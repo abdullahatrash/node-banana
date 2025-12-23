@@ -116,6 +116,61 @@ const isMouseWheel = (event: WheelEvent): boolean => {
          Math.abs(event.deltaY) % 40 === 0; // Mouse deltas often in multiples
 };
 
+// Check if an element can scroll and has room to scroll in the given direction
+const canElementScroll = (element: HTMLElement, deltaX: number, deltaY: number): boolean => {
+  const style = window.getComputedStyle(element);
+  const overflowY = style.overflowY;
+  const overflowX = style.overflowX;
+
+  const canScrollY = overflowY === 'auto' || overflowY === 'scroll';
+  const canScrollX = overflowX === 'auto' || overflowX === 'scroll';
+
+  // Check if there's room to scroll in the delta direction
+  if (canScrollY && deltaY !== 0) {
+    const hasVerticalScroll = element.scrollHeight > element.clientHeight;
+    if (hasVerticalScroll) {
+      // Check if we can scroll further in the delta direction
+      if (deltaY > 0 && element.scrollTop < element.scrollHeight - element.clientHeight) {
+        return true; // Can scroll down
+      }
+      if (deltaY < 0 && element.scrollTop > 0) {
+        return true; // Can scroll up
+      }
+    }
+  }
+
+  if (canScrollX && deltaX !== 0) {
+    const hasHorizontalScroll = element.scrollWidth > element.clientWidth;
+    if (hasHorizontalScroll) {
+      if (deltaX > 0 && element.scrollLeft < element.scrollWidth - element.clientWidth) {
+        return true; // Can scroll right
+      }
+      if (deltaX < 0 && element.scrollLeft > 0) {
+        return true; // Can scroll left
+      }
+    }
+  }
+
+  return false;
+};
+
+// Find if the target element or any ancestor is scrollable
+const findScrollableAncestor = (target: HTMLElement, deltaX: number, deltaY: number): HTMLElement | null => {
+  let current: HTMLElement | null = target;
+
+  while (current && !current.classList.contains('react-flow')) {
+    // Check for nowheel class (React Flow convention for elements that should handle their own scroll)
+    if (current.classList.contains('nowheel') || current.tagName === 'TEXTAREA') {
+      if (canElementScroll(current, deltaX, deltaY)) {
+        return current;
+      }
+    }
+    current = current.parentElement;
+  }
+
+  return null;
+};
+
 export function WorkflowCanvas() {
   const { nodes, edges, groups, onNodesChange, onEdgesChange, onConnect, addNode, updateNodeData, loadWorkflow, getNodeById, addToGlobalHistory, setNodeGroupId } =
     useWorkflowStore();
@@ -520,6 +575,15 @@ export function WorkflowCanvas() {
 
   // Custom wheel handler for macOS trackpad support
   const handleWheel = useCallback((event: React.WheelEvent) => {
+    // Check if scrolling over a scrollable element (e.g., textarea, scrollable div)
+    const target = event.target as HTMLElement;
+    const scrollableElement = findScrollableAncestor(target, event.deltaX, event.deltaY);
+
+    if (scrollableElement) {
+      // Let the element handle its own scroll - don't prevent default or manipulate viewport
+      return;
+    }
+
     // Pinch gesture (ctrlKey) always zooms
     if (event.ctrlKey) {
       event.preventDefault();
