@@ -73,6 +73,16 @@ interface FalModel {
 }
 
 /**
+ * Generation response from fal.ai
+ * Different models may return different structures
+ */
+interface FalGenerationResponse {
+  images?: Array<{ url: string; content_type?: string }>;
+  image?: { url: string; content_type?: string };
+  output?: string;
+}
+
+/**
  * Get API key from localStorage (client-side only)
  * Returns null when running on server or if not configured
  */
@@ -232,12 +242,97 @@ const falProvider: ProviderInterface = {
     }
   },
 
-  async generate(_input: GenerationInput): Promise<GenerationOutput> {
-    // Generation will be implemented in Phase 3
-    return {
-      success: false,
-      error: "Not implemented - generation support coming in Phase 3",
-    };
+  async generate(input: GenerationInput): Promise<GenerationOutput> {
+    const apiKey = getApiKeyFromStorage();
+    // Note: fal.ai works without API key but with rate limits
+
+    try {
+      const modelId = input.model.id;
+
+      // Build request body
+      // fal.ai models typically expect "prompt" as input
+      const requestBody: Record<string, unknown> = {
+        prompt: input.prompt,
+        ...input.parameters,
+      };
+
+      // Note: Image inputs are skipped for now (Phase 5 adds URL server)
+      // input.images would need to be converted to URLs for fal.ai
+
+      // POST to fal.run/{modelId}
+      const response = await fetch(`https://fal.run/${modelId}`, {
+        method: "POST",
+        headers: {
+          ...buildHeaders(apiKey),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return {
+          success: false,
+          error: `fal.ai API error: ${response.status} - ${errorText}`,
+        };
+      }
+
+      const result: FalGenerationResponse = await response.json();
+
+      // fal.ai response typically has "images" array with url field
+      // or "image" object with url field depending on the model
+      let imageUrl: string | null = null;
+
+      if (result.images && Array.isArray(result.images) && result.images.length > 0) {
+        imageUrl = result.images[0].url;
+      } else if (result.image && result.image.url) {
+        imageUrl = result.image.url;
+      } else if (result.output && typeof result.output === "string") {
+        // Some models return URL directly in output
+        imageUrl = result.output;
+      }
+
+      if (!imageUrl) {
+        return {
+          success: false,
+          error: "No image URL in response",
+        };
+      }
+
+      // Fetch the image and convert to base64
+      const imageResponse = await fetch(imageUrl);
+
+      if (!imageResponse.ok) {
+        return {
+          success: false,
+          error: `Failed to fetch output image: ${imageResponse.status}`,
+        };
+      }
+
+      const imageArrayBuffer = await imageResponse.arrayBuffer();
+      const imageBase64 = Buffer.from(imageArrayBuffer).toString("base64");
+
+      // Determine MIME type from response
+      const contentType =
+        imageResponse.headers.get("content-type") || "image/png";
+
+      return {
+        success: true,
+        outputs: [
+          {
+            type: "image",
+            data: `data:${contentType};base64,${imageBase64}`,
+            url: imageUrl,
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("[fal.ai] Generation failed:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Generation failed",
+      };
+    }
   },
 
   isConfigured(): boolean {
