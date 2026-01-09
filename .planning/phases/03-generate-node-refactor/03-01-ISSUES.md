@@ -19,24 +19,6 @@
 
 **Note:** This may be an API key issue or pre-existing problem. No changes were made to `/api/generate/route.ts` in this plan. Lower priority - recommend investigating separately or checking API key.
 
-### UAT-004: Replicate shows incomplete model list
-
-**Discovered:** 2026-01-09
-**Phase/Plan:** 03-01
-**Severity:** Minor
-**Feature:** Model fetching for Replicate
-**Description:** Replicate model list appears incomplete
-**Deferred:** To be addressed in later phase
-
-### UAT-005: fal.ai shows video models in image-only dropdown
-
-**Discovered:** 2026-01-09
-**Phase/Plan:** 03-01
-**Severity:** Minor
-**Feature:** Model filtering by capability
-**Description:** Video models are showing in the image-only model dropdown for fal.ai
-**Deferred:** To be addressed - capability filtering may not be working correctly
-
 ## Resolved Issues
 
 ### UAT-001: API response structure not handled correctly
@@ -46,6 +28,14 @@
 ### UAT-002: API keys not sent to /api/models endpoint
 **Resolved:** 2026-01-09 - Fixed in commit a2540f1
 **Fix:** Added headers with X-Replicate-Key and X-Fal-Key to fetch request
+
+### UAT-004: Replicate shows incomplete model list
+**Resolved:** 2026-01-09 - By design
+**Note:** Replicate API returns paginated results (~25 per page). First page is sufficient for initial use. Full pagination can be added as enhancement.
+
+### UAT-005: fal.ai shows video models in image-only dropdown
+**Resolved:** 2026-01-09 - Fixed in commit f2895c3
+**Fix:** Added capabilities filtering to /api/models endpoint. Models now filtered by ?capabilities param.
 
 ---
 
