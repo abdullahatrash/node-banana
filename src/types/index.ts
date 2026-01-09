@@ -142,6 +142,7 @@ export interface NanoBananaNodeData extends BaseNodeData {
   aspectRatio: AspectRatio;
   resolution: Resolution; // Only used by Nano Banana Pro
   model: ModelType;
+  selectedModel?: SelectedModel;  // Multi-provider model selection (optional for backward compat)
   useGoogleSearch: boolean; // Only available for Nano Banana Pro
   status: NodeStatus;
   error: string | null;
@@ -300,6 +301,13 @@ export interface NodeGroup {
 
 // Provider Types for multi-provider support
 export type ProviderType = "gemini" | "replicate" | "fal";
+
+// Selected model for image/video generation nodes
+export interface SelectedModel {
+  provider: ProviderType;
+  modelId: string;
+  displayName: string;
+}
 
 export interface ProviderConfig {
   id: ProviderType;
