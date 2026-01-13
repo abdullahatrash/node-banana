@@ -283,17 +283,17 @@ Plans:
 **Goal**: Test that generate nodes properly validate and render dynamic inputs from provider schemas, and that all inputs/parameters are correctly included in API calls
 **Depends on**: Phase 21
 **Research**: Unlikely (existing test patterns from Phase 17)
-**Plans**: TBD
+**Plans**: 1 plan
 
 **Test coverage:**
 1. Dynamic inputs from provider schemas render correctly as parameters and input handles on node creation
 2. Validation of dynamic inputs (required fields, type checking, constraints)
 3. Standard inputs (image, text) validate properly
-4. On submission, all parameters and inputs are included in API call payload correctly
+4. On submission, all parameters and inputs are included in API call payload correctly (covered by Phase 18)
 5. Coverage across all providers (Gemini, Replicate, fal.ai)
 
 Plans:
-- [ ] 22-01: TBD (run /gsd:plan-phase 22 to break down)
+- [ ] 22-01: ModelParameters tests, GenerateImageNode/GenerateVideoNode dynamic handle tests
 
 ## Progress
 
@@ -323,4 +323,4 @@ Phases execute in numeric order: 1 → 2 → ... → 14 → 15 → 16 → 17 →
 | 19. Type Refactoring | v1.2 | 0/? | Not started | - |
 | 20. Integration Tests | v1.2 | 0/? | Not started | - |
 | 21. Fix Image Input & Deduplication | v1.2 | 0/? | Not started | - |
-| 22. Generate Node Dynamic Input Tests | v1.2 | 0/? | Not started | - |
+| 22. Generate Node Dynamic Input Tests | v1.2 | 0/1 | Planned | - |
