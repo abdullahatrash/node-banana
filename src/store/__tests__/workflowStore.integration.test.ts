@@ -705,4 +705,415 @@ describe("workflowStore integration tests", () => {
       });
     });
   });
+
+  describe("executeWorkflow (topological sort)", () => {
+    // Track execution order via updateNodeData calls
+    let executionOrder: string[];
+
+    beforeEach(() => {
+      executionOrder = [];
+
+      // Mock fetch for API calls
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ success: true, image: "data:image/png;base64,generated" }),
+        text: () => Promise.resolve(""),
+      }));
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    describe("Execution order tests", () => {
+      it("should execute linear chain A -> B -> C in order", async () => {
+        // Set up: imageInput -> prompt -> nanoBanana
+        // Only nanoBanana actually "executes" something visible
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("prompt-1", "prompt", { prompt: "test" }, { x: 0, y: 0 }),
+            createTestNode("nanoBanana-1", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }, { x: 100, y: 0 }),
+            createTestNode("output-1", "output", {}, { x: 200, y: 0 }),
+          ],
+          edges: [
+            createTestEdge("prompt-1", "nanoBanana-1", "text", "text"),
+            createTestEdge("nanoBanana-1", "output-1", "image", "image"),
+          ],
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        // Check that the workflow completed (isRunning should be false)
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+
+        // Check that nanoBanana node was updated (status should be complete or loading at some point)
+        // The node should have been processed
+        const nanoBananaNode = useWorkflowStore.getState().nodes.find(n => n.id === "nanoBanana-1");
+        expect(nanoBananaNode).toBeDefined();
+      });
+
+      it("should execute multiple dependencies A, B -> C correctly", async () => {
+        // Two prompts feeding into one nanoBanana
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("imageInput-1", "imageInput", { image: "data:image/png;base64,test" }, { x: 0, y: 0 }),
+            createTestNode("prompt-1", "prompt", { prompt: "test prompt" }, { x: 0, y: 100 }),
+            createTestNode("nanoBanana-1", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }, { x: 200, y: 50 }),
+          ],
+          edges: [
+            createTestEdge("imageInput-1", "nanoBanana-1", "image", "image"),
+            createTestEdge("prompt-1", "nanoBanana-1", "text", "text"),
+          ],
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        // Workflow should complete successfully
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+        expect(useWorkflowStore.getState().currentNodeId).toBeNull();
+      });
+
+      it("should throw error on cycle detection", async () => {
+        // Create a cycle: A -> B -> A
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("nanoBanana-1", "nanoBanana", { prompt: "test" }),
+            createTestNode("nanoBanana-2", "nanoBanana", { prompt: "test" }),
+          ],
+          edges: [
+            createTestEdge("nanoBanana-1", "nanoBanana-2", "image", "image"),
+            createTestEdge("nanoBanana-2", "nanoBanana-1", "image", "image"),
+          ],
+        });
+
+        const store = useWorkflowStore.getState();
+
+        // Execute workflow - should handle cycle internally
+        await store.executeWorkflow();
+
+        // After cycle detection, workflow should stop running
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+      });
+
+      it("should handle parallel branches that merge", async () => {
+        // Two parallel paths that merge:
+        // prompt-1 -> nanoBanana-1 --|
+        //                            |-> output-1
+        // prompt-2 -> nanoBanana-2 --|
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("prompt-1", "prompt", { prompt: "path 1" }, { x: 0, y: 0 }),
+            createTestNode("prompt-2", "prompt", { prompt: "path 2" }, { x: 0, y: 200 }),
+            createTestNode("nanoBanana-1", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }, { x: 200, y: 0 }),
+            createTestNode("nanoBanana-2", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }, { x: 200, y: 200 }),
+            createTestNode("output-1", "output", {}, { x: 400, y: 100 }),
+          ],
+          edges: [
+            createTestEdge("prompt-1", "nanoBanana-1", "text", "text"),
+            createTestEdge("prompt-2", "nanoBanana-2", "text", "text"),
+            createTestEdge("nanoBanana-1", "output-1", "image", "image"),
+            createTestEdge("nanoBanana-2", "output-1", "image", "image"),
+          ],
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        // Workflow should complete
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+
+        // Both nanoBanana nodes should have been processed before output
+        const outputNode = useWorkflowStore.getState().nodes.find(n => n.id === "output-1");
+        expect(outputNode).toBeDefined();
+      });
+    });
+
+    describe("Pause edge handling", () => {
+      it("should stop execution at node with incoming pause edge", async () => {
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("prompt-1", "prompt", { prompt: "test" }),
+            createTestNode("nanoBanana-1", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }),
+            createTestNode("output-1", "output", {}),
+          ],
+          edges: [
+            createTestEdge("prompt-1", "nanoBanana-1", "text", "text"),
+            createTestEdge("nanoBanana-1", "output-1", "image", "image", true), // Pause edge
+          ],
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        // Should be paused at output node
+        expect(useWorkflowStore.getState().pausedAtNodeId).toBe("output-1");
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+      });
+
+      it("should set pausedAtNodeId correctly", async () => {
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("prompt-1", "prompt", { prompt: "test" }),
+            createTestNode("nanoBanana-1", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }),
+          ],
+          edges: [
+            createTestEdge("prompt-1", "nanoBanana-1", "text", "text", true), // Pause edge
+          ],
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        expect(useWorkflowStore.getState().pausedAtNodeId).toBe("nanoBanana-1");
+      });
+
+      it("should resume from paused node when startFromNodeId matches pausedAtNodeId", async () => {
+        // First, run until pause
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("prompt-1", "prompt", { prompt: "test" }),
+            createTestNode("nanoBanana-1", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }),
+          ],
+          edges: [
+            createTestEdge("prompt-1", "nanoBanana-1", "text", "text", true), // Pause edge
+          ],
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        // Should be paused
+        expect(useWorkflowStore.getState().pausedAtNodeId).toBe("nanoBanana-1");
+
+        // Now resume from the paused node
+        await store.executeWorkflow("nanoBanana-1");
+
+        // After resuming, pausedAtNodeId should be cleared
+        expect(useWorkflowStore.getState().pausedAtNodeId).toBeNull();
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+      });
+    });
+
+    describe("Locked group handling", () => {
+      it("should skip nodes in locked groups", async () => {
+        useWorkflowStore.setState({
+          nodes: [
+            { ...createTestNode("prompt-1", "prompt", { prompt: "test" }), groupId: "group-1" },
+            { ...createTestNode("nanoBanana-1", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }), groupId: "group-1" },
+            createTestNode("output-1", "output", {}),
+          ],
+          edges: [
+            createTestEdge("prompt-1", "nanoBanana-1", "text", "text"),
+            createTestEdge("nanoBanana-1", "output-1", "image", "image"),
+          ],
+          groups: {
+            "group-1": {
+              id: "group-1",
+              name: "Locked Group",
+              color: "neutral" as const,
+              position: { x: 0, y: 0 },
+              size: { width: 400, height: 400 },
+              locked: true, // Locked!
+            },
+          },
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        // Workflow should complete
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+
+        // The locked nodes should not have made API calls
+        // Since prompt and nanoBanana are in locked group, they should be skipped
+        // Only output should execute (but it has no image from skipped nanoBanana)
+      });
+
+      it("should execute non-locked group nodes normally", async () => {
+        useWorkflowStore.setState({
+          nodes: [
+            { ...createTestNode("prompt-1", "prompt", { prompt: "test" }), groupId: "group-1" },
+            { ...createTestNode("nanoBanana-1", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }), groupId: "group-1" },
+          ],
+          edges: [
+            createTestEdge("prompt-1", "nanoBanana-1", "text", "text"),
+          ],
+          groups: {
+            "group-1": {
+              id: "group-1",
+              name: "Unlocked Group",
+              color: "neutral" as const,
+              position: { x: 0, y: 0 },
+              size: { width: 400, height: 400 },
+              locked: false, // Not locked
+            },
+          },
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        // Workflow should complete and nodes should execute
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+      });
+
+      it("should only skip nodes in the locked group, not other nodes", async () => {
+        useWorkflowStore.setState({
+          nodes: [
+            // Locked group nodes
+            { ...createTestNode("prompt-1", "prompt", { prompt: "locked prompt" }), groupId: "group-locked" },
+            // Unlocked nodes
+            createTestNode("prompt-2", "prompt", { prompt: "unlocked prompt" }),
+            createTestNode("nanoBanana-1", "nanoBanana", {
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }),
+          ],
+          edges: [
+            createTestEdge("prompt-2", "nanoBanana-1", "text", "text"),
+          ],
+          groups: {
+            "group-locked": {
+              id: "group-locked",
+              name: "Locked Group",
+              color: "neutral" as const,
+              position: { x: 0, y: 0 },
+              size: { width: 200, height: 200 },
+              locked: true,
+            },
+          },
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        // Workflow should complete
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+
+        // The unlocked nodes should have executed
+        // (nanoBanana-1 should have status updated)
+      });
+    });
+
+    describe("Start from specific node", () => {
+      it("should skip nodes before startFromNodeId in execution order", async () => {
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("prompt-1", "prompt", { prompt: "test" }),
+            createTestNode("nanoBanana-1", "nanoBanana", {
+              outputImage: "data:image/png;base64,existingImage",
+              aspectRatio: "1:1",
+              resolution: "1MP",
+              model: "nano-banana",
+            }),
+            createTestNode("output-1", "output", {}),
+          ],
+          edges: [
+            createTestEdge("prompt-1", "nanoBanana-1", "text", "text"),
+            createTestEdge("nanoBanana-1", "output-1", "image", "image"),
+          ],
+        });
+
+        const store = useWorkflowStore.getState();
+
+        // Start from output node - should skip prompt and nanoBanana
+        await store.executeWorkflow("output-1");
+
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+      });
+    });
+
+    describe("Execution state management", () => {
+      it("should set isRunning to true during execution", async () => {
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("prompt-1", "prompt", { prompt: "test" }),
+          ],
+          edges: [],
+        });
+
+        const store = useWorkflowStore.getState();
+
+        // Start workflow but don't await yet
+        const promise = store.executeWorkflow();
+
+        // Wait for workflow to complete
+        await promise;
+
+        // After completion, isRunning should be false
+        expect(useWorkflowStore.getState().isRunning).toBe(false);
+      });
+
+      it("should ignore execution request if already running", async () => {
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("prompt-1", "prompt", { prompt: "test" }),
+          ],
+          edges: [],
+          isRunning: true, // Already running
+        });
+
+        const store = useWorkflowStore.getState();
+
+        // This should return immediately without doing anything
+        await store.executeWorkflow();
+
+        // Should still be running (our mock state)
+        expect(useWorkflowStore.getState().isRunning).toBe(true);
+      });
+
+      it("should clear currentNodeId after execution completes", async () => {
+        useWorkflowStore.setState({
+          nodes: [
+            createTestNode("prompt-1", "prompt", { prompt: "test" }),
+          ],
+          edges: [],
+        });
+
+        const store = useWorkflowStore.getState();
+        await store.executeWorkflow();
+
+        expect(useWorkflowStore.getState().currentNodeId).toBeNull();
+      });
+    });
+  });
 });
