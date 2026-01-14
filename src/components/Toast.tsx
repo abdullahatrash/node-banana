@@ -54,11 +54,22 @@ const typeIcons = {
 export function Toast() {
   const { message, type, persistent, details, hide } = useToast();
   const [isExpanded, setIsExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     // Reset expanded state when toast changes
     setIsExpanded(false);
+    setCopied(false);
   }, [message]);
+
+  const handleCopy = async () => {
+    const textToCopy = details ? `${message}\n\n${details}` : message;
+    if (textToCopy) {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   useEffect(() => {
     if (message && !persistent) {
@@ -80,8 +91,24 @@ export function Toast() {
           {typeIcons[type]}
           <span className="text-sm font-medium flex-1">{message}</span>
           <button
+            onClick={handleCopy}
+            className="p-1 rounded hover:bg-white/10 transition-colors"
+            title="Copy message"
+          >
+            {copied ? (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            )}
+          </button>
+          <button
             onClick={hide}
             className="p-1 rounded hover:bg-white/10 transition-colors"
+            title="Dismiss"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
