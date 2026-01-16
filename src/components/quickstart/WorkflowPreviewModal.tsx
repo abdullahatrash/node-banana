@@ -46,14 +46,19 @@ export function WorkflowPreviewModal({
 
       {/* Modal */}
       <div
-        className="relative bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-[90vw] max-w-3xl max-h-[85vh] flex flex-col"
+        className="relative bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-[90vw] max-w-4xl max-h-[85vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-700">
-          <h3 className="text-base font-semibold text-neutral-100">
-            {templateName} — Workflow Preview
-          </h3>
+          <div>
+            <h3 className="text-base font-semibold text-neutral-100">
+              {templateName}
+            </h3>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              Workflow structure preview
+            </p>
+          </div>
           <button
             onClick={onClose}
             className="p-1.5 rounded-md text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
@@ -76,40 +81,16 @@ export function WorkflowPreviewModal({
 
         {/* Preview Content */}
         <div className="flex-1 min-h-0 p-4">
-          <div className="w-full h-[60vh] bg-neutral-800/50 rounded-lg border border-neutral-700 overflow-hidden">
+          <div className="w-full h-[65vh] bg-neutral-950 rounded-lg border border-neutral-800 overflow-hidden">
             <WorkflowPreview workflow={workflow} />
           </div>
         </div>
 
-        {/* Legend */}
-        <div className="px-5 py-3 border-t border-neutral-700">
-          <div className="flex flex-wrap items-center gap-4 text-xs text-neutral-400">
-            <span className="font-medium text-neutral-300">Node Types:</span>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded bg-[#22c55e]" />
-              <span>Image Input</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded bg-[#3b82f6]" />
-              <span>Prompt</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded bg-[#f97316]" />
-              <span>Generate Image</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded bg-[#a855f7]" />
-              <span>Generate Video</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded bg-[#06b6d4]" />
-              <span>LLM</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded bg-[#6b7280]" />
-              <span>Output</span>
-            </div>
-          </div>
+        {/* Footer hint */}
+        <div className="px-5 py-3 border-t border-neutral-700 text-center">
+          <p className="text-xs text-neutral-500">
+            Press <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 font-mono text-[10px]">Esc</kbd> or click outside to close
+          </p>
         </div>
       </div>
     </div>
