@@ -4,7 +4,7 @@ import { useState, useCallback, useRef } from "react";
 import { WorkflowFile } from "@/store/workflowStore";
 import { QuickstartView } from "@/types/quickstart";
 import { QuickstartInitialView } from "./QuickstartInitialView";
-import { QuickstartTemplatesView } from "./QuickstartTemplatesView";
+import { TemplateExplorerView } from "./TemplateExplorerView";
 import { PromptWorkflowView } from "./PromptWorkflowView";
 
 interface WelcomeModalProps {
@@ -76,7 +76,7 @@ export function WelcomeModal({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="w-full max-w-3xl mx-4 bg-neutral-800 rounded-xl border border-neutral-700 shadow-2xl overflow-hidden">
+      <div className="w-full max-w-4xl mx-4 bg-neutral-800 rounded-xl border border-neutral-700 shadow-2xl overflow-hidden max-h-[80vh]">
         {currentView === "initial" && (
           <QuickstartInitialView
             onSelectBlankCanvas={handleSelectBlankCanvas}
@@ -86,7 +86,7 @@ export function WelcomeModal({
           />
         )}
         {currentView === "templates" && (
-          <QuickstartTemplatesView
+          <TemplateExplorerView
             onBack={handleBack}
             onWorkflowSelected={handleWorkflowSelected}
           />
