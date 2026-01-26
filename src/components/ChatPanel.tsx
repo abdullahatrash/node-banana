@@ -1,0 +1,128 @@
+"use client";
+
+import { useRef, useEffect, useState } from "react";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
+
+interface ChatPanelProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [input, setInput] = useState("");
+
+  const { messages, sendMessage, status } = useChat({
+    transport: new DefaultChatTransport({ api: "/api/chat" }),
+  });
+
+  const isLoading = status === "streaming" || status === "submitted";
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed bottom-[220px] right-5 w-[380px] h-[450px] bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl flex flex-col z-40">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-200">Workflow Assistant</h3>
+        <button
+          onClick={onClose}
+          className="text-neutral-400 hover:text-neutral-200 transition-colors"
+          aria-label="Close chat"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+        {messages.length === 0 && (
+          <div className="text-center text-neutral-500 text-sm py-8">
+            <p>Ask me anything about creating workflows!</p>
+            <p className="text-xs mt-2">e.g., &quot;How do I create product photos with different backgrounds?&quot;</p>
+          </div>
+        )}
+
+        {messages.map((message) => {
+          // Extract text from message parts
+          const textContent = message.parts
+            ?.filter((part): part is { type: "text"; text: string } => part.type === "text")
+            .map((part) => part.text)
+            .join("") || "";
+
+          return (
+            <div
+              key={message.id}
+              className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                  message.role === "user"
+                    ? "bg-blue-600 text-white"
+                    : "bg-neutral-700 text-neutral-200"
+                }`}
+              >
+                <p className="whitespace-pre-wrap">{textContent}</p>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Loading indicator */}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-neutral-700 rounded-lg px-3 py-2">
+              <div className="flex space-x-1">
+                <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input area */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (input.trim() && !isLoading) {
+            sendMessage({ text: input });
+            setInput("");
+          }
+        }}
+        className="p-3 border-t border-neutral-700"
+      >
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Type a message..."
+            className="flex-1 bg-neutral-700 border border-neutral-600 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-blue-500"
+            disabled={isLoading}
+          />
+          <button
+            type="submit"
+            disabled={isLoading || !input.trim()}
+            className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}

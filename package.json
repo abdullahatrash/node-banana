@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.13",
+    "@ai-sdk/react": "^3.0.51",
     "@google/genai": "^1.30.0",
     "@tailwindcss/postcss": "^4.1.17",
     "@xyflow/react": "^12.9.3",
