@@ -179,7 +179,7 @@ const findScrollableAncestor = (target: HTMLElement, deltaX: number, deltaY: num
 };
 
 export function WorkflowCanvas() {
-  const { nodes, edges, groups, onNodesChange, onEdgesChange, onConnect, addNode, updateNodeData, loadWorkflow, getNodeById, addToGlobalHistory, setNodeGroupId, executeWorkflow, isModalOpen, showQuickstart, setShowQuickstart, navigationTarget, setNavigationTarget } =
+  const { nodes, edges, groups, onNodesChange, onEdgesChange, onConnect, addNode, updateNodeData, loadWorkflow, getNodeById, addToGlobalHistory, setNodeGroupId, executeWorkflow, isModalOpen, showQuickstart, setShowQuickstart, navigationTarget, setNavigationTarget, captureSnapshot } =
     useWorkflowStore();
   const { screenToFlowPosition, getViewport, zoomIn, zoomOut, setViewport, setCenter } = useReactFlow();
   const { show: showToast } = useToast();
@@ -579,6 +579,7 @@ export function WorkflowCanvas() {
       const data = await response.json();
 
       if (data.success && data.workflow) {
+        captureSnapshot(); // Capture BEFORE loading new workflow
         await loadWorkflow(data.workflow);
         setIsChatOpen(false);
         showToast("Workflow generated successfully", "success");
@@ -591,7 +592,7 @@ export function WorkflowCanvas() {
     } finally {
       setIsBuildingWorkflow(false);
     }
-  }, [loadWorkflow, showToast]);
+  }, [loadWorkflow, showToast, captureSnapshot]);
 
   // Handle node selection from drop menu
   const handleMenuSelect = useCallback(

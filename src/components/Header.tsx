@@ -67,6 +67,8 @@ export function Header() {
     setWorkflowMetadata,
     saveToFile,
     loadWorkflow,
+    previousWorkflowSnapshot,
+    revertToSnapshot,
   } = useWorkflowStore();
 
   const [showProjectModal, setShowProjectModal] = useState(false);
@@ -156,6 +158,15 @@ export function Header() {
       alert("Failed to open project folder. Please try again.");
     }
   };
+
+  const handleRevertAIChanges = useCallback(() => {
+    const confirmed = window.confirm(
+      "Are you sure? This will restore your previous workflow."
+    );
+    if (confirmed) {
+      revertToSnapshot();
+    }
+  }, [revertToSnapshot]);
 
   return (
     <>
@@ -357,6 +368,15 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-3 text-xs">
+          {previousWorkflowSnapshot && (
+            <button
+              onClick={handleRevertAIChanges}
+              className="px-2.5 py-1 text-xs font-medium text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded transition-colors"
+              title="Restore workflow from before AI changes"
+            >
+              Revert AI Changes
+            </button>
+          )}
           <CommentsNavigationIcon />
           <span className="text-neutral-400">
             {isProjectConfigured ? (

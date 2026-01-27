@@ -467,7 +467,7 @@ Plans:
 
 Plans:
 - [x] 32-01: ChatPanel component with useChat hook, WorkflowCanvas integration
-- [ ] 32-02: Chat context and workflow generation integration
+- [x] 32-02: Chat context and workflow generation integration
 
 #### Phase 33: Workflow Edit Safety
 
@@ -477,8 +477,11 @@ Plans:
 **Research topics**: Shadow copy vs diff-based vs undo stack approaches, JSON diff visualization
 **Plans**: TBD
 
+**Plans**: 2 plans
+
 Plans:
-- [ ] 33-01: TBD (run /gsd:plan-phase 33 to break down)
+- [ ] 33-01-PLAN.md — Store snapshot state, capture/revert/clear actions, manual change tracking
+- [ ] 33-02-PLAN.md — Wire snapshot capture in AI flow, Revert AI Changes button in Header
 
 #### Phase 34: Agentic Workflow Editing
 
@@ -651,7 +654,7 @@ Phases execute in numeric order: 1 → 2 → ... → 35 → 36 → 37 → 38 →
 | 29. Canvas Performance | v1.3 | 0/0 | Deferred | - |
 | 30. Small Fixes | v1.3 | 0/0 | Deferred | - |
 | 31. Workflow Proposal System | v1.4 | 2/2 | Complete | 2026-01-26 |
-| 32. Chat UI Foundation | v1.4 | 1/2 | In progress | - |
+| 32. Chat UI Foundation | v1.4 | 2/2 | Complete | 2026-01-27 |
 | 33. Workflow Edit Safety | v1.4 | 0/? | Not started | - |
 | 34. Agentic Workflow Editing | v1.4 | 0/? | Not started | - |
 | 35. Large Workflow Handling | v1.4 | 0/? | Not started | - |
