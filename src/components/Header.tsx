@@ -371,7 +371,7 @@ export function Header() {
           {previousWorkflowSnapshot && (
             <button
               onClick={handleRevertAIChanges}
-              className="px-2.5 py-1.5 text-xs text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 rounded transition-colors"
+              className="px-2.5 py-1.5 text-xs text-neutral-300 hover:text-neutral-100 bg-neutral-700/50 hover:bg-neutral-700 border border-neutral-600 rounded transition-colors"
               title="Restore workflow from before AI changes"
             >
               Revert AI Changes
