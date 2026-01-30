@@ -26,7 +26,7 @@ export function normalizeSelectedPath(selectedPath: string, platform: string): s
 
   // Remove trailing slash/backslash (except root paths like "/" or "C:\")
   if (selectedPath.length > 1 && (selectedPath.endsWith("/") || selectedPath.endsWith("\\"))) {
-    if (!(platform === "win32" && /^[A-Za-z]:\\$/.test(selectedPath))) {
+    if (!(platform === "win32" && /^[A-Za-z]:[\\\/]$/.test(selectedPath))) {
       selectedPath = selectedPath.slice(0, -1);
     }
   }

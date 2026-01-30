@@ -407,7 +407,7 @@ describe("ProjectSetupModal", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByText("Project directory must be an absolute path (starting with / or a drive letter)")
+          screen.getByText("Project directory must be an absolute path (starting with /, a drive letter, or a UNC path)")
         ).toBeInTheDocument();
       });
       expect(onSave).not.toHaveBeenCalled();

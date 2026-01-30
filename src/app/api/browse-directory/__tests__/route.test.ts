@@ -32,9 +32,14 @@ describe("normalizeSelectedPath", () => {
       .toBe("C:\\Users\\guy");
   });
 
-  it("should preserve Windows drive root", () => {
+  it("should preserve Windows drive root with backslash", () => {
     expect(normalizeSelectedPath("C:\\", "win32"))
       .toBe("C:\\");
+  });
+
+  it("should preserve Windows drive root with forward slash", () => {
+    expect(normalizeSelectedPath("C:/", "win32"))
+      .toBe("C:/");
   });
 
   it("should preserve Unix root /", () => {

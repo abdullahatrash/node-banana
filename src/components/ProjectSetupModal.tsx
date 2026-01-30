@@ -200,8 +200,8 @@ export function ProjectSetupModal({
     }
 
     const trimmedPath = directoryPath.trim();
-    if (!(trimmedPath.startsWith("/") || /^[A-Za-z]:/.test(trimmedPath))) {
-      setError("Project directory must be an absolute path (starting with / or a drive letter)");
+    if (!(trimmedPath.startsWith("/") || /^[A-Za-z]:[\\\/]/.test(trimmedPath) || trimmedPath.startsWith("\\\\"))) {
+      setError("Project directory must be an absolute path (starting with /, a drive letter, or a UNC path)");
       return;
     }
 
