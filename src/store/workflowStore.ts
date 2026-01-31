@@ -882,11 +882,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       return;
     }
 
-    // Start logging session
-    await logger.startSession();
-
     const isResuming = startFromNodeId === get().pausedAtNodeId;
     set({ isRunning: true, pausedAtNodeId: null });
+
+    // Start logging session
+    await logger.startSession();
 
     logger.info('workflow.start', 'Workflow execution started', {
       nodeCount: nodes.length,
@@ -1791,13 +1791,13 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       return;
     }
 
+    set({ isRunning: true, currentNodeId: nodeId });
+
     await logger.startSession();
     logger.info('node.execution', 'Regenerating node', {
       nodeId,
       nodeType: node.type,
     });
-
-    set({ isRunning: true, currentNodeId: nodeId });
 
     try {
       if (node.type === "nanoBanana") {
