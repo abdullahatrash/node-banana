@@ -1473,25 +1473,7 @@ export function WorkflowCanvas() {
       {/* Global image history */}
       <GlobalImageHistory />
 
-      {/* Chat toggle button - positioned above minimap */}
-      <button
-        onClick={() => setIsChatOpen(!isChatOpen)}
-        className={`fixed bottom-[180px] right-5 w-10 h-10 rounded-full flex items-center justify-center transition-colors z-40 ${
-          isChatOpen
-            ? "bg-blue-600 text-white"
-            : "bg-neutral-800 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 border border-neutral-700"
-        }`}
-        title={isChatOpen ? "Close chat" : "Open workflow assistant"}
-      >
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-          />
-        </svg>
-      </button>
+      {/* Chat toggle button - hidden for now */}
 
       {/* Chat panel */}
       <ChatPanel
