@@ -2014,7 +2014,7 @@ export async function POST(request: NextRequest) {
       const processedImages: string[] = images ? [...images] : [];
 
       // Process dynamicInputs: filter empty values
-      let processedDynamicInputs: Record<string, string> | undefined = undefined;
+      let processedDynamicInputs: Record<string, string | string[]> | undefined = undefined;
 
       if (dynamicInputs) {
         processedDynamicInputs = {};
