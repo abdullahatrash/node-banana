@@ -1913,9 +1913,13 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
               let audioData = null;
               if (inputs.audio.length > 0 && inputs.audio[0]) {
                 const { prepareAudioAsync } = await import('@/hooks/useAudioMixing');
-                const audioBlob = await fetch(inputs.audio[0]).then((r) => r.blob());
-                // Calculate total video duration from blobs (we'll use MediaBunny for this during stitch)
-                // For now, pass 0 and let stitch handle duration
+                const audioUrl = inputs.audio[0];
+                const audioResponse = await fetch(audioUrl);
+                const rawBlob = await audioResponse.blob();
+                // Ensure the blob has the correct MIME type for MediaBunny format detection
+                // Data URLs from AudioInput preserve the original MIME type, but fetch() may lose it
+                const audioMime = rawBlob.type || (audioUrl.startsWith('data:') ? audioUrl.split(';')[0].split(':')[1] : 'audio/mpeg');
+                const audioBlob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: audioMime });
                 audioData = await prepareAudioAsync(audioBlob, 0);
               }
 
@@ -2609,7 +2613,12 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           let audioData = null;
           if (inputs.audio.length > 0 && inputs.audio[0]) {
             const { prepareAudioAsync } = await import('@/hooks/useAudioMixing');
-            const audioBlob = await fetch(inputs.audio[0]).then((r) => r.blob());
+            const audioUrl = inputs.audio[0];
+            const audioResponse = await fetch(audioUrl);
+            const rawBlob = await audioResponse.blob();
+            // Ensure the blob has the correct MIME type for MediaBunny format detection
+            const audioMime = rawBlob.type || (audioUrl.startsWith('data:') ? audioUrl.split(';')[0].split(':')[1] : 'audio/mpeg');
+            const audioBlob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: audioMime });
             audioData = await prepareAudioAsync(audioBlob, 0);
           }
 
