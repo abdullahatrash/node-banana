@@ -1,4 +1,5 @@
 export { ImageInputNode } from "./ImageInputNode";
+export { AudioInputNode } from "./AudioInputNode";
 export { AnnotationNode } from "./AnnotationNode";
 export { PromptNode } from "./PromptNode";
 export { PromptConstructorNode } from "./PromptConstructorNode";

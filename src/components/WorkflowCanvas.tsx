@@ -21,6 +21,7 @@ import { useWorkflowStore, WorkflowFile } from "@/store/workflowStore";
 import { useToast } from "@/components/Toast";
 import {
   ImageInputNode,
+  AudioInputNode,
   AnnotationNode,
   PromptNode,
   PromptConstructorNode,
@@ -49,6 +50,7 @@ import { stripBinaryData } from "@/lib/chat/contextBuilder";
 
 const nodeTypes: NodeTypes = {
   imageInput: ImageInputNode,
+  audioInput: AudioInputNode,
   annotation: AnnotationNode,
   prompt: PromptNode,
   promptConstructor: PromptConstructorNode,
@@ -72,10 +74,11 @@ const edgeTypes: EdgeTypes = {
 // - Video handles can only connect to generateVideo or output nodes
 // Helper to determine handle type from handle ID
 // For dynamic handles, we use naming convention: image inputs contain "image", text inputs are "prompt" or "negative_prompt"
-const getHandleType = (handleId: string | null | undefined): "image" | "text" | "video" | null => {
+const getHandleType = (handleId: string | null | undefined): "image" | "text" | "video" | "audio" | null => {
   if (!handleId) return null;
   // Standard handles
   if (handleId === "video") return "video";
+  if (handleId === "audio" || handleId.startsWith("audio")) return "audio";
   if (handleId === "image" || handleId === "text") return handleId;
   // Dynamic handles - check naming patterns (including indexed: text-0, image-0)
   if (handleId.includes("video")) return "video";
@@ -89,6 +92,8 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
   switch (nodeType) {
     case "imageInput":
       return { inputs: ["reference"], outputs: ["image"] };
+    case "audioInput":
+      return { inputs: [], outputs: ["audio"] };
     case "annotation":
       return { inputs: ["image"], outputs: ["image"] };
     case "prompt":
@@ -117,7 +122,7 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
 interface ConnectionDropState {
   position: { x: number; y: number };
   flowPosition: { x: number; y: number };
-  handleType: "image" | "text" | "video" | null;
+  handleType: "image" | "text" | "video" | "audio" | null;
   connectionType: "source" | "target";
   sourceNodeId: string | null;
   sourceHandleId: string | null;
@@ -299,6 +304,11 @@ export function WorkflowCanvas() {
         return false;
       }
 
+      // Audio connections: audio handles can only connect to audio handles
+      if (sourceType === "audio" || targetType === "audio") {
+        return sourceType === "audio" && targetType === "audio";
+      }
+
       // Standard type matching for image and text
       // Image handles connect to image handles, text handles connect to text handles
       return sourceType === targetType;
@@ -387,7 +397,7 @@ export function WorkflowCanvas() {
       // Helper to find a compatible handle on a node by type
       const findCompatibleHandle = (
         node: Node,
-        handleType: "image" | "text" | "video",
+        handleType: "image" | "text" | "video" | "audio",
         needInput: boolean
       ): string | null => {
         // Check for dynamic inputSchema first
@@ -923,6 +933,7 @@ export function WorkflowCanvas() {
           // Offset by half the default node dimensions to center it
           const defaultDimensions: Record<NodeType, { width: number; height: number }> = {
             imageInput: { width: 300, height: 280 },
+            audioInput: { width: 300, height: 200 },
             annotation: { width: 300, height: 280 },
             prompt: { width: 320, height: 220 },
             promptConstructor: { width: 340, height: 280 },
@@ -933,6 +944,7 @@ export function WorkflowCanvas() {
             output: { width: 320, height: 320 },
             outputGallery: { width: 320, height: 360 },
             imageCompare: { width: 400, height: 360 },
+            videoStitch: { width: 400, height: 280 },
           };
           const dims = defaultDimensions[nodeType];
           addNode(nodeType, { x: centerX - dims.width / 2, y: centerY - dims.height / 2 });
@@ -1426,6 +1438,8 @@ export function WorkflowCanvas() {
             switch (node.type) {
               case "imageInput":
                 return "#3b82f6";
+              case "audioInput":
+                return "#a78bfa";
               case "annotation":
                 return "#8b5cf6";
               case "prompt":

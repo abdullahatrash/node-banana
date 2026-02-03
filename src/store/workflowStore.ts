@@ -13,6 +13,7 @@ import {
   WorkflowEdge,
   NodeType,
   ImageInputNodeData,
+  AudioInputNodeData,
   AnnotationNodeData,
   PromptNodeData,
   PromptConstructorNodeData,
@@ -135,7 +136,7 @@ interface WorkflowStore {
 
   // Helpers
   getNodeById: (id: string) => WorkflowNode | undefined;
-  getConnectedInputs: (nodeId: string) => { images: string[]; videos: string[]; text: string | null; dynamicInputs: Record<string, string | string[]> };
+  getConnectedInputs: (nodeId: string) => { images: string[]; videos: string[]; audio: string[]; text: string | null; dynamicInputs: Record<string, string | string[]> };
   validateWorkflow: () => { valid: boolean; errors: string[] };
 
   // Global Image History
@@ -750,6 +751,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const { edges, nodes } = get();
     const images: string[] = [];
     const videos: string[] = [];
+    const audio: string[] = [];
     let text: string | null = null;
     const dynamicInputs: Record<string, string | string[]> = {};
 
@@ -799,9 +801,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     };
 
     // Helper to extract output from source node
-    const getSourceOutput = (sourceNode: WorkflowNode): { type: "image" | "text" | "video"; value: string | null } => {
+    const getSourceOutput = (sourceNode: WorkflowNode): { type: "image" | "text" | "video" | "audio"; value: string | null } => {
       if (sourceNode.type === "imageInput") {
         return { type: "image", value: (sourceNode.data as ImageInputNodeData).image };
+      } else if (sourceNode.type === "audioInput") {
+        return { type: "audio", value: (sourceNode.data as AudioInputNodeData).audioFile };
       } else if (sourceNode.type === "annotation") {
         return { type: "image", value: (sourceNode.data as AnnotationNodeData).outputImage };
       } else if (sourceNode.type === "nanoBanana") {
@@ -849,6 +853,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         // This preserves type information from the source node
         if (type === "video") {
           videos.push(value);
+        } else if (type === "audio") {
+          audio.push(value);
         } else if (type === "text" || isTextHandle(handleId)) {
           text = value;
         } else if (isImageHandle(handleId) || !handleId) {
@@ -856,7 +862,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         }
       });
 
-    return { images, videos, text, dynamicInputs };
+    return { images, videos, audio, text, dynamicInputs };
   },
 
   validateWorkflow: () => {
@@ -1038,6 +1044,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         switch (node.type) {
           case "imageInput":
             // Nothing to execute, data is already set
+            break;
+
+          case "audioInput":
+            // Audio input is a data source - no execution needed
             break;
 
           case "annotation": {

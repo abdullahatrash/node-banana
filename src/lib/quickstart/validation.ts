@@ -27,6 +27,7 @@ const VALID_HANDLE_TYPES = ["image", "text", "reference"];
 // Default node dimensions
 const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = {
   imageInput: { width: 300, height: 280 },
+  audioInput: { width: 300, height: 200 },
   annotation: { width: 300, height: 280 },
   prompt: { width: 320, height: 220 },
   promptConstructor: { width: 340, height: 280 },
@@ -37,6 +38,7 @@ const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = 
   output: { width: 320, height: 320 },
   outputGallery: { width: 320, height: 360 },
   imageCompare: { width: 400, height: 360 },
+  videoStitch: { width: 400, height: 280 },
 };
 
 /**
@@ -198,6 +200,13 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
         filename: null,
         dimensions: null,
       };
+    case "audioInput":
+      return {
+        audioFile: null,
+        filename: null,
+        duration: null,
+        format: null,
+      };
     case "annotation":
       return {
         sourceImage: null,
@@ -281,6 +290,16 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
       return {
         imageA: null,
         imageB: null,
+      };
+    case "videoStitch":
+      return {
+        clips: [],
+        clipOrder: [],
+        outputVideo: null,
+        status: "idle",
+        error: null,
+        progress: 0,
+        encoderSupported: null,
       };
   }
 }
