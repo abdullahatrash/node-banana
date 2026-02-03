@@ -2572,6 +2572,81 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           await logger.endSession();
           return;
         }
+      } else if (node.type === "videoStitch") {
+        const nodeData = node.data as VideoStitchNodeData;
+
+        if (nodeData.encoderSupported === false) {
+          updateNodeData(nodeId, {
+            status: "error",
+            error: "Browser does not support video encoding",
+            progress: 0,
+          });
+          set({ isRunning: false, currentNodeId: null });
+          await logger.endSession();
+          return;
+        }
+
+        updateNodeData(nodeId, { status: "loading", progress: 0, error: null });
+
+        try {
+          const inputs = getConnectedInputs(nodeId);
+
+          if (inputs.videos.length < 2) {
+            updateNodeData(nodeId, {
+              status: "error",
+              error: "Need at least 2 video clips to stitch",
+              progress: 0,
+            });
+            set({ isRunning: false, currentNodeId: null });
+            await logger.endSession();
+            return;
+          }
+
+          const videoBlobs = await Promise.all(
+            inputs.videos.map((v) => fetch(v).then((r) => r.blob()))
+          );
+
+          let audioData = null;
+          if (inputs.audio.length > 0 && inputs.audio[0]) {
+            const { prepareAudioAsync } = await import('@/hooks/useAudioMixing');
+            const audioBlob = await fetch(inputs.audio[0]).then((r) => r.blob());
+            audioData = await prepareAudioAsync(audioBlob, 0);
+          }
+
+          const { stitchVideosAsync } = await import('@/hooks/useStitchVideos');
+          const outputBlob = await stitchVideosAsync(
+            videoBlobs,
+            audioData,
+            (progress) => {
+              updateNodeData(nodeId, { progress: progress.progress });
+            }
+          );
+
+          let outputVideo: string;
+          if (outputBlob.size > 20 * 1024 * 1024) {
+            outputVideo = URL.createObjectURL(outputBlob);
+          } else {
+            const reader = new FileReader();
+            outputVideo = await new Promise<string>((resolve) => {
+              reader.onload = () => resolve(reader.result as string);
+              reader.readAsDataURL(outputBlob);
+            });
+          }
+
+          updateNodeData(nodeId, {
+            outputVideo,
+            status: "complete",
+            progress: 100,
+            error: null,
+          });
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : "Stitch failed";
+          updateNodeData(nodeId, {
+            status: "error",
+            error: errorMessage,
+            progress: 0,
+          });
+        }
       }
 
       logger.info('node.execution', 'Node regeneration completed successfully', { nodeId });

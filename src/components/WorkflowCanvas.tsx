@@ -432,6 +432,18 @@ export function WorkflowCanvas() {
           return handleType === "image" ? "image" : null;
         }
 
+        // VideoStitch has dynamic indexed video input handles (video-0, video-1, ...)
+        if (node.type === "videoStitch" && needInput && handleType === "video") {
+          for (let i = 0; i < 50; i++) {
+            const candidateHandle = `video-${i}`;
+            const isOccupied = edges.some(
+              (edge) => edge.target === node.id && edge.targetHandle === candidateHandle
+            );
+            if (!isOccupied) return candidateHandle;
+          }
+          return null;
+        }
+
         // Fall back to static handles
         const staticHandles = getNodeHandles(node.type || "");
         const handleList = needInput ? staticHandles.inputs : staticHandles.outputs;

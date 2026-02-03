@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { Handle, Position, NodeProps, Node, useReactFlow } from "@xyflow/react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
 import { useCommentNavigation } from "@/hooks/useCommentNavigation";
 import { useWorkflowStore } from "@/store/workflowStore";
@@ -20,7 +20,6 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
   const regenerateNode = useWorkflowStore((state) => state.regenerateNode);
   const isRunning = useWorkflowStore((state) => state.isRunning);
   const removeEdge = useWorkflowStore((state) => state.removeEdge);
-  const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
 
   // Check encoder support on mount
   useEffect(() => {
@@ -38,6 +37,24 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
     );
   }, [edges, id]);
 
+  // Sync clipOrder with connected edges (side effect, must be in useEffect)
+  useEffect(() => {
+    const currentEdgeIds = videoEdges.map((e) => e.id);
+    const currentOrder = nodeData.clipOrder || [];
+
+    // Keep existing order for edges that still exist, append new ones
+    const validExisting = currentOrder.filter((eid) => currentEdgeIds.includes(eid));
+    const newEdges = currentEdgeIds.filter((eid) => !currentOrder.includes(eid));
+    const newOrder = [...validExisting, ...newEdges];
+
+    if (
+      newOrder.length !== currentOrder.length ||
+      !newOrder.every((eid, idx) => eid === currentOrder[idx])
+    ) {
+      updateNodeData(id, { clipOrder: newOrder });
+    }
+  }, [videoEdges, nodeData.clipOrder, id, updateNodeData]);
+
   // Get ordered clips based on clipOrder or connection order
   const orderedClips = useMemo(() => {
     const clipMap = new Map<string, { edge: any; sourceNode: any; videoData: string | null; duration: number | null }>();
@@ -49,7 +66,6 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
       let videoData: string | null = null;
       let duration: number | null = null;
 
-      // Extract video data and duration from different node types
       if (sourceNode.type === "generateVideo") {
         videoData = (sourceNode.data as any).outputVideo || null;
       }
@@ -57,11 +73,9 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
       clipMap.set(edge.id, { edge, sourceNode, videoData, duration });
     });
 
-    // Order by clipOrder if available, otherwise by edge creation time
     let ordered: Array<{ edgeId: string; edge: any; sourceNode: any; videoData: string | null; duration: number | null }>;
 
     if (nodeData.clipOrder && nodeData.clipOrder.length > 0) {
-      // Use clipOrder for ordering
       ordered = nodeData.clipOrder
         .map((edgeId) => {
           const clip = clipMap.get(edgeId);
@@ -70,7 +84,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         })
         .filter((c): c is NonNullable<typeof c> => c !== null);
 
-      // Append any new edges not in clipOrder
+      // Append any new edges not in clipOrder yet
       videoEdges.forEach((edge) => {
         if (!nodeData.clipOrder.includes(edge.id)) {
           const clip = clipMap.get(edge.id);
@@ -80,7 +94,6 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         }
       });
     } else {
-      // Fall back to edge creation order (sort by data.createdAt if available)
       ordered = videoEdges
         .sort((a, b) => {
           const timeA = (a.data as any)?.createdAt ?? 0;
@@ -95,18 +108,8 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         .filter((c): c is NonNullable<typeof c> => c !== null);
     }
 
-    // Update clipOrder if it's out of sync
-    const currentOrder = ordered.map((c) => c.edgeId);
-    if (
-      !nodeData.clipOrder ||
-      nodeData.clipOrder.length !== currentOrder.length ||
-      !nodeData.clipOrder.every((id, idx) => id === currentOrder[idx])
-    ) {
-      updateNodeData(id, { clipOrder: currentOrder });
-    }
-
     return ordered;
-  }, [videoEdges, nodes, nodeData.clipOrder, id, updateNodeData]);
+  }, [videoEdges, nodes, nodeData.clipOrder]);
 
   // Extract thumbnails from connected videos
   useEffect(() => {
@@ -121,7 +124,6 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         }
 
         try {
-          // Create video element
           const video = document.createElement("video");
           video.src = clip.videoData;
           video.crossOrigin = "anonymous";
@@ -132,7 +134,6 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
             video.onerror = () => reject(new Error("Failed to load video"));
           });
 
-          // Seek to 25% of duration
           const seekTime = video.duration * 0.25;
           video.currentTime = seekTime;
 
@@ -140,7 +141,6 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
             video.onseeked = () => resolve();
           });
 
-          // Draw frame to canvas
           const canvas = document.createElement("canvas");
           canvas.width = 160;
           canvas.height = 120;
@@ -151,7 +151,6 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
           const thumbnail = canvas.toDataURL("image/jpeg", 0.7);
           newThumbnails.set(clip.edgeId, thumbnail);
 
-          // Store duration
           clip.duration = video.duration;
         } catch (error) {
           console.warn(`Failed to extract thumbnail for clip ${clip.edgeId}:`, error);
@@ -194,7 +193,6 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         return;
       }
 
-      // Reorder
       currentOrder.splice(draggedIndex, 1);
       currentOrder.splice(targetIndex, 0, draggedClipId);
 
@@ -215,6 +213,62 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
     regenerateNode(id);
   }, [id, regenerateNode]);
 
+  // Dynamic video input handles
+  const videoHandles = useMemo(() => {
+    const count = Math.max(videoEdges.length + 1, 2);
+    return Array.from({ length: count }, (_, i) => ({ id: `video-${i}` }));
+  }, [videoEdges.length]);
+
+  // Shared handles rendered in ALL states so connections always work
+  const renderHandles = () => (
+    <>
+      {/* Dynamic video input handles (left side) */}
+      {videoHandles.map((handle, index) => {
+        const topPercent = ((index + 1) / (videoHandles.length + 1)) * 100;
+        return (
+          <Handle
+            key={handle.id}
+            type="target"
+            position={Position.Left}
+            id={handle.id}
+            data-handletype="video"
+            isConnectable={true}
+            style={{ top: `${topPercent}%` }}
+          />
+        );
+      })}
+
+      {/* Audio input handle (left side, bottom) */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="audio"
+        data-handletype="audio"
+        isConnectable={true}
+        style={{ top: "90%", background: "rgb(167, 139, 250)" }}
+      />
+      <div
+        className="absolute text-[10px] font-medium whitespace-nowrap pointer-events-none text-right"
+        style={{
+          right: `calc(100% + 8px)`,
+          top: "calc(90% - 18px)",
+          color: "rgb(167, 139, 250)",
+        }}
+      >
+        Audio
+      </div>
+
+      {/* Video output handle (right side) */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="video"
+        data-handletype="video"
+        isConnectable={true}
+      />
+    </>
+  );
+
   // Disable if encoder not supported
   if (nodeData.encoderSupported === false) {
     return (
@@ -230,6 +284,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         minWidth={500}
         minHeight={280}
       >
+        {renderHandles()}
         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center px-4">
           <svg className="w-8 h-8 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
@@ -265,6 +320,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         minWidth={500}
         minHeight={280}
       >
+        {renderHandles()}
         <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-2 text-neutral-400">
             <svg
@@ -293,12 +349,6 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
     );
   }
 
-  // Dynamic video input handles
-  const videoHandles = useMemo(() => {
-    const count = Math.max(videoEdges.length + 1, 2);
-    return Array.from({ length: count }, (_, i) => ({ id: `video-${i}` }));
-  }, [videoEdges.length]);
-
   return (
     <BaseNode
       id={id}
@@ -315,47 +365,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
       minWidth={500}
       minHeight={280}
     >
-      {/* Dynamic video input handles (left side) */}
-      {videoHandles.map((handle, index) => {
-        const topPercent = ((index + 1) / (videoHandles.length + 1)) * 100;
-        return (
-          <Handle
-            key={handle.id}
-            type="target"
-            position={Position.Left}
-            id={handle.id}
-            data-handletype="video"
-            style={{ top: `${topPercent}%` }}
-          />
-        );
-      })}
-
-      {/* Audio input handle (left side, bottom) */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="audio"
-        data-handletype="audio"
-        style={{ top: "90%", background: "rgb(167, 139, 250)" }}
-      />
-      <div
-        className="absolute text-[10px] font-medium whitespace-nowrap pointer-events-none text-right"
-        style={{
-          right: `calc(100% + 8px)`,
-          top: "calc(90% - 18px)",
-          color: "rgb(167, 139, 250)",
-        }}
-      >
-        Audio
-      </div>
-
-      {/* Video output handle (right side) */}
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="video"
-        data-handletype="video"
-      />
+      {renderHandles()}
 
       <div className="flex-1 flex flex-col min-h-0 gap-2">
         {/* Filmstrip UI */}
