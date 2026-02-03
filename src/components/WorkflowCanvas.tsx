@@ -208,7 +208,7 @@ export function WorkflowCanvas() {
   const { screenToFlowPosition, getViewport, zoomIn, zoomOut, setViewport, setCenter } = useReactFlow();
   const { show: showToast } = useToast();
   const [isDragOver, setIsDragOver] = useState(false);
-  const [dropType, setDropType] = useState<"image" | "workflow" | "node" | null>(null);
+  const [dropType, setDropType] = useState<"image" | "audio" | "workflow" | "node" | null>(null);
   const [connectionDrop, setConnectionDrop] = useState<ConnectionDropState | null>(null);
   const [isSplitting, setIsSplitting] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -1221,9 +1221,16 @@ export function WorkflowCanvas() {
       (item) => item.kind === "file" && item.type === "application/json"
     );
 
+    const hasAudioFile = items.some(
+      (item) => item.kind === "file" && item.type.startsWith("audio/")
+    );
+
     if (hasJsonFile) {
       setIsDragOver(true);
       setDropType("workflow");
+    } else if (hasAudioFile) {
+      setIsDragOver(true);
+      setDropType("audio");
     } else if (hasImageFile) {
       setIsDragOver(true);
       setDropType("image");
@@ -1305,6 +1312,32 @@ export function WorkflowCanvas() {
         return;
       }
 
+      // Handle audio files
+      const audioFiles = allFiles.filter((file) => file.type.startsWith("audio/"));
+      if (audioFiles.length > 0) {
+        const position = screenToFlowPosition({
+          x: event.clientX,
+          y: event.clientY,
+        });
+        audioFiles.forEach((file, index) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const dataUrl = e.target?.result as string;
+            const nodeId = addNode("audioInput", {
+              x: position.x + index * 240,
+              y: position.y,
+            });
+            updateNodeData(nodeId, {
+              audioFile: dataUrl,
+              filename: file.name,
+              format: file.type,
+            });
+          };
+          reader.readAsDataURL(file);
+        });
+        return;
+      }
+
       // Handle image files
       const imageFiles = allFiles.filter((file) => file.type.startsWith("image/"));
       if (imageFiles.length === 0) return;
@@ -1362,6 +1395,8 @@ export function WorkflowCanvas() {
                 ? "Drop to load workflow"
                 : dropType === "node"
                 ? "Drop to create node"
+                : dropType === "audio"
+                ? "Drop audio to create node"
                 : "Drop image to create node"}
             </p>
           </div>
