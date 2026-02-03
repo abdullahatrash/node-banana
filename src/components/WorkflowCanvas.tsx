@@ -753,6 +753,26 @@ export function WorkflowCanvas() {
           targetHandleId = "text";
           sourceHandleIdForNewNode = "text";
         }
+      } else if (handleType === "video") {
+        if (nodeType === "videoStitch") {
+          // VideoStitch has dynamic video-N inputs and a video output
+          targetHandleId = "video-0";
+          sourceHandleIdForNewNode = "video";
+        } else if (nodeType === "generateVideo") {
+          // GenerateVideo outputs video
+          sourceHandleIdForNewNode = "video";
+        } else if (nodeType === "output") {
+          // Output accepts video on its image handle (it detects video content type)
+          targetHandleId = "image";
+        }
+      } else if (handleType === "audio") {
+        if (nodeType === "audioInput") {
+          // AudioInput outputs audio
+          sourceHandleIdForNewNode = "audio";
+        } else if (nodeType === "videoStitch") {
+          // VideoStitch accepts audio
+          targetHandleId = "audio";
+        }
       }
 
       // Get all selected nodes to connect them all to the new node
