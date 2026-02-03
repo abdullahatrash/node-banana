@@ -24,6 +24,7 @@ import type { LLMProvider, LLMModelType, SelectedModel, ProviderType } from "./p
  */
 export type NodeType =
   | "imageInput"
+  | "audioInput"
   | "annotation"
   | "prompt"
   | "promptConstructor"
@@ -33,7 +34,8 @@ export type NodeType =
   | "splitGrid"
   | "output"
   | "outputGallery"
-  | "imageCompare";
+  | "imageCompare"
+  | "videoStitch";
 
 /**
  * Node execution status
@@ -48,6 +50,16 @@ export interface ImageInputNodeData extends BaseNodeData {
   imageRef?: string; // External image reference for storage optimization
   filename: string | null;
   dimensions: { width: number; height: number } | null;
+}
+
+/**
+ * Audio input node - loads/uploads audio files into the workflow
+ */
+export interface AudioInputNodeData extends BaseNodeData {
+  audioFile: string | null;      // Base64 data URL of the audio file
+  filename: string | null;       // Original filename for display
+  duration: number | null;       // Duration in seconds
+  format: string | null;         // MIME type (audio/mp3, audio/wav, etc.)
 }
 
 /**
@@ -203,6 +215,30 @@ export interface ImageCompareNodeData extends BaseNodeData {
 }
 
 /**
+ * Video stitch clip - represents a single video clip in the filmstrip
+ */
+export interface VideoStitchClip {
+  edgeId: string;                // Edge ID for disconnect capability
+  sourceNodeId: string;          // Source node producing this video
+  thumbnail: string | null;      // Base64 JPEG thumbnail
+  duration: number | null;       // Clip duration in seconds
+  handleId: string;              // Which input handle (video-0, video-1, etc.)
+}
+
+/**
+ * Video Stitch node - concatenates multiple videos into a single output
+ */
+export interface VideoStitchNodeData extends BaseNodeData {
+  clips: VideoStitchClip[];       // Ordered clip sequence for filmstrip
+  clipOrder: string[];            // Edge IDs in user-defined order (drag reorder)
+  outputVideo: string | null;     // Stitched video blob URL or data URL
+  status: NodeStatus;
+  error: string | null;
+  progress: number;               // 0-100 processing progress
+  encoderSupported: boolean | null; // null = not checked yet, true/false after check
+}
+
+/**
  * Split Grid node - splits image into grid cells for parallel processing
  */
 export interface SplitGridNodeData extends BaseNodeData {
@@ -233,6 +269,7 @@ export interface SplitGridNodeData extends BaseNodeData {
  */
 export type WorkflowNodeData =
   | ImageInputNodeData
+  | AudioInputNodeData
   | AnnotationNodeData
   | PromptNodeData
   | PromptConstructorNodeData
@@ -242,7 +279,8 @@ export type WorkflowNodeData =
   | SplitGridNodeData
   | OutputNodeData
   | OutputGalleryNodeData
-  | ImageCompareNodeData;
+  | ImageCompareNodeData
+  | VideoStitchNodeData;
 
 /**
  * Workflow node with typed data (extended with optional groupId)
@@ -254,7 +292,7 @@ export type WorkflowNode = Node<WorkflowNodeData, NodeType> & {
 /**
  * Handle types for node connections
  */
-export type HandleType = "image" | "text";
+export type HandleType = "image" | "text" | "audio" | "video";
 
 /**
  * Default settings for node types - stored in localStorage
