@@ -42,6 +42,8 @@ export function EaseCurveNode({ id, data, selected }: NodeProps<EaseCurveNodeTyp
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const regenerateNode = useWorkflowStore((state) => state.regenerateNode);
   const isRunning = useWorkflowStore((state) => state.isRunning);
+  const edges = useWorkflowStore((state) => state.edges);
+  const removeEdge = useWorkflowStore((state) => state.removeEdge);
 
   const [activeTab, setActiveTab] = useState<"editor" | "video">("editor");
   const [showPresets, setShowPresets] = useState(false);
@@ -137,6 +139,25 @@ export function EaseCurveNode({ id, data, selected }: NodeProps<EaseCurveNodeTyp
     regenerateNode(id);
   }, [id, regenerateNode]);
 
+  // Check if this node has an incoming easeCurve connection (inheritance)
+  const inheritedEdge = useMemo(() => {
+    return edges.find((e) => e.target === id && e.targetHandle === "easeCurve") || null;
+  }, [edges, id]);
+  const isInherited = inheritedEdge !== null;
+
+  const handleBreakInheritance = useCallback(() => {
+    if (inheritedEdge) {
+      removeEdge(inheritedEdge.id);
+      updateNodeData(id, { inheritedFrom: null });
+    }
+  }, [inheritedEdge, removeEdge, id, updateNodeData]);
+
+  // Compute easing curve polyline for the editor overlay (higher sample count than thumbnails)
+  const editorEasingCurve = useMemo(() => {
+    if (!nodeData.easingPreset) return undefined;
+    return generateEasingPolyline(nodeData.easingPreset, 100, 100, 50);
+  }, [nodeData.easingPreset]);
+
   // Memoize the preset thumbnail SVGs
   const presetThumbnails = useMemo(() => {
     return ALL_EASING_NAMES.map((name) => ({
@@ -146,25 +167,72 @@ export function EaseCurveNode({ id, data, selected }: NodeProps<EaseCurveNodeTyp
     }));
   }, []);
 
-  // Shared handles rendered in ALL states
+  // Shared handles rendered in ALL states (4 handles with labels)
   const renderHandles = () => (
     <>
+      {/* Video In (target, left, 35%) */}
       <Handle
         type="target"
         position={Position.Left}
         id="video"
         data-handletype="video"
         isConnectable={true}
-        style={{ top: "50%" }}
+        style={{ top: "35%" }}
       />
+      <div
+        className="absolute text-[10px] font-medium whitespace-nowrap pointer-events-none text-right"
+        style={{ right: "calc(100% + 8px)", top: "calc(35% - 7px)", color: "rgb(168, 85, 247)" }}
+      >
+        Video In
+      </div>
+
+      {/* Video Out (source, right, 35%) */}
       <Handle
         type="source"
         position={Position.Right}
         id="video"
         data-handletype="video"
         isConnectable={true}
-        style={{ top: "50%" }}
+        style={{ top: "35%" }}
       />
+      <div
+        className="absolute text-[10px] font-medium whitespace-nowrap pointer-events-none"
+        style={{ left: "calc(100% + 8px)", top: "calc(35% - 7px)", color: "rgb(168, 85, 247)" }}
+      >
+        Video Out
+      </div>
+
+      {/* Ease In (target, left, 75%) */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="easeCurve"
+        data-handletype="easeCurve"
+        isConnectable={true}
+        style={{ top: "75%", background: "rgb(190, 242, 100)" }}
+      />
+      <div
+        className="absolute text-[10px] font-medium whitespace-nowrap pointer-events-none text-right"
+        style={{ right: "calc(100% + 8px)", top: "calc(75% - 7px)", color: "rgb(190, 242, 100)" }}
+      >
+        Ease In
+      </div>
+
+      {/* Ease Out (source, right, 75%) */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="easeCurve"
+        data-handletype="easeCurve"
+        isConnectable={true}
+        style={{ top: "75%", background: "rgb(190, 242, 100)" }}
+      />
+      <div
+        className="absolute text-[10px] font-medium whitespace-nowrap pointer-events-none"
+        style={{ left: "calc(100% + 8px)", top: "calc(75% - 7px)", color: "rgb(190, 242, 100)" }}
+      >
+        Ease Out
+      </div>
     </>
   );
 
@@ -278,153 +346,172 @@ export function EaseCurveNode({ id, data, selected }: NodeProps<EaseCurveNodeTyp
 
         {/* Tab content */}
         {activeTab === "editor" && (
-          <div className="flex-1 flex flex-col min-h-0 gap-2">
-            {/* Bezier curve editor - fills available width */}
-            <div className="flex-1 min-h-0 px-2">
-              <CubicBezierEditor
-                value={nodeData.bezierHandles}
-                onChange={handleBezierChange}
-                onCommit={handleBezierCommit}
-                disabled={nodeData.status === "loading"}
-              />
-            </div>
-
-            {/* Preset label */}
-            {nodeData.easingPreset && (
-              <div className="text-center -mt-1">
-                <span className="text-[10px] text-lime-300/70 font-medium">
-                  {nodeData.easingPreset}
-                </span>
+          <div className="flex-1 flex flex-col min-h-0 gap-2 relative">
+            {/* Editor controls - dimmed when inherited */}
+            <div className={isInherited ? "pointer-events-none opacity-40" : ""}>
+              {/* Bezier curve editor - fills available width */}
+              <div className="flex-1 min-h-0 px-2">
+                <CubicBezierEditor
+                  value={nodeData.bezierHandles}
+                  onChange={handleBezierChange}
+                  onCommit={handleBezierCommit}
+                  disabled={nodeData.status === "loading" || isInherited}
+                  easingCurve={editorEasingCurve}
+                />
               </div>
-            )}
 
-            {/* Controls row: Duration + Presets button */}
-            <div className="flex items-center gap-2 px-2">
-              <label className="text-[10px] text-neutral-400 whitespace-nowrap">Duration</label>
-              <input
-                type="number"
-                min="0.1"
-                max="30"
-                step="0.1"
-                value={nodeData.outputDuration}
-                onChange={handleDurationChange}
-                className="nodrag w-16 px-1.5 py-1 bg-neutral-800 border border-neutral-600 rounded text-xs text-neutral-200 text-center"
-              />
-              <span className="text-[10px] text-neutral-500">sec</span>
+              {/* Preset label */}
+              {nodeData.easingPreset && (
+                <div className="text-center -mt-1">
+                  <span className="text-[10px] text-lime-300/70 font-medium">
+                    {nodeData.easingPreset}
+                  </span>
+                </div>
+              )}
 
-              {/* Presets button */}
-              <div className="relative ml-auto" ref={presetsRef}>
-                <button
-                  className="nodrag nopan px-2 py-1 bg-neutral-800 hover:bg-neutral-700 border border-neutral-600 rounded text-xs text-neutral-300 transition-colors flex items-center gap-1"
-                  onClick={() => setShowPresets(!showPresets)}
-                >
-                  {/* Curve icon */}
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M2 14 C 6 14, 4 2, 14 2" strokeLinecap="round" />
-                  </svg>
-                  <span>Presets</span>
-                </button>
+              {/* Controls row: Duration + Presets button */}
+              <div className="flex items-center gap-2 px-2">
+                <label className="text-[10px] text-neutral-400 whitespace-nowrap">Duration</label>
+                <input
+                  type="number"
+                  min="0.1"
+                  max="30"
+                  step="0.1"
+                  value={nodeData.outputDuration}
+                  onChange={handleDurationChange}
+                  className="nodrag w-16 px-1.5 py-1 bg-neutral-800 border border-neutral-600 rounded text-xs text-neutral-200 text-center"
+                />
+                <span className="text-[10px] text-neutral-500">sec</span>
 
-                {/* Presets popover */}
-                {showPresets && (
-                  <div className="absolute z-50 right-0 bottom-full mb-1 w-[280px] bg-neutral-800 border border-neutral-600 rounded-lg shadow-xl p-2 nowheel">
-                    {/* Preset Bezier thumbnails (top section) */}
-                    <div className="mb-2">
-                      <div className="text-[9px] text-neutral-500 uppercase tracking-wider mb-1 px-1">
-                        Bezier Presets
+                {/* Presets button */}
+                <div className="relative ml-auto" ref={presetsRef}>
+                  <button
+                    className="nodrag nopan px-2 py-1 bg-neutral-800 hover:bg-neutral-700 border border-neutral-600 rounded text-xs text-neutral-300 transition-colors flex items-center gap-1 disabled:opacity-40 disabled:pointer-events-none"
+                    onClick={() => setShowPresets(!showPresets)}
+                    disabled={isInherited}
+                  >
+                    {/* Curve icon */}
+                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M2 14 C 6 14, 4 2, 14 2" strokeLinecap="round" />
+                    </svg>
+                    <span>Presets</span>
+                  </button>
+
+                  {/* Presets popover */}
+                  {showPresets && (
+                    <div className="absolute z-50 right-0 bottom-full mb-1 w-[280px] bg-neutral-800 border border-neutral-600 rounded-lg shadow-xl p-2 nowheel">
+                      {/* Preset Bezier thumbnails (top section) */}
+                      <div className="mb-2">
+                        <div className="text-[9px] text-neutral-500 uppercase tracking-wider mb-1 px-1">
+                          Bezier Presets
+                        </div>
+                        <div className="grid grid-cols-5 gap-1">
+                          {EASING_PRESETS.map((name) => {
+                            const thumb = presetThumbnails.find((t) => t.name === name);
+                            const isActive = nodeData.easingPreset === name;
+                            return (
+                              <button
+                                key={name}
+                                className={`nodrag nopan flex flex-col items-center gap-0.5 p-1 rounded transition-colors ${
+                                  isActive
+                                    ? "bg-lime-300/20 border border-lime-300/40"
+                                    : "hover:bg-neutral-700 border border-transparent"
+                                }`}
+                                onClick={() => handleSelectPreset(name)}
+                                title={name}
+                              >
+                                <svg width="40" height="40" viewBox="-2 -2 40 40" className="flex-shrink-0">
+                                  <rect x="-2" y="-2" width="40" height="40" fill="transparent" />
+                                  <line x1="0" y1="36" x2="36" y2="0" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" strokeDasharray="2 2" />
+                                  {thumb && (
+                                    <polyline
+                                      points={thumb.polyline}
+                                      fill="none"
+                                      stroke={isActive ? "#bef264" : "rgba(255,255,255,0.5)"}
+                                      strokeWidth="1.5"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  )}
+                                </svg>
+                                <span className="text-[7px] text-neutral-400 truncate w-full text-center leading-none">
+                                  {name.replace(/^ease/, "")}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                      <div className="grid grid-cols-5 gap-1">
-                        {EASING_PRESETS.map((name) => {
-                          const thumb = presetThumbnails.find((t) => t.name === name);
-                          const isActive = nodeData.easingPreset === name;
-                          return (
-                            <button
-                              key={name}
-                              className={`nodrag nopan flex flex-col items-center gap-0.5 p-1 rounded transition-colors ${
-                                isActive
-                                  ? "bg-lime-300/20 border border-lime-300/40"
-                                  : "hover:bg-neutral-700 border border-transparent"
-                              }`}
-                              onClick={() => handleSelectPreset(name)}
-                              title={name}
-                            >
-                              <svg width="40" height="40" viewBox="-2 -2 40 40" className="flex-shrink-0">
-                                <rect x="-2" y="-2" width="40" height="40" fill="transparent" />
-                                <line x1="0" y1="36" x2="36" y2="0" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" strokeDasharray="2 2" />
-                                {thumb && (
+
+                      {/* All easing functions (scrollable grid) */}
+                      <div className="border-t border-neutral-700 pt-2">
+                        <div className="text-[9px] text-neutral-500 uppercase tracking-wider mb-1 px-1">
+                          All Easing Functions
+                        </div>
+                        <div className="grid grid-cols-5 gap-1 max-h-[200px] overflow-y-auto nowheel">
+                          {presetThumbnails.map(({ name, polyline }) => {
+                            const isActive = nodeData.easingPreset === name;
+                            return (
+                              <button
+                                key={name}
+                                className={`nodrag nopan flex flex-col items-center gap-0.5 p-1 rounded transition-colors ${
+                                  isActive
+                                    ? "bg-lime-300/20 border border-lime-300/40"
+                                    : "hover:bg-neutral-700 border border-transparent"
+                                }`}
+                                onClick={() => handleSelectEasing(name)}
+                                title={name}
+                              >
+                                <svg width="40" height="40" viewBox="-2 -2 40 40" className="flex-shrink-0">
+                                  <rect x="-2" y="-2" width="40" height="40" fill="transparent" />
+                                  <line x1="0" y1="36" x2="36" y2="0" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" strokeDasharray="2 2" />
                                   <polyline
-                                    points={thumb.polyline}
+                                    points={polyline}
                                     fill="none"
                                     stroke={isActive ? "#bef264" : "rgba(255,255,255,0.5)"}
                                     strokeWidth="1.5"
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                   />
-                                )}
-                              </svg>
-                              <span className="text-[7px] text-neutral-400 truncate w-full text-center leading-none">
-                                {name.replace(/^ease/, "")}
-                              </span>
-                            </button>
-                          );
-                        })}
+                                </svg>
+                                <span className="text-[7px] text-neutral-400 truncate w-full text-center leading-none">
+                                  {name.replace(/^ease/, "")}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
+                  )}
+                </div>
+              </div>
 
-                    {/* All easing functions (scrollable grid) */}
-                    <div className="border-t border-neutral-700 pt-2">
-                      <div className="text-[9px] text-neutral-500 uppercase tracking-wider mb-1 px-1">
-                        All Easing Functions
-                      </div>
-                      <div className="grid grid-cols-5 gap-1 max-h-[200px] overflow-y-auto nowheel">
-                        {presetThumbnails.map(({ name, polyline }) => {
-                          const isActive = nodeData.easingPreset === name;
-                          return (
-                            <button
-                              key={name}
-                              className={`nodrag nopan flex flex-col items-center gap-0.5 p-1 rounded transition-colors ${
-                                isActive
-                                  ? "bg-lime-300/20 border border-lime-300/40"
-                                  : "hover:bg-neutral-700 border border-transparent"
-                              }`}
-                              onClick={() => handleSelectEasing(name)}
-                              title={name}
-                            >
-                              <svg width="40" height="40" viewBox="-2 -2 40 40" className="flex-shrink-0">
-                                <rect x="-2" y="-2" width="40" height="40" fill="transparent" />
-                                <line x1="0" y1="36" x2="36" y2="0" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" strokeDasharray="2 2" />
-                                <polyline
-                                  points={polyline}
-                                  fill="none"
-                                  stroke={isActive ? "#bef264" : "rgba(255,255,255,0.5)"}
-                                  strokeWidth="1.5"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                              <span className="text-[7px] text-neutral-400 truncate w-full text-center leading-none">
-                                {name.replace(/^ease/, "")}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
+              {/* Apply button */}
+              <div className="px-2 pb-1">
+                <button
+                  className="nodrag nopan px-3 py-1.5 bg-lime-300/15 hover:bg-lime-300/25 border border-lime-300/30 rounded text-xs text-lime-300 font-medium transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                  onClick={handleRun}
+                  disabled={isRunning || nodeData.status === "loading" || isInherited}
+                >
+                  Apply
+                </button>
               </div>
             </div>
 
-            {/* Apply button */}
-            <div className="px-2 pb-1">
-              <button
-                className="nodrag nopan px-3 py-1.5 bg-lime-300/15 hover:bg-lime-300/25 border border-lime-300/30 rounded text-xs text-lime-300 font-medium transition-colors disabled:opacity-40 disabled:pointer-events-none"
-                onClick={handleRun}
-                disabled={isRunning || nodeData.status === "loading"}
-              >
-                Apply
-              </button>
-            </div>
+            {/* Inheritance overlay */}
+            {isInherited && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/80 backdrop-blur-sm rounded z-10">
+                <p className="text-sm text-neutral-200 font-medium">Settings inherited from parent node</p>
+                <p className="text-[11px] text-neutral-400 mt-1">Break connection to edit manually</p>
+                <button
+                  className="mt-3 px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded text-xs text-neutral-200 transition-colors"
+                  onClick={handleBreakInheritance}
+                >
+                  Control manually
+                </button>
+              </div>
+            )}
           </div>
         )}
 
