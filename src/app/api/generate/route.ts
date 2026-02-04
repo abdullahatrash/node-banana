@@ -1280,6 +1280,13 @@ function getKieModelDefaults(modelId: string): Record<string, unknown> {
         quality: "basic",
       };
 
+    // Nano Banana Pro (Kie)
+    case "nano-banana-pro":
+      return {
+        aspect_ratio: "1:1",
+        resolution: "1K",
+      };
+
     // Flux-2 models
     case "flux-2/pro-text-to-image":
     case "flux-2/pro-image-to-image":
@@ -1368,6 +1375,7 @@ function getKieModelDefaults(modelId: string): Record<string, unknown> {
  */
 function getKieImageInputKey(modelId: string): string {
   // Model-specific parameter names
+  if (modelId === "nano-banana-pro") return "image_input";
   if (modelId === "seedream/4.5-edit") return "image_urls";
   if (modelId === "gpt-image/1.5-image-to-image") return "input_urls";
   // Flux-2 I2I models use input_urls
@@ -1568,31 +1576,10 @@ async function generateWithKie(
     delete inputParams.size;
   }
 
-  // Handle image inputs
-  if (input.images && input.images.length > 0) {
-    // Upload images to get URLs (Kie requires URLs, not base64)
-    const imageUrls: string[] = [];
-    for (const image of input.images) {
-      if (image.startsWith("http")) {
-        imageUrls.push(image);
-      } else {
-        // Upload base64 image
-        const url = await uploadImageToKie(requestId, apiKey, image);
-        imageUrls.push(url);
-      }
-    }
+  // Handle dynamic inputs FIRST (from schema-mapped connections) - these take priority
+  // Track which image keys dynamicInputs already handled to avoid double-uploads
+  const handledImageKeys = new Set<string>();
 
-    // Set the correct parameter name for this model
-    const imageKey = getKieImageInputKey(modelId);
-    // Some models use singular string, others use arrays
-    if (imageKey === "image_url" || imageKey === "video_url") {
-      inputParams[imageKey] = imageUrls[0];
-    } else {
-      inputParams[imageKey] = imageUrls;
-    }
-  }
-
-  // Handle dynamic inputs (from schema-mapped connections)
   if (input.dynamicInputs) {
     for (const [key, value] of Object.entries(input.dynamicInputs)) {
       if (value !== null && value !== undefined && value !== '') {
@@ -1606,6 +1593,7 @@ async function generateWithKie(
           } else {
             inputParams[key] = [url];
           }
+          handledImageKeys.add(key);
         } else if (Array.isArray(value)) {
           // Array of values - check if they're data URLs that need uploading
           const processedArray: string[] = [];
@@ -1621,11 +1609,35 @@ async function generateWithKie(
           }
           if (processedArray.length > 0) {
             inputParams[key] = processedArray;
+            handledImageKeys.add(key);
           }
         } else {
           inputParams[key] = value;
         }
       }
+    }
+  }
+
+  // Handle image inputs (fallback - only if dynamicInputs didn't already set the image key)
+  const imageKey = getKieImageInputKey(modelId);
+  if (input.images && input.images.length > 0 && !handledImageKeys.has(imageKey)) {
+    // Upload images to get URLs (Kie requires URLs, not base64)
+    const imageUrls: string[] = [];
+    for (const image of input.images) {
+      if (image.startsWith("http")) {
+        imageUrls.push(image);
+      } else {
+        // Upload base64 image
+        const url = await uploadImageToKie(requestId, apiKey, image);
+        imageUrls.push(url);
+      }
+    }
+
+    // Some models use singular string, others use arrays
+    if (imageKey === "image_url" || imageKey === "video_url") {
+      inputParams[imageKey] = imageUrls[0];
+    } else {
+      inputParams[imageKey] = imageUrls;
     }
   }
 

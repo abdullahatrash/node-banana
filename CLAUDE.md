@@ -9,6 +9,8 @@ npm run dev      # Start Next.js dev server at http://localhost:3000
 npm run build    # Build for production
 npm run start    # Start production server
 npm run lint     # Run Next.js linting
+npm run test     # Run all tests with Vitest (watch mode)
+npm run test:run # Run all tests once (CI mode)
 ```
 
 ## Environment Setup

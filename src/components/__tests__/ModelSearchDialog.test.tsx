@@ -5,6 +5,12 @@ import { ModelSearchDialog } from "@/components/modals/ModelSearchDialog";
 import { ProviderSettings } from "@/types";
 import { ProviderModel } from "@/lib/providers/types";
 
+// Mock deduplicatedFetch to pass through to global fetch (avoids caching issues in tests)
+vi.mock("@/utils/deduplicatedFetch", () => ({
+  deduplicatedFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+  clearFetchCache: vi.fn(),
+}));
+
 // Mock the workflow store
 const mockAddNode = vi.fn();
 const mockIncrementModalCount = vi.fn();
@@ -19,6 +25,14 @@ vi.mock("@/store/workflowStore", () => ({
     }
     return mockUseWorkflowStore((s: unknown) => s);
   },
+  useProviderApiKeys: () => ({
+    replicateApiKey: "test-replicate-key",
+    falApiKey: "test-fal-key",
+    kieApiKey: null,
+    wavespeedApiKey: null,
+    replicateEnabled: true,
+    kieEnabled: false,
+  }),
 }));
 
 // Mock useReactFlow

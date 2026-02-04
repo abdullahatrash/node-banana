@@ -433,7 +433,7 @@ describe("SplitGridSettingsModal", () => {
 
       // Each target count button should have a grid preview
       const gridPreviews = container.querySelectorAll(".aspect-video");
-      expect(gridPreviews.length).toBe(5); // 5 options: 4, 6, 8, 9, 10
+      expect(gridPreviews.length).toBe(6); // 6 options: 4, 5, 6, 8, 9, 10
     });
   });
 

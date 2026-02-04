@@ -4,6 +4,12 @@ import { GenerateVideoNode } from "@/components/nodes/GenerateVideoNode";
 import { ReactFlowProvider } from "@xyflow/react";
 import { GenerateVideoNodeData, ProviderSettings } from "@/types";
 
+// Mock deduplicatedFetch to pass through to global fetch (avoids caching issues in tests)
+vi.mock("@/utils/deduplicatedFetch", () => ({
+  deduplicatedFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+  clearFetchCache: vi.fn(),
+}));
+
 // Mock the workflow store
 const mockUpdateNodeData = vi.fn();
 const mockRegenerateNode = vi.fn();
@@ -20,6 +26,14 @@ vi.mock("@/store/workflowStore", () => ({
     // When called without selector (destructuring pattern), return the full state object
     return mockUseWorkflowStore((s: unknown) => s);
   },
+  useProviderApiKeys: () => ({
+    replicateApiKey: null,
+    falApiKey: null,
+    kieApiKey: null,
+    wavespeedApiKey: null,
+    replicateEnabled: false,
+    kieEnabled: false,
+  }),
 }));
 
 // Mock useReactFlow

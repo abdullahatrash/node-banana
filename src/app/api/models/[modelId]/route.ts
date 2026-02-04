@@ -584,6 +584,17 @@ function getKieSchema(modelId: string): ExtractedSchema {
         { name: "input_urls", type: "image", required: true, label: "Image", isArray: true },
       ],
     },
+    "nano-banana-pro": {
+      parameters: [
+        { name: "aspect_ratio", type: "string", description: "Output aspect ratio", enum: ["1:1", "2:3", "3:2", "4:3", "16:9", "9:16", "21:9", "auto"], default: "1:1" },
+        { name: "resolution", type: "string", description: "Output resolution", enum: ["1K", "2K", "4K"], default: "1K" },
+        { name: "output_format", type: "string", description: "Output format", enum: ["png", "jpg"], default: "png" },
+      ],
+      inputs: [
+        { name: "prompt", type: "text", required: true, label: "Prompt" },
+        { name: "image_input", type: "image", required: false, label: "Image", isArray: true },
+      ],
+    },
     "grok-imagine/text-to-image": {
       parameters: [
         { name: "aspect_ratio", type: "string", description: "Output aspect ratio", enum: ["2:3", "3:2", "1:1", "16:9", "9:16"], default: "1:1" },

@@ -141,6 +141,15 @@ const KIE_MODELS: ProviderModel[] = [
     pageUrl: "https://kie.ai/flux-2",
   },
   {
+    id: "nano-banana-pro",
+    name: "Nano Banana Pro",
+    description: "Google Gemini 3 Pro image generation via Kie.ai. Supports text-to-image and image-to-image with up to 8 input images.",
+    provider: "kie",
+    capabilities: ["text-to-image", "image-to-image"],
+    coverImage: undefined,
+    pageUrl: "https://docs.kie.ai/market/google/pro-image-to-image",
+  },
+  {
     id: "grok-imagine/text-to-image",
     name: "Grok Imagine",
     description: "Grok Imagine text-to-image generation via Kie.ai.",

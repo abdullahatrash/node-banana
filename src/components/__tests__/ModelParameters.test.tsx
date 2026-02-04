@@ -3,8 +3,22 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ModelParameters } from "@/components/nodes/ModelParameters";
 import { ModelParameter } from "@/lib/providers/types";
 
+// Mock deduplicatedFetch to pass through to global fetch (avoids caching issues in tests)
+vi.mock("@/utils/deduplicatedFetch", () => ({
+  deduplicatedFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+  clearFetchCache: vi.fn(),
+}));
+
 // Mock the workflow store
 const mockUseWorkflowStore = vi.fn();
+const mockUseProviderApiKeys = vi.fn(() => ({
+  replicateApiKey: null as string | null,
+  falApiKey: null as string | null,
+  kieApiKey: null as string | null,
+  wavespeedApiKey: null as string | null,
+  replicateEnabled: false,
+  kieEnabled: false,
+}));
 
 vi.mock("@/store/workflowStore", () => ({
   useWorkflowStore: (selector?: (state: unknown) => unknown) => {
@@ -13,6 +27,7 @@ vi.mock("@/store/workflowStore", () => ({
     }
     return mockUseWorkflowStore((s: unknown) => s);
   },
+  useProviderApiKeys: () => mockUseProviderApiKeys(),
 }));
 
 // Default store state
@@ -698,15 +713,13 @@ describe("ModelParameters", () => {
 
   describe("API Key Headers", () => {
     it("should send Replicate API key header when available", async () => {
-      mockUseWorkflowStore.mockImplementation((selector) => {
-        return selector({
-          providerSettings: {
-            providers: {
-              replicate: { apiKey: "test-replicate-key" },
-              fal: { apiKey: null },
-            },
-          },
-        });
+      mockUseProviderApiKeys.mockReturnValue({
+        replicateApiKey: "test-replicate-key",
+        falApiKey: null,
+        kieApiKey: null,
+        wavespeedApiKey: null,
+        replicateEnabled: false,
+        kieEnabled: false,
       });
 
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
