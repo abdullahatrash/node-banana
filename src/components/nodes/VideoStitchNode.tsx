@@ -408,7 +408,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
                       onDragStart={(e) => handleDragStart(e, clip.edgeId)}
                       onDragOver={handleDragOver}
                       onDrop={(e) => handleDrop(e, clip.edgeId)}
-                      className="relative w-full aspect-video bg-neutral-800 border border-neutral-600 rounded cursor-move hover:border-neutral-500 transition-colors group"
+                      className="nodrag relative w-full aspect-video bg-neutral-800 border border-neutral-600 rounded cursor-move hover:border-neutral-500 transition-colors group"
                     >
                       {thumbnail ? (
                         <img
