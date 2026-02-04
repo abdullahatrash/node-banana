@@ -245,6 +245,7 @@ export interface VideoStitchNodeData extends BaseNodeData {
 export interface EaseCurveNodeData extends BaseNodeData {
   bezierHandles: [number, number, number, number];
   easingPreset: string | null;
+  inheritedFrom: string | null;
   outputDuration: number;
   outputVideo: string | null;
   status: NodeStatus;
@@ -308,7 +309,7 @@ export type WorkflowNode = Node<WorkflowNodeData, NodeType> & {
 /**
  * Handle types for node connections
  */
-export type HandleType = "image" | "text" | "audio" | "video";
+export type HandleType = "image" | "text" | "audio" | "video" | "easeCurve";
 
 /**
  * Default settings for node types - stored in localStorage

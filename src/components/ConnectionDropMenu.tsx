@@ -298,7 +298,7 @@ const AUDIO_SOURCE_OPTIONS: MenuOption[] = [
 
 interface ConnectionDropMenuProps {
   position: { x: number; y: number };
-  handleType: "image" | "text" | "video" | "audio" | null;
+  handleType: "image" | "text" | "video" | "audio" | "easeCurve" | null;
   connectionType: "source" | "target"; // source = dragging from output, target = dragging from input
   onSelect: (selection: { type: NodeType | MenuAction; isAction: boolean }) => void;
   onClose: () => void;

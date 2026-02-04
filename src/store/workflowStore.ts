@@ -138,7 +138,7 @@ interface WorkflowStore {
 
   // Helpers
   getNodeById: (id: string) => WorkflowNode | undefined;
-  getConnectedInputs: (nodeId: string) => { images: string[]; videos: string[]; audio: string[]; text: string | null; dynamicInputs: Record<string, string | string[]> };
+  getConnectedInputs: (nodeId: string) => { images: string[]; videos: string[]; audio: string[]; text: string | null; dynamicInputs: Record<string, string | string[]>; easeCurve: { bezierHandles: [number, number, number, number]; easingPreset: string | null } | null };
   validateWorkflow: () => { valid: boolean; errors: string[] };
 
   // Global Image History
@@ -868,7 +868,23 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         }
       });
 
-    return { images, videos, audio, text, dynamicInputs };
+    // Extract easeCurve data from parent EaseCurve node
+    let easeCurve: { bezierHandles: [number, number, number, number]; easingPreset: string | null } | null = null;
+    const easeCurveEdge = edges.find(
+      (e) => e.target === nodeId && e.targetHandle === "easeCurve"
+    );
+    if (easeCurveEdge) {
+      const sourceNode = nodes.find((n) => n.id === easeCurveEdge.source);
+      if (sourceNode?.type === "easeCurve") {
+        const sourceData = sourceNode.data as EaseCurveNodeData;
+        easeCurve = {
+          bezierHandles: sourceData.bezierHandles,
+          easingPreset: sourceData.easingPreset,
+        };
+      }
+    }
+
+    return { images, videos, audio, text, dynamicInputs, easeCurve };
   },
 
   validateWorkflow: () => {
@@ -1985,6 +2001,22 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             try {
               const inputs = getConnectedInputs(node.id);
 
+              // Propagate parent easeCurve settings if inherited
+              let activeBezierHandles = nodeData.bezierHandles;
+              let activeEasingPreset = nodeData.easingPreset;
+              if (inputs.easeCurve) {
+                activeBezierHandles = inputs.easeCurve.bezierHandles;
+                activeEasingPreset = inputs.easeCurve.easingPreset;
+                const easeCurveSourceId = edges.filter(
+                  (e) => e.target === node.id && e.targetHandle === "easeCurve"
+                )[0]?.source ?? null;
+                updateNodeData(node.id, {
+                  bezierHandles: activeBezierHandles,
+                  easingPreset: activeEasingPreset,
+                  inheritedFrom: easeCurveSourceId,
+                });
+              }
+
               if (inputs.videos.length === 0) {
                 updateNodeData(node.id, {
                   status: "error",
@@ -2015,15 +2047,15 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
               // Determine easing function: use named preset if set, otherwise create from Bezier handles
               let easingFunction: string | ((t: number) => number);
-              if (nodeData.easingPreset) {
-                easingFunction = nodeData.easingPreset;
+              if (activeEasingPreset) {
+                easingFunction = activeEasingPreset;
               } else {
                 const { createBezierEasing } = await import('@/lib/easing-functions');
                 easingFunction = createBezierEasing(
-                  nodeData.bezierHandles[0],
-                  nodeData.bezierHandles[1],
-                  nodeData.bezierHandles[2],
-                  nodeData.bezierHandles[3]
+                  activeBezierHandles[0],
+                  activeBezierHandles[1],
+                  activeBezierHandles[2],
+                  activeBezierHandles[3]
                 );
               }
 
@@ -2783,6 +2815,23 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         try {
           const inputs = getConnectedInputs(nodeId);
 
+          // Propagate parent easeCurve settings if inherited
+          let activeBezierHandles = nodeData.bezierHandles;
+          let activeEasingPreset = nodeData.easingPreset;
+          if (inputs.easeCurve) {
+            activeBezierHandles = inputs.easeCurve.bezierHandles;
+            activeEasingPreset = inputs.easeCurve.easingPreset;
+            const { edges } = get();
+            const easeCurveSourceId = edges.filter(
+              (e) => e.target === nodeId && e.targetHandle === "easeCurve"
+            )[0]?.source ?? null;
+            updateNodeData(nodeId, {
+              bezierHandles: activeBezierHandles,
+              easingPreset: activeEasingPreset,
+              inheritedFrom: easeCurveSourceId,
+            });
+          }
+
           if (inputs.videos.length === 0) {
             updateNodeData(nodeId, {
               status: "error",
@@ -2812,15 +2861,15 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           });
 
           let easingFunction: string | ((t: number) => number);
-          if (nodeData.easingPreset) {
-            easingFunction = nodeData.easingPreset;
+          if (activeEasingPreset) {
+            easingFunction = activeEasingPreset;
           } else {
             const { createBezierEasing } = await import('@/lib/easing-functions');
             easingFunction = createBezierEasing(
-              nodeData.bezierHandles[0],
-              nodeData.bezierHandles[1],
-              nodeData.bezierHandles[2],
-              nodeData.bezierHandles[3]
+              activeBezierHandles[0],
+              activeBezierHandles[1],
+              activeBezierHandles[2],
+              activeBezierHandles[3]
             );
           }
 

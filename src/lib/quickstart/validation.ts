@@ -306,6 +306,7 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
       return {
         bezierHandles: [0.445, 0.05, 0.55, 0.95] as [number, number, number, number],
         easingPreset: "easeInOutSine",
+        inheritedFrom: null,
         outputDuration: 1.5,
         outputVideo: null,
         status: "idle",

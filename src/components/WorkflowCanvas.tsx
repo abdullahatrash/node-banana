@@ -78,8 +78,10 @@ const edgeTypes: EdgeTypes = {
 // - Video handles can only connect to generateVideo or output nodes
 // Helper to determine handle type from handle ID
 // For dynamic handles, we use naming convention: image inputs contain "image", text inputs are "prompt" or "negative_prompt"
-const getHandleType = (handleId: string | null | undefined): "image" | "text" | "video" | "audio" | null => {
+const getHandleType = (handleId: string | null | undefined): "image" | "text" | "video" | "audio" | "easeCurve" | null => {
   if (!handleId) return null;
+  // EaseCurve handles (must check before other types)
+  if (handleId === "easeCurve") return "easeCurve";
   // Standard handles
   if (handleId === "video") return "video";
   if (handleId === "audio" || handleId.startsWith("audio")) return "audio";
@@ -121,7 +123,7 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
     case "videoStitch":
       return { inputs: ["video", "audio"], outputs: ["video"] };
     case "easeCurve":
-      return { inputs: ["video"], outputs: ["video"] };
+      return { inputs: ["video", "easeCurve"], outputs: ["video", "easeCurve"] };
     default:
       return { inputs: [], outputs: [] };
   }
@@ -130,7 +132,7 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
 interface ConnectionDropState {
   position: { x: number; y: number };
   flowPosition: { x: number; y: number };
-  handleType: "image" | "text" | "video" | "audio" | null;
+  handleType: "image" | "text" | "video" | "audio" | "easeCurve" | null;
   connectionType: "source" | "target";
   sourceNodeId: string | null;
   sourceHandleId: string | null;
@@ -294,6 +296,13 @@ export function WorkflowCanvas() {
       // If we can't determine types, allow the connection
       if (!sourceType || !targetType) return true;
 
+      // EaseCurve connections: only between easeCurve nodes
+      if (sourceType === "easeCurve" || targetType === "easeCurve") {
+        if (sourceType !== "easeCurve" || targetType !== "easeCurve") return false;
+        const targetNode = nodes.find((n) => n.id === connection.target);
+        return targetNode?.type === "easeCurve";
+      }
+
       // Video connections have special rules
       if (sourceType === "video") {
         // Video source can ONLY connect to:
@@ -406,7 +415,7 @@ export function WorkflowCanvas() {
       // Helper to find a compatible handle on a node by type
       const findCompatibleHandle = (
         node: Node,
-        handleType: "image" | "text" | "video" | "audio",
+        handleType: "image" | "text" | "video" | "audio" | "easeCurve",
         needInput: boolean
       ): string | null => {
         // Check for dynamic inputSchema first
@@ -780,6 +789,11 @@ export function WorkflowCanvas() {
         } else if (nodeType === "videoStitch") {
           // VideoStitch accepts audio
           targetHandleId = "audio";
+        }
+      } else if (handleType === "easeCurve") {
+        if (nodeType === "easeCurve") {
+          targetHandleId = "easeCurve";
+          sourceHandleIdForNewNode = "easeCurve";
         }
       }
 
@@ -1544,7 +1558,7 @@ export function WorkflowCanvas() {
               case "videoStitch":
                 return "#f97316";
               case "easeCurve":
-                return "#f59e0b"; // amber-500
+                return "#bef264"; // lime-300 (easy-peasy-ease)
               default:
                 return "#94a3b8";
             }
