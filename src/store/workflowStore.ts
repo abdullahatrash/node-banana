@@ -1166,75 +1166,93 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             break;
 
           case "annotation": {
-            // Get connected image and set as source (use first image)
-            const { images } = getConnectedInputs(node.id);
-            const image = images[0] || null;
-            if (image) {
-              updateNodeData(node.id, { sourceImage: image });
-              // If no annotations, pass through the image
-              const nodeData = node.data as AnnotationNodeData;
-              if (!nodeData.outputImage) {
-                updateNodeData(node.id, { outputImage: image });
+            try {
+              // Get connected image and set as source (use first image)
+              const { images } = getConnectedInputs(node.id);
+              const image = images[0] || null;
+              if (image) {
+                updateNodeData(node.id, { sourceImage: image });
+                // If no annotations, pass through the image
+                const nodeData = node.data as AnnotationNodeData;
+                if (!nodeData.outputImage) {
+                  updateNodeData(node.id, { outputImage: image });
+                }
               }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error(`[Workflow] Annotation node ${node.id} failed:`, message);
+              updateNodeData(node.id, { error: message });
             }
             break;
           }
 
           case "prompt": {
-            // Check for connected text input and update prompt if connected
-            const { text: connectedText } = getConnectedInputs(node.id);
-            if (connectedText !== null) {
-              updateNodeData(node.id, { prompt: connectedText });
+            try {
+              // Check for connected text input and update prompt if connected
+              const { text: connectedText } = getConnectedInputs(node.id);
+              if (connectedText !== null) {
+                updateNodeData(node.id, { prompt: connectedText });
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error(`[Workflow] Prompt node ${node.id} failed:`, message);
+              updateNodeData(node.id, { error: message });
             }
             break;
           }
 
           case "promptConstructor": {
-            // Get fresh node data from store
-            const freshNode = get().nodes.find((n) => n.id === node.id);
-            const nodeData = (freshNode?.data || node.data) as PromptConstructorNodeData;
-            const template = nodeData.template;
+            try {
+              // Get fresh node data from store
+              const freshNode = get().nodes.find((n) => n.id === node.id);
+              const nodeData = (freshNode?.data || node.data) as PromptConstructorNodeData;
+              const template = nodeData.template;
 
-            // Find connected prompt nodes via text edges
-            const connectedPromptNodes = edges
-              .filter((e) => e.target === node.id && e.targetHandle === "text")
-              .map((e) => nodes.find((n) => n.id === e.source))
-              .filter((n): n is WorkflowNode => n !== undefined && n.type === "prompt");
+              // Find connected prompt nodes via text edges
+              const connectedPromptNodes = edges
+                .filter((e) => e.target === node.id && e.targetHandle === "text")
+                .map((e) => nodes.find((n) => n.id === e.source))
+                .filter((n): n is WorkflowNode => n !== undefined && n.type === "prompt");
 
-            // Build variable map from connected prompt nodes
-            const variableMap: Record<string, string> = {};
-            connectedPromptNodes.forEach((promptNode) => {
-              const promptData = promptNode.data as PromptNodeData;
-              if (promptData.variableName) {
-                variableMap[promptData.variableName] = promptData.prompt;
-              }
-            });
+              // Build variable map from connected prompt nodes
+              const variableMap: Record<string, string> = {};
+              connectedPromptNodes.forEach((promptNode) => {
+                const promptData = promptNode.data as PromptNodeData;
+                if (promptData.variableName) {
+                  variableMap[promptData.variableName] = promptData.prompt;
+                }
+              });
 
-            // Find all @variable patterns in template
-            const varPattern = /@(\w+)/g;
-            const unresolvedVars: string[] = [];
-            let resolvedText = template;
+              // Find all @variable patterns in template
+              const varPattern = /@(\w+)/g;
+              const unresolvedVars: string[] = [];
+              let resolvedText = template;
 
-            // Replace @variables with values or track unresolved
-            const matches = template.matchAll(varPattern);
-            for (const match of matches) {
-              const varName = match[1];
-              if (variableMap[varName] !== undefined) {
-                // Replace with actual value
-                resolvedText = resolvedText.replace(new RegExp(`@${varName}`, 'g'), variableMap[varName]);
-              } else {
-                // Track unresolved variable
-                if (!unresolvedVars.includes(varName)) {
-                  unresolvedVars.push(varName);
+              // Replace @variables with values or track unresolved
+              const matches = template.matchAll(varPattern);
+              for (const match of matches) {
+                const varName = match[1];
+                if (variableMap[varName] !== undefined) {
+                  // Replace with actual value
+                  resolvedText = resolvedText.replaceAll(`@${varName}`, variableMap[varName]);
+                } else {
+                  // Track unresolved variable
+                  if (!unresolvedVars.includes(varName)) {
+                    unresolvedVars.push(varName);
+                  }
                 }
               }
-            }
 
-            // Update node with resolved text and unresolved vars list
-            updateNodeData(node.id, {
-              outputText: resolvedText,
-              unresolvedVars,
-            });
+              // Update node with resolved text and unresolved vars list
+              updateNodeData(node.id, {
+                outputText: resolvedText,
+                unresolvedVars,
+              });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error(`[Workflow] PromptConstructor node ${node.id} failed:`, message);
+              updateNodeData(node.id, { error: message });
+            }
             break;
           }
 

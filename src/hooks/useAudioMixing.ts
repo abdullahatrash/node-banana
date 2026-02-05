@@ -80,13 +80,17 @@ async function decodeWithMediaBunny(
 
     return decodedBuffers;
   } finally {
-    if (sink && typeof sink.close === 'function') {
+    // Defensively close resources — types may not declare close() but implementations may have it
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const closeable = (obj: unknown): obj is { close(): Promise<void> } =>
+      obj != null && typeof (obj as any).close === 'function';
+    if (closeable(sink)) {
       try { await sink.close(); } catch (e) { console.warn('Failed to close sink:', e); }
     }
-    if (input && typeof input.close === 'function') {
+    if (closeable(input)) {
       try { await input.close(); } catch (e) { console.warn('Failed to close input:', e); }
     }
-    if (blobSource && typeof blobSource.close === 'function') {
+    if (closeable(blobSource)) {
       try { await blobSource.close(); } catch (e) { console.warn('Failed to close blobSource:', e); }
     }
   }
