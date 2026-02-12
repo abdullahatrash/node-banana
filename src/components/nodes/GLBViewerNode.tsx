@@ -80,12 +80,14 @@ function Model({ url, onError }: { url: string; onError?: () => void }) {
       if (sceneRef.current) {
         sceneRef.current.traverse((obj) => {
           if (obj instanceof THREE.Mesh) {
-            obj.geometry?.dispose();
-            if (Array.isArray(obj.material)) {
-              obj.material.forEach((m) => m.dispose());
-            } else {
-              obj.material?.dispose();
-            }
+            try { obj.geometry?.dispose(); } catch (e) { console.warn("GLB geometry dispose failed:", e); }
+            try {
+              if (Array.isArray(obj.material)) {
+                obj.material.forEach((m) => m.dispose());
+              } else {
+                obj.material?.dispose();
+              }
+            } catch (e) { console.warn("GLB material dispose failed:", e); }
           }
         });
         sceneRef.current = null;
@@ -140,7 +142,7 @@ function CaptureHelper({
   captureRef,
   envGroupRef,
 }: {
-  captureRef: React.MutableRefObject<(() => string) | null>;
+  captureRef: React.MutableRefObject<(() => string | null) | null>;
   envGroupRef: React.RefObject<THREE.Group | null>;
 }) {
   const { gl, scene, camera } = useThree();
@@ -148,21 +150,30 @@ function CaptureHelper({
   // Update the capture function every frame so it always has current gl/scene/camera
   useFrame(() => {
     captureRef.current = () => {
-      // Directly hide environment objects in the Three.js scene graph (synchronous)
-      if (envGroupRef.current) {
-        envGroupRef.current.visible = false;
+      try {
+        // Directly hide environment objects in the Three.js scene graph (synchronous)
+        if (envGroupRef.current) {
+          envGroupRef.current.visible = false;
+        }
+
+        // Render without the grid
+        gl.render(scene, camera);
+        const dataUrl = gl.domElement.toDataURL("image/png");
+
+        // Restore environment objects
+        if (envGroupRef.current) {
+          envGroupRef.current.visible = true;
+        }
+
+        return dataUrl;
+      } catch (err) {
+        console.warn("GLB capture failed:", err);
+        // Restore environment objects on failure
+        if (envGroupRef.current) {
+          envGroupRef.current.visible = true;
+        }
+        return null;
       }
-
-      // Render without the grid
-      gl.render(scene, camera);
-      const dataUrl = gl.domElement.toDataURL("image/png");
-
-      // Restore environment objects
-      if (envGroupRef.current) {
-        envGroupRef.current.visible = true;
-      }
-
-      return dataUrl;
     };
   });
 
@@ -190,7 +201,7 @@ function AutoRotate({ enabled }: { enabled: boolean }) {
 }
 
 /**
- * Loading spinner shown while GLB is parsing.
+ * Loading indicator (wireframe sphere) shown while GLB is parsing.
  */
 function LoadingIndicator() {
   return (
@@ -207,7 +218,7 @@ export function GLBViewerNode({ id, data, selected }: NodeProps<GLBViewerNodeTyp
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const { setNodes, getNodes } = useReactFlow();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const captureRef = useRef<(() => string) | null>(null);
+  const captureRef = useRef<(() => string | null) | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [autoRotate, setAutoRotate] = useState(false);
   const [isInteracting, setIsInteracting] = useState(false);
@@ -256,15 +267,16 @@ export function GLBViewerNode({ id, data, selected }: NodeProps<GLBViewerNodeTyp
     });
   }, [id, nodeData.capturedImage, getNodes, setNodes]);
 
-  // Revoke blob URL when node is unmounted (e.g. deleted from canvas)
+  // Revoke blob URL when it changes or when node is unmounted
+  const glbUrlRef = useRef<string | null>(nodeData.glbUrl);
   useEffect(() => {
+    glbUrlRef.current = nodeData.glbUrl;
     return () => {
-      if (nodeData.glbUrl) {
-        URL.revokeObjectURL(nodeData.glbUrl);
+      if (glbUrlRef.current) {
+        URL.revokeObjectURL(glbUrlRef.current);
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- only revoke on unmount
-  }, []);
+  }, [nodeData.glbUrl]);
 
   // Shared file processing logic for both click-to-upload and drag-and-drop
   const processFile = useCallback(
@@ -339,7 +351,11 @@ export function GLBViewerNode({ id, data, selected }: NodeProps<GLBViewerNodeTyp
   const handleCapture = useCallback(() => {
     if (captureRef.current) {
       const base64 = captureRef.current();
-      updateNodeData(id, { capturedImage: base64 });
+      if (base64) {
+        updateNodeData(id, { capturedImage: base64 });
+      } else {
+        useToast.getState().show("Failed to capture 3D view", "error");
+      }
     }
   }, [id, updateNodeData]);
 
