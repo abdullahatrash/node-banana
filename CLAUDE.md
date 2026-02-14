@@ -219,6 +219,6 @@ All routes in `src/app/api/`:
 - Never push directly to `main`, `master`, or `develop`
 
 ## Commits
-
+- Commit frequently and atomically, if a task is complete, commit. 
 - The .planning directory is untracked, do not attempt to commit any changes to the files in this directory.
 

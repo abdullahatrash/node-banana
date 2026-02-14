@@ -77,6 +77,20 @@ import type { NodeExecutionContext } from "./execution";
 export type { LevelGroup } from "./utils/executionUtils";
 export { CONCURRENCY_SETTINGS_KEY } from "./utils/executionUtils";
 
+function saveLogSession(): void {
+  const session = logger.getCurrentSession();
+  if (session) {
+    session.endTime = new Date().toISOString();
+    fetch('/api/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session }),
+    }).catch((err) => {
+      console.error('Failed to save log session:', err);
+    });
+  }
+}
+
 export type EdgeStyle = "angular" | "curved";
 
 // Workflow file format
@@ -151,6 +165,7 @@ interface WorkflowStore {
   _buildExecutionContext: (node: WorkflowNode, signal?: AbortSignal) => NodeExecutionContext;
   executeWorkflow: (startFromNodeId?: string) => Promise<void>;
   regenerateNode: (nodeId: string) => Promise<void>;
+  executeSelectedNodes: (nodeIds: string[]) => Promise<void>;
   stopWorkflow: () => void;
   setMaxConcurrentCalls: (value: number) => void;
 
@@ -958,19 +973,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
       set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
-      // Save logs to server
-      const session = logger.getCurrentSession();
-      if (session) {
-        session.endTime = new Date().toISOString();
-        fetch('/api/logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session }),
-        }).catch((err) => {
-          console.error('Failed to save log session:', err);
-        });
-      }
-
+      saveLogSession();
       await logger.endSession();
     } catch (error) {
       // Handle AbortError gracefully (user cancelled)
@@ -986,19 +989,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       }
       set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
-      // Save logs to server (even on error)
-      const session = logger.getCurrentSession();
-      if (session) {
-        session.endTime = new Date().toISOString();
-        fetch('/api/logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session }),
-        }).catch((err) => {
-          console.error('Failed to save log session:', err);
-        });
-      }
-
+      saveLogSession();
       await logger.endSession();
     }
   },
@@ -1092,19 +1083,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       logger.info('node.execution', 'Node regeneration completed successfully', { nodeId });
       set({ isRunning: false, currentNodeIds: [] });
 
-      // Save logs to server
-      const session = logger.getCurrentSession();
-      if (session) {
-        session.endTime = new Date().toISOString();
-        fetch('/api/logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session }),
-        }).catch((err) => {
-          console.error('Failed to save log session:', err);
-        });
-      }
-
+      saveLogSession();
       await logger.endSession();
     } catch (error) {
       logger.error('node.error', 'Node regeneration failed', {
@@ -1116,19 +1095,212 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       });
       set({ isRunning: false, currentNodeIds: [] });
 
-      // Save logs to server (even on error)
-      const session = logger.getCurrentSession();
-      if (session) {
-        session.endTime = new Date().toISOString();
-        fetch('/api/logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session }),
-        }).catch((err) => {
-          console.error('Failed to save log session:', err);
-        });
+      saveLogSession();
+      await logger.endSession();
+    }
+  },
+
+  executeSelectedNodes: async (nodeIds: string[]) => {
+    const { nodes, edges, isRunning, maxConcurrentCalls } = get();
+
+    if (isRunning) {
+      logger.warn('node.execution', 'Cannot execute nodes, workflow already running');
+      return;
+    }
+
+    if (nodeIds.length === 0) {
+      logger.warn('node.execution', 'No nodes provided for execution');
+      return;
+    }
+
+    // Filter to valid nodes
+    const selectedSet = new Set(nodeIds);
+    const nodesToExecute = nodeIds
+      .map((id) => nodes.find((n) => n.id === id))
+      .filter((n): n is WorkflowNode => n !== undefined);
+
+    if (nodesToExecute.length === 0) {
+      logger.warn('node.execution', 'No valid nodes found for execution');
+      return;
+    }
+
+    // Create AbortController for this execution run
+    const abortController = new AbortController();
+    set({ isRunning: true, currentNodeIds: nodeIds, _abortController: abortController });
+
+    await logger.startSession();
+    logger.info('node.execution', 'Executing selected nodes', {
+      nodeCount: nodesToExecute.length,
+      nodeIds,
+    });
+
+    // Helper to execute a single node
+    const executeNode = async (node: WorkflowNode, signal: AbortSignal) => {
+      if (signal.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
       }
 
+      logger.info('node.execution', `Executing ${node.type} node`, {
+        nodeId: node.id,
+        nodeType: node.type,
+      });
+
+      const executionCtx = get()._buildExecutionContext(node, signal);
+      const regenOptions = { useStoredFallback: true };
+
+      switch (node.type) {
+        case "imageInput":
+        case "audioInput":
+          // Data source nodes - no execution needed
+          break;
+        case "glbViewer":
+          await executeGlbViewer(executionCtx);
+          break;
+        case "annotation":
+          await executeAnnotation(executionCtx);
+          break;
+        case "prompt":
+          await executePrompt(executionCtx);
+          break;
+        case "promptConstructor":
+          await executePromptConstructor(executionCtx);
+          break;
+        case "nanoBanana":
+          await executeNanoBanana(executionCtx, regenOptions);
+          break;
+        case "generateVideo":
+          await executeGenerateVideo(executionCtx, regenOptions);
+          break;
+        case "llmGenerate":
+          await executeLlmGenerate(executionCtx, regenOptions);
+          break;
+        case "splitGrid":
+          await executeSplitGrid(executionCtx);
+          break;
+        case "output":
+          await executeOutput(executionCtx);
+          break;
+        case "outputGallery":
+          await executeOutputGallery(executionCtx);
+          break;
+        case "imageCompare":
+          await executeImageCompare(executionCtx);
+          break;
+        case "videoStitch":
+          await executeVideoStitch(executionCtx);
+          break;
+        case "easeCurve":
+          await executeEaseCurve(executionCtx);
+          break;
+      }
+    };
+
+    try {
+      // Filter edges to only those within the selected set for topological sort
+      const selectedEdges = edges.filter(
+        (e) => selectedSet.has(e.source) && selectedSet.has(e.target)
+      );
+
+      // Group selected nodes by dependency level for ordered execution
+      const levels = groupNodesByLevel(nodesToExecute, selectedEdges);
+
+      // Execute levels sequentially, nodes within each level in parallel batches
+      for (const level of levels) {
+        if (abortController.signal.aborted || !get().isRunning) break;
+
+        const levelNodes = level.nodeIds
+          .map((id) => nodesToExecute.find((n) => n.id === id))
+          .filter((n): n is WorkflowNode => n !== undefined);
+
+        if (levelNodes.length === 0) continue;
+
+        const batches = chunk(levelNodes, maxConcurrentCalls);
+
+        for (const batch of batches) {
+          if (abortController.signal.aborted || !get().isRunning) break;
+
+          const batchIds = batch.map((n) => n.id);
+          set({ currentNodeIds: batchIds });
+
+          logger.info('node.execution', `Executing batch of selected nodes`, {
+            level: level.level,
+            nodeCount: batch.length,
+            nodeIds: batchIds,
+          });
+
+          const results = await Promise.allSettled(
+            batch.map((node) => executeNode(node, abortController.signal))
+          );
+
+          // Check for failures, filtering out AbortErrors
+          const failed = results.find(
+            (r): r is PromiseRejectedResult =>
+              r.status === 'rejected' &&
+              !(r.reason instanceof DOMException && r.reason.name === 'AbortError')
+          );
+
+          if (failed) {
+            logger.error('node.error', 'Node execution failed in batch', {
+              level: level.level,
+              error: failed.reason instanceof Error ? failed.reason.message : String(failed.reason),
+            });
+            abortController.abort();
+            throw failed.reason;
+          }
+        }
+      }
+
+      // Propagate to downstream consumer nodes not in the selected set
+      if (!abortController.signal.aborted && get().isRunning) {
+        const { edges: currentEdges } = get();
+        const propagated = new Set<string>();
+        for (const nodeId of nodeIds) {
+          const downstreamEdges = currentEdges.filter(e => e.source === nodeId);
+          for (const edge of downstreamEdges) {
+            if (selectedSet.has(edge.target) || propagated.has(edge.target)) continue;
+            const targetNode = get().nodes.find(n => n.id === edge.target);
+            if (!targetNode) continue;
+            const targetCtx = get()._buildExecutionContext(targetNode);
+            switch (targetNode.type) {
+              case "glbViewer":
+                await executeGlbViewer(targetCtx);
+                propagated.add(edge.target);
+                break;
+              case "output":
+                await executeOutput(targetCtx);
+                propagated.add(edge.target);
+                break;
+              case "outputGallery":
+                await executeOutputGallery(targetCtx);
+                propagated.add(edge.target);
+                break;
+              case "imageCompare":
+                await executeImageCompare(targetCtx);
+                propagated.add(edge.target);
+                break;
+            }
+          }
+        }
+      }
+
+      logger.info('node.execution', 'Selected nodes execution completed successfully');
+      set({ isRunning: false, currentNodeIds: [], _abortController: null });
+
+      saveLogSession();
+      await logger.endSession();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        logger.info('node.execution', 'Selected nodes execution cancelled by user');
+      } else {
+        logger.error('node.error', 'Selected nodes execution failed', {}, error instanceof Error ? error : undefined);
+        useToast.getState().show(
+          `Execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          "error"
+        );
+      }
+      set({ isRunning: false, currentNodeIds: [], _abortController: null });
+
+      saveLogSession();
       await logger.endSession();
     }
   },
