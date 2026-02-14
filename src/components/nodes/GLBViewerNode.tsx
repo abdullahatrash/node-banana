@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState, useEffect, Suspense } from "react";
-import { Handle, Position, NodeProps, Node, useReactFlow } from "@xyflow/react";
+import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { BaseNode } from "./BaseNode";
@@ -83,7 +83,7 @@ function Model({ url, onError }: { url: string; onError?: () => void }) {
             try { obj.geometry?.dispose(); } catch (e) { console.warn("GLB geometry dispose failed:", e); }
             try {
               if (Array.isArray(obj.material)) {
-                obj.material.forEach((m) => m.dispose());
+                obj.material.forEach((m) => { m.dispose(); });
               } else {
                 obj.material?.dispose();
               }
@@ -204,7 +204,6 @@ export function GLBViewerNode({ id, data, selected }: NodeProps<GLBViewerNodeTyp
   const nodeData = data as GLBViewerNodeData;
   const commentNavigation = useCommentNavigation(id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
-  const { setNodes, getNodes } = useReactFlow();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const captureRef = useRef<(() => string | null) | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -223,7 +222,8 @@ export function GLBViewerNode({ id, data, selected }: NodeProps<GLBViewerNodeTyp
     if (hadCapture === hasCapture) return;
 
     requestAnimationFrame(() => {
-      const thisNode = getNodes().find((n) => n.id === id);
+      const storeState = useWorkflowStore.getState();
+      const thisNode = storeState.nodes.find((n) => n.id === id);
       if (!thisNode) return;
 
       const currentHeight = typeof thisNode.style?.height === "number"
@@ -243,17 +243,18 @@ export function GLBViewerNode({ id, data, selected }: NodeProps<GLBViewerNodeTyp
         ? currentHeight + captureExtraHeight
         : Math.max(380, currentHeight - captureExtraHeight);
 
-      setNodes((nodes) =>
-        nodes.map((node) => {
+      useWorkflowStore.setState((state) => ({
+        nodes: state.nodes.map((node) => {
           if (node.id !== id) return node;
           return {
             ...node,
             style: { ...node.style, width: currentWidth, height: newHeight },
           };
-        })
-      );
+        }),
+        hasUnsavedChanges: true,
+      }));
     });
-  }, [id, nodeData.capturedImage, getNodes, setNodes]);
+  }, [id, nodeData.capturedImage]);
 
   // Revoke blob URL when it changes or when node is unmounted
   const glbUrlRef = useRef<string | null>(nodeData.glbUrl);

@@ -15,6 +15,7 @@ function getExtensionFromMime(mimeType: string): string {
     "video/mp4": "mp4",
     "video/webm": "webm",
     "video/quicktime": "mov",
+    "model/gltf-binary": "glb",
   };
 
   // Check explicit mapping first
@@ -28,6 +29,9 @@ function getExtensionFromMime(mimeType: string): string {
   }
   if (mimeType.startsWith("video/")) {
     return "mp4";
+  }
+  if (mimeType.startsWith("model/")) {
+    return "glb";
   }
 
   // Unknown type - use generic binary extension
@@ -69,18 +73,21 @@ export async function POST(request: NextRequest) {
     directoryPath = body.directoryPath;
     const image = body.image;
     const video = body.video;
+    const model3d = body.model3d;
     const prompt = body.prompt;
     const imageId = body.imageId; // Optional ID for carousel support
     const customFilename = body.customFilename; // Optional custom filename (without extension)
     const createDirectory = body.createDirectory; // Optional flag to create directory if it doesn't exist
 
     const isVideo = !!video;
-    const content = video || image;
+    const isModel = !!model3d;
+    const content = video || model3d || image;
 
     logger.info('file.save', 'Generation auto-save request received', {
       directoryPath,
       hasImage: !!image,
       hasVideo: !!video,
+      hasModel3d: !!model3d,
       prompt,
       customFilename,
     });
@@ -166,9 +173,9 @@ export async function POST(request: NextRequest) {
         }
 
         const rawSaveContentType = response.headers.get("content-type");
-        const contentType = (rawSaveContentType && (rawSaveContentType.startsWith("video/") || rawSaveContentType.startsWith("image/")))
+        const contentType = (rawSaveContentType && (rawSaveContentType.startsWith("video/") || rawSaveContentType.startsWith("image/") || rawSaveContentType.startsWith("model/")))
           ? rawSaveContentType
-          : (isVideo ? "video/mp4" : "image/png");
+          : (isModel ? "model/gltf-binary" : isVideo ? "video/mp4" : "image/png");
         extension = getExtensionFromMime(contentType);
 
         const arrayBuffer = await response.arrayBuffer();
@@ -203,7 +210,7 @@ export async function POST(request: NextRequest) {
 
     // Safety net: if extension resolved to "bin" but we know the media type, use correct extension
     if (extension === "bin") {
-      extension = isVideo ? "mp4" : "png";
+      extension = isModel ? "glb" : isVideo ? "mp4" : "png";
     }
 
     // Compute content hash for deduplication
@@ -258,6 +265,7 @@ export async function POST(request: NextRequest) {
       filename,
       fileSize: buffer.length,
       isVideo,
+      isModel,
       contentHash,
     });
 

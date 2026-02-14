@@ -76,11 +76,14 @@ export async function executeSplitGrid(ctx: NodeExecutionContext): Promise<void>
 
     updateNodeData(node.id, { status: "complete", error: null });
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      updateNodeData(node.id, { status: "idle", error: null });
+      throw error;
+    }
     updateNodeData(node.id, {
       status: "error",
       error: error instanceof Error ? error.message : "Failed to split image",
     });
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw error instanceof Error ? error : new Error("Failed to split image");
   }
 }

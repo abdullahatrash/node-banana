@@ -125,8 +125,9 @@ export function clearNodeImageRefs(nodes: WorkflowNode[]): WorkflowNode[] {
   return nodes.map(node => {
     const data = { ...node.data } as Record<string, unknown>;
 
-    // Revoke blob URLs for video outputs before clearing
+    // Revoke blob URLs for video/3D outputs before clearing
     revokeBlobUrl(data.outputVideo as string | undefined);
+    revokeBlobUrl(data.glbUrl as string | undefined);
 
     // Clear all ref fields regardless of node type
     delete data.imageRef;

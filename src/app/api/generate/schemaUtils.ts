@@ -159,10 +159,16 @@ export function getInputMappingFromSchema(schema: Record<string, unknown> | unde
           matchedParam = pattern;
         } else {
           // Check for case-insensitive partial match
-          const match = propertyNames.find(name =>
-            name.toLowerCase().includes(pattern.toLowerCase()) ||
-            pattern.toLowerCase().includes(name.toLowerCase())
-          );
+          const patternLower = pattern.toLowerCase();
+          const match = propertyNames.find(name => {
+            const nameLower = name.toLowerCase();
+            // Property name contains the pattern (intended direction)
+            if (nameLower.includes(patternLower)) return true;
+            // Pattern contains the property name — only allow for longer patterns
+            // to prevent short property names (e.g. "id") matching everything
+            if (patternLower.length >= 3 && patternLower.includes(nameLower)) return true;
+            return false;
+          });
           if (match) {
             matchedParam = match;
           }

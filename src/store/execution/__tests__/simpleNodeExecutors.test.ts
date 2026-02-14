@@ -6,6 +6,7 @@ import {
   executeOutput,
   executeOutputGallery,
   executeImageCompare,
+  executeGlbViewer,
 } from "../simpleNodeExecutors";
 import type { NodeExecutionContext } from "../types";
 import type { WorkflowNode, WorkflowEdge } from "@/types";
@@ -81,8 +82,8 @@ describe("executeAnnotation", () => {
     expect(ctx.updateNodeData).toHaveBeenCalledWith("ann", { outputImage: "data:image/png;base64,abc" });
   });
 
-  it("should not overwrite existing outputImage", async () => {
-    const node = makeNode("ann", "annotation", { outputImage: "existing-annotated-image" });
+  it("should not overwrite existing annotated outputImage", async () => {
+    const node = makeNode("ann", "annotation", { outputImage: "existing-annotated-image", sourceImage: "old-source" });
     const ctx = makeCtx(node, {
       getConnectedInputs: vi.fn().mockReturnValue({
         images: ["data:image/png;base64,abc"],
@@ -96,11 +97,31 @@ describe("executeAnnotation", () => {
 
     await executeAnnotation(ctx);
 
-    // Should set sourceImage but NOT overwrite outputImage
+    // Should set sourceImage but NOT overwrite outputImage (it has real annotations)
     expect(ctx.updateNodeData).toHaveBeenCalledWith("ann", { sourceImage: "data:image/png;base64,abc" });
     const calls = (ctx.updateNodeData as ReturnType<typeof vi.fn>).mock.calls;
     const outputCall = calls.find((c: unknown[]) => (c[1] as Record<string, unknown>).outputImage !== undefined);
     expect(outputCall).toBeUndefined();
+  });
+
+  it("should update pass-through outputImage when upstream changes", async () => {
+    // When outputImage === sourceImage, it was a pass-through — should update with new image
+    const node = makeNode("ann", "annotation", { outputImage: "old-image", sourceImage: "old-image" });
+    const ctx = makeCtx(node, {
+      getConnectedInputs: vi.fn().mockReturnValue({
+        images: ["new-image"],
+        videos: [],
+        audio: [],
+        text: null,
+        dynamicInputs: {},
+        easeCurve: null,
+      }),
+    });
+
+    await executeAnnotation(ctx);
+
+    expect(ctx.updateNodeData).toHaveBeenCalledWith("ann", { sourceImage: "new-image" });
+    expect(ctx.updateNodeData).toHaveBeenCalledWith("ann", { outputImage: "new-image" });
   });
 
   it("should do nothing when no images connected", async () => {
@@ -449,5 +470,107 @@ describe("executeImageCompare", () => {
       imageA: null,
       imageB: null,
     });
+  });
+});
+
+describe("executeGlbViewer", () => {
+  it("should fetch 3D model and set blob URL", async () => {
+    const node = makeNode("glb", "glbViewer", {});
+    const mockBlob = new Blob(["fake-glb"], { type: "model/gltf-binary" });
+    const mockBlobUrl = "blob:http://localhost/fake-blob-url";
+
+    const mockResponse = { ok: true, blob: () => Promise.resolve(mockBlob) };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse as unknown as Response);
+    const createObjectURLSpy = vi.spyOn(URL, "createObjectURL").mockReturnValue(mockBlobUrl);
+
+    const ctx = makeCtx(node, {
+      getConnectedInputs: vi.fn().mockReturnValue({
+        images: [],
+        videos: [],
+        audio: [],
+        model3d: "https://example.com/model.glb",
+        text: null,
+        dynamicInputs: {},
+        easeCurve: null,
+      }),
+    });
+
+    await executeGlbViewer(ctx);
+
+    expect(fetchSpy).toHaveBeenCalledWith("https://example.com/model.glb", {});
+    expect(ctx.updateNodeData).toHaveBeenCalledWith("glb", {
+      glbUrl: mockBlobUrl,
+      filename: "generated.glb",
+      capturedImage: null,
+    });
+
+    fetchSpy.mockRestore();
+    createObjectURLSpy.mockRestore();
+  });
+
+  it("should set error on fetch failure", async () => {
+    const node = makeNode("glb", "glbViewer", {});
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network error"));
+
+    const ctx = makeCtx(node, {
+      getConnectedInputs: vi.fn().mockReturnValue({
+        images: [],
+        videos: [],
+        audio: [],
+        model3d: "https://example.com/model.glb",
+        text: null,
+        dynamicInputs: {},
+        easeCurve: null,
+      }),
+    });
+
+    await executeGlbViewer(ctx);
+
+    expect(ctx.updateNodeData).toHaveBeenCalledWith("glb", { error: "Network error" });
+
+    fetchSpy.mockRestore();
+  });
+
+  it("should do nothing when no model3d input", async () => {
+    const node = makeNode("glb", "glbViewer", {});
+    const ctx = makeCtx(node, {
+      getConnectedInputs: vi.fn().mockReturnValue({
+        images: [],
+        videos: [],
+        audio: [],
+        model3d: null,
+        text: null,
+        dynamicInputs: {},
+        easeCurve: null,
+      }),
+    });
+
+    await executeGlbViewer(ctx);
+
+    expect(ctx.updateNodeData).not.toHaveBeenCalled();
+  });
+
+  it("should not set error on abort", async () => {
+    const node = makeNode("glb", "glbViewer", {});
+    const abortError = new DOMException("Aborted", "AbortError");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(abortError);
+
+    const ctx = makeCtx(node, {
+      getConnectedInputs: vi.fn().mockReturnValue({
+        images: [],
+        videos: [],
+        audio: [],
+        model3d: "https://example.com/model.glb",
+        text: null,
+        dynamicInputs: {},
+        easeCurve: null,
+      }),
+    });
+
+    await executeGlbViewer(ctx);
+
+    expect(ctx.updateNodeData).not.toHaveBeenCalled();
+
+    fetchSpy.mockRestore();
   });
 });

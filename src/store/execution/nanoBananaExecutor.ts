@@ -136,6 +136,25 @@ export async function executeNanoBanana(
       if (nodeData.selectedModel?.provider === "fal" && nodeData.selectedModel?.pricing) {
         addIncurredCost(nodeData.selectedModel.pricing.amount);
       }
+
+      // Auto-save 3D model to generations folder if configured
+      if (generationsPath) {
+        const savePromise = fetch("/api/save-generation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            directoryPath: generationsPath,
+            model3d: result.model3dUrl,
+            prompt: promptText,
+          }),
+        })
+          .then((res) => res.json())
+          .catch((err) => {
+            console.error("Failed to save 3D model:", err);
+          });
+
+        trackSaveGeneration(`3d-${Date.now()}`, savePromise);
+      }
       return;
     }
 
@@ -232,14 +251,13 @@ export async function executeNanoBanana(
       throw new Error(result.error || "Generation failed");
     }
   } catch (error) {
-    // Convert network/abort errors to user-friendly messages
-    let errorMessage = "Generation failed";
     if (error instanceof DOMException && error.name === "AbortError") {
-      const isUserCancel = signal?.reason === "user-cancelled";
-      errorMessage = isUserCancel
-        ? "Generation cancelled."
-        : "Request timed out. Try reducing image sizes or using a simpler prompt.";
-    } else if (error instanceof TypeError && error.message.includes("NetworkError")) {
+      throw error;
+    }
+
+    // Convert network errors to user-friendly messages
+    let errorMessage = "Generation failed";
+    if (error instanceof TypeError && error.message.includes("NetworkError")) {
       errorMessage = "Network error. Check your connection and try again.";
     } else if (error instanceof TypeError) {
       errorMessage = `Network error: ${error.message}`;
@@ -251,8 +269,6 @@ export async function executeNanoBanana(
       status: "error",
       error: errorMessage,
     });
-
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new Error(errorMessage);
   }
 }

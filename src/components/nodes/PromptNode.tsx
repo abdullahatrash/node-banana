@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useEffect, useMemo } from "react";
+import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
@@ -35,22 +35,22 @@ export function PromptNode({ id, data, selected }: NodeProps<PromptNodeType>) {
   }, [edges, id]);
 
   // Track the last received text from connected LLM node to detect when it changes
-  const [lastReceivedText, setLastReceivedText] = useState<string | null>(null);
+  const lastReceivedTextRef = useRef<string | null>(null);
 
   // Get connected text input and update prompt when LLM output changes
   useEffect(() => {
     if (hasIncomingTextConnection) {
       const { text } = getConnectedInputs(id);
       // Only update if the incoming text changed (LLM node ran again)
-      if (text !== null && text !== lastReceivedText) {
-        setLastReceivedText(text);
+      if (text !== null && text !== lastReceivedTextRef.current) {
+        lastReceivedTextRef.current = text;
         updateNodeData(id, { prompt: text });
       }
     } else {
       // Clear tracking when connection is removed
-      setLastReceivedText(null);
+      lastReceivedTextRef.current = null;
     }
-  }, [hasIncomingTextConnection, id, getConnectedInputs, updateNodeData, lastReceivedText]);
+  }, [hasIncomingTextConnection, id, getConnectedInputs, updateNodeData]);
 
   // Sync from props when not actively editing
   useEffect(() => {

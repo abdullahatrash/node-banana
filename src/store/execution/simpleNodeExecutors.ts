@@ -26,10 +26,11 @@ export async function executeAnnotation(ctx: NodeExecutionContext): Promise<void
     const { images } = getConnectedInputs(node.id);
     const image = images[0] || null;
     if (image) {
-      updateNodeData(node.id, { sourceImage: image });
-      // If no annotations, pass through the image
       const nodeData = node.data as AnnotationNodeData;
-      if (!nodeData.outputImage) {
+      updateNodeData(node.id, { sourceImage: image });
+      // Pass through the image if no annotations exist, or if the previous
+      // output was itself a pass-through of the old source image
+      if (!nodeData.outputImage || nodeData.outputImage === nodeData.sourceImage) {
         updateNodeData(node.id, { outputImage: image });
       }
     }
@@ -226,12 +227,12 @@ export async function executeImageCompare(ctx: NodeExecutionContext): Promise<vo
  * GLB Viewer node: receives 3D model URL from upstream, fetches and loads it.
  */
 export async function executeGlbViewer(ctx: NodeExecutionContext): Promise<void> {
-  const { node, getConnectedInputs, updateNodeData } = ctx;
+  const { node, getConnectedInputs, updateNodeData, signal } = ctx;
   const { model3d } = getConnectedInputs(node.id);
   if (model3d) {
     // Fetch the GLB URL and create a blob URL for the viewer
     try {
-      const response = await fetch(model3d);
+      const response = await fetch(model3d, signal ? { signal } : {});
       if (!response.ok) {
         throw new Error(`Failed to fetch 3D model: ${response.status}`);
       }
@@ -243,6 +244,10 @@ export async function executeGlbViewer(ctx: NodeExecutionContext): Promise<void>
         capturedImage: null,
       });
     } catch (error) {
+      // Don't set error state on abort
+      if ((error instanceof DOMException && error.name === "AbortError") || signal?.aborted) {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[Workflow] GLB Viewer node ${node.id} failed:`, message);
       updateNodeData(node.id, { error: message });

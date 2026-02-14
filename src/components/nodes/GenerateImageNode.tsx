@@ -391,6 +391,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
   }, [id, updateNodeData]);
 
   const isGeminiProvider = currentProvider === "gemini";
+  const is3D = useMemo(() => nodeData.selectedModel?.capabilities?.some((c: string) => c.includes("3d")) ?? false, [nodeData.selectedModel]);
 
   // Dynamic title based on selected model - just the model name
   const displayTitle = useMemo(() => {
@@ -532,13 +533,13 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
       >
         Prompt
       </div>
-      {/* Output handle — switches to 3d when a 3D model is selected */}
+      {/* Output handle — always "image" ID for stable connections; visual style changes for 3D */}
       <Handle
         type="source"
         position={Position.Right}
-        id={nodeData.selectedModel?.capabilities?.some((c: string) => c.includes("3d")) ? "3d" : "image"}
+        id="image"
         style={{ top: "50%" }}
-        data-handletype={nodeData.selectedModel?.capabilities?.some((c: string) => c.includes("3d")) ? "3d" : "image"}
+        data-handletype={is3D ? "3d" : "image"}
       />
       {/* Output label */}
       <div
@@ -546,10 +547,10 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
         style={{
           left: `calc(100% + 8px)`,
           top: "calc(50% - 18px)",
-          color: nodeData.selectedModel?.capabilities?.some((c: string) => c.includes("3d")) ? "var(--handle-color-3d)" : "var(--handle-color-image)",
+          color: is3D ? "var(--handle-color-3d)" : "var(--handle-color-image)",
         }}
       >
-        {nodeData.selectedModel?.capabilities?.some((c: string) => c.includes("3d")) ? "3D" : "Image"}
+        {is3D ? "3D" : "Image"}
       </div>
 
       <div className="flex-1 flex flex-col min-h-0 gap-2">

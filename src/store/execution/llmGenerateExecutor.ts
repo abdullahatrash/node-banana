@@ -107,13 +107,12 @@ export async function executeLlmGenerate(
       throw new Error(result.error || "LLM generation failed");
     }
   } catch (error) {
-    let errorMessage = "LLM generation failed";
     if (error instanceof DOMException && error.name === "AbortError") {
-      const isUserCancel = signal?.reason === "user-cancelled";
-      errorMessage = isUserCancel
-        ? "Generation cancelled."
-        : "Request timed out. Try using a simpler prompt.";
-    } else if (error instanceof TypeError && error.message.includes("NetworkError")) {
+      throw error;
+    }
+
+    let errorMessage = "LLM generation failed";
+    if (error instanceof TypeError && error.message.includes("NetworkError")) {
       errorMessage = "Network error. Check your connection and try again.";
     } else if (error instanceof TypeError) {
       errorMessage = `Network error: ${error.message}`;
@@ -125,6 +124,6 @@ export async function executeLlmGenerate(
       status: "error",
       error: errorMessage,
     });
-    throw error instanceof Error ? error : new Error(errorMessage);
+    throw new Error(errorMessage);
   }
 }

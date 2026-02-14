@@ -205,74 +205,83 @@ export async function generateWithWaveSpeed(
 
     await new Promise((resolve) => setTimeout(resolve, pollInterval));
 
-    // Use provided poll URL if available, otherwise construct it
-    const pollUrl = providedPollUrl || `${WAVESPEED_API_BASE}/predictions/${taskId}/result`;
-    const pollResponse = await fetch(
-      pollUrl,
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
+    try {
+      // Use provided poll URL if available, otherwise construct it
+      const pollUrl = providedPollUrl || `${WAVESPEED_API_BASE}/predictions/${taskId}/result`;
+      const pollResponse = await fetch(
+        pollUrl,
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        }
+      );
+
+      // Log poll response status for debugging
+      const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+      console.log(`[API:${requestId}] WaveSpeed poll (${elapsedSec}s): ${pollResponse.status} from ${pollUrl}`);
+
+      // 404 means result not ready yet - continue polling
+      if (pollResponse.status === 404) {
+        lastStatus = "pending";
+        continue;
       }
-    );
 
-    // Log poll response status for debugging
-    const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-    console.log(`[API:${requestId}] WaveSpeed poll (${elapsedSec}s): ${pollResponse.status} from ${pollUrl}`);
-
-    // 404 means result not ready yet - continue polling
-    if (pollResponse.status === 404) {
-      lastStatus = "pending";
-      continue;
-    }
-
-    if (!pollResponse.ok) {
-      const errorText = await pollResponse.text();
-      let errorDetail = errorText || `HTTP ${pollResponse.status}`;
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorDetail = errorJson.error || errorJson.message || errorJson.detail || errorDetail;
-      } catch {
-        // Keep original text
+      if (!pollResponse.ok) {
+        const errorText = await pollResponse.text();
+        let errorDetail = errorText || `HTTP ${pollResponse.status}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorDetail = errorJson.error || errorJson.message || errorJson.detail || errorDetail;
+        } catch {
+          // Keep original text
+        }
+        console.error(`[API:${requestId}] WaveSpeed poll failed: ${pollResponse.status} - ${errorDetail}`);
+        return {
+          success: false,
+          error: `${input.model.name}: ${errorDetail}`,
+        };
       }
-      console.error(`[API:${requestId}] WaveSpeed poll failed: ${pollResponse.status} - ${errorDetail}`);
+
+      const pollData: WaveSpeedPredictionResponse = await pollResponse.json();
+      console.log(`[API:${requestId}] WaveSpeed poll data:`, JSON.stringify(pollData).substring(0, 300));
+
+      // Extract status from nested data object (WaveSpeed wraps response in { code, message, data: {...} })
+      const currentStatus = pollData.data?.status || pollData.status;
+      const currentError = pollData.data?.error || pollData.error;
+
+      // Log status changes
+      if (currentStatus !== lastStatus) {
+        console.log(`[API:${requestId}] WaveSpeed status changed: ${lastStatus} → ${currentStatus}`);
+        lastStatus = currentStatus || "";
+      }
+
+      // Check if task is complete
+      if (currentStatus === "completed") {
+        console.log(`[API:${requestId}] WaveSpeed task completed`);
+        resultData = pollData;
+        break;
+      }
+
+      // Check if task failed
+      if (currentStatus === "failed") {
+        const failureReason = currentError || pollData.message || "Generation failed";
+        console.error(`[API:${requestId}] WaveSpeed task failed: ${failureReason}`);
+        return {
+          success: false,
+          error: `${input.model.name}: ${failureReason}`,
+        };
+      }
+
+      // Continue polling for "created" or "processing" status
+    } catch (pollError) {
+      const message = pollError instanceof Error ? pollError.message : String(pollError);
+      console.error(`[API:${requestId}] WaveSpeed poll error: ${message}`);
       return {
         success: false,
-        error: `${input.model.name}: ${errorDetail}`,
+        error: `${input.model.name}: ${message}`,
       };
     }
-
-    const pollData: WaveSpeedPredictionResponse = await pollResponse.json();
-    console.log(`[API:${requestId}] WaveSpeed poll data:`, JSON.stringify(pollData).substring(0, 300));
-
-    // Extract status from nested data object (WaveSpeed wraps response in { code, message, data: {...} })
-    const currentStatus = pollData.data?.status || pollData.status;
-    const currentError = pollData.data?.error || pollData.error;
-
-    // Log status changes
-    if (currentStatus !== lastStatus) {
-      console.log(`[API:${requestId}] WaveSpeed status changed: ${lastStatus} → ${currentStatus}`);
-      lastStatus = currentStatus || "";
-    }
-
-    // Check if task is complete
-    if (currentStatus === "completed") {
-      console.log(`[API:${requestId}] WaveSpeed task completed`);
-      resultData = pollData;
-      break;
-    }
-
-    // Check if task failed
-    if (currentStatus === "failed") {
-      const failureReason = currentError || pollData.message || "Generation failed";
-      console.error(`[API:${requestId}] WaveSpeed task failed: ${failureReason}`);
-      return {
-        success: false,
-        error: `${input.model.name}: ${failureReason}`,
-      };
-    }
-
-    // Continue polling for "created" or "processing" status
   }
 
   // Safety check (should never happen since we break on completed)
@@ -321,6 +330,21 @@ export async function generateWithWaveSpeed(
     return { success: false, error: `Invalid output URL: ${outputUrlCheck.error}` };
   }
 
+  // For 3D models, return URL directly (GLB files are binary — skip downloading/buffering)
+  if (is3DModel) {
+    console.log(`[API:${requestId}] SUCCESS - Returning 3D model URL`);
+    return {
+      success: true,
+      outputs: [
+        {
+          type: "3d",
+          data: "",
+          url: outputUrl,
+        },
+      ],
+    };
+  }
+
   console.log(`[API:${requestId}] Fetching WaveSpeed output from: ${outputUrl.substring(0, 80)}...`);
 
   const outputResponse = await fetch(outputUrl);
@@ -344,21 +368,6 @@ export async function generateWithWaveSpeed(
     return { success: false, error: `Media too large: ${(outputArrayBuffer.byteLength / (1024 * 1024)).toFixed(0)}MB > 500MB limit` };
   }
   const outputSizeMB = outputArrayBuffer.byteLength / (1024 * 1024);
-
-  // For 3D models, return URL directly (GLB files are binary — don't base64 encode)
-  if (is3DModel) {
-    console.log(`[API:${requestId}] SUCCESS - Returning 3D model URL`);
-    return {
-      success: true,
-      outputs: [
-        {
-          type: "3d",
-          data: "",
-          url: outputUrl,
-        },
-      ],
-    };
-  }
 
   const rawContentType = outputResponse.headers.get("content-type");
   const contentType =
