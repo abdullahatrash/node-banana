@@ -89,7 +89,7 @@ function getPaneCenter() {
 }
 
 // Capability filter options
-type CapabilityFilter = "all" | "image" | "video";
+type CapabilityFilter = "all" | "image" | "video" | "3d";
 
 // API response type
 interface ModelsResponse {
@@ -200,7 +200,9 @@ export function ModelSearchDialog({
         const capabilities =
           capabilityFilter === "image"
             ? "text-to-image,image-to-image"
-            : "text-to-video,image-to-video";
+            : capabilityFilter === "video"
+            ? "text-to-video,image-to-video"
+            : "text-to-3d,image-to-3d";
         params.set("capabilities", capabilities);
       }
       if (bypassCache) {
@@ -315,14 +317,18 @@ export function ModelSearchDialog({
       const isVideoModel = model.capabilities.some(
         (cap) => cap === "text-to-video" || cap === "image-to-video"
       );
+      const is3DModel = model.capabilities.some(
+        (cap) => cap === "text-to-3d" || cap === "image-to-3d"
+      );
 
-      const nodeType = isVideoModel ? "generateVideo" : "nanoBanana";
+      const nodeType = isVideoModel ? "generateVideo" : is3DModel ? "generate3d" : "nanoBanana";
 
       addNode(nodeType, position, {
         selectedModel: {
           provider: model.provider,
           modelId: model.id,
           displayName: model.name,
+          capabilities: model.capabilities,
         },
       });
 
@@ -413,9 +419,13 @@ export function ModelSearchDialog({
         const isVideo = matchingModel.capabilities.some(
           (cap) => cap === "text-to-video" || cap === "image-to-video"
         );
+        const is3D = matchingModel.capabilities.some(
+          (cap) => cap === "text-to-3d" || cap === "image-to-3d"
+        );
 
         if (capabilityFilter === "image") return isImage;
         if (capabilityFilter === "video") return isVideo;
+        if (capabilityFilter === "3d") return is3D;
         return true;
       })
       .slice(0, 4); // Show max 4
@@ -635,6 +645,7 @@ export function ModelSearchDialog({
               <option value="all">All Types</option>
               <option value="image">Image</option>
               <option value="video">Video</option>
+              <option value="3d">3D</option>
             </select>
 
             {/* Refresh Cache */}
