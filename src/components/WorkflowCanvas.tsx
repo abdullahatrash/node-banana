@@ -29,6 +29,7 @@ import {
   GenerateImageNode,
   GenerateVideoNode,
   Generate3DNode,
+  GenerateAudioNode,
   LLMGenerateNode,
   SplitGridNode,
   OutputNode,
@@ -65,6 +66,7 @@ const nodeTypes: NodeTypes = {
   nanoBanana: GenerateImageNode,
   generateVideo: GenerateVideoNode,
   generate3d: Generate3DNode,
+  generateAudio: GenerateAudioNode,
   llmGenerate: LLMGenerateNode,
   splitGrid: SplitGridNode,
   output: OutputNode,
@@ -1095,6 +1097,7 @@ export function WorkflowCanvas() {
             nanoBanana: { width: 300, height: 300 },
             generateVideo: { width: 300, height: 300 },
             generate3d: { width: 300, height: 300 },
+            generateAudio: { width: 300, height: 280 },
             llmGenerate: { width: 320, height: 360 },
             splitGrid: { width: 300, height: 320 },
             output: { width: 320, height: 320 },
@@ -1672,6 +1675,8 @@ export function WorkflowCanvas() {
                 return "#9333ea";
               case "generate3d":
                 return "#fb923c";
+              case "generateAudio":
+                return "#d946ef"; // fuchsia-500 (audio/TTS)
               case "llmGenerate":
                 return "#06b6d4";
               case "splitGrid":

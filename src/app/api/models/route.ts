@@ -43,7 +43,7 @@ const REPLICATE_API_BASE = "https://api.replicate.com/v1";
 const FAL_API_BASE = "https://api.fal.ai/v1";
 const WAVESPEED_API_BASE = "https://api.wavespeed.ai/api/v3";
 
-// Categories we care about for image/video/3D generation (fal.ai)
+// Categories we care about for image/video/3D/audio generation (fal.ai)
 const RELEVANT_CATEGORIES = [
   "text-to-image",
   "image-to-image",
@@ -51,6 +51,7 @@ const RELEVANT_CATEGORIES = [
   "image-to-video",
   "text-to-3d",
   "image-to-3d",
+  "text-to-speech",
 ];
 
 // Kie.ai models (hardcoded - no discovery API available)
@@ -308,6 +309,37 @@ const KIE_MODELS: ProviderModel[] = [
     capabilities: ["image-to-video"],
     coverImage: undefined,
     pageUrl: "https://docs.kie.ai/veo3-api/quickstart",
+  },
+  // ============ Audio/TTS Models (3) ============
+  {
+    id: "elevenlabs/turbo-v2.5",
+    name: "ElevenLabs Turbo v2.5",
+    description: "Fast, high-quality text-to-speech with natural-sounding voices from ElevenLabs via Kie.ai.",
+    provider: "kie",
+    capabilities: ["text-to-audio"],
+    coverImage: undefined,
+    pricing: { type: "per-run", amount: 0.05, currency: "USD" },
+    pageUrl: "https://kie.ai/elevenlabs-tts",
+  },
+  {
+    id: "elevenlabs/multilingual-v2",
+    name: "ElevenLabs Multilingual v2",
+    description: "Multilingual text-to-speech supporting multiple languages with natural voices via Kie.ai.",
+    provider: "kie",
+    capabilities: ["text-to-audio"],
+    coverImage: undefined,
+    pricing: { type: "per-run", amount: 0.05, currency: "USD" },
+    pageUrl: "https://kie.ai/elevenlabs-tts",
+  },
+  {
+    id: "elevenlabs/text-to-dialogue-v3",
+    name: "ElevenLabs Eleven V3",
+    description: "ElevenLabs' most expressive text-to-speech model with emotional nuance, supporting 70+ languages and audio tags for dialogue via Kie.ai.",
+    provider: "kie",
+    capabilities: ["text-to-audio"],
+    coverImage: undefined,
+    pricing: { type: "per-run", amount: 0.06, currency: "USD" },
+    pageUrl: "https://kie.ai/elevenlabs/text-to-dialogue-v3",
   },
 ];
 
@@ -724,6 +756,9 @@ async function fetchWaveSpeedModels(apiKey: string): Promise<ProviderModel[]> {
 // ============ Fal.ai Helpers ============
 
 function mapFalCategory(category: string): ModelCapability | null {
+  if (category === "text-to-speech") {
+    return "text-to-audio";
+  }
   if (RELEVANT_CATEGORIES.includes(category)) {
     return category as ModelCapability;
   }
