@@ -153,6 +153,8 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         inputImages: [],
         inputPrompt: null,
         output3dUrl: null,
+        savedFilename: null,
+        savedFilePath: null,
         selectedModel: nodeDefaults.generate3d?.selectedModel,
         status: "idle",
         error: null,
