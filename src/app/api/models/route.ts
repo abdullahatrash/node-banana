@@ -802,15 +802,15 @@ async function fetchWaveSpeedModels(apiKey: string): Promise<ProviderModel[]> {
 
 // ============ Fal.ai Helpers ============
 
+const FAL_AUDIO_CATEGORIES: Record<string, ModelCapability> = {
+  "text-to-speech": "text-to-audio",
+  "text-to-music": "text-to-audio",
+  "text-to-sound-effects": "text-to-audio",
+};
+
 function mapFalCategory(category: string): ModelCapability | null {
-  if (category === "text-to-speech") {
-    return "text-to-audio";
-  }
-  if (category === "text-to-music") {
-    return "text-to-audio";
-  }
-  if (category === "text-to-sound-effects") {
-    return "text-to-audio";
+  if (category in FAL_AUDIO_CATEGORIES) {
+    return FAL_AUDIO_CATEGORIES[category];
   }
   if (RELEVANT_CATEGORIES.includes(category)) {
     return category as ModelCapability;
