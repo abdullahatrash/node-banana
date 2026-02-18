@@ -73,7 +73,6 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
     const handleTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
     };
-
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("timeupdate", handleTimeUpdate);
 
@@ -159,9 +158,10 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
     const height = canvas.height;
     if (width === 0 || height === 0) return;
 
-    const progress = nodeData.duration && currentTime > 0 ? currentTime / nodeData.duration : undefined;
+    const duration = audioRef.current?.duration;
+    const progress = duration && isFinite(duration) && currentTime > 0 ? currentTime / duration : undefined;
     drawWaveform(ctx, width, height, waveformData.peaks, progress);
-  }, [isPlaying, currentTime, nodeData.duration, waveformData, drawWaveform]);
+  }, [isPlaying, currentTime, waveformData, drawWaveform]);
 
   // Animation loop for smooth playback position updates
   useEffect(() => {
@@ -447,10 +447,10 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
 
               {/* Progress bar */}
               <div className="flex-1 h-1 bg-neutral-700 rounded-full overflow-hidden relative">
-                {nodeData.duration && (
+                {audioRef.current?.duration && isFinite(audioRef.current.duration) && (
                   <div
                     className="h-full bg-violet-500 transition-all"
-                    style={{ width: `${(currentTime / nodeData.duration) * 100}%` }}
+                    style={{ width: `${(currentTime / audioRef.current.duration) * 100}%` }}
                   />
                 )}
               </div>

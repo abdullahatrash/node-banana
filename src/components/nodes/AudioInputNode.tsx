@@ -52,7 +52,6 @@ export function AudioInputNode({ id, data, selected }: NodeProps<AudioInputNodeT
       const handleTimeUpdate = () => {
         setCurrentTime(audio.currentTime);
       };
-
       audio.addEventListener("ended", handleEnded);
       audio.addEventListener("timeupdate", handleTimeUpdate);
 
@@ -146,9 +145,10 @@ export function AudioInputNode({ id, data, selected }: NodeProps<AudioInputNodeT
     const height = canvas.height;
     if (width === 0 || height === 0) return;
 
-    const progress = nodeData.duration && currentTime > 0 ? currentTime / nodeData.duration : undefined;
+    const duration = audioRef.current?.duration;
+    const progress = duration && isFinite(duration) && currentTime > 0 ? currentTime / duration : undefined;
     drawWaveform(ctx, width, height, waveformData.peaks, progress);
-  }, [isPlaying, currentTime, nodeData.duration, waveformData, drawWaveform]);
+  }, [isPlaying, currentTime, waveformData, drawWaveform]);
 
   // Animation loop for smooth playback position updates
   useEffect(() => {
@@ -256,16 +256,16 @@ export function AudioInputNode({ id, data, selected }: NodeProps<AudioInputNodeT
   }, [isPlaying]);
 
   const handleSeek = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || !nodeData.duration || !waveformContainerRef.current) return;
+    if (!audioRef.current || !audioRef.current.duration || !isFinite(audioRef.current.duration) || !waveformContainerRef.current) return;
 
     const rect = waveformContainerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const progress = x / rect.width;
-    const newTime = progress * nodeData.duration;
+    const newTime = progress * audioRef.current.duration;
 
     audioRef.current.currentTime = newTime;
     setCurrentTime(newTime);
-  }, [nodeData.duration]);
+  }, []);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -347,10 +347,10 @@ export function AudioInputNode({ id, data, selected }: NodeProps<AudioInputNodeT
 
             {/* Progress bar / scrubber */}
             <div className="flex-1 h-1 bg-neutral-700 rounded-full overflow-hidden relative">
-              {nodeData.duration && (
+              {audioRef.current?.duration && isFinite(audioRef.current.duration) && (
                 <div
                   className="h-full bg-violet-500 transition-all"
-                  style={{ width: `${(currentTime / nodeData.duration) * 100}%` }}
+                  style={{ width: `${(currentTime / audioRef.current.duration) * 100}%` }}
                 />
               )}
             </div>
