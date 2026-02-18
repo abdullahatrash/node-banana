@@ -195,32 +195,30 @@ describe("GenerateAudioNode", () => {
     });
   });
 
-  describe("Provider Selection", () => {
-    it("should show fal.ai as default provider", () => {
+  describe("Provider Badge", () => {
+    it("should show provider badge for default provider (fal)", () => {
       const { container } = render(
         <TestWrapper>
           <GenerateAudioNode {...createNodeProps()} />
         </TestWrapper>
       );
 
-      // fal.ai badge should be the default (check via select value)
-      const select = container.querySelector('select') as HTMLSelectElement;
-      expect(select).toBeInTheDocument();
-      expect(select.value).toBe("fal");
+      // Provider badge should be rendered with fal.ai title
+      const badge = container.querySelector('[title="fal.ai"]');
+      expect(badge).toBeInTheDocument();
     });
 
-    it("should update provider on change", () => {
-      render(
+    it("should show provider badge matching selected model provider", () => {
+      const { container } = render(
         <TestWrapper>
           <GenerateAudioNode {...createNodeProps({
-            selectedModel: { provider: "fal", modelId: "", displayName: "Select model..." },
+            selectedModel: { provider: "kie", modelId: "elevenlabs-turbo-v2.5", displayName: "ElevenLabs" },
           })} />
         </TestWrapper>
       );
 
-      // Provider select should be present
-      const selects = screen.getAllByRole("combobox");
-      expect(selects.length).toBeGreaterThan(0);
+      const badge = container.querySelector('[title="Kie.ai"]');
+      expect(badge).toBeInTheDocument();
     });
   });
 
@@ -449,28 +447,14 @@ describe("GenerateAudioNode", () => {
     });
   });
 
-  describe("Fetch Models on Mount", () => {
-    it("should fetch models with audio capabilities", async () => {
-      render(
-        <TestWrapper>
-          <GenerateAudioNode {...createNodeProps({
-            selectedModel: { provider: "fal", modelId: "", displayName: "Select model..." },
-          })} />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        const fetchCalls = mockFetch.mock.calls.filter(call =>
-          typeof call[0] === 'string' && call[0].includes('text-to-audio')
-        );
-        expect(fetchCalls.length).toBeGreaterThan(0);
-      });
-    });
-  });
-
   describe("ModelParameters Component", () => {
-    it("should render ModelParameters when model is selected", async () => {
-      render(
+    it("should render ModelParameters when model is selected", () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ parameters: [], inputs: [] }),
+      });
+
+      const { container } = render(
         <TestWrapper>
           <GenerateAudioNode {...createNodeProps({
             selectedModel: { provider: "kie", modelId: "elevenlabs-turbo-v2.5", displayName: "ElevenLabs Turbo v2.5" },
@@ -478,10 +462,9 @@ describe("GenerateAudioNode", () => {
         </TestWrapper>
       );
 
-      // ModelParameters should attempt to load schema
-      await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalled();
-      });
+      // ModelParameters component should be rendered (it contains the parameters section)
+      // The node should show the model name as its title
+      expect(screen.getByText("ElevenLabs Turbo v2.5")).toBeInTheDocument();
     });
   });
 

@@ -3,17 +3,14 @@
 import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { Handle, Position, NodeProps, Node, useReactFlow } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
+import { ProviderBadge } from "./ProviderBadge";
 import { useCommentNavigation } from "@/hooks/useCommentNavigation";
 import { ModelParameters } from "./ModelParameters";
-import { useWorkflowStore, useProviderApiKeys } from "@/store/workflowStore";
-import { deduplicatedFetch } from "@/utils/deduplicatedFetch";
+import { useWorkflowStore } from "@/store/workflowStore";
 import { GenerateAudioNodeData, ProviderType, SelectedModel, ModelInputDef } from "@/types";
-import { ProviderModel, ModelCapability } from "@/lib/providers/types";
+import { ProviderModel } from "@/lib/providers/types";
 import { ModelSearchDialog } from "@/components/modals/ModelSearchDialog";
 import { useAudioVisualization } from "@/hooks/useAudioVisualization";
-
-// Audio generation capabilities
-const AUDIO_CAPABILITIES: ModelCapability[] = ["text-to-audio"];
 
 type GenerateAudioNodeType = Node<GenerateAudioNodeData, "generateAudio">;
 
@@ -21,11 +18,7 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
   const nodeData = data;
   const commentNavigation = useCommentNavigation(id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
-  const { replicateApiKey, falApiKey, kieApiKey, wavespeedApiKey, replicateEnabled, kieEnabled } = useProviderApiKeys();
   const generationsPath = useWorkflowStore((state) => state.generationsPath);
-  const [externalModels, setExternalModels] = useState<ProviderModel[]>([]);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const [modelsFetchError, setModelsFetchError] = useState<string | null>(null);
   const [isBrowseDialogOpen, setIsBrowseDialogOpen] = useState(false);
   const [isLoadingCarouselAudio, setIsLoadingCarouselAudio] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -36,26 +29,6 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
 
   // Get the current selected provider (default to fal)
   const currentProvider: ProviderType = nodeData.selectedModel?.provider || "fal";
-
-  // Get enabled providers
-  const enabledProviders = useMemo(() => {
-    const providers: { id: ProviderType; name: string }[] = [];
-    // fal.ai is always available
-    providers.push({ id: "fal", name: "fal.ai" });
-    // Add Replicate if configured
-    if (replicateEnabled && replicateApiKey) {
-      providers.push({ id: "replicate", name: "Replicate" });
-    }
-    // Add Kie.ai if configured
-    if (kieEnabled && kieApiKey) {
-      providers.push({ id: "kie", name: "Kie.ai" });
-    }
-    // Add WaveSpeed if configured (always check for key since enabled flag not in hook)
-    if (wavespeedApiKey) {
-      providers.push({ id: "wavespeed", name: "WaveSpeed" });
-    }
-    return providers;
-  }, [replicateEnabled, replicateApiKey, kieEnabled, kieApiKey, wavespeedApiKey]);
 
   // Convert base64 data URL to Blob for visualization
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -190,80 +163,6 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
       ctx.stroke();
     }
   }, [isPlaying, currentTime, nodeData.duration, waveformData, drawWaveform]);
-
-  // Fetch models from external providers
-  const fetchModels = useCallback(async () => {
-    setIsLoadingModels(true);
-    setModelsFetchError(null);
-    try {
-      const capabilities = AUDIO_CAPABILITIES.join(",");
-      const headers: HeadersInit = {};
-      if (replicateApiKey) {
-        headers["X-Replicate-Key"] = replicateApiKey;
-      }
-      if (falApiKey) {
-        headers["X-Fal-Key"] = falApiKey;
-      }
-      if (kieApiKey) {
-        headers["X-Kie-Key"] = kieApiKey;
-      }
-      if (wavespeedApiKey) {
-        headers["X-WaveSpeed-Key"] = wavespeedApiKey;
-      }
-      const response = await deduplicatedFetch(`/api/models?provider=${currentProvider}&capabilities=${capabilities}`, { headers });
-      if (response.ok) {
-        const data = await response.json();
-        setExternalModels(data.models || []);
-        setModelsFetchError(null);
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMsg = errorData.error || `Failed to load models (${response.status})`;
-        setExternalModels([]);
-        setModelsFetchError(errorMsg);
-      }
-    } catch (error) {
-      console.error("Failed to fetch audio models:", error);
-      setExternalModels([]);
-      setModelsFetchError("Failed to load models. Check your connection.");
-    } finally {
-      setIsLoadingModels(false);
-    }
-  }, [currentProvider, replicateApiKey, falApiKey, kieApiKey, wavespeedApiKey]);
-
-  useEffect(() => {
-    fetchModels();
-  }, [fetchModels]);
-
-  // Handle provider change
-  const handleProviderChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const provider = e.target.value as ProviderType;
-      const newSelectedModel: SelectedModel = {
-        provider,
-        modelId: "",
-        displayName: "Select model...",
-      };
-      updateNodeData(id, { selectedModel: newSelectedModel, parameters: {} });
-    },
-    [id, updateNodeData]
-  );
-
-  // Handle model change
-  const handleModelChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const modelId = e.target.value;
-      const model = externalModels.find(m => m.id === modelId);
-      if (model) {
-        const newSelectedModel: SelectedModel = {
-          provider: currentProvider,
-          modelId: model.id,
-          displayName: model.name,
-        };
-        updateNodeData(id, { selectedModel: newSelectedModel, parameters: {} });
-      }
-    },
-    [id, currentProvider, externalModels, updateNodeData]
-  );
 
   const handleClearAudio = useCallback(() => {
     if (audioRef.current) {
@@ -420,6 +319,21 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // Provider badge as title prefix
+  const titlePrefix = useMemo(() => (
+    <ProviderBadge provider={currentProvider} />
+  ), [currentProvider]);
+
+  // Header action element - browse button
+  const headerAction = useMemo(() => (
+    <button
+      onClick={() => setIsBrowseDialogOpen(true)}
+      className="nodrag nopan text-[10px] py-0.5 px-1.5 bg-neutral-700 hover:bg-neutral-600 border border-neutral-600 rounded text-neutral-300 transition-colors"
+    >
+      Browse
+    </button>
+  ), []);
+
   // Dynamic handles based on inputSchema
   const dynamicHandles = useMemo(() => {
     if (!nodeData.inputSchema || nodeData.inputSchema.length === 0) return null;
@@ -448,6 +362,8 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
       <BaseNode
         id={id}
         title={displayTitle}
+        titlePrefix={titlePrefix}
+        headerAction={headerAction}
         customTitle={nodeData.customTitle}
         comment={nodeData.comment}
         onCustomTitleChange={(title) => updateNodeData(id, { customTitle: title || undefined })}
@@ -457,50 +373,6 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
         minWidth={300}
         minHeight={250}
       >
-        {/* Provider and model selection */}
-        <div className="flex flex-col gap-2 mb-2">
-          <div className="flex gap-2">
-            <select
-              value={currentProvider}
-              onChange={handleProviderChange}
-              className="flex-1 px-2 py-1 text-xs bg-neutral-800 border border-neutral-700 rounded"
-            >
-              {enabledProviders.map(provider => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.name}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => setIsBrowseDialogOpen(true)}
-              className="px-2 py-1 text-xs bg-violet-600 hover:bg-violet-500 rounded transition-colors"
-              title="Browse all models"
-            >
-              Browse
-            </button>
-          </div>
-
-          {isLoadingModels ? (
-            <div className="text-xs text-neutral-500">Loading models...</div>
-          ) : modelsFetchError ? (
-            <div className="text-xs text-red-400">{modelsFetchError}</div>
-          ) : (
-            <select
-              value={nodeData.selectedModel?.modelId || ""}
-              onChange={handleModelChange}
-              className="w-full px-2 py-1 text-xs bg-neutral-800 border border-neutral-700 rounded"
-              disabled={externalModels.length === 0}
-            >
-              <option value="">Select model...</option>
-              {externalModels.map(model => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-
         {/* Model parameters */}
         {nodeData.selectedModel?.modelId && (
           <ModelParameters
