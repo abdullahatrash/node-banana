@@ -1101,6 +1101,9 @@ export function WorkflowCanvas() {
           case "a":
             nodeType = "annotation";
             break;
+          case "t":
+            nodeType = "generateAudio";
+            break;
         }
 
         if (nodeType) {
