@@ -280,6 +280,8 @@ export async function generateWithReplicate(
   // Determine MIME type from response
   const contentType = mediaResponse.headers.get("content-type") || "image/png";
   const isVideo = contentType.startsWith("video/");
+  const isAudio = contentType.startsWith("audio/") ||
+    input.model.capabilities.some(c => c.includes("audio"));
 
   const mediaArrayBuffer = await mediaResponse.arrayBuffer();
   const mediaSizeBytes = mediaArrayBuffer.byteLength;
@@ -303,6 +305,22 @@ export async function generateWithReplicate(
   }
 
   const mediaBase64 = Buffer.from(mediaArrayBuffer).toString("base64");
+
+  if (isAudio) {
+    const audioContentType = contentType.startsWith("audio/") ? contentType : "audio/mpeg";
+    console.log(`[API:${requestId}] SUCCESS - Returning audio`);
+    return {
+      success: true,
+      outputs: [
+        {
+          type: "audio",
+          data: `data:${audioContentType};base64,${mediaBase64}`,
+          url: mediaUrl,
+        },
+      ],
+    };
+  }
+
   console.log(`[API:${requestId}] SUCCESS - Returning ${isVideo ? "video" : "image"}`);
 
   return {

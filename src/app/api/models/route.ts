@@ -491,6 +491,23 @@ function inferReplicateCapabilities(model: ReplicateModel): ModelCapability[] {
     return capabilities;
   }
 
+  // Check for audio-related keywords
+  const isAudioModel =
+    searchText.includes("music") ||
+    searchText.includes("audio") ||
+    searchText.includes("tts") ||
+    searchText.includes("text-to-speech") ||
+    searchText.includes("speech") ||
+    searchText.includes("sound effect") ||
+    searchText.includes("voice") ||
+    searchText.includes("bark") ||
+    searchText.includes("xtts");
+
+  if (isAudioModel) {
+    capabilities.push("text-to-audio");
+    return capabilities;
+  }
+
   // Check for video-related keywords
   const isVideoModel =
     searchText.includes("video") ||
@@ -648,6 +665,24 @@ function inferWaveSpeedCapabilities(model: WaveSpeedModel): ModelCapability[] {
     } else {
       capabilities.push("text-to-3d");
     }
+    return capabilities;
+  }
+
+  // Check for audio-related keywords
+  const isAudioModel =
+    searchText.includes("music") ||
+    searchText.includes("audio") ||
+    searchText.includes("tts") ||
+    searchText.includes("text-to-speech") ||
+    searchText.includes("speech") ||
+    searchText.includes("sound effect") ||
+    searchText.includes("voice") ||
+    category.includes("audio") ||
+    category.includes("music") ||
+    category.includes("speech");
+
+  if (isAudioModel) {
+    capabilities.push("text-to-audio");
     return capabilities;
   }
 
