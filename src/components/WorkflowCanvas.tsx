@@ -1127,6 +1127,7 @@ export function WorkflowCanvas() {
             imageCompare: { width: 400, height: 360 },
             videoStitch: { width: 400, height: 280 },
             easeCurve: { width: 340, height: 480 },
+            videoTrim: { width: 360, height: 360 },
             glbViewer: { width: 360, height: 380 },
           };
           const dims = defaultDimensions[nodeType];

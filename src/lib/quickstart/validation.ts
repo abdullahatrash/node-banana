@@ -44,6 +44,7 @@ const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = 
   imageCompare: { width: 400, height: 360 },
   videoStitch: { width: 400, height: 280 },
   easeCurve: { width: 340, height: 480 },
+  videoTrim: { width: 360, height: 360 },
   glbViewer: { width: 360, height: 380 },
 };
 
@@ -337,6 +338,17 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
         easingPreset: "easeInOutSine",
         inheritedFrom: null,
         outputDuration: 1.5,
+        outputVideo: null,
+        status: "idle",
+        error: null,
+        progress: 0,
+        encoderSupported: null,
+      };
+    case "videoTrim":
+      return {
+        startTime: 0,
+        endTime: 0,
+        duration: null,
         outputVideo: null,
         status: "idle",
         error: null,

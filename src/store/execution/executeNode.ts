@@ -21,7 +21,7 @@ import { executeGenerateVideo } from "./generateVideoExecutor";
 import { executeGenerate3D } from "./generate3dExecutor";
 import { executeLlmGenerate } from "./llmGenerateExecutor";
 import { executeSplitGrid } from "./splitGridExecutor";
-import { executeVideoStitch, executeEaseCurve } from "./videoProcessingExecutors";
+import { executeVideoStitch, executeEaseCurve, executeVideoTrim } from "./videoProcessingExecutors";
 
 export interface ExecuteNodeOptions {
   /** When true, executors that support it will fall back to stored inputs. */
@@ -89,6 +89,9 @@ export async function executeNode(
       break;
     case "easeCurve":
       await executeEaseCurve(ctx);
+      break;
+    case "videoTrim":
+      await executeVideoTrim(ctx);
       break;
     case "glbViewer":
       await executeGlbViewer(ctx);

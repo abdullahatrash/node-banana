@@ -17,6 +17,7 @@ import {
   GenerateAudioNodeData,
   VideoStitchNodeData,
   EaseCurveNodeData,
+  VideoTrimNodeData,
   PromptNodeData,
   PromptConstructorNodeData,
   LLMGenerateNodeData,
@@ -76,6 +77,8 @@ function getSourceOutput(sourceNode: WorkflowNode): { type: "image" | "text" | "
     return { type: "video", value: (sourceNode.data as VideoStitchNodeData).outputVideo };
   } else if (sourceNode.type === "easeCurve") {
     return { type: "video", value: (sourceNode.data as EaseCurveNodeData).outputVideo };
+  } else if (sourceNode.type === "videoTrim") {
+    return { type: "video", value: (sourceNode.data as VideoTrimNodeData).outputVideo };
   } else if (sourceNode.type === "prompt") {
     return { type: "text", value: (sourceNode.data as PromptNodeData).prompt };
   } else if (sourceNode.type === "promptConstructor") {

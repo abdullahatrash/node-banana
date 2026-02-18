@@ -5,7 +5,7 @@
  * Used by both executeWorkflow and regenerateNode.
  */
 
-import type { VideoStitchNodeData, EaseCurveNodeData } from "@/types";
+import type { VideoStitchNodeData, EaseCurveNodeData, VideoTrimNodeData } from "@/types";
 import { revokeBlobUrl } from "@/store/utils/executionUtils";
 import type { NodeExecutionContext } from "./types";
 
@@ -106,6 +106,102 @@ export async function executeVideoStitch(ctx: NodeExecutionContext): Promise<voi
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "Stitch failed";
+    updateNodeData(node.id, {
+      status: "error",
+      error: errorMessage,
+      progress: 0,
+    });
+    throw err instanceof Error ? err : new Error(errorMessage);
+  }
+}
+
+/**
+ * VideoTrim: trims a video clip to a user-defined start/end time range with audio preservation.
+ */
+export async function executeVideoTrim(ctx: NodeExecutionContext): Promise<void> {
+  const { node, getConnectedInputs, updateNodeData, getNodes } = ctx;
+  const nodeData = node.data as VideoTrimNodeData;
+
+  if (nodeData.encoderSupported === false) {
+    updateNodeData(node.id, {
+      status: "error",
+      error: "Browser does not support video encoding",
+      progress: 0,
+    });
+    throw new Error("Browser does not support video encoding");
+  }
+
+  updateNodeData(node.id, { status: "loading", progress: 0, error: null });
+
+  try {
+    const inputs = getConnectedInputs(node.id);
+
+    if (inputs.videos.length === 0) {
+      updateNodeData(node.id, {
+        status: "error",
+        error: "Connect a video input to trim",
+        progress: 0,
+      });
+      throw new Error("Connect a video input to trim");
+    }
+
+    const videoUrl = inputs.videos[0];
+    const videoBlob = await fetch(videoUrl).then((r) => r.blob());
+
+    // Get fresh node data for current slider values
+    const freshNodeData = getNodes().find((n) => n.id === node.id)?.data as VideoTrimNodeData | undefined;
+    const startTime = freshNodeData?.startTime ?? nodeData.startTime;
+    const endTime = freshNodeData?.endTime ?? nodeData.endTime;
+
+    if (endTime <= 0 || startTime >= endTime) {
+      updateNodeData(node.id, {
+        status: "error",
+        error: "Set valid start/end trim times",
+        progress: 0,
+      });
+      throw new Error("Set valid start/end trim times");
+    }
+
+    const { trimVideoAsync } = await import("@/hooks/useTrimVideo");
+    const outputBlob = await trimVideoAsync(
+      videoBlob,
+      startTime,
+      endTime,
+      (progress) => {
+        updateNodeData(node.id, { progress: progress.progress });
+      }
+    );
+
+    // Revoke old blob URL before replacing
+    const oldData = getNodes().find((n) => n.id === node.id)?.data as
+      | Record<string, unknown>
+      | undefined;
+    const oldOutputVideo = oldData?.outputVideo as string | undefined;
+    if (oldOutputVideo && oldOutputVideo.startsWith("blob:")) {
+      URL.revokeObjectURL(oldOutputVideo);
+    }
+
+    let outputVideo: string;
+    if (outputBlob.size > 20 * 1024 * 1024) {
+      outputVideo = URL.createObjectURL(outputBlob);
+    } else {
+      const reader = new FileReader();
+      outputVideo = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("FileReader error while reading trimmed video"));
+        reader.onabort = () => reject(new Error("FileReader aborted while reading trimmed video"));
+        reader.readAsDataURL(outputBlob);
+      });
+    }
+
+    updateNodeData(node.id, {
+      outputVideo,
+      status: "complete",
+      progress: 100,
+      error: null,
+    });
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : "Video trim failed";
     updateNodeData(node.id, {
       status: "error",
       error: errorMessage,

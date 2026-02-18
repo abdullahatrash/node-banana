@@ -15,6 +15,7 @@ import {
   OutputGalleryNodeData,
   ImageCompareNodeData,
   EaseCurveNodeData,
+  VideoTrimNodeData,
   GLBViewerNodeData,
   WorkflowNodeData,
   GroupColor,
@@ -43,6 +44,7 @@ export const defaultNodeDimensions: Record<NodeType, { width: number; height: nu
   imageCompare: { width: 400, height: 360 },
   videoStitch: { width: 400, height: 280 },
   easeCurve: { width: 340, height: 480 },
+  videoTrim: { width: 360, height: 360 },
   glbViewer: { width: 360, height: 380 },
 };
 
@@ -246,6 +248,17 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         progress: 0,
         encoderSupported: null,
       } as EaseCurveNodeData;
+    case "videoTrim":
+      return {
+        startTime: 0,
+        endTime: 0,
+        duration: null,
+        outputVideo: null,
+        status: "idle",
+        error: null,
+        progress: 0,
+        encoderSupported: null,
+      } as VideoTrimNodeData;
     case "glbViewer":
       return {
         glbUrl: null,
