@@ -52,6 +52,8 @@ const RELEVANT_CATEGORIES = [
   "text-to-3d",
   "image-to-3d",
   "text-to-speech",
+  "text-to-music",
+  "text-to-sound-effects",
 ];
 
 // Kie.ai models (hardcoded - no discovery API available)
@@ -310,7 +312,7 @@ const KIE_MODELS: ProviderModel[] = [
     coverImage: undefined,
     pageUrl: "https://docs.kie.ai/veo3-api/quickstart",
   },
-  // ============ Audio/TTS Models (3) ============
+  // ============ Audio/TTS Models (4) ============
   {
     id: "elevenlabs/turbo-v2.5",
     name: "ElevenLabs Turbo v2.5",
@@ -340,6 +342,16 @@ const KIE_MODELS: ProviderModel[] = [
     coverImage: undefined,
     pricing: { type: "per-run", amount: 0.06, currency: "USD" },
     pageUrl: "https://kie.ai/elevenlabs/text-to-dialogue-v3",
+  },
+  {
+    id: "elevenlabs/sound-effect-v2",
+    name: "ElevenLabs Sound Effects v2",
+    description: "Generate sound effects from text descriptions. Supports looping, 0.5-22 second duration, and multiple output formats via Kie.ai.",
+    provider: "kie",
+    capabilities: ["text-to-audio"],
+    coverImage: undefined,
+    pricing: { type: "per-run", amount: 0.02, currency: "USD" },
+    pageUrl: "https://kie.ai/elevenlabs-sound-effect",
   },
 ];
 
@@ -757,6 +769,12 @@ async function fetchWaveSpeedModels(apiKey: string): Promise<ProviderModel[]> {
 
 function mapFalCategory(category: string): ModelCapability | null {
   if (category === "text-to-speech") {
+    return "text-to-audio";
+  }
+  if (category === "text-to-music") {
+    return "text-to-audio";
+  }
+  if (category === "text-to-sound-effects") {
     return "text-to-audio";
   }
   if (RELEVANT_CATEGORIES.includes(category)) {
