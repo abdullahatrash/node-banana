@@ -18,6 +18,7 @@ import {
   VideoStitchNodeData,
   EaseCurveNodeData,
   VideoTrimNodeData,
+  VideoFrameGrabNodeData,
   PromptNodeData,
   PromptConstructorNodeData,
   LLMGenerateNodeData,
@@ -86,6 +87,8 @@ function getSourceOutput(sourceNode: WorkflowNode): { type: "image" | "text" | "
     return { type: "text", value: pcData.outputText ?? pcData.template ?? null };
   } else if (sourceNode.type === "llmGenerate") {
     return { type: "text", value: (sourceNode.data as LLMGenerateNodeData).outputText };
+  } else if (sourceNode.type === "videoFrameGrab") {
+    return { type: "image", value: (sourceNode.data as VideoFrameGrabNodeData).outputImage };
   } else if (sourceNode.type === "glbViewer") {
     return { type: "image", value: (sourceNode.data as GLBViewerNodeData).capturedImage };
   }

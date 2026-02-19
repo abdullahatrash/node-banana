@@ -39,6 +39,7 @@ export type NodeType =
   | "videoStitch"
   | "easeCurve"
   | "videoTrim"
+  | "videoFrameGrab"
   | "generate3d"
   | "glbViewer";
 
@@ -320,6 +321,16 @@ export interface VideoTrimNodeData extends BaseNodeData {
 }
 
 /**
+ * Video Frame Grab node - extracts the first or last frame from a video as a full-resolution PNG image
+ */
+export interface VideoFrameGrabNodeData extends BaseNodeData {
+  framePosition: "first" | "last";   // Which frame to extract
+  outputImage: string | null;        // Extracted frame as base64 PNG data URL
+  status: NodeStatus;
+  error: string | null;
+}
+
+/**
  * Split Grid node - splits image into grid cells for parallel processing
  */
 export interface SplitGridNodeData extends BaseNodeData {
@@ -375,6 +386,7 @@ export type WorkflowNodeData =
   | VideoStitchNodeData
   | EaseCurveNodeData
   | VideoTrimNodeData
+  | VideoFrameGrabNodeData
   | GLBViewerNodeData;
 
 /**

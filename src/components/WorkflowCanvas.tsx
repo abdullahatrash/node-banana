@@ -1136,6 +1136,7 @@ export function WorkflowCanvas() {
             videoStitch: { width: 400, height: 280 },
             easeCurve: { width: 340, height: 480 },
             videoTrim: { width: 360, height: 360 },
+            videoFrameGrab: { width: 320, height: 320 },
             glbViewer: { width: 360, height: 380 },
           };
           const dims = defaultDimensions[nodeType];
