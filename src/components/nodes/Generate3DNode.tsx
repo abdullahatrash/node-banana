@@ -334,15 +334,23 @@ export function Generate3DNode({ id, data, selected }: NodeProps<Generate3DNodeT
               <button
                 onClick={async (e) => {
                   e.stopPropagation();
-                  if (!nodeData.savedFilePath) return;
+                  if (!nodeData.savedFilePath) {
+                    useToast.getState().show("No file path available", "error");
+                    return;
+                  }
                   try {
-                    await fetch("/api/open-file", {
+                    const res = await fetch("/api/open-file", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ filePath: nodeData.savedFilePath }),
                     });
+                    if (!res.ok) {
+                      const detail = await res.text().catch(() => `Status ${res.status}`);
+                      useToast.getState().show("Failed to open file", "error", true, detail);
+                    }
                   } catch (err) {
                     console.error("Failed to open file location:", err);
+                    useToast.getState().show("Failed to open file location", "error");
                   }
                 }}
                 className="nodrag nopan text-[10px] text-neutral-400 hover:text-orange-300 truncate max-w-full cursor-pointer transition-colors flex items-center gap-1"

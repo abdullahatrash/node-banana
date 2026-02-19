@@ -372,7 +372,14 @@ export async function executeVideoFrameGrab(ctx: NodeExecutionContext): Promise<
     let blobUrl: string | null = null;
 
     try {
+    const FRAME_EXTRACTION_TIMEOUT = 30_000; // 30 seconds
     const outputImage = await new Promise<string>((resolve, reject) => {
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+      const cleanup = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+      };
+
       video.onloadedmetadata = () => {
         // For "first" frame, seek to 0.001 (not exactly 0 to ensure a decoded frame)
         // For "last" frame, seek to duration - small epsilon
@@ -380,9 +387,15 @@ export async function executeVideoFrameGrab(ctx: NodeExecutionContext): Promise<
           ? 0.001
           : Math.max(0, video.duration - 0.1);
         video.currentTime = seekTime;
+
+        timeoutId = setTimeout(() => {
+          if (blobUrl) URL.revokeObjectURL(blobUrl);
+          reject(new Error("Frame extraction timed out"));
+        }, FRAME_EXTRACTION_TIMEOUT);
       };
 
       video.onseeked = () => {
+        cleanup();
         try {
           const canvas = document.createElement("canvas");
           canvas.width = video.videoWidth;
@@ -401,6 +414,7 @@ export async function executeVideoFrameGrab(ctx: NodeExecutionContext): Promise<
       };
 
       video.onerror = () => {
+        cleanup();
         reject(new Error("Failed to load video for frame extraction"));
       };
 

@@ -812,11 +812,13 @@ export async function generateWithKie(
 
   const rawContentType = mediaResponse.headers.get("content-type") || "";
   const isConcreteMedia = rawContentType.startsWith("audio/") || rawContentType.startsWith("video/") || rawContentType.startsWith("image/");
-  // Content-type wins; fall back to URL/capability detection only when ambiguous
+  // Content-type wins over URL-based detection; reset opposite flag to avoid conflicts
   if (rawContentType.startsWith("video/")) {
     isVideo = true;
+    isAudio = false;
   } else if (rawContentType.startsWith("audio/")) {
     isAudio = true;
+    isVideo = false;
   } else if (!isConcreteMedia && !isVideo && !isAudio && isAudioModel) {
     isAudio = true;
   }

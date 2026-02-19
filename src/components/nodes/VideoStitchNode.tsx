@@ -169,7 +169,8 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
 
           const canvas = document.createElement("canvas");
           const thumbWidth = 160;
-          const aspectRatio = video.videoWidth / video.videoHeight || 16 / 9;
+          const rawAspectRatio = video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 0;
+          const aspectRatio = Number.isFinite(rawAspectRatio) && rawAspectRatio > 0 ? rawAspectRatio : 16 / 9;
           canvas.width = thumbWidth;
           canvas.height = Math.round(thumbWidth / aspectRatio);
           const ctx = canvas.getContext("2d");

@@ -169,6 +169,15 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Sanitize imageId to prevent path traversal
+    const safeImageId = path.basename(imageId);
+    if (safeImageId !== imageId || imageId.includes('..')) {
+      return NextResponse.json(
+        { success: false, error: "Invalid imageId" },
+        { status: 400 }
+      );
+    }
+
     // Validate workflow directory exists
     try {
       const stats = await fs.stat(workflowPath);
@@ -202,7 +211,7 @@ export async function GET(request: NextRequest) {
     // Check each folder and extension combination in order
     for (const searchFolder of searchOrder) {
       for (const ext of possibleExtensions) {
-        const filename = `${imageId}.${ext}`;
+        const filename = `${safeImageId}.${ext}`;
         const candidatePath = path.join(searchFolder, filename);
         try {
           await fs.access(candidatePath);

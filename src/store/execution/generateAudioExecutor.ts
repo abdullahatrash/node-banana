@@ -73,7 +73,7 @@ export async function executeGenerateAudio(
   }
 
   updateNodeData(node.id, {
-    inputPrompt: text,
+    inputPrompt: text ?? nodeData.inputPrompt,
     status: "loading",
     error: null,
   });

@@ -531,9 +531,12 @@ export async function generateWithFalQueue(
         };
       }
 
-      // For audio models, always base64 encode (audio files are small)
-      if (isAudioModel) {
-        const audioContentType = mediaResponse.headers.get("content-type") || "audio/mpeg";
+      // Detect actual media type from response content-type, falling back to model hints
+      const rawContentType = mediaResponse.headers.get("content-type") || "";
+      const isAudioResponse = rawContentType.startsWith("audio/") || (!rawContentType.startsWith("video/") && !rawContentType.startsWith("image/") && isAudioModel);
+
+      if (isAudioResponse) {
+        const audioContentType = rawContentType.startsWith("audio/") ? rawContentType : "audio/mpeg";
         const audioBuffer = await mediaResponse.arrayBuffer();
         const audioBase64 = Buffer.from(audioBuffer).toString("base64");
         console.log(`[API:${requestId}] SUCCESS - Returning audio`);
@@ -547,7 +550,7 @@ export async function generateWithFalQueue(
         };
       }
 
-      const contentType = mediaResponse.headers.get("content-type") || (isVideoModel ? "video/mp4" : "image/png");
+      const contentType = rawContentType || (isVideoModel ? "video/mp4" : "image/png");
       const isVideo = contentType.startsWith("video/");
 
       const mediaArrayBuffer = await mediaResponse.arrayBuffer();

@@ -261,6 +261,7 @@ export async function stitchVideosAsync(
     await output.start();
     outputStarted = true;
 
+    try {
     // Feed audio early so the muxer can interleave audio packets with video frames.
     // Writing audio after all video causes broken interleaving (Discord won't play audio).
     if (audioSource && pendingAudioBuffer) {
@@ -273,7 +274,6 @@ export async function stitchVideosAsync(
       pendingAudioBuffer = null;
     }
 
-    try {
     // Track the highest timestamp we've written to ensure monotonicity
     // Start at -frameInterval so first frame can be at timestamp 0
     const frameInterval = 1 / MAX_OUTPUT_FPS;
