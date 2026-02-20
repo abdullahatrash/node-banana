@@ -132,6 +132,14 @@ export async function executeGenerate3D(
           }),
         })
           .then((res) => res.json())
+          .then((saveResult) => {
+            if (saveResult.success && saveResult.filename) {
+              updateNodeData(node.id, {
+                savedFilename: saveResult.filename,
+                savedFilePath: saveResult.filePath,
+              });
+            }
+          })
           .catch((err) => {
             console.error("Failed to save 3D model:", err);
           });

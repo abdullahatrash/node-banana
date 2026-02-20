@@ -16,6 +16,16 @@ function getExtensionFromMime(mimeType: string): string {
     "video/webm": "webm",
     "video/quicktime": "mov",
     "model/gltf-binary": "glb",
+    "model/gltf+json": "gltf",
+    "model/obj": "obj",
+    "model/vnd.usdz+zip": "usdz",
+    "model/fbx": "fbx",
+    "model/stl": "stl",
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "audio/ogg": "ogg",
+    "audio/flac": "flac",
+    "audio/aac": "aac",
   };
 
   // Check explicit mapping first
@@ -33,6 +43,9 @@ function getExtensionFromMime(mimeType: string): string {
   if (mimeType.startsWith("model/")) {
     return "glb";
   }
+  if (mimeType.startsWith("audio/")) {
+    return "mp3";
+  }
 
   // Unknown type - use generic binary extension
   return "bin";
@@ -41,6 +54,25 @@ function getExtensionFromMime(mimeType: string): string {
 // Helper to detect if a string is an HTTP URL
 function isHttpUrl(str: string): boolean {
   return str.startsWith("http://") || str.startsWith("https://");
+}
+
+// Known file extensions for 3D models and common media
+const KNOWN_3D_EXTENSIONS = new Set(["glb", "gltf", "obj", "fbx", "usdz", "stl", "ply"]);
+const KNOWN_MEDIA_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "webm", "mov"]);
+
+// Helper to extract a recognized file extension from a URL pathname
+export function getExtensionFromUrl(url: string): string | null {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    const lastDot = pathname.lastIndexOf(".");
+    if (lastDot === -1 || lastDot === pathname.length - 1) return null;
+    const ext = pathname.substring(lastDot + 1).toLowerCase();
+    if (KNOWN_3D_EXTENSIONS.has(ext) || KNOWN_MEDIA_EXTENSIONS.has(ext)) return ext;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // Helper to compute MD5 hash of buffer content
@@ -74,6 +106,7 @@ export async function POST(request: NextRequest) {
     const image = body.image;
     const video = body.video;
     const model3d = body.model3d;
+    const audio = body.audio;
     const prompt = body.prompt;
     const imageId = body.imageId; // Optional ID for carousel support
     const customFilename = body.customFilename; // Optional custom filename (without extension)
@@ -81,13 +114,15 @@ export async function POST(request: NextRequest) {
 
     const isVideo = !!video;
     const isModel = !!model3d;
-    const content = video || model3d || image;
+    const isAudio = !!audio;
+    const content = video || model3d || audio || image;
 
     logger.info('file.save', 'Generation auto-save request received', {
       directoryPath,
       hasImage: !!image,
       hasVideo: !!video,
       hasModel3d: !!model3d,
+      hasAudio: !!audio,
       prompt,
       customFilename,
     });
@@ -173,10 +208,18 @@ export async function POST(request: NextRequest) {
         }
 
         const rawSaveContentType = response.headers.get("content-type");
-        const contentType = (rawSaveContentType && (rawSaveContentType.startsWith("video/") || rawSaveContentType.startsWith("image/") || rawSaveContentType.startsWith("model/")))
-          ? rawSaveContentType
-          : (isModel ? "model/gltf-binary" : isVideo ? "video/mp4" : "image/png");
-        extension = getExtensionFromMime(contentType);
+
+        // For 3D models, try extracting extension from URL first (most reliable with CDN URLs)
+        const urlExtension = isModel ? getExtensionFromUrl(content) : null;
+
+        if (urlExtension) {
+          extension = urlExtension;
+        } else {
+          const contentType = (rawSaveContentType && (rawSaveContentType.startsWith("video/") || rawSaveContentType.startsWith("image/") || rawSaveContentType.startsWith("model/") || rawSaveContentType.startsWith("audio/")))
+            ? rawSaveContentType
+            : (isModel ? "model/gltf-binary" : isAudio ? "audio/mpeg" : isVideo ? "video/mp4" : "image/png");
+          extension = getExtensionFromMime(contentType);
+        }
 
         const arrayBuffer = await response.arrayBuffer();
 
@@ -203,14 +246,18 @@ export async function POST(request: NextRequest) {
         buffer = Buffer.from(base64Data, "base64");
       } else {
         // Fallback: assume it's raw base64 without data URL prefix
-        extension = isVideo ? "mp4" : "png";
+        extension = isAudio ? "mp3" : isVideo ? "mp4" : "png";
         buffer = Buffer.from(content, "base64");
       }
     }
 
     // Safety net: if extension resolved to "bin" but we know the media type, use correct extension
     if (extension === "bin") {
-      extension = isModel ? "glb" : isVideo ? "mp4" : "png";
+      if (isModel && isHttpUrl(content)) {
+        extension = getExtensionFromUrl(content) || "glb";
+      } else {
+        extension = isModel ? "glb" : isAudio ? "mp3" : isVideo ? "mp4" : "png";
+      }
     }
 
     // Compute content hash for deduplication
@@ -266,6 +313,7 @@ export async function POST(request: NextRequest) {
       fileSize: buffer.length,
       isVideo,
       isModel,
+      isAudio,
       contentHash,
     });
 

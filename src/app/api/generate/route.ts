@@ -12,7 +12,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { GenerateRequest, GenerateResponse, ModelType, SelectedModel, ProviderType } from "@/types";
-import { GenerationInput } from "@/lib/providers/types";
+import { GenerationInput, ModelCapability } from "@/lib/providers/types";
 import { generateWithGemini } from "./providers/gemini";
 import { generateWithReplicate } from "./providers/replicate";
 import { clearFalInputMappingCache as _clearFalInputMappingCache, generateWithFalQueue } from "./providers/fal";
@@ -36,6 +36,51 @@ interface MultiProviderGenerateRequest extends GenerateRequest {
   dynamicInputs?: Record<string, string | string[]>;
 }
 
+
+function buildMediaResponse(output: { type: string; data: string; url?: string }): NextResponse {
+  if (output.type === "3d") {
+    return NextResponse.json<GenerateResponse>({
+      success: true,
+      model3dUrl: output.url,
+      contentType: "3d",
+    });
+  }
+
+  if (output.type === "video") {
+    const isLarge = !output.data && output.url;
+    return NextResponse.json<GenerateResponse>({
+      success: true,
+      video: isLarge ? undefined : output.data,
+      videoUrl: isLarge ? output.url : undefined,
+      contentType: "video",
+    });
+  }
+
+  if (output.type === "audio") {
+    const isLarge = !output.data && output.url;
+    return NextResponse.json<GenerateResponse>({
+      success: true,
+      audio: isLarge ? undefined : output.data,
+      audioUrl: isLarge ? output.url : undefined,
+      contentType: "audio",
+    });
+  }
+
+  return NextResponse.json<GenerateResponse>({
+    success: true,
+    image: output.data,
+    contentType: "image",
+  });
+}
+
+function capabilitiesForMediaType(mediaType?: string): ModelCapability[] {
+  const map: Record<string, ModelCapability[]> = {
+    audio: ["text-to-audio"],
+    video: ["text-to-video"],
+    "3d": ["text-to-3d"],
+  };
+  return map[mediaType ?? ""] ?? ["text-to-image"];
+}
 
 export async function POST(request: NextRequest) {
   const requestId = Math.random().toString(36).substring(7);
@@ -86,6 +131,13 @@ export async function POST(request: NextRequest) {
 
     // Route to appropriate provider
     if (provider === "replicate") {
+      if (!selectedModel?.modelId || !selectedModel?.displayName) {
+        return NextResponse.json<GenerateResponse>(
+          { success: false, error: "selectedModel with modelId and displayName is required for Replicate" },
+          { status: 400 }
+        );
+      }
+
       // User-provided key takes precedence over env variable
       const replicateApiKey = request.headers.get("X-Replicate-API-Key") || process.env.REPLICATE_API_KEY;
       if (!replicateApiKey) {
@@ -122,10 +174,10 @@ export async function POST(request: NextRequest) {
       // Build generation input
       const genInput: GenerationInput = {
         model: {
-          id: selectedModel!.modelId,
-          name: selectedModel!.displayName,
+          id: selectedModel.modelId,
+          name: selectedModel.displayName,
           provider: "replicate",
-          capabilities: mediaType === "video" ? ["text-to-video"] : mediaType === "3d" ? ["text-to-3d"] : ["text-to-image"],
+          capabilities: capabilitiesForMediaType(mediaType),
           description: null,
         },
         prompt: prompt || "",
@@ -146,46 +198,26 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Return first output (image or video)
+      // Return first output
       const output = result.outputs?.[0];
       if (!output?.data && !output?.url) {
         return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: "No output in generation result",
-          },
+          { success: false, error: "No output in generation result" },
           { status: 500 }
         );
       }
 
-      // Return appropriate fields based on output type
-      if (output.type === "3d") {
-        return NextResponse.json<GenerateResponse>({
-          success: true,
-          model3dUrl: output.url,
-          contentType: "3d",
-        });
-      }
-
-      if (output.type === "video") {
-        // Large videos have data="" with url set; normal videos have base64 data
-        const isLargeVideo = !output.data && output.url;
-        return NextResponse.json<GenerateResponse>({
-          success: true,
-          video: isLargeVideo ? undefined : output.data,
-          videoUrl: isLargeVideo ? output.url : undefined,
-          contentType: "video",
-        });
-      }
-
-      return NextResponse.json<GenerateResponse>({
-        success: true,
-        image: output.data,
-        contentType: "image",
-      });
+      return buildMediaResponse(output);
     }
 
     if (provider === "fal") {
+      if (!selectedModel?.modelId || !selectedModel?.displayName) {
+        return NextResponse.json<GenerateResponse>(
+          { success: false, error: "selectedModel with modelId and displayName is required for fal.ai" },
+          { status: 400 }
+        );
+      }
+
       // User-provided key takes precedence over env variable
       const falApiKey = request.headers.get("X-Fal-API-Key") || process.env.FAL_API_KEY || null;
 
@@ -217,10 +249,10 @@ export async function POST(request: NextRequest) {
       // Build generation input
       const genInput: GenerationInput = {
         model: {
-          id: selectedModel!.modelId,
-          name: selectedModel!.displayName,
+          id: selectedModel.modelId,
+          name: selectedModel.displayName,
           provider: "fal",
-          capabilities: mediaType === "video" ? ["text-to-video"] : mediaType === "3d" ? ["text-to-3d"] : ["text-to-image"],
+          capabilities: capabilitiesForMediaType(mediaType),
           description: null,
         },
         prompt: prompt || "",
@@ -241,46 +273,26 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Return first output (image or video)
+      // Return first output
       const output = result.outputs?.[0];
       if (!output?.data && !output?.url) {
         return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: "No output in generation result",
-          },
+          { success: false, error: "No output in generation result" },
           { status: 500 }
         );
       }
 
-      // Return appropriate fields based on output type
-      if (output.type === "3d") {
-        return NextResponse.json<GenerateResponse>({
-          success: true,
-          model3dUrl: output.url,
-          contentType: "3d",
-        });
-      }
-
-      if (output.type === "video") {
-        // Large videos have data="" with url set; normal videos have base64 data
-        const isLargeVideo = !output.data && output.url;
-        return NextResponse.json<GenerateResponse>({
-          success: true,
-          video: isLargeVideo ? undefined : output.data,
-          videoUrl: isLargeVideo ? output.url : undefined,
-          contentType: "video",
-        });
-      }
-
-      return NextResponse.json<GenerateResponse>({
-        success: true,
-        image: output.data,
-        contentType: "image",
-      });
+      return buildMediaResponse(output);
     }
 
     if (provider === "kie") {
+      if (!selectedModel?.modelId || !selectedModel?.displayName) {
+        return NextResponse.json<GenerateResponse>(
+          { success: false, error: "selectedModel with modelId and displayName is required for Kie.ai" },
+          { status: 400 }
+        );
+      }
+
       // User-provided key takes precedence over env variable
       const kieApiKey = request.headers.get("X-Kie-Key") || process.env.KIE_API_KEY;
       if (!kieApiKey) {
@@ -316,10 +328,10 @@ export async function POST(request: NextRequest) {
       // Build generation input
       const genInput: GenerationInput = {
         model: {
-          id: selectedModel!.modelId,
-          name: selectedModel!.displayName,
+          id: selectedModel.modelId,
+          name: selectedModel.displayName,
           provider: "kie",
-          capabilities: mediaType === "video" ? ["text-to-video"] : mediaType === "3d" ? ["text-to-3d"] : ["text-to-image"],
+          capabilities: capabilitiesForMediaType(mediaType),
           description: null,
         },
         prompt: prompt || "",
@@ -340,46 +352,26 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Return first output (image or video)
+      // Return first output
       const output = result.outputs?.[0];
       if (!output?.data && !output?.url) {
         return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: "No output in generation result",
-          },
+          { success: false, error: "No output in generation result" },
           { status: 500 }
         );
       }
 
-      // Return appropriate fields based on output type
-      if (output.type === "3d") {
-        return NextResponse.json<GenerateResponse>({
-          success: true,
-          model3dUrl: output.url,
-          contentType: "3d",
-        });
-      }
-
-      if (output.type === "video") {
-        // Large videos have data="" with url set; normal videos have base64 data
-        const isLargeVideo = !output.data && output.url;
-        return NextResponse.json<GenerateResponse>({
-          success: true,
-          video: isLargeVideo ? undefined : output.data,
-          videoUrl: isLargeVideo ? output.url : undefined,
-          contentType: "video",
-        });
-      }
-
-      return NextResponse.json<GenerateResponse>({
-        success: true,
-        image: output.data,
-        contentType: "image",
-      });
+      return buildMediaResponse(output);
     }
 
     if (provider === "wavespeed") {
+      if (!selectedModel?.modelId || !selectedModel?.displayName) {
+        return NextResponse.json<GenerateResponse>(
+          { success: false, error: "selectedModel with modelId and displayName is required for WaveSpeed" },
+          { status: 400 }
+        );
+      }
+
       // User-provided key takes precedence over env variable
       const wavespeedApiKey = request.headers.get("X-WaveSpeed-Key") || process.env.WAVESPEED_API_KEY;
       if (!wavespeedApiKey) {
@@ -415,10 +407,10 @@ export async function POST(request: NextRequest) {
       // Build generation input
       const genInput: GenerationInput = {
         model: {
-          id: selectedModel!.modelId,
-          name: selectedModel!.displayName,
+          id: selectedModel.modelId,
+          name: selectedModel.displayName,
           provider: "wavespeed",
-          capabilities: mediaType === "video" ? ["text-to-video"] : mediaType === "3d" ? ["text-to-3d"] : ["text-to-image"],
+          capabilities: capabilitiesForMediaType(mediaType),
           description: null,
         },
         prompt: prompt || "",
@@ -439,43 +431,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Return first output (image or video)
+      // Return first output
       const output = result.outputs?.[0];
       if (!output?.data && !output?.url) {
         return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: "No output in generation result",
-          },
+          { success: false, error: "No output in generation result" },
           { status: 500 }
         );
       }
 
-      // Return appropriate fields based on output type
-      if (output.type === "3d") {
-        return NextResponse.json<GenerateResponse>({
-          success: true,
-          model3dUrl: output.url,
-          contentType: "3d",
-        });
-      }
-
-      if (output.type === "video") {
-        // Large videos have data="" with url set; normal videos have base64 data
-        const isLargeVideo = !output.data && output.url;
-        return NextResponse.json<GenerateResponse>({
-          success: true,
-          video: isLargeVideo ? undefined : output.data,
-          videoUrl: isLargeVideo ? output.url : undefined,
-          contentType: "video",
-        });
-      }
-
-      return NextResponse.json<GenerateResponse>({
-        success: true,
-        image: output.data,
-        contentType: "image",
-      });
+      return buildMediaResponse(output);
     }
 
     // Default: Use Gemini
@@ -495,10 +460,27 @@ export async function POST(request: NextRequest) {
     // Use selectedModel.modelId if available (new format), fallback to legacy model field
     const geminiModel = (selectedModel?.modelId as ModelType) || model;
 
+    // Resolve prompt: use top-level prompt, fall back to dynamicInputs.prompt
+    // This handles cases where the prompt arrives via dynamicInputs instead of top-level
+    let resolvedPrompt = prompt;
+    if (!resolvedPrompt && dynamicInputs?.prompt) {
+      resolvedPrompt = Array.isArray(dynamicInputs.prompt)
+        ? dynamicInputs.prompt[0]
+        : dynamicInputs.prompt;
+    }
+    // Validate: if a prompt was provided but isn't a string (corrupted data), return clear error
+    // If no prompt provided but images exist, that's valid (image-to-image)
+    if (resolvedPrompt !== undefined && resolvedPrompt !== null && typeof resolvedPrompt !== 'string') {
+      return NextResponse.json<GenerateResponse>(
+        { success: false, error: "prompt must be a string" },
+        { status: 400 }
+      );
+    }
+
     return await generateWithGemini(
       requestId,
       geminiApiKey,
-      prompt,
+      resolvedPrompt,
       images || [],
       geminiModel,
       aspectRatio,

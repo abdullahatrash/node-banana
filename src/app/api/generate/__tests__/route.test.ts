@@ -2637,5 +2637,153 @@ describe("/api/generate route", () => {
       expect(data.success).toBe(false);
       expect(data.error).toContain("No media URL in response");
     });
+
+    it("should handle model_glb.url response format (Hunyuan 3D)", async () => {
+      // Schema fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ models: [] }),
+      });
+
+      // Queue flow: submit → poll → result (model_glb format) → media fetch
+      // Queue submit
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ request_id: "test-req-id" }),
+      });
+      // Status poll → COMPLETED
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "COMPLETED" }),
+      });
+      // Result fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ model_glb: { url: "https://fal.media/hunyuan3d-output.glb" } }),
+      });
+
+      const request = createMockPostRequest(
+        {
+          prompt: "A 3D model of a chair",
+          mediaType: "3d",
+          selectedModel: {
+            provider: "fal",
+            modelId: "fal-ai/hunyuan3d/mini",
+            displayName: "Hunyuan 3D Mini",
+          },
+        },
+        { "X-Fal-API-Key": "test-fal-key" }
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.contentType).toBe("3d");
+      expect(data.model3dUrl).toBe("https://fal.media/hunyuan3d-output.glb");
+    });
+
+    it("should handle model_urls.glb.url response format (Hunyuan 3D variant)", async () => {
+      // Schema fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ models: [] }),
+      });
+
+      // Queue flow: submit → poll → result (model_urls.glb format) → media fetch
+      // Queue submit
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ request_id: "test-req-id" }),
+      });
+      // Status poll → COMPLETED
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "COMPLETED" }),
+      });
+      // Result fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ model_urls: { glb: { url: "https://fal.media/hunyuan3d-v2-output.glb" } } }),
+      });
+
+      const request = createMockPostRequest(
+        {
+          prompt: "A 3D model of a tree",
+          mediaType: "3d",
+          selectedModel: {
+            provider: "fal",
+            modelId: "fal-ai/hunyuan3d/standard",
+            displayName: "Hunyuan 3D Standard",
+          },
+        },
+        { "X-Fal-API-Key": "test-fal-key" }
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.contentType).toBe("3d");
+      expect(data.model3dUrl).toBe("https://fal.media/hunyuan3d-v2-output.glb");
+    });
+
+    it("should include Result keys in error log when no media URL found", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // Schema fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ models: [] }),
+      });
+
+      // Queue submit
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ request_id: "test-req-id" }),
+      });
+      // Status poll → COMPLETED
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "COMPLETED" }),
+      });
+      // Result fetch returns unrecognized format
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ unknown_field: "data", another: 123 }),
+      });
+
+      const request = createMockPostRequest(
+        {
+          prompt: "Test prompt",
+          selectedModel: {
+            provider: "fal",
+            modelId: "fal-ai/some-model",
+            displayName: "Some Model",
+          },
+        },
+        { "X-Fal-API-Key": "test-fal-key" }
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("No media URL in response");
+
+      // Verify the enhanced error log includes Result keys
+      const errorCalls = consoleSpy.mock.calls;
+      const resultKeysLog = errorCalls.find(
+        (call) => typeof call[0] === "string" && call[0].includes("Result keys:")
+      );
+      expect(resultKeysLog).toBeDefined();
+      expect(resultKeysLog![0]).toContain("unknown_field");
+      expect(resultKeysLog![0]).toContain("another");
+
+      consoleSpy.mockRestore();
+    });
   });
 });
