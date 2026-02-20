@@ -12,7 +12,7 @@ import { GenerateResponse, ModelType } from "@/types";
  * Map model types to Gemini model IDs
  */
 export const MODEL_MAP: Record<ModelType, string> = {
-  "nano-banana": "gemini-2.5-flash-preview-image-generation",
+  "nano-banana": "gemini-2.5-flash-image",
   "nano-banana-pro": "gemini-3-pro-image-preview",
 };
 
