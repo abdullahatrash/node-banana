@@ -1457,6 +1457,15 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       return edge;
     });
 
+    // Deduplicate edges by ID (keep the last occurrence, which is the most recent)
+    const edgeById = new Map<string, WorkflowEdge>();
+    for (const edge of workflow.edges) {
+      edgeById.set(edge.id, edge);
+    }
+    if (edgeById.size < workflow.edges.length) {
+      workflow.edges = Array.from(edgeById.values());
+    }
+
     // Look up saved config from localStorage (only if workflow has an ID)
     const configs = loadSaveConfigs();
     const savedConfig = workflow.id ? configs[workflow.id] : null;
