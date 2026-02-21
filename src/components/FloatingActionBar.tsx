@@ -263,7 +263,6 @@ export function FloatingActionBar() {
         <NodeButton type="imageInput" label="Image" />
         <NodeButton type="annotation" label="Annotate" />
         <NodeButton type="prompt" label="Prompt" />
-        <NodeButton type="array" label="Array" />
         <GenerateComboButton />
         <NodeButton type="output" label="Output" />
 
