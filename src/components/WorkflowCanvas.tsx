@@ -1714,6 +1714,8 @@ export function WorkflowCanvas() {
                 return "#8b5cf6";
               case "prompt":
                 return "#f97316";
+              case "array":
+                return "#a3e635";
               case "promptConstructor":
                 return "#f472b6";
               case "nanoBanana":
