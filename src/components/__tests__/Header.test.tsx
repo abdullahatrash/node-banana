@@ -5,6 +5,7 @@ import { Header } from "@/components/Header";
 // Mock the workflow store
 const mockSetWorkflowMetadata = vi.fn();
 const mockSaveToFile = vi.fn();
+const mockSaveAsFile = vi.fn();
 const mockLoadWorkflow = vi.fn();
 const mockUseWorkflowStore = vi.fn();
 
@@ -45,6 +46,7 @@ const createDefaultState = (overrides = {}) => ({
   isSaving: false,
   setWorkflowMetadata: mockSetWorkflowMetadata,
   saveToFile: mockSaveToFile,
+  saveAsFile: mockSaveAsFile,
   loadWorkflow: mockLoadWorkflow,
   getNodesWithComments: mockGetNodesWithComments,
   getUnviewedCommentCount: mockGetUnviewedCommentCount,
@@ -57,6 +59,7 @@ const createDefaultState = (overrides = {}) => ({
 describe("Header", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSaveAsFile.mockResolvedValue(true);
     // Default mock implementation - unconfigured project
     mockGetNodesWithComments.mockReturnValue([]);
     mockGetUnviewedCommentCount.mockReturnValue(0);
@@ -321,6 +324,43 @@ describe("Header", () => {
       const modal = screen.getByTestId("project-setup-modal");
       expect(modal).toBeInTheDocument();
       expect(modal).toHaveAttribute("data-mode", "settings");
+    });
+  });
+
+  describe("Save As Button", () => {
+    beforeEach(() => {
+      mockUseWorkflowStore.mockImplementation((selector) => {
+        return selector(createDefaultState({
+          workflowName: "My Project",
+          workflowId: "project-123",
+          saveDirectoryPath: "/path/to/project",
+        }));
+      });
+    });
+
+    it("should render Save As button for configured project", () => {
+      render(<Header />);
+      expect(screen.getByTitle("Save as new workflow")).toBeInTheDocument();
+    });
+
+    it("should call saveAsFile with the prompted name", () => {
+      const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("Version 2");
+
+      render(<Header />);
+      fireEvent.click(screen.getByTitle("Save as new workflow"));
+
+      expect(mockSaveAsFile).toHaveBeenCalledWith("Version 2");
+      promptSpy.mockRestore();
+    });
+
+    it("should not call saveAsFile when prompt is cancelled", () => {
+      const promptSpy = vi.spyOn(window, "prompt").mockReturnValue(null);
+
+      render(<Header />);
+      fireEvent.click(screen.getByTitle("Save as new workflow"));
+
+      expect(mockSaveAsFile).not.toHaveBeenCalled();
+      promptSpy.mockRestore();
     });
   });
 

@@ -88,6 +88,58 @@ describe("getConnectedInputsPure", () => {
     expect(result.text).toBe("generated text");
   });
 
+  it("should extract full array JSON from array node default text output", () => {
+    const nodes = [
+      makeNode("arr", "array", { outputText: "[\"one\",\"two\"]", outputItems: ["one", "two"] }),
+      makeNode("gen", "nanoBanana"),
+    ];
+    const edges = [{
+      id: "arr-gen",
+      source: "arr",
+      target: "gen",
+      sourceHandle: "text",
+      targetHandle: "text",
+    }] as WorkflowEdge[];
+
+    const result = getConnectedInputsPure("gen", nodes, edges);
+    expect(result.text).toBe("[\"one\",\"two\"]");
+  });
+
+  it("should extract indexed item from array node dynamic output handle", () => {
+    const nodes = [
+      makeNode("arr", "array", { outputText: "[\"one\",\"two\"]", outputItems: ["one", "two"] }),
+      makeNode("gen", "nanoBanana"),
+    ];
+    const edges = [{
+      id: "arr-gen-item",
+      source: "arr",
+      target: "gen",
+      sourceHandle: "text-1",
+      targetHandle: "text",
+    }] as WorkflowEdge[];
+
+    const result = getConnectedInputsPure("gen", nodes, edges);
+    expect(result.text).toBe("two");
+  });
+
+  it("should extract indexed item from array node edge metadata index", () => {
+    const nodes = [
+      makeNode("arr", "array", { outputText: "[\"one\",\"two\",\"three\"]", outputItems: ["one", "two", "three"] }),
+      makeNode("gen", "nanoBanana"),
+    ];
+    const edges = [{
+      id: "arr-gen-meta",
+      source: "arr",
+      target: "gen",
+      sourceHandle: "text",
+      targetHandle: "text",
+      data: { arrayItemIndex: 2 },
+    }] as WorkflowEdge[];
+
+    const result = getConnectedInputsPure("gen", nodes, edges);
+    expect(result.text).toBe("three");
+  });
+
   it("should extract text from promptConstructor outputText", () => {
     const nodes = [
       makeNode("pc", "promptConstructor", { outputText: "constructed", template: "tmpl" }),

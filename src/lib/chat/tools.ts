@@ -13,6 +13,7 @@ const VALID_NODE_TYPES: NodeType[] = [
   "imageInput",
   "annotation",
   "prompt",
+  "array",
   "nanoBanana",
   "generateVideo",
   "generate3d",
@@ -206,7 +207,7 @@ export function createChatTools(nodeIds: string[]) {
                 .string()
                 .optional()
                 .describe(
-                  "Node type for addNode. Valid: imageInput, annotation, prompt, nanoBanana, generateVideo, generate3d, llmGenerate, splitGrid, output"
+                  "Node type for addNode. Valid: imageInput, annotation, prompt, array, nanoBanana, generateVideo, generate3d, llmGenerate, splitGrid, output"
                 ),
               nodeId: z
                 .string()

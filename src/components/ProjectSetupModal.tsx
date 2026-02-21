@@ -242,13 +242,7 @@ export function ProjectSetupModal({
       );
       const result = await response.json();
 
-      if (!result.exists) {
-        setError("Project directory does not exist");
-        setIsValidating(false);
-        return;
-      }
-
-      if (!result.isDirectory) {
+      if (result.exists && !result.isDirectory) {
         setError("Project path is not a directory");
         setIsValidating(false);
         return;
