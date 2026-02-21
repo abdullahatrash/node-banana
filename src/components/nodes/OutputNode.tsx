@@ -6,6 +6,7 @@ import { BaseNode } from "./BaseNode";
 import { useCommentNavigation } from "@/hooks/useCommentNavigation";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { OutputNodeData } from "@/types";
+import { useVideoBlobUrl } from "@/hooks/useVideoBlobUrl";
 
 type OutputNodeType = Node<OutputNodeData, "output">;
 
@@ -39,6 +40,8 @@ export function OutputNode({ id, data, selected }: NodeProps<OutputNodeType>) {
     if (nodeData.video) return nodeData.video;
     return nodeData.image;
   }, [nodeData.audio, nodeData.video, nodeData.image]);
+
+  const videoBlobUrl = useVideoBlobUrl(isVideo ? contentSrc ?? null : null);
 
   const handleDownload = useCallback(async () => {
     if (!contentSrc) return;
@@ -123,7 +126,7 @@ export function OutputNode({ id, data, selected }: NodeProps<OutputNodeType>) {
               >
                 {isVideo ? (
                   <video
-                    src={contentSrc}
+                    src={videoBlobUrl ?? undefined}
                     controls
                     loop
                     muted
@@ -180,7 +183,7 @@ export function OutputNode({ id, data, selected }: NodeProps<OutputNodeType>) {
           <div className="relative max-w-full max-h-full">
             {isVideo ? (
               <video
-                src={contentSrc}
+                src={videoBlobUrl ?? undefined}
                 controls
                 loop
                 autoPlay

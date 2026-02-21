@@ -243,7 +243,8 @@ export async function stitchVideosAsync(
       });
 
       if (!audioCodec) {
-        console.warn('No supported audio codec found, continuing without audio');
+        console.warn('[VideoStitch] No supported audio codec found, continuing without audio');
+        updateProgress('processing', 'Warning: no supported audio codec — audio skipped', 10);
       } else {
         updateProgress('processing', `Adding audio track (${audioCodec})...`, 10);
 

@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate workflow directory exists
+    // Validate workflow directory exists, or create it if missing
     try {
       const stats = await fs.stat(workflowPath);
       if (!stats.isDirectory()) {
@@ -75,13 +75,20 @@ export async function POST(request: NextRequest) {
         );
       }
     } catch (dirError) {
-      logger.warn('file.error', 'Workflow image save failed: directory does not exist', {
-        workflowPath,
-      });
-      return NextResponse.json(
-        { success: false, error: "Workflow directory does not exist" },
-        { status: 400 }
-      );
+      try {
+        await fs.mkdir(workflowPath, { recursive: true });
+        logger.info('file.save', 'Created workflow directory for image save', {
+          workflowPath,
+        });
+      } catch (mkdirError) {
+        logger.error('file.error', 'Failed to create workflow directory', {
+          workflowPath,
+        }, mkdirError instanceof Error ? mkdirError : undefined);
+        return NextResponse.json(
+          { success: false, error: "Failed to create workflow directory" },
+          { status: 500 }
+        );
+      }
     }
 
     // Create target folder if it doesn't exist

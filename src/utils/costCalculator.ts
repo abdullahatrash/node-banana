@@ -146,7 +146,7 @@ export function calculatePredictedCost(
 
     // Fallback to hardcoded Gemini pricing for legacy models
     if (provider === "gemini") {
-      if (modelId === "nano-banana" || modelId === "gemini-2.5-flash-preview-image-generation") {
+      if (modelId === "nano-banana" || modelId === "gemini-2.5-flash-image") {
         return { unitCost: PRICING["nano-banana"]["1K"], unit: "image" };
       }
       if (modelId === "nano-banana-pro" || modelId === "gemini-3-pro-image-preview") {

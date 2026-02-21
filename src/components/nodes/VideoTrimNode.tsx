@@ -7,6 +7,7 @@ import { useCommentNavigation } from "@/hooks/useCommentNavigation";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { VideoTrimNodeData } from "@/types";
 import { checkEncoderSupport } from "@/hooks/useStitchVideos";
+import { useVideoBlobUrl } from "@/hooks/useVideoBlobUrl";
 
 type VideoTrimNodeType = Node<VideoTrimNodeData, "videoTrim">;
 
@@ -154,6 +155,7 @@ export function VideoTrimNode({ id, data, selected }: NodeProps<VideoTrimNodeTyp
 
   // Which video URL to show in preview
   const previewUrl = showOutput && nodeData.outputVideo ? nodeData.outputVideo : sourceVideoUrl;
+  const previewBlobUrl = useVideoBlobUrl(previewUrl);
 
   // Compute slider thumb position percentages for the visual range highlight
   const startPct = duration > 0 ? (startTime / duration) * 100 : 0;
@@ -285,7 +287,7 @@ export function VideoTrimNode({ id, data, selected }: NodeProps<VideoTrimNodeTyp
           {previewUrl ? (
             <video
               key={previewUrl}
-              src={previewUrl}
+              src={previewBlobUrl ?? undefined}
               controls
               playsInline
               muted
@@ -345,7 +347,22 @@ export function VideoTrimNode({ id, data, selected }: NodeProps<VideoTrimNodeTyp
         {hasSourceVideo && (
           <div className="shrink-0 flex flex-col gap-1.5 px-1">
             {/* Dual range slider */}
-            <div className="nodrag nowheel relative h-5 flex items-center">
+            <div className="nodrag nowheel relative h-5 flex items-center trim-slider-container">
+              {/* Make only the slider thumbs interactive, not the full-width invisible input bodies */}
+              <style>{`
+                .trim-slider-container input[type="range"] {
+                  pointer-events: none;
+                }
+                .trim-slider-container input[type="range"]::-webkit-slider-thumb {
+                  pointer-events: all;
+                  cursor: pointer;
+                }
+                .trim-slider-container input[type="range"]::-moz-range-thumb {
+                  pointer-events: all;
+                  cursor: pointer;
+                }
+              `}</style>
+
               {/* Track background */}
               <div className="absolute left-0 right-0 h-1.5 bg-neutral-700 rounded-full" />
 
@@ -355,7 +372,7 @@ export function VideoTrimNode({ id, data, selected }: NodeProps<VideoTrimNodeTyp
                 style={{ left: `${startPct}%`, right: `${100 - endPct}%` }}
               />
 
-              {/* Start slider */}
+              {/* Start slider (higher z-index so it's draggable when both thumbs overlap at 0) */}
               <input
                 type="range"
                 min={0}
@@ -363,8 +380,8 @@ export function VideoTrimNode({ id, data, selected }: NodeProps<VideoTrimNodeTyp
                 step={0.1}
                 value={startTime}
                 onChange={handleStartChange}
-                className="absolute w-full h-full opacity-0 cursor-pointer nodrag"
-                style={{ zIndex: 2 }}
+                className="absolute w-full h-full opacity-0 nodrag"
+                style={{ zIndex: 3 }}
               />
 
               {/* End slider */}
@@ -375,8 +392,8 @@ export function VideoTrimNode({ id, data, selected }: NodeProps<VideoTrimNodeTyp
                 step={0.1}
                 value={endTime}
                 onChange={handleEndChange}
-                className="absolute w-full h-full opacity-0 cursor-pointer nodrag"
-                style={{ zIndex: 3 }}
+                className="absolute w-full h-full opacity-0 nodrag"
+                style={{ zIndex: 2 }}
               />
 
               {/* Visual thumb indicators */}

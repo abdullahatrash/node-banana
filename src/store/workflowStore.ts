@@ -60,6 +60,7 @@ import {
 import { getConnectedInputsPure, validateWorkflowPure } from "./utils/connectedInputs";
 import {
   executeAnnotation,
+  executeArray,
   executePrompt,
   executePromptConstructor,
   executeOutput,
@@ -97,11 +98,63 @@ function saveLogSession(): void {
 
 export type EdgeStyle = "angular" | "curved";
 
+function buildConnectionEdgeData(
+  connection: Connection,
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[]
+): Record<string, unknown> {
+  const baseData: Record<string, unknown> = { createdAt: Date.now() };
+  const sourceNode = nodes.find((n) => n.id === connection.source);
+
+  // Array node uses a single output handle; assign each edge a stable item index.
+  if (sourceNode?.type === "array" && (connection.sourceHandle || "text") === "text") {
+    const sourceData = sourceNode.data as Record<string, unknown>;
+    const selectedIndex = sourceData.selectedOutputIndex;
+    const outputItems = Array.isArray(sourceData.outputItems) ? sourceData.outputItems : [];
+    const outputCount = outputItems.length;
+
+    if (
+      typeof selectedIndex === "number" &&
+      Number.isInteger(selectedIndex) &&
+      selectedIndex >= 0 &&
+      (outputCount === 0 || selectedIndex < outputCount)
+    ) {
+      baseData.arrayItemIndex = selectedIndex;
+      return baseData;
+    }
+
+    if (outputCount > 0) {
+      const existingArrayEdges = edges.filter(
+        (e) => e.source === connection.source && (e.sourceHandle || "text") === "text"
+      );
+
+      const lastEdge = existingArrayEdges.reduce<WorkflowEdge | null>((latest, edge) => {
+        if (!latest) return edge;
+        const latestTime = (latest.data as Record<string, unknown> | undefined)?.createdAt;
+        const edgeTime = (edge.data as Record<string, unknown> | undefined)?.createdAt;
+        return (typeof edgeTime === "number" && typeof latestTime === "number" && edgeTime > latestTime) ? edge : latest;
+      }, null);
+
+      const lastIndex = (lastEdge?.data as Record<string, unknown> | undefined)?.arrayItemIndex;
+      const startIndex = typeof lastIndex === "number" && Number.isInteger(lastIndex) && lastIndex >= 0
+        ? lastIndex + 1
+        : existingArrayEdges.length;
+
+      baseData.arrayItemIndex = startIndex % outputCount;
+    } else {
+      baseData.arrayItemIndex = 0;
+    }
+  }
+
+  return baseData;
+}
+
 // Workflow file format
 export interface WorkflowFile {
   version: 1;
   id?: string;  // Optional for backward compatibility with old/shared workflows
   name: string;
+  directoryPath?: string;  // Embedded save path so image hydration works on import
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   edgeStyle: EdgeStyle;
@@ -132,8 +185,8 @@ interface WorkflowStore {
 
   // Edge operations
   onEdgesChange: (changes: EdgeChange<WorkflowEdge>[]) => void;
-  onConnect: (connection: Connection) => void;
-  addEdgeWithType: (connection: Connection, edgeType: string) => void;
+  onConnect: (connection: Connection, edgeDataOverrides?: Record<string, unknown>) => void;
+  addEdgeWithType: (connection: Connection, edgeType: string, edgeDataOverrides?: Record<string, unknown>) => void;
   removeEdge: (edgeId: string) => void;
   toggleEdgePause: (edgeId: string) => void;
 
@@ -208,6 +261,7 @@ interface WorkflowStore {
   setUseExternalImageStorage: (enabled: boolean) => void;
   markAsUnsaved: () => void;
   saveToFile: () => Promise<boolean>;
+  saveAsFile: (name: string) => Promise<boolean>;
   initializeAutoSave: () => void;
   cleanupAutoSave: () => void;
 
@@ -478,34 +532,37 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     }
   },
 
-  onConnect: (connection: Connection) => {
-    set((state) => ({
-      edges: addEdge(
-        {
-          ...connection,
-          id: `edge-${connection.source}-${connection.target}-${connection.sourceHandle || "default"}-${connection.targetHandle || "default"}`,
-          data: { createdAt: Date.now() },
-        },
-        state.edges
-      ),
-      hasUnsavedChanges: true,
-    }));
+  onConnect: (connection: Connection, edgeDataOverrides?: Record<string, unknown>) => {
+    set((state) => {
+      const baseData = buildConnectionEdgeData(connection, state.nodes, state.edges);
+      const newEdge = {
+        ...connection,
+        id: `edge-${connection.source}-${connection.target}-${connection.sourceHandle || "default"}-${connection.targetHandle || "default"}`,
+        data: edgeDataOverrides ? { ...baseData, ...edgeDataOverrides } : baseData,
+      };
+      // Cast needed: React Flow's Edge<T> types data as T | undefined, but addEdge expects data to be defined
+      return {
+        edges: addEdge(newEdge, state.edges as never) as WorkflowEdge[],
+        hasUnsavedChanges: true,
+      };
+    });
     get().incrementManualChangeCount();
   },
 
-  addEdgeWithType: (connection: Connection, edgeType: string) => {
-    set((state) => ({
-      edges: addEdge(
-        {
-          ...connection,
-          id: `edge-${connection.source}-${connection.target}-${connection.sourceHandle || "default"}-${connection.targetHandle || "default"}`,
-          type: edgeType,
-          data: { createdAt: Date.now() },
-        },
-        state.edges
-      ),
-      hasUnsavedChanges: true,
-    }));
+  addEdgeWithType: (connection: Connection, edgeType: string, edgeDataOverrides?: Record<string, unknown>) => {
+    set((state) => {
+      const baseData = buildConnectionEdgeData(connection, state.nodes, state.edges);
+      const newEdge = {
+        ...connection,
+        id: `edge-${connection.source}-${connection.target}-${connection.sourceHandle || "default"}-${connection.targetHandle || "default"}`,
+        type: edgeType,
+        data: edgeDataOverrides ? { ...baseData, ...edgeDataOverrides } : baseData,
+      };
+      return {
+        edges: addEdge(newEdge, state.edges as never) as WorkflowEdge[],
+        hasUnsavedChanges: true,
+      };
+    });
   },
 
   removeEdge: (edgeId: string) => {
@@ -905,6 +962,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           case "prompt":
             await executePrompt(executionCtx);
             break;
+          case "array":
+            await executeArray(executionCtx);
+            break;
           case "promptConstructor":
             await executePromptConstructor(executionCtx);
             break;
@@ -1075,6 +1135,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
       if (node.type === "nanoBanana") {
         await executeNanoBanana(executionCtx, regenOptions);
+      } else if (node.type === "array") {
+        await executeArray(executionCtx);
       } else if (node.type === "llmGenerate") {
         await executeLlmGenerate(executionCtx, regenOptions);
       } else if (node.type === "generateVideo") {
@@ -1212,6 +1274,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           break;
         case "prompt":
           await executePrompt(executionCtx);
+          break;
+        case "array":
+          await executeArray(executionCtx);
           break;
         case "promptConstructor":
           await executePromptConstructor(executionCtx);
@@ -1437,12 +1502,41 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       return node;
     }) as WorkflowNode[];
 
+    // Migrate legacy indexed handle IDs on edges targeting nanoBanana nodes.
+    // GenerateImageNode always renders "image"/"text" handles (not "image-0"/"text-0"),
+    // so edges saved with the old indexed format cause React Flow error #008.
+    const nanoBananaNodeIds = new Set(
+      workflow.nodes.filter((n) => n.type === "nanoBanana").map((n) => n.id)
+    );
+    workflow.edges = workflow.edges.map((edge) => {
+      if (!nanoBananaNodeIds.has(edge.target)) return edge;
+      const th = edge.targetHandle;
+      if (th === "image-0" || th === "text-0") {
+        const baseHandle = th === "image-0" ? "image" : "text";
+        return {
+          ...edge,
+          targetHandle: baseHandle,
+          id: `edge-${edge.source}-${edge.target}-${edge.sourceHandle || "default"}-${baseHandle}`,
+        };
+      }
+      return edge;
+    });
+
+    // Deduplicate edges by ID (keep the last occurrence, which is the most recent)
+    const edgeById = new Map<string, WorkflowEdge>();
+    for (const edge of workflow.edges) {
+      edgeById.set(edge.id, edge);
+    }
+    if (edgeById.size < workflow.edges.length) {
+      workflow.edges = Array.from(edgeById.values());
+    }
+
     // Look up saved config from localStorage (only if workflow has an ID)
     const configs = loadSaveConfigs();
     const savedConfig = workflow.id ? configs[workflow.id] : null;
 
-    // Determine the workflow directory path (passed in or from saved config)
-    const directoryPath = workflowPath || savedConfig?.directoryPath;
+    // Determine the workflow directory path (passed in, from saved config, or embedded in workflow)
+    const directoryPath = workflowPath || savedConfig?.directoryPath || workflow.directoryPath;
 
     // Hydrate images if we have a directory path and the workflow has image refs
     let hydratedWorkflow = workflow;
@@ -1637,6 +1731,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         version: 1,
         id: workflowId,
         name: workflowName,
+        directoryPath: saveDirectoryPath,
         nodes: currentNodes,
         edges,
         edgeStyle,
@@ -1737,6 +1832,33 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     } finally {
       set({ isSaving: false });
     }
+  },
+
+  saveAsFile: async (name: string) => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      return false;
+    }
+
+    const { saveDirectoryPath, workflowId: prevId, workflowName: prevName } = get();
+    if (!saveDirectoryPath) {
+      return false;
+    }
+
+    // Save As creates another workflow JSON in the same project folder.
+    const newWorkflowId = generateWorkflowId();
+    set({
+      workflowId: newWorkflowId,
+      workflowName: trimmedName,
+      hasUnsavedChanges: true,
+    });
+
+    const success = await get().saveToFile();
+    if (!success) {
+      // Rollback to previous identity on failure
+      set({ workflowId: prevId, workflowName: prevName });
+    }
+    return success;
   },
 
   initializeAutoSave: () => {

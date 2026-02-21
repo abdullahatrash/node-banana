@@ -324,6 +324,7 @@ export async function pollKieTaskCompletion(
     }
 
     if (state === "FAIL" || state === "FAILED" || state === "ERROR") {
+      console.error(`[API:${requestId}] Kie task failed. Full response:`, JSON.stringify(result).substring(0, 1000));
       const errorMessage = result.data?.failMsg || result.data?.errorMessage || result.error || result.message || "Generation failed";
       return { success: false, error: errorMessage };
     }

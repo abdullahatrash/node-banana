@@ -37,6 +37,7 @@ describe("nodeDefaults utilities", () => {
         "imageInput",
         "annotation",
         "prompt",
+        "array",
         "nanoBanana",
         "generateVideo",
         "llmGenerate",
@@ -116,6 +117,22 @@ describe("nodeDefaults utilities", () => {
       const data = createDefaultNodeData("prompt");
 
       expect(data).toHaveProperty("prompt", "");
+    });
+
+    it("creates correct structure for array", () => {
+      const data = createDefaultNodeData("array");
+
+      expect(data).toHaveProperty("inputText", null);
+      expect(data).toHaveProperty("splitMode", "delimiter");
+      expect(data).toHaveProperty("delimiter", "*");
+      expect(data).toHaveProperty("regexPattern", "");
+      expect(data).toHaveProperty("trimItems", true);
+      expect(data).toHaveProperty("removeEmpty", true);
+      expect(data).toHaveProperty("selectedOutputIndex", null);
+      expect(data).toHaveProperty("outputItems");
+      expect(Array.isArray((data as any).outputItems)).toBe(true);
+      expect(data).toHaveProperty("outputText", "[]");
+      expect(data).toHaveProperty("error", null);
     });
 
     it("creates correct structure for nanoBanana", () => {

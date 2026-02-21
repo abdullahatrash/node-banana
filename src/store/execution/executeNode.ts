@@ -9,6 +9,7 @@
 import type { NodeExecutionContext } from "./types";
 import {
   executeAnnotation,
+  executeArray,
   executePrompt,
   executePromptConstructor,
   executeOutput,
@@ -57,6 +58,9 @@ export async function executeNode(
       break;
     case "prompt":
       await executePrompt(ctx);
+      break;
+    case "array":
+      await executeArray(ctx);
       break;
     case "promptConstructor":
       await executePromptConstructor(ctx);

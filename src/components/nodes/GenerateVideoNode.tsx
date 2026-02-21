@@ -13,6 +13,7 @@ import { ModelSearchDialog } from "@/components/modals/ModelSearchDialog";
 import { useToast } from "@/components/Toast";
 import { getVideoDimensions, calculateNodeSizePreservingHeight } from "@/utils/nodeDimensions";
 import { ProviderBadge } from "./ProviderBadge";
+import { useVideoBlobUrl } from "@/hooks/useVideoBlobUrl";
 
 // Video generation capabilities
 const VIDEO_CAPABILITIES: ModelCapability[] = ["text-to-video", "image-to-video"];
@@ -31,6 +32,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
   const [modelsFetchError, setModelsFetchError] = useState<string | null>(null);
   const [isBrowseDialogOpen, setIsBrowseDialogOpen] = useState(false);
   const [isLoadingCarouselVideo, setIsLoadingCarouselVideo] = useState(false);
+  const videoBlobUrl = useVideoBlobUrl(nodeData.outputVideo ?? null);
 
   // Get the current selected provider (default to fal since Gemini doesn't do video)
   const currentProvider: ProviderType = nodeData.selectedModel?.provider || "fal";
@@ -559,7 +561,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
           <div className="relative w-full flex-1 min-h-0">
             <video
               key={nodeData.videoHistory?.[nodeData.selectedVideoHistoryIndex || 0]?.id}
-              src={nodeData.outputVideo}
+              src={videoBlobUrl ?? undefined}
               controls
               autoPlay
               loop

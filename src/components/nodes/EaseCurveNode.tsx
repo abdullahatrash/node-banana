@@ -8,6 +8,7 @@ import { useCommentNavigation } from "@/hooks/useCommentNavigation";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { EaseCurveNodeData } from "@/types";
 import { checkEncoderSupport } from "@/hooks/useStitchVideos";
+import { useVideoBlobUrl } from "@/hooks/useVideoBlobUrl";
 import { CubicBezierEditor } from "@/components/CubicBezierEditor";
 import {
   EASING_PRESETS,
@@ -46,6 +47,7 @@ export function EaseCurveNode({ id, data, selected }: NodeProps<EaseCurveNodeTyp
   const edges = useWorkflowStore((state) => state.edges);
   const removeEdge = useWorkflowStore((state) => state.removeEdge);
   const { setNodes } = useReactFlow();
+  const videoBlobUrl = useVideoBlobUrl(nodeData.outputVideo ?? null);
 
   const [activeTab, setActiveTab] = useState<"editor" | "video">("editor");
   const [showPresets, setShowPresets] = useState(false);
@@ -493,7 +495,7 @@ export function EaseCurveNode({ id, data, selected }: NodeProps<EaseCurveNodeTyp
             {nodeData.outputVideo ? (
               <div className="relative flex-1 min-h-0">
                 <video
-                  src={nodeData.outputVideo}
+                  src={videoBlobUrl ?? undefined}
                   controls
                   autoPlay
                   loop

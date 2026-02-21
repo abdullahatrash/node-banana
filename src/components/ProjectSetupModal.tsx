@@ -85,6 +85,40 @@ export function ProjectSetupModal({
   onSave,
   mode,
 }: ProjectSetupModalProps) {
+  const sanitizeProjectFolderName = (projectName: string): string => {
+    return projectName
+      .trim()
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+      .replace(/\.+$/g, "")
+      .trim();
+  };
+
+  const joinPathForPlatform = (basePath: string, folderName: string): string => {
+    const trimmedBase = basePath.trim();
+    const separator = /^[A-Za-z]:[\\\/]/.test(trimmedBase) || trimmedBase.startsWith("\\\\") ? "\\" : "/";
+    const endsWithSeparator = trimmedBase.endsWith("/") || trimmedBase.endsWith("\\");
+    return `${trimmedBase}${endsWithSeparator ? "" : separator}${folderName}`;
+  };
+
+  const getPathBasename = (fullPath: string): string => {
+    const withoutTrailingSeparator = fullPath.trim().replace(/[\\/]+$/, "");
+    const parts = withoutTrailingSeparator.split(/[\\/]/);
+    return parts[parts.length - 1] || "";
+  };
+
+  const ensureProjectSubfolderPath = (basePath: string, projectName: string): string => {
+    const trimmedBase = basePath.trim();
+    const sanitizedFolder = sanitizeProjectFolderName(projectName);
+    if (!sanitizedFolder) return trimmedBase;
+
+    const basename = getPathBasename(trimmedBase);
+    if (basename.toLowerCase() === sanitizedFolder.toLowerCase()) {
+      return trimmedBase;
+    }
+
+    return joinPathForPlatform(trimmedBase, sanitizedFolder);
+  };
+
   const {
     workflowName,
     saveDirectoryPath,
@@ -226,8 +260,9 @@ export function ProjectSetupModal({
       return;
     }
 
-    const trimmedPath = directoryPath.trim();
-    if (!(trimmedPath.startsWith("/") || /^[A-Za-z]:[\\\/]/.test(trimmedPath) || trimmedPath.startsWith("\\\\"))) {
+    const fullProjectPath = ensureProjectSubfolderPath(directoryPath, name);
+
+    if (!(fullProjectPath.startsWith("/") || /^[A-Za-z]:[\\\/]/.test(fullProjectPath) || fullProjectPath.startsWith("\\\\"))) {
       setError("Project directory must be an absolute path (starting with /, a drive letter, or a UNC path)");
       return;
     }
@@ -236,19 +271,13 @@ export function ProjectSetupModal({
     setError(null);
 
     try {
-      // Validate project directory exists
+      // Validate path shape when it already exists
       const response = await fetch(
-        `/api/workflow?path=${encodeURIComponent(directoryPath.trim())}`
+        `/api/workflow?path=${encodeURIComponent(fullProjectPath)}`
       );
       const result = await response.json();
 
-      if (!result.exists) {
-        setError("Project directory does not exist");
-        setIsValidating(false);
-        return;
-      }
-
-      if (!result.isDirectory) {
+      if (result.exists && !result.isDirectory) {
         setError("Project path is not a directory");
         setIsValidating(false);
         return;
@@ -257,7 +286,7 @@ export function ProjectSetupModal({
       const id = mode === "new" ? generateWorkflowId() : useWorkflowStore.getState().workflowId || generateWorkflowId();
       // Update external storage setting
       setUseExternalImageStorage(externalStorage);
-      onSave(id, name.trim(), directoryPath.trim());
+      onSave(id, name.trim(), fullProjectPath);
       setIsValidating(false);
     } catch (err) {
       setError(

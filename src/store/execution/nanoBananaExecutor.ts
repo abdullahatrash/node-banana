@@ -65,8 +65,9 @@ export async function executeNanoBanana(
   // Defensive: ensure promptText is actually a string at runtime
   // (Guards against corrupted node data or race conditions in parallel execution)
   if (promptText !== null && typeof promptText !== 'string') {
-    console.warn('[nanoBanana] promptText was not a string, coercing:', typeof promptText, Array.isArray(promptText) ? `<redacted array length=${promptText.length}>` : '<redacted>');
-    promptText = Array.isArray(promptText) ? (promptText as string[])[0] ?? null : null;
+    const raw: unknown = promptText;
+    console.warn('[nanoBanana] promptText was not a string, coercing:', typeof raw, Array.isArray(raw) ? `<redacted array length=${raw.length}>` : '<redacted>');
+    promptText = Array.isArray(raw) ? (raw as string[])[0] ?? null : null;
   }
 
   if (!promptText) {
