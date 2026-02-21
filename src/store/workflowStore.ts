@@ -1843,7 +1843,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       return false;
     }
 
-    const { saveDirectoryPath } = get();
+    const { saveDirectoryPath, workflowId: prevId, workflowName: prevName } = get();
     if (!saveDirectoryPath) {
       return false;
     }
@@ -1856,7 +1856,12 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       hasUnsavedChanges: true,
     });
 
-    return await get().saveToFile();
+    const success = await get().saveToFile();
+    if (!success) {
+      // Rollback to previous identity on failure
+      set({ workflowId: prevId, workflowName: prevName });
+    }
+    return success;
   },
 
   initializeAutoSave: () => {
