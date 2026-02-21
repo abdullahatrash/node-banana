@@ -20,6 +20,7 @@ import {
   VideoTrimNodeData,
   VideoFrameGrabNodeData,
   PromptNodeData,
+  ArrayNodeData,
   PromptConstructorNodeData,
   LLMGenerateNodeData,
   GLBViewerNodeData,
@@ -57,7 +58,11 @@ function isTextHandle(handleId: string | null | undefined): boolean {
 /**
  * Extract output data and type from a source node
  */
-function getSourceOutput(sourceNode: WorkflowNode): { type: "image" | "text" | "video" | "audio" | "3d"; value: string | null } {
+function getSourceOutput(
+  sourceNode: WorkflowNode,
+  sourceHandle: string | null | undefined,
+  edgeData?: Record<string, unknown>
+): { type: "image" | "text" | "video" | "audio" | "3d"; value: string | null } {
   if (sourceNode.type === "imageInput") {
     return { type: "image", value: (sourceNode.data as ImageInputNodeData).image };
   } else if (sourceNode.type === "audioInput") {
@@ -82,6 +87,19 @@ function getSourceOutput(sourceNode: WorkflowNode): { type: "image" | "text" | "
     return { type: "video", value: (sourceNode.data as VideoTrimNodeData).outputVideo };
   } else if (sourceNode.type === "prompt") {
     return { type: "text", value: (sourceNode.data as PromptNodeData).prompt };
+  } else if (sourceNode.type === "array") {
+    const arrayData = sourceNode.data as ArrayNodeData;
+    const dataIndex = edgeData?.arrayItemIndex;
+    if (typeof dataIndex === "number" && Number.isInteger(dataIndex) && dataIndex >= 0) {
+      return { type: "text", value: arrayData.outputItems[dataIndex] ?? null };
+    }
+    if (sourceHandle?.startsWith("text-")) {
+      const index = Number(sourceHandle.replace("text-", ""));
+      if (Number.isInteger(index) && index >= 0) {
+        return { type: "text", value: arrayData.outputItems[index] ?? null };
+      }
+    }
+    return { type: "text", value: arrayData.outputText };
   } else if (sourceNode.type === "promptConstructor") {
     const pcData = sourceNode.data as PromptConstructorNodeData;
     return { type: "text", value: pcData.outputText ?? pcData.template ?? null };
@@ -143,7 +161,11 @@ export function getConnectedInputsPure(
       if (!sourceNode) return;
 
       const handleId = edge.targetHandle;
-      const { type, value } = getSourceOutput(sourceNode);
+      const { type, value } = getSourceOutput(
+        sourceNode,
+        edge.sourceHandle,
+        (edge.data as Record<string, unknown> | undefined)
+      );
 
       if (!value) return;
 

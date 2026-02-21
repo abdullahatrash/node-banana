@@ -25,6 +25,7 @@ import {
   AudioInputNode,
   AnnotationNode,
   PromptNode,
+  ArrayNode,
   PromptConstructorNode,
   GenerateImageNode,
   GenerateVideoNode,
@@ -64,6 +65,7 @@ const nodeTypes: NodeTypes = {
   audioInput: AudioInputNode,
   annotation: AnnotationNode,
   prompt: PromptNode,
+  array: ArrayNode,
   promptConstructor: PromptConstructorNode,
   nanoBanana: GenerateImageNode,
   generateVideo: GenerateVideoNode,
@@ -119,6 +121,8 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
     case "annotation":
       return { inputs: ["image"], outputs: ["image"] };
     case "prompt":
+      return { inputs: ["text"], outputs: ["text"] };
+    case "array":
       return { inputs: ["text"], outputs: ["text"] };
     case "promptConstructor":
       return { inputs: ["text"], outputs: ["text"] };
@@ -835,8 +839,8 @@ export function WorkflowCanvas() {
           if (nodeType === "llmGenerate") {
             sourceHandleIdForNewNode = "text";
           }
-        } else if (nodeType === "prompt" || nodeType === "promptConstructor") {
-          // prompt and promptConstructor can receive and output text
+        } else if (nodeType === "prompt" || nodeType === "promptConstructor" || nodeType === "array") {
+          // prompt, promptConstructor, and array can receive and output text
           targetHandleId = "text";
           sourceHandleIdForNewNode = "text";
         }
@@ -1101,6 +1105,9 @@ export function WorkflowCanvas() {
           case "p":
             nodeType = "prompt";
             break;
+          case "r":
+            nodeType = "array";
+            break;
           case "i":
             nodeType = "imageInput";
             break;
@@ -1130,6 +1137,7 @@ export function WorkflowCanvas() {
             audioInput: { width: 300, height: 200 },
             annotation: { width: 300, height: 280 },
             prompt: { width: 320, height: 220 },
+            array: { width: 360, height: 360 },
             promptConstructor: { width: 340, height: 280 },
             nanoBanana: { width: 300, height: 300 },
             generateVideo: { width: 300, height: 300 },

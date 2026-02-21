@@ -67,6 +67,7 @@ export function Header() {
     isSaving,
     setWorkflowMetadata,
     saveToFile,
+    saveAsFile,
     loadWorkflow,
     previousWorkflowSnapshot,
     revertToSnapshot,
@@ -162,6 +163,32 @@ export function Header() {
     }
   };
 
+  const handleSaveAs = async () => {
+    if (!workflowName || !saveDirectoryPath) {
+      handleOpenSettings();
+      return;
+    }
+
+    const value = window.prompt("Save project as", workflowName);
+    if (value === null) return;
+
+    const newName = value.trim();
+    if (!newName) {
+      alert("Project name cannot be empty.");
+      return;
+    }
+
+    try {
+      const success = await saveAsFile(newName);
+      if (!success) {
+        alert("Save As failed. Please try again.");
+      }
+    } catch (error) {
+      console.error("Failed to save project as:", error);
+      alert("Save As failed. Please try again.");
+    }
+  };
+
   const handleRevertAIChanges = useCallback(() => {
     const confirmed = window.confirm(
       "Are you sure? This will restore your previous workflow."
@@ -254,6 +281,24 @@ export function Header() {
                       <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-neutral-900" />
                     )}
                   </button>
+                  {canSave && (
+                    <button
+                      onClick={handleSaveAs}
+                      disabled={isSaving}
+                      className="p-1.5 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 rounded transition-colors disabled:opacity-50"
+                      title="Save as new workflow"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 3.75h6a3.75 3.75 0 013.75 3.75v6M16.5 3.75L20.25 7.5M16.5 12.75h-9a3.75 3.75 0 00-3.75 3.75v3.75h12v-3.75a3.75 3.75 0 00-3.75-3.75z" />
+                      </svg>
+                    </button>
+                  )}
                   {saveDirectoryPath && (
                     <button
                       onClick={handleOpenDirectory}
