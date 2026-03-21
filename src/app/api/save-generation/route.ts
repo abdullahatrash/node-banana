@@ -3,6 +3,9 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as crypto from "crypto";
 import { logger } from "@/utils/logger";
+import { isDatabaseConfigured } from "@/lib/db";
+import { resolveRequestContext } from "@/lib/server/requestContext";
+import { recordAsset } from "@/lib/studio/repository";
 
 // Helper to get file extension from MIME type
 function getExtensionFromMime(mimeType: string): string {
@@ -49,6 +52,33 @@ function getExtensionFromMime(mimeType: string): string {
 
   // Unknown type - use generic binary extension
   return "bin";
+}
+
+function getMimeFromExtension(extension: string): string {
+  const ext = extension.toLowerCase();
+  const map: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    svg: "image/svg+xml",
+    mp4: "video/mp4",
+    webm: "video/webm",
+    mov: "video/quicktime",
+    glb: "model/gltf-binary",
+    gltf: "model/gltf+json",
+    obj: "model/obj",
+    usdz: "model/vnd.usdz+zip",
+    fbx: "model/fbx",
+    stl: "model/stl",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    ogg: "audio/ogg",
+    flac: "audio/flac",
+    aac: "audio/aac",
+  };
+  return map[ext] || "application/octet-stream";
 }
 
 // Helper to detect if a string is an HTTP URL
@@ -108,6 +138,7 @@ export async function POST(request: NextRequest) {
     const model3d = body.model3d;
     const audio = body.audio;
     const prompt = body.prompt;
+    const projectId = body.projectId;
     const imageId = body.imageId; // Optional ID for carousel support
     const customFilename = body.customFilename; // Optional custom filename (without extension)
     const createDirectory = body.createDirectory; // Optional flag to create directory if it doesn't exist
@@ -116,6 +147,13 @@ export async function POST(request: NextRequest) {
     const isModel = !!model3d;
     const isAudio = !!audio;
     const content = video || model3d || audio || image;
+    const assetType = isModel
+      ? "model3d"
+      : isAudio
+        ? "audio"
+        : isVideo
+          ? "video"
+          : "image";
 
     logger.info('file.save', 'Generation auto-save request received', {
       directoryPath,
@@ -273,6 +311,31 @@ export async function POST(request: NextRequest) {
         filePath: existingPath,
       });
 
+      if (isDatabaseConfigured()) {
+        try {
+          const context = await resolveRequestContext(request);
+          await recordAsset({
+            workspaceId: context.workspaceId,
+            userId: context.userId,
+            projectId: projectId || null,
+            type: assetType,
+            storageProvider: "local",
+            storageKey: existingPath,
+            mimeType: getMimeFromExtension(extension),
+            sizeBytes: buffer.length,
+            checksum: contentHash,
+            metadata: {
+              deduplicated: true,
+              prompt: prompt || null,
+            },
+          });
+        } catch (dbError) {
+          logger.warn("file.save", "Asset DB sync failed (non-fatal)", {
+            error: dbError instanceof Error ? dbError.message : "Unknown error",
+          });
+        }
+      }
+
       return NextResponse.json({
         success: true,
         filePath: existingPath,
@@ -316,6 +379,31 @@ export async function POST(request: NextRequest) {
       isAudio,
       contentHash,
     });
+
+    if (isDatabaseConfigured()) {
+      try {
+        const context = await resolveRequestContext(request);
+        await recordAsset({
+          workspaceId: context.workspaceId,
+          userId: context.userId,
+          projectId: projectId || null,
+          type: assetType,
+          storageProvider: "local",
+          storageKey: filePath,
+          mimeType: getMimeFromExtension(extension),
+          sizeBytes: buffer.length,
+          checksum: contentHash,
+          metadata: {
+            deduplicated: false,
+            prompt: prompt || null,
+          },
+        });
+      } catch (dbError) {
+        logger.warn("file.save", "Asset DB sync failed (non-fatal)", {
+          error: dbError instanceof Error ? dbError.message : "Unknown error",
+        });
+      }
+    }
 
     return NextResponse.json({
       success: true,

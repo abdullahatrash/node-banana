@@ -53,6 +53,39 @@ GEMINI_API_KEY=your_gemini_api_key
 OPENAI_API_KEY=your_openai_api_key      # Optional, for OpenAI LLM provider
 REPLICATE_API_KEY=your_replicate_api_key  # Optional, beta
 FAL_API_KEY=your_fal_api_key              # Optional, beta
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/node_banana
+BETTER_AUTH_SECRET=change_this_to_a_long_random_secret
+BETTER_AUTH_URL=http://localhost:3000
+NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
+# Optional S3-backed asset storage
+STORAGE_BACKEND=local                      # or "s3"
+S3_BUCKET_NAME=your_bucket_name
+S3_REGION=us-east-1
+S3_ENDPOINT=
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+S3_FORCE_PATH_STYLE=false
+```
+
+### Local Postgres (Docker)
+
+Start local Postgres:
+
+```bash
+pnpm db:up
+```
+
+Generate and apply migrations:
+
+```bash
+pnpm db:generate
+pnpm db:migrate
+```
+
+Stop local Postgres:
+
+```bash
+pnpm db:down
 ```
 
 ### Installation
