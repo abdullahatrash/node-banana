@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useMemo, useCallback } from "react";
 import { useWorkflowStore, WorkflowFile } from "@/store/workflowStore";
 import { useShallow } from "zustand/shallow";
+import { authClient } from "@/lib/auth/client";
 import { ProjectSetupModal } from "./ProjectSetupModal";
 import { ProjectBrowserModal } from "./ProjectBrowserModal";
 import { CostIndicator } from "./CostIndicator";
@@ -60,6 +62,7 @@ function CommentsNavigationIcon() {
 }
 
 export function Header() {
+  const { data: session } = authClient.useSession();
   const {
     workflowName,
     workflowId,
@@ -95,6 +98,7 @@ export function Header() {
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showProjectBrowserModal, setShowProjectBrowserModal] = useState(false);
   const [projectModalMode, setProjectModalMode] = useState<"new" | "settings">("new");
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   const isProjectConfigured = !!workflowName;
   const canSave = !!(workflowId && workflowName && saveDirectoryPath);
@@ -157,6 +161,22 @@ export function Header() {
     }
   };
 
+  const handleSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await authClient.signOut();
+    } catch (error) {
+      console.error("Failed to sign out:", error);
+      alert("Failed to sign out. Please try again.");
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
+
+  const sessionLabel =
+    (typeof session?.user?.name === "string" && session.user.name.trim()) ||
+    (typeof session?.user?.email === "string" && session.user.email.trim()) ||
+    "Signed in";
 
   const handleRevertAIChanges = useCallback(() => {
     const confirmed = window.confirm(
@@ -365,6 +385,37 @@ export function Header() {
             </button>
           )}
           <CommentsNavigationIcon />
+          {session?.user ? (
+            <>
+              <span className="text-neutral-300 truncate max-w-[220px]" title={sessionLabel}>
+                {sessionLabel}
+              </span>
+              <button
+                onClick={() => void handleSignOut()}
+                disabled={isSigningOut}
+                className="text-neutral-400 hover:text-neutral-200 transition-colors disabled:opacity-60"
+                title="Sign out"
+              >
+                {isSigningOut ? "Signing out..." : "Sign out"}
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/sign-in"
+                className="text-neutral-400 hover:text-neutral-200 transition-colors"
+              >
+                Sign in
+              </Link>
+              <Link
+                href="/sign-up"
+                className="text-neutral-400 hover:text-neutral-200 transition-colors"
+              >
+                Sign up
+              </Link>
+            </>
+          )}
+          <span className="text-neutral-500">·</span>
           <span className="text-neutral-400">
             {isProjectConfigured ? (
               isSaving ? (

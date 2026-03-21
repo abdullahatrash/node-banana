@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Header } from "@/components/Header";
+
+const mockUseSession = vi.fn();
+const mockSignOut = vi.fn();
+
+vi.mock("@/lib/auth/client", () => ({
+  authClient: {
+    useSession: () => mockUseSession(),
+    signOut: (...args: unknown[]) => mockSignOut(...args),
+  },
+}));
 
 // Mock the workflow store
 const mockSetWorkflowMetadata = vi.fn();
@@ -63,6 +73,8 @@ const createDefaultState = (overrides = {}) => ({
 describe("Header", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseSession.mockReturnValue({ data: null, isPending: false });
+    mockSignOut.mockResolvedValue({});
     // Default mock implementation - unconfigured project
     mockGetNodesWithComments.mockReturnValue([]);
     mockGetUnviewedCommentCount.mockReturnValue(0);
@@ -94,6 +106,53 @@ describe("Header", () => {
       render(<Header />);
       const link = screen.getByTitle("Support");
       expect(link).toHaveAttribute("href", "https://discord.com/invite/89Nr6EKkTf");
+    });
+
+    it("should render sign-in and sign-up links when unauthenticated", () => {
+      render(<Header />);
+      expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in");
+      expect(screen.getByRole("link", { name: "Sign up" })).toHaveAttribute("href", "/sign-up");
+    });
+  });
+
+  describe("Authentication Controls", () => {
+    it("should show session label and sign out button for authenticated users", () => {
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: "user_1",
+            name: "Test User",
+            email: "test@example.com",
+          },
+        },
+        isPending: false,
+      });
+
+      render(<Header />);
+
+      expect(screen.getByText("Test User")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
+    });
+
+    it("should call auth signOut when clicking sign out", async () => {
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: "user_1",
+            name: "Test User",
+            email: "test@example.com",
+          },
+        },
+        isPending: false,
+      });
+
+      render(<Header />);
+      fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+      await waitFor(() => {
+        expect(mockSignOut).toHaveBeenCalledTimes(1);
+      });
     });
   });
 
