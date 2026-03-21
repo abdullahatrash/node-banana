@@ -63,6 +63,7 @@ import { detectAndSplitGrid } from "@/utils/gridSplitter";
 import { logger } from "@/utils/logger";
 import { WelcomeModal } from "./quickstart";
 import { ProjectSetupModal } from "./ProjectSetupModal";
+import { ProjectBrowserModal } from "./ProjectBrowserModal";
 import { ChatPanel } from "./ChatPanel";
 import { EditOperation } from "@/lib/chat/editOperations";
 import { stripBinaryData } from "@/lib/chat/contextBuilder";
@@ -312,6 +313,9 @@ export function WorkflowCanvas() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isBuildingWorkflow, setIsBuildingWorkflow] = useState(false);
   const [showNewProjectSetup, setShowNewProjectSetup] = useState(false);
+  const [showProjectBrowser, setShowProjectBrowser] = useState(false);
+  const [restoreQuickstartOnProjectBrowserClose, setRestoreQuickstartOnProjectBrowserClose] =
+    useState(false);
   const [expandingNode, setExpandingNode] = useState<{ id: string; type: string } | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
@@ -1937,6 +1941,29 @@ export function WorkflowCanvas() {
             clearWorkflow();
             setShowQuickstart(false);
             setShowNewProjectSetup(true);
+          }}
+          onOpenProjectBrowser={() => {
+            setShowQuickstart(false);
+            setRestoreQuickstartOnProjectBrowserClose(true);
+            setShowProjectBrowser(true);
+          }}
+        />
+      )}
+
+      {showProjectBrowser && (
+        <ProjectBrowserModal
+          isOpen={showProjectBrowser}
+          onClose={() => {
+            setShowProjectBrowser(false);
+            if (restoreQuickstartOnProjectBrowserClose) {
+              setShowQuickstart(true);
+            }
+            setRestoreQuickstartOnProjectBrowserClose(false);
+          }}
+          onLoadWorkflow={async (workflow, workflowPath) => {
+            await loadWorkflow(workflow, workflowPath);
+            setShowProjectBrowser(false);
+            setRestoreQuickstartOnProjectBrowserClose(false);
           }}
         />
       )}

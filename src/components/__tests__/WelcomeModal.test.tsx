@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { WelcomeModal } from "@/components/quickstart/WelcomeModal";
-import { WorkflowFile } from "@/store/workflowStore";
 
 // Mock fetch
 const mockFetch = vi.fn();
@@ -185,198 +184,21 @@ describe("WelcomeModal", () => {
   });
 
   describe("File Loading", () => {
-    it("should render hidden file input for workflow loading", () => {
-      const { container } = render(
+    it("should call onOpenProjectBrowser when 'Load workflow' is clicked", () => {
+      const mockOnOpenProjectBrowser = vi.fn();
+
+      render(
         <WelcomeModal
           onWorkflowGenerated={mockOnWorkflowGenerated}
           onClose={mockOnClose}
           onNewProject={mockOnNewProject}
+          onOpenProjectBrowser={mockOnOpenProjectBrowser}
         />
       );
-
-      const fileInput = container.querySelector('input[type="file"]');
-      expect(fileInput).toBeInTheDocument();
-      expect(fileInput).toHaveAttribute("accept", ".json");
-      expect(fileInput).toHaveClass("hidden");
-    });
-
-    it("should trigger file input when 'Load workflow' is clicked", () => {
-      const { container } = render(
-        <WelcomeModal
-          onWorkflowGenerated={mockOnWorkflowGenerated}
-          onClose={mockOnClose}
-          onNewProject={mockOnNewProject}
-        />
-      );
-
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-      const clickSpy = vi.spyOn(fileInput, "click");
 
       fireEvent.click(screen.getByText("Load workflow"));
 
-      expect(clickSpy).toHaveBeenCalled();
-    });
-
-    it("should call onWorkflowGenerated when valid workflow file is loaded", async () => {
-      const validWorkflow: WorkflowFile = {
-        id: "test-id",
-        version: 1,
-        name: "Test Workflow",
-        edgeStyle: "curved",
-        nodes: [],
-        edges: [],
-      };
-
-      // Create a mock FileReader class
-      const mockFileReader = {
-        readAsText: vi.fn(function (this: { onload: ((e: ProgressEvent<FileReader>) => void) | null; result: string }) {
-          setTimeout(() => {
-            this.onload?.({ target: { result: this.result } } as ProgressEvent<FileReader>);
-          }, 0);
-        }),
-        onload: null as ((e: ProgressEvent<FileReader>) => void) | null,
-        onerror: null,
-        result: JSON.stringify(validWorkflow),
-      };
-
-      vi.stubGlobal("FileReader", function FileReaderMock(this: typeof mockFileReader) {
-        Object.assign(this, mockFileReader);
-        this.readAsText = mockFileReader.readAsText.bind(this);
-        return this;
-      });
-
-      const { container } = render(
-        <WelcomeModal
-          onWorkflowGenerated={mockOnWorkflowGenerated}
-          onClose={mockOnClose}
-          onNewProject={mockOnNewProject}
-        />
-      );
-
-      const file = new File([JSON.stringify(validWorkflow)], "test.json", {
-        type: "application/json",
-      });
-
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      await act(async () => {
-        fireEvent.change(fileInput, { target: { files: [file] } });
-      });
-
-      await waitFor(() => {
-        expect(mockOnWorkflowGenerated).toHaveBeenCalledWith(validWorkflow);
-      });
-
-      vi.unstubAllGlobals();
-    });
-
-    it("should show alert for invalid workflow file format", async () => {
-      const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-      const invalidWorkflow = { foo: "bar" }; // Missing required fields
-
-      const mockFileReader = {
-        readAsText: vi.fn(function (this: { onload: ((e: ProgressEvent<FileReader>) => void) | null; result: string }) {
-          setTimeout(() => {
-            this.onload?.({ target: { result: this.result } } as ProgressEvent<FileReader>);
-          }, 0);
-        }),
-        onload: null as ((e: ProgressEvent<FileReader>) => void) | null,
-        onerror: null,
-        result: JSON.stringify(invalidWorkflow),
-      };
-
-      vi.stubGlobal("FileReader", function FileReaderMock(this: typeof mockFileReader) {
-        Object.assign(this, mockFileReader);
-        this.readAsText = mockFileReader.readAsText.bind(this);
-        return this;
-      });
-
-      const { container } = render(
-        <WelcomeModal
-          onWorkflowGenerated={mockOnWorkflowGenerated}
-          onClose={mockOnClose}
-          onNewProject={mockOnNewProject}
-        />
-      );
-
-      const file = new File([JSON.stringify(invalidWorkflow)], "test.json", {
-        type: "application/json",
-      });
-
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      await act(async () => {
-        fireEvent.change(fileInput, { target: { files: [file] } });
-      });
-
-      await waitFor(() => {
-        expect(alertSpy).toHaveBeenCalledWith("Invalid workflow file format");
-      });
-      expect(mockOnWorkflowGenerated).not.toHaveBeenCalled();
-
-      vi.unstubAllGlobals();
-    });
-
-    it("should show alert when file parsing fails", async () => {
-      const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-      const mockFileReader = {
-        readAsText: vi.fn(function (this: { onload: ((e: ProgressEvent<FileReader>) => void) | null; result: string }) {
-          setTimeout(() => {
-            this.onload?.({ target: { result: this.result } } as ProgressEvent<FileReader>);
-          }, 0);
-        }),
-        onload: null as ((e: ProgressEvent<FileReader>) => void) | null,
-        onerror: null,
-        result: "invalid json",
-      };
-
-      vi.stubGlobal("FileReader", function FileReaderMock(this: typeof mockFileReader) {
-        Object.assign(this, mockFileReader);
-        this.readAsText = mockFileReader.readAsText.bind(this);
-        return this;
-      });
-
-      const { container } = render(
-        <WelcomeModal
-          onWorkflowGenerated={mockOnWorkflowGenerated}
-          onClose={mockOnClose}
-          onNewProject={mockOnNewProject}
-        />
-      );
-
-      const file = new File(["invalid json"], "test.json", {
-        type: "application/json",
-      });
-
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      await act(async () => {
-        fireEvent.change(fileInput, { target: { files: [file] } });
-      });
-
-      await waitFor(() => {
-        expect(alertSpy).toHaveBeenCalledWith("Failed to parse workflow file");
-      });
-
-      vi.unstubAllGlobals();
-    });
-
-    it("should not process if no file is selected", () => {
-      const { container } = render(
-        <WelcomeModal
-          onWorkflowGenerated={mockOnWorkflowGenerated}
-          onClose={mockOnClose}
-          onNewProject={mockOnNewProject}
-        />
-      );
-
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      fireEvent.change(fileInput, { target: { files: [] } });
-
-      expect(mockOnWorkflowGenerated).not.toHaveBeenCalled();
+      expect(mockOnOpenProjectBrowser).toHaveBeenCalledTimes(1);
     });
   });
 

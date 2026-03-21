@@ -24,6 +24,12 @@ vi.mock("@/components/ProjectSetupModal", () => ({
   ),
 }));
 
+vi.mock("@/components/ProjectBrowserModal", () => ({
+  ProjectBrowserModal: ({ isOpen }: { isOpen: boolean }) => (
+    isOpen ? <div data-testid="project-browser-modal">Project Browser Modal</div> : null
+  ),
+}));
+
 // Mock CostIndicator
 vi.mock("@/components/CostIndicator", () => ({
   CostIndicator: () => <div data-testid="cost-indicator">$0.00</div>,
@@ -250,24 +256,12 @@ describe("Header", () => {
       expect(openButton).toBeInTheDocument();
     });
 
-    it("should have hidden file input for loading workflows", () => {
-      const { container } = render(<Header />);
-      const fileInput = container.querySelector('input[type="file"]');
-      expect(fileInput).toBeInTheDocument();
-      expect(fileInput).toHaveAttribute("accept", ".json");
-      expect(fileInput).toHaveClass("hidden");
-    });
-
-    it("should trigger file input click when open button is clicked", () => {
-      const { container } = render(<Header />);
+    it("should open project browser modal when open button is clicked", () => {
+      render(<Header />);
       const openButton = screen.getByTitle("Open project");
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      // Mock click on file input
-      const clickSpy = vi.spyOn(fileInput, "click");
       fireEvent.click(openButton);
 
-      expect(clickSpy).toHaveBeenCalled();
+      expect(screen.getByTestId("project-browser-modal")).toBeInTheDocument();
     });
   });
 
@@ -405,23 +399,11 @@ describe("Header", () => {
     });
   });
 
-  describe("File Loading", () => {
-    it("should not call loadWorkflow when no file is selected", () => {
-      const { container } = render(<Header />);
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      // Trigger file change with empty files
-      fireEvent.change(fileInput, { target: { files: [] } });
-
+  describe("Project Browser", () => {
+    it("should not call loadWorkflow directly when opening browser", () => {
+      render(<Header />);
+      fireEvent.click(screen.getByTitle("Open project"));
       expect(mockLoadWorkflow).not.toHaveBeenCalled();
-    });
-
-    it("should reset file input value after file selection to allow re-selecting same file", () => {
-      const { container } = render(<Header />);
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      // File input should accept .json files
-      expect(fileInput).toHaveAttribute("accept", ".json");
     });
   });
 
