@@ -42,7 +42,7 @@ Configure API keys in Project Settings to enable these providers.
 ### Prerequisites
 
 - Node.js 18+
-- npm
+- pnpm (recommended via Corepack)
 
 ### Environment Variables
 
@@ -58,13 +58,13 @@ FAL_API_KEY=your_fal_api_key              # Optional, beta
 ### Installation
 
 ```bash
-npm install
+pnpm install
 ```
 
 ### Development
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
@@ -72,15 +72,15 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ### Build
 
 ```bash
-npm run build
-npm run start
+pnpm build
+pnpm start
 ```
 
 ## Example Workflows
 
 The `/examples` directory contains some example workflow files from my personal projects. To try them:
 
-1. Start the dev server with `npm run dev`
+1. Start the dev server with `pnpm dev`
 2. Drag any `.json` file from the `/examples` folder into the browser window
 3. Make sure you review each of the prompts before starting, these are fairly targetted to the examples. 
 
@@ -104,9 +104,9 @@ The `/examples` directory contains some example workflow files from my personal 
 Run the test suite with:
 
 ```bash
-npm test              # Watch mode
-npm run test:run      # Single run
-npm run test:coverage # With coverage report
+pnpm test              # Watch mode
+pnpm test:run          # Single run
+pnpm test:coverage     # With coverage report
 ```
 
 ## Contributions
