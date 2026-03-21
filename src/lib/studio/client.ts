@@ -1,6 +1,8 @@
-import { WorkflowFile } from "@/store/workflowStore";
+import type { WorkflowFile } from "@/store/workflowStore";
 
 type JsonRecord = Record<string, unknown>;
+
+const ACTIVE_WORKSPACE_STORAGE_KEY = "node-banana-active-workspace-id";
 
 export class StudioApiError extends Error {
   status: number;
@@ -30,17 +32,55 @@ function readApiError(data: unknown): string {
 }
 
 function getFriendlyStatusMessage(status: number, fallback: string): string {
-  if (status === 401) {
-    return "Please sign in to access AI Studio.";
-  }
-  if (status === 403) {
-    return "You do not have access to this workspace.";
-  }
+  if (status === 401) return "Please sign in to access AI Studio.";
+  if (status === 403) return "You do not have access to this workspace.";
   return fallback;
 }
 
-async function fetchApi(input: RequestInfo, init?: RequestInit): Promise<JsonRecord> {
-  const response = await fetch(input, init);
+export function getActiveWorkspaceId(): string | null {
+  if (typeof window === "undefined") return null;
+  const value = window.localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY);
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+export function setActiveWorkspaceId(workspaceId: string | null): void {
+  if (typeof window === "undefined") return;
+  if (!workspaceId || !workspaceId.trim()) {
+    window.localStorage.removeItem(ACTIVE_WORKSPACE_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, workspaceId.trim());
+}
+
+function mergeHeaders(init?: RequestInit, requireWorkspace = true): Headers {
+  const headers = new Headers(init?.headers || {});
+  if (requireWorkspace) {
+    const activeWorkspaceId = getActiveWorkspaceId();
+    if (activeWorkspaceId) {
+      headers.set("x-workspace-id", activeWorkspaceId);
+    }
+  }
+  return headers;
+}
+
+async function fetchApi(
+  input: RequestInfo,
+  init?: RequestInit,
+  options?: { requireWorkspace?: boolean },
+): Promise<JsonRecord> {
+  const requireWorkspace = options?.requireWorkspace ?? true;
+  const activeWorkspaceId = getActiveWorkspaceId();
+  if (requireWorkspace && !activeWorkspaceId) {
+    throw new StudioApiError(403, "Select a workspace to continue.");
+  }
+
+  const response = await fetch(input, {
+    ...init,
+    headers: mergeHeaders(init, requireWorkspace),
+  });
+
   let data: unknown = null;
   try {
     data = await response.json();
@@ -85,8 +125,16 @@ async function fetchApi(input: RequestInfo, init?: RequestInit): Promise<JsonRec
   return record;
 }
 
+export interface StudioWorkspace {
+  id: string;
+  name: string;
+  slug: string;
+  role: string;
+}
+
 export interface StudioProjectSummary {
   id: string;
+  workspaceId: string;
   name: string;
   slug: string | null;
   description: string | null;
@@ -102,6 +150,7 @@ export interface StudioProjectDetail extends StudioProjectSummary {
 
 export interface StudioAsset {
   id: string;
+  workspaceId: string;
   type: string | null;
   storageProvider: string | null;
   storageKey: string | null;
@@ -111,15 +160,28 @@ export interface StudioAsset {
   createdAt: string | null;
 }
 
+function parseWorkspace(value: unknown): StudioWorkspace | null {
+  const row = asRecord(value);
+  if (!row) return null;
+  const id = asString(row.id);
+  const name = asString(row.name);
+  const slug = asString(row.slug);
+  const role = asString(row.role);
+  if (!id || !name || !slug || !role) return null;
+  return { id, name, slug, role };
+}
+
 function parseProjectSummary(value: unknown): StudioProjectSummary | null {
   const row = asRecord(value);
   if (!row) return null;
-  const id = asString(row?.id);
-  const name = asString(row?.name);
-  if (!id || !name) return null;
+  const id = asString(row.id);
+  const workspaceId = asString(row.workspaceId);
+  const name = asString(row.name);
+  if (!id || !workspaceId || !name) return null;
 
   return {
     id,
+    workspaceId,
     name,
     slug: asString(row.slug),
     description: asString(row.description),
@@ -137,35 +199,62 @@ function parseProjectDetail(value: unknown): StudioProjectDetail | null {
 
   return {
     ...summary,
-    workflowJson: asRecord(row?.workflowJson),
-    createdAt: asString(row?.createdAt),
+    workflowJson: asRecord(row.workflowJson),
+    createdAt: asString(row.createdAt),
   };
 }
 
 function parseAsset(value: unknown): StudioAsset | null {
   const row = asRecord(value);
   if (!row) return null;
-  const id = asString(row?.id);
-  if (!id) return null;
+  const id = asString(row.id);
+  const workspaceId = asString(row.workspaceId);
+  if (!id || !workspaceId) return null;
 
   return {
     id,
-    type: asString(row?.type),
-    storageProvider: asString(row?.storageProvider),
-    storageKey: asString(row?.storageKey),
-    mimeType: asString(row?.mimeType),
-    sizeBytes: typeof row?.sizeBytes === "number" ? row.sizeBytes : null,
-    updatedAt: asString(row?.updatedAt),
-    createdAt: asString(row?.createdAt),
+    workspaceId,
+    type: asString(row.type),
+    storageProvider: asString(row.storageProvider),
+    storageKey: asString(row.storageKey),
+    mimeType: asString(row.mimeType),
+    sizeBytes: typeof row.sizeBytes === "number" ? row.sizeBytes : null,
+    updatedAt: asString(row.updatedAt),
+    createdAt: asString(row.createdAt),
   };
+}
+
+export async function listStudioWorkspaces(): Promise<StudioWorkspace[]> {
+  const data = await fetchApi(
+    "/api/studio/workspaces",
+    undefined,
+    { requireWorkspace: false },
+  );
+  const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+  const parsed = workspaces
+    .map(parseWorkspace)
+    .filter((workspace): workspace is StudioWorkspace => Boolean(workspace));
+
+  const activeWorkspaceId = getActiveWorkspaceId();
+  if (!activeWorkspaceId && parsed[0]) {
+    setActiveWorkspaceId(parsed[0].id);
+  }
+
+  return parsed;
 }
 
 export async function listStudioProjects(): Promise<StudioProjectSummary[]> {
   const data = await fetchApi("/api/studio/projects");
   const projects = Array.isArray(data.projects) ? data.projects : [];
-  return projects
+  const parsed = projects
     .map(parseProjectSummary)
     .filter((project): project is StudioProjectSummary => Boolean(project));
+
+  if (parsed[0]?.workspaceId) {
+    setActiveWorkspaceId(parsed[0].workspaceId);
+  }
+
+  return parsed;
 }
 
 export async function getStudioProject(projectId: string): Promise<StudioProjectDetail> {
@@ -173,6 +262,27 @@ export async function getStudioProject(projectId: string): Promise<StudioProject
   const project = parseProjectDetail(data.project);
   if (!project) {
     throw new Error("Project detail payload is invalid");
+  }
+  setActiveWorkspaceId(project.workspaceId);
+  return project;
+}
+
+export async function upsertStudioProject(input: {
+  projectId?: string;
+  name: string;
+  description?: string | null;
+  workflowJson?: Record<string, unknown> | null;
+  sourceDirectoryPath?: string | null;
+}): Promise<StudioProjectDetail | null> {
+  const data = await fetchApi("/api/studio/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const project = parseProjectDetail(data.project);
+  if (project?.workspaceId) {
+    setActiveWorkspaceId(project.workspaceId);
   }
   return project;
 }
@@ -186,9 +296,13 @@ export async function deleteStudioProject(projectId: string): Promise<void> {
 export async function listStudioAssets(projectId: string): Promise<StudioAsset[]> {
   const data = await fetchApi(`/api/studio/assets?projectId=${encodeURIComponent(projectId)}`);
   const assets = Array.isArray(data.assets) ? data.assets : [];
-  return assets
+  const parsed = assets
     .map(parseAsset)
     .filter((asset): asset is StudioAsset => Boolean(asset));
+  if (parsed[0]?.workspaceId) {
+    setActiveWorkspaceId(parsed[0].workspaceId);
+  }
+  return parsed;
 }
 
 export async function deleteStudioAsset(assetId: string): Promise<void> {

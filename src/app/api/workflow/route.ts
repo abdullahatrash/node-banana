@@ -3,9 +3,6 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { logger } from "@/utils/logger";
 import { validateWorkflowPath } from "@/utils/pathValidation";
-import { isDatabaseConfigured } from "@/lib/db";
-import { resolveRequestContext } from "@/lib/server/requestContext";
-import { upsertProject } from "@/lib/studio/repository";
 
 export const maxDuration = 300; // 5 minute timeout for large workflow files
 
@@ -124,25 +121,6 @@ export async function POST(request: NextRequest) {
       filePath,
       fileSize: json.length,
     });
-
-    // Non-blocking DB sync for project metadata/workflow JSON.
-    if (isDatabaseConfigured()) {
-      try {
-        const context = await resolveRequestContext(request);
-        await upsertProject({
-          workspaceId: context.workspaceId,
-          userId: context.userId,
-          projectId: typeof workflow.id === "string" ? workflow.id : undefined,
-          name: typeof workflow.name === "string" ? workflow.name : safeName,
-          workflowJson: workflow as Record<string, unknown>,
-          sourceDirectoryPath: directoryPath,
-        });
-      } catch (dbError) {
-        logger.warn("file.save", "Workflow DB sync failed (non-fatal)", {
-          error: dbError instanceof Error ? dbError.message : "Unknown error",
-        });
-      }
-    }
 
     return NextResponse.json({
       success: true,

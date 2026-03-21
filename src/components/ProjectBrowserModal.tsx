@@ -5,13 +5,17 @@ import type { WorkflowFile } from "@/store/workflowStore";
 import {
   deleteStudioAsset,
   deleteStudioProject,
+  getActiveWorkspaceId,
   getStudioProject,
   isWorkflowFile,
   listStudioAssets,
   listStudioProjects,
+  listStudioWorkspaces,
+  setActiveWorkspaceId,
   StudioAsset,
   StudioProjectDetail,
   StudioProjectSummary,
+  StudioWorkspace,
 } from "@/lib/studio/client";
 
 interface ProjectBrowserModalProps {
@@ -44,11 +48,14 @@ export function ProjectBrowserModal({
 }: ProjectBrowserModalProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>("projects");
   const [projects, setProjects] = useState<StudioProjectSummary[]>([]);
+  const [workspaces, setWorkspaces] = useState<StudioWorkspace[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<StudioProjectDetail | null>(null);
   const [assets, setAssets] = useState<StudioAsset[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
   const [isLoadingProjectDetail, setIsLoadingProjectDetail] = useState(false);
   const [isLoadingJson, setIsLoadingJson] = useState(false);
   const [isDeletingProjectId, setIsDeletingProjectId] = useState<string | null>(null);
@@ -67,6 +74,32 @@ export function ProjectBrowserModal({
       created: formatTimestamp(selectedProject.createdAt),
     };
   }, [selectedProject]);
+
+  const loadWorkspaces = async (): Promise<string | null> => {
+    setIsLoadingWorkspaces(true);
+    try {
+      const nextWorkspaces = await listStudioWorkspaces();
+      setWorkspaces(nextWorkspaces);
+
+      if (nextWorkspaces.length === 0) {
+        setActiveWorkspaceIdState(null);
+        setActiveWorkspaceId(null);
+        return null;
+      }
+
+      const savedWorkspaceId = getActiveWorkspaceId();
+      const resolvedWorkspaceId =
+        savedWorkspaceId && nextWorkspaces.some((ws) => ws.id === savedWorkspaceId)
+          ? savedWorkspaceId
+          : nextWorkspaces[0].id;
+
+      setActiveWorkspaceIdState(resolvedWorkspaceId);
+      setActiveWorkspaceId(resolvedWorkspaceId);
+      return resolvedWorkspaceId;
+    } finally {
+      setIsLoadingWorkspaces(false);
+    }
+  };
 
   const loadProjects = async () => {
     setIsLoadingProjects(true);
@@ -125,9 +158,36 @@ export function ProjectBrowserModal({
   useEffect(() => {
     if (!isOpen) return;
     setActiveTab("projects");
-    void loadProjects();
+    void (async () => {
+      try {
+        const resolvedWorkspaceId = await loadWorkspaces();
+        if (!resolvedWorkspaceId) {
+          setProjects([]);
+          setSelectedProjectId(null);
+          setSelectedProject(null);
+          setAssets([]);
+          return;
+        }
+        await loadProjects();
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Failed to load workspaces.");
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  const handleWorkspaceChange = async (
+    event: ChangeEvent<HTMLSelectElement>,
+  ) => {
+    const workspaceId = event.target.value;
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceIdState(workspaceId);
+    setProjects([]);
+    setSelectedProjectId(null);
+    setSelectedProject(null);
+    setAssets([]);
+    await loadProjects();
+  };
 
   const handleOpenSelectedProject = async () => {
     if (!selectedProject?.workflowJson) return;
@@ -262,27 +322,49 @@ export function ProjectBrowserModal({
         </div>
 
         <div className="px-4 pt-3">
-          <div className="inline-flex rounded-lg bg-neutral-800 p-1">
-            <button
-              onClick={() => setActiveTab("projects")}
-              className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                activeTab === "projects"
-                  ? "bg-neutral-700 text-neutral-100"
-                  : "text-neutral-400 hover:text-neutral-200"
-              }`}
-            >
-              Studio Projects
-            </button>
-            <button
-              onClick={() => setActiveTab("json")}
-              className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                activeTab === "json"
-                  ? "bg-neutral-700 text-neutral-100"
-                  : "text-neutral-400 hover:text-neutral-200"
-              }`}
-            >
-              JSON File
-            </button>
+          <div className="flex items-center justify-between gap-3">
+            <div className="inline-flex rounded-lg bg-neutral-800 p-1">
+              <button
+                onClick={() => setActiveTab("projects")}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                  activeTab === "projects"
+                    ? "bg-neutral-700 text-neutral-100"
+                    : "text-neutral-400 hover:text-neutral-200"
+                }`}
+              >
+                Studio Projects
+              </button>
+              <button
+                onClick={() => setActiveTab("json")}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                  activeTab === "json"
+                    ? "bg-neutral-700 text-neutral-100"
+                    : "text-neutral-400 hover:text-neutral-200"
+                }`}
+              >
+                JSON File
+              </button>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-neutral-400">
+              Workspace
+              <select
+                value={activeWorkspaceId || ""}
+                onChange={(event) => void handleWorkspaceChange(event)}
+                disabled={isLoadingWorkspaces || workspaces.length === 0}
+                data-testid="workspace-select"
+                className="bg-neutral-800 border border-neutral-700 text-neutral-100 rounded px-2 py-1"
+              >
+                {workspaces.length === 0 ? (
+                  <option value="">No workspace</option>
+                ) : (
+                  workspaces.map((workspace) => (
+                    <option key={workspace.id} value={workspace.id}>
+                      {workspace.name} ({workspace.role})
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
           </div>
         </div>
 

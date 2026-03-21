@@ -4,7 +4,7 @@ import { isDatabaseConfigured } from "@/lib/db";
 import { assetTypeEnum } from "@/lib/db/schema";
 import { canUseS3Storage, buildAssetObjectKey, createPresignedUpload } from "@/lib/storage";
 import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
-import { recordAsset } from "@/lib/studio/repository";
+import { getProject, recordAsset } from "@/lib/studio/repository";
 
 interface PresignRequest {
   projectId?: string | null;
@@ -69,6 +69,19 @@ export async function POST(
     });
     if (!authz.authorized) {
       return authzErrorResponse(authz);
+    }
+
+    if (body.projectId) {
+      const project = await getProject(authz.workspaceId, body.projectId);
+      if (!project) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "No access to this project.",
+          },
+          { status: 403 },
+        );
+      }
     }
 
     const extFromName = body.fileName ? path.extname(body.fileName) : "";

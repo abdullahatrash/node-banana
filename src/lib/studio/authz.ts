@@ -110,21 +110,6 @@ async function getMembership(workspaceId: string, userId: string) {
   return membership ?? null;
 }
 
-async function getDefaultWorkspaceForUser(userId: string): Promise<string | null> {
-  const db = getDb();
-
-  const [membership] = await db
-    .select({
-      workspaceId: workspaceMembers.workspaceId,
-    })
-    .from(workspaceMembers)
-    .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-    .where(and(eq(workspaceMembers.userId, userId), isNull(workspaces.deletedAt)))
-    .limit(1);
-
-  return parseHeaderValue(membership?.workspaceId ?? null);
-}
-
 function canPerformAction(role: WorkspaceRole, action: StudioAccessAction): boolean {
   if (action === "delete") {
     return deleteRoles.has(role);
@@ -160,14 +145,14 @@ export async function authorizeStudioRequest(
     headerWorkspaceId ||
     (bypassEnabled
       ? process.env.DEV_WORKSPACE_ID || "local-workspace"
-      : await getDefaultWorkspaceForUser(userId));
+      : null);
 
   if (!workspaceId) {
     return authFailure(
       options.route,
       "invalid-workspace",
       403,
-      "No access to this workspace.",
+      "Select a workspace to continue.",
     );
   }
 

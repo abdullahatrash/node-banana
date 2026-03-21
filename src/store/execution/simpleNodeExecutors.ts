@@ -20,6 +20,7 @@ import type {
 import type { NodeExecutionContext } from "./types";
 import { parseTextToArray } from "@/utils/arrayParser";
 import { parseVarTags } from "@/utils/parseVarTags";
+import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
 
 /**
  * Annotation node: receives upstream image as source, passes through if no annotations.
@@ -181,7 +182,14 @@ export async function executePromptConstructor(ctx: NodeExecutionContext): Promi
  * Output node: displays final image/video result.
  */
 export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
-  const { node, getConnectedInputs, updateNodeData, saveDirectoryPath } = ctx;
+  const {
+    node,
+    getConnectedInputs,
+    updateNodeData,
+    saveDirectoryPath,
+    trackSaveGeneration,
+    get,
+  } = ctx;
   const { images, videos, audio } = getConnectedInputs(node.id);
 
   // Check audio array first
@@ -199,7 +207,7 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
       const outputNodeData = node.data as OutputNodeData;
       const outputsPath = `${saveDirectoryPath}/outputs`;
 
-      fetch("/api/save-generation", {
+      const savePromise = fetch("/api/save-generation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -208,9 +216,22 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
           customFilename: outputNodeData.outputFilename || undefined,
           createDirectory: true,
         }),
-      }).catch((err) => {
-        console.error("Failed to save output:", err);
-      });
+      })
+        .then((res) => res.json())
+        .then((saveResult) =>
+          syncStudioAssetFromSaveResult({
+            saveResult,
+            assetType: "audio",
+            getStoreState: () => get(),
+          }).catch((syncError) => {
+            console.error("Failed to sync studio output audio asset:", syncError);
+          }),
+        )
+        .catch((err) => {
+          console.error("Failed to save output:", err);
+        });
+
+      trackSaveGeneration(`output-${node.id}-audio-${Date.now()}`, savePromise);
     }
     return;
   }
@@ -229,7 +250,7 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
       const outputNodeData = node.data as OutputNodeData;
       const outputsPath = `${saveDirectoryPath}/outputs`;
 
-      fetch("/api/save-generation", {
+      const savePromise = fetch("/api/save-generation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -238,9 +259,22 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
           customFilename: outputNodeData.outputFilename || undefined,
           createDirectory: true,
         }),
-      }).catch((err) => {
-        console.error("Failed to save output:", err);
-      });
+      })
+        .then((res) => res.json())
+        .then((saveResult) =>
+          syncStudioAssetFromSaveResult({
+            saveResult,
+            assetType: "video",
+            getStoreState: () => get(),
+          }).catch((syncError) => {
+            console.error("Failed to sync studio output video asset:", syncError);
+          }),
+        )
+        .catch((err) => {
+          console.error("Failed to save output:", err);
+        });
+
+      trackSaveGeneration(`output-${node.id}-video-${Date.now()}`, savePromise);
     }
   } else if (images.length > 0) {
     const content = images[0];
@@ -270,7 +304,7 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
       const outputNodeData = node.data as OutputNodeData;
       const outputsPath = `${saveDirectoryPath}/outputs`;
 
-      fetch("/api/save-generation", {
+      const savePromise = fetch("/api/save-generation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -280,9 +314,25 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
           customFilename: outputNodeData.outputFilename || undefined,
           createDirectory: true,
         }),
-      }).catch((err) => {
-        console.error("Failed to save output:", err);
-      });
+      })
+        .then((res) => res.json())
+        .then((saveResult) =>
+          syncStudioAssetFromSaveResult({
+            saveResult,
+            assetType: isVideoContent ? "video" : "image",
+            getStoreState: () => get(),
+          }).catch((syncError) => {
+            console.error("Failed to sync studio output asset:", syncError);
+          }),
+        )
+        .catch((err) => {
+          console.error("Failed to save output:", err);
+        });
+
+      trackSaveGeneration(
+        `output-${node.id}-${isVideoContent ? "video" : "image"}-${Date.now()}`,
+        savePromise,
+      );
     }
   }
 }

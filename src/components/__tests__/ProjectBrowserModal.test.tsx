@@ -9,8 +9,14 @@ const mockDeleteStudioProject = vi.fn();
 const mockListStudioAssets = vi.fn();
 const mockDeleteStudioAsset = vi.fn();
 const mockIsWorkflowFile = vi.fn();
+const mockListStudioWorkspaces = vi.fn();
+const mockGetActiveWorkspaceId = vi.fn();
+const mockSetActiveWorkspaceId = vi.fn();
 
 vi.mock("@/lib/studio/client", () => ({
+  listStudioWorkspaces: (...args: unknown[]) => mockListStudioWorkspaces(...args),
+  getActiveWorkspaceId: (...args: unknown[]) => mockGetActiveWorkspaceId(...args),
+  setActiveWorkspaceId: (...args: unknown[]) => mockSetActiveWorkspaceId(...args),
   listStudioProjects: (...args: unknown[]) => mockListStudioProjects(...args),
   getStudioProject: (...args: unknown[]) => mockGetStudioProject(...args),
   deleteStudioProject: (...args: unknown[]) => mockDeleteStudioProject(...args),
@@ -31,9 +37,19 @@ const sampleWorkflow: WorkflowFile = {
 describe("ProjectBrowserModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockListStudioWorkspaces.mockResolvedValue([
+      {
+        id: "ws_1",
+        name: "Default Workspace",
+        slug: "default-workspace",
+        role: "owner",
+      },
+    ]);
+    mockGetActiveWorkspaceId.mockReturnValue("ws_1");
     mockListStudioProjects.mockResolvedValue([
       {
         id: "proj_1",
+        workspaceId: "ws_1",
         name: "Project One",
         slug: "project-one",
         description: null,
@@ -44,6 +60,7 @@ describe("ProjectBrowserModal", () => {
     ]);
     mockGetStudioProject.mockResolvedValue({
       id: "proj_1",
+      workspaceId: "ws_1",
       name: "Project One",
       slug: "project-one",
       description: null,
@@ -56,6 +73,7 @@ describe("ProjectBrowserModal", () => {
     mockListStudioAssets.mockResolvedValue([
       {
         id: "asset_1",
+        workspaceId: "ws_1",
         type: "image",
         storageProvider: "local",
         storageKey: "/tmp/project-one/generations/a.png",
@@ -77,6 +95,7 @@ describe("ProjectBrowserModal", () => {
     );
 
     await waitFor(() => {
+      expect(mockListStudioWorkspaces).toHaveBeenCalledTimes(1);
       expect(mockListStudioProjects).toHaveBeenCalledTimes(1);
     });
 

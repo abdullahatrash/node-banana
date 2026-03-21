@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { assetTypeEnum, storageProviderEnum } from "@/lib/db/schema";
 import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
-import { listProjectAssets, recordAsset } from "@/lib/studio/repository";
+import { getProject, listProjectAssets, recordAsset } from "@/lib/studio/repository";
 
 interface AssetsGetResponse {
   success: boolean;
@@ -125,6 +125,19 @@ export async function POST(
     });
     if (!authz.authorized) {
       return authzErrorResponse(authz);
+    }
+
+    if (body.projectId) {
+      const project = await getProject(authz.workspaceId, body.projectId);
+      if (!project) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "No access to this project.",
+          },
+          { status: 403 },
+        );
+      }
     }
 
     const asset = await recordAsset({

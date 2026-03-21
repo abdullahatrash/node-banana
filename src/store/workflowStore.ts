@@ -31,6 +31,11 @@ import { logger } from "@/utils/logger";
 import { externalizeWorkflowImages, hydrateWorkflowImages } from "@/utils/imageStorage";
 import { EditOperation, applyEditOperations as executeEditOps } from "@/lib/chat/editOperations";
 import {
+  getActiveWorkspaceId,
+  listStudioWorkspaces,
+  upsertStudioProject,
+} from "@/lib/studio/client";
+import {
   loadSaveConfigs,
   saveSaveConfig,
   loadWorkflowCostData,
@@ -1981,6 +1986,30 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           lastSavedAt: timestamp,
           useExternalImageStorage,
         });
+
+        // Non-blocking protected Studio API sync for project metadata/workflow JSON.
+        void (async () => {
+          try {
+            if (!getActiveWorkspaceId()) {
+              await listStudioWorkspaces();
+            }
+            if (!getActiveWorkspaceId()) return;
+
+            await upsertStudioProject({
+              projectId: workflowId,
+              name: workflowName,
+              workflowJson: workflow as unknown as Record<string, unknown>,
+              sourceDirectoryPath: saveDirectoryPath,
+            });
+          } catch (studioSyncError) {
+            logger.warn("file.save", "Studio project sync failed (non-fatal)", {
+              error:
+                studioSyncError instanceof Error
+                  ? studioSyncError.message
+                  : "Unknown error",
+            });
+          }
+        })();
 
         return true;
       } else {
