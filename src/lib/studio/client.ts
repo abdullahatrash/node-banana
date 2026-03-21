@@ -2,6 +2,16 @@ import { WorkflowFile } from "@/store/workflowStore";
 
 type JsonRecord = Record<string, unknown>;
 
+export class StudioApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "StudioApiError";
+    this.status = status;
+  }
+}
+
 function asRecord(value: unknown): JsonRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as JsonRecord;
@@ -19,27 +29,57 @@ function readApiError(data: unknown): string {
     : "Unexpected API response";
 }
 
+function getFriendlyStatusMessage(status: number, fallback: string): string {
+  if (status === 401) {
+    return "Please sign in to access AI Studio.";
+  }
+  if (status === 403) {
+    return "You do not have access to this workspace.";
+  }
+  return fallback;
+}
+
 async function fetchApi(input: RequestInfo, init?: RequestInit): Promise<JsonRecord> {
   const response = await fetch(input, init);
   let data: unknown = null;
   try {
     data = await response.json();
   } catch {
-    throw new Error(`Request failed with status ${response.status}`);
+    throw new StudioApiError(
+      response.status,
+      getFriendlyStatusMessage(
+        response.status,
+        `Request failed with status ${response.status}`,
+      ),
+    );
   }
 
   const record = asRecord(data);
   if (!record) {
-    throw new Error(`Invalid API response for ${typeof input === "string" ? input : "request"}`);
+    throw new StudioApiError(
+      response.status,
+      getFriendlyStatusMessage(
+        response.status,
+        `Invalid API response for ${typeof input === "string" ? input : "request"}`,
+      ),
+    );
   }
 
   const success = record.success;
   if (typeof success !== "boolean") {
-    throw new Error(readApiError(record));
+    const message = readApiError(record);
+    throw new StudioApiError(
+      response.status,
+      getFriendlyStatusMessage(response.status, message),
+    );
   }
 
   if (!response.ok || !success) {
-    throw new Error(readApiError(record));
+    const message = readApiError(record);
+    throw new StudioApiError(
+      response.status,
+      getFriendlyStatusMessage(response.status, message),
+    );
   }
 
   return record;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
-import { resolveRequestContext } from "@/lib/server/requestContext";
+import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { listProjects, upsertProject } from "@/lib/studio/repository";
 
 interface ProjectsGetResponse {
@@ -38,8 +38,15 @@ export async function GET(
   }
 
   try {
-    const context = await resolveRequestContext(request);
-    const projects = await listProjects(context.workspaceId);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/projects",
+      action: "read",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
+    const projects = await listProjects(authz.workspaceId);
     return NextResponse.json({
       success: true,
       projects,
@@ -78,10 +85,17 @@ export async function POST(
       );
     }
 
-    const context = await resolveRequestContext(request);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/projects",
+      action: "write",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
     const project = await upsertProject({
-      workspaceId: context.workspaceId,
-      userId: context.userId,
+      workspaceId: authz.workspaceId,
+      userId: authz.userId,
       projectId: body.projectId,
       name: body.name.trim(),
       description: body.description || null,
@@ -103,4 +117,3 @@ export async function POST(
     );
   }
 }
-

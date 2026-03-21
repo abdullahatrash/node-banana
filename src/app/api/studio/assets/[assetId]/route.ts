@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
-import { resolveRequestContext } from "@/lib/server/requestContext";
+import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { getAsset, softDeleteAsset } from "@/lib/studio/repository";
 
 interface AssetResponse {
@@ -25,9 +25,16 @@ export async function GET(
   }
 
   try {
-    const context = await resolveRequestContext(request);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/assets/[assetId]",
+      action: "read",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
     const { assetId } = await params;
-    const asset = await getAsset(context.workspaceId, assetId);
+    const asset = await getAsset(authz.workspaceId, assetId);
     if (!asset) {
       return NextResponse.json(
         { success: false, error: "Asset not found." },
@@ -66,9 +73,16 @@ export async function DELETE(
   }
 
   try {
-    const context = await resolveRequestContext(request);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/assets/[assetId]",
+      action: "delete",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
     const { assetId } = await params;
-    const asset = await softDeleteAsset(context.workspaceId, assetId);
+    const asset = await softDeleteAsset(authz.workspaceId, assetId);
     if (!asset) {
       return NextResponse.json(
         { success: false, error: "Asset not found." },

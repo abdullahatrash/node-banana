@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { assetTypeEnum } from "@/lib/db/schema";
 import { canUseS3Storage, buildAssetObjectKey, createPresignedUpload } from "@/lib/storage";
-import { resolveRequestContext } from "@/lib/server/requestContext";
+import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { recordAsset } from "@/lib/studio/repository";
 
 interface PresignRequest {
@@ -63,10 +63,17 @@ export async function POST(
       );
     }
 
-    const context = await resolveRequestContext(request);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/assets/presign",
+      action: "write",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
     const extFromName = body.fileName ? path.extname(body.fileName) : "";
     const key = buildAssetObjectKey({
-      workspaceId: context.workspaceId,
+      workspaceId: authz.workspaceId,
       projectId: body.projectId || null,
       assetType: body.assetType,
       fileExtension: extFromName || undefined,
@@ -78,8 +85,8 @@ export async function POST(
     });
 
     const asset = await recordAsset({
-      workspaceId: context.workspaceId,
-      userId: context.userId,
+      workspaceId: authz.workspaceId,
+      userId: authz.userId,
       projectId: body.projectId || null,
       type: body.assetType,
       storageProvider: "s3",
@@ -110,4 +117,3 @@ export async function POST(
     );
   }
 }
-

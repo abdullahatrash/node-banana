@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
-import { resolveRequestContext } from "@/lib/server/requestContext";
+import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { getProject, softDeleteProject, upsertProject } from "@/lib/studio/repository";
 
 interface ProjectResponse {
@@ -32,9 +32,16 @@ export async function GET(
   }
 
   try {
-    const context = await resolveRequestContext(request);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/projects/[projectId]",
+      action: "read",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
     const { projectId } = await params;
-    const project = await getProject(context.workspaceId, projectId);
+    const project = await getProject(authz.workspaceId, projectId);
     if (!project) {
       return NextResponse.json(
         { success: false, error: "Project not found." },
@@ -72,9 +79,16 @@ export async function PATCH(
   }
 
   try {
-    const context = await resolveRequestContext(request);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/projects/[projectId]",
+      action: "write",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
     const { projectId } = await params;
-    const existing = await getProject(context.workspaceId, projectId);
+    const existing = await getProject(authz.workspaceId, projectId);
     if (!existing) {
       return NextResponse.json(
         { success: false, error: "Project not found." },
@@ -86,8 +100,8 @@ export async function PATCH(
     const resolvedName = body.name?.trim() || existing.name;
 
     const project = await upsertProject({
-      workspaceId: context.workspaceId,
-      userId: context.userId,
+      workspaceId: authz.workspaceId,
+      userId: authz.userId,
       projectId,
       name: resolvedName,
       description:
@@ -133,9 +147,16 @@ export async function DELETE(
   }
 
   try {
-    const context = await resolveRequestContext(request);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/projects/[projectId]",
+      action: "delete",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
     const { projectId } = await params;
-    const deleted = await softDeleteProject(context.workspaceId, projectId);
+    const deleted = await softDeleteProject(authz.workspaceId, projectId);
     if (!deleted) {
       return NextResponse.json(
         { success: false, error: "Project not found." },
@@ -156,4 +177,3 @@ export async function DELETE(
     );
   }
 }
-

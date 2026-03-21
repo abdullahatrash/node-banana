@@ -25,14 +25,50 @@ function getAuthDatabase() {
   return memoryAdapter(memoryDb);
 }
 
-const trustedOrigin =
-  process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const DEV_SECRET_FALLBACK = "change-this-dev-secret-before-production";
+
+function getAuthSecret(): string {
+  const configured = process.env.BETTER_AUTH_SECRET?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "BETTER_AUTH_SECRET must be set in non-development environments.",
+    );
+  }
+
+  return DEV_SECRET_FALLBACK;
+}
+
+function getTrustedOrigin(): string {
+  const configured =
+    process.env.BETTER_AUTH_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.NEXT_PUBLIC_BETTER_AUTH_URL?.trim();
+
+  if (configured) {
+    return configured;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "BETTER_AUTH_URL (or NEXT_PUBLIC_APP_URL) must be set in non-development environments.",
+    );
+  }
+
+  return "http://localhost:3000";
+}
+
+const trustedOrigin = getTrustedOrigin();
+const authSecret = getAuthSecret();
 
 export const auth = betterAuth({
   appName: "Node Banana",
   basePath: "/api/auth",
   baseURL: trustedOrigin,
-  secret: process.env.BETTER_AUTH_SECRET || "change-this-dev-secret-before-production",
+  secret: authSecret,
   trustedOrigins: [trustedOrigin],
   database: getAuthDatabase(),
   plugins: [nextCookies()],
@@ -41,4 +77,3 @@ export const auth = betterAuth({
     requireEmailVerification: false,
   },
 });
-

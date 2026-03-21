@@ -57,6 +57,11 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/node_banana
 BETTER_AUTH_SECRET=change_this_to_a_long_random_secret
 BETTER_AUTH_URL=http://localhost:3000
 NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
+# Optional local-only auth bypass for AI Studio routes.
+# Keep false in production.
+DEV_AUTH_BYPASS=false
+DEV_USER_ID=local-user
+DEV_WORKSPACE_ID=local-workspace
 # Optional S3-backed asset storage
 STORAGE_BACKEND=local                      # or "s3"
 S3_BUCKET_NAME=your_bucket_name
@@ -66,6 +71,8 @@ S3_ACCESS_KEY_ID=
 S3_SECRET_ACCESS_KEY=
 S3_FORCE_PATH_STYLE=false
 ```
+
+For non-development environments, set `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` explicitly. AI Studio route bypass is only enabled when `DEV_AUTH_BYPASS=true` and is ignored in production.
 
 ### Local Postgres (Docker)
 

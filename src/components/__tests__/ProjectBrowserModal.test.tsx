@@ -120,6 +120,91 @@ describe("ProjectBrowserModal", () => {
     });
   });
 
+  it("restores an optimistically removed asset when delete is forbidden", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockDeleteStudioAsset.mockRejectedValue(
+      new Error("You do not have access to this workspace."),
+    );
+
+    render(
+      <ProjectBrowserModal isOpen onClose={vi.fn()} onLoadWorkflow={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-asset-asset_1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("delete-asset-asset_1"));
+
+    await waitFor(() => {
+      expect(mockDeleteStudioAsset).toHaveBeenCalledWith("asset_1");
+    });
+
+    expect(screen.getByTestId("delete-asset-asset_1")).toBeInTheDocument();
+    expect(
+      screen.getByText("You do not have access to this workspace."),
+    ).toBeInTheDocument();
+  });
+
+  it("restores an optimistically removed project when delete is forbidden", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockDeleteStudioProject.mockRejectedValue(
+      new Error("You do not have access to this workspace."),
+    );
+
+    render(
+      <ProjectBrowserModal isOpen onClose={vi.fn()} onLoadWorkflow={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-project-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("delete-project-button"));
+
+    await waitFor(() => {
+      expect(mockDeleteStudioProject).toHaveBeenCalledWith("proj_1");
+    });
+
+    expect(screen.getAllByText("Project One").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("delete-project-button")).toBeInTheDocument();
+    expect(
+      screen.getByText("You do not have access to this workspace."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a clear sign-in message for 401-style failures", async () => {
+    mockListStudioProjects.mockRejectedValue(
+      new Error("Please sign in to access AI Studio."),
+    );
+
+    render(
+      <ProjectBrowserModal isOpen onClose={vi.fn()} onLoadWorkflow={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Please sign in to access AI Studio."),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("shows a clear access message for 403-style failures", async () => {
+    mockListStudioProjects.mockRejectedValue(
+      new Error("You do not have access to this workspace."),
+    );
+
+    render(
+      <ProjectBrowserModal isOpen onClose={vi.fn()} onLoadWorkflow={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("You do not have access to this workspace."),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("supports JSON fallback loading", async () => {
     const onLoadWorkflow = vi.fn().mockResolvedValue(undefined);
 

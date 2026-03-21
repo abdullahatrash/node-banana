@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { assetTypeEnum, storageProviderEnum } from "@/lib/db/schema";
-import { resolveRequestContext } from "@/lib/server/requestContext";
+import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { listProjectAssets, recordAsset } from "@/lib/studio/repository";
 
 interface AssetsGetResponse {
@@ -57,8 +57,15 @@ export async function GET(
   }
 
   try {
-    const context = await resolveRequestContext(request);
-    const assets = await listProjectAssets(context.workspaceId, projectId);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/assets",
+      action: "read",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
+    const assets = await listProjectAssets(authz.workspaceId, projectId);
     return NextResponse.json({
       success: true,
       assets,
@@ -112,10 +119,17 @@ export async function POST(
       );
     }
 
-    const context = await resolveRequestContext(request);
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/assets",
+      action: "write",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
     const asset = await recordAsset({
-      workspaceId: context.workspaceId,
-      userId: context.userId,
+      workspaceId: authz.workspaceId,
+      userId: authz.userId,
       projectId: body.projectId || null,
       type: body.type,
       storageProvider: body.storageProvider,
@@ -144,4 +158,3 @@ export async function POST(
     );
   }
 }
-
