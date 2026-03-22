@@ -10,6 +10,7 @@ import type {
 } from "@/types";
 import { calculateGenerationCost } from "@/utils/costCalculator";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
+import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
 import type { NodeExecutionContext } from "./types";
 
 export interface NanoBananaOptions {
@@ -220,6 +221,14 @@ export async function executeNanoBanana(
                 }
               }
             }
+            return syncStudioAssetFromSaveResult({
+              saveResult,
+              assetType: "image",
+              prompt: promptText,
+              getStoreState: () => get(),
+            }).catch((syncError) => {
+              console.error("Failed to sync studio image asset:", syncError);
+            });
           })
           .catch((err) => {
             console.error("Failed to save generation:", err);

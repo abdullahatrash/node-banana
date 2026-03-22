@@ -42,7 +42,7 @@ Configure API keys in Project Settings to enable these providers.
 ### Prerequisites
 
 - Node.js 18+
-- npm
+- pnpm (recommended via Corepack)
 
 ### Environment Variables
 
@@ -53,18 +53,58 @@ GEMINI_API_KEY=your_gemini_api_key
 OPENAI_API_KEY=your_openai_api_key      # Optional, for OpenAI LLM provider
 REPLICATE_API_KEY=your_replicate_api_key  # Optional, beta
 FAL_API_KEY=your_fal_api_key              # Optional, beta
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/node_banana
+BETTER_AUTH_SECRET=change_this_to_a_long_random_secret
+BETTER_AUTH_URL=http://localhost:3000
+NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
+# Optional local-only auth bypass for AI Studio routes.
+# Keep false in production.
+DEV_AUTH_BYPASS=false
+DEV_USER_ID=local-user
+DEV_WORKSPACE_ID=local-workspace
+# Optional S3-backed asset storage
+STORAGE_BACKEND=local                      # or "s3"
+S3_BUCKET_NAME=your_bucket_name
+S3_REGION=us-east-1
+S3_ENDPOINT=
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+S3_FORCE_PATH_STYLE=false
+```
+
+For non-development environments, set `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` explicitly. AI Studio route bypass is only enabled when `DEV_AUTH_BYPASS=true` and is ignored in production.
+
+### Local Postgres (Docker)
+
+Start local Postgres:
+
+```bash
+pnpm db:up
+```
+
+Generate and apply migrations:
+
+```bash
+pnpm db:generate
+pnpm db:migrate
+```
+
+Stop local Postgres:
+
+```bash
+pnpm db:down
 ```
 
 ### Installation
 
 ```bash
-npm install
+pnpm install
 ```
 
 ### Development
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
@@ -72,15 +112,15 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ### Build
 
 ```bash
-npm run build
-npm run start
+pnpm build
+pnpm start
 ```
 
 ## Example Workflows
 
 The `/examples` directory contains some example workflow files from my personal projects. To try them:
 
-1. Start the dev server with `npm run dev`
+1. Start the dev server with `pnpm dev`
 2. Drag any `.json` file from the `/examples` folder into the browser window
 3. Make sure you review each of the prompts before starting, these are fairly targetted to the examples. 
 
@@ -104,9 +144,9 @@ The `/examples` directory contains some example workflow files from my personal 
 Run the test suite with:
 
 ```bash
-npm test              # Watch mode
-npm run test:run      # Single run
-npm run test:coverage # With coverage report
+pnpm test              # Watch mode
+pnpm test:run          # Single run
+pnpm test:coverage     # With coverage report
 ```
 
 ## Contributions

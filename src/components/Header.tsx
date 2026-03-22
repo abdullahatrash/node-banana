@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, useRef, useMemo, useCallback } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState, useMemo, useCallback } from "react";
 import { useWorkflowStore, WorkflowFile } from "@/store/workflowStore";
 import { useShallow } from "zustand/shallow";
+import { authClient } from "@/lib/auth/client";
+import { setActiveWorkspaceId } from "@/lib/studio/client";
 import { ProjectSetupModal } from "./ProjectSetupModal";
+import { ProjectBrowserModal } from "./ProjectBrowserModal";
 import { CostIndicator } from "./CostIndicator";
 import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
 
@@ -59,6 +64,8 @@ function CommentsNavigationIcon() {
 }
 
 export function Header() {
+  const router = useRouter();
+  const { data: session } = authClient.useSession();
   const {
     workflowName,
     workflowId,
@@ -92,8 +99,9 @@ export function Header() {
   })));
 
   const [showProjectModal, setShowProjectModal] = useState(false);
+  const [showProjectBrowserModal, setShowProjectBrowserModal] = useState(false);
   const [projectModalMode, setProjectModalMode] = useState<"new" | "settings">("new");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   const isProjectConfigured = !!workflowName;
   const canSave = !!(workflowId && workflowName && saveDirectoryPath);
@@ -116,30 +124,7 @@ export function Header() {
   };
 
   const handleOpenFile = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const workflow = JSON.parse(event.target?.result as string) as WorkflowFile;
-        if (workflow.version && workflow.nodes && workflow.edges) {
-          await loadWorkflow(workflow);
-        } else {
-          alert("Invalid workflow file format");
-        }
-      } catch {
-        alert("Failed to parse workflow file");
-      }
-    };
-    reader.readAsText(file);
-
-    // Reset input so same file can be loaded again
-    e.target.value = "";
+    setShowProjectBrowserModal(true);
   };
 
   const handleProjectSave = async (id: string, name: string, path: string) => {
@@ -179,6 +164,35 @@ export function Header() {
     }
   };
 
+  const handleSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      const result = await authClient.signOut();
+      const signOutError =
+        result &&
+        typeof result === "object" &&
+        "error" in result
+          ? (result as { error?: unknown }).error
+          : null;
+      if (signOutError) {
+        throw signOutError;
+      }
+
+      // Prevent stale workspace context from leaking across user sessions.
+      setActiveWorkspaceId(null);
+      router.replace("/");
+    } catch (error) {
+      console.error("Failed to sign out:", error);
+      alert("Failed to sign out. Please try again.");
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
+
+  const sessionLabel =
+    (typeof session?.user?.name === "string" && session.user.name.trim()) ||
+    (typeof session?.user?.email === "string" && session.user.email.trim()) ||
+    "Signed in";
 
   const handleRevertAIChanges = useCallback(() => {
     const confirmed = window.confirm(
@@ -226,12 +240,13 @@ export function Header() {
         onSave={handleProjectSave}
         mode={projectModalMode}
       />
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".json"
-        onChange={handleFileChange}
-        className="hidden"
+      <ProjectBrowserModal
+        isOpen={showProjectBrowserModal}
+        onClose={() => setShowProjectBrowserModal(false)}
+        onLoadWorkflow={async (workflow: WorkflowFile, workflowPath?: string) => {
+          await loadWorkflow(workflow, workflowPath);
+          setShowProjectBrowserModal(false);
+        }}
       />
       <header className="h-11 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-2">
@@ -386,6 +401,37 @@ export function Header() {
             </button>
           )}
           <CommentsNavigationIcon />
+          {session?.user ? (
+            <>
+              <span className="text-neutral-300 truncate max-w-[220px]" title={sessionLabel}>
+                {sessionLabel}
+              </span>
+              <button
+                onClick={() => void handleSignOut()}
+                disabled={isSigningOut}
+                className="text-neutral-400 hover:text-neutral-200 transition-colors disabled:opacity-60"
+                title="Sign out"
+              >
+                {isSigningOut ? "Signing out..." : "Sign out"}
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/sign-in"
+                className="text-neutral-400 hover:text-neutral-200 transition-colors"
+              >
+                Sign in
+              </Link>
+              <Link
+                href="/sign-up"
+                className="text-neutral-400 hover:text-neutral-200 transition-colors"
+              >
+                Sign up
+              </Link>
+            </>
+          )}
+          <span className="text-neutral-500">·</span>
           <span className="text-neutral-400">
             {isProjectConfigured ? (
               isSaving ? (

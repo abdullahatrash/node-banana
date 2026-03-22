@@ -108,7 +108,6 @@ export async function POST(request: NextRequest) {
     const model3d = body.model3d;
     const audio = body.audio;
     const prompt = body.prompt;
-    const imageId = body.imageId; // Optional ID for carousel support
     const customFilename = body.customFilename; // Optional custom filename (without extension)
     const createDirectory = body.createDirectory; // Optional flag to create directory if it doesn't exist
 

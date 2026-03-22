@@ -7,6 +7,7 @@
 
 import type { Generate3DNodeData } from "@/types";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
+import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
 import type { NodeExecutionContext } from "./types";
 
 export interface Generate3DOptions {
@@ -28,6 +29,7 @@ export async function executeGenerate3D(
     addIncurredCost,
     generationsPath,
     trackSaveGeneration,
+    get,
   } = ctx;
 
   const { useStoredFallback = false } = options;
@@ -139,6 +141,14 @@ export async function executeGenerate3D(
                 savedFilePath: saveResult.filePath,
               });
             }
+            return syncStudioAssetFromSaveResult({
+              saveResult,
+              assetType: "model3d",
+              prompt: promptText,
+              getStoreState: () => get(),
+            }).catch((syncError) => {
+              console.error("Failed to sync studio 3D asset:", syncError);
+            });
           })
           .catch((err) => {
             console.error("Failed to save 3D model:", err);

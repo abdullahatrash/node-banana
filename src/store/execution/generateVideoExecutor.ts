@@ -7,6 +7,7 @@
 
 import type { GenerateVideoNodeData } from "@/types";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
+import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
 import type { NodeExecutionContext } from "./types";
 
 export interface GenerateVideoOptions {
@@ -29,6 +30,7 @@ export async function executeGenerateVideo(
     generationsPath,
     getNodes,
     trackSaveGeneration,
+    get,
   } = ctx;
 
   const { useStoredFallback = false } = options;
@@ -182,6 +184,14 @@ export async function executeGenerateVideo(
                 }
               }
             }
+            return syncStudioAssetFromSaveResult({
+              saveResult,
+              assetType: "video",
+              prompt: text,
+              getStoreState: () => get(),
+            }).catch((syncError) => {
+              console.error("Failed to sync studio video asset:", syncError);
+            });
           })
           .catch((err) => {
             console.error("Failed to save video generation:", err);

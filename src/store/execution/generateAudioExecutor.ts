@@ -7,6 +7,7 @@
 
 import type { GenerateAudioNodeData } from "@/types";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
+import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
 import type { NodeExecutionContext } from "./types";
 
 export interface GenerateAudioOptions {
@@ -29,6 +30,7 @@ export async function executeGenerateAudio(
     generationsPath,
     getNodes,
     trackSaveGeneration,
+    get,
   } = ctx;
 
   const { useStoredFallback = false } = options;
@@ -174,6 +176,14 @@ export async function executeGenerateAudio(
                 }
               }
             }
+            return syncStudioAssetFromSaveResult({
+              saveResult,
+              assetType: "audio",
+              prompt: text,
+              getStoreState: () => get(),
+            }).catch((syncError) => {
+              console.error("Failed to sync studio audio asset:", syncError);
+            });
           })
           .catch((err) => {
             console.error("Failed to save audio generation:", err);
