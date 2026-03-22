@@ -28,7 +28,7 @@ export default function SignInPage() {
 
   useEffect(() => {
     if (session?.user) {
-      router.replace("/");
+      router.replace("/studio");
     }
   }, [router, session]);
 
@@ -48,7 +48,7 @@ export default function SignInPage() {
         return;
       }
 
-      router.push("/");
+      router.replace("/studio");
     } catch (submitError) {
       setError(getErrorMessage(submitError, "Sign in failed."));
     } finally {

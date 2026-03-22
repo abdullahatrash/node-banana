@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useMemo, useCallback } from "react";
 import { useWorkflowStore, WorkflowFile } from "@/store/workflowStore";
 import { useShallow } from "zustand/shallow";
 import { authClient } from "@/lib/auth/client";
+import { setActiveWorkspaceId } from "@/lib/studio/client";
 import { ProjectSetupModal } from "./ProjectSetupModal";
 import { ProjectBrowserModal } from "./ProjectBrowserModal";
 import { CostIndicator } from "./CostIndicator";
@@ -62,6 +64,7 @@ function CommentsNavigationIcon() {
 }
 
 export function Header() {
+  const router = useRouter();
   const { data: session } = authClient.useSession();
   const {
     workflowName,
@@ -164,7 +167,20 @@ export function Header() {
   const handleSignOut = async () => {
     setIsSigningOut(true);
     try {
-      await authClient.signOut();
+      const result = await authClient.signOut();
+      const signOutError =
+        result &&
+        typeof result === "object" &&
+        "error" in result
+          ? (result as { error?: unknown }).error
+          : null;
+      if (signOutError) {
+        throw signOutError;
+      }
+
+      // Prevent stale workspace context from leaking across user sessions.
+      setActiveWorkspaceId(null);
+      router.replace("/");
     } catch (error) {
       console.error("Failed to sign out:", error);
       alert("Failed to sign out. Please try again.");

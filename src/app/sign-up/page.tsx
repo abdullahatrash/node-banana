@@ -29,7 +29,7 @@ export default function SignUpPage() {
 
   useEffect(() => {
     if (session?.user) {
-      router.replace("/");
+      router.replace("/studio");
     }
   }, [router, session]);
 
@@ -50,7 +50,7 @@ export default function SignUpPage() {
         return;
       }
 
-      router.push("/");
+      router.replace("/studio");
     } catch (submitError) {
       setError(getErrorMessage(submitError, "Sign up failed."));
     } finally {

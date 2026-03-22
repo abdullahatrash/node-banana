@@ -4,12 +4,24 @@ import { Header } from "@/components/Header";
 
 const mockUseSession = vi.fn();
 const mockSignOut = vi.fn();
+const mockSetActiveWorkspaceId = vi.fn();
+const mockRouterReplace = vi.fn();
 
 vi.mock("@/lib/auth/client", () => ({
   authClient: {
     useSession: () => mockUseSession(),
     signOut: (...args: unknown[]) => mockSignOut(...args),
   },
+}));
+
+vi.mock("@/lib/studio/client", () => ({
+  setActiveWorkspaceId: (...args: unknown[]) => mockSetActiveWorkspaceId(...args),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    replace: (...args: unknown[]) => mockRouterReplace(...args),
+  }),
 }));
 
 // Mock the workflow store
@@ -73,8 +85,11 @@ const createDefaultState = (overrides = {}) => ({
 describe("Header", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(window, "alert").mockImplementation(() => {});
     mockUseSession.mockReturnValue({ data: null, isPending: false });
     mockSignOut.mockResolvedValue({});
+    mockSetActiveWorkspaceId.mockReset();
+    mockRouterReplace.mockReset();
     // Default mock implementation - unconfigured project
     mockGetNodesWithComments.mockReturnValue([]);
     mockGetUnviewedCommentCount.mockReturnValue(0);
@@ -153,6 +168,33 @@ describe("Header", () => {
       await waitFor(() => {
         expect(mockSignOut).toHaveBeenCalledTimes(1);
       });
+      expect(mockSetActiveWorkspaceId).toHaveBeenCalledWith(null);
+      expect(mockRouterReplace).toHaveBeenCalledWith("/");
+    });
+
+    it("should not clear workspace if sign out fails", async () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      mockUseSession.mockReturnValue({
+        data: {
+          user: {
+            id: "user_1",
+            name: "Test User",
+            email: "test@example.com",
+          },
+        },
+        isPending: false,
+      });
+      mockSignOut.mockResolvedValue({ error: new Error("Sign out failed") });
+
+      render(<Header />);
+      fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+      await waitFor(() => {
+        expect(mockSignOut).toHaveBeenCalledTimes(1);
+      });
+      expect(mockSetActiveWorkspaceId).not.toHaveBeenCalled();
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
     });
   });
 

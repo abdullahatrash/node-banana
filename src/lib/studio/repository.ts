@@ -72,6 +72,105 @@ export async function ensureWorkspaceUser(
     .onConflictDoNothing();
 }
 
+function buildWorkspaceName(userName: string | null | undefined, userEmail: string | null | undefined): string {
+  const trimmedName = typeof userName === "string" ? userName.trim() : "";
+  if (trimmedName) {
+    return `${trimmedName}'s Workspace`;
+  }
+
+  const email = typeof userEmail === "string" ? userEmail.trim() : "";
+  const localPart = email.split("@")[0]?.trim();
+  if (localPart) {
+    return `${localPart}'s Workspace`;
+  }
+
+  return "Personal Workspace";
+}
+
+export async function ensurePersonalWorkspaceForUser(input: {
+  userId: string;
+  userName?: string | null;
+  userEmail?: string | null;
+}): Promise<{ workspaceId: string; slug: string }> {
+  const db = getDb();
+
+  const [existingMembership] = await db
+    .select({
+      workspaceId: workspaceMembers.workspaceId,
+      slug: workspaces.slug,
+    })
+    .from(workspaceMembers)
+    .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+    .where(and(eq(workspaceMembers.userId, input.userId), isNull(workspaces.deletedAt)))
+    .limit(1);
+
+  if (existingMembership) {
+    return {
+      workspaceId: existingMembership.workspaceId,
+      slug: existingMembership.slug,
+    };
+  }
+
+  const baseName = buildWorkspaceName(input.userName, input.userEmail);
+  const baseSlug =
+    slugify(baseName) ||
+    slugify(input.userEmail || "") ||
+    `workspace-${input.userId.slice(0, 8)}`;
+
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const slug =
+      attempt === 0
+        ? baseSlug
+        : `${baseSlug}-${timestampSuffix()}-${attempt}`;
+    const workspaceId = `ws_${randomUUID()}`;
+    const now = new Date();
+
+    const [createdWorkspace] = await db
+      .insert(workspaces)
+      .values({
+        id: workspaceId,
+        name: baseName,
+        slug,
+        ownerUserId: input.userId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing()
+      .returning({
+        id: workspaces.id,
+        slug: workspaces.slug,
+      });
+
+    if (!createdWorkspace) {
+      continue;
+    }
+
+    await db
+      .insert(workspaceMembers)
+      .values({
+        workspaceId: createdWorkspace.id,
+        userId: input.userId,
+        role: "owner",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [workspaceMembers.workspaceId, workspaceMembers.userId],
+        set: {
+          role: "owner",
+          updatedAt: now,
+        },
+      });
+
+    return {
+      workspaceId: createdWorkspace.id,
+      slug: createdWorkspace.slug,
+    };
+  }
+
+  throw new Error("Failed to provision personal workspace for user.");
+}
+
 interface UpsertProjectInput {
   workspaceId: string;
   userId: string;

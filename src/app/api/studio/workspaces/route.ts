@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth/server";
 import { getDb, isDatabaseConfigured } from "@/lib/db";
 import { workspaceMembers, workspaces } from "@/lib/db/schema";
-import { ensureWorkspaceUser } from "@/lib/studio/repository";
+import { ensurePersonalWorkspaceForUser, ensureWorkspaceUser } from "@/lib/studio/repository";
 
 interface WorkspaceItem {
   id: string;
@@ -29,19 +29,33 @@ function parseHeaderValue(value: string | null): string | null {
   return trimmed ? trimmed : null;
 }
 
-async function getSessionUserId(request: Request): Promise<string | null> {
+async function getSessionUser(request: Request): Promise<{
+  userId: string | null;
+  userName: string | null;
+  userEmail: string | null;
+}> {
   try {
     const session = await (
       auth as unknown as {
         api?: {
-          getSession?: (args: { headers: Headers }) => Promise<{ user?: { id?: string } } | null>;
+          getSession?: (args: { headers: Headers }) => Promise<{
+            user?: { id?: string; name?: string; email?: string };
+          } | null>;
         };
       }
     ).api?.getSession?.({ headers: request.headers });
 
-    return parseHeaderValue(session?.user?.id ?? null);
+    return {
+      userId: parseHeaderValue(session?.user?.id ?? null),
+      userName: parseHeaderValue(session?.user?.name ?? null),
+      userEmail: parseHeaderValue(session?.user?.email ?? null),
+    };
   } catch {
-    return null;
+    return {
+      userId: null,
+      userName: null,
+      userEmail: null,
+    };
   }
 }
 
@@ -60,10 +74,10 @@ export async function GET(
   }
 
   const bypassEnabled = isDevBypassEnabled();
-  const sessionUserId = await getSessionUserId(request);
+  const sessionUser = await getSessionUser(request);
   const headerUserId = parseHeaderValue(request.headers.get("x-user-id"));
   const userId =
-    sessionUserId ||
+    sessionUser.userId ||
     (bypassEnabled ? headerUserId || process.env.DEV_USER_ID || "local-user" : null);
 
   if (!userId) {
@@ -84,7 +98,7 @@ export async function GET(
   try {
     const db = getDb();
 
-    const rows = await db
+    let rows = await db
       .select({
         id: workspaces.id,
         name: workspaces.name,
@@ -99,6 +113,30 @@ export async function GET(
           isNull(workspaces.deletedAt),
         ),
       );
+
+    if (rows.length === 0 && !bypassEnabled) {
+      await ensurePersonalWorkspaceForUser({
+        userId,
+        userName: sessionUser.userName,
+        userEmail: sessionUser.userEmail,
+      });
+
+      rows = await db
+        .select({
+          id: workspaces.id,
+          name: workspaces.name,
+          slug: workspaces.slug,
+          role: workspaceMembers.role,
+        })
+        .from(workspaceMembers)
+        .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+        .where(
+          and(
+            eq(workspaceMembers.userId, userId),
+            isNull(workspaces.deletedAt),
+          ),
+        );
+    }
 
     return NextResponse.json({
       success: true,

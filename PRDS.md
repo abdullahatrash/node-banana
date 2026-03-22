@@ -70,6 +70,10 @@ The AI Content Studio is the primary hook. SMB owners describe their brand, and 
 - AI-powered A/B variant generation
 - Batch content generation (30 days of content in one session)
 - Product photo enhancement and background replacement
+- **Basic Quick Generate Mode (Form-Based):** A simplified Studio mode for non-technical users who want speed over workflow control.
+- **Side-Sheet Generation Form:** Users fill structured inputs (goal, platform, style, format/aspect ratio, tone, CTA, brand references, output count).
+- **Batch Quick Output:** Generate up to 20 pieces in one run from the same form configuration.
+- **Basic-to-Advanced Handoff:** Any generated batch can be opened in Advanced Workflow mode for node-level editing, iteration, and custom pipelines.
 
 #### 2.1.3 Technical Implementation
 

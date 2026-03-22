@@ -3,6 +3,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { nextCookies } from "better-auth/next-js";
 import { getDb, isDatabaseConfigured, schema } from "@/lib/db";
+import { ensurePersonalWorkspaceForUser } from "@/lib/studio/repository";
 
 const memoryDb = {
   user: [],
@@ -42,7 +43,7 @@ function getAuthSecret(): string {
   return DEV_SECRET_FALLBACK;
 }
 
-function getTrustedOrigin(): string {
+function getBaseUrl(): string {
   const configured =
     process.env.BETTER_AUTH_URL?.trim() ||
     process.env.NEXT_PUBLIC_APP_URL?.trim() ||
@@ -61,19 +62,56 @@ function getTrustedOrigin(): string {
   return "http://localhost:3000";
 }
 
-const trustedOrigin = getTrustedOrigin();
+function getTrustedOrigins(baseUrl: string): string[] {
+  const configured = [
+    process.env.BETTER_AUTH_URL,
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.NEXT_PUBLIC_BETTER_AUTH_URL,
+    ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  ]
+    .map((origin) => origin?.trim())
+    .filter((origin): origin is string => Boolean(origin));
+
+  if (process.env.NODE_ENV !== "production") {
+    configured.push("http://localhost:3000", "http://127.0.0.1:3000");
+  }
+
+  configured.push(baseUrl);
+  return Array.from(new Set(configured));
+}
+
+const baseUrl = getBaseUrl();
 const authSecret = getAuthSecret();
 
 export const auth = betterAuth({
   appName: "Node Banana",
   basePath: "/api/auth",
-  baseURL: trustedOrigin,
+  baseURL: baseUrl,
   secret: authSecret,
-  trustedOrigins: [trustedOrigin],
+  trustedOrigins: getTrustedOrigins(baseUrl),
   database: getAuthDatabase(),
   plugins: [nextCookies()],
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: false,
+  },
+  databaseHooks: {
+    user: {
+      create: {
+        after: async (createdUser) => {
+          // Only provision workspace when Postgres is enabled.
+          if (!isDatabaseConfigured()) return;
+
+          await ensurePersonalWorkspaceForUser({
+            userId: createdUser.id,
+            userName: createdUser.name ?? null,
+            userEmail: createdUser.email ?? null,
+          });
+        },
+      },
+    },
   },
 });
