@@ -23,6 +23,10 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function readApiError(data: unknown): string {
   const record = asRecord(data);
   const error = record?.error;
@@ -158,6 +162,29 @@ export interface StudioAsset {
   sizeBytes: number | null;
   updatedAt: string | null;
   createdAt: string | null;
+}
+
+export interface StudioAssetPresignInput {
+  projectId?: string | null;
+  assetType: "image" | "video" | "audio" | "model3d" | "workflow";
+  fileName?: string;
+  contentType: string;
+}
+
+export interface StudioAssetPresignResult {
+  assetId: string;
+  key: string;
+  uploadUrl: string;
+  downloadUrl: string;
+  expiresInSeconds: number;
+}
+
+export interface StudioAssetFinalizeInput {
+  uploadState: "ready" | "failed";
+  sizeBytes?: number;
+  checksum?: string;
+  mimeType?: string;
+  error?: string;
 }
 
 function parseWorkspace(value: unknown): StudioWorkspace | null {
@@ -309,6 +336,53 @@ export async function deleteStudioAsset(assetId: string): Promise<void> {
   await fetchApi(`/api/studio/assets/${encodeURIComponent(assetId)}`, {
     method: "DELETE",
   });
+}
+
+export async function createStudioAssetPresign(
+  input: StudioAssetPresignInput,
+): Promise<StudioAssetPresignResult> {
+  const data = await fetchApi("/api/studio/assets/presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const assetId = asString(data.assetId);
+  const key = asString(data.key);
+  const uploadUrl = asString(data.uploadUrl);
+  const downloadUrl = asString(data.downloadUrl);
+  const expiresInSeconds = asNumber(data.expiresInSeconds);
+
+  if (!assetId || !key || !uploadUrl || !downloadUrl || expiresInSeconds === null) {
+    throw new Error("Presign payload is invalid");
+  }
+
+  return {
+    assetId,
+    key,
+    uploadUrl,
+    downloadUrl,
+    expiresInSeconds,
+  };
+}
+
+export async function finalizeStudioAssetUpload(
+  assetId: string,
+  input: StudioAssetFinalizeInput,
+): Promise<StudioAsset> {
+  const data = await fetchApi(`/api/studio/assets/${encodeURIComponent(assetId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const asset = parseAsset(data.asset);
+  if (!asset) {
+    throw new Error("Asset finalize payload is invalid");
+  }
+
+  setActiveWorkspaceId(asset.workspaceId);
+  return asset;
 }
 
 export function isWorkflowFile(value: unknown): value is WorkflowFile {

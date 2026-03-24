@@ -154,6 +154,11 @@ describe("/api/studio/assets/presign auth hardening", () => {
         type: "image",
         storageProvider: "s3",
         storageKey: "ws_1/proj_1/image/file.png",
+        metadata: expect.objectContaining({
+          uploadState: "pending",
+          originalFileName: "image.png",
+          pendingExpiresAt: expect.any(String),
+        }),
       }),
     );
     expect(mockAuthorizeStudioRequest).toHaveBeenCalledWith(

@@ -109,6 +109,7 @@ export async function POST(
       metadata: {
         uploadState: "pending",
         originalFileName: body.fileName || null,
+        pendingExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       },
     });
 

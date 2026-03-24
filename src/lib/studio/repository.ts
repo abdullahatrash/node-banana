@@ -11,6 +11,51 @@ import {
   workspaces,
 } from "@/lib/db/schema";
 
+type AssetUploadState = "pending" | "ready" | "failed";
+
+function asMetadataRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function getAssetUploadState(value: unknown): AssetUploadState {
+  const metadata = asMetadataRecord(value);
+  const uploadState = metadata.uploadState;
+  if (uploadState === "ready" || uploadState === "failed") {
+    return uploadState;
+  }
+  return "pending";
+}
+
+function canTransitionUploadState(
+  currentState: AssetUploadState,
+  nextState: "ready" | "failed",
+): boolean {
+  if (currentState === "pending") return true;
+  return currentState === nextState;
+}
+
+export class StudioAssetNotFoundError extends Error {
+  constructor() {
+    super("Asset not found.");
+    this.name = "StudioAssetNotFoundError";
+  }
+}
+
+export class StudioAssetUploadTransitionError extends Error {
+  currentState: AssetUploadState;
+  nextState: "ready" | "failed";
+
+  constructor(currentState: AssetUploadState, nextState: "ready" | "failed") {
+    super(`Invalid upload state transition: ${currentState} -> ${nextState}`);
+    this.name = "StudioAssetUploadTransitionError";
+    this.currentState = currentState;
+    this.nextState = nextState;
+  }
+}
+
 function slugify(value: string): string {
   return value
     .trim()
@@ -280,6 +325,86 @@ export async function softDeleteProject(workspaceId: string, projectId: string) 
     .returning();
 
   return deleted ?? null;
+}
+
+interface FinalizeAssetUploadInput {
+  workspaceId: string;
+  assetId: string;
+  uploadState: "ready" | "failed";
+  sizeBytes?: number;
+  checksum?: string;
+  mimeType?: string;
+  error?: string;
+}
+
+export async function finalizeAssetUpload(input: FinalizeAssetUploadInput) {
+  const db = getDb();
+  const now = new Date();
+
+  const [existing] = await db
+    .select()
+    .from(assets)
+    .where(
+      and(
+        eq(assets.workspaceId, input.workspaceId),
+        eq(assets.id, input.assetId),
+        isNull(assets.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  if (!existing) {
+    throw new StudioAssetNotFoundError();
+  }
+
+  const currentState = getAssetUploadState(existing.metadata);
+  if (!canTransitionUploadState(currentState, input.uploadState)) {
+    throw new StudioAssetUploadTransitionError(currentState, input.uploadState);
+  }
+
+  const existingMetadata = asMetadataRecord(existing.metadata);
+  const nextMetadata: Record<string, unknown> = {
+    ...existingMetadata,
+    uploadState: input.uploadState,
+  };
+
+  if (input.uploadState === "ready") {
+    nextMetadata.uploadedAt =
+      typeof existingMetadata.uploadedAt === "string" &&
+      existingMetadata.uploadedAt.trim()
+        ? existingMetadata.uploadedAt
+        : now.toISOString();
+    delete nextMetadata.failedAt;
+    delete nextMetadata.uploadError;
+  } else {
+    nextMetadata.failedAt = now.toISOString();
+    nextMetadata.uploadError = input.error || "Upload failed";
+  }
+
+  const [updated] = await db
+    .update(assets)
+    .set({
+      metadata: nextMetadata,
+      sizeBytes:
+        typeof input.sizeBytes === "number" ? input.sizeBytes : existing.sizeBytes,
+      checksum: input.checksum ?? existing.checksum,
+      mimeType: input.mimeType ?? existing.mimeType,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(assets.workspaceId, input.workspaceId),
+        eq(assets.id, input.assetId),
+        isNull(assets.deletedAt),
+      ),
+    )
+    .returning();
+
+  if (!updated) {
+    throw new StudioAssetNotFoundError();
+  }
+
+  return updated;
 }
 
 interface RecordAssetInput {

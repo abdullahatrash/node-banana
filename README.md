@@ -57,22 +57,32 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/node_banana
 BETTER_AUTH_SECRET=change_this_to_a_long_random_secret
 BETTER_AUTH_URL=http://localhost:3000
 NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
+# Optional extra trusted origins (comma-separated), useful for local 127.0.0.1/IP URLs
+BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:3000
 # Optional local-only auth bypass for AI Studio routes.
 # Keep false in production.
 DEV_AUTH_BYPASS=false
 DEV_USER_ID=local-user
 DEV_WORKSPACE_ID=local-workspace
-# Optional S3-backed asset storage
+# Optional S3-compatible asset storage ("s3" means S3 API compatible, not AWS-only)
 STORAGE_BACKEND=local                      # or "s3"
+
+# Recommended Cloudflare R2 defaults when STORAGE_BACKEND=s3
 S3_BUCKET_NAME=your_bucket_name
-S3_REGION=us-east-1
-S3_ENDPOINT=
+S3_REGION=auto
+S3_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
 S3_ACCESS_KEY_ID=
 S3_SECRET_ACCESS_KEY=
-S3_FORCE_PATH_STYLE=false
+S3_FORCE_PATH_STYLE=false                  # R2 default
 ```
 
-For non-development environments, set `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` explicitly. AI Studio route bypass is only enabled when `DEV_AUTH_BYPASS=true` and is ignored in production.
+For non-development environments, `BETTER_AUTH_SECRET` is required and you must provide either `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` so auth origin validation works correctly.
+
+Better Auth client defaults to same-origin when `NEXT_PUBLIC_BETTER_AUTH_URL`/`NEXT_PUBLIC_APP_URL` are not set. In development, `localhost` and `127.0.0.1` are trusted automatically; use `BETTER_AUTH_TRUSTED_ORIGINS` for any additional local origins.
+
+AI Studio bypass is local-only (`DEV_AUTH_BYPASS=true`) and is ignored in production.
+
+For browser presigned uploads (S3/R2 mode), configure bucket CORS to allow your app origin(s), methods `PUT/GET/HEAD`, and `Content-Type` headers.
 
 ### Local Postgres (Docker)
 
@@ -108,6 +118,51 @@ pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+### Auth + Route Behavior
+
+- `/` is a public home/auth landing page (sign in/up actions).
+- `/studio` is protected and redirects unauthenticated users to `/sign-in`.
+- Auth sessions are handled through Better Auth (`/api/auth/*`) with Postgres-backed persistence when `DATABASE_URL` is configured.
+
+### Infra Smoke (Gate A)
+
+Prerequisites:
+
+1. Start Postgres: `pnpm db:up`
+2. Run migrations: `pnpm db:migrate`
+3. Seed local users/workspaces: `pnpm db:seed`
+
+Run smoke validation (local metadata mode):
+
+```bash
+pnpm smoke:infra
+```
+
+Run smoke validation (S3-compatible presign/upload/finalize mode):
+
+```bash
+SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
+```
+
+S3 mode requires `STORAGE_BACKEND=s3` plus valid `S3_BUCKET_NAME`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`.
+
+Expected pass output includes:
+
+- `auth health check`
+- `sign-in with seeded user`
+- `workspace list`
+- `project create/list/open/delete (soft)`
+- `asset create/list/delete (soft)` in local mode
+- `asset presign/upload/finalize/list/delete (soft)` in s3 mode
+
+Phase 6 verification commands:
+
+```bash
+pnpm test:gate-a
+pnpm smoke:infra
+SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
+```
 
 ### Build
 
@@ -146,6 +201,7 @@ Run the test suite with:
 ```bash
 pnpm test              # Watch mode
 pnpm test:run          # Single run
+pnpm test:gate-a       # Gate A deterministic API/auth regression suite
 pnpm test:coverage     # With coverage report
 ```
 
