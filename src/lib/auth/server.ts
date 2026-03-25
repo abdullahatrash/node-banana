@@ -110,26 +110,20 @@ for (const warning of authFeatureWarnings) {
 }
 
 const socialProviders = getSocialProviderConfig(authFeatureFlags);
-const authPlugins: Array<
-  | ReturnType<typeof nextCookies>
-  | ReturnType<typeof organization>
-  | ReturnType<typeof magicLink>
-  | ReturnType<typeof twoFactor>
-> = [nextCookies(), organization()];
-
-if (authFeatureFlags.magicLink) {
-  authPlugins.push(
-    magicLink({
-      sendMagicLink: async ({ email, url }) => {
-        console.info(`[auth] Magic link requested for ${email}: ${url}`);
-      },
-    }),
-  );
-}
-
-if (authFeatureFlags.twoFactor) {
-  authPlugins.push(twoFactor());
-}
+const authPlugins = [
+  nextCookies(),
+  organization(),
+  ...(authFeatureFlags.magicLink
+    ? [
+        magicLink({
+          sendMagicLink: async ({ email, url }) => {
+            console.info(`[auth] Magic link requested for ${email}: ${url}`);
+          },
+        }),
+      ]
+    : []),
+  ...(authFeatureFlags.twoFactor ? [twoFactor()] : []),
+];
 
 export const auth = betterAuth({
   appName: "Node Banana",
