@@ -38,6 +38,7 @@ jobs:
     needs: test
     env:
       NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/node_banana
       BETTER_AUTH_SECRET: ci-prodlike-auth-secret-7wqVb1L9pT2nX4mK8sR0dF6hJ3zQaC5
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
