@@ -175,15 +175,17 @@ export async function syncStudioAssetFromSaveResult(params: {
   let presignedAssetId: string | null = null;
 
   try {
+    const blob = await readSavedFileBlob(filePath, mimeType);
+
     const presign = await createStudioAssetPresign({
       projectId,
       assetType: params.assetType,
       fileName,
       contentType: mimeType,
+      expectedSizeBytes: blob.size,
     });
     presignedAssetId = presign.assetId;
 
-    const blob = await readSavedFileBlob(filePath, mimeType);
     const uploadResponse = await fetch(presign.uploadUrl, {
       method: "PUT",
       headers: {

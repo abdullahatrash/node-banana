@@ -57,6 +57,19 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/node_banana
 BETTER_AUTH_SECRET=change_this_to_a_long_random_secret
 BETTER_AUTH_URL=http://localhost:3000
 NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
+# Optional staged auth features (all false by default)
+BETTER_AUTH_ENABLE_GOOGLE_OAUTH=false
+BETTER_AUTH_ENABLE_GITHUB_OAUTH=false
+BETTER_AUTH_ENABLE_MAGIC_LINK=false
+BETTER_AUTH_ENABLE_TWO_FACTOR=false
+# Google/GitHub OAuth credentials (required only when corresponding feature is enabled)
+BETTER_AUTH_GOOGLE_CLIENT_ID=
+BETTER_AUTH_GOOGLE_CLIENT_SECRET=
+BETTER_AUTH_GITHUB_CLIENT_ID=
+BETTER_AUTH_GITHUB_CLIENT_SECRET=
+# Optional client-side feature toggles for auth UI/client plugin wiring
+NEXT_PUBLIC_BETTER_AUTH_ENABLE_MAGIC_LINK=false
+NEXT_PUBLIC_BETTER_AUTH_ENABLE_TWO_FACTOR=false
 # Optional extra trusted origins (comma-separated), useful for local 127.0.0.1/IP URLs
 BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:3000
 # Optional local-only auth bypass for AI Studio routes.
@@ -77,6 +90,7 @@ S3_FORCE_PATH_STYLE=false                  # R2 default
 ```
 
 For non-development environments, `BETTER_AUTH_SECRET` is required and you must provide either `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` so auth origin validation works correctly.
+For production/staging-like deployments, `DATABASE_URL` is required for Better Auth (memory adapter fallback is local-only).
 
 Better Auth client defaults to same-origin when `NEXT_PUBLIC_BETTER_AUTH_URL`/`NEXT_PUBLIC_APP_URL` are not set. In development, `localhost` and `127.0.0.1` are trusted automatically; use `BETTER_AUTH_TRUSTED_ORIGINS` for any additional local origins.
 
@@ -97,6 +111,7 @@ Generate and apply migrations:
 ```bash
 pnpm db:generate
 pnpm db:migrate
+pnpm db:backfill:org
 ```
 
 Stop local Postgres:
@@ -124,6 +139,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - `/` is a public home/auth landing page (sign in/up actions).
 - `/studio` is protected and redirects unauthenticated users to `/sign-in`.
 - Auth sessions are handled through Better Auth (`/api/auth/*`) with Postgres-backed persistence when `DATABASE_URL` is configured.
+- Workspace/organization hybrid mapping is stored in `workspace_settings` with Better Auth organization plugin tables (`organization`, `member`, `invitation`).
 
 ### Infra Smoke (Gate A)
 
@@ -146,6 +162,16 @@ SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
 ```
 
 S3 mode requires `STORAGE_BACKEND=s3` plus valid `S3_BUCKET_NAME`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`.
+
+Workspace quota enforcement (Phase 6b):
+
+- Default quota is `10 GB` per workspace (DB-managed, not env-managed).
+- Presign requests reserve quota using `expectedSizeBytes`; uploads are blocked with `403` when projected usage exceeds quota.
+- Override quota for one workspace via script:
+
+```bash
+pnpm db:set-workspace-quota -- <workspace_id> 20gb
+```
 
 Expected pass output includes:
 

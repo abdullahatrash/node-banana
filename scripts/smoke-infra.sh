@@ -182,7 +182,7 @@ if [ "$SMOKE_STORAGE_MODE" = "s3" ]; then
   node -e 'require("fs").writeFileSync(process.argv[1], Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wf8MZ0AAAAASUVORK5CYII=", "base64"));' "$SMOKE_UPLOAD_FILE"
   upload_size="$(wc -c < "$SMOKE_UPLOAD_FILE" | tr -d ' ')"
 
-  presign_payload="$(printf '{"projectId":"%s","assetType":"image","fileName":"smoke.png","contentType":"image/png"}' "$project_id")"
+  presign_payload="$(printf '{"projectId":"%s","assetType":"image","fileName":"smoke.png","contentType":"image/png","expectedSizeBytes":%s}' "$project_id" "$upload_size")"
   presign_response="$(
     curl -sS \
       -c "$COOKIE_JAR" \

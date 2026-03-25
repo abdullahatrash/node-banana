@@ -49,6 +49,7 @@ export const session = pgTable(
       .notNull(),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
+    activeOrganizationId: text("active_organization_id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -56,6 +57,74 @@ export const session = pgTable(
   (table) => ({
     tokenUnique: uniqueIndex("session_token_unique").on(table.token),
     userIdIdx: index("session_user_id_idx").on(table.userId),
+  }),
+);
+
+export const organization = pgTable(
+  "organization",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    logo: text("logo"),
+    metadata: text("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    slugUnique: uniqueIndex("organization_slug_unique").on(table.slug),
+  }),
+);
+
+export const member = pgTable(
+  "member",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    organizationUserUnique: uniqueIndex("member_organization_user_unique").on(
+      table.organizationId,
+      table.userId,
+    ),
+    organizationIdx: index("member_organization_idx").on(table.organizationId),
+    userIdx: index("member_user_idx").on(table.userId),
+  }),
+);
+
+export const invitation = pgTable(
+  "invitation",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role").notNull(),
+    status: text("status").default("pending").notNull(),
+    teamId: text("team_id"),
+    inviterId: text("inviter_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    organizationIdx: index("invitation_organization_idx").on(table.organizationId),
+    emailIdx: index("invitation_email_idx").on(table.email),
+    statusIdx: index("invitation_status_idx").on(table.status),
   }),
 );
 
@@ -148,6 +217,11 @@ export const generationStatusEnum = pgEnum("generation_status", [
   "failed",
   "cancelled",
 ]);
+export const planTierEnum = pgEnum("plan_tier", [
+  "free",
+  "pro",
+  "enterprise",
+]);
 
 export const workspaces = pgTable(
   "workspaces",
@@ -171,6 +245,48 @@ export const workspaces = pgTable(
     slugUnique: uniqueIndex("workspaces_slug_unique").on(table.slug),
     ownerIdx: index("workspaces_owner_idx").on(table.ownerUserId),
   }),
+);
+
+export const workspaceSettings = pgTable(
+  "workspace_settings",
+  {
+    workspaceId: text("workspace_id")
+      .primaryKey()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    planTier: planTierEnum("plan_tier").default("free").notNull(),
+    brandKit: jsonb("brand_kit").$type<Record<string, unknown>>(),
+    billingCustomerId: text("billing_customer_id"),
+    billingSubscriptionId: text("billing_subscription_id"),
+    billingMetadata: jsonb("billing_metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    organizationUnique: uniqueIndex("workspace_settings_organization_unique").on(
+      table.organizationId,
+    ),
+    planTierIdx: index("workspace_settings_plan_tier_idx").on(table.planTier),
+  }),
+);
+
+export const workspaceStorageLimits = pgTable(
+  "workspace_storage_limits",
+  {
+    workspaceId: text("workspace_id")
+      .primaryKey()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    quotaBytes: bigint("quota_bytes", { mode: "number" }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
 );
 
 export const workspaceMembers = pgTable(
@@ -322,4 +438,3 @@ export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
 export type StorageProvider = typeof storageProviderEnum.enumValues[number];
 export type GenerationStatus = typeof generationStatusEnum.enumValues[number];
-

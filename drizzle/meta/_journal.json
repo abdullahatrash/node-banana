@@ -8,6 +8,20 @@
       "when": 1774074363802,
       "tag": "0000_wealthy_morlun",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1774376850117,
+      "tag": "0001_nosy_fixer",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774386000000,
+      "tag": "0002_contentos_auth_org",
+      "breakpoints": true
     }
   ]
 }

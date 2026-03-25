@@ -169,6 +169,7 @@ export interface StudioAssetPresignInput {
   assetType: "image" | "video" | "audio" | "model3d" | "workflow";
   fileName?: string;
   contentType: string;
+  expectedSizeBytes: number;
 }
 
 export interface StudioAssetPresignResult {

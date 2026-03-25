@@ -447,12 +447,12 @@ export function Header() {
           </span>
           <span className="text-neutral-500">·</span>
           <a
-            href="https://x.com/ReflctWillie"
+            href="https://x.com/abodiatrash"
             target="_blank"
             rel="noopener noreferrer"
             className="text-neutral-400 hover:text-neutral-200 transition-colors"
           >
-            Made by Willie
+            Made by abodi
           </a>
           <span className="text-neutral-500">·</span>
           <button

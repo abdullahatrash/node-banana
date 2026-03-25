@@ -265,3 +265,133 @@ Update README + env docs:
 ## Notes on UploadThing (Decision Record)
 
 UploadThing remains deferred because Phase 6 requires minimal-risk completion on existing storage ownership architecture. Consider a post-MVP spike only if we want managed upload orchestration.
+
+## Post-Phase Addendum (Audit + Updated Plan)
+
+> Date: 2026-03-24  
+> Status: Decision-complete for next increments (`6b`, `6c`)  
+> Scope: Quota fairness, usage warning UX, and asset portability clarifications
+
+### Audit Snapshot (Current Repo State)
+
+- Phase 6 S3 generated-asset lifecycle is implemented (`presign -> PUT -> finalize` for generated outputs).
+- `pendingExpiresAt` fixed 24h metadata is implemented on presign.
+- Quota enforcement is **not** implemented yet:
+  - no `workspace_storage_limits` table
+  - no `expectedSizeBytes` in presign contract
+  - no presign-time quota projection lock/check
+- User download is supported in UI (`OutputNode` download action).
+- Local filesystem integration exists (directory picker + localhost-only file routes).
+- Cross-device portability is partial:
+  - generated assets are synced to S3 in `STORAGE_BACKEND=s3`
+  - user-uploaded input assets are still persisted via local workflow image storage paths (`/api/workflow-images`) and node base64/refs, so they are not fully cloud-portable yet.
+
+### Locked Direction (Reconfirmed)
+
+- Shared bucket is acceptable; fairness is enforced per workspace in app/data layer.
+- `6b`: hard quota block at presign time, default 10 GB/workspace.
+- `6c`: add usage visibility/warnings and complete cloud-portable handling for user-uploaded input assets.
+- Keep local fallback behavior non-breaking for local/dev workflows.
+
+## Phase 6b: Workspace Storage Quotas (Implementation Plan)
+
+### Data model + migration
+
+- Add `workspace_storage_limits` table:
+  - `workspace_id` (PK/FK to `workspaces.id`)
+  - `quota_bytes` (`bigint`, required)
+  - `updated_at` (timestamp with timezone)
+- Backfill all existing workspaces with `10 * 1024 * 1024 * 1024` bytes.
+- Ensure workspace provisioning paths insert quota row idempotently.
+
+### Presign contract + enforcement (`POST /api/studio/assets/presign`)
+
+- Request body adds required `expectedSizeBytes` (non-negative integer).
+- Return `400` for missing/invalid `expectedSizeBytes`.
+- Enforce under one DB transaction:
+  - `pg_advisory_xact_lock(hash(workspace_id))`
+  - compute `ready_used_bytes`: non-deleted S3 assets in `ready`
+  - compute `pending_reserved_bytes`: non-deleted S3 `pending` assets with unexpired `pendingExpiresAt`, summing `metadata.expectedSizeBytes`
+  - `projected = ready_used_bytes + pending_reserved_bytes + expectedSizeBytes`
+  - compare against `quota_bytes`
+- If `projected > quota_bytes`:
+  - return `403`, no asset row created
+- If allowed:
+  - continue presign flow
+  - persist pending metadata with:
+    - `uploadState: "pending"`
+    - `pendingExpiresAt` (24h fixed)
+    - `expectedSizeBytes`
+
+### Client + smoke updates
+
+- `createStudioAssetPresign` input type requires `expectedSizeBytes`.
+- `syncStudioAssetFromSaveResult` reads file blob first, then presigns with exact `blob.size`.
+- Update `scripts/smoke-infra.sh` S3 presign payload to include `expectedSizeBytes`.
+
+### Phase 6b tests
+
+- Presign route:
+  - `400` missing/invalid `expectedSizeBytes`
+  - `403` projected exceeds quota
+  - `200` projected within quota
+  - boundary `projected == quota` allowed
+  - expired pending excluded
+  - pending metadata includes `expectedSizeBytes` and `pendingExpiresAt`
+- Regression: existing finalize/state tests remain green.
+
+## Phase 6c: Usage Warnings + Input Asset Portability
+
+### 1) Quota usage visibility and warnings
+
+- Add workspace usage read API (or enrich existing workspace payload) returning:
+  - `quotaBytes`
+  - `readyUsedBytes`
+  - `pendingReservedBytes`
+  - `effectiveUsedBytes` (`ready + pending`)
+  - `remainingBytes`
+  - `usagePercent`
+  - `warningLevel` (`none | low | medium | high | critical`)
+- Warning thresholds (locked for this phase):
+  - `low`: `>= 80%`
+  - `medium`: `>= 90%`
+  - `high`: `>= 95%`
+  - `critical`: `>= 99%`
+- UI behavior:
+  - show passive usage meter in Studio shell
+  - show non-blocking warning banner/toast when crossing threshold
+  - show blocking error when presign returns quota exceeded (`403`)
+
+### 2) Cloud-portable user input assets
+
+- Goal: when workspace uses S3 mode, user-uploaded input assets (image/audio) become workspace assets in object storage, not local-only workflow files.
+- Add client upload path for input nodes:
+  - on file selection, compute bytes
+  - call presign (`expectedSizeBytes`)
+  - direct PUT
+  - finalize `ready`
+  - persist node reference to Studio asset identity (assetId/key), not only local imageRef/base64
+- Hydration/load behavior:
+  - if node has studio asset reference, load via server-mediated asset URL/read path
+  - if not, keep existing local ref/base64 behavior (backward compatibility)
+- Save/load compatibility:
+  - existing workflow JSON remains readable
+  - legacy local refs still hydrate via `/api/workflow-images`
+  - new S3-backed refs hydrate without requiring the same local disk path
+
+### 3) Phase 6c tests
+
+- API usage tests for threshold calculations and warning levels.
+- Presign response/UI integration tests for quota warning/exceeded states.
+- Input-node integration tests:
+  - upload file in S3 mode -> asset recorded/finalized
+  - workflow reload on different machine/session resolves input asset from workspace storage
+  - local mode behavior unchanged.
+
+## Env Var Impact (Locked)
+
+- No new required environment variables for `6b` or `6c`.
+- Existing storage envs remain:
+  - `STORAGE_BACKEND=s3`
+  - `S3_BUCKET_NAME`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`
+- Default quota is DB-backed fixed `10 GB` per workspace in this phase (admin override via DB/script, not env).

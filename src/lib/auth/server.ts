@@ -2,6 +2,15 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { nextCookies } from "better-auth/next-js";
+import { magicLink } from "better-auth/plugins/magic-link";
+import { organization } from "better-auth/plugins/organization";
+import { twoFactor } from "better-auth/plugins/two-factor";
+import {
+  getAuthFeatureFlags,
+  getAuthFeatureWarnings,
+  getSocialProviderConfig,
+  isProductionLikeRuntime,
+} from "@/lib/auth/features";
 import { getDb, isDatabaseConfigured, schema } from "@/lib/db";
 import { ensurePersonalWorkspaceForUser } from "@/lib/studio/repository";
 
@@ -10,6 +19,9 @@ const memoryDb = {
   session: [],
   account: [],
   verification: [],
+  organization: [],
+  member: [],
+  invitation: [],
 };
 
 function getAuthDatabase() {
@@ -21,8 +33,13 @@ function getAuthDatabase() {
     });
   }
 
-  // Non-breaking fallback for local development when DATABASE_URL isn't set.
-  // Existing AI studio features continue to work while infra is being configured.
+  if (isProductionLikeRuntime()) {
+    throw new Error(
+      "DATABASE_URL must be set in production/staging environments for Postgres-backed Better Auth sessions.",
+    );
+  }
+
+  // Local-only fallback for environments that are not production-like.
   return memoryAdapter(memoryDb);
 }
 
@@ -34,9 +51,9 @@ function getAuthSecret(): string {
     return configured;
   }
 
-  if (process.env.NODE_ENV === "production") {
+  if (isProductionLikeRuntime()) {
     throw new Error(
-      "BETTER_AUTH_SECRET must be set in non-development environments.",
+      "BETTER_AUTH_SECRET must be set in production/staging environments.",
     );
   }
 
@@ -53,9 +70,9 @@ function getBaseUrl(): string {
     return configured;
   }
 
-  if (process.env.NODE_ENV === "production") {
+  if (isProductionLikeRuntime()) {
     throw new Error(
-      "BETTER_AUTH_URL (or NEXT_PUBLIC_APP_URL) must be set in non-development environments.",
+      "BETTER_AUTH_URL (or NEXT_PUBLIC_APP_URL) must be set in production/staging environments.",
     );
   }
 
@@ -75,7 +92,7 @@ function getTrustedOrigins(baseUrl: string): string[] {
     .map((origin) => origin?.trim())
     .filter((origin): origin is string => Boolean(origin));
 
-  if (process.env.NODE_ENV !== "production") {
+  if (!isProductionLikeRuntime()) {
     configured.push("http://localhost:3000", "http://127.0.0.1:3000");
   }
 
@@ -85,6 +102,34 @@ function getTrustedOrigins(baseUrl: string): string[] {
 
 const baseUrl = getBaseUrl();
 const authSecret = getAuthSecret();
+const authFeatureFlags = getAuthFeatureFlags();
+const authFeatureWarnings = getAuthFeatureWarnings(authFeatureFlags);
+for (const warning of authFeatureWarnings) {
+  // Keep startup resilient for optional, staged features.
+  console.warn(`[auth] ${warning}`);
+}
+
+const socialProviders = getSocialProviderConfig(authFeatureFlags);
+const authPlugins: Array<
+  | ReturnType<typeof nextCookies>
+  | ReturnType<typeof organization>
+  | ReturnType<typeof magicLink>
+  | ReturnType<typeof twoFactor>
+> = [nextCookies(), organization()];
+
+if (authFeatureFlags.magicLink) {
+  authPlugins.push(
+    magicLink({
+      sendMagicLink: async ({ email, url }) => {
+        console.info(`[auth] Magic link requested for ${email}: ${url}`);
+      },
+    }),
+  );
+}
+
+if (authFeatureFlags.twoFactor) {
+  authPlugins.push(twoFactor());
+}
 
 export const auth = betterAuth({
   appName: "Node Banana",
@@ -93,11 +138,12 @@ export const auth = betterAuth({
   secret: authSecret,
   trustedOrigins: getTrustedOrigins(baseUrl),
   database: getAuthDatabase(),
-  plugins: [nextCookies()],
+  plugins: authPlugins,
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: false,
   },
+  socialProviders,
   databaseHooks: {
     user: {
       create: {
