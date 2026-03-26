@@ -442,6 +442,7 @@ export const socialPlatformEnum = pgEnum("social_platform", [
   "instagram",
   "tiktok",
   "threads",
+  "pinterest",
   "facebook",
   "youtube",
   "reddit",

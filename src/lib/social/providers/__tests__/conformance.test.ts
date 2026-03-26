@@ -3,6 +3,7 @@ import {
   facebookProvider,
   instagramProvider,
   linkedInProvider,
+  pinterestProvider,
   redditProvider,
   threadsProvider,
   tikTokProvider,
@@ -20,6 +21,7 @@ const providers = [
   youTubeProvider,
   redditProvider,
   threadsProvider,
+  pinterestProvider,
 ] as const;
 
 const classificationFixtures: Record<
@@ -65,6 +67,11 @@ const classificationFixtures: Record<
     token: "Error validating access token",
     badBody: "2207026 unsupported video format",
     retry: "An unknown error occurred",
+  },
+  pinterest: {
+    token: "401 Unauthorized token expired",
+    badBody: "400 board validation error",
+    retry: "429 rate limit exceeded",
   },
 };
 

@@ -13,6 +13,7 @@ import "./tiktok";
 import "./youtube";
 import "./reddit";
 import "./threads";
+import "./pinterest";
 
 export { linkedInProvider } from "./linkedin";
 export { xProvider } from "./x";
@@ -22,3 +23,4 @@ export { facebookProvider } from "./facebook";
 export { instagramProvider } from "./instagram";
 export { redditProvider } from "./reddit";
 export { threadsProvider } from "./threads";
+export { pinterestProvider } from "./pinterest";
