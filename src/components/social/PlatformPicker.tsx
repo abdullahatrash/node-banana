@@ -8,6 +8,7 @@ import {
 } from "@/lib/social/client";
 import { PlatformIcon } from "./shared/PlatformIcon";
 import { PLATFORM_LABELS } from "@/lib/social/constants";
+import { XCloseIcon } from "./icons";
 import { useToast } from "@/components/Toast";
 import type { SocialPlatform } from "@/lib/db/schema";
 
@@ -18,7 +19,6 @@ interface PlatformPickerProps {
 
 export function PlatformPicker({ isOpen, onClose }: PlatformPickerProps) {
   const [providers, setProviders] = useState<ProviderCapabilities[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(
     null,
   );
@@ -28,9 +28,7 @@ export function PlatformPicker({ isOpen, onClose }: PlatformPickerProps) {
     if (isOpen && providers.length === 0) {
       listSocialProviders()
         .then(setProviders)
-        .catch(() => {
-          showToast("Failed to load providers", "error");
-        });
+        .catch(() => showToast("Failed to load providers", "error"));
     }
   }, [isOpen]);
 
@@ -50,7 +48,6 @@ export function PlatformPicker({ isOpen, onClose }: PlatformPickerProps) {
     }
   }
 
-  // Fallback to all 6 platforms if provider list not loaded yet
   const platforms: Array<{ identifier: SocialPlatform; name: string }> =
     providers.length > 0
       ? providers.map((p) => ({
@@ -62,33 +59,33 @@ export function PlatformPicker({ isOpen, onClose }: PlatformPickerProps) {
         ).map((id) => ({ identifier: id, name: PLATFORM_LABELS[id] }));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div className="relative z-10 w-full max-w-md rounded-lg border border-neutral-700 bg-neutral-800 shadow-xl">
-        <div className="flex items-center justify-between border-b border-neutral-700 px-5 py-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-[420px] rounded-xl border border-neutral-800 bg-[#111] shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
           <div>
-            <h2 className="text-base font-semibold text-neutral-100">
-              Choose a platform
+            <h2 className="text-[13px] font-semibold text-neutral-200">
+              Connect a channel
             </h2>
-            <p className="mt-0.5 text-xs text-neutral-500">
-              Select the social network you want to connect
+            <p className="mt-0.5 text-[10px] text-neutral-600">
+              Select the platform you want to link
             </p>
           </div>
           <button
             onClick={onClose}
-            className="text-neutral-500 hover:text-neutral-300 transition-colors"
+            className="flex h-6 w-6 items-center justify-center rounded text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-400"
           >
-            ✕
+            <XCloseIcon size={12} />
           </button>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 p-5">
+        {/* Grid */}
+        <div className="grid grid-cols-3 gap-2 p-4">
           {platforms.map((platform) => {
             const isConnecting = connectingPlatform === platform.identifier;
             return (
@@ -96,10 +93,12 @@ export function PlatformPicker({ isOpen, onClose }: PlatformPickerProps) {
                 key={platform.identifier}
                 onClick={() => handleConnect(platform.identifier)}
                 disabled={!!connectingPlatform}
-                className="flex flex-col items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 p-4 transition-colors hover:border-neutral-500 hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex flex-col items-center gap-2 rounded-lg border border-neutral-800 bg-[#0a0a0a] px-3 py-4 transition-all duration-200 hover:-translate-y-px hover:border-neutral-700 hover:bg-[#141414] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <PlatformIcon platform={platform.identifier} size={36} />
-                <span className="text-xs font-medium text-neutral-200">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-800">
+                  <PlatformIcon platform={platform.identifier} size={20} />
+                </div>
+                <span className="text-[11px] font-medium text-neutral-500 transition-colors group-hover:text-neutral-200">
                   {isConnecting ? "Connecting..." : platform.name}
                 </span>
               </button>

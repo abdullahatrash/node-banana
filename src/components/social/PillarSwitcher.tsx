@@ -2,11 +2,12 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { ChannelsIcon, ChevronDownIcon } from "./icons";
 
 const PILLARS = [
-  { id: "studio", label: "AI Studio", icon: "🎨", href: "/studio" },
-  { id: "social", label: "Social Hub", icon: "📱", href: "/social" },
-  { id: "analytics", label: "Analytics", icon: "📊", href: "/analytics" },
+  { id: "studio", label: "AI Studio", href: "/studio" },
+  { id: "social", label: "Social Hub", href: "/social" },
+  { id: "analytics", label: "Analytics", href: "/analytics" },
 ] as const;
 
 interface PillarSwitcherProps {
@@ -38,32 +39,32 @@ export function PillarSwitcher({
     <div ref={ref} className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 rounded-md bg-neutral-800 border border-neutral-700 px-2.5 py-1 text-sm font-medium text-neutral-200 hover:bg-neutral-700 transition-colors"
+        className="flex items-center gap-1.5 rounded-[5px] border border-neutral-800 bg-neutral-900 px-2.5 py-1 text-xs font-medium text-green-400 transition-all duration-150 hover:border-neutral-700 hover:bg-neutral-800"
       >
-        <span>{current.icon}</span>
+        <ChannelsIcon size={12} />
         <span>{current.label}</span>
-        <span className="text-xs text-neutral-500 ml-0.5">
-          {isOpen ? "▲" : "▼"}
-        </span>
+        <ChevronDownIcon
+          size={10}
+          className={`text-neutral-600 transition-transform duration-150 ${isOpen ? "rotate-180" : ""}`}
+        />
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 w-52 rounded-lg bg-neutral-800 border border-neutral-700 shadow-lg z-50 py-1">
+        <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-lg border border-neutral-800 bg-neutral-900 py-1 shadow-lg">
           {PILLARS.map((pillar) => (
             <Link
               key={pillar.id}
               href={pillar.href}
               onClick={() => setIsOpen(false)}
-              className={`flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
+              className={`flex items-center gap-2 px-3 py-2 text-xs transition-colors ${
                 pillar.id === currentPillar
-                  ? "bg-neutral-700 text-green-400"
-                  : "text-neutral-300 hover:bg-neutral-700/50"
+                  ? "bg-neutral-800 text-green-400"
+                  : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200"
               }`}
             >
-              <span>{pillar.icon}</span>
               <span>{pillar.label}</span>
               {pillar.id === currentPillar && (
-                <span className="ml-auto text-xs text-neutral-500">
+                <span className="ml-auto text-[9px] text-neutral-600">
                   current
                 </span>
               )}

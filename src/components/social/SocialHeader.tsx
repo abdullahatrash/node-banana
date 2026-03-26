@@ -2,16 +2,17 @@
 
 import Link from "next/link";
 import { PillarSwitcher } from "./PillarSwitcher";
+import { PlusIcon } from "./icons";
 import { authClient } from "@/lib/auth/client";
 
 export function SocialHeader() {
   const session = authClient.useSession();
   const userName =
-    session.data?.user?.name || session.data?.user?.email || "User";
+    session.data?.user?.name || session.data?.user?.email || "";
 
   return (
-    <header className="flex h-11 items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-4">
-      <Link href="/social" className="text-lg font-bold text-neutral-100">
+    <header className="flex h-11 items-center gap-2.5 border-b border-neutral-900 bg-[#0f0f0f] px-4">
+      <Link href="/social" className="text-base font-bold text-neutral-100">
         🍌
       </Link>
       <PillarSwitcher currentPillar="social" />
@@ -20,12 +21,15 @@ export function SocialHeader() {
 
       <Link
         href="/social/compose"
-        className="rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-500 transition-colors"
+        className="flex items-center gap-1 rounded-[5px] bg-green-700 px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-green-600"
       >
-        + New Post
+        <PlusIcon size={12} />
+        New Post
       </Link>
 
-      <span className="text-xs text-neutral-500">{userName}</span>
+      {userName && (
+        <span className="text-[11px] text-neutral-600">{userName}</span>
+      )}
     </header>
   );
 }
