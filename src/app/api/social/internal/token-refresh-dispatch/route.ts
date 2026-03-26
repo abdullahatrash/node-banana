@@ -4,6 +4,7 @@ import { isDatabaseConfigured } from "@/lib/db";
 import { ensureInternalSocialAuth } from "@/lib/social/internal-auth";
 import { listExpiringSocialAccounts } from "@/lib/social/repository";
 import { tokenRefreshWorkflow } from "@/../workflows/token-refresh";
+import { logger } from "@/utils/logger";
 
 interface TokenRefreshDispatchResponse {
   success: boolean;
@@ -72,8 +73,22 @@ export async function POST(
     for (const account of expiringAccounts) {
       try {
         await start(tokenRefreshWorkflow, [account.id]);
+        logger.info("system", "Token refresh workflow dispatched", {
+          workspaceId: account.workspaceId,
+          accountId: account.id,
+          provider: account.platform,
+          dispatchKey: `token-refresh:${account.id}`,
+          workflowRunRef: null,
+        });
         dispatched += 1;
       } catch {
+        logger.warn("system", "Token refresh workflow dispatch failed", {
+          workspaceId: account.workspaceId,
+          accountId: account.id,
+          provider: account.platform,
+          dispatchKey: `token-refresh:${account.id}`,
+          workflowRunRef: null,
+        });
         failed += 1;
       }
     }

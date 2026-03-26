@@ -10,6 +10,7 @@ import {
   OAuthSelectionSessionExpiredError,
 } from "@/lib/social/repository";
 import type { SocialPlatform } from "@/lib/db/schema";
+import { logger } from "@/utils/logger";
 
 interface SelectPageRequest {
   platform: string;
@@ -103,6 +104,14 @@ export async function POST(
       accessTokenSecret: selectionSession.accessTokenSecret ?? undefined,
       tokenExpiresAt: selectionSession.tokenExpiresAt ?? undefined,
       createdByUserId: result.session.user.id,
+    });
+    logger.info("system", "Social page selection completed", {
+      workspaceId: result.session.workspace.id,
+      provider: body.platform,
+      postId: null,
+      accountId: account.id,
+      dispatchKey: body.selectionSessionId,
+      workflowRunRef: null,
     });
 
     const {

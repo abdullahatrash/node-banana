@@ -8,6 +8,7 @@ import {
   listSocialPosts,
 } from "@/lib/social/repository";
 import type { SocialPostStatus } from "@/lib/db/schema";
+import { logger } from "@/utils/logger";
 
 interface PostsGetResponse {
   success: boolean;
@@ -153,6 +154,14 @@ export async function POST(
       scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : undefined,
       studioAssetId: body.studioAssetId,
       createdByUserId: result.session.user.id,
+    });
+    logger.info("system", "Social draft post created", {
+      workspaceId: result.session.workspace.id,
+      postId: post.id,
+      accountId: post.socialAccountId,
+      provider: null,
+      dispatchKey: null,
+      workflowRunRef: null,
     });
 
     return NextResponse.json({ success: true, post });

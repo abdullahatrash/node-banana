@@ -18,6 +18,14 @@ vi.mock("workflow/api", () => ({
   start: (...args: unknown[]) => mockWorkflowStart(...args),
 }));
 
+vi.mock("@/utils/logger", () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 function createRequest(
   url = "http://localhost:3000/api/social/internal/token-refresh-dispatch",
 ): NextRequest {

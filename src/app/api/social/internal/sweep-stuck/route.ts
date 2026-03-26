@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
+import { emitSocialEvent } from "@/lib/social/events";
 import { ensureInternalSocialAuth } from "@/lib/social/internal-auth";
 import { listStalePublishingPosts, updatePostStatus } from "@/lib/social/repository";
+import { logger } from "@/utils/logger";
 
 interface SweepResponse {
   success: boolean;
@@ -89,6 +91,26 @@ export async function POST(
           lastDispatchError: "stuck_publishing_timeout",
           lockedAt: null,
         });
+        await emitSocialEvent({
+          workspaceId: post.workspaceId,
+          eventType: "post.failed",
+          severity: "error",
+          message: "Post failed after repeated publishing timeout recovery.",
+          userFacing: true,
+          postId: post.id,
+          accountId: post.socialAccountId,
+          metadata: {
+            retryCount: nextRetryCount,
+            reason: "stuck_publishing_timeout",
+          },
+        });
+        logger.error("system", "Stuck publishing post moved to failed", {
+          workspaceId: post.workspaceId,
+          postId: post.id,
+          accountId: post.socialAccountId,
+          dispatchKey: null,
+          workflowRunRef: post.workflowRunRef ?? null,
+        });
         failed += 1;
         continue;
       }
@@ -101,6 +123,25 @@ export async function POST(
         workflowRunRef: null,
         lastDispatchError: "stuck_publishing_timeout",
         lockedAt: null,
+      });
+      await emitSocialEvent({
+        workspaceId: post.workspaceId,
+        eventType: "dispatch.failed",
+        severity: "warn",
+        message: "Publishing timeout detected. Post requeued.",
+        postId: post.id,
+        accountId: post.socialAccountId,
+        metadata: {
+          retryCount: nextRetryCount,
+          reason: "stuck_publishing_timeout",
+        },
+      });
+      logger.warn("system", "Stuck publishing post requeued", {
+        workspaceId: post.workspaceId,
+        postId: post.id,
+        accountId: post.socialAccountId,
+        dispatchKey: null,
+        workflowRunRef: post.workflowRunRef ?? null,
       });
       requeued += 1;
     }

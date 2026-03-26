@@ -5,6 +5,7 @@ import {
   cleanupExpiredOAuthSelectionSessions,
   cleanupExpiredOAuthStates,
 } from "@/lib/social/repository";
+import { logger } from "@/utils/logger";
 
 interface CleanupResponse {
   success: boolean;
@@ -44,6 +45,15 @@ export async function POST(
       },
     });
   } catch (error) {
+    logger.error("system", "Social cleanup route failed", {
+      workspaceId: null,
+      postId: null,
+      accountId: null,
+      provider: null,
+      dispatchKey: "social-cleanup",
+      workflowRunRef: null,
+      error: error instanceof Error ? error.message : "unknown",
+    });
     return NextResponse.json(
       {
         success: false,

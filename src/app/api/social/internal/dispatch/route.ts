@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { isDatabaseConfigured } from "@/lib/db";
 import { ensureInternalSocialAuth } from "@/lib/social/internal-auth";
+import { emitSocialEvent } from "@/lib/social/events";
 import {
   claimPostForDispatch,
   listDueQueuedPosts,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/social/repository";
 import { resolveWorkflowRunRef } from "@/lib/social/workflow-utils";
 import { publishPostWorkflow } from "@/../workflows/social-publish";
+import { logger } from "@/utils/logger";
 
 interface DispatchResponse {
   success: boolean;
@@ -91,6 +93,7 @@ export async function POST(
     let skipped = 0;
 
     for (const post of duePosts) {
+      const dispatchKey = `dispatch:${post.id}`;
       const claimed = await claimPostForDispatch({
         postId: post.id,
         now,
@@ -108,7 +111,7 @@ export async function POST(
         ]);
         const workflowRunRef = resolveWorkflowRunRef(
           workflowRun,
-          `dispatch:${claimed.id}`,
+          dispatchKey,
         );
 
         await updatePostStatus(claimed.id, "queued", {
@@ -117,6 +120,12 @@ export async function POST(
           nextDispatchAt: null,
           lastDispatchError: null,
           lockedAt: null,
+        });
+        logger.info("system", "Internal social dispatch succeeded", {
+          workspaceId: claimed.workspaceId,
+          postId: claimed.id,
+          dispatchKey,
+          workflowRunRef,
         });
         dispatched += 1;
       } catch (error) {
@@ -133,6 +142,26 @@ export async function POST(
             lastDispatchError: errorMessage,
             lockedAt: null,
           });
+          await emitSocialEvent({
+            workspaceId: claimed.workspaceId,
+            eventType: "post.failed",
+            severity: "error",
+            message: "Post failed after repeated dispatch failures.",
+            userFacing: true,
+            postId: claimed.id,
+            dispatchKey,
+            metadata: {
+              attempts,
+              error: errorMessage,
+            },
+          });
+          logger.error("system", "Internal social dispatch exhausted retries", {
+            workspaceId: claimed.workspaceId,
+            postId: claimed.id,
+            dispatchKey,
+            workflowRunRef: null,
+            error: errorMessage,
+          });
           failed += 1;
           continue;
         }
@@ -145,6 +174,26 @@ export async function POST(
           nextDispatchAt,
           lastDispatchError: errorMessage,
           lockedAt: null,
+        });
+        await emitSocialEvent({
+          workspaceId: claimed.workspaceId,
+          eventType: "dispatch.failed",
+          severity: "warn",
+          message: "Dispatch failed and was scheduled for retry.",
+          postId: claimed.id,
+          dispatchKey,
+          metadata: {
+            attempts,
+            error: errorMessage,
+            retryAt: nextDispatchAt.toISOString(),
+          },
+        });
+        logger.warn("system", "Internal social dispatch scheduled retry", {
+          workspaceId: claimed.workspaceId,
+          postId: claimed.id,
+          dispatchKey,
+          workflowRunRef: null,
+          error: errorMessage,
         });
         retryScheduled += 1;
       }

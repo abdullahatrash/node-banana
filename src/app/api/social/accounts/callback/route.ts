@@ -12,6 +12,7 @@ import {
 } from "@/lib/social/repository";
 import type { SocialPlatform } from "@/lib/db/schema";
 import type { PageInfo } from "@/lib/social/provider-interface";
+import { logger } from "@/utils/logger";
 
 interface CallbackRequest {
   platform: string;
@@ -117,6 +118,14 @@ export async function POST(
         createdByUserId: result.session.user.id,
         expiresAt: new Date(Date.now() + OAUTH_SELECTION_SESSION_TTL_MS),
       });
+      logger.info("system", "Social callback requires page selection", {
+        workspaceId: oauthState.workspaceId,
+        provider: body.platform,
+        postId: null,
+        accountId: null,
+        dispatchKey: body.state,
+        workflowRunRef: null,
+      });
 
       return NextResponse.json({
         success: true,
@@ -155,6 +164,14 @@ export async function POST(
         ? new Date(Date.now() + authResult.expiresIn * 1000)
         : undefined,
       createdByUserId: result.session.user.id,
+    });
+    logger.info("system", "Social account connected", {
+      workspaceId: oauthState.workspaceId,
+      provider: body.platform,
+      postId: null,
+      accountId: account.id,
+      dispatchKey: body.state,
+      workflowRunRef: null,
     });
 
     // Strip encrypted fields from response

@@ -10,6 +10,7 @@ const mockDeleteSocialPost = vi.fn();
 const mockUpdatePostStatus = vi.fn();
 const mockCountSocialPostsCreatedInRange = vi.fn();
 const mockWorkflowStart = vi.fn();
+const mockEmitSocialEvent = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -43,6 +44,18 @@ vi.mock("@/lib/social/repository", () => ({
 
 vi.mock("workflow/api", () => ({
   start: (...args: unknown[]) => mockWorkflowStart(...args),
+}));
+
+vi.mock("@/lib/social/events", () => ({
+  emitSocialEvent: (...args: unknown[]) => mockEmitSocialEvent(...args),
+}));
+
+vi.mock("@/utils/logger", () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
 }));
 
 const mockSession = {
@@ -259,7 +272,7 @@ describe("/api/social/posts/[postId]/publish", () => {
     expect(data.success).toBe(true);
     expect(data.post.status).toBe("queued");
     expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(1, "spost_1", "queued", {
-      errorMessage: undefined,
+      errorMessage: null,
       retryCount: undefined,
       dispatchStatus: "pending",
       dispatchAttempts: 1,
@@ -303,7 +316,7 @@ describe("/api/social/posts/[postId]/publish", () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(1, "spost_1", "queued", {
-      errorMessage: undefined,
+      errorMessage: null,
       retryCount: 0,
       dispatchStatus: "pending",
       dispatchAttempts: 3,

@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 const mockIsDatabaseConfigured = vi.fn(() => true);
 const mockListStalePublishingPosts = vi.fn();
 const mockUpdatePostStatus = vi.fn();
+const mockEmitSocialEvent = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...args),
@@ -13,6 +14,18 @@ vi.mock("@/lib/social/repository", () => ({
   listStalePublishingPosts: (...args: unknown[]) =>
     mockListStalePublishingPosts(...args),
   updatePostStatus: (...args: unknown[]) => mockUpdatePostStatus(...args),
+}));
+
+vi.mock("@/lib/social/events", () => ({
+  emitSocialEvent: (...args: unknown[]) => mockEmitSocialEvent(...args),
+}));
+
+vi.mock("@/utils/logger", () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
 }));
 
 function createRequest(

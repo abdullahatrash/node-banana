@@ -6,6 +6,7 @@ const mockListDueQueuedPosts = vi.fn();
 const mockClaimPostForDispatch = vi.fn();
 const mockUpdatePostStatus = vi.fn();
 const mockWorkflowStart = vi.fn();
+const mockEmitSocialEvent = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...args),
@@ -19,6 +20,18 @@ vi.mock("@/lib/social/repository", () => ({
 
 vi.mock("workflow/api", () => ({
   start: (...args: unknown[]) => mockWorkflowStart(...args),
+}));
+
+vi.mock("@/lib/social/events", () => ({
+  emitSocialEvent: (...args: unknown[]) => mockEmitSocialEvent(...args),
+}));
+
+vi.mock("@/utils/logger", () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
 }));
 
 function createRequest(url = "http://localhost:3000/api/social/internal/dispatch"): NextRequest {

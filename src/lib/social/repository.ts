@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   socialAccounts,
+  socialEvents,
   socialOAuthSelectionSessions,
   socialOAuthStates,
+  socialWebhookDeliveries,
+  socialWebhooks,
   socialPosts,
+  type SocialEventSeverity,
+  type SocialEventType,
   type SocialPlatform,
   type SocialPostStatus,
 } from "@/lib/db/schema";
@@ -67,6 +72,20 @@ export class OAuthSelectionSessionExpiredError extends Error {
   constructor() {
     super("Selection session has expired. Please reconnect your account.");
     this.name = "OAuthSelectionSessionExpiredError";
+  }
+}
+
+export class SocialWebhookNotFoundError extends Error {
+  constructor(id?: string) {
+    super(id ? `Social webhook "${id}" not found.` : "Social webhook not found.");
+    this.name = "SocialWebhookNotFoundError";
+  }
+}
+
+export class SocialEventNotFoundError extends Error {
+  constructor(id?: string) {
+    super(id ? `Social event "${id}" not found.` : "Social event not found.");
+    this.name = "SocialEventNotFoundError";
   }
 }
 
@@ -289,6 +308,23 @@ export async function countActiveSocialAccounts(workspaceId: string) {
       and(
         eq(socialAccounts.workspaceId, workspaceId),
         eq(socialAccounts.disabled, false),
+      ),
+    );
+
+  return row?.count ?? 0;
+}
+
+export async function countActiveSocialWebhooks(workspaceId: string) {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      count: sql<number>`cast(count(*) as int)`,
+    })
+    .from(socialWebhooks)
+    .where(
+      and(
+        eq(socialWebhooks.workspaceId, workspaceId),
+        eq(socialWebhooks.enabled, true),
       ),
     );
 
@@ -690,7 +726,7 @@ export async function updatePostStatus(
     platformPostId?: string;
     platformPostUrl?: string;
     publishedAt?: Date;
-    errorMessage?: string;
+    errorMessage?: string | null;
     retryCount?: number;
     dispatchStatus?: "pending" | "dispatched" | "retry_scheduled" | "failed" | null;
     dispatchAttempts?: number;
@@ -782,4 +818,426 @@ export async function incrementRetryCount(postId: string) {
       updatedAt: new Date(),
     })
     .where(eq(socialPosts.id, postId));
+}
+
+// ---------------------------------------------------------------------------
+// Social observability: events + webhooks + deliveries
+// ---------------------------------------------------------------------------
+
+export async function createSocialWebhook(input: {
+  workspaceId: string;
+  targetUrl: string;
+  signingSecretEncrypted: string;
+  createdByUserId: string;
+}) {
+  const db = getDb();
+  const id = `swh_${randomUUID()}`;
+  const now = new Date();
+
+  const [row] = await db
+    .insert(socialWebhooks)
+    .values({
+      id,
+      workspaceId: input.workspaceId,
+      targetUrl: input.targetUrl,
+      signingSecretEncrypted: input.signingSecretEncrypted,
+      enabled: true,
+      createdByUserId: input.createdByUserId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  return row;
+}
+
+export async function listSocialWebhooks(workspaceId: string) {
+  const db = getDb();
+  return db
+    .select()
+    .from(socialWebhooks)
+    .where(eq(socialWebhooks.workspaceId, workspaceId))
+    .orderBy(desc(socialWebhooks.createdAt));
+}
+
+export async function getSocialWebhook(workspaceId: string, webhookId: string) {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(socialWebhooks)
+    .where(
+      and(
+        eq(socialWebhooks.workspaceId, workspaceId),
+        eq(socialWebhooks.id, webhookId),
+      ),
+    );
+
+  if (!row) {
+    throw new SocialWebhookNotFoundError(webhookId);
+  }
+
+  return row;
+}
+
+export async function deleteSocialWebhook(workspaceId: string, webhookId: string) {
+  const db = getDb();
+  const [row] = await db
+    .delete(socialWebhooks)
+    .where(
+      and(
+        eq(socialWebhooks.workspaceId, workspaceId),
+        eq(socialWebhooks.id, webhookId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new SocialWebhookNotFoundError(webhookId);
+  }
+
+  return row;
+}
+
+export async function recordSocialEvent(input: {
+  workspaceId: string;
+  eventType: SocialEventType;
+  severity?: SocialEventSeverity;
+  message: string;
+  userFacing?: boolean;
+  readAt?: Date | null;
+  postId?: string;
+  accountId?: string;
+  provider?: SocialPlatform;
+  dispatchKey?: string;
+  workflowRunRef?: string;
+  metadata?: Record<string, unknown>;
+  createdByUserId?: string;
+}) {
+  const db = getDb();
+  const now = new Date();
+
+  return db.transaction(async (tx) => {
+    const eventId = `sevt_${randomUUID()}`;
+    const [event] = await tx
+      .insert(socialEvents)
+      .values({
+        id: eventId,
+        workspaceId: input.workspaceId,
+        eventType: input.eventType,
+        severity: input.severity ?? "info",
+        message: input.message,
+        userFacing: input.userFacing ?? false,
+        readAt: input.readAt ?? null,
+        postId: input.postId ?? null,
+        accountId: input.accountId ?? null,
+        provider: input.provider ?? null,
+        dispatchKey: input.dispatchKey ?? null,
+        workflowRunRef: input.workflowRunRef ?? null,
+        metadata: input.metadata ?? null,
+        createdByUserId: input.createdByUserId ?? null,
+        createdAt: now,
+      })
+      .returning();
+
+    const activeWebhooks = await tx
+      .select({ id: socialWebhooks.id })
+      .from(socialWebhooks)
+      .where(
+        and(
+          eq(socialWebhooks.workspaceId, input.workspaceId),
+          eq(socialWebhooks.enabled, true),
+        ),
+      );
+
+    if (activeWebhooks.length > 0) {
+      await tx.insert(socialWebhookDeliveries).values(
+        activeWebhooks.map((webhook) => ({
+          id: `swhd_${randomUUID()}`,
+          workspaceId: input.workspaceId,
+          webhookId: webhook.id,
+          eventId,
+          status: "pending" as const,
+          attemptCount: 0,
+          nextAttemptAt: now,
+          lockedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        })),
+      );
+    }
+
+    return {
+      event,
+      queuedWebhookDeliveries: activeWebhooks.length,
+    };
+  });
+}
+
+export async function listSocialEvents(
+  workspaceId: string,
+  filters?: {
+    userFacing?: boolean;
+    unreadOnly?: boolean;
+    limit?: number;
+    offset?: number;
+  },
+) {
+  const db = getDb();
+  const conditions = [eq(socialEvents.workspaceId, workspaceId)];
+
+  if (filters?.userFacing !== undefined) {
+    conditions.push(eq(socialEvents.userFacing, filters.userFacing));
+  }
+  if (filters?.unreadOnly) {
+    conditions.push(isNull(socialEvents.readAt));
+  }
+
+  const query = db
+    .select()
+    .from(socialEvents)
+    .where(and(...conditions))
+    .orderBy(desc(socialEvents.createdAt));
+
+  if (filters?.limit) {
+    query.limit(filters.limit);
+  }
+  if (filters?.offset) {
+    query.offset(filters.offset);
+  }
+
+  return query;
+}
+
+export async function markSocialEventRead(workspaceId: string, eventId: string) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialEvents)
+    .set({
+      readAt: new Date(),
+    })
+    .where(
+      and(
+        eq(socialEvents.workspaceId, workspaceId),
+        eq(socialEvents.id, eventId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new SocialEventNotFoundError(eventId);
+  }
+
+  return row;
+}
+
+export async function listDueWebhookDeliveries(input?: {
+  now?: Date;
+  lockStaleBefore?: Date;
+  limit?: number;
+}) {
+  const db = getDb();
+  const now = input?.now ?? new Date();
+  const lockStaleBefore =
+    input?.lockStaleBefore ?? new Date(now.getTime() - 10 * 60 * 1000);
+  const limit = input?.limit ?? 50;
+
+  return db
+    .select({
+      deliveryId: socialWebhookDeliveries.id,
+      workspaceId: socialWebhookDeliveries.workspaceId,
+      webhookId: socialWebhookDeliveries.webhookId,
+      eventId: socialWebhookDeliveries.eventId,
+      attemptCount: socialWebhookDeliveries.attemptCount,
+      targetUrl: socialWebhooks.targetUrl,
+      signingSecretEncrypted: socialWebhooks.signingSecretEncrypted,
+      eventType: socialEvents.eventType,
+      message: socialEvents.message,
+      userFacing: socialEvents.userFacing,
+      severity: socialEvents.severity,
+      postId: socialEvents.postId,
+      accountId: socialEvents.accountId,
+      provider: socialEvents.provider,
+      dispatchKey: socialEvents.dispatchKey,
+      workflowRunRef: socialEvents.workflowRunRef,
+      metadata: socialEvents.metadata,
+      eventCreatedAt: socialEvents.createdAt,
+    })
+    .from(socialWebhookDeliveries)
+    .innerJoin(
+      socialWebhooks,
+      eq(socialWebhookDeliveries.webhookId, socialWebhooks.id),
+    )
+    .innerJoin(socialEvents, eq(socialWebhookDeliveries.eventId, socialEvents.id))
+    .where(
+      and(
+        eq(socialWebhookDeliveries.status, "pending"),
+        eq(socialWebhooks.enabled, true),
+        or(
+          isNull(socialWebhookDeliveries.nextAttemptAt),
+          lte(socialWebhookDeliveries.nextAttemptAt, now),
+        ),
+        or(
+          isNull(socialWebhookDeliveries.lockedAt),
+          lt(socialWebhookDeliveries.lockedAt, lockStaleBefore),
+        ),
+      ),
+    )
+    .orderBy(
+      asc(socialWebhookDeliveries.nextAttemptAt),
+      desc(socialWebhookDeliveries.createdAt),
+    )
+    .limit(limit);
+}
+
+export async function claimWebhookDelivery(input: {
+  deliveryId: string;
+  now?: Date;
+  lockStaleBefore?: Date;
+}) {
+  const db = getDb();
+  const now = input.now ?? new Date();
+  const lockStaleBefore =
+    input.lockStaleBefore ?? new Date(now.getTime() - 10 * 60 * 1000);
+
+  const [row] = await db
+    .update(socialWebhookDeliveries)
+    .set({
+      lockedAt: now,
+      attemptCount: sql`${socialWebhookDeliveries.attemptCount} + 1`,
+      lastAttemptAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(socialWebhookDeliveries.id, input.deliveryId),
+        eq(socialWebhookDeliveries.status, "pending"),
+        or(
+          isNull(socialWebhookDeliveries.lockedAt),
+          lt(socialWebhookDeliveries.lockedAt, lockStaleBefore),
+        ),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
+}
+
+export async function markWebhookDeliverySuccess(input: {
+  deliveryId: string;
+  responseStatus?: number;
+  responseBody?: string;
+}) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialWebhookDeliveries)
+    .set({
+      status: "success",
+      deliveredAt: new Date(),
+      responseStatus: input.responseStatus ?? null,
+      responseBody: input.responseBody ?? null,
+      lastError: null,
+      nextAttemptAt: null,
+      lockedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(socialWebhookDeliveries.id, input.deliveryId))
+    .returning();
+
+  return row ?? null;
+}
+
+export async function markWebhookDeliveryPendingRetry(input: {
+  deliveryId: string;
+  nextAttemptAt: Date;
+  responseStatus?: number;
+  responseBody?: string;
+  lastError?: string;
+}) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialWebhookDeliveries)
+    .set({
+      status: "pending",
+      nextAttemptAt: input.nextAttemptAt,
+      responseStatus: input.responseStatus ?? null,
+      responseBody: input.responseBody ?? null,
+      lastError: input.lastError ?? null,
+      lockedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(socialWebhookDeliveries.id, input.deliveryId))
+    .returning();
+
+  return row ?? null;
+}
+
+export async function markWebhookDeliveryFailed(input: {
+  deliveryId: string;
+  responseStatus?: number;
+  responseBody?: string;
+  lastError?: string;
+}) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialWebhookDeliveries)
+    .set({
+      status: "failed",
+      responseStatus: input.responseStatus ?? null,
+      responseBody: input.responseBody ?? null,
+      lastError: input.lastError ?? null,
+      nextAttemptAt: null,
+      lockedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(socialWebhookDeliveries.id, input.deliveryId))
+    .returning();
+
+  return row ?? null;
+}
+
+export async function listWebhookDeliveriesForWorkspace(
+  workspaceId: string,
+  filters?: {
+    webhookId?: string;
+    limit?: number;
+    offset?: number;
+  },
+) {
+  const db = getDb();
+  const conditions = [eq(socialWebhookDeliveries.workspaceId, workspaceId)];
+
+  if (filters?.webhookId) {
+    conditions.push(eq(socialWebhookDeliveries.webhookId, filters.webhookId));
+  }
+
+  const query = db
+    .select({
+      id: socialWebhookDeliveries.id,
+      webhookId: socialWebhookDeliveries.webhookId,
+      eventId: socialWebhookDeliveries.eventId,
+      status: socialWebhookDeliveries.status,
+      attemptCount: socialWebhookDeliveries.attemptCount,
+      nextAttemptAt: socialWebhookDeliveries.nextAttemptAt,
+      lastAttemptAt: socialWebhookDeliveries.lastAttemptAt,
+      deliveredAt: socialWebhookDeliveries.deliveredAt,
+      responseStatus: socialWebhookDeliveries.responseStatus,
+      responseBody: socialWebhookDeliveries.responseBody,
+      lastError: socialWebhookDeliveries.lastError,
+      createdAt: socialWebhookDeliveries.createdAt,
+      eventType: socialEvents.eventType,
+      eventMessage: socialEvents.message,
+    })
+    .from(socialWebhookDeliveries)
+    .innerJoin(socialEvents, eq(socialWebhookDeliveries.eventId, socialEvents.id))
+    .where(and(...conditions))
+    .orderBy(desc(socialWebhookDeliveries.createdAt));
+
+  if (filters?.limit) {
+    query.limit(filters.limit);
+  }
+  if (filters?.offset) {
+    query.offset(filters.offset);
+  }
+
+  return query;
 }

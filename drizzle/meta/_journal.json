@@ -43,6 +43,13 @@
       "when": 1774548734639,
       "tag": "0005_ambiguous_shinobi_shaw",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1774551027813,
+      "tag": "0006_daily_james_howlett",
+      "breakpoints": true
     }
   ]
 }
