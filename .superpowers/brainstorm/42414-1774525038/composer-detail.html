@@ -1,0 +1,204 @@
+<h2>Post Composer — /social/compose</h2>
+<p class="subtitle">Full page, split view: editor left, live preview right. Let's nail the layout.</p>
+
+<div class="mockup">
+  <div class="mockup-header">/social/compose — full page composer</div>
+  <div class="mockup-body" style="min-height: 500px; padding: 0; display: flex; flex-direction: column;">
+    <!-- Header -->
+    <div style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #0f172a; border-bottom: 1px solid #1e293b; flex-shrink: 0;">
+      <span style="font-size: 14px;">🍌</span>
+      <div style="font-size: 12px; color: #4ade80; background: #1e293b; padding: 3px 8px; border-radius: 4px;">📱 Social Hub ▼</div>
+      <div style="font-size: 13px; color: #64748b; margin-left: 8px;">← Back to Calendar</div>
+      <div style="flex: 1;"></div>
+      <div style="font-size: 11px; color: #64748b;">Draft saved</div>
+    </div>
+
+    <!-- Main split view -->
+    <div style="display: flex; flex: 1; overflow: hidden;">
+
+      <!-- LEFT: Editor panel -->
+      <div style="flex: 1; padding: 20px; overflow-y: auto; border-right: 1px solid #1e293b;">
+
+        <!-- Platform selector -->
+        <div style="margin-bottom: 16px;">
+          <div style="font-size: 11px; color: #64748b; text-transform: uppercase; margin-bottom: 8px;">Post to</div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #172554; border: 1px solid #1e40af; border-radius: 6px; cursor: pointer;">
+              <div style="width: 20px; height: 20px; background: #0a66c2; border-radius: 50%; font-size: 8px; display: flex; align-items: center; justify-content: center; color: white;">in</div>
+              <span style="font-size: 12px; color: #93c5fd;">My Company</span>
+              <span style="font-size: 10px; color: #3b82f6;">✓</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #052e16; border: 1px solid #166534; border-radius: 6px; cursor: pointer;">
+              <div style="width: 20px; height: 20px; background: #000; border-radius: 50%; font-size: 8px; display: flex; align-items: center; justify-content: center; color: white;">𝕏</div>
+              <span style="font-size: 12px; color: #86efac;">@handle</span>
+              <span style="font-size: 10px; color: #4ade80;">✓</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; cursor: pointer; opacity: 0.6;">
+              <div style="width: 20px; height: 20px; background: linear-gradient(45deg, #f09433, #dc2743); border-radius: 50%; font-size: 7px; display: flex; align-items: center; justify-content: center; color: white;">ig</div>
+              <span style="font-size: 12px; color: #94a3b8;">mybrand</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Content editing mode tabs -->
+        <div style="display: flex; gap: 0; border-bottom: 1px solid #1e293b; margin-bottom: 12px;">
+          <div style="padding: 6px 14px; font-size: 11px; color: #4ade80; border-bottom: 2px solid #4ade80;">All platforms</div>
+          <div style="padding: 6px 14px; font-size: 11px; color: #94a3b8;">Per platform</div>
+        </div>
+
+        <!-- Text editor -->
+        <div style="background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 14px; min-height: 140px; margin-bottom: 8px; position: relative;">
+          <div style="color: #e2e8f0; font-size: 13px; line-height: 1.6;">Excited to announce our new product launch! 🚀<br><br>We've been working on this for months and can't wait to share it with you. Check it out at the link below.<br><br>#launch #product #ai</div>
+        </div>
+        <!-- Character counts -->
+        <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+          <div style="font-size: 10px; display: flex; align-items: center; gap: 4px;">
+            <div style="width: 14px; height: 14px; background: #0a66c2; border-radius: 50%; font-size: 6px; display: flex; align-items: center; justify-content: center; color: white;">in</div>
+            <span style="color: #4ade80;">186 / 3,000</span>
+          </div>
+          <div style="font-size: 10px; display: flex; align-items: center; gap: 4px;">
+            <div style="width: 14px; height: 14px; background: #000; border-radius: 50%; font-size: 6px; display: flex; align-items: center; justify-content: center; color: white;">𝕏</div>
+            <span style="color: #f59e0b;">186 / 280</span>
+          </div>
+        </div>
+
+        <!-- Media section -->
+        <div style="margin-bottom: 16px;">
+          <div style="font-size: 11px; color: #64748b; text-transform: uppercase; margin-bottom: 8px;">Media</div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <div style="width: 80px; height: 80px; background: #334155; border-radius: 6px; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden;">
+              <div style="font-size: 28px;">🏔️</div>
+              <div style="position: absolute; top: 4px; right: 4px; width: 16px; height: 16px; background: rgba(0,0,0,0.7); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #ef4444; cursor: pointer;">✕</div>
+            </div>
+            <div style="width: 80px; height: 80px; border: 1px dashed #334155; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer;">
+              <div style="font-size: 18px; color: #64748b;">+</div>
+              <div style="font-size: 9px; color: #64748b;">Media Pool</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Schedule section -->
+        <div style="margin-bottom: 20px;">
+          <div style="font-size: 11px; color: #64748b; text-transform: uppercase; margin-bottom: 8px;">Schedule</div>
+          <div style="display: flex; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 6px; padding: 8px 14px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; cursor: pointer;">
+              <span style="font-size: 13px;">📅</span>
+              <span style="font-size: 12px; color: #e2e8f0;">Mar 28, 2026</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px; padding: 8px 14px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; cursor: pointer;">
+              <span style="font-size: 13px;">🕐</span>
+              <span style="font-size: 12px; color: #e2e8f0;">10:00 AM</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action buttons -->
+        <div style="display: flex; gap: 10px; padding-top: 12px; border-top: 1px solid #1e293b;">
+          <button style="font-size: 12px; color: #94a3b8; background: #1e293b; border: 1px solid #334155; padding: 8px 18px; border-radius: 6px; cursor: pointer;">Save Draft</button>
+          <button style="font-size: 12px; color: #0f172a; background: #f59e0b; border: none; padding: 8px 18px; border-radius: 6px; font-weight: 600; cursor: pointer;">📅 Schedule</button>
+          <button style="font-size: 12px; color: #0f172a; background: #4ade80; border: none; padding: 8px 18px; border-radius: 6px; font-weight: 600; cursor: pointer;">Publish Now</button>
+        </div>
+      </div>
+
+      <!-- RIGHT: Live preview panel -->
+      <div style="width: 340px; padding: 20px; overflow-y: auto; background: #0f172a;">
+        <div style="font-size: 11px; color: #64748b; text-transform: uppercase; margin-bottom: 12px;">Live Preview</div>
+
+        <!-- LinkedIn preview -->
+        <div style="background: #1e293b; border-radius: 10px; padding: 14px; margin-bottom: 14px;">
+          <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 4px;">
+            <div style="width: 14px; height: 14px; background: #0a66c2; border-radius: 50%; font-size: 6px; display: flex; align-items: center; justify-content: center; color: white;">in</div>
+            <span style="font-size: 10px; color: #64748b; font-weight: 600;">LinkedIn</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+            <div style="width: 40px; height: 40px; background: #334155; border-radius: 50%;"></div>
+            <div>
+              <div style="font-size: 12px; color: #e2e8f0; font-weight: 600;">My Company</div>
+              <div style="font-size: 10px; color: #64748b;">1,234 followers · Just now</div>
+            </div>
+          </div>
+          <div style="font-size: 12px; color: #cbd5e1; line-height: 1.5; margin-bottom: 10px;">Excited to announce our new product launch! 🚀<br><br>We've been working on this for months and can't wait to share it with you. Check it out at the link below.<br><br>#launch #product #ai</div>
+          <div style="width: 100%; height: 160px; background: #334155; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 32px;">🏔️</div>
+          <div style="display: flex; gap: 16px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #334155;">
+            <span style="font-size: 10px; color: #64748b;">👍 Like</span>
+            <span style="font-size: 10px; color: #64748b;">💬 Comment</span>
+            <span style="font-size: 10px; color: #64748b;">🔄 Repost</span>
+          </div>
+        </div>
+
+        <!-- X preview -->
+        <div style="background: #1e293b; border-radius: 10px; padding: 14px;">
+          <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 4px;">
+            <div style="width: 14px; height: 14px; background: #000; border-radius: 50%; font-size: 7px; display: flex; align-items: center; justify-content: center; color: white;">𝕏</div>
+            <span style="font-size: 10px; color: #64748b; font-weight: 600;">X</span>
+            <span style="font-size: 10px; color: #f59e0b; margin-left: auto;">⚠ 186/280</span>
+          </div>
+          <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+            <div style="width: 36px; height: 36px; background: #334155; border-radius: 50%; flex-shrink: 0;"></div>
+            <div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <span style="font-size: 12px; color: #e2e8f0; font-weight: 600;">Your Name</span>
+                <span style="font-size: 11px; color: #64748b;">@handle · now</span>
+              </div>
+              <div style="font-size: 12px; color: #cbd5e1; line-height: 1.5; margin-top: 4px;">Excited to announce our new product launch! 🚀<br><br>We've been working on this for months and can't wait to share it with you. Check it out at the link below.<br><br>#launch #product #ai</div>
+              <div style="width: 100%; height: 120px; background: #334155; border-radius: 10px; margin-top: 8px; display: flex; align-items: center; justify-content: center; font-size: 28px;">🏔️</div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 24px; margin-top: 6px; padding-left: 44px;">
+            <span style="font-size: 10px; color: #64748b;">💬</span>
+            <span style="font-size: 10px; color: #64748b;">🔄</span>
+            <span style="font-size: 10px; color: #64748b;">❤️</span>
+            <span style="font-size: 10px; color: #64748b;">📊</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 20px;">Key features in this composer:</h3>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
+  <div style="background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 8px; padding: 12px;">
+    <div style="font-size: 12px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px;">Multi-platform toggle</div>
+    <div style="font-size: 11px; color: #94a3b8;">Select which channels to post to. Selected channels glow with platform color.</div>
+  </div>
+  <div style="background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 8px; padding: 12px;">
+    <div style="font-size: 12px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px;">All / Per-platform editing</div>
+    <div style="font-size: 11px; color: #94a3b8;">Write once for all, or switch to per-platform tab to customize for each channel.</div>
+  </div>
+  <div style="background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 8px; padding: 12px;">
+    <div style="font-size: 12px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px;">Live character count</div>
+    <div style="font-size: 11px; color: #94a3b8;">Per-platform count with color warnings (green = safe, amber = close, red = over).</div>
+  </div>
+  <div style="background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 8px; padding: 12px;">
+    <div style="font-size: 12px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px;">Media Pool</div>
+    <div style="font-size: 11px; color: #94a3b8;">Click "+" to open Media Pool — browse R2 assets, search, drag to attach. Like an editing app's media bin.</div>
+  </div>
+  <div style="background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 8px; padding: 12px;">
+    <div style="font-size: 12px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px;">Live preview</div>
+    <div style="font-size: 11px; color: #94a3b8;">Right panel shows platform-accurate previews that update as you type. Scroll to see each platform.</div>
+  </div>
+  <div style="background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 8px; padding: 12px;">
+    <div style="font-size: 12px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px;">3 action modes</div>
+    <div style="font-size: 11px; color: #94a3b8;">Save Draft (gray), Schedule (amber with date/time), Publish Now (green).</div>
+  </div>
+</div>
+
+<div style="margin-top: 20px;">
+  <div class="options">
+    <div class="option" data-choice="yes" onclick="toggleSelect(this)">
+      <div class="letter">✓</div>
+      <div class="content">
+        <h3>This composer layout works</h3>
+        <p>Editor left, preview right, platform picker top, media pool, schedule, 3 actions</p>
+      </div>
+    </div>
+    <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+      <div class="letter">~</div>
+      <div class="content">
+        <h3>Needs adjustments</h3>
+        <p>I'll explain in the terminal</p>
+      </div>
+    </div>
+  </div>
+</div>
