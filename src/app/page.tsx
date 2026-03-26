@@ -1,12 +1,10 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth/server";
+import { getServerAuthSession } from "@/lib/auth/session";
 
 export default async function HomePage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const session = await getServerAuthSession(await headers());
 
   if (session?.user) {
     redirect("/studio");

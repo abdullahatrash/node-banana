@@ -4,6 +4,7 @@ import { hashPassword } from "better-auth/crypto";
 const databaseUrl =
   process.env.DATABASE_URL ||
   "postgresql://postgres:postgres@localhost:5432/node_banana";
+const DEFAULT_WORKSPACE_QUOTA_BYTES = 10 * 1024 * 1024 * 1024;
 
 const seedUsers = [
   {
@@ -40,6 +41,14 @@ const seedUsers = [
     },
   },
 ];
+
+function organizationIdForWorkspace(workspaceId) {
+  return `org_${workspaceId}`;
+}
+
+function organizationMemberId(workspaceId, userId) {
+  return `mbr_${workspaceId}_${userId}`;
+}
 
 async function ensureUser(client, seedUser) {
   const existingUserResult = await client.query(
@@ -133,6 +142,21 @@ async function ensureUser(client, seedUser) {
 
   await client.query(
     `
+      INSERT INTO workspace_storage_limits (
+        workspace_id,
+        quota_bytes,
+        updated_at
+      )
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (workspace_id)
+      DO UPDATE SET
+        updated_at = NOW()
+    `,
+    [workspaceId, DEFAULT_WORKSPACE_QUOTA_BYTES],
+  );
+
+  await client.query(
+    `
       INSERT INTO workspace_members (
         workspace_id,
         user_id,
@@ -147,6 +171,67 @@ async function ensureUser(client, seedUser) {
         updated_at = NOW()
     `,
     [workspaceId, userId],
+  );
+
+  const organizationId = organizationIdForWorkspace(workspaceId);
+
+  await client.query(
+    `
+      INSERT INTO organization (
+        id,
+        name,
+        slug,
+        metadata,
+        created_at
+      )
+      VALUES ($1, $2, $3, $4, NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        slug = EXCLUDED.slug,
+        metadata = EXCLUDED.metadata
+    `,
+    [
+      organizationId,
+      seedUser.workspace.name,
+      seedUser.workspace.slug,
+      null,
+    ],
+  );
+
+  await client.query(
+    `
+      INSERT INTO workspace_settings (
+        workspace_id,
+        organization_id,
+        plan_tier,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, 'free', NOW(), NOW())
+      ON CONFLICT (workspace_id)
+      DO UPDATE SET
+        organization_id = EXCLUDED.organization_id,
+        updated_at = NOW()
+    `,
+    [workspaceId, organizationId],
+  );
+
+  await client.query(
+    `
+      INSERT INTO member (
+        id,
+        organization_id,
+        user_id,
+        role,
+        created_at
+      )
+      VALUES ($1, $2, $3, 'owner', NOW())
+      ON CONFLICT (organization_id, user_id)
+      DO UPDATE SET
+        role = 'owner'
+    `,
+    [organizationMemberId(workspaceId, userId), organizationId, userId],
   );
 
   return {

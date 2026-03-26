@@ -5,6 +5,7 @@ const mockGetSession = vi.fn();
 const mockEnsureWorkspaceUser = vi.fn();
 const mockEnsurePersonalWorkspaceForUser = vi.fn();
 const mockSelectRows = vi.fn();
+const mockIsDatabaseConfigured = vi.fn(() => true);
 
 const mockDb = {
   select: vi.fn(() => ({
@@ -25,7 +26,7 @@ vi.mock("@/lib/auth/server", () => ({
 }));
 
 vi.mock("@/lib/db", () => ({
-  isDatabaseConfigured: vi.fn(() => true),
+  isDatabaseConfigured: () => mockIsDatabaseConfigured(),
   getDb: vi.fn(() => mockDb),
 }));
 
@@ -47,9 +48,29 @@ function createRequest(headers?: HeadersInit): NextRequest {
 describe("/api/studio/workspaces GET", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsDatabaseConfigured.mockReturnValue(true);
     delete process.env.DEV_AUTH_BYPASS;
     delete process.env.DEV_USER_ID;
     delete process.env.DEV_WORKSPACE_ID;
+  });
+
+  it("returns 503 when database is not configured", async () => {
+    mockIsDatabaseConfigured.mockReturnValue(false);
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "user_1",
+      },
+    });
+
+    const response = await GET(createRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(data).toEqual({
+      success: false,
+      error:
+        "DATABASE_URL is not configured. Configure Postgres to use workspace APIs.",
+    });
   });
 
   it("returns 401 for unauthenticated requests", async () => {

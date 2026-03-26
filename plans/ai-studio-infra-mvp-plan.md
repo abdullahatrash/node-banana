@@ -1,7 +1,7 @@
 # Plan: AI Studio Infrastructure Foundation (MVP)
 
 > Source PRD: `/Users/neoak/projects/node-banana/PRDS.md`
-> Last updated: 2026-03-21
+> Last updated: 2026-03-23
 
 ## Architectural decisions
 
@@ -28,9 +28,7 @@ Completed on branch `feature/ui-persistence-project-browser`:
 
 Known gaps to close for infra MVP readiness:
 
-- [ ] Add test coverage for `/api/studio/workspaces`.
-- [ ] Finalize environment docs for non-dev auth requirements (`BETTER_AUTH_URL` / `NEXT_PUBLIC_APP_URL`) to avoid production build/runtime failures.
-- [ ] Complete true end-to-end S3 upload flow in client path (presign + direct upload + finalize metadata state).
+- [x] Complete true end-to-end S3 upload flow in client path (presign + direct upload + finalize metadata state).
 - [ ] Plan and implement account recovery hardening (password reset + magic link/OTP) after core infra MVP is complete.
 
 ---
@@ -81,10 +79,8 @@ Use S3-presigned uploads and DB metadata tracking for asset ownership, project l
 
 - [x] Presign endpoint issues PUT/GET URLs when `STORAGE_BACKEND=s3`.
 - [x] S3 object keys are namespaced by workspace/project.
-- [~] Asset metadata is persisted before/after upload.
+- [x] Asset metadata is persisted before/after upload.
 - [x] Users can list old assets per project and delete metadata records.
-
-`[~]` means partially complete in backend routes; client direct-upload/finalization flow is still pending.
 
 ---
 
@@ -117,10 +113,21 @@ Add missing test/doc coverage for workspace resolution and production auth env r
 
 ### Acceptance criteria
 
-- [ ] Add API tests for `/api/studio/workspaces` (`401`, `200`, dev bypass behavior).
-- [ ] Update docs for required production auth env vars (`BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL`) and local dev examples.
-- [ ] Add one e2e-like smoke checklist/script for: create/save project, reopen project, create/list/delete asset metadata under workspace headers.
-- [ ] Verify `pnpm build` succeeds in a production-like env with required auth vars set.
+- [x] Add API tests for `/api/studio/workspaces` (`401`, `200`, dev bypass behavior, auto-provision, `503` DB-missing).
+- [x] Update docs for required production auth env vars (`BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL`) and local dev examples.
+- [x] Add one e2e-like smoke checklist/script for: create/save project, reopen project, create/list/delete asset metadata under workspace headers.
+- [x] Verify `pnpm build` succeeds in a production-like env with required auth vars set.
+
+### Gate A evidence (2026-03-22)
+
+- `pnpm test:gate-a` passed (`59/59` tests), including `/api/studio/workspaces` coverage.
+- `pnpm smoke:infra` passed end-to-end (`auth`, `workspaces`, `projects`, `assets` metadata lifecycle).
+- Production-like build passed with required auth env vars:
+  - `BETTER_AUTH_SECRET`
+  - `BETTER_AUTH_URL`
+  - `NEXT_PUBLIC_APP_URL`
+  - `NEXT_PUBLIC_BETTER_AUTH_URL`
+- Negative build validation passed: build fails with clear error when auth base URL env vars are missing in production-like mode.
 
 ---
 
@@ -134,10 +141,10 @@ Complete client integration with presigned S3 upload flow and finalize metadata 
 
 ### Acceptance criteria
 
-- [ ] Client can request presign, upload object, and finalize asset metadata per workspace/project.
-- [ ] Metadata captures upload status (`pending` -> `ready` / `failed`) and remains queryable by project.
-- [ ] Local fallback path remains functional when S3 is not configured.
-- [ ] Soft-delete metadata remains non-destructive; hard-delete worker remains explicitly out-of-scope for MVP.
+- [x] Client can request presign, upload object, and finalize asset metadata per workspace/project.
+- [x] Metadata captures upload status (`pending` -> `ready` / `failed`) and remains queryable by project.
+- [x] Local fallback path remains functional when S3 is not configured.
+- [x] Soft-delete metadata remains non-destructive; hard-delete worker remains explicitly out-of-scope for MVP.
 
 ---
 

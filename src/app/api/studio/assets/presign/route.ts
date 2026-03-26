@@ -4,13 +4,18 @@ import { isDatabaseConfigured } from "@/lib/db";
 import { assetTypeEnum } from "@/lib/db/schema";
 import { canUseS3Storage, buildAssetObjectKey, createPresignedUpload } from "@/lib/storage";
 import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
-import { getProject, recordAsset } from "@/lib/studio/repository";
+import {
+  getProject,
+  recordPendingS3AssetWithQuota,
+  StudioAssetQuotaExceededError,
+} from "@/lib/studio/repository";
 
 interface PresignRequest {
   projectId?: string | null;
   assetType: (typeof assetTypeEnum.enumValues)[number];
   fileName?: string;
   contentType: string;
+  expectedSizeBytes: number;
 }
 
 interface PresignResponse {
@@ -62,6 +67,20 @@ export async function POST(
         { status: 400 },
       );
     }
+    if (
+      typeof body.expectedSizeBytes !== "number" ||
+      !Number.isFinite(body.expectedSizeBytes) ||
+      !Number.isInteger(body.expectedSizeBytes) ||
+      body.expectedSizeBytes < 0
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "expectedSizeBytes is required and must be a non-negative integer.",
+        },
+        { status: 400 },
+      );
+    }
 
     const authz = await authorizeStudioRequest(request, {
       route: "/api/studio/assets/presign",
@@ -97,19 +116,16 @@ export async function POST(
       contentType: body.contentType.trim(),
     });
 
-    const asset = await recordAsset({
+    const asset = await recordPendingS3AssetWithQuota({
       workspaceId: authz.workspaceId,
       userId: authz.userId,
       projectId: body.projectId || null,
       type: body.assetType,
-      storageProvider: "s3",
       storageBucket: process.env.S3_BUCKET_NAME || null,
       storageKey: key,
       mimeType: body.contentType.trim(),
-      metadata: {
-        uploadState: "pending",
-        originalFileName: body.fileName || null,
-      },
+      originalFileName: body.fileName || null,
+      expectedSizeBytes: body.expectedSizeBytes,
     });
 
     return NextResponse.json({
@@ -121,6 +137,16 @@ export async function POST(
       expiresInSeconds: signed.expiresInSeconds,
     });
   } catch (error) {
+    if (error instanceof StudioAssetQuotaExceededError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Workspace storage quota exceeded.",
+        },
+        { status: 403 },
+      );
+    }
+
     return NextResponse.json(
       {
         success: false,
