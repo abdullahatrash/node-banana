@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   socialAccounts,
@@ -334,6 +334,8 @@ export async function listSocialPosts(
   filters?: {
     status?: SocialPostStatus;
     socialAccountId?: string;
+    startDate?: Date;
+    endDate?: Date;
     limit?: number;
     offset?: number;
   },
@@ -346,6 +348,12 @@ export async function listSocialPosts(
   }
   if (filters?.socialAccountId) {
     conditions.push(eq(socialPosts.socialAccountId, filters.socialAccountId));
+  }
+  if (filters?.startDate) {
+    conditions.push(gte(socialPosts.scheduledAt, filters.startDate));
+  }
+  if (filters?.endDate) {
+    conditions.push(lte(socialPosts.scheduledAt, filters.endDate));
   }
 
   const query = db

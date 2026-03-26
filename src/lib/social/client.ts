@@ -192,12 +192,16 @@ export async function disconnectSocialAccount(
 export async function listSocialPosts(filters?: {
   status?: SocialPostStatus;
   socialAccountId?: string;
+  startDate?: string;
+  endDate?: string;
   limit?: number;
   offset?: number;
 }): Promise<SocialPost[]> {
   const params = new URLSearchParams();
   if (filters?.status) params.set("status", filters.status);
   if (filters?.socialAccountId) params.set("socialAccountId", filters.socialAccountId);
+  if (filters?.startDate) params.set("startDate", filters.startDate);
+  if (filters?.endDate) params.set("endDate", filters.endDate);
   if (filters?.limit) params.set("limit", String(filters.limit));
   if (filters?.offset) params.set("offset", String(filters.offset));
 
