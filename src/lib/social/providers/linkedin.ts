@@ -410,21 +410,21 @@ export const linkedInProvider: SocialProviderAdapter = {
       return [];
     }
 
-    return data.elements
-      .map((el) => {
-        const org = el["organization~"];
-        if (!org?.id) return null;
+    const pages: PageInfo[] = [];
+    for (const el of data.elements) {
+      const org = el["organization~"];
+      if (!org?.id) continue;
 
-        const logoUrl =
-          org.logoV2?.["original~"]?.elements?.[0]?.identifiers?.[0]?.identifier ?? undefined;
+      const logoUrl =
+        org.logoV2?.["original~"]?.elements?.[0]?.identifiers?.[0]?.identifier ?? undefined;
 
-        return {
-          id: String(org.id),
-          name: org.localizedName ?? String(org.id),
-          picture: logoUrl,
-        } satisfies PageInfo;
-      })
-      .filter((p): p is PageInfo => p !== null);
+      pages.push({
+        id: String(org.id),
+        name: org.localizedName ?? String(org.id),
+        picture: logoUrl,
+      });
+    }
+    return pages;
   },
 
   // -------------------------------------------------------------------------

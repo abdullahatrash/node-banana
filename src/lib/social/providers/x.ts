@@ -193,10 +193,13 @@ export const xProvider: SocialProviderAdapter = {
       mediaIds.push(mediaId);
     }
 
-    const { data } = (await client.v2.tweet({
-      text: request.content,
-      ...(mediaIds.length ? { media: { media_ids: mediaIds } } : {}),
-    })) as { data: { id: string } };
+    const tweetPayload: Record<string, unknown> = { text: request.content };
+    if (mediaIds.length) {
+      tweetPayload.media = { media_ids: mediaIds };
+    }
+    const { data } = (await client.v2.tweet(
+      tweetPayload as Parameters<typeof client.v2.tweet>[0],
+    )) as { data: { id: string } };
 
     // Retrieve username for the post URL
     const {
