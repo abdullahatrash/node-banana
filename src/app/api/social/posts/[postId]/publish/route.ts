@@ -51,8 +51,10 @@ export async function POST(
     }
 
     // Transition to "queued" — the Vercel Workflow will pick it up
+    // On retry (failed → queued), reset retryCount and clear error
     const updated = await updatePostStatus(postId, "queued", {
       errorMessage: undefined,
+      retryCount: post.status === "failed" ? 0 : undefined,
     });
 
     // TODO: Start Vercel Workflow here once workflows/social-publish.ts is implemented

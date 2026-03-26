@@ -1,0 +1,284 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest, NextResponse } from "next/server";
+
+const mockWithApiPermission = vi.fn();
+const mockCreateSocialPost = vi.fn();
+const mockListSocialPosts = vi.fn();
+const mockGetSocialPost = vi.fn();
+const mockUpdateSocialPost = vi.fn();
+const mockDeleteSocialPost = vi.fn();
+const mockUpdatePostStatus = vi.fn();
+
+vi.mock("@/lib/db", () => ({
+  isDatabaseConfigured: vi.fn(() => true),
+}));
+
+vi.mock("@/lib/studio/authz", () => ({
+  withApiPermission: (...args: unknown[]) => mockWithApiPermission(...args),
+  authzErrorResponse: (result: { status: number; error: string }) =>
+    NextResponse.json({ success: false, error: result.error }, { status: result.status }),
+}));
+
+vi.mock("@/lib/social/repository", () => ({
+  createSocialPost: (...args: unknown[]) => mockCreateSocialPost(...args),
+  listSocialPosts: (...args: unknown[]) => mockListSocialPosts(...args),
+  getSocialPost: (...args: unknown[]) => mockGetSocialPost(...args),
+  updateSocialPost: (...args: unknown[]) => mockUpdateSocialPost(...args),
+  deleteSocialPost: (...args: unknown[]) => mockDeleteSocialPost(...args),
+  updatePostStatus: (...args: unknown[]) => mockUpdatePostStatus(...args),
+  SocialPostNotFoundError: class extends Error {
+    constructor(id?: string) { super(`Post "${id}" not found.`); this.name = "SocialPostNotFoundError"; }
+  },
+  SocialPostStateTransitionError: class extends Error {
+    constructor(from: string, to: string) {
+      super(`Cannot transition from "${from}" to "${to}".`);
+      this.name = "SocialPostStateTransitionError";
+    }
+  },
+}));
+
+const mockSession = {
+  user: { id: "user_1", name: "Test", email: "test@example.com" },
+  workspace: { id: "ws_1", organizationId: "org_1" },
+  role: "owner" as const,
+  planTier: "free" as const,
+  permissions: ["social:view", "social:publish"],
+};
+
+function authorized() {
+  mockWithApiPermission.mockResolvedValue({ authorized: true, session: mockSession });
+}
+
+function unauthorized(status: 401 | 403) {
+  mockWithApiPermission.mockResolvedValue({
+    authorized: false,
+    response: NextResponse.json(
+      { success: false, error: status === 401 ? "Unauthenticated" : "Forbidden" },
+      { status },
+    ),
+  });
+}
+
+function createRequest(
+  url = "http://localhost:3000/api/social/posts",
+  init?: RequestInit,
+): NextRequest {
+  return new NextRequest(url, init);
+}
+
+describe("/api/social/posts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe("GET /api/social/posts", () => {
+    it("returns 401 for unauthenticated requests", async () => {
+      unauthorized(401);
+      const { GET } = await import("../../posts/route");
+      const response = await GET(createRequest());
+      expect(response.status).toBe(401);
+    });
+
+    it("returns 403 for unauthorized requests", async () => {
+      unauthorized(403);
+      const { GET } = await import("../../posts/route");
+      const response = await GET(createRequest());
+      expect(response.status).toBe(403);
+    });
+
+    it("lists posts for workspace", async () => {
+      authorized();
+      mockListSocialPosts.mockResolvedValue([
+        { id: "spost_1", status: "draft", content: "Hello" },
+      ]);
+      const { GET } = await import("../../posts/route");
+      const response = await GET(createRequest());
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.posts).toHaveLength(1);
+      expect(mockListSocialPosts).toHaveBeenCalledWith("ws_1", {
+        status: undefined,
+        socialAccountId: undefined,
+        limit: undefined,
+        offset: undefined,
+      });
+    });
+
+    it("passes filter params to repository", async () => {
+      authorized();
+      mockListSocialPosts.mockResolvedValue([]);
+      const { GET } = await import("../../posts/route");
+      const response = await GET(
+        createRequest("http://localhost:3000/api/social/posts?status=draft&socialAccountId=sacct_1&limit=10&offset=5"),
+      );
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+      expect(mockListSocialPosts).toHaveBeenCalledWith("ws_1", {
+        status: "draft",
+        socialAccountId: "sacct_1",
+        limit: 10,
+        offset: 5,
+      });
+    });
+  });
+
+  describe("POST /api/social/posts", () => {
+    it("creates a draft post", async () => {
+      authorized();
+      mockCreateSocialPost.mockResolvedValue({
+        id: "spost_1",
+        status: "draft",
+        content: "Hello world",
+      });
+      const { POST } = await import("../../posts/route");
+      const response = await POST(
+        createRequest("http://localhost:3000/api/social/posts", {
+          method: "POST",
+          body: JSON.stringify({
+            socialAccountId: "sacct_1",
+            content: "Hello world",
+          }),
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.post.status).toBe("draft");
+    });
+
+    it("returns 400 when socialAccountId is missing", async () => {
+      authorized();
+      const { POST } = await import("../../posts/route");
+      const response = await POST(
+        createRequest("http://localhost:3000/api/social/posts", {
+          method: "POST",
+          body: JSON.stringify({ content: "Hello" }),
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("socialAccountId");
+    });
+
+    it("returns 400 when both content and media are empty", async () => {
+      authorized();
+      const { POST } = await import("../../posts/route");
+      const response = await POST(
+        createRequest("http://localhost:3000/api/social/posts", {
+          method: "POST",
+          body: JSON.stringify({ socialAccountId: "sacct_1" }),
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toContain("Content or media");
+    });
+  });
+});
+
+describe("/api/social/posts/[postId]/publish", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns 401 for unauthenticated requests", async () => {
+    unauthorized(401);
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("transitions draft → queued", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({ id: "spost_1", status: "draft" });
+    mockUpdatePostStatus.mockResolvedValue({ id: "spost_1", status: "queued" });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.post.status).toBe("queued");
+    expect(mockUpdatePostStatus).toHaveBeenCalledWith("spost_1", "queued", {
+      errorMessage: undefined,
+      retryCount: undefined,
+    });
+  });
+
+  it("resets retryCount when retrying a failed post", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({ id: "spost_1", status: "failed", retryCount: 3 });
+    mockUpdatePostStatus.mockResolvedValue({ id: "spost_1", status: "queued", retryCount: 0 });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockUpdatePostStatus).toHaveBeenCalledWith("spost_1", "queued", {
+      errorMessage: undefined,
+      retryCount: 0,
+    });
+  });
+
+  it("returns 400 for published post", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({ id: "spost_1", status: "published" });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("published");
+  });
+
+  it("returns 400 for queued post", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({ id: "spost_1", status: "queued" });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("queued");
+  });
+
+  it("returns 400 for publishing post", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({ id: "spost_1", status: "publishing" });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+
+    expect(response.status).toBe(400);
+  });
+});
