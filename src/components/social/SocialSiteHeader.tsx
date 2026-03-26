@@ -34,10 +34,12 @@ export function SocialSiteHeader() {
         <h1 className="text-base font-medium">{title}</h1>
 
         <div className="ml-auto">
-          <Button size="sm" render={<Link href="/social/compose" />}>
-            <PlusIcon className="size-4" />
-            New Post
-          </Button>
+          <Link href="/social/compose">
+            <Button size="sm" nativeButton={false}>
+              <PlusIcon className="size-4" />
+              New Post
+            </Button>
+          </Link>
         </div>
       </div>
     </header>
