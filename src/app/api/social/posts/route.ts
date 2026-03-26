@@ -51,12 +51,16 @@ export async function GET(
     const url = new URL(request.url);
     const status = url.searchParams.get("status") as SocialPostStatus | null;
     const socialAccountId = url.searchParams.get("socialAccountId");
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
     const limit = url.searchParams.get("limit");
     const offset = url.searchParams.get("offset");
 
     const posts = await listSocialPosts(result.session.workspace.id, {
       status: status ?? undefined,
       socialAccountId: socialAccountId ?? undefined,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
       offset: offset ? parseInt(offset, 10) : undefined,
     });

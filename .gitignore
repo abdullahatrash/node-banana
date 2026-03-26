@@ -49,4 +49,4 @@ logs/*.json
 # agents
 .agents/
 
-.superset/
+.superset/.superpowers/
