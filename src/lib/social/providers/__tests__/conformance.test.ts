@@ -4,6 +4,7 @@ import {
   instagramProvider,
   linkedInProvider,
   redditProvider,
+  threadsProvider,
   tikTokProvider,
   xProvider,
   youTubeProvider,
@@ -18,6 +19,7 @@ const providers = [
   tikTokProvider,
   youTubeProvider,
   redditProvider,
+  threadsProvider,
 ] as const;
 
 const classificationFixtures: Record<
@@ -58,6 +60,11 @@ const classificationFixtures: Record<
     token: "401 Unauthorized token expired",
     badBody: "validation subreddit required",
     retry: "429 rate limit exceeded",
+  },
+  threads: {
+    token: "Error validating access token",
+    badBody: "2207026 unsupported video format",
+    retry: "An unknown error occurred",
   },
 };
 
