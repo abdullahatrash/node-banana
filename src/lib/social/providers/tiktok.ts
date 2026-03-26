@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type {
+  AuthenticateParams,
   AuthenticateResult,
   GenerateAuthUrlResult,
   ProviderCapabilities,
@@ -220,11 +221,7 @@ export const tikTokProvider: SocialProviderAdapter = {
     return { url, state, codeVerifier };
   },
 
-  async authenticate(params: {
-    code: string;
-    codeVerifier?: string;
-    state?: string;
-  }): Promise<AuthenticateResult> {
+  async authenticate(params: AuthenticateParams): Promise<AuthenticateResult> {
     const clientKey = process.env.TIKTOK_CLIENT_KEY;
     const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
     if (!clientKey || !clientSecret) {
@@ -238,7 +235,7 @@ export const tikTokProvider: SocialProviderAdapter = {
         client_secret: clientSecret,
         code: params.code,
         grant_type: "authorization_code",
-        redirect_uri: params.state ?? "",
+        redirect_uri: params.redirectUri,
       }),
     });
     if (!tokenResponse.ok) {

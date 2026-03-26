@@ -568,6 +568,36 @@ export const socialOAuthStates = pgTable(
   }),
 );
 
+export const socialOAuthSelectionSessions = pgTable(
+  "social_oauth_selection_sessions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    platform: socialPlatformEnum("platform").notNull(),
+    accessTokenEncrypted: text("access_token_encrypted").notNull(),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    accessTokenSecret: text("access_token_secret"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("social_oauth_selection_sessions_workspace_idx").on(
+      table.workspaceId,
+    ),
+    expiresAtIdx: index("social_oauth_selection_sessions_expires_at_idx").on(
+      table.expiresAt,
+    ),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];

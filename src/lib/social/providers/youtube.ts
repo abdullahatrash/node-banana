@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { google } from "googleapis";
 import type {
+  AuthenticateParams,
   AuthenticateResult,
   GenerateAuthUrlResult,
   PageInfo,
@@ -75,12 +76,8 @@ export const youTubeProvider: SocialProviderAdapter = {
     return { url, state };
   },
 
-  async authenticate(params: {
-    code: string;
-    codeVerifier?: string;
-    state?: string;
-  }): Promise<AuthenticateResult> {
-    const client = buildOAuth2Client(params.state);
+  async authenticate(params: AuthenticateParams): Promise<AuthenticateResult> {
+    const client = buildOAuth2Client(params.redirectUri);
     const { tokens } = await client.getToken(params.code);
     client.setCredentials(tokens);
 

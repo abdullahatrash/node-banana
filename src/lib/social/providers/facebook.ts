@@ -16,6 +16,7 @@
  */
 
 import type {
+  AuthenticateParams,
   AuthenticateResult,
   GenerateAuthUrlResult,
   PageInfo,
@@ -118,12 +119,8 @@ export const facebookProvider: SocialProviderAdapter = {
     return { url, state, codeVerifier: makeOAuthState(10) };
   },
 
-  async authenticate(params: {
-    code: string;
-    codeVerifier?: string;
-    state?: string;
-  }): Promise<AuthenticateResult> {
-    const redirectUri = params.codeVerifier ?? "";
+  async authenticate(params: AuthenticateParams): Promise<AuthenticateResult> {
+    const redirectUri = params.redirectUri;
 
     const shortToken = await exchangeCodeForToken(params.code, redirectUri);
     const longToken = await exchangeForLongLivedToken(shortToken.access_token);

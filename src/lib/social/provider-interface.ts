@@ -40,6 +40,16 @@ export interface AuthenticateResult {
 }
 
 /**
+ * Input for exchanging an OAuth callback code into tokens.
+ */
+export interface AuthenticateParams {
+  code: string;
+  state: string;
+  redirectUri: string;
+  codeVerifier?: string;
+}
+
+/**
  * Result from refreshing an expired token.
  */
 export interface RefreshTokenResult {
@@ -148,11 +158,7 @@ export interface SocialProviderAdapter {
    * Exchange an OAuth authorization code for access tokens.
    * Called after the user approves the OAuth prompt.
    */
-  authenticate(params: {
-    code: string;
-    codeVerifier?: string;
-    state?: string;
-  }): Promise<AuthenticateResult>;
+  authenticate(params: AuthenticateParams): Promise<AuthenticateResult>;
 
   /**
    * Refresh an expired access token.

@@ -4,6 +4,7 @@ import { withApiPermission } from "@/lib/studio/authz";
 import { getProvider } from "@/lib/social/provider-registry";
 import { encryptToken } from "@/lib/social/crypto";
 import {
+  createOAuthSelectionSession,
   consumeOAuthState,
   upsertSocialAccount,
   OAuthStateNotFoundError,
@@ -23,8 +24,11 @@ interface CallbackResponse {
   account?: Record<string, unknown>;
   pages?: PageInfo[];
   requiresPageSelection?: boolean;
+  selectionSessionId?: string;
   error?: string;
 }
+
+const OAUTH_SELECTION_SESSION_TTL_MS = 10 * 60 * 1000;
 
 export async function POST(
   request: NextRequest,
@@ -66,31 +70,70 @@ export async function POST(
       );
     }
 
+    const metadata =
+      oauthState.metadata &&
+      typeof oauthState.metadata === "object" &&
+      !Array.isArray(oauthState.metadata)
+        ? (oauthState.metadata as Record<string, unknown>)
+        : null;
+    const callbackUrl =
+      metadata && typeof metadata.callbackUrl === "string"
+        ? metadata.callbackUrl
+        : null;
+
+    if (!callbackUrl) {
+      return NextResponse.json(
+        { success: false, error: "OAuth callback URL is missing. Please reconnect." },
+        { status: 400 },
+      );
+    }
+
     // Exchange code for tokens
     const provider = getProvider(body.platform);
     const authResult = await provider.authenticate({
       code: body.code,
-      codeVerifier: oauthState.codeVerifier ?? undefined,
       state: body.state,
+      redirectUri: callbackUrl,
+      codeVerifier: oauthState.codeVerifier ?? undefined,
     });
 
-    // If provider requires page selection, return pages without saving yet
+    // If provider requires page selection, return pages and a short-lived
+    // server-side selection session instead of exposing tokens to the client.
     if (authResult.requiresPageSelection && provider.fetchPageInformation) {
       const pages = await provider.fetchPageInformation(authResult.accessToken);
+      const session = await createOAuthSelectionSession({
+        workspaceId: oauthState.workspaceId,
+        platform: body.platform as SocialPlatform,
+        accessTokenEncrypted: encryptToken(authResult.accessToken),
+        refreshTokenEncrypted: authResult.refreshToken
+          ? encryptToken(authResult.refreshToken)
+          : undefined,
+        accessTokenSecret: authResult.accessTokenSecret
+          ? encryptToken(authResult.accessTokenSecret)
+          : undefined,
+        tokenExpiresAt: authResult.expiresIn
+          ? new Date(Date.now() + authResult.expiresIn * 1000)
+          : undefined,
+        createdByUserId: result.session.user.id,
+        expiresAt: new Date(Date.now() + OAUTH_SELECTION_SESSION_TTL_MS),
+      });
+
       return NextResponse.json({
         success: true,
         requiresPageSelection: true,
         pages,
-        // Temporarily store the token info for the select-page step
-        account: {
-          platform: body.platform,
-          platformUserId: authResult.platformUserId,
-          displayName: authResult.displayName,
-          accessToken: authResult.accessToken, // Will be encrypted on final save
-          refreshToken: authResult.refreshToken,
-          expiresIn: authResult.expiresIn,
-        },
+        selectionSessionId: session.id,
       });
+    }
+
+    if (authResult.requiresPageSelection) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `${body.platform} requires page selection but provider does not support it.`,
+        },
+        { status: 500 },
+      );
     }
 
     // Save the social account with encrypted tokens

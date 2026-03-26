@@ -151,6 +151,8 @@ describe("xProvider.authenticate", () => {
 
     const result = await xProvider.authenticate({
       code: "oauth-verifier-xyz",
+      state: "oauth-state",
+      redirectUri: "https://app.example.com/callback/x",
       codeVerifier: "tok123:sec456",
     });
 

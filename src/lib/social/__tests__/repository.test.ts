@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   OAuthStateExpiredError,
   OAuthStateNotFoundError,
+  OAuthSelectionSessionExpiredError,
+  OAuthSelectionSessionNotFoundError,
   SocialAccountNotFoundError,
   SocialPostNotFoundError,
   SocialPostStateTransitionError,
@@ -61,7 +63,8 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/db/schema", () => ({
   socialAccounts: { workspaceId: "workspace_id", id: "id", platform: "platform", platformUserId: "platform_user_id" },
   socialPosts: { workspaceId: "workspace_id", id: "id", status: "status", socialAccountId: "social_account_id", retryCount: "retry_count", createdAt: "created_at" },
-  socialOAuthStates: { state: "state", expiresAt: "expires_at" },
+  socialOAuthStates: { id: "id", state: "state", expiresAt: "expires_at" },
+  socialOAuthSelectionSessions: { id: "id", expiresAt: "expires_at", workspaceId: "workspace_id", platform: "platform" },
 }));
 
 describe("social/repository", () => {
@@ -99,6 +102,16 @@ describe("social/repository", () => {
     it("OAuthStateExpiredError has correct name", () => {
       const error = new OAuthStateExpiredError();
       expect(error.name).toBe("OAuthStateExpiredError");
+    });
+
+    it("OAuthSelectionSessionNotFoundError has correct name", () => {
+      const error = new OAuthSelectionSessionNotFoundError();
+      expect(error.name).toBe("OAuthSelectionSessionNotFoundError");
+    });
+
+    it("OAuthSelectionSessionExpiredError has correct name", () => {
+      const error = new OAuthSelectionSessionExpiredError();
+      expect(error.name).toBe("OAuthSelectionSessionExpiredError");
     });
   });
 
@@ -158,6 +171,63 @@ describe("social/repository", () => {
       await expect(consumeOAuthState("test")).rejects.toThrow(
         OAuthStateExpiredError,
       );
+    });
+  });
+
+  describe("selection sessions", () => {
+    it("creates a selection session", async () => {
+      const mockRow = { id: "sosel_1", workspaceId: "ws_1", platform: "facebook" };
+      setupChainableMock([mockRow]);
+      const { createOAuthSelectionSession } = await import("@/lib/social/repository");
+      const result = await createOAuthSelectionSession({
+        workspaceId: "ws_1",
+        platform: "facebook",
+        accessTokenEncrypted: "enc_access",
+        createdByUserId: "user_1",
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+      expect(result).toEqual(mockRow);
+    });
+
+    it("consumes a valid selection session", async () => {
+      const futureDate = new Date(Date.now() + 3600_000);
+      setupChainableMock([
+        { id: "sosel_1", expiresAt: futureDate, workspaceId: "ws_1", platform: "facebook" },
+      ]);
+      const { consumeOAuthSelectionSession } = await import("@/lib/social/repository");
+      const result = await consumeOAuthSelectionSession({
+        selectionSessionId: "sosel_1",
+        workspaceId: "ws_1",
+        platform: "facebook",
+      });
+      expect(result.id).toBe("sosel_1");
+    });
+
+    it("throws when selection session is missing", async () => {
+      setupChainableMock([]);
+      const { consumeOAuthSelectionSession } = await import("@/lib/social/repository");
+      await expect(
+        consumeOAuthSelectionSession({
+          selectionSessionId: "missing",
+          workspaceId: "ws_1",
+          platform: "facebook",
+        }),
+      ).rejects.toThrow(OAuthSelectionSessionNotFoundError);
+    });
+
+    it("throws when selection session is expired", async () => {
+      const pastDate = new Date(Date.now() - 3600_000);
+      setupChainableMock([
+        { id: "sosel_1", expiresAt: pastDate, workspaceId: "ws_1", platform: "facebook" },
+      ]);
+      const { consumeOAuthSelectionSession } = await import("@/lib/social/repository");
+      await expect(
+        consumeOAuthSelectionSession({
+          selectionSessionId: "sosel_1",
+          workspaceId: "ws_1",
+          platform: "facebook",
+        }),
+      ).rejects.toThrow(OAuthSelectionSessionExpiredError);
     });
   });
 

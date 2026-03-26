@@ -115,7 +115,8 @@ describe("TikTok provider", () => {
 
       const result = await tikTokProvider.authenticate({
         code: "auth-code",
-        state: "https://app.example.com/callback",
+        state: "oauth-state",
+        redirectUri: "https://app.example.com/callback",
       });
 
       expect(result.platformUserId).toBe("openid123"); // dashes stripped
@@ -145,7 +146,11 @@ describe("TikTok provider", () => {
           }),
         );
 
-      await tikTokProvider.authenticate({ code: "code" });
+      await tikTokProvider.authenticate({
+        code: "code",
+        state: "oauth-state",
+        redirectUri: "https://app.example.com/callback",
+      });
 
       const tokenBody = new URLSearchParams(
         mockFetch.mock.calls[0][1].body as string,
@@ -171,7 +176,11 @@ describe("TikTok provider", () => {
           }),
         );
 
-      const result = await tikTokProvider.authenticate({ code: "code" });
+      const result = await tikTokProvider.authenticate({
+        code: "code",
+        state: "oauth-state",
+        redirectUri: "https://app.example.com/callback",
+      });
       expect(result.platformUserId).toBe("abcdef0123456789");
     });
 
@@ -179,7 +188,11 @@ describe("TikTok provider", () => {
       mockFetch.mockResolvedValueOnce(mockFetchError(400, "bad_request"));
 
       await expect(
-        tikTokProvider.authenticate({ code: "bad-code" }),
+        tikTokProvider.authenticate({
+          code: "bad-code",
+          state: "oauth-state",
+          redirectUri: "https://app.example.com/callback",
+        }),
       ).rejects.toThrow("TikTok token exchange failed: 400");
     });
   });

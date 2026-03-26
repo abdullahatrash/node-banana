@@ -7,10 +7,13 @@ const mockGetSocialAccount = vi.fn();
 const mockDisconnectSocialAccount = vi.fn();
 const mockCreateOAuthState = vi.fn();
 const mockConsumeOAuthState = vi.fn();
+const mockCreateOAuthSelectionSession = vi.fn();
+const mockConsumeOAuthSelectionSession = vi.fn();
 const mockUpsertSocialAccount = vi.fn();
 const mockGetProvider = vi.fn();
 const mockIsProviderRegistered = vi.fn();
 const mockEncryptToken = vi.fn();
+const mockDecryptToken = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -28,6 +31,8 @@ vi.mock("@/lib/social/repository", () => ({
   disconnectSocialAccount: (...args: unknown[]) => mockDisconnectSocialAccount(...args),
   createOAuthState: (...args: unknown[]) => mockCreateOAuthState(...args),
   consumeOAuthState: (...args: unknown[]) => mockConsumeOAuthState(...args),
+  createOAuthSelectionSession: (...args: unknown[]) => mockCreateOAuthSelectionSession(...args),
+  consumeOAuthSelectionSession: (...args: unknown[]) => mockConsumeOAuthSelectionSession(...args),
   upsertSocialAccount: (...args: unknown[]) => mockUpsertSocialAccount(...args),
   SocialAccountNotFoundError: class extends Error {
     constructor(id?: string) { super(`Account "${id}" not found.`); this.name = "SocialAccountNotFoundError"; }
@@ -38,6 +43,12 @@ vi.mock("@/lib/social/repository", () => ({
   OAuthStateExpiredError: class extends Error {
     constructor() { super("OAuth state expired."); this.name = "OAuthStateExpiredError"; }
   },
+  OAuthSelectionSessionNotFoundError: class extends Error {
+    constructor() { super("Selection session not found."); this.name = "OAuthSelectionSessionNotFoundError"; }
+  },
+  OAuthSelectionSessionExpiredError: class extends Error {
+    constructor() { super("Selection session expired."); this.name = "OAuthSelectionSessionExpiredError"; }
+  },
 }));
 
 vi.mock("@/lib/social/provider-registry", () => ({
@@ -47,6 +58,7 @@ vi.mock("@/lib/social/provider-registry", () => ({
 
 vi.mock("@/lib/social/crypto", () => ({
   encryptToken: (...args: unknown[]) => mockEncryptToken(...args),
+  decryptToken: (...args: unknown[]) => mockDecryptToken(...args),
 }));
 
 const mockSession = {
@@ -252,17 +264,19 @@ describe("/api/social/accounts/callback POST", () => {
       workspaceId: "ws_1",
       platform: "linkedin",
       codeVerifier: "test-verifier",
+      metadata: { callbackUrl: "http://localhost:3000/api/social/accounts/callback" },
+    });
+    const mockAuthenticate = vi.fn().mockResolvedValue({
+      platformUserId: "li_user_123",
+      accessToken: "access_tok",
+      refreshToken: "refresh_tok",
+      expiresIn: 3600,
+      displayName: "Test User",
+      username: "testuser",
+      requiresPageSelection: false,
     });
     mockGetProvider.mockReturnValue({
-      authenticate: vi.fn().mockResolvedValue({
-        platformUserId: "li_user_123",
-        accessToken: "access_tok",
-        refreshToken: "refresh_tok",
-        expiresIn: 3600,
-        displayName: "Test User",
-        username: "testuser",
-        requiresPageSelection: false,
-      }),
+      authenticate: mockAuthenticate,
     });
     mockEncryptToken.mockImplementation((t: string) => `enc_${t}`);
     mockUpsertSocialAccount.mockResolvedValue({
@@ -288,8 +302,133 @@ describe("/api/social/accounts/callback POST", () => {
     expect(data.account).toBeDefined();
     // Tokens should be stripped from response
     expect(data.account).not.toHaveProperty("accessTokenEncrypted");
+    expect(mockAuthenticate).toHaveBeenCalledWith({
+      code: "auth_code",
+      state: "valid-state",
+      redirectUri: "http://localhost:3000/api/social/accounts/callback",
+      codeVerifier: "test-verifier",
+    });
     expect(mockEncryptToken).toHaveBeenCalledWith("access_tok");
     expect(mockEncryptToken).toHaveBeenCalledWith("refresh_tok");
+  });
+
+  it("returns selectionSessionId for page-selection providers", async () => {
+    authorized();
+    mockConsumeOAuthState.mockResolvedValue({
+      id: "soauth_1",
+      workspaceId: "ws_1",
+      platform: "facebook",
+      codeVerifier: "test-verifier",
+      metadata: { callbackUrl: "http://localhost:3000/api/social/accounts/callback" },
+    });
+    mockGetProvider.mockReturnValue({
+      authenticate: vi.fn().mockResolvedValue({
+        platformUserId: "fb_user_123",
+        accessToken: "access_tok",
+        refreshToken: "refresh_tok",
+        expiresIn: 3600,
+        displayName: "Test Page",
+        username: "testpage",
+        requiresPageSelection: true,
+      }),
+      fetchPageInformation: vi.fn().mockResolvedValue([
+        { id: "pg_1", name: "Page One" },
+      ]),
+    });
+    mockEncryptToken.mockImplementation((t: string) => `enc_${t}`);
+    mockCreateOAuthSelectionSession.mockResolvedValue({ id: "sosel_1" });
+
+    const { POST } = await import("../../accounts/callback/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/accounts/callback", {
+        method: "POST",
+        body: JSON.stringify({ platform: "facebook", code: "auth_code", state: "valid-state" }),
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.requiresPageSelection).toBe(true);
+    expect(data.selectionSessionId).toBe("sosel_1");
+    expect(data.pages).toHaveLength(1);
+    expect(data).not.toHaveProperty("account");
+    expect(mockCreateOAuthSelectionSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws_1",
+        platform: "facebook",
+      }),
+    );
+  });
+});
+
+describe("/api/social/accounts/select-page POST", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns 400 for missing selectionSessionId", async () => {
+    authorized();
+    const { POST } = await import("../../accounts/select-page/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/accounts/select-page", {
+        method: "POST",
+        body: JSON.stringify({ platform: "facebook", pageId: "pg_1" }),
+      }),
+    );
+    const data = await response.json();
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("selectionSessionId");
+  });
+
+  it("uses selection session to complete page connect without raw client tokens", async () => {
+    authorized();
+    mockConsumeOAuthSelectionSession.mockResolvedValue({
+      id: "sosel_1",
+      workspaceId: "ws_1",
+      platform: "facebook",
+      accessTokenEncrypted: "enc_access",
+      refreshTokenEncrypted: "enc_refresh",
+      accessTokenSecret: null,
+      tokenExpiresAt: new Date("2026-01-01T00:00:00.000Z"),
+      expiresAt: new Date("2026-01-01T00:10:00.000Z"),
+    });
+    mockDecryptToken.mockReturnValue("plain_access");
+    mockGetProvider.mockReturnValue({
+      fetchPageInformation: vi.fn().mockResolvedValue([
+        { id: "pg_1", name: "Page One", accessToken: "page_token_1" },
+      ]),
+    });
+    mockEncryptToken.mockImplementation((t: string) => `enc_${t}`);
+    mockUpsertSocialAccount.mockResolvedValue({
+      id: "sacct_1",
+      platform: "facebook",
+      displayName: "Page One",
+      accessTokenEncrypted: "enc_page_token_1",
+      refreshTokenEncrypted: "enc_refresh",
+      accessTokenSecret: null,
+    });
+
+    const { POST } = await import("../../accounts/select-page/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/accounts/select-page", {
+        method: "POST",
+        body: JSON.stringify({
+          platform: "facebook",
+          pageId: "pg_1",
+          selectionSessionId: "sosel_1",
+        }),
+      }),
+    );
+    const data = await response.json();
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.account).not.toHaveProperty("accessTokenEncrypted");
+    expect(mockConsumeOAuthSelectionSession).toHaveBeenCalledWith({
+      selectionSessionId: "sosel_1",
+      workspaceId: "ws_1",
+      platform: "facebook",
+    });
   });
 });
 

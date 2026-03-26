@@ -3,6 +3,7 @@ import { and, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   socialAccounts,
+  socialOAuthSelectionSessions,
   socialOAuthStates,
   socialPosts,
   type SocialPlatform,
@@ -52,6 +53,20 @@ export class OAuthStateExpiredError extends Error {
   constructor() {
     super("OAuth state has expired. Please try connecting again.");
     this.name = "OAuthStateExpiredError";
+  }
+}
+
+export class OAuthSelectionSessionNotFoundError extends Error {
+  constructor() {
+    super("Selection session not found or already consumed.");
+    this.name = "OAuthSelectionSessionNotFoundError";
+  }
+}
+
+export class OAuthSelectionSessionExpiredError extends Error {
+  constructor() {
+    super("Selection session has expired. Please reconnect your account.");
+    this.name = "OAuthSelectionSessionExpiredError";
   }
 }
 
@@ -111,9 +126,79 @@ export async function consumeOAuthState(state: string) {
 
 export async function cleanupExpiredOAuthStates() {
   const db = getDb();
-  return db
+  const rows = await db
     .delete(socialOAuthStates)
-    .where(lt(socialOAuthStates.expiresAt, new Date()));
+    .where(lt(socialOAuthStates.expiresAt, new Date()))
+    .returning({ id: socialOAuthStates.id });
+  return rows.length;
+}
+
+export async function createOAuthSelectionSession(input: {
+  workspaceId: string;
+  platform: SocialPlatform;
+  accessTokenEncrypted: string;
+  refreshTokenEncrypted?: string;
+  accessTokenSecret?: string;
+  tokenExpiresAt?: Date;
+  createdByUserId: string;
+  expiresAt: Date;
+}) {
+  const db = getDb();
+  const id = `sosel_${randomUUID()}`;
+  const [row] = await db
+    .insert(socialOAuthSelectionSessions)
+    .values({
+      id,
+      workspaceId: input.workspaceId,
+      platform: input.platform,
+      accessTokenEncrypted: input.accessTokenEncrypted,
+      refreshTokenEncrypted: input.refreshTokenEncrypted ?? null,
+      accessTokenSecret: input.accessTokenSecret ?? null,
+      tokenExpiresAt: input.tokenExpiresAt ?? null,
+      createdByUserId: input.createdByUserId,
+      expiresAt: input.expiresAt,
+    })
+    .returning();
+
+  return row;
+}
+
+export async function consumeOAuthSelectionSession(input: {
+  selectionSessionId: string;
+  workspaceId: string;
+  platform: SocialPlatform;
+}) {
+  const db = getDb();
+  const [row] = await db
+    .delete(socialOAuthSelectionSessions)
+    .where(
+      and(
+        eq(socialOAuthSelectionSessions.id, input.selectionSessionId),
+        eq(socialOAuthSelectionSessions.workspaceId, input.workspaceId),
+        eq(socialOAuthSelectionSessions.platform, input.platform),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new OAuthSelectionSessionNotFoundError();
+  }
+
+  if (row.expiresAt < new Date()) {
+    throw new OAuthSelectionSessionExpiredError();
+  }
+
+  return row;
+}
+
+export async function cleanupExpiredOAuthSelectionSessions() {
+  const db = getDb();
+  const rows = await db
+    .delete(socialOAuthSelectionSessions)
+    .where(lt(socialOAuthSelectionSessions.expiresAt, new Date()))
+    .returning({ id: socialOAuthSelectionSessions.id });
+
+  return rows.length;
 }
 
 // ---------------------------------------------------------------------------

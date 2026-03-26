@@ -21,6 +21,7 @@
 import sharp from "sharp";
 import { TwitterApi } from "twitter-api-v2";
 import type {
+  AuthenticateParams,
   AuthenticateResult,
   GenerateAuthUrlResult,
   ProviderCapabilities,
@@ -123,11 +124,7 @@ export const xProvider: SocialProviderAdapter = {
     };
   },
 
-  async authenticate(params: {
-    code: string; // oauth_verifier from callback
-    codeVerifier?: string; // "oauth_token:oauth_token_secret"
-    state?: string;
-  }): Promise<AuthenticateResult> {
+  async authenticate(params: AuthenticateParams): Promise<AuthenticateResult> {
     const { code: oauthVerifier, codeVerifier = "" } = params;
     const [oauthToken, oauthTokenSecret] = codeVerifier.split(":");
 

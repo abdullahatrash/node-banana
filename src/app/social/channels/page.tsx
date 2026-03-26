@@ -28,9 +28,7 @@ export default function ChannelsPage() {
   const [pageSelection, setPageSelection] = useState<{
     pages: PageInfo[]
     platform: string
-    accessToken: string
-    refreshToken?: string
-    expiresIn?: number
+    selectionSessionId: string
   } | null>(null)
   const { show: showToast } = useToast()
   const searchParams = useSearchParams()
@@ -60,15 +58,18 @@ export default function ChannelsPage() {
     try {
       const result = await handleOAuthCallback(platform, code, state)
 
-      if (result.requiresPageSelection && result.pages) {
-        const acct = result.account as unknown as Record<string, unknown> | undefined
+      if (
+        result.requiresPageSelection &&
+        result.pages &&
+        result.selectionSessionId
+      ) {
         setPageSelection({
           pages: result.pages,
           platform,
-          accessToken: (acct?.accessToken as string) ?? "",
-          refreshToken: acct?.refreshToken as string | undefined,
-          expiresIn: acct?.expiresIn as number | undefined,
+          selectionSessionId: result.selectionSessionId,
         })
+      } else if (result.requiresPageSelection) {
+        throw new Error("Missing secure selection session. Please reconnect.")
       } else {
         showToast("Channel connected successfully!", "success")
         fetchAccounts()
@@ -94,9 +95,7 @@ export default function ChannelsPage() {
       await selectPage(
         pageSelection.platform,
         page.id,
-        pageSelection.accessToken,
-        pageSelection.refreshToken,
-        pageSelection.expiresIn,
+        pageSelection.selectionSessionId,
       )
       showToast(`Connected to ${page.name}!`, "success")
       fetchAccounts()
