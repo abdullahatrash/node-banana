@@ -434,6 +434,7 @@ export async function updatePostStatus(
     platformPostUrl?: string;
     publishedAt?: Date;
     errorMessage?: string;
+    retryCount?: number;
   },
 ) {
   const db = getDb();
@@ -453,6 +454,9 @@ export async function updatePostStatus(
       }),
       ...(extra?.errorMessage !== undefined && {
         errorMessage: extra.errorMessage,
+      }),
+      ...(extra?.retryCount !== undefined && {
+        retryCount: extra.retryCount,
       }),
       updatedAt: new Date(),
     })
