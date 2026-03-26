@@ -24,7 +24,7 @@ import { logger } from "@/utils/logger";
 
 export type ContentOSPlanTier = "free" | "pro" | "enterprise";
 
-export type ContentOSPermission =
+export type StudioPermission =
   | "workspaces:read"
   | "workspaces:write"
   | "workspaces:delete"
@@ -34,6 +34,14 @@ export type ContentOSPermission =
   | "assets:read"
   | "assets:write"
   | "assets:delete";
+
+export type SocialPermission =
+  | "social:view"
+  | "social:connect"
+  | "social:publish"
+  | "social:manage";
+
+export type ContentOSPermission = StudioPermission | SocialPermission;
 
 type StudioAccessAction = "read" | "write" | "delete";
 
@@ -76,7 +84,7 @@ export type StudioAuthorizationResult =
   | StudioAuthorizationSuccess
   | StudioAuthorizationFailure;
 
-const ROLE_PERMISSIONS: Record<WorkspaceRole, ContentOSPermission[]> = {
+const STUDIO_ROLE_PERMISSIONS: Record<WorkspaceRole, StudioPermission[]> = {
   owner: [
     "workspaces:read",
     "workspaces:write",
@@ -108,8 +116,14 @@ const ROLE_PERMISSIONS: Record<WorkspaceRole, ContentOSPermission[]> = {
   ],
 };
 
+const SOCIAL_ROLE_PERMISSIONS: Record<WorkspaceRole, SocialPermission[]> = {
+  owner: ["social:view", "social:connect", "social:publish", "social:manage"],
+  admin: ["social:view", "social:connect", "social:publish", "social:manage"],
+  member: ["social:view", "social:publish"],
+};
+
 export function getPermissionsForRole(role: WorkspaceRole): ContentOSPermission[] {
-  return ROLE_PERMISSIONS[role];
+  return [...STUDIO_ROLE_PERMISSIONS[role], ...SOCIAL_ROLE_PERMISSIONS[role]];
 }
 
 function authFailure(
