@@ -17,11 +17,13 @@ export function SocialLayout({ children }: SocialLayoutProps) {
   }, [fetchAccounts]);
 
   return (
-    <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
-      <SocialHeader />
-      <div className="flex flex-1 overflow-hidden">
-        <SocialSidebar />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+    <div className="flex h-screen bg-[#0a0a0a] text-neutral-100">
+      <SocialSidebar />
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <SocialHeader />
+        <main className="flex flex-1 flex-col overflow-y-auto">
+          {children}
+        </main>
       </div>
     </div>
   );

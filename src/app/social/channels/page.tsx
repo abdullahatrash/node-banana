@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useSocialAccountsStore } from "@/store/socialAccountsStore";
 import { PlatformPicker } from "@/components/social/PlatformPicker";
 import { ChannelCard } from "@/components/social/ChannelCard";
-import { ChannelsIcon, PlusIcon } from "@/components/social/icons";
+import { PlusIcon } from "@/components/social/icons";
 import { useToast } from "@/components/Toast";
 import {
   handleOAuthCallback,
@@ -106,11 +106,8 @@ export default function ChannelsPage() {
   // Processing OAuth callback
   if (isProcessingCallback) {
     return (
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex h-full items-center justify-center">
         <div className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-neutral-800 bg-[#111]">
-            <ChannelsIcon size={20} className="text-neutral-600" />
-          </div>
           <div className="text-[13px] text-neutral-300">
             Completing connection...
           </div>
@@ -183,12 +180,9 @@ export default function ChannelsPage() {
   if (!isLoading && accounts.length === 0) {
     return (
       <>
-        <div className="flex flex-1 items-center justify-center">
+        <div className="flex h-full items-center justify-center">
           <div className="max-w-xs text-center">
-            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-neutral-800 bg-[#111]">
-              <ChannelsIcon size={28} className="text-neutral-700" />
-            </div>
-            <h2 className="mb-1.5 text-[15px] font-semibold text-neutral-300">
+            <h2 className="mb-2 text-[15px] font-semibold text-neutral-300">
               Connect your first channel
             </h2>
             <p className="mb-5 text-[12px] leading-relaxed text-neutral-600">
