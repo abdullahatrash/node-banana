@@ -3,6 +3,7 @@ import {
   facebookProvider,
   instagramProvider,
   linkedInProvider,
+  redditProvider,
   tikTokProvider,
   xProvider,
   youTubeProvider,
@@ -16,6 +17,7 @@ const providers = [
   facebookProvider,
   tikTokProvider,
   youTubeProvider,
+  redditProvider,
 ] as const;
 
 const classificationFixtures: Record<
@@ -51,6 +53,11 @@ const classificationFixtures: Record<
     token: "token expired",
     badBody: "invalidTitle",
     retry: "quotaExceeded",
+  },
+  reddit: {
+    token: "401 Unauthorized token expired",
+    badBody: "validation subreddit required",
+    retry: "429 rate limit exceeded",
   },
 };
 

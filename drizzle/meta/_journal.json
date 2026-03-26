@@ -50,6 +50,13 @@
       "when": 1774551027813,
       "tag": "0006_daily_james_howlett",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1774552166482,
+      "tag": "0007_curvy_vermin",
+      "breakpoints": true
     }
   ]
 }

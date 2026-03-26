@@ -443,6 +443,7 @@ export const socialPlatformEnum = pgEnum("social_platform", [
   "tiktok",
   "facebook",
   "youtube",
+  "reddit",
 ]);
 
 export const socialPostStatusEnum = pgEnum("social_post_status", [

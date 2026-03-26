@@ -11,6 +11,7 @@ import "./instagram";
 import "./facebook";
 import "./tiktok";
 import "./youtube";
+import "./reddit";
 
 export { linkedInProvider } from "./linkedin";
 export { xProvider } from "./x";
@@ -18,3 +19,4 @@ export { tikTokProvider } from "./tiktok";
 export { youTubeProvider } from "./youtube";
 export { facebookProvider } from "./facebook";
 export { instagramProvider } from "./instagram";
+export { redditProvider } from "./reddit";
