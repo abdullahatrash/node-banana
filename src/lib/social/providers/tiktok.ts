@@ -6,6 +6,7 @@ import type {
   ProviderCapabilities,
   PublishRequest,
   PublishResult,
+  PublishStatusResult,
   RefreshTokenResult,
   SocialProviderAdapter,
   SocialProviderError,
@@ -69,49 +70,95 @@ export async function pollTikTokPublishStatus(
 ): Promise<{ platformPostId: string; platformPostUrl: string }> {
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const response = await fetch(TIKTOK_PUBLISH_STATUS_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json; charset=UTF-8",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({ publish_id: publishId }),
-    });
+    const status = await fetchTikTokPublishStatusOnce(
+      username,
+      publishId,
+      accessToken,
+    );
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(
-        `TikTok publish status poll failed: ${response.status} ${body}`,
-      );
-    }
-
-    const data = await response.json();
-    const { status, publicaly_available_post_id } = data.data ?? {};
-
-    if (status === "SEND_TO_USER_INBOX") {
+    if (status.status === "published") {
       return {
-        platformPostId: "inbox",
-        platformPostUrl: "https://www.tiktok.com/messages?lang=en",
+        platformPostId: status.platformPostId,
+        platformPostUrl: status.platformPostUrl,
       };
     }
-
-    if (status === "PUBLISH_COMPLETE") {
-      const postId = publicaly_available_post_id?.[0] ?? publishId;
-      const postUrl = publicaly_available_post_id?.[0]
-        ? `https://www.tiktok.com/@${username}/video/${publicaly_available_post_id[0]}`
-        : `https://www.tiktok.com/@${username}`;
-      return { platformPostId: postId, platformPostUrl: postUrl };
-    }
-
-    if (status === "FAILED") {
-      const errorCode = data.data?.fail_reason ?? data.error?.code ?? "unknown";
+    if (status.status === "failed") {
       throw new Error(
-        `TikTok publish failed: ${errorCode} — ${JSON.stringify(data)}`,
+        status.errorMessage ?? `TikTok publish failed for ${publishId}`,
       );
     }
 
     await delay(pollIntervalMs);
   }
+}
+
+async function fetchTikTokPublishStatusOnce(
+  username: string,
+  publishId: string,
+  accessToken: string,
+): Promise<PublishStatusResult> {
+  const response = await fetch(TIKTOK_PUBLISH_STATUS_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=UTF-8",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ publish_id: publishId }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `TikTok publish status poll failed: ${response.status} ${body}`,
+    );
+  }
+
+  const data = await response.json();
+  const { status, publicaly_available_post_id } = data.data ?? {};
+
+  if (status === "SEND_TO_USER_INBOX") {
+    return {
+      platformPostId: "inbox",
+      platformPostUrl: "https://www.tiktok.com/messages?lang=en",
+      status: "published",
+    };
+  }
+
+  if (status === "PUBLISH_COMPLETE") {
+    const postId = publicaly_available_post_id?.[0] ?? publishId;
+    const postUrl = publicaly_available_post_id?.[0]
+      ? `https://www.tiktok.com/@${username}/video/${publicaly_available_post_id[0]}`
+      : `https://www.tiktok.com/@${username}`;
+    return {
+      platformPostId: postId,
+      platformPostUrl: postUrl,
+      status: "published",
+    };
+  }
+
+  if (status === "FAILED") {
+    const errorCode = data.data?.fail_reason ?? data.error?.code ?? "unknown";
+    return {
+      platformPostId: publishId,
+      platformPostUrl: `https://www.tiktok.com/@${username}`,
+      status: "failed",
+      errorMessage: `TikTok publish failed: ${errorCode}`,
+    };
+  }
+
+  return {
+    platformPostId: publishId,
+    platformPostUrl: `https://www.tiktok.com/@${username}`,
+    status: "processing",
+  };
+}
+
+export async function fetchTikTokPublishStatus(
+  username: string,
+  publishId: string,
+  accessToken: string,
+): Promise<PublishStatusResult> {
+  return fetchTikTokPublishStatusOnce(username, publishId, accessToken);
 }
 
 async function initiateVideoPost(
@@ -318,16 +365,22 @@ export const tikTokProvider: SocialProviderAdapter = {
       } catch {
         // Non-fatal
       }
-      const { platformPostId, platformPostUrl } =
-        await pollTikTokPublishStatus(username, publishId, accessToken);
       results.push({
         postId: request.postId,
-        platformPostId,
-        platformPostUrl,
+        platformPostId: publishId,
+        platformPostUrl: `https://www.tiktok.com/@${username}`,
         status: "processing",
       });
     }
     return results;
+  },
+
+  async getPostStatus(
+    platformUserId: string,
+    accessToken: string,
+    platformPostId: string,
+  ): Promise<PublishStatusResult> {
+    return fetchTikTokPublishStatus(platformUserId, platformPostId, accessToken);
   },
 
   classifyError(error: unknown): SocialProviderError {

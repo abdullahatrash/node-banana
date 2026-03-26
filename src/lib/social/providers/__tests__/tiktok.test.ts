@@ -350,7 +350,7 @@ describe("TikTok provider", () => {
   // -------------------------------------------------------------------------
 
   describe("post", () => {
-    it("initiates a video post and polls for publish status", async () => {
+    it("initiates a video post and returns processing state", async () => {
       // 1. video init call
       mockFetch
         .mockResolvedValueOnce(
@@ -366,15 +366,6 @@ describe("TikTok provider", () => {
                 avatar_url: "",
                 username: "videotiktoker",
               },
-            },
-          }),
-        )
-        // 3. poll status
-        .mockResolvedValueOnce(
-          mockFetchOk({
-            data: {
-              status: "PUBLISH_COMPLETE",
-              publicaly_available_post_id: ["vid123"],
             },
           }),
         );
@@ -393,7 +384,7 @@ describe("TikTok provider", () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].postId).toBe("internal-post-1");
-      expect(results[0].platformPostId).toBe("vid123");
+      expect(results[0].platformPostId).toBe("video-publish-id");
       expect(results[0].status).toBe("processing");
     });
 
@@ -411,14 +402,6 @@ describe("TikTok provider", () => {
                 avatar_url: "",
                 username: "u",
               },
-            },
-          }),
-        )
-        .mockResolvedValueOnce(
-          mockFetchOk({
-            data: {
-              status: "PUBLISH_COMPLETE",
-              publicaly_available_post_id: ["vid"],
             },
           }),
         );
@@ -452,14 +435,6 @@ describe("TikTok provider", () => {
               },
             },
           }),
-        )
-        .mockResolvedValueOnce(
-          mockFetchOk({
-            data: {
-              status: "PUBLISH_COMPLETE",
-              publicaly_available_post_id: ["photo123"],
-            },
-          }),
         );
 
       const results = await tikTokProvider.post(
@@ -478,7 +453,7 @@ describe("TikTok provider", () => {
       );
 
       expect(results[0].postId).toBe("internal-post-2");
-      expect(results[0].platformPostId).toBe("photo123");
+      expect(results[0].platformPostId).toBe("photo-publish-id");
 
       // Should have called the photo content init endpoint
       const initBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
@@ -495,6 +470,53 @@ describe("TikTok provider", () => {
           { postId: "p1", content: "no media" },
         ]),
       ).rejects.toThrow("TikTok requires at least one media item");
+    });
+  });
+
+  describe("getPostStatus", () => {
+    it("returns published status when TikTok reports publish complete", async () => {
+      mockFetch.mockResolvedValueOnce(
+        mockFetchOk({
+          data: {
+            status: "PUBLISH_COMPLETE",
+            publicaly_available_post_id: ["abc123"],
+          },
+        }),
+      );
+
+      const result = await tikTokProvider.getPostStatus?.(
+        "myuser",
+        "access-token",
+        "publish-id",
+      );
+
+      expect(result).toEqual({
+        platformPostId: "abc123",
+        platformPostUrl: "https://www.tiktok.com/@myuser/video/abc123",
+        status: "published",
+      });
+    });
+
+    it("returns processing status for intermediate states", async () => {
+      mockFetch.mockResolvedValueOnce(
+        mockFetchOk({
+          data: {
+            status: "PROCESSING_UPLOAD",
+          },
+        }),
+      );
+
+      const result = await tikTokProvider.getPostStatus?.(
+        "myuser",
+        "access-token",
+        "publish-id",
+      );
+
+      expect(result).toEqual({
+        platformPostId: "publish-id",
+        platformPostUrl: "https://www.tiktok.com/@myuser",
+        status: "processing",
+      });
     });
   });
 

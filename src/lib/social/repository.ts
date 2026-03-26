@@ -610,6 +610,44 @@ export async function listStalePublishingPosts(input?: {
     .limit(limit);
 }
 
+export async function listPublishingPostsForReconciliation(input?: {
+  updatedBefore?: Date;
+  limit?: number;
+}) {
+  const db = getDb();
+  const updatedBefore =
+    input?.updatedBefore ?? new Date(Date.now() - 60 * 1000);
+  const limit = input?.limit ?? 50;
+
+  return db
+    .select({
+      postId: socialPosts.id,
+      workspaceId: socialPosts.workspaceId,
+      socialAccountId: socialPosts.socialAccountId,
+      platformPostId: socialPosts.platformPostId,
+      platformPostUrl: socialPosts.platformPostUrl,
+      updatedAt: socialPosts.updatedAt,
+      accountId: socialAccounts.id,
+      platform: socialAccounts.platform,
+      platformUserId: socialAccounts.platformUserId,
+      accessTokenEncrypted: socialAccounts.accessTokenEncrypted,
+      accessTokenSecret: socialAccounts.accessTokenSecret,
+      disabled: socialAccounts.disabled,
+      requiresReauth: socialAccounts.requiresReauth,
+    })
+    .from(socialPosts)
+    .innerJoin(socialAccounts, eq(socialPosts.socialAccountId, socialAccounts.id))
+    .where(
+      and(
+        eq(socialPosts.status, "publishing"),
+        isNotNull(socialPosts.platformPostId),
+        lte(socialPosts.updatedAt, updatedBefore),
+      ),
+    )
+    .orderBy(asc(socialPosts.updatedAt))
+    .limit(limit);
+}
+
 export async function listExpiringSocialAccounts(input?: {
   expiresBefore?: Date;
   limit?: number;

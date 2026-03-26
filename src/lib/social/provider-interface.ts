@@ -99,6 +99,13 @@ export interface PublishResult {
   status: "published" | "processing"; // Some platforms (IG, TikTok) publish async
 }
 
+export interface PublishStatusResult {
+  platformPostId: string;
+  platformPostUrl: string;
+  status: "published" | "processing" | "failed";
+  errorMessage?: string;
+}
+
 /**
  * Provider capabilities exposed to the UI (e.g., provider list endpoint).
  */
@@ -191,6 +198,17 @@ export interface SocialProviderAdapter {
    * Only implemented by providers where requiresPageSelection is true.
    */
   fetchPageInformation?(accessToken: string): Promise<PageInfo[]>;
+
+  /**
+   * Fetch the current status of a previously created platform post.
+   * Implemented only by providers that support asynchronous publish states.
+   */
+  getPostStatus?(
+    platformUserId: string,
+    accessToken: string,
+    platformPostId: string,
+    options?: { accessTokenSecret?: string },
+  ): Promise<PublishStatusResult>;
 
   /**
    * Get the provider's capabilities for UI display.

@@ -265,6 +265,7 @@ async function processMediaStep(
 interface PublishResultData {
   platformPostId: string;
   platformPostUrl: string;
+  status: "published" | "processing";
 }
 
 async function publishStep(
@@ -310,6 +311,7 @@ async function publishStep(
     return {
       platformPostId: result.platformPostId,
       platformPostUrl: result.platformPostUrl,
+      status: result.status,
     };
   } catch (error) {
     // Classify the error to determine retry behavior
@@ -368,10 +370,33 @@ async function finalizeStep(
   const { updatePostStatus } = await import("@/lib/social/repository");
   const { emitSocialEvent } = await import("@/lib/social/events");
 
+  if (result.status === "processing") {
+    await updatePostStatus(post.id, "publishing", {
+      platformPostId: result.platformPostId,
+      platformPostUrl: result.platformPostUrl,
+      errorMessage: null,
+    });
+    await emitSocialEvent({
+      workspaceId: post.workspaceId,
+      eventType: "post.publishing",
+      severity: "info",
+      message: "Provider accepted the post and is still processing it.",
+      postId: post.id,
+      accountId: post.socialAccountId,
+      provider: account.platform as import("@/lib/db/schema").SocialPlatform,
+      metadata: {
+        platformPostId: result.platformPostId,
+        platformPostUrl: result.platformPostUrl,
+      },
+    });
+    return;
+  }
+
   await updatePostStatus(post.id, "published", {
     platformPostId: result.platformPostId,
     platformPostUrl: result.platformPostUrl,
     publishedAt: new Date(),
+    errorMessage: null,
   });
   await emitSocialEvent({
     workspaceId: post.workspaceId,
