@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { withApiPermission } from "@/lib/studio/authz";
+import "@/lib/social/runtime-bootstrap";
 import { getProvider, isProviderRegistered } from "@/lib/social/provider-registry";
 import { getSocialPlanLimits, quotaExceededPayload } from "@/lib/social/limits";
 import { countActiveSocialAccounts, createOAuthState } from "@/lib/social/repository";

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { withApiPermission } from "@/lib/studio/authz";
+import "@/lib/social/runtime-bootstrap";
 import { getProvider } from "@/lib/social/provider-registry";
 import { encryptToken } from "@/lib/social/crypto";
 import {

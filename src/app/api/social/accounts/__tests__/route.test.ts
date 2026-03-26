@@ -54,6 +54,8 @@ vi.mock("@/lib/social/repository", () => ({
 }));
 
 vi.mock("@/lib/social/provider-registry", () => ({
+  registerProvider: vi.fn(),
+  clearRegistry: vi.fn(),
   getProvider: (...args: unknown[]) => mockGetProvider(...args),
   isProviderRegistered: (...args: unknown[]) => mockIsProviderRegistered(...args),
 }));

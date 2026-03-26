@@ -134,6 +134,7 @@ async function refreshTokenStep(
   const { getSocialAccountById, updateSocialAccountTokens, markRequiresReauth } =
     await import("@/lib/social/repository");
   const { decryptToken, encryptToken } = await import("@/lib/social/crypto");
+  await import("@/lib/social/runtime-bootstrap");
   const { getProvider } = await import("@/lib/social/provider-registry");
   const { emitSocialEvent } = await import("@/lib/social/events");
 
@@ -276,6 +277,7 @@ async function publishStep(
 ): Promise<PublishResultData> {
   "use step";
 
+  await import("@/lib/social/runtime-bootstrap");
   const { getProvider } = await import("@/lib/social/provider-registry");
   const { decryptToken } = await import("@/lib/social/crypto");
   const { updatePostStatus, markRequiresReauth } = await import(

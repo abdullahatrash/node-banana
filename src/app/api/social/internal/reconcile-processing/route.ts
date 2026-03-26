@@ -3,6 +3,7 @@ import { isDatabaseConfigured } from "@/lib/db";
 import { decryptToken } from "@/lib/social/crypto";
 import { emitSocialEvent } from "@/lib/social/events";
 import { ensureInternalSocialAuth } from "@/lib/social/internal-auth";
+import "@/lib/social/runtime-bootstrap";
 import { getProvider } from "@/lib/social/provider-registry";
 import {
   listPublishingPostsForReconciliation,
