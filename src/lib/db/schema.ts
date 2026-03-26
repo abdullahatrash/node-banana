@@ -453,6 +453,13 @@ export const socialPostStatusEnum = pgEnum("social_post_status", [
   "failed",
 ]);
 
+export const socialDispatchStatusEnum = pgEnum("social_dispatch_status", [
+  "pending",
+  "dispatched",
+  "retry_scheduled",
+  "failed",
+]);
+
 export const socialAccounts = pgTable(
   "social_accounts",
   {
@@ -504,6 +511,12 @@ export const socialPosts = pgTable(
       .notNull()
       .references(() => socialAccounts.id, { onDelete: "cascade" }),
     status: socialPostStatusEnum("status").default("draft").notNull(),
+    dispatchStatus: socialDispatchStatusEnum("dispatch_status"),
+    dispatchAttempts: integer("dispatch_attempts").default(0).notNull(),
+    workflowRunRef: text("workflow_run_ref"),
+    nextDispatchAt: timestamp("next_dispatch_at", { withTimezone: true }),
+    lastDispatchError: text("last_dispatch_error"),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
     content: text("content"),
     mediaUrls: jsonb("media_urls").$type<
       Array<{ type: string; url: string; alt?: string }>
@@ -537,6 +550,12 @@ export const socialPosts = pgTable(
       table.socialAccountId,
     ),
     statusIdx: index("social_posts_status_idx").on(table.status),
+    dispatchStatusIdx: index("social_posts_dispatch_status_idx").on(
+      table.dispatchStatus,
+    ),
+    nextDispatchAtIdx: index("social_posts_next_dispatch_at_idx").on(
+      table.nextDispatchAt,
+    ),
     scheduledAtIdx: index("social_posts_scheduled_at_idx").on(
       table.scheduledAt,
     ),

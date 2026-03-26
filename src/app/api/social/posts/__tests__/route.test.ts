@@ -8,6 +8,7 @@ const mockGetSocialPost = vi.fn();
 const mockUpdateSocialPost = vi.fn();
 const mockDeleteSocialPost = vi.fn();
 const mockUpdatePostStatus = vi.fn();
+const mockWorkflowStart = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -35,6 +36,10 @@ vi.mock("@/lib/social/repository", () => ({
       this.name = "SocialPostStateTransitionError";
     }
   },
+}));
+
+vi.mock("workflow/api", () => ({
+  start: (...args: unknown[]) => mockWorkflowStart(...args),
 }));
 
 const mockSession = {
@@ -200,8 +205,20 @@ describe("/api/social/posts/[postId]/publish", () => {
 
   it("transitions draft → queued", async () => {
     authorized();
-    mockGetSocialPost.mockResolvedValue({ id: "spost_1", status: "draft" });
-    mockUpdatePostStatus.mockResolvedValue({ id: "spost_1", status: "queued" });
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_1",
+      status: "draft",
+      dispatchAttempts: 0,
+    });
+    mockUpdatePostStatus
+      .mockResolvedValueOnce({ id: "spost_1", status: "queued" })
+      .mockResolvedValueOnce({
+        id: "spost_1",
+        status: "queued",
+        dispatchStatus: "dispatched",
+        workflowRunRef: "workflow-run-1",
+      });
+    mockWorkflowStart.mockResolvedValue({ runId: "workflow-run-1" });
 
     const { POST } = await import("../../posts/[postId]/publish/route");
     const response = await POST(
@@ -213,16 +230,39 @@ describe("/api/social/posts/[postId]/publish", () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.post.status).toBe("queued");
-    expect(mockUpdatePostStatus).toHaveBeenCalledWith("spost_1", "queued", {
+    expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(1, "spost_1", "queued", {
       errorMessage: undefined,
       retryCount: undefined,
+      dispatchStatus: "pending",
+      dispatchAttempts: 1,
+      workflowRunRef: null,
+      nextDispatchAt: null,
+      lastDispatchError: null,
+      lockedAt: expect.any(Date),
+    });
+    expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(2, "spost_1", "queued", {
+      dispatchStatus: "dispatched",
+      workflowRunRef: "workflow-run-1",
     });
   });
 
   it("resets retryCount when retrying a failed post", async () => {
     authorized();
-    mockGetSocialPost.mockResolvedValue({ id: "spost_1", status: "failed", retryCount: 3 });
-    mockUpdatePostStatus.mockResolvedValue({ id: "spost_1", status: "queued", retryCount: 0 });
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_1",
+      status: "failed",
+      retryCount: 3,
+      dispatchAttempts: 2,
+    });
+    mockUpdatePostStatus
+      .mockResolvedValueOnce({ id: "spost_1", status: "queued", retryCount: 0 })
+      .mockResolvedValueOnce({
+        id: "spost_1",
+        status: "queued",
+        retryCount: 0,
+        dispatchStatus: "dispatched",
+      });
+    mockWorkflowStart.mockResolvedValue({ runId: "workflow-run-2" });
 
     const { POST } = await import("../../posts/[postId]/publish/route");
     const response = await POST(
@@ -233,9 +273,52 @@ describe("/api/social/posts/[postId]/publish", () => {
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(mockUpdatePostStatus).toHaveBeenCalledWith("spost_1", "queued", {
+    expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(1, "spost_1", "queued", {
       errorMessage: undefined,
       retryCount: 0,
+      dispatchStatus: "pending",
+      dispatchAttempts: 3,
+      workflowRunRef: null,
+      nextDispatchAt: null,
+      lastDispatchError: null,
+      lockedAt: expect.any(Date),
+    });
+  });
+
+  it("persists retry schedule when workflow start fails", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_1",
+      status: "draft",
+      retryCount: 0,
+      dispatchAttempts: 0,
+    });
+    mockUpdatePostStatus
+      .mockResolvedValueOnce({ id: "spost_1", status: "queued" })
+      .mockResolvedValueOnce({
+        id: "spost_1",
+        status: "failed",
+        dispatchStatus: "retry_scheduled",
+      });
+    mockWorkflowStart.mockRejectedValue(new Error("WDK start failed"));
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(data.success).toBe(false);
+    expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(2, "spost_1", "failed", {
+      errorMessage:
+        "Failed to start publish workflow. Automatic retry has been scheduled.",
+      dispatchStatus: "retry_scheduled",
+      nextDispatchAt: expect.any(Date),
+      lastDispatchError: "WDK start failed",
+      workflowRunRef: null,
+      lockedAt: null,
     });
   });
 

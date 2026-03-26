@@ -528,6 +528,12 @@ export async function updatePostStatus(
     publishedAt?: Date;
     errorMessage?: string;
     retryCount?: number;
+    dispatchStatus?: "pending" | "dispatched" | "retry_scheduled" | "failed" | null;
+    dispatchAttempts?: number;
+    workflowRunRef?: string | null;
+    nextDispatchAt?: Date | null;
+    lastDispatchError?: string | null;
+    lockedAt?: Date | null;
   },
 ) {
   const db = getDb();
@@ -550,6 +556,24 @@ export async function updatePostStatus(
       }),
       ...(extra?.retryCount !== undefined && {
         retryCount: extra.retryCount,
+      }),
+      ...(extra?.dispatchStatus !== undefined && {
+        dispatchStatus: extra.dispatchStatus,
+      }),
+      ...(extra?.dispatchAttempts !== undefined && {
+        dispatchAttempts: extra.dispatchAttempts,
+      }),
+      ...(extra?.workflowRunRef !== undefined && {
+        workflowRunRef: extra.workflowRunRef,
+      }),
+      ...(extra?.nextDispatchAt !== undefined && {
+        nextDispatchAt: extra.nextDispatchAt,
+      }),
+      ...(extra?.lastDispatchError !== undefined && {
+        lastDispatchError: extra.lastDispatchError,
+      }),
+      ...(extra?.lockedAt !== undefined && {
+        lockedAt: extra.lockedAt,
       }),
       updatedAt: new Date(),
     })
