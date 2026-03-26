@@ -271,6 +271,7 @@ describe("/api/social/posts/[postId]/publish", () => {
     expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(2, "spost_1", "queued", {
       dispatchStatus: "dispatched",
       workflowRunRef: "workflow-run-1",
+      lockedAt: null,
     });
   });
 
@@ -325,7 +326,7 @@ describe("/api/social/posts/[postId]/publish", () => {
       .mockResolvedValueOnce({ id: "spost_1", status: "queued" })
       .mockResolvedValueOnce({
         id: "spost_1",
-        status: "failed",
+        status: "queued",
         dispatchStatus: "retry_scheduled",
       });
     mockWorkflowStart.mockRejectedValue(new Error("WDK start failed"));
@@ -339,9 +340,8 @@ describe("/api/social/posts/[postId]/publish", () => {
 
     expect(response.status).toBe(503);
     expect(data.success).toBe(false);
-    expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(2, "spost_1", "failed", {
-      errorMessage:
-        "Failed to start publish workflow. Automatic retry has been scheduled.",
+    expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(2, "spost_1", "queued", {
+      errorMessage: "Dispatch failed. Automatic retry has been scheduled.",
       dispatchStatus: "retry_scheduled",
       nextDispatchAt: expect.any(Date),
       lastDispatchError: "WDK start failed",

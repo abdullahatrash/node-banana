@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   socialAccounts,
@@ -472,6 +472,131 @@ export async function listSocialPosts(
   }
 
   return query;
+}
+
+export async function listDueQueuedPosts(input?: {
+  now?: Date;
+  lockStaleBefore?: Date;
+  limit?: number;
+}) {
+  const db = getDb();
+  const now = input?.now ?? new Date();
+  const lockStaleBefore =
+    input?.lockStaleBefore ?? new Date(now.getTime() - 10 * 60 * 1000);
+  const limit = input?.limit ?? 50;
+
+  return db
+    .select()
+    .from(socialPosts)
+    .where(
+      and(
+        eq(socialPosts.status, "queued"),
+        or(
+          isNull(socialPosts.dispatchStatus),
+          eq(socialPosts.dispatchStatus, "pending"),
+          eq(socialPosts.dispatchStatus, "retry_scheduled"),
+        ),
+        or(
+          isNull(socialPosts.scheduledAt),
+          lte(socialPosts.scheduledAt, now),
+        ),
+        or(
+          isNull(socialPosts.nextDispatchAt),
+          lte(socialPosts.nextDispatchAt, now),
+        ),
+        or(
+          isNull(socialPosts.lockedAt),
+          lt(socialPosts.lockedAt, lockStaleBefore),
+        ),
+      ),
+    )
+    .orderBy(desc(socialPosts.createdAt))
+    .limit(limit);
+}
+
+export async function claimPostForDispatch(input: {
+  postId: string;
+  now?: Date;
+  lockStaleBefore?: Date;
+}) {
+  const db = getDb();
+  const now = input.now ?? new Date();
+  const lockStaleBefore =
+    input.lockStaleBefore ?? new Date(now.getTime() - 10 * 60 * 1000);
+
+  const [row] = await db
+    .update(socialPosts)
+    .set({
+      lockedAt: now,
+      dispatchStatus: "pending",
+      dispatchAttempts: sql`${socialPosts.dispatchAttempts} + 1`,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(socialPosts.id, input.postId),
+        eq(socialPosts.status, "queued"),
+        or(
+          isNull(socialPosts.dispatchStatus),
+          eq(socialPosts.dispatchStatus, "pending"),
+          eq(socialPosts.dispatchStatus, "retry_scheduled"),
+        ),
+        or(
+          isNull(socialPosts.lockedAt),
+          lt(socialPosts.lockedAt, lockStaleBefore),
+        ),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
+}
+
+export async function listStalePublishingPosts(input?: {
+  staleBefore?: Date;
+  limit?: number;
+}) {
+  const db = getDb();
+  const staleBefore =
+    input?.staleBefore ?? new Date(Date.now() - 30 * 60 * 1000);
+  const limit = input?.limit ?? 50;
+
+  return db
+    .select()
+    .from(socialPosts)
+    .where(
+      and(
+        eq(socialPosts.status, "publishing"),
+        lt(socialPosts.updatedAt, staleBefore),
+      ),
+    )
+    .orderBy(desc(socialPosts.updatedAt))
+    .limit(limit);
+}
+
+export async function listExpiringSocialAccounts(input?: {
+  expiresBefore?: Date;
+  limit?: number;
+}) {
+  const db = getDb();
+  const expiresBefore =
+    input?.expiresBefore ?? new Date(Date.now() + 15 * 60 * 1000);
+  const limit = input?.limit ?? 50;
+
+  return db
+    .select()
+    .from(socialAccounts)
+    .where(
+      and(
+        eq(socialAccounts.disabled, false),
+        eq(socialAccounts.requiresReauth, false),
+        isNotNull(socialAccounts.refreshTokenEncrypted),
+        isNotNull(socialAccounts.tokenExpiresAt),
+        lte(socialAccounts.tokenExpiresAt, expiresBefore),
+      ),
+    )
+    .orderBy(desc(socialAccounts.tokenExpiresAt))
+    .limit(limit);
 }
 
 export async function countSocialPostsCreatedInRange(
