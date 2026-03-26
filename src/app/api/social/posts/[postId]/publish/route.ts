@@ -7,6 +7,8 @@ import {
   SocialPostNotFoundError,
   SocialPostStateTransitionError,
 } from "@/lib/social/repository";
+import { start } from "workflow/api";
+import { publishPostWorkflow } from "@/../workflows/social-publish";
 
 interface PublishResponse {
   success: boolean;
@@ -57,8 +59,15 @@ export async function POST(
       retryCount: post.status === "failed" ? 0 : undefined,
     });
 
-    // TODO: Start Vercel Workflow here once workflows/social-publish.ts is implemented
-    // await publishPostWorkflow.start(postId, result.session.workspace.id);
+    // Start the durable publish workflow — returns immediately
+    // Workflow handles sleep (scheduled), token refresh, media processing, and publish
+    try {
+      await start(publishPostWorkflow, [postId, result.session.workspace.id]);
+    } catch (workflowError) {
+      // Workflow start failure shouldn't block the response —
+      // the post is already queued and can be retried
+      console.error("Failed to start publish workflow:", workflowError);
+    }
 
     return NextResponse.json({ success: true, post: updated });
   } catch (error) {
