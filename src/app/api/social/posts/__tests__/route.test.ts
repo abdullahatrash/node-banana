@@ -8,6 +8,7 @@ const mockGetSocialPost = vi.fn();
 const mockUpdateSocialPost = vi.fn();
 const mockDeleteSocialPost = vi.fn();
 const mockUpdatePostStatus = vi.fn();
+const mockCountSocialPostsCreatedInRange = vi.fn();
 const mockWorkflowStart = vi.fn();
 
 vi.mock("@/lib/db", () => ({
@@ -27,6 +28,8 @@ vi.mock("@/lib/social/repository", () => ({
   updateSocialPost: (...args: unknown[]) => mockUpdateSocialPost(...args),
   deleteSocialPost: (...args: unknown[]) => mockDeleteSocialPost(...args),
   updatePostStatus: (...args: unknown[]) => mockUpdatePostStatus(...args),
+  countSocialPostsCreatedInRange: (...args: unknown[]) =>
+    mockCountSocialPostsCreatedInRange(...args),
   SocialPostNotFoundError: class extends Error {
     constructor(id?: string) { super(`Post "${id}" not found.`); this.name = "SocialPostNotFoundError"; }
   },
@@ -74,6 +77,7 @@ function createRequest(
 describe("/api/social/posts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCountSocialPostsCreatedInRange.mockResolvedValue(0);
   });
 
   describe("GET /api/social/posts", () => {
@@ -133,6 +137,7 @@ describe("/api/social/posts", () => {
   describe("POST /api/social/posts", () => {
     it("creates a draft post", async () => {
       authorized();
+      mockCountSocialPostsCreatedInRange.mockResolvedValue(1);
       mockCreateSocialPost.mockResolvedValue({
         id: "spost_1",
         status: "draft",
@@ -184,6 +189,29 @@ describe("/api/social/posts", () => {
 
       expect(response.status).toBe(400);
       expect(data.error).toContain("Content or media");
+    });
+
+    it("returns 402 when monthly post quota is exceeded", async () => {
+      authorized();
+      mockCountSocialPostsCreatedInRange.mockResolvedValue(50);
+
+      const { POST } = await import("../../posts/route");
+      const response = await POST(
+        createRequest("http://localhost:3000/api/social/posts", {
+          method: "POST",
+          body: JSON.stringify({
+            socialAccountId: "sacct_1",
+            content: "hello",
+          }),
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(402);
+      expect(data.success).toBe(false);
+      expect(data.code).toBe("quota_exceeded");
+      expect(data.section).toBe("posts_per_month");
+      expect(mockCreateSocialPost).not.toHaveBeenCalled();
     });
   });
 });

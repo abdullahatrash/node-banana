@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { withApiPermission } from "@/lib/studio/authz";
 import { getProvider, isProviderRegistered } from "@/lib/social/provider-registry";
-import { createOAuthState } from "@/lib/social/repository";
+import { getSocialPlanLimits, quotaExceededPayload } from "@/lib/social/limits";
+import { countActiveSocialAccounts, createOAuthState } from "@/lib/social/repository";
 import type { SocialPlatform } from "@/lib/db/schema";
 
 interface ConnectRequest {
@@ -14,6 +15,8 @@ interface ConnectResponse {
   success: boolean;
   authUrl?: string;
   error?: string;
+  code?: string;
+  billingUrl?: string;
 }
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -51,6 +54,21 @@ export async function POST(
       return NextResponse.json(
         { success: false, error: `Platform "${body.platform}" is not available.` },
         { status: 400 },
+      );
+    }
+
+    const limits = getSocialPlanLimits(result.session.planTier);
+    const activeChannels = await countActiveSocialAccounts(
+      result.session.workspace.id,
+    );
+    if (activeChannels >= limits.channels) {
+      return NextResponse.json(
+        quotaExceededPayload({
+          section: "channels",
+          current: activeChannels,
+          limit: limits.channels,
+        }),
+        { status: 402 },
       );
     }
 

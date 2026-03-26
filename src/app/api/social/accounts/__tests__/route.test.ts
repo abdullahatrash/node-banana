@@ -9,6 +9,7 @@ const mockCreateOAuthState = vi.fn();
 const mockConsumeOAuthState = vi.fn();
 const mockCreateOAuthSelectionSession = vi.fn();
 const mockConsumeOAuthSelectionSession = vi.fn();
+const mockCountActiveSocialAccounts = vi.fn();
 const mockUpsertSocialAccount = vi.fn();
 const mockGetProvider = vi.fn();
 const mockIsProviderRegistered = vi.fn();
@@ -33,6 +34,7 @@ vi.mock("@/lib/social/repository", () => ({
   consumeOAuthState: (...args: unknown[]) => mockConsumeOAuthState(...args),
   createOAuthSelectionSession: (...args: unknown[]) => mockCreateOAuthSelectionSession(...args),
   consumeOAuthSelectionSession: (...args: unknown[]) => mockConsumeOAuthSelectionSession(...args),
+  countActiveSocialAccounts: (...args: unknown[]) => mockCountActiveSocialAccounts(...args),
   upsertSocialAccount: (...args: unknown[]) => mockUpsertSocialAccount(...args),
   SocialAccountNotFoundError: class extends Error {
     constructor(id?: string) { super(`Account "${id}" not found.`); this.name = "SocialAccountNotFoundError"; }
@@ -186,6 +188,7 @@ describe("/api/social/accounts/connect POST", () => {
   it("returns authUrl for valid platform", async () => {
     authorized();
     mockIsProviderRegistered.mockReturnValue(true);
+    mockCountActiveSocialAccounts.mockResolvedValue(1);
     mockGetProvider.mockReturnValue({
       generateAuthUrl: vi.fn().mockResolvedValue({
         url: "https://linkedin.com/oauth?...",
@@ -216,6 +219,25 @@ describe("/api/social/accounts/connect POST", () => {
         codeVerifier: "test-verifier",
       }),
     );
+  });
+
+  it("returns 402 when channel quota is exceeded", async () => {
+    authorized();
+    mockIsProviderRegistered.mockReturnValue(true);
+    mockCountActiveSocialAccounts.mockResolvedValue(3);
+
+    const { POST } = await import("../../accounts/connect/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/accounts/connect", {
+        method: "POST",
+        body: JSON.stringify({ platform: "linkedin" }),
+      }),
+    );
+    const data = await response.json();
+    expect(response.status).toBe(402);
+    expect(data.success).toBe(false);
+    expect(data.code).toBe("quota_exceeded");
+    expect(data.section).toBe("channels");
   });
 });
 

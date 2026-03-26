@@ -278,6 +278,23 @@ export async function listSocialAccounts(workspaceId: string) {
     .orderBy(desc(socialAccounts.createdAt));
 }
 
+export async function countActiveSocialAccounts(workspaceId: string) {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      count: sql<number>`cast(count(*) as int)`,
+    })
+    .from(socialAccounts)
+    .where(
+      and(
+        eq(socialAccounts.workspaceId, workspaceId),
+        eq(socialAccounts.disabled, false),
+      ),
+    );
+
+  return row?.count ?? 0;
+}
+
 export async function getSocialAccount(
   workspaceId: string,
   accountId: string,
@@ -455,6 +472,28 @@ export async function listSocialPosts(
   }
 
   return query;
+}
+
+export async function countSocialPostsCreatedInRange(
+  workspaceId: string,
+  start: Date,
+  end: Date,
+) {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      count: sql<number>`cast(count(*) as int)`,
+    })
+    .from(socialPosts)
+    .where(
+      and(
+        eq(socialPosts.workspaceId, workspaceId),
+        gte(socialPosts.createdAt, start),
+        lt(socialPosts.createdAt, end),
+      ),
+    );
+
+  return row?.count ?? 0;
 }
 
 export async function getSocialPost(workspaceId: string, postId: string) {
