@@ -1,0 +1,127 @@
+<h2>App Architecture — Does this match your vision?</h2>
+<p class="subtitle">Confirming the navigation model before we design the Social Hub pages</p>
+
+<div class="mockup">
+  <div class="mockup-header">Navigation Flow</div>
+  <div class="mockup-body" style="padding: 24px;">
+
+    <!-- Flow diagram -->
+    <div style="display: flex; flex-direction: column; gap: 24px;">
+
+      <!-- Landing -->
+      <div style="display: flex; align-items: center; gap: 16px;">
+        <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px 20px; min-width: 160px; text-align: center;">
+          <div style="font-size: 14px; font-weight: 600; color: #e2e8f0;">/ (Home)</div>
+          <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Marketing page (future)</div>
+        </div>
+        <div style="color: #475569; font-size: 20px;">→</div>
+        <div style="color: #94a3b8; font-size: 12px;">Sign in / Sign up</div>
+        <div style="color: #475569; font-size: 20px;">→</div>
+        <div style="background: #1e293b; border: 2px solid #3b82f6; border-radius: 8px; padding: 12px 20px; min-width: 160px; text-align: center;">
+          <div style="font-size: 14px; font-weight: 600; color: #3b82f6;">Command Center</div>
+          <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Dashboard hub — pick a pillar</div>
+        </div>
+      </div>
+
+      <!-- Arrow down -->
+      <div style="display: flex; justify-content: center; padding-left: 340px;">
+        <div style="color: #475569; font-size: 20px;">↓</div>
+      </div>
+
+      <!-- Three pillars -->
+      <div style="display: flex; gap: 16px; justify-content: center;">
+        <div style="background: #172554; border: 1px solid #1e40af; border-radius: 8px; padding: 16px; min-width: 180px; text-align: center;">
+          <div style="font-size: 22px; margin-bottom: 6px;">🎨</div>
+          <div style="font-size: 14px; font-weight: 600; color: #60a5fa;">/studio</div>
+          <div style="font-size: 11px; color: #93c5fd; margin-top: 4px;">AI Content Studio</div>
+          <div style="font-size: 10px; color: #64748b; margin-top: 8px;">Canvas editor, workflows</div>
+        </div>
+        <div style="background: #052e16; border: 1px solid #166534; border-radius: 8px; padding: 16px; min-width: 180px; text-align: center;">
+          <div style="font-size: 22px; margin-bottom: 6px;">📱</div>
+          <div style="font-size: 14px; font-weight: 600; color: #4ade80;">/social</div>
+          <div style="font-size: 11px; color: #86efac; margin-top: 4px;">Social Media Hub</div>
+          <div style="font-size: 10px; color: #64748b; margin-top: 8px;">Channels, compose, schedule</div>
+        </div>
+        <div style="background: #1a1a2e; border: 1px solid #4338ca; border-radius: 8px; padding: 16px; min-width: 180px; text-align: center;">
+          <div style="font-size: 22px; margin-bottom: 6px;">📊</div>
+          <div style="font-size: 14px; font-weight: 600; color: #a78bfa;">/analytics</div>
+          <div style="font-size: 11px; color: #c4b5fd; margin-top: 4px;">Analytics (future)</div>
+          <div style="font-size: 10px; color: #64748b; margin-top: 8px;">Performance, competitors</div>
+        </div>
+      </div>
+
+      <!-- Cross-nav arrows -->
+      <div style="display: flex; justify-content: center;">
+        <div style="background: #1e293b; border: 1px dashed #475569; border-radius: 8px; padding: 10px 20px;">
+          <div style="font-size: 12px; color: #94a3b8; text-align: center;">
+            ↔ <strong>Pillar Switcher Dropdown</strong> in every header — jump between Studio / Social / Analytics without going back to Command Center
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<h3 style="margin-top: 24px;">Pillar Switcher (in every pillar's header)</h3>
+<div class="mockup">
+  <div class="mockup-header">Example: Inside /social — header dropdown</div>
+  <div class="mockup-body" style="padding: 0;">
+    <div style="display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: #0f172a; border-bottom: 1px solid #1e293b;">
+      <span style="font-size: 16px;">🍌</span>
+      <div style="display: flex; align-items: center; gap: 6px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: 4px 10px; cursor: pointer;">
+        <span style="font-size: 12px;">📱</span>
+        <span style="font-size: 13px; font-weight: 600; color: #4ade80;">Social Hub</span>
+        <span style="font-size: 10px; color: #64748b;">▼</span>
+      </div>
+      <div style="flex: 1;"></div>
+      <span style="font-size: 12px; color: #64748b;">user@example.com</span>
+    </div>
+    <!-- Dropdown open -->
+    <div style="position: relative;">
+      <div style="position: absolute; top: 0; left: 40px; background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 4px; width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 10;">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; cursor: pointer; background: #334155;">
+          <span style="font-size: 14px;">📱</span>
+          <span style="font-size: 13px; color: #4ade80;">Social Hub</span>
+          <span style="font-size: 10px; color: #64748b; margin-left: auto;">✓</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; cursor: pointer;">
+          <span style="font-size: 14px;">🎨</span>
+          <span style="font-size: 13px; color: #94a3b8;">AI Studio</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; cursor: pointer;">
+          <span style="font-size: 14px;">📊</span>
+          <span style="font-size: 13px; color: #94a3b8;">Analytics</span>
+        </div>
+        <div style="border-top: 1px solid #334155; margin: 4px 0;"></div>
+        <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; cursor: pointer;">
+          <span style="font-size: 14px;">🏠</span>
+          <span style="font-size: 13px; color: #94a3b8;">Command Center</span>
+        </div>
+      </div>
+    </div>
+    <div style="min-height: 180px; padding: 16px; padding-top: 200px; color: #475569; font-size: 13px;">
+      ← Social Hub content area
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3>Does this match what you have in mind?</h3>
+  <div class="options">
+    <div class="option" data-choice="yes" onclick="toggleSelect(this)">
+      <div class="letter">✓</div>
+      <div class="content">
+        <h3>Yes, this is right</h3>
+        <p>Separate route per pillar, pillar switcher dropdown in every header, command center as the hub</p>
+      </div>
+    </div>
+    <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+      <div class="letter">~</div>
+      <div class="content">
+        <h3>Close, but needs adjustments</h3>
+        <p>I'll explain what's different in the terminal</p>
+      </div>
+    </div>
+  </div>
+</div>

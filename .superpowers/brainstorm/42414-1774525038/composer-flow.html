@@ -1,0 +1,134 @@
+<h2>Post Composer — How should the user create a post?</h2>
+<p class="subtitle">This is the core user flow. Postiz uses a modal that opens over the calendar. How should ContentOS handle it?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Modal Composer (Postiz style)</h3>
+      <p>Click "New Post" → modal opens over current view. Compose text, add media, pick platforms, set schedule, preview, publish. Dismissible — calendar stays underneath.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-header">Modal over calendar</div>
+        <div class="mockup-body" style="min-height: 300px; position: relative; background: #0f172a;">
+          <!-- Dimmed background -->
+          <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.5); z-index: 1;"></div>
+          <!-- Calendar behind (dimmed) -->
+          <div style="padding: 12px; opacity: 0.3;">
+            <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;">
+              <div style="padding: 4px; font-size: 9px; color: #64748b; text-align: center;" >Mon</div>
+              <div style="padding: 4px; font-size: 9px; color: #64748b; text-align: center;">Tue</div>
+              <div style="padding: 4px; font-size: 9px; color: #64748b; text-align: center;">Wed</div>
+              <div style="padding: 4px; font-size: 9px; color: #64748b; text-align: center;">Thu</div>
+              <div style="padding: 4px; font-size: 9px; color: #64748b; text-align: center;">Fri</div>
+              <div style="padding: 4px; font-size: 9px; color: #64748b; text-align: center;">Sat</div>
+              <div style="padding: 4px; font-size: 9px; color: #64748b; text-align: center;">Sun</div>
+            </div>
+          </div>
+          <!-- Modal -->
+          <div style="position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 85%; max-width: 600px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; z-index: 2; box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #334155;">
+              <span style="font-size: 13px; font-weight: 600; color: #e2e8f0;">New Post</span>
+              <span style="color: #64748b; cursor: pointer;">✕</span>
+            </div>
+            <div style="padding: 16px;">
+              <!-- Platform picker -->
+              <div style="display: flex; gap: 6px; margin-bottom: 12px;">
+                <div style="width: 28px; height: 28px; background: #1d4ed8; border-radius: 50%; border: 2px solid #3b82f6; font-size: 9px; display: flex; align-items: center; justify-content: center; color: white;">in</div>
+                <div style="width: 28px; height: 28px; background: #1e293b; border-radius: 50%; border: 2px solid #4ade80; font-size: 9px; display: flex; align-items: center; justify-content: center; color: white;">𝕏</div>
+                <div style="width: 28px; height: 28px; background: #1e293b; border-radius: 50%; border: 2px solid transparent; font-size: 9px; display: flex; align-items: center; justify-content: center; color: #64748b;">ig</div>
+              </div>
+              <!-- Editor -->
+              <div style="background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; min-height: 80px; margin-bottom: 12px;">
+                <div style="color: #94a3b8; font-size: 12px;">Write your post here...</div>
+              </div>
+              <!-- Media + Schedule row -->
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; gap: 8px;">
+                  <span style="font-size: 14px; cursor: pointer;">🖼️</span>
+                  <span style="font-size: 14px; cursor: pointer;">🎬</span>
+                  <span style="font-size: 14px; cursor: pointer;">😊</span>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                  <div style="font-size: 11px; color: #94a3b8; background: #0f172a; padding: 4px 10px; border-radius: 4px; border: 1px solid #334155;">📅 Schedule</div>
+                  <div style="font-size: 11px; color: #0f172a; background: #4ade80; padding: 4px 14px; border-radius: 4px; font-weight: 600;">Publish Now</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Quick — doesn't navigate away</li><li>Proven pattern (Postiz, Buffer, Hootsuite)</li><li>Can open from anywhere (calendar click, button)</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Limited space for preview + editor side-by-side</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Full Page Composer</h3>
+      <p>Click "New Post" → navigates to /social/compose. Split view: editor on left, live platform previews on right. More room for everything.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-header">/social/compose — full page</div>
+        <div class="mockup-body" style="display: flex; min-height: 300px; padding: 0;">
+          <!-- Left: editor -->
+          <div style="flex: 1; padding: 16px; border-right: 1px solid #1e293b;">
+            <div style="font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 12px;">Compose</div>
+            <!-- Platforms -->
+            <div style="display: flex; gap: 6px; margin-bottom: 12px;">
+              <div style="width: 28px; height: 28px; background: #1d4ed8; border-radius: 50%; border: 2px solid #3b82f6; font-size: 9px; display: flex; align-items: center; justify-content: center; color: white;">in</div>
+              <div style="width: 28px; height: 28px; background: #1e293b; border-radius: 50%; border: 2px solid #4ade80; font-size: 9px; display: flex; align-items: center; justify-content: center; color: white;">𝕏</div>
+            </div>
+            <!-- Editor -->
+            <div style="background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; min-height: 100px; margin-bottom: 12px;">
+              <div style="color: #e2e8f0; font-size: 12px;">Excited to announce our new product launch! 🚀</div>
+              <div style="margin-top: 8px; font-size: 10px; color: #64748b;">142 / 3000 (LinkedIn) · 142 / 280 (X)</div>
+            </div>
+            <!-- Media -->
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+              <div style="width: 60px; height: 60px; background: #334155; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 20px;">🖼️</div>
+              <div style="width: 60px; height: 60px; border: 1px dashed #334155; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #64748b;">+</div>
+            </div>
+            <!-- Actions -->
+            <div style="display: flex; gap: 8px;">
+              <div style="font-size: 11px; color: #94a3b8; background: #0f172a; padding: 6px 14px; border-radius: 4px; border: 1px solid #334155;">📅 Schedule</div>
+              <div style="font-size: 11px; color: #0f172a; background: #4ade80; padding: 6px 14px; border-radius: 4px; font-weight: 600;">Publish Now</div>
+            </div>
+          </div>
+          <!-- Right: preview -->
+          <div style="width: 280px; padding: 16px; background: #0f172a;">
+            <div style="font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 12px;">Preview</div>
+            <!-- LinkedIn preview -->
+            <div style="background: #1e293b; border-radius: 8px; padding: 10px; margin-bottom: 10px;">
+              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+                <div style="width: 24px; height: 24px; background: #334155; border-radius: 50%;"></div>
+                <div>
+                  <div style="font-size: 10px; color: #e2e8f0; font-weight: 600;">Your Name</div>
+                  <div style="font-size: 9px; color: #64748b;">LinkedIn · Just now</div>
+                </div>
+              </div>
+              <div style="font-size: 11px; color: #cbd5e1; line-height: 1.4;">Excited to announce our new product launch! 🚀</div>
+              <div style="width: 100%; height: 80px; background: #334155; border-radius: 4px; margin-top: 6px;"></div>
+            </div>
+            <!-- X preview -->
+            <div style="background: #1e293b; border-radius: 8px; padding: 10px;">
+              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+                <div style="width: 24px; height: 24px; background: #334155; border-radius: 50%;"></div>
+                <div>
+                  <div style="font-size: 10px; color: #e2e8f0; font-weight: 600;">@handle</div>
+                  <div style="font-size: 9px; color: #64748b;">X · Just now</div>
+                </div>
+              </div>
+              <div style="font-size: 11px; color: #cbd5e1; line-height: 1.4;">Excited to announce our new product launch! 🚀</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Room for editor + live preview side-by-side</li><li>Per-platform character counts visible</li><li>Can customize content per platform</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Navigates away from calendar</li><li>More pages to build</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,204 @@
+<h2>Channel Connection Flow</h2>
+<p class="subtitle">Step-by-step: how a user connects their first social account</p>
+
+<div class="mockup">
+  <div class="mockup-header">Step 1: /social/channels — Empty state (first visit)</div>
+  <div class="mockup-body" style="display: flex; min-height: 300px; padding: 0;">
+    <!-- Sidebar -->
+    <div style="width: 220px; background: #0f172a; border-right: 1px solid #1e293b; padding-top: 44px;">
+      <div style="padding: 12px;">
+        <div style="font-size: 10px; color: #64748b; text-transform: uppercase; margin-bottom: 8px;">Navigation</div>
+        <div style="padding: 6px 8px; color: #94a3b8; font-size: 12px; margin-bottom: 4px;">📅 Calendar</div>
+        <div style="padding: 6px 8px; color: #94a3b8; font-size: 12px; margin-bottom: 4px;">✏️ Compose</div>
+        <div style="padding: 6px 8px; color: #94a3b8; font-size: 12px; margin-bottom: 4px;">📝 Posts</div>
+        <div style="padding: 6px 8px; color: #4ade80; background: #1e293b; border-radius: 4px; font-size: 12px; margin-bottom: 12px;">📱 Channels</div>
+        <div style="font-size: 10px; color: #64748b; text-transform: uppercase; margin-bottom: 8px;">Channels</div>
+        <div style="font-size: 11px; color: #475569; padding: 6px 8px;">No channels connected</div>
+      </div>
+    </div>
+    <!-- Main: empty state -->
+    <div style="flex: 1; padding-top: 44px; display: flex; align-items: center; justify-content: center; background: #0f172a;">
+      <div style="text-align: center; max-width: 400px;">
+        <div style="font-size: 48px; margin-bottom: 16px;">📱</div>
+        <div style="font-size: 18px; font-weight: 600; color: #e2e8f0; margin-bottom: 8px;">Connect your first channel</div>
+        <div style="font-size: 13px; color: #94a3b8; margin-bottom: 20px;">Link your social accounts to start scheduling and publishing content directly from ContentOS.</div>
+        <button style="background: #4ade80; color: #0f172a; border: none; padding: 10px 24px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">+ Connect Channel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top: 20px;">
+  <div class="mockup-header">Step 2: Platform picker (after clicking "Connect Channel")</div>
+  <div class="mockup-body" style="min-height: 280px; padding: 24px; background: #0f172a;">
+    <div style="max-width: 500px; margin: 0 auto;">
+      <div style="font-size: 16px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px;">Choose a platform</div>
+      <div style="font-size: 12px; color: #94a3b8; margin-bottom: 16px;">Select the social network you want to connect</div>
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+        <!-- LinkedIn -->
+        <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer;">
+          <div style="width: 40px; height: 40px; background: #0a66c2; border-radius: 8px; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; font-weight: bold;">in</div>
+          <div style="font-size: 12px; font-weight: 600; color: #e2e8f0;">LinkedIn</div>
+        </div>
+        <!-- Instagram -->
+        <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer;">
+          <div style="width: 40px; height: 40px; background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); border-radius: 8px; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; color: white;">ig</div>
+          <div style="font-size: 12px; font-weight: 600; color: #e2e8f0;">Instagram</div>
+        </div>
+        <!-- X -->
+        <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer;">
+          <div style="width: 40px; height: 40px; background: #000; border-radius: 8px; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white; font-weight: bold;">𝕏</div>
+          <div style="font-size: 12px; font-weight: 600; color: #e2e8f0;">X</div>
+        </div>
+        <!-- TikTok -->
+        <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer;">
+          <div style="width: 40px; height: 40px; background: #010101; border-radius: 8px; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #25f4ee;">♪</div>
+          <div style="font-size: 12px; font-weight: 600; color: #e2e8f0;">TikTok</div>
+        </div>
+        <!-- Facebook -->
+        <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer;">
+          <div style="width: 40px; height: 40px; background: #1877f2; border-radius: 8px; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white; font-weight: bold;">f</div>
+          <div style="font-size: 12px; font-weight: 600; color: #e2e8f0;">Facebook</div>
+        </div>
+        <!-- YouTube -->
+        <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer;">
+          <div style="width: 40px; height: 40px; background: #ff0000; border-radius: 8px; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; color: white;">▶</div>
+          <div style="font-size: 12px; font-weight: 600; color: #e2e8f0;">YouTube</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top: 20px;">
+  <div class="mockup-header">Step 3: OAuth redirect → callback → success</div>
+  <div class="mockup-body" style="padding: 24px; background: #0f172a;">
+    <div style="display: flex; gap: 16px; align-items: flex-start; justify-content: center;">
+      <!-- Step 3a: redirecting -->
+      <div style="background: #1e293b; border-radius: 8px; padding: 16px; width: 180px; text-align: center;">
+        <div style="font-size: 10px; color: #64748b; margin-bottom: 8px;">3a. Redirect</div>
+        <div style="font-size: 24px; margin-bottom: 8px;">🔗</div>
+        <div style="font-size: 11px; color: #94a3b8;">Redirecting to LinkedIn...</div>
+        <div style="width: 60%; height: 3px; background: #334155; border-radius: 2px; margin: 8px auto 0; overflow: hidden;">
+          <div style="width: 60%; height: 100%; background: #4ade80; border-radius: 2px;"></div>
+        </div>
+      </div>
+      <div style="font-size: 20px; color: #475569; padding-top: 40px;">→</div>
+      <!-- Step 3b: platform approves -->
+      <div style="background: #1e293b; border-radius: 8px; padding: 16px; width: 180px; text-align: center;">
+        <div style="font-size: 10px; color: #64748b; margin-bottom: 8px;">3b. Approve</div>
+        <div style="font-size: 24px; margin-bottom: 8px;">✅</div>
+        <div style="font-size: 11px; color: #94a3b8;">User approves on LinkedIn</div>
+      </div>
+      <div style="font-size: 20px; color: #475569; padding-top: 40px;">→</div>
+      <!-- Step 3c: page selection (if needed) -->
+      <div style="background: #1e293b; border: 1px solid #f59e0b; border-radius: 8px; padding: 16px; width: 180px; text-align: center;">
+        <div style="font-size: 10px; color: #f59e0b; margin-bottom: 8px;">3c. Select Page (if needed)</div>
+        <div style="font-size: 24px; margin-bottom: 8px;">📄</div>
+        <div style="font-size: 11px; color: #94a3b8;">Pick company page or personal profile</div>
+        <div style="font-size: 9px; color: #64748b; margin-top: 4px;">LinkedIn, Instagram, Facebook, YouTube</div>
+      </div>
+      <div style="font-size: 20px; color: #475569; padding-top: 40px;">→</div>
+      <!-- Step 3d: success -->
+      <div style="background: #052e16; border: 1px solid #166534; border-radius: 8px; padding: 16px; width: 180px; text-align: center;">
+        <div style="font-size: 10px; color: #4ade80; margin-bottom: 8px;">3d. Connected!</div>
+        <div style="font-size: 24px; margin-bottom: 8px;">🎉</div>
+        <div style="font-size: 11px; color: #86efac;">Channel added to sidebar</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top: 20px;">
+  <div class="mockup-header">Step 4: /social/channels — with connected accounts</div>
+  <div class="mockup-body" style="display: flex; min-height: 260px; padding: 0;">
+    <!-- Sidebar updated -->
+    <div style="width: 220px; background: #0f172a; border-right: 1px solid #1e293b; padding: 12px; padding-top: 12px;">
+      <div style="font-size: 10px; color: #64748b; text-transform: uppercase; margin-bottom: 8px;">Channels</div>
+      <div style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: #e2e8f0; background: #1e293b; border-radius: 4px; margin-bottom: 4px;">
+        <div style="width: 22px; height: 22px; background: #0a66c2; border-radius: 50%; font-size: 8px; display: flex; align-items: center; justify-content: center; color: white;">in</div>
+        <span>My Company</span>
+        <span style="width: 6px; height: 6px; background: #4ade80; border-radius: 50%; margin-left: auto;"></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: #e2e8f0; margin-bottom: 4px;">
+        <div style="width: 22px; height: 22px; background: #000; border-radius: 50%; font-size: 9px; display: flex; align-items: center; justify-content: center; color: white;">𝕏</div>
+        <span>@handle</span>
+        <span style="width: 6px; height: 6px; background: #4ade80; border-radius: 50%; margin-left: auto;"></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: #e2e8f0; margin-bottom: 4px;">
+        <div style="width: 22px; height: 22px; background: linear-gradient(45deg, #f09433, #dc2743); border-radius: 50%; font-size: 8px; display: flex; align-items: center; justify-content: center; color: white;">ig</div>
+        <span>mybrand</span>
+        <span style="width: 6px; height: 6px; background: #ef4444; border-radius: 50%; margin-left: auto;" title="Needs re-auth"></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 11px; color: #64748b; border: 1px dashed #334155; border-radius: 4px; margin-top: 8px; cursor: pointer;">
+        + Add Channel
+      </div>
+    </div>
+    <!-- Main: channel management grid -->
+    <div style="flex: 1; padding: 16px; background: #0f172a;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <div style="font-size: 16px; font-weight: 600; color: #e2e8f0;">Connected Channels</div>
+        <button style="font-size: 11px; background: #4ade80; color: #0f172a; border: none; padding: 6px 14px; border-radius: 6px; font-weight: 600;">+ Connect Channel</button>
+      </div>
+      <!-- Channel cards -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px;">
+        <!-- LinkedIn card -->
+        <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px;">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+            <div style="width: 36px; height: 36px; background: #0a66c2; border-radius: 50%; font-size: 14px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">in</div>
+            <div>
+              <div style="font-size: 13px; font-weight: 600; color: #e2e8f0;">My Company</div>
+              <div style="font-size: 11px; color: #64748b;">LinkedIn · Company Page</div>
+            </div>
+            <div style="margin-left: auto; display: flex; align-items: center; gap: 4px;">
+              <span style="width: 8px; height: 8px; background: #4ade80; border-radius: 50;"></span>
+              <span style="font-size: 10px; color: #4ade80;">Connected</span>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button style="flex: 1; font-size: 10px; color: #94a3b8; background: #0f172a; border: 1px solid #334155; padding: 5px; border-radius: 4px; cursor: pointer;">Settings</button>
+            <button style="flex: 1; font-size: 10px; color: #ef4444; background: #0f172a; border: 1px solid #334155; padding: 5px; border-radius: 4px; cursor: pointer;">Disconnect</button>
+          </div>
+        </div>
+        <!-- Instagram card (needs re-auth) -->
+        <div style="background: #1e293b; border: 1px solid #7f1d1d; border-radius: 8px; padding: 14px;">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+            <div style="width: 36px; height: 36px; background: linear-gradient(45deg, #f09433, #dc2743); border-radius: 50%; font-size: 12px; display: flex; align-items: center; justify-content: center; color: white;">ig</div>
+            <div>
+              <div style="font-size: 13px; font-weight: 600; color: #e2e8f0;">mybrand</div>
+              <div style="font-size: 11px; color: #64748b;">Instagram · Business</div>
+            </div>
+            <div style="margin-left: auto; display: flex; align-items: center; gap: 4px;">
+              <span style="width: 8px; height: 8px; background: #ef4444; border-radius: 50;"></span>
+              <span style="font-size: 10px; color: #ef4444;">Needs re-auth</span>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button style="flex: 1; font-size: 10px; color: #0f172a; background: #f59e0b; border: none; padding: 5px; border-radius: 4px; cursor: pointer; font-weight: 600;">Reconnect</button>
+            <button style="flex: 1; font-size: 10px; color: #ef4444; background: #0f172a; border: 1px solid #334155; padding: 5px; border-radius: 4px; cursor: pointer;">Disconnect</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 20px;">
+  <h3>Does this channel connection flow look right?</h3>
+  <div class="options">
+    <div class="option" data-choice="yes" onclick="toggleSelect(this)">
+      <div class="letter">✓</div>
+      <div class="content">
+        <h3>Looks good</h3>
+        <p>Empty state → platform picker → OAuth → page selection → connected with status indicators</p>
+      </div>
+    </div>
+    <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+      <div class="letter">~</div>
+      <div class="content">
+        <h3>Needs changes</h3>
+        <p>I'll describe what's different in the terminal</p>
+      </div>
+    </div>
+  </div>
+</div>

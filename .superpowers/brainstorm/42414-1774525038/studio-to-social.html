@@ -1,0 +1,73 @@
+<h2>Studio → Social: How do generated assets flow to publishing?</h2>
+<p class="subtitle">ContentOS's unique advantage is AI Studio → Social Hub. A user generates an image in Studio, then wants to publish it. How does that handoff work?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>"Publish to Social" button in Studio</h3>
+      <p>After generating content in Studio, a button appears on the output node: <strong>"Publish to Social"</strong>. Clicking it opens the full-page composer at <code>/social/compose</code> with the generated image/text pre-filled.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-header">Studio output node → Social composer</div>
+        <div class="mockup-body" style="min-height: 180px; display: flex; gap: 16px; align-items: center; justify-content: center;">
+          <!-- Studio node -->
+          <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px; width: 160px;">
+            <div style="font-size: 10px; color: #64748b; margin-bottom: 6px;">Output Node</div>
+            <div style="width: 100%; height: 80px; background: #334155; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 24px;">🖼️</div>
+            <button style="width: 100%; margin-top: 8px; font-size: 10px; background: #4ade80; color: #0f172a; border: none; padding: 6px; border-radius: 4px; font-weight: 600; cursor: pointer;">📱 Publish to Social</button>
+          </div>
+          <div style="font-size: 24px; color: #475569;">→</div>
+          <!-- Composer (pre-filled) -->
+          <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px; width: 200px;">
+            <div style="font-size: 10px; color: #64748b; margin-bottom: 6px;">/social/compose</div>
+            <div style="display: flex; gap: 4px; margin-bottom: 8px;">
+              <div style="width: 20px; height: 20px; background: #1d4ed8; border-radius: 50%; border: 2px solid #3b82f6; font-size: 7px; display: flex; align-items: center; justify-content: center; color: white;">in</div>
+              <div style="width: 20px; height: 20px; background: #1e293b; border-radius: 50%; font-size: 7px; display: flex; align-items: center; justify-content: center; color: #64748b;">𝕏</div>
+            </div>
+            <div style="font-size: 10px; color: #94a3b8; background: #0f172a; padding: 6px; border-radius: 4px; margin-bottom: 6px;">Write caption...</div>
+            <div style="width: 60px; height: 40px; background: #334155; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 12px; border: 2px solid #4ade80;">🖼️✓</div>
+            <div style="font-size: 9px; color: #4ade80; margin-top: 4px;">Image pre-attached from Studio</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Media Library bridge</h3>
+      <p>Studio saves generated assets to a shared <strong>Media Library</strong>. In the Social composer, users browse the library to attach assets. No direct button — assets are always available.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-header">Studio → Media Library → Composer</div>
+        <div class="mockup-body" style="min-height: 120px; display: flex; gap: 12px; align-items: center; justify-content: center;">
+          <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px; text-align: center; width: 100px;">
+            <div style="font-size: 18px;">🎨</div>
+            <div style="font-size: 10px; color: #60a5fa;">Studio</div>
+            <div style="font-size: 9px; color: #64748b;">generates</div>
+          </div>
+          <div style="font-size: 16px; color: #475569;">→</div>
+          <div style="background: #1e293b; border: 1px solid #f59e0b; border-radius: 8px; padding: 10px; text-align: center; width: 100px;">
+            <div style="font-size: 18px;">📚</div>
+            <div style="font-size: 10px; color: #f59e0b;">Media Library</div>
+            <div style="font-size: 9px; color: #64748b;">stores</div>
+          </div>
+          <div style="font-size: 16px; color: #475569;">→</div>
+          <div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px; text-align: center; width: 100px;">
+            <div style="font-size: 18px;">✏️</div>
+            <div style="font-size: 10px; color: #4ade80;">Composer</div>
+            <div style="font-size: 9px; color: #64748b;">attaches</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Both — direct button + media library</h3>
+      <p>Quick "Publish to Social" button on Studio output for the fast path. Media Library for browsing all assets. Best of both worlds.</p>
+    </div>
+  </div>
+</div>

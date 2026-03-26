@@ -1,0 +1,130 @@
+<h2>Social Hub Layout — What pages does /social need?</h2>
+<p class="subtitle">The Social Hub has several core sections. Which layout structure feels right?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Left Sidebar Navigation (like Postiz)</h3>
+      <p>Channels listed in left sidebar, main content on right. Sidebar doubles as channel picker when composing.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-header">/social — sidebar layout</div>
+        <div class="mockup-body" style="display: flex; min-height: 280px; padding: 0;">
+          <!-- Header -->
+          <div style="position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #0f172a; border-bottom: 1px solid #1e293b; z-index: 1;">
+            <span style="font-size: 14px;">🍌</span>
+            <div style="font-size: 12px; color: #4ade80; background: #1e293b; padding: 3px 8px; border-radius: 4px;">📱 Social Hub ▼</div>
+            <div style="flex:1;"></div>
+            <div style="font-size: 11px; color: #64748b;">user@email.com</div>
+          </div>
+          <!-- Sidebar -->
+          <div style="width: 220px; background: #0f172a; border-right: 1px solid #1e293b; padding-top: 44px;">
+            <div style="padding: 12px;">
+              <div style="font-size: 10px; color: #64748b; text-transform: uppercase; margin-bottom: 8px;">Navigation</div>
+              <div style="padding: 6px 8px; border-radius: 4px; background: #1e293b; color: #4ade80; font-size: 12px; margin-bottom: 4px;">📅 Calendar</div>
+              <div style="padding: 6px 8px; color: #94a3b8; font-size: 12px; margin-bottom: 4px;">✏️ Compose</div>
+              <div style="padding: 6px 8px; color: #94a3b8; font-size: 12px; margin-bottom: 12px;">📊 Activity</div>
+              <div style="font-size: 10px; color: #64748b; text-transform: uppercase; margin-bottom: 8px;">Channels</div>
+              <div style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: #e2e8f0; margin-bottom: 4px;">
+                <div style="width: 20px; height: 20px; background: #1d4ed8; border-radius: 50%; font-size: 8px; display: flex; align-items: center; justify-content: center;">in</div>
+                My LinkedIn
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: #e2e8f0; margin-bottom: 4px;">
+                <div style="width: 20px; height: 20px; background: #1e293b; border-radius: 50%; font-size: 8px; display: flex; align-items: center; justify-content: center;">𝕏</div>
+                @myhandle
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: #94a3b8; cursor: pointer; border: 1px dashed #334155; border-radius: 4px; margin-top: 8px;">
+                <span style="font-size: 14px;">+</span> Add Channel
+              </div>
+            </div>
+          </div>
+          <!-- Main content -->
+          <div style="flex: 1; padding-top: 44px; background: #0f172a;">
+            <div style="padding: 16px; color: #475569; font-size: 12px;">
+              Calendar / Compose / Activity content here
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Top Tab Navigation (cleaner)</h3>
+      <p>Tabs below header for sections. Channels managed in their own tab — not always visible. More horizontal space for content.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-header">/social — top tabs layout</div>
+        <div class="mockup-body" style="min-height: 280px; padding: 0;">
+          <!-- Header -->
+          <div style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #0f172a; border-bottom: 1px solid #1e293b;">
+            <span style="font-size: 14px;">🍌</span>
+            <div style="font-size: 12px; color: #4ade80; background: #1e293b; padding: 3px 8px; border-radius: 4px;">📱 Social Hub ▼</div>
+            <div style="flex:1;"></div>
+            <button style="font-size: 11px; background: #4ade80; color: #0f172a; border: none; padding: 4px 12px; border-radius: 4px; font-weight: 600; cursor: pointer;">+ New Post</button>
+            <div style="font-size: 11px; color: #64748b;">user@email.com</div>
+          </div>
+          <!-- Tabs -->
+          <div style="display: flex; gap: 0; border-bottom: 1px solid #1e293b; background: #0f172a;">
+            <div style="padding: 10px 20px; font-size: 12px; color: #4ade80; border-bottom: 2px solid #4ade80;">📅 Calendar</div>
+            <div style="padding: 10px 20px; font-size: 12px; color: #94a3b8;">📝 Posts</div>
+            <div style="padding: 10px 20px; font-size: 12px; color: #94a3b8;">📱 Channels</div>
+            <div style="padding: 10px 20px; font-size: 12px; color: #94a3b8;">📊 Activity</div>
+          </div>
+          <!-- Content -->
+          <div style="padding: 20px; background: #0f172a; min-height: 180px;">
+            <div style="color: #475569; font-size: 12px;">Full-width content area — calendar, posts list, channel management</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Hybrid — Sidebar Channels + Top Tabs</h3>
+      <p>Collapsible channel sidebar on left (always visible), top tabs for content sections. Best of both — see your channels while browsing calendar/posts.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-header">/social — hybrid layout</div>
+        <div class="mockup-body" style="display: flex; min-height: 280px; padding: 0;">
+          <!-- Header full width -->
+          <div style="position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #0f172a; border-bottom: 1px solid #1e293b; z-index: 1;">
+            <span style="font-size: 14px;">🍌</span>
+            <div style="font-size: 12px; color: #4ade80; background: #1e293b; padding: 3px 8px; border-radius: 4px;">📱 Social Hub ▼</div>
+            <div style="flex:1;"></div>
+            <button style="font-size: 11px; background: #4ade80; color: #0f172a; border: none; padding: 4px 12px; border-radius: 4px; font-weight: 600;">+ New Post</button>
+            <div style="font-size: 11px; color: #64748b;">user</div>
+          </div>
+          <!-- Channels sidebar (slim) -->
+          <div style="width: 180px; background: #0f172a; border-right: 1px solid #1e293b; padding-top: 44px;">
+            <div style="padding: 10px;">
+              <div style="font-size: 10px; color: #64748b; text-transform: uppercase; margin-bottom: 8px;">Channels</div>
+              <div style="display: flex; align-items: center; gap: 6px; padding: 5px 6px; font-size: 11px; color: #e2e8f0; background: #1e293b; border-radius: 4px; margin-bottom: 3px;">
+                <div style="width: 18px; height: 18px; background: #1d4ed8; border-radius: 50%; font-size: 7px; display: flex; align-items: center; justify-content: center;">in</div>
+                LinkedIn
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px; padding: 5px 6px; font-size: 11px; color: #e2e8f0; border-radius: 4px; margin-bottom: 3px;">
+                <div style="width: 18px; height: 18px; background: #1e293b; border-radius: 50%; font-size: 7px; display: flex; align-items: center; justify-content: center;">𝕏</div>
+                X
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px; padding: 5px 6px; font-size: 11px; color: #64748b; border: 1px dashed #334155; border-radius: 4px; margin-top: 8px;">
+                + Add
+              </div>
+            </div>
+          </div>
+          <!-- Right: tabs + content -->
+          <div style="flex: 1; padding-top: 44px;">
+            <div style="display: flex; gap: 0; border-bottom: 1px solid #1e293b;">
+              <div style="padding: 8px 16px; font-size: 11px; color: #4ade80; border-bottom: 2px solid #4ade80;">📅 Calendar</div>
+              <div style="padding: 8px 16px; font-size: 11px; color: #94a3b8;">📝 Posts</div>
+              <div style="padding: 8px 16px; font-size: 11px; color: #94a3b8;">📊 Activity</div>
+            </div>
+            <div style="padding: 16px; color: #475569; font-size: 12px;">Content area (wider than sidebar layout)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

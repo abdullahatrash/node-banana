@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Social Hub — Channels Page Redesign</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+    background: #0a0a0a;
+    color: #e5e5e5;
+    min-height: 100vh;
+  }
+
+  .app-shell {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ─── Sidebar ─── */
+  .sidebar {
+    width: 220px;
+    background: #0a0a0a;
+    border-right: 1px solid #1a1a1a;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .nav-section {
+    padding: 12px;
+  }
+
+  .nav-label {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #525252;
+    padding: 0 8px;
+    margin-bottom: 6px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    font-size: 12px;
+    color: #737373;
+    text-decoration: none;
+    transition: all 0.15s;
+    cursor: pointer;
+  }
+  .nav-item:hover { background: #171717; color: #d4d4d4; }
+  .nav-item.active { background: #171717; color: #4ade80; }
+  .nav-item svg { width: 14px; height: 14px; opacity: 0.7; }
+  .nav-item.active svg { opacity: 1; }
+
+  .sidebar-divider {
+    height: 1px;
+    background: #1a1a1a;
+    margin: 4px 12px;
+  }
+
+  /* Channel list in sidebar */
+  .channel-list { padding: 8px 12px; flex: 1; overflow-y: auto; }
+
+  .channel-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    font-size: 11px;
+    color: #a3a3a3;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .channel-item:hover {
+    background: #171717;
+    color: #e5e5e5;
+  }
+  .channel-item:hover::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 2px;
+    bottom: 2px;
+    width: 2px;
+    border-radius: 1px;
+    background: linear-gradient(180deg, #4ade80, #22d3ee);
+  }
+
+  .channel-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .channel-avatar .icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    color: white;
+  }
+  .channel-avatar .badge {
+    position: absolute;
+    bottom: -2px;
+    right: -2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1.5px solid #0a0a0a;
+  }
+  .badge-ok { background: #4ade80; }
+  .badge-err { background: #ef4444; }
+
+  .channel-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .add-channel-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    margin-top: 8px;
+    border-radius: 5px;
+    border: 1px dashed #262626;
+    font-size: 11px;
+    color: #525252;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: none;
+    width: 100%;
+    text-align: left;
+  }
+  .add-channel-btn:hover {
+    border-color: #404040;
+    color: #737373;
+    background: #0f0f0f;
+  }
+
+  /* ─── Header ─── */
+  .header {
+    display: flex;
+    align-items: center;
+    height: 44px;
+    padding: 0 16px;
+    background: #0f0f0f;
+    border-bottom: 1px solid #1a1a1a;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .logo { font-size: 16px; }
+
+  .pillar-switcher {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: #171717;
+    border: 1px solid #262626;
+    border-radius: 5px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #4ade80;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .pillar-switcher:hover { background: #1f1f1f; border-color: #333; }
+  .pillar-switcher .arrow { font-size: 8px; color: #525252; margin-left: 2px; }
+
+  .spacer { flex: 1; }
+
+  .new-post-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #16a34a;
+    color: white;
+    border: none;
+    padding: 5px 12px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .new-post-btn:hover { background: #15803d; }
+  .new-post-btn svg { width: 12px; height: 12px; }
+
+  .user-label { font-size: 11px; color: #525252; }
+
+  /* ─── Main Content ─── */
+  .main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .page-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+  }
+
+  /* ─── Channels Page ─── */
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  .page-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #e5e5e5;
+  }
+  .page-subtitle {
+    font-size: 11px;
+    color: #525252;
+    margin-top: 2px;
+  }
+
+  .connect-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: #171717;
+    border: 1px solid #262626;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #a3a3a3;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .connect-btn:hover { background: #1f1f1f; border-color: #333; color: #e5e5e5; }
+  .connect-btn svg { width: 14px; height: 14px; }
+
+  /* Channel cards grid */
+  .channels-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+
+  .channel-card {
+    background: #111111;
+    border: 1px solid #1a1a1a;
+    border-radius: 8px;
+    padding: 16px;
+    transition: all 0.2s;
+    position: relative;
+  }
+  .channel-card:hover {
+    border-color: #262626;
+    background: #141414;
+  }
+  .channel-card.needs-reauth {
+    border-color: #7f1d1d;
+  }
+  .channel-card.needs-reauth:hover {
+    border-color: #991b1b;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .card-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: white;
+    font-weight: 700;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .card-avatar .platform-ring {
+    position: absolute;
+    inset: -2px;
+    border-radius: 12px;
+    border: 1.5px solid transparent;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .channel-card:hover .platform-ring { opacity: 1; }
+
+  .card-info { flex: 1; min-width: 0; }
+  .card-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: #e5e5e5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-platform {
+    font-size: 10px;
+    color: #525252;
+    margin-top: 1px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .card-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .status-connected .status-dot { background: #4ade80; }
+  .status-connected { color: #4ade80; }
+  .status-error .status-dot { background: #ef4444; }
+  .status-error { color: #ef4444; }
+
+  .card-meta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 0;
+    border-top: 1px solid #1a1a1a;
+    margin-bottom: 12px;
+  }
+  .meta-item {
+    font-size: 10px;
+    color: #525252;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .meta-item svg { width: 12px; height: 12px; opacity: 0.5; }
+
+  .card-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .action-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 6px 0;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: none;
+    font-family: inherit;
+  }
+  .action-secondary {
+    background: #171717;
+    color: #737373;
+    border: 1px solid #262626;
+  }
+  .action-secondary:hover { background: #1f1f1f; color: #a3a3a3; }
+  .action-danger {
+    background: transparent;
+    color: #525252;
+    border: 1px solid #1a1a1a;
+  }
+  .action-danger:hover { color: #ef4444; border-color: #7f1d1d; background: #1a0000; }
+  .action-warning {
+    background: #78350f;
+    color: #fbbf24;
+    border: 1px solid #92400e;
+  }
+  .action-warning:hover { background: #92400e; }
+
+  .three-dot-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    background: none;
+    border: none;
+    color: #404040;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 14px;
+  }
+  .three-dot-btn:hover { background: #171717; color: #737373; }
+
+  /* ─── Empty State ─── */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 40px;
+  }
+
+  .empty-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+    background: #111;
+    border: 1px solid #1a1a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+  .empty-icon svg { width: 28px; height: 28px; color: #404040; }
+
+  .empty-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #d4d4d4;
+    margin-bottom: 6px;
+  }
+  .empty-desc {
+    font-size: 12px;
+    color: #525252;
+    max-width: 320px;
+    text-align: center;
+    line-height: 1.5;
+    margin-bottom: 20px;
+  }
+  .empty-cta {
+    background: #16a34a;
+    color: white;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .empty-cta:hover { background: #15803d; }
+
+  /* ─── Platform Picker Modal ─── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .modal {
+    background: #111;
+    border: 1px solid #1a1a1a;
+    border-radius: 12px;
+    width: 420px;
+    box-shadow: 0 24px 48px rgba(0,0,0,0.5);
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .modal-title { font-size: 13px; font-weight: 600; color: #e5e5e5; }
+  .modal-subtitle { font-size: 10px; color: #525252; margin-top: 2px; }
+  .modal-close {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    background: none;
+    border: none;
+    color: #525252;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 12px;
+  }
+  .modal-close:hover { background: #1a1a1a; color: #a3a3a3; }
+
+  .platform-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding: 16px 20px;
+  }
+
+  .platform-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 12px;
+    border-radius: 8px;
+    background: #0a0a0a;
+    border: 1px solid #1a1a1a;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .platform-card:hover {
+    border-color: #333;
+    background: #141414;
+    transform: translateY(-1px);
+  }
+
+  .platform-icon-wrap {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .platform-icon-wrap svg { width: 20px; height: 20px; fill: white; }
+
+  .platform-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: #a3a3a3;
+  }
+  .platform-card:hover .platform-label { color: #e5e5e5; }
+
+  /* Annotations */
+  .section-annotation {
+    position: fixed;
+    background: #16a34a;
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 3px;
+    z-index: 200;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="nav-section">
+      <div class="nav-label">Navigation</div>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Calendar
+      </a>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        Compose
+      </a>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Posts
+      </a>
+      <a class="nav-item active" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Channels
+      </a>
+    </div>
+
+    <div class="sidebar-divider"></div>
+
+    <div class="channel-list">
+      <div class="nav-label">Channels</div>
+
+      <div class="channel-item">
+        <div class="channel-avatar">
+          <div class="icon" style="background: #0A66C2;">in</div>
+          <div class="badge badge-ok"></div>
+        </div>
+        <span class="channel-name">ACME Corp</span>
+      </div>
+
+      <div class="channel-item">
+        <div class="channel-avatar">
+          <div class="icon" style="background: #000;">𝕏</div>
+          <div class="badge badge-ok"></div>
+        </div>
+        <span class="channel-name">@acmecorp</span>
+      </div>
+
+      <div class="channel-item">
+        <div class="channel-avatar">
+          <div class="icon" style="background: linear-gradient(45deg, #f09433, #dc2743);">ig</div>
+          <div class="badge badge-err"></div>
+        </div>
+        <span class="channel-name">acme.brand</span>
+      </div>
+
+      <button class="add-channel-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add channel
+      </button>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main-content">
+    <!-- Header -->
+    <div class="header">
+      <span class="logo">🍌</span>
+      <div class="pillar-switcher">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Social Hub
+        <span class="arrow">▼</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="new-post-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Post
+      </button>
+      <span class="user-label">user@acme.com</span>
+    </div>
+
+    <!-- Channels Page -->
+    <div class="page-content">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Connected Channels</div>
+          <div class="page-subtitle">Manage your social media accounts and connections</div>
+        </div>
+        <button class="connect-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Connect Channel
+        </button>
+      </div>
+
+      <div class="channels-grid">
+        <!-- LinkedIn -->
+        <div class="channel-card">
+          <div class="card-header">
+            <div class="card-avatar" style="background: #0A66C2;">
+              <div class="platform-ring" style="border-color: #0A66C2;"></div>
+              in
+            </div>
+            <div class="card-info">
+              <div class="card-name">ACME Corp</div>
+              <div class="card-platform">
+                LinkedIn · Company Page
+              </div>
+            </div>
+            <div class="card-status status-connected">
+              <div class="status-dot"></div>
+              Connected
+            </div>
+          </div>
+          <div class="card-meta">
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Connected 3 days ago
+            </div>
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+              12 posts
+            </div>
+          </div>
+          <div class="card-actions">
+            <button class="action-btn action-secondary">Settings</button>
+            <button class="action-btn action-danger">Disconnect</button>
+            <button class="three-dot-btn">⋮</button>
+          </div>
+        </div>
+
+        <!-- X -->
+        <div class="channel-card">
+          <div class="card-header">
+            <div class="card-avatar" style="background: #000; border: 1px solid #262626;">
+              <div class="platform-ring" style="border-color: #525252;"></div>
+              𝕏
+            </div>
+            <div class="card-info">
+              <div class="card-name">@acmecorp</div>
+              <div class="card-platform">X · Personal</div>
+            </div>
+            <div class="card-status status-connected">
+              <div class="status-dot"></div>
+              Connected
+            </div>
+          </div>
+          <div class="card-meta">
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Connected 1 week ago
+            </div>
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+              8 posts
+            </div>
+          </div>
+          <div class="card-actions">
+            <button class="action-btn action-secondary">Settings</button>
+            <button class="action-btn action-danger">Disconnect</button>
+            <button class="three-dot-btn">⋮</button>
+          </div>
+        </div>
+
+        <!-- Instagram (needs re-auth) -->
+        <div class="channel-card needs-reauth">
+          <div class="card-header">
+            <div class="card-avatar" style="background: linear-gradient(135deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);">
+              <div class="platform-ring" style="border-color: #dc2743;"></div>
+              ig
+            </div>
+            <div class="card-info">
+              <div class="card-name">acme.brand</div>
+              <div class="card-platform">Instagram · Business</div>
+            </div>
+            <div class="card-status status-error">
+              <div class="status-dot"></div>
+              Re-auth needed
+            </div>
+          </div>
+          <div class="card-meta">
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              Token expired · Feb 24
+            </div>
+          </div>
+          <div class="card-actions">
+            <button class="action-btn action-warning">Reconnect</button>
+            <button class="action-btn action-danger">Remove</button>
+            <button class="three-dot-btn">⋮</button>
+          </div>
+        </div>
+
+        <!-- TikTok -->
+        <div class="channel-card">
+          <div class="card-header">
+            <div class="card-avatar" style="background: #010101; border: 1px solid #262626;">
+              <div class="platform-ring" style="border-color: #25f4ee;"></div>
+              <span style="font-size: 14px;">♪</span>
+            </div>
+            <div class="card-info">
+              <div class="card-name">acme_official</div>
+              <div class="card-platform">TikTok · Business</div>
+            </div>
+            <div class="card-status status-connected">
+              <div class="status-dot"></div>
+              Connected
+            </div>
+          </div>
+          <div class="card-meta">
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Connected 5 days ago
+            </div>
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+              3 posts
+            </div>
+          </div>
+          <div class="card-actions">
+            <button class="action-btn action-secondary">Settings</button>
+            <button class="action-btn action-danger">Disconnect</button>
+            <button class="three-dot-btn">⋮</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Platform Picker Modal (shown separately below) -->
+<div style="margin-top: 40px; padding: 40px; background: #050505; border-top: 1px solid #1a1a1a;">
+  <div style="font-size: 11px; color: #525252; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px; text-align: center;">Platform Picker Modal</div>
+  <div style="display: flex; justify-content: center;">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Connect a channel</div>
+          <div class="modal-subtitle">Select the platform you want to link</div>
+        </div>
+        <button class="modal-close">✕</button>
+      </div>
+      <div class="platform-grid">
+        <div class="platform-card">
+          <div class="platform-icon-wrap" style="background: #0A66C2;">
+            <svg viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+          </div>
+          <span class="platform-label">LinkedIn</span>
+        </div>
+        <div class="platform-card">
+          <div class="platform-icon-wrap" style="background: linear-gradient(135deg, #f09433, #dc2743, #bc1888);">
+            <svg viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
+          </div>
+          <span class="platform-label">Instagram</span>
+        </div>
+        <div class="platform-card">
+          <div class="platform-icon-wrap" style="background: #000; border: 1px solid #333;">
+            <svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          </div>
+          <span class="platform-label">X</span>
+        </div>
+        <div class="platform-card">
+          <div class="platform-icon-wrap" style="background: #010101; border: 1px solid #333;">
+            <svg viewBox="0 0 24 24"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>
+          </div>
+          <span class="platform-label">TikTok</span>
+        </div>
+        <div class="platform-card">
+          <div class="platform-icon-wrap" style="background: #1877F2;">
+            <svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+          </div>
+          <span class="platform-label">Facebook</span>
+        </div>
+        <div class="platform-card">
+          <div class="platform-icon-wrap" style="background: #FF0000;">
+            <svg viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+          </div>
+          <span class="platform-label">YouTube</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Empty State (shown separately below) -->
+<div style="padding: 40px; background: #050505; border-top: 1px solid #1a1a1a;">
+  <div style="font-size: 11px; color: #525252; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px; text-align: center;">Empty State (first visit)</div>
+  <div class="empty-state" style="height: 300px;">
+    <div class="empty-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    </div>
+    <div class="empty-title">Connect your first channel</div>
+    <div class="empty-desc">Link your social accounts to start scheduling and publishing content directly from ContentOS.</div>
+    <button class="empty-cta">Connect Channel</button>
+  </div>
+</div>
+
+</body>
+</html>
