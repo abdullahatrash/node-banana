@@ -3,9 +3,22 @@ import { NextRequest, NextResponse } from "next/server";
 
 const mockAuthorizeStudioRequest = vi.fn();
 const mockGetProject = vi.fn();
-const mockRecordAsset = vi.fn();
+const mockRecordPendingS3AssetWithQuota = vi.fn();
 const mockBuildAssetObjectKey = vi.fn();
 const mockCreatePresignedUpload = vi.fn();
+
+const { MockStudioAssetQuotaExceededError } = vi.hoisted(() => {
+  class StudioAssetQuotaExceededError extends Error {
+    constructor() {
+      super("Workspace storage quota exceeded.");
+      this.name = "StudioAssetQuotaExceededError";
+    }
+  }
+
+  return {
+    MockStudioAssetQuotaExceededError: StudioAssetQuotaExceededError,
+  };
+});
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -33,7 +46,9 @@ vi.mock("@/lib/studio/authz", () => {
 
 vi.mock("@/lib/studio/repository", () => ({
   getProject: (...args: unknown[]) => mockGetProject(...args),
-  recordAsset: (...args: unknown[]) => mockRecordAsset(...args),
+  recordPendingS3AssetWithQuota: (...args: unknown[]) =>
+    mockRecordPendingS3AssetWithQuota(...args),
+  StudioAssetQuotaExceededError: MockStudioAssetQuotaExceededError,
 }));
 
 import { POST } from "../route";
@@ -55,7 +70,7 @@ describe("/api/studio/assets/presign auth hardening", () => {
       downloadUrl: "https://example-download",
       expiresInSeconds: 900,
     });
-    mockRecordAsset.mockResolvedValue({
+    mockRecordPendingS3AssetWithQuota.mockResolvedValue({
       id: "asset_1",
     });
   });
@@ -74,6 +89,7 @@ describe("/api/studio/assets/presign auth hardening", () => {
         assetType: "image",
         fileName: "image.png",
         contentType: "image/png",
+        expectedSizeBytes: 123,
       }),
     );
     const data = await response.json();
@@ -100,6 +116,7 @@ describe("/api/studio/assets/presign auth hardening", () => {
         assetType: "image",
         fileName: "image.png",
         contentType: "image/png",
+        expectedSizeBytes: 123,
       }),
     );
     const data = await response.json();
@@ -126,6 +143,7 @@ describe("/api/studio/assets/presign auth hardening", () => {
         assetType: "image",
         fileName: "image.png",
         contentType: "image/png",
+        expectedSizeBytes: 123,
       }),
     );
     const data = await response.json();
@@ -146,14 +164,15 @@ describe("/api/studio/assets/presign auth hardening", () => {
         assetType: "image",
       }),
     );
-    expect(mockRecordAsset).toHaveBeenCalledWith(
+    expect(mockRecordPendingS3AssetWithQuota).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: "ws_1",
         userId: "user_1",
         projectId: "proj_1",
         type: "image",
-        storageProvider: "s3",
         storageKey: "ws_1/proj_1/image/file.png",
+        originalFileName: "image.png",
+        expectedSizeBytes: 123,
       }),
     );
     expect(mockAuthorizeStudioRequest).toHaveBeenCalledWith(
@@ -163,5 +182,91 @@ describe("/api/studio/assets/presign auth hardening", () => {
         action: "write",
       },
     );
+  });
+
+  it("returns 400 when expectedSizeBytes is missing", async () => {
+    const response = await POST(
+      createRequest({
+        projectId: "proj_1",
+        assetType: "image",
+        fileName: "image.png",
+        contentType: "image/png",
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data).toEqual({
+      success: false,
+      error: "expectedSizeBytes is required and must be a non-negative integer.",
+    });
+  });
+
+  it("returns 400 when expectedSizeBytes is negative", async () => {
+    const response = await POST(
+      createRequest({
+        projectId: "proj_1",
+        assetType: "image",
+        fileName: "image.png",
+        contentType: "image/png",
+        expectedSizeBytes: -1,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data).toEqual({
+      success: false,
+      error: "expectedSizeBytes is required and must be a non-negative integer.",
+    });
+  });
+
+  it("returns 400 when expectedSizeBytes is not a number", async () => {
+    const response = await POST(
+      createRequest({
+        projectId: "proj_1",
+        assetType: "image",
+        fileName: "image.png",
+        contentType: "image/png",
+        expectedSizeBytes: "123",
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data).toEqual({
+      success: false,
+      error: "expectedSizeBytes is required and must be a non-negative integer.",
+    });
+  });
+
+  it("returns 403 when workspace quota would be exceeded", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+    mockGetProject.mockResolvedValue({ id: "proj_1", workspaceId: "ws_1" });
+    mockRecordPendingS3AssetWithQuota.mockRejectedValue(
+      new MockStudioAssetQuotaExceededError(),
+    );
+
+    const response = await POST(
+      createRequest({
+        projectId: "proj_1",
+        assetType: "image",
+        fileName: "image.png",
+        contentType: "image/png",
+        expectedSizeBytes: 123,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data).toEqual({
+      success: false,
+      error: "Workspace storage quota exceeded.",
+    });
   });
 });

@@ -1,6 +1,12 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth/server";
+import {
+  getAuthenticatedUserFromHeaders,
+  getDevFallbackUserId,
+  getDevFallbackWorkspaceId,
+  isDevAuthBypassEnabled,
+  parseHeaderValue,
+} from "@/lib/auth/session";
 import { getDb, isDatabaseConfigured } from "@/lib/db";
 import { workspaceMembers, workspaces } from "@/lib/db/schema";
 import { ensurePersonalWorkspaceForUser, ensureWorkspaceUser } from "@/lib/studio/repository";
@@ -18,45 +24,25 @@ interface WorkspacesResponse {
   error?: string;
 }
 
-function isDevBypassEnabled(): boolean {
-  if (process.env.DEV_AUTH_BYPASS !== "true") return false;
-  return process.env.NODE_ENV !== "production";
-}
-
-function parseHeaderValue(value: string | null): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-
 async function getSessionUser(request: Request): Promise<{
   userId: string | null;
   userName: string | null;
   userEmail: string | null;
 }> {
-  try {
-    const session = await (
-      auth as unknown as {
-        api?: {
-          getSession?: (args: { headers: Headers }) => Promise<{
-            user?: { id?: string; name?: string; email?: string };
-          } | null>;
-        };
-      }
-    ).api?.getSession?.({ headers: request.headers });
-
-    return {
-      userId: parseHeaderValue(session?.user?.id ?? null),
-      userName: parseHeaderValue(session?.user?.name ?? null),
-      userEmail: parseHeaderValue(session?.user?.email ?? null),
-    };
-  } catch {
+  const user = await getAuthenticatedUserFromHeaders(request.headers);
+  if (!user) {
     return {
       userId: null,
       userName: null,
       userEmail: null,
     };
   }
+
+  return {
+    userId: user.id,
+    userName: user.name,
+    userEmail: user.email,
+  };
 }
 
 export async function GET(
@@ -73,12 +59,12 @@ export async function GET(
     );
   }
 
-  const bypassEnabled = isDevBypassEnabled();
+  const bypassEnabled = isDevAuthBypassEnabled();
   const sessionUser = await getSessionUser(request);
   const headerUserId = parseHeaderValue(request.headers.get("x-user-id"));
   const userId =
     sessionUser.userId ||
-    (bypassEnabled ? headerUserId || process.env.DEV_USER_ID || "local-user" : null);
+    (bypassEnabled ? headerUserId || getDevFallbackUserId() : null);
 
   if (!userId) {
     return NextResponse.json(
@@ -91,7 +77,7 @@ export async function GET(
   }
 
   if (bypassEnabled) {
-    const devWorkspaceId = process.env.DEV_WORKSPACE_ID || "local-workspace";
+    const devWorkspaceId = getDevFallbackWorkspaceId();
     await ensureWorkspaceUser(devWorkspaceId, userId);
   }
 

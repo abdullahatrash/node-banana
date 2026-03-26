@@ -3,6 +3,31 @@ import { NextRequest, NextResponse } from "next/server";
 
 const mockAuthorizeStudioRequest = vi.fn();
 const mockSoftDeleteAsset = vi.fn();
+const mockFinalizeAssetUpload = vi.fn();
+
+const {
+  MockStudioAssetNotFoundError,
+  MockStudioAssetUploadTransitionError,
+} = vi.hoisted(() => {
+  class StudioAssetNotFoundError extends Error {
+    constructor() {
+      super("Asset not found.");
+      this.name = "StudioAssetNotFoundError";
+    }
+  }
+
+  class StudioAssetUploadTransitionError extends Error {
+    constructor(currentState: string, nextState: string) {
+      super(`Invalid upload state transition: ${currentState} -> ${nextState}`);
+      this.name = "StudioAssetUploadTransitionError";
+    }
+  }
+
+  return {
+    MockStudioAssetNotFoundError: StudioAssetNotFoundError,
+    MockStudioAssetUploadTransitionError: StudioAssetUploadTransitionError,
+  };
+});
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -25,14 +50,25 @@ vi.mock("@/lib/studio/authz", () => {
 vi.mock("@/lib/studio/repository", () => ({
   getAsset: vi.fn(),
   softDeleteAsset: (...args: unknown[]) => mockSoftDeleteAsset(...args),
+  finalizeAssetUpload: (...args: unknown[]) => mockFinalizeAssetUpload(...args),
+  StudioAssetNotFoundError: MockStudioAssetNotFoundError,
+  StudioAssetUploadTransitionError: MockStudioAssetUploadTransitionError,
 }));
 
-import { DELETE } from "../route";
+import { DELETE, PATCH } from "../route";
 
 function createRequest(): NextRequest {
   return {
     headers: new Headers(),
     nextUrl: new URL("http://localhost:3000/api/studio/assets/asset_1"),
+  } as unknown as NextRequest;
+}
+
+function createPatchRequest(body: unknown): NextRequest {
+  return {
+    headers: new Headers(),
+    nextUrl: new URL("http://localhost:3000/api/studio/assets/asset_1"),
+    json: async () => body,
   } as unknown as NextRequest;
 }
 
@@ -83,5 +119,287 @@ describe("/api/studio/assets/[assetId] DELETE role enforcement", () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(mockSoftDeleteAsset).toHaveBeenCalledWith("ws_1", "asset_1");
+  });
+});
+
+describe("/api/studio/assets/[assetId] PATCH finalize upload", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns 401 for unauthenticated requests", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: false,
+      status: 401,
+      error: "Please sign in to access AI Studio.",
+      reason: "unauthenticated",
+    });
+
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "ready",
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(data).toEqual({
+      success: false,
+      error: "Please sign in to access AI Studio.",
+    });
+  });
+
+  it("returns 403 for non-member/no-access requests", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: false,
+      status: 403,
+      error: "You do not have access to this workspace.",
+      reason: "forbidden",
+    });
+
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "ready",
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data).toEqual({
+      success: false,
+      error: "You do not have access to this workspace.",
+    });
+    expect(mockFinalizeAssetUpload).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when asset is not found in workspace", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+    mockFinalizeAssetUpload.mockRejectedValue(new MockStudioAssetNotFoundError());
+
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "ready",
+      }),
+      { params: Promise.resolve({ assetId: "asset_missing" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(data).toEqual({
+      success: false,
+      error: "Asset not found.",
+    });
+  });
+
+  it("returns 400 for invalid payload", async () => {
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "pending",
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data).toEqual({
+      success: false,
+      error: "uploadState is required and must be ready or failed.",
+    });
+  });
+
+  it("returns 400 when failed uploadState is missing error", async () => {
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "failed",
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data).toEqual({
+      success: false,
+      error: "error is required when uploadState is failed.",
+    });
+  });
+
+  it("returns 400 when sizeBytes is negative", async () => {
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "ready",
+        sizeBytes: -1,
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data).toEqual({
+      success: false,
+      error: "sizeBytes must be a non-negative number.",
+    });
+  });
+
+  it("returns 200 for pending -> ready", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+    mockFinalizeAssetUpload.mockResolvedValue({
+      id: "asset_1",
+      workspaceId: "ws_1",
+      metadata: { uploadState: "ready" },
+    });
+
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "ready",
+        sizeBytes: 1024,
+        mimeType: "image/png",
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockFinalizeAssetUpload).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      assetId: "asset_1",
+      uploadState: "ready",
+      sizeBytes: 1024,
+      checksum: undefined,
+      mimeType: "image/png",
+      error: undefined,
+    });
+  });
+
+  it("returns 200 for pending -> failed", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+    mockFinalizeAssetUpload.mockResolvedValue({
+      id: "asset_1",
+      workspaceId: "ws_1",
+      metadata: { uploadState: "failed" },
+    });
+
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "failed",
+        error: "Upload timed out",
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockFinalizeAssetUpload).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      assetId: "asset_1",
+      uploadState: "failed",
+      sizeBytes: undefined,
+      checksum: undefined,
+      mimeType: undefined,
+      error: "Upload timed out",
+    });
+  });
+
+  it("returns 200 for ready -> ready idempotent", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+    mockFinalizeAssetUpload.mockResolvedValue({
+      id: "asset_1",
+      workspaceId: "ws_1",
+      metadata: { uploadState: "ready" },
+    });
+
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "ready",
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockFinalizeAssetUpload).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      assetId: "asset_1",
+      uploadState: "ready",
+      sizeBytes: undefined,
+      checksum: undefined,
+      mimeType: undefined,
+      error: undefined,
+    });
+  });
+
+  it("returns 409 for ready -> failed", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+    mockFinalizeAssetUpload.mockRejectedValue(
+      new MockStudioAssetUploadTransitionError("ready", "failed"),
+    );
+
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "failed",
+        error: "Upload checksum mismatch",
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data).toEqual({
+      success: false,
+      error: "Invalid upload state transition: ready -> failed",
+    });
+  });
+
+  it("returns 409 for failed -> ready", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+    mockFinalizeAssetUpload.mockRejectedValue(
+      new MockStudioAssetUploadTransitionError("failed", "ready"),
+    );
+
+    const response = await PATCH(
+      createPatchRequest({
+        uploadState: "ready",
+      }),
+      { params: Promise.resolve({ assetId: "asset_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data).toEqual({
+      success: false,
+      error: "Invalid upload state transition: failed -> ready",
+    });
   });
 });

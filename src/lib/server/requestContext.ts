@@ -1,4 +1,8 @@
-import { auth } from "@/lib/auth/server";
+import {
+  getAuthenticatedUserFromHeaders,
+  getDevFallbackUserId,
+  getDevFallbackWorkspaceId,
+} from "@/lib/auth/session";
 
 export interface RequestContext {
   userId: string;
@@ -15,27 +19,19 @@ export interface RequestContext {
  * 3) Local dev defaults from env
  */
 export async function resolveRequestContext(request: Request): Promise<RequestContext> {
-  const fallbackUserId = process.env.DEV_USER_ID || "local-user";
-  const fallbackWorkspaceId = process.env.DEV_WORKSPACE_ID || "local-workspace";
+  const fallbackUserId = getDevFallbackUserId();
+  const fallbackWorkspaceId = getDevFallbackWorkspaceId();
 
   const headerUserId = request.headers.get("x-user-id") || undefined;
   const headerWorkspaceId = request.headers.get("x-workspace-id") || undefined;
 
-  try {
-    const session = await (auth as unknown as {
-      api?: { getSession?: (args: { headers: Headers }) => Promise<{ user?: { id?: string } } | null> };
-    }).api?.getSession?.({ headers: request.headers });
-
-    const sessionUserId = session?.user?.id;
-    if (sessionUserId) {
-      return {
-        userId: sessionUserId,
-        workspaceId: headerWorkspaceId || fallbackWorkspaceId,
-        hasAuthenticatedSession: true,
-      };
-    }
-  } catch {
-    // Non-breaking fallback for unauthenticated/development flows.
+  const sessionUser = await getAuthenticatedUserFromHeaders(request.headers);
+  if (sessionUser?.id) {
+    return {
+      userId: sessionUser.id,
+      workspaceId: headerWorkspaceId || fallbackWorkspaceId,
+      hasAuthenticatedSession: true,
+    };
   }
 
   return {
@@ -44,4 +40,3 @@ export async function resolveRequestContext(request: Request): Promise<RequestCo
     hasAuthenticatedSession: false,
   };
 }
-

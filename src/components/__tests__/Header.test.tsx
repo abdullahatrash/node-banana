@@ -111,10 +111,10 @@ describe("Header", () => {
       expect(icon).toHaveAttribute("src", "/banana_icon.png");
     });
 
-    it("should render 'Made by Willie' link", () => {
+    it("should render 'Made by abodi' link", () => {
       render(<Header />);
-      const link = screen.getByText("Made by Willie");
-      expect(link).toHaveAttribute("href", "https://x.com/ReflctWillie");
+      const link = screen.getByText("Made by abodi");
+      expect(link).toHaveAttribute("href", "https://x.com/abodiatrash");
     });
 
     it("should render Discord support link", () => {
