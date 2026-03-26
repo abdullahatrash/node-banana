@@ -30,7 +30,7 @@ export function encryptToken(plaintext: string): string {
   if (!key) {
     if (isDevAuthBypassEnabled()) {
       logger.warn(
-        "social",
+        "system",
         "SOCIAL_TOKEN_ENCRYPTION_KEY not set — storing token in plaintext (dev bypass)",
       );
       return `${PLAINTEXT_PREFIX}${plaintext}`;
