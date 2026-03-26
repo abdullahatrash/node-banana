@@ -317,9 +317,146 @@ export const generationJobs = pgTable(
   }),
 );
 
+/**
+ * Social Hub domain tables (workspace-scoped).
+ */
+export const socialPlatformEnum = pgEnum("social_platform", [
+  "x",
+  "linkedin",
+  "instagram",
+  "tiktok",
+  "facebook",
+  "youtube",
+]);
+
+export const socialPostStatusEnum = pgEnum("social_post_status", [
+  "draft",
+  "queued",
+  "publishing",
+  "published",
+  "failed",
+]);
+
+export const socialAccounts = pgTable(
+  "social_accounts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    platform: socialPlatformEnum("platform").notNull(),
+    platformUserId: text("platform_user_id").notNull(),
+    displayName: text("display_name").notNull(),
+    username: text("username"),
+    avatarUrl: text("avatar_url"),
+    accessTokenEncrypted: text("access_token_encrypted").notNull(),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    accessTokenSecret: text("access_token_secret"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    additionalSettings: jsonb("additional_settings").$type<
+      Record<string, unknown>
+    >(),
+    requiresReauth: boolean("requires_reauth").default(false).notNull(),
+    disabled: boolean("disabled").default(false).notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspacePlatformUserUnique: uniqueIndex(
+      "social_accounts_workspace_platform_user_unique",
+    ).on(table.workspaceId, table.platform, table.platformUserId),
+    workspaceIdx: index("social_accounts_workspace_idx").on(table.workspaceId),
+    createdAtIdx: index("social_accounts_created_at_idx").on(table.createdAt),
+  }),
+);
+
+export const socialPosts = pgTable(
+  "social_posts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    socialAccountId: text("social_account_id")
+      .notNull()
+      .references(() => socialAccounts.id, { onDelete: "cascade" }),
+    status: socialPostStatusEnum("status").default("draft").notNull(),
+    content: text("content"),
+    mediaUrls: jsonb("media_urls").$type<
+      Array<{ type: string; url: string; alt?: string }>
+    >(),
+    platformSettings: jsonb("platform_settings").$type<
+      Record<string, unknown>
+    >(),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    platformPostId: text("platform_post_id"),
+    platformPostUrl: text("platform_post_url"),
+    errorMessage: text("error_message"),
+    retryCount: integer("retry_count").default(0).notNull(),
+    parentPostId: text("parent_post_id"),
+    studioAssetId: text("studio_asset_id").references(() => assets.id, {
+      onDelete: "set null",
+    }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("social_posts_workspace_idx").on(table.workspaceId),
+    socialAccountIdx: index("social_posts_account_idx").on(
+      table.socialAccountId,
+    ),
+    statusIdx: index("social_posts_status_idx").on(table.status),
+    scheduledAtIdx: index("social_posts_scheduled_at_idx").on(
+      table.scheduledAt,
+    ),
+    createdAtIdx: index("social_posts_created_at_idx").on(table.createdAt),
+  }),
+);
+
+export const socialOAuthStates = pgTable(
+  "social_oauth_states",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    platform: socialPlatformEnum("platform").notNull(),
+    state: text("state").notNull(),
+    codeVerifier: text("code_verifier"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    stateUnique: uniqueIndex("social_oauth_states_state_unique").on(
+      table.state,
+    ),
+    expiresAtIdx: index("social_oauth_states_expires_at_idx").on(
+      table.expiresAt,
+    ),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
 export type StorageProvider = typeof storageProviderEnum.enumValues[number];
 export type GenerationStatus = typeof generationStatusEnum.enumValues[number];
+export type SocialPlatform = typeof socialPlatformEnum.enumValues[number];
+export type SocialPostStatus = typeof socialPostStatusEnum.enumValues[number];
 
