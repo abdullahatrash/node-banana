@@ -2469,11 +2469,21 @@ export async function listWebhookDeliveriesForWorkspace(
 // Automation rules + tasks
 // ---------------------------------------------------------------------------
 
+export function buildAutomationTaskKey(input: {
+  workspaceId: string;
+  ruleId: string;
+  runIndex: number;
+}) {
+  return `${input.workspaceId}:${input.ruleId}:${input.runIndex}`;
+}
+
 export async function createAutomationRule(input: {
   workspaceId: string;
   name: string;
   triggerSource: string;
   triggerFilters?: Record<string, unknown> | null;
+  repeatIntervalSeconds?: number | null;
+  maxRuns?: number | null;
   actionType?: string;
   actionConfig?: Record<string, unknown> | null;
   enabled?: boolean;
@@ -2492,6 +2502,9 @@ export async function createAutomationRule(input: {
       enabled: input.enabled ?? true,
       triggerSource: input.triggerSource,
       triggerFilters: input.triggerFilters ?? null,
+      repeatIntervalSeconds: input.repeatIntervalSeconds ?? null,
+      maxRuns: input.maxRuns ?? null,
+      totalRuns: 0,
       actionType: input.actionType ?? "create_social_post",
       actionConfig: input.actionConfig ?? null,
       createdByUserId: input.createdByUserId,
@@ -2564,6 +2577,9 @@ export async function updateAutomationRule(
     name?: string;
     triggerSource?: string;
     triggerFilters?: Record<string, unknown> | null;
+    repeatIntervalSeconds?: number | null;
+    maxRuns?: number | null;
+    totalRuns?: number;
     actionType?: string;
     actionConfig?: Record<string, unknown> | null;
     enabled?: boolean;
@@ -2579,6 +2595,15 @@ export async function updateAutomationRule(
       }),
       ...(data.triggerFilters !== undefined && {
         triggerFilters: data.triggerFilters,
+      }),
+      ...(data.repeatIntervalSeconds !== undefined && {
+        repeatIntervalSeconds: data.repeatIntervalSeconds,
+      }),
+      ...(data.maxRuns !== undefined && {
+        maxRuns: data.maxRuns,
+      }),
+      ...(data.totalRuns !== undefined && {
+        totalRuns: data.totalRuns,
       }),
       ...(data.actionType !== undefined && { actionType: data.actionType }),
       ...(data.actionConfig !== undefined && {
@@ -2627,6 +2652,8 @@ export async function deleteAutomationRule(
 export async function createAutomationTask(input: {
   workspaceId: string;
   ruleId: string;
+  taskKey: string;
+  runIndex: number;
   dueAt?: Date | null;
   input?: Record<string, unknown> | null;
   result?: Record<string, unknown> | null;
@@ -2648,6 +2675,8 @@ export async function createAutomationTask(input: {
       id,
       workspaceId: input.workspaceId,
       ruleId: input.ruleId,
+      taskKey: input.taskKey,
+      runIndex: input.runIndex,
       state: input.state ?? "pending",
       dueAt: input.dueAt ?? null,
       claimToken: input.claimToken ?? null,
@@ -2663,9 +2692,28 @@ export async function createAutomationTask(input: {
       createdAt: now,
       updatedAt: now,
     })
+    .onConflictDoNothing({
+      target: [socialAutomationTasks.taskKey],
+    })
     .returning();
 
-  return row;
+  if (row) {
+    return row;
+  }
+
+  const [existing] = await db
+    .select()
+    .from(socialAutomationTasks)
+    .where(eq(socialAutomationTasks.taskKey, input.taskKey))
+    .limit(1);
+
+  if (!existing) {
+    throw new Error(
+      `Failed to create automation task with key "${input.taskKey}".`,
+    );
+  }
+
+  return existing;
 }
 
 export async function listAutomationTasks(
@@ -2863,4 +2911,50 @@ export async function claimDueAutomationTasks(input?: {
   }
 
   return claimedRows;
+}
+
+export async function getNextAutomationRunIndex(
+  workspaceId: string,
+  ruleId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      maxRunIndex: sql<number>`cast(coalesce(max(${socialAutomationTasks.runIndex}), 0) as int)`,
+    })
+    .from(socialAutomationTasks)
+    .where(
+      and(
+        eq(socialAutomationTasks.workspaceId, workspaceId),
+        eq(socialAutomationTasks.ruleId, ruleId),
+      ),
+    );
+
+  return (row?.maxRunIndex ?? 0) + 1;
+}
+
+export async function incrementAutomationRuleRunCount(input: {
+  workspaceId: string;
+  ruleId: string;
+}) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialAutomationRules)
+    .set({
+      totalRuns: sql`${socialAutomationRules.totalRuns} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(socialAutomationRules.workspaceId, input.workspaceId),
+        eq(socialAutomationRules.id, input.ruleId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new AutomationRuleNotFoundError(input.ruleId);
+  }
+
+  return row;
 }

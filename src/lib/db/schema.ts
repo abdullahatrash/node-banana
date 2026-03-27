@@ -1050,6 +1050,9 @@ export const socialAutomationRules = pgTable(
     enabled: boolean("enabled").default(true).notNull(),
     triggerSource: text("trigger_source").notNull(),
     triggerFilters: jsonb("trigger_filters").$type<Record<string, unknown>>(),
+    repeatIntervalSeconds: integer("repeat_interval_seconds"),
+    maxRuns: integer("max_runs"),
+    totalRuns: integer("total_runs").default(0).notNull(),
     actionType: text("action_type").notNull().default("create_social_post"),
     actionConfig: jsonb("action_config").$type<Record<string, unknown>>(),
     createdByUserId: text("created_by_user_id")
@@ -1086,6 +1089,8 @@ export const socialAutomationTasks = pgTable(
     ruleId: text("rule_id")
       .notNull()
       .references(() => socialAutomationRules.id, { onDelete: "cascade" }),
+    taskKey: text("task_key").notNull(),
+    runIndex: integer("run_index").default(1).notNull(),
     state: automationTaskStateEnum("state").default("pending").notNull(),
     dueAt: timestamp("due_at", { withTimezone: true }),
     claimToken: text("claim_token"),
@@ -1114,8 +1119,17 @@ export const socialAutomationTasks = pgTable(
       table.workspaceId,
     ),
     ruleIdx: index("social_automation_tasks_rule_idx").on(table.ruleId),
+    taskKeyUnique: uniqueIndex("social_automation_tasks_task_key_unique").on(
+      table.taskKey,
+    ),
+    ruleRunIndexUnique: uniqueIndex(
+      "social_automation_tasks_rule_run_index_unique",
+    ).on(table.ruleId, table.runIndex),
     stateIdx: index("social_automation_tasks_state_idx").on(table.state),
     dueAtIdx: index("social_automation_tasks_due_at_idx").on(table.dueAt),
+    runIndexIdx: index("social_automation_tasks_run_index_idx").on(
+      table.runIndex,
+    ),
     claimedAtIdx: index("social_automation_tasks_claimed_at_idx").on(
       table.claimedAt,
     ),

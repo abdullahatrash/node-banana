@@ -106,7 +106,7 @@ This file tracks the remaining social backend parity slices as independently gra
 - Type: AFK
 - Blocked by: Issue 11
 - User stories: US5 automation parity
-- Status: In Progress
+- Status: Completed
 - Scope:
   - Add `social_automation_rules` and `social_automation_tasks`.
   - Implement deterministic task key + duplicate-safe claiming.
