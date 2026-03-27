@@ -10,7 +10,6 @@
       "packageName": "@opencut/web",
       "routing": [
         {
-          "flag": "editor-enabled",
           "paths": ["/editor/:path*"]
         }
       ]
