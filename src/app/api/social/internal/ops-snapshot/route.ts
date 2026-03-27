@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, isNull, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, isNull, isNotNull, lte, or, sql } from "drizzle-orm";
 import { isDatabaseConfigured, getDb } from "@/lib/db";
 import { ensureInternalSocialAuth } from "@/lib/social/internal-auth";
 import {
@@ -51,9 +51,39 @@ interface OpsSnapshotResponse {
       claimed: number;
       failed: number;
     };
+    queueDepth: {
+      queuedPosts: number;
+      queuedDueNowPosts: number;
+      retryScheduledPosts: number;
+      pendingWebhookDeliveries: number;
+      pendingDispatchRuns: number;
+      claimedDispatchRuns: number;
+    };
+    dispatchFailures: {
+      failedDispatchRuns: number;
+      failedPosts: number;
+      retryScheduledPosts: number;
+      failedWebhookDeliveries: number;
+      deadLetteredDeliveries: number;
+    };
+    deadLetters: {
+      total: number;
+      deadLettered: number;
+      replayRequested: number;
+      replayed: number;
+      replayFailed: number;
+    };
     refreshLeases: {
       active: number;
       expired: number;
+      released: number;
+    };
+    workflowLag: {
+      oldestQueuedDuePostAgeSeconds: number | null;
+      oldestPublishingPostAgeSeconds: number | null;
+      oldestClaimedDispatchAgeSeconds: number | null;
+      oldestPendingWebhookDeliveryAgeSeconds: number | null;
+      oldestExpiredRefreshLeaseAgeSeconds: number | null;
     };
   };
   error?: string;
@@ -63,6 +93,13 @@ function positiveInt(value: string | null): number | null {
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function scopeConditions(
+  workspaceCondition: any | null,
+  conditions: any[],
+): any[] {
+  return workspaceCondition ? [workspaceCondition, ...conditions] : conditions;
 }
 
 async function countRows(table: any, conditions: any[] = []): Promise<number> {
@@ -79,6 +116,35 @@ async function countRows(table: any, conditions: any[] = []): Promise<number> {
 
   const [row] = await query;
   return row?.count ?? 0;
+}
+
+async function getOldestTimestamp(
+  table: any,
+  column: any,
+  conditions: any[] = [],
+): Promise<Date | null> {
+  const db = getDb();
+  let query: any = db
+    .select({
+      oldest: sql<Date | string | null>`min(${column})`,
+    })
+    .from(table);
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions));
+  }
+
+  const [row] = await query;
+  const raw = row?.oldest ?? null;
+  if (!raw) return null;
+  const parsed = raw instanceof Date ? raw : new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function ageSecondsFromOldest(oldest: Date | null, now: Date): number | null {
+  if (!oldest) return null;
+  const ageMs = now.getTime() - oldest.getTime();
+  return ageMs > 0 ? Math.floor(ageMs / 1000) : 0;
 }
 
 async function buildSnapshot(
@@ -105,9 +171,13 @@ async function buildSnapshot(
     const expiringBefore = new Date(now.getTime() + horizonMinutes * 60 * 1000);
 
     const workspacePost = workspaceId ? eq(socialPosts.workspaceId, workspaceId) : null;
-    const workspaceAccount = workspaceId ? eq(socialAccounts.workspaceId, workspaceId) : null;
+    const workspaceAccount = workspaceId
+      ? eq(socialAccounts.workspaceId, workspaceId)
+      : null;
     const workspaceEvent = workspaceId ? eq(socialEvents.workspaceId, workspaceId) : null;
-    const workspaceWebhook = workspaceId ? eq(socialWebhooks.workspaceId, workspaceId) : null;
+    const workspaceWebhook = workspaceId
+      ? eq(socialWebhooks.workspaceId, workspaceId)
+      : null;
     const workspaceDelivery = workspaceId
       ? eq(socialWebhookDeliveries.workspaceId, workspaceId)
       : null;
@@ -121,13 +191,36 @@ async function buildSnapshot(
       ? eq(socialTokenRefreshLeases.workspaceId, workspaceId)
       : null;
 
+    const queuedDueNowConditions = [
+      eq(socialPosts.status, "queued"),
+      or(isNull(socialPosts.scheduledAt), lte(socialPosts.scheduledAt, now)),
+      or(isNull(socialPosts.nextDispatchAt), lte(socialPosts.nextDispatchAt, now)),
+    ];
+
+    const retryScheduledConditions = [
+      eq(socialPosts.status, "queued"),
+      eq(socialPosts.dispatchStatus, "retry_scheduled"),
+    ];
+
+    const publishingConditions = [eq(socialPosts.status, "publishing")];
+    const claimedDispatchConditions = [eq(socialDispatchRuns.state, "claimed")];
+    const pendingDeliveryConditions = [
+      eq(socialWebhookDeliveries.status, "pending"),
+    ];
+    const expiredLeaseConditions = [
+      eq(socialTokenRefreshLeases.state, "active"),
+      lte(socialTokenRefreshLeases.leaseExpiresAt, now),
+    ];
+
     const [
       postsTotal,
       postsQueued,
+      postsQueuedDueNow,
       postsPublishing,
       postsFailed,
       postsDraft,
       postsPublished,
+      postsRetryScheduled,
       accountsTotal,
       accountsActive,
       accountsReauth,
@@ -145,112 +238,160 @@ async function buildSnapshot(
       dispatchFailed,
       refreshLeasesActive,
       refreshLeasesExpired,
+      refreshLeasesReleased,
+      deadLettersDeadLettered,
+      deadLettersReplayRequested,
+      deadLettersReplayed,
+      deadLettersReplayFailed,
+      oldestQueuedDuePost,
+      oldestPublishingPost,
+      oldestClaimedDispatch,
+      oldestPendingDelivery,
+      oldestExpiredLease,
     ] = await Promise.all([
-      countRows(socialPosts, workspacePost ? [workspacePost] : []),
-      countRows(socialPosts, workspacePost ? [workspacePost, eq(socialPosts.status, "queued")] : [eq(socialPosts.status, "queued")]),
+      countRows(socialPosts, scopeConditions(workspacePost, [])),
       countRows(
         socialPosts,
-        workspacePost ? [workspacePost, eq(socialPosts.status, "publishing")] : [eq(socialPosts.status, "publishing")],
-      ),
-      countRows(socialPosts, workspacePost ? [workspacePost, eq(socialPosts.status, "failed")] : [eq(socialPosts.status, "failed")]),
-      countRows(socialPosts, workspacePost ? [workspacePost, eq(socialPosts.status, "draft")] : [eq(socialPosts.status, "draft")]),
-      countRows(socialPosts, workspacePost ? [workspacePost, eq(socialPosts.status, "published")] : [eq(socialPosts.status, "published")]),
-      countRows(socialAccounts, workspaceAccount ? [workspaceAccount] : []),
-      countRows(
-        socialAccounts,
-        workspaceAccount ? [workspaceAccount, eq(socialAccounts.disabled, false)] : [eq(socialAccounts.disabled, false)],
+        scopeConditions(workspacePost, [eq(socialPosts.status, "queued")]),
       ),
       countRows(
+        socialPosts,
+        scopeConditions(workspacePost, queuedDueNowConditions),
+      ),
+      countRows(socialPosts, scopeConditions(workspacePost, publishingConditions)),
+      countRows(
+        socialPosts,
+        scopeConditions(workspacePost, [eq(socialPosts.status, "failed")]),
+      ),
+      countRows(
+        socialPosts,
+        scopeConditions(workspacePost, [eq(socialPosts.status, "draft")]),
+      ),
+      countRows(
+        socialPosts,
+        scopeConditions(workspacePost, [eq(socialPosts.status, "published")]),
+      ),
+      countRows(
+        socialPosts,
+        scopeConditions(workspacePost, retryScheduledConditions),
+      ),
+      countRows(socialAccounts, scopeConditions(workspaceAccount, [])),
+      countRows(
         socialAccounts,
-        workspaceAccount
-          ? [workspaceAccount, eq(socialAccounts.requiresReauth, true)]
-          : [eq(socialAccounts.requiresReauth, true)],
+        scopeConditions(workspaceAccount, [eq(socialAccounts.disabled, false)]),
       ),
       countRows(
         socialAccounts,
-        workspaceAccount
-          ? [
-              workspaceAccount,
-              eq(socialAccounts.disabled, false),
-              eq(socialAccounts.requiresReauth, false),
-              isNotNull(socialAccounts.refreshTokenEncrypted),
-              isNotNull(socialAccounts.tokenExpiresAt),
-              lte(socialAccounts.tokenExpiresAt, expiringBefore),
-            ]
-          : [
-              eq(socialAccounts.disabled, false),
-              eq(socialAccounts.requiresReauth, false),
-              isNotNull(socialAccounts.refreshTokenEncrypted),
-              isNotNull(socialAccounts.tokenExpiresAt),
-              lte(socialAccounts.tokenExpiresAt, expiringBefore),
-            ],
+        scopeConditions(workspaceAccount, [eq(socialAccounts.requiresReauth, true)]),
       ),
-      countRows(socialEvents, workspaceEvent ? [workspaceEvent] : []),
+      countRows(
+        socialAccounts,
+        scopeConditions(workspaceAccount, [
+          eq(socialAccounts.disabled, false),
+          eq(socialAccounts.requiresReauth, false),
+          isNotNull(socialAccounts.refreshTokenEncrypted),
+          isNotNull(socialAccounts.tokenExpiresAt),
+          lte(socialAccounts.tokenExpiresAt, expiringBefore),
+        ]),
+      ),
+      countRows(socialEvents, scopeConditions(workspaceEvent, [])),
       countRows(
         socialEvents,
-        workspaceEvent ? [workspaceEvent, eq(socialEvents.userFacing, true)] : [eq(socialEvents.userFacing, true)],
+        scopeConditions(workspaceEvent, [eq(socialEvents.userFacing, true)]),
       ),
       countRows(
         socialEvents,
-        workspaceEvent ? [workspaceEvent, isNull(socialEvents.readAt)] : [isNull(socialEvents.readAt)],
+        scopeConditions(workspaceEvent, [isNull(socialEvents.readAt)]),
       ),
-      countRows(socialWebhooks, workspaceWebhook ? [workspaceWebhook] : []),
+      countRows(socialWebhooks, scopeConditions(workspaceWebhook, [])),
       countRows(
         socialWebhooks,
-        workspaceWebhook ? [workspaceWebhook, eq(socialWebhooks.enabled, true)] : [eq(socialWebhooks.enabled, true)],
+        scopeConditions(workspaceWebhook, [eq(socialWebhooks.enabled, true)]),
       ),
       countRows(
         socialWebhookDeliveries,
-        workspaceDelivery
-          ? [workspaceDelivery, eq(socialWebhookDeliveries.status, "pending")]
-          : [eq(socialWebhookDeliveries.status, "pending")],
+        scopeConditions(workspaceDelivery, pendingDeliveryConditions),
       ),
       countRows(
         socialWebhookDeliveries,
-        workspaceDelivery
-          ? [workspaceDelivery, eq(socialWebhookDeliveries.status, "failed")]
-          : [eq(socialWebhookDeliveries.status, "failed")],
+        scopeConditions(workspaceDelivery, [eq(socialWebhookDeliveries.status, "failed")]),
       ),
       countRows(
         socialWebhookDeliveryDeadLetters,
-        workspaceDeadLetter ? [workspaceDeadLetter] : [],
+        scopeConditions(workspaceDeadLetter, []),
       ),
       countRows(
         socialDispatchRuns,
-        workspaceDispatchRun
-          ? [workspaceDispatchRun, eq(socialDispatchRuns.state, "pending")]
-          : [eq(socialDispatchRuns.state, "pending")],
+        scopeConditions(workspaceDispatchRun, [eq(socialDispatchRuns.state, "pending")]),
       ),
       countRows(
         socialDispatchRuns,
-        workspaceDispatchRun
-          ? [workspaceDispatchRun, eq(socialDispatchRuns.state, "claimed")]
-          : [eq(socialDispatchRuns.state, "claimed")],
+        scopeConditions(workspaceDispatchRun, claimedDispatchConditions),
       ),
       countRows(
         socialDispatchRuns,
-        workspaceDispatchRun
-          ? [workspaceDispatchRun, eq(socialDispatchRuns.state, "failed")]
-          : [eq(socialDispatchRuns.state, "failed")],
+        scopeConditions(workspaceDispatchRun, [eq(socialDispatchRuns.state, "failed")]),
       ),
       countRows(
         socialTokenRefreshLeases,
-        workspaceRefreshLease
-          ? [workspaceRefreshLease, eq(socialTokenRefreshLeases.state, "active")]
-          : [eq(socialTokenRefreshLeases.state, "active")],
+        scopeConditions(workspaceRefreshLease, [eq(socialTokenRefreshLeases.state, "active")]),
       ),
       countRows(
         socialTokenRefreshLeases,
-        workspaceRefreshLease
-          ? [
-              workspaceRefreshLease,
-              eq(socialTokenRefreshLeases.state, "active"),
-              lte(socialTokenRefreshLeases.leaseExpiresAt, now),
-            ]
-          : [
-              eq(socialTokenRefreshLeases.state, "active"),
-              lte(socialTokenRefreshLeases.leaseExpiresAt, now),
-            ],
+        scopeConditions(workspaceRefreshLease, expiredLeaseConditions),
+      ),
+      countRows(
+        socialTokenRefreshLeases,
+        scopeConditions(workspaceRefreshLease, [eq(socialTokenRefreshLeases.state, "released")]),
+      ),
+      countRows(
+        socialWebhookDeliveryDeadLetters,
+        scopeConditions(workspaceDeadLetter, [
+          eq(socialWebhookDeliveryDeadLetters.replayState, "dead_lettered"),
+        ]),
+      ),
+      countRows(
+        socialWebhookDeliveryDeadLetters,
+        scopeConditions(workspaceDeadLetter, [
+          eq(socialWebhookDeliveryDeadLetters.replayState, "replay_requested"),
+        ]),
+      ),
+      countRows(
+        socialWebhookDeliveryDeadLetters,
+        scopeConditions(workspaceDeadLetter, [
+          eq(socialWebhookDeliveryDeadLetters.replayState, "replayed"),
+        ]),
+      ),
+      countRows(
+        socialWebhookDeliveryDeadLetters,
+        scopeConditions(workspaceDeadLetter, [
+          eq(socialWebhookDeliveryDeadLetters.replayState, "failed"),
+        ]),
+      ),
+      getOldestTimestamp(
+        socialPosts,
+        socialPosts.createdAt,
+        scopeConditions(workspacePost, queuedDueNowConditions),
+      ),
+      getOldestTimestamp(
+        socialPosts,
+        socialPosts.updatedAt,
+        scopeConditions(workspacePost, publishingConditions),
+      ),
+      getOldestTimestamp(
+        socialDispatchRuns,
+        socialDispatchRuns.claimedAt,
+        scopeConditions(workspaceDispatchRun, claimedDispatchConditions),
+      ),
+      getOldestTimestamp(
+        socialWebhookDeliveries,
+        socialWebhookDeliveries.createdAt,
+        scopeConditions(workspaceDelivery, pendingDeliveryConditions),
+      ),
+      getOldestTimestamp(
+        socialTokenRefreshLeases,
+        socialTokenRefreshLeases.leaseExpiresAt,
+        scopeConditions(workspaceRefreshLease, expiredLeaseConditions),
       ),
     ]);
 
@@ -292,9 +433,39 @@ async function buildSnapshot(
           claimed: dispatchClaimed,
           failed: dispatchFailed,
         },
+        queueDepth: {
+          queuedPosts: postsQueued,
+          queuedDueNowPosts: postsQueuedDueNow,
+          retryScheduledPosts: postsRetryScheduled,
+          pendingWebhookDeliveries: deliveriesPending,
+          pendingDispatchRuns: dispatchPending,
+          claimedDispatchRuns: dispatchClaimed,
+        },
+        dispatchFailures: {
+          failedDispatchRuns: dispatchFailed,
+          failedPosts: postsFailed,
+          retryScheduledPosts: postsRetryScheduled,
+          failedWebhookDeliveries: deliveriesFailed,
+          deadLetteredDeliveries: deliveriesDeadLettered,
+        },
+        deadLetters: {
+          total: deliveriesDeadLettered,
+          deadLettered: deadLettersDeadLettered,
+          replayRequested: deadLettersReplayRequested,
+          replayed: deadLettersReplayed,
+          replayFailed: deadLettersReplayFailed,
+        },
         refreshLeases: {
           active: refreshLeasesActive,
           expired: refreshLeasesExpired,
+          released: refreshLeasesReleased,
+        },
+        workflowLag: {
+          oldestQueuedDuePostAgeSeconds: ageSecondsFromOldest(oldestQueuedDuePost, now),
+          oldestPublishingPostAgeSeconds: ageSecondsFromOldest(oldestPublishingPost, now),
+          oldestClaimedDispatchAgeSeconds: ageSecondsFromOldest(oldestClaimedDispatch, now),
+          oldestPendingWebhookDeliveryAgeSeconds: ageSecondsFromOldest(oldestPendingDelivery, now),
+          oldestExpiredRefreshLeaseAgeSeconds: ageSecondsFromOldest(oldestExpiredLease, now),
         },
       },
     });
@@ -310,10 +481,14 @@ async function buildSnapshot(
   }
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse<OpsSnapshotResponse>> {
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse<OpsSnapshotResponse>> {
   return buildSnapshot(request);
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse<OpsSnapshotResponse>> {
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<OpsSnapshotResponse>> {
   return buildSnapshot(request);
 }
