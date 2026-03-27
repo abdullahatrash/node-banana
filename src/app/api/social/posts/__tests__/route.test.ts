@@ -8,6 +8,8 @@ const mockGetSocialPost = vi.fn();
 const mockUpdateSocialPost = vi.fn();
 const mockDeleteSocialPost = vi.fn();
 const mockUpdatePostStatus = vi.fn();
+const mockClaimSocialDispatchRun = vi.fn();
+const mockFinalizeSocialDispatchRun = vi.fn();
 const mockCountSocialPostsCreatedInRange = vi.fn();
 const mockWorkflowStart = vi.fn();
 const mockEmitSocialEvent = vi.fn();
@@ -17,20 +19,21 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/studio/authz", () => ({
-  withApiPermission: (...args: unknown[]) => mockWithApiPermission(...args),
+  withApiPermission: mockWithApiPermission,
   authzErrorResponse: (result: { status: number; error: string }) =>
     NextResponse.json({ success: false, error: result.error }, { status: result.status }),
 }));
 
 vi.mock("@/lib/social/repository", () => ({
-  createSocialPost: (...args: unknown[]) => mockCreateSocialPost(...args),
-  listSocialPosts: (...args: unknown[]) => mockListSocialPosts(...args),
-  getSocialPost: (...args: unknown[]) => mockGetSocialPost(...args),
-  updateSocialPost: (...args: unknown[]) => mockUpdateSocialPost(...args),
-  deleteSocialPost: (...args: unknown[]) => mockDeleteSocialPost(...args),
-  updatePostStatus: (...args: unknown[]) => mockUpdatePostStatus(...args),
-  countSocialPostsCreatedInRange: (...args: unknown[]) =>
-    mockCountSocialPostsCreatedInRange(...args),
+  createSocialPost: mockCreateSocialPost,
+  listSocialPosts: mockListSocialPosts,
+  getSocialPost: mockGetSocialPost,
+  updateSocialPost: mockUpdateSocialPost,
+  deleteSocialPost: mockDeleteSocialPost,
+  updatePostStatus: mockUpdatePostStatus,
+  claimSocialDispatchRun: mockClaimSocialDispatchRun,
+  finalizeSocialDispatchRun: mockFinalizeSocialDispatchRun,
+  countSocialPostsCreatedInRange: mockCountSocialPostsCreatedInRange,
   SocialPostNotFoundError: class extends Error {
     constructor(id?: string) { super(`Post "${id}" not found.`); this.name = "SocialPostNotFoundError"; }
   },
@@ -43,11 +46,11 @@ vi.mock("@/lib/social/repository", () => ({
 }));
 
 vi.mock("workflow/api", () => ({
-  start: (...args: unknown[]) => mockWorkflowStart(...args),
+  start: mockWorkflowStart,
 }));
 
 vi.mock("@/lib/social/events", () => ({
-  emitSocialEvent: (...args: unknown[]) => mockEmitSocialEvent(...args),
+  emitSocialEvent: mockEmitSocialEvent,
 }));
 
 vi.mock("@/utils/logger", () => ({
@@ -232,6 +235,15 @@ describe("/api/social/posts", () => {
 describe("/api/social/posts/[postId]/publish", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockClaimSocialDispatchRun.mockImplementation(
+      (input: { claimToken?: string; dispatchKey: string }) => ({
+        id: "sdrun_1",
+        dispatchKey: input.dispatchKey,
+        claimToken: input.claimToken,
+        state: "claimed",
+      }),
+    );
+    mockFinalizeSocialDispatchRun.mockResolvedValue({});
   });
 
   it("returns 401 for unauthenticated requests", async () => {

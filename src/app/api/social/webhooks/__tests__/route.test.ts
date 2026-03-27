@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 const mockWithApiPermission = vi.fn();
 const mockCountActiveSocialWebhooks = vi.fn();
 const mockCreateSocialWebhook = vi.fn();
+const mockCreateSocialWebhookSubscription = vi.fn();
 const mockListSocialWebhooks = vi.fn();
 const mockEncryptToken = vi.fn();
 
@@ -21,6 +22,8 @@ vi.mock("@/lib/social/repository", () => ({
   countActiveSocialWebhooks: (...args: unknown[]) =>
     mockCountActiveSocialWebhooks(...args),
   createSocialWebhook: (...args: unknown[]) => mockCreateSocialWebhook(...args),
+  createSocialWebhookSubscription: (...args: unknown[]) =>
+    mockCreateSocialWebhookSubscription(...args),
   listSocialWebhooks: (...args: unknown[]) => mockListSocialWebhooks(...args),
 }));
 
@@ -126,6 +129,42 @@ describe("/api/social/webhooks", () => {
       signingSecretEncrypted: "enc_secret",
       createdByUserId: "user_1",
     });
+    expect(mockCreateSocialWebhookSubscription).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      webhookId: "swh_1",
+      name: undefined,
+      enabled: true,
+      filters: undefined,
+      createdByUserId: "user_1",
+    });
+  });
+
+  it("rejects missing webhook URLs", async () => {
+    authorized();
+
+    const { POST } = await import("../route");
+    const response = await POST(
+      req("http://localhost:3000/api/social/webhooks", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects non-http(s) webhook URLs", async () => {
+    authorized();
+
+    const { POST } = await import("../route");
+    const response = await POST(
+      req("http://localhost:3000/api/social/webhooks", {
+        method: "POST",
+        body: JSON.stringify({ targetUrl: "ftp://example.com/hook" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
   });
 
   it("returns 402 when webhook quota is exceeded", async () => {

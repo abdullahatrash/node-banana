@@ -3,14 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { isDatabaseConfigured } from "@/lib/db";
 import { ensureInternalSocialAuth } from "@/lib/social/internal-auth";
-import { emitSocialEvent } from "@/lib/social/events";
 import "@/lib/social/runtime-bootstrap";
+import { emitSocialEvent } from "@/lib/social/events";
 import {
-  claimPostForDispatch,
+  claimQueuedDispatchedPostForRecovery,
   claimSocialDispatchRun,
   finalizeSocialDispatchRun,
   getSocialAccountById,
-  listDueQueuedPosts,
+  listQueuedDispatchedPostsMissingWorkflow,
   updatePostStatus,
 } from "@/lib/social/repository";
 import { getProvider } from "@/lib/social/provider-registry";
@@ -18,10 +18,11 @@ import { resolveWorkflowRunRef } from "@/lib/social/workflow-utils";
 import { publishPostWorkflow } from "@/../workflows/social-publish";
 import { logger } from "@/utils/logger";
 
-interface DispatchResponse {
+interface RecoverMissingDispatchResponse {
   success: boolean;
   summary?: {
     scanned: number;
+    recovered: number;
     dispatched: number;
     retryScheduled: number;
     failed: number;
@@ -30,37 +31,25 @@ interface DispatchResponse {
   error?: string;
 }
 
+const DEFAULT_BATCH_SIZE = 25;
 const MAX_BATCH_SIZE = 100;
-const DEFAULT_BATCH_SIZE = 20;
-const DEFAULT_MAX_DISPATCH_ATTEMPTS = 5;
+const DEFAULT_MAX_ATTEMPTS = 5;
 
-function getBatchSize(request: NextRequest): number {
-  const queryBatch = Number.parseInt(
-    request.nextUrl.searchParams.get("batch") ?? "",
-    10,
-  );
-  const envBatch = Number.parseInt(
-    process.env.SOCIAL_DISPATCH_BATCH_SIZE ?? "",
-    10,
-  );
-
-  const raw = Number.isFinite(queryBatch)
-    ? queryBatch
-    : Number.isFinite(envBatch)
-      ? envBatch
-      : DEFAULT_BATCH_SIZE;
-
-  return Math.max(1, Math.min(MAX_BATCH_SIZE, raw));
+function positiveInt(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function getMaxDispatchAttempts(): number {
-  const value = Number.parseInt(
-    process.env.SOCIAL_DISPATCH_MAX_ATTEMPTS ?? "",
-    10,
-  );
-  return Number.isFinite(value) && value > 0
-    ? value
-    : DEFAULT_MAX_DISPATCH_ATTEMPTS;
+function getBatchSize(request: NextRequest): number {
+  const queryBatch = positiveInt(request.nextUrl.searchParams.get("batch"));
+  const envBatch = positiveInt(process.env.SOCIAL_RECOVER_BATCH_SIZE ?? null);
+
+  return Math.min(MAX_BATCH_SIZE, queryBatch ?? envBatch ?? DEFAULT_BATCH_SIZE);
+}
+
+function getMaxAttempts(): number {
+  return positiveInt(process.env.SOCIAL_DISPATCH_MAX_ATTEMPTS ?? null) ?? DEFAULT_MAX_ATTEMPTS;
 }
 
 function backoffMs(attempts: number): number {
@@ -68,21 +57,9 @@ function backoffMs(attempts: number): number {
   return Math.min(60 * 60 * 1000, base * Math.max(1, attempts));
 }
 
-function getProviderKey(platform: string | null | undefined): string | null {
-  if (!platform) {
-    return null;
-  }
-
-  try {
-    return getProvider(platform).identifier;
-  } catch {
-    return null;
-  }
-}
-
-export async function POST(
+async function handleRecover(
   request: NextRequest,
-): Promise<NextResponse<DispatchResponse>> {
+): Promise<NextResponse<RecoverMissingDispatchResponse>> {
   if (!isDatabaseConfigured()) {
     return NextResponse.json(
       { success: false, error: "DATABASE_URL is not configured." },
@@ -97,14 +74,16 @@ export async function POST(
 
   try {
     const batchSize = getBatchSize(request);
-    const maxDispatchAttempts = getMaxDispatchAttempts();
+    const maxAttempts = getMaxAttempts();
+    const dryRun = request.nextUrl.searchParams.get("dryRun") === "true";
     const now = new Date();
 
-    const duePosts = await listDueQueuedPosts({
+    const duePosts = await listQueuedDispatchedPostsMissingWorkflow({
       now,
       limit: batchSize,
     });
 
+    let recovered = 0;
     let dispatched = 0;
     let retryScheduled = 0;
     let failed = 0;
@@ -112,7 +91,7 @@ export async function POST(
     const activeByProvider = new Map<string, number>();
 
     for (const post of duePosts) {
-      const claimed = await claimPostForDispatch({
+      const claimed = await claimQueuedDispatchedPostForRecovery({
         postId: post.id,
         now,
       });
@@ -122,22 +101,20 @@ export async function POST(
         continue;
       }
 
-      const attempts = claimed.dispatchAttempts ?? 1;
-      const dispatchKey = `publish:${claimed.id}:${attempts}`;
-      const dispatchClaimToken = randomUUID();
-      let providerKey: string | null = null;
+      const attempt = claimed.dispatchAttempts ?? 1;
+      const dispatchKey = `recover:${claimed.id}:${attempt}`;
+      recovered += 1;
 
+      let providerKey: string | null = null;
       if (claimed.socialAccountId) {
         try {
           const account = await getSocialAccountById(claimed.socialAccountId);
-          providerKey = getProviderKey(account.platform);
-          if (providerKey) {
-            const provider = getProvider(providerKey);
-            const active = activeByProvider.get(providerKey) ?? 0;
-            if (active >= Math.max(1, provider.maxConcurrentJobs || 1)) {
-              const nextDispatchAt = new Date(
-                now.getTime() + backoffMs(attempts),
-              );
+          providerKey = account.platform;
+          const provider = getProvider(account.platform);
+          const active = activeByProvider.get(providerKey) ?? 0;
+          if (active >= Math.max(1, provider.maxConcurrentJobs || 1)) {
+            const nextDispatchAt = new Date(now.getTime() + backoffMs(attempt));
+            if (!dryRun) {
               await updatePostStatus(claimed.id, "queued", {
                 dispatchStatus: "retry_scheduled",
                 errorMessage: "Provider concurrency limit reached.",
@@ -146,25 +123,39 @@ export async function POST(
                 lastDispatchError: "provider_concurrency_gate",
                 lockedAt: null,
               });
-              logger.warn("system", "Internal social dispatch gated by provider concurrency", {
-                workspaceId: claimed.workspaceId,
-                postId: claimed.id,
-                accountId: claimed.socialAccountId,
-                provider: providerKey,
-                dispatchKey,
-                workflowRunRef: null,
-              });
-              retryScheduled += 1;
-              continue;
             }
-            activeByProvider.set(providerKey, active + 1);
+            retryScheduled += 1;
+            logger.warn("system", "Recovery gated by provider concurrency", {
+              workspaceId: claimed.workspaceId,
+              postId: claimed.id,
+              accountId: claimed.socialAccountId,
+              provider: providerKey,
+              dispatchKey,
+              workflowRunRef: null,
+            });
+            continue;
           }
+          activeByProvider.set(providerKey, active + 1);
         } catch {
           providerKey = null;
         }
       }
 
+      if (dryRun) {
+        dispatched += 1;
+        if (providerKey) {
+          const active = activeByProvider.get(providerKey) ?? 0;
+          if (active <= 1) {
+            activeByProvider.delete(providerKey);
+          } else {
+            activeByProvider.set(providerKey, active - 1);
+          }
+        }
+        continue;
+      }
+
       try {
+        const dispatchClaimToken = randomUUID();
         const dispatchRun = await claimSocialDispatchRun({
           workspaceId: claimed.workspaceId,
           dispatchKey,
@@ -173,10 +164,6 @@ export async function POST(
           postId: claimed.id,
           accountId: claimed.socialAccountId ?? null,
           provider: (providerKey as import("@/lib/db/schema").SocialPlatform | null) ?? null,
-          payload: {
-            postId: claimed.id,
-            workspaceId: claimed.workspaceId,
-          },
         });
 
         if (!dispatchRun || dispatchRun.claimToken !== dispatchClaimToken) {
@@ -193,7 +180,6 @@ export async function POST(
           claimed.workspaceId,
         ]);
         const workflowRunRef = resolveWorkflowRunRef(workflowRun, dispatchKey);
-
         await updatePostStatus(claimed.id, "queued", {
           dispatchStatus: "dispatched",
           workflowRunRef,
@@ -206,9 +192,11 @@ export async function POST(
           state: "succeeded",
           result: { workflowRunRef },
         });
-        logger.info("system", "Internal social dispatch succeeded", {
+        logger.info("system", "Recovered missing social dispatch", {
           workspaceId: claimed.workspaceId,
           postId: claimed.id,
+          accountId: claimed.socialAccountId,
+          provider: providerKey,
           dispatchKey,
           workflowRunRef,
         });
@@ -220,12 +208,9 @@ export async function POST(
           dispatchKey,
           state: "failed",
           errorMessage,
-          result: {
-            attempts,
-          },
         });
 
-        if (attempts >= maxDispatchAttempts) {
+        if (attempt >= maxAttempts) {
           await updatePostStatus(claimed.id, "failed", {
             dispatchStatus: "failed",
             errorMessage: "Dispatch failed after maximum retry attempts.",
@@ -238,18 +223,20 @@ export async function POST(
             workspaceId: claimed.workspaceId,
             eventType: "post.failed",
             severity: "error",
-            message: "Post failed after repeated dispatch failures.",
+            message: "Post failed while recovering a missing dispatch.",
             userFacing: true,
             postId: claimed.id,
             dispatchKey,
             metadata: {
-              attempts,
+              attempts: attempt,
               error: errorMessage,
             },
           });
-          logger.error("system", "Internal social dispatch exhausted retries", {
+          logger.error("system", "Recovery exhausted retries", {
             workspaceId: claimed.workspaceId,
             postId: claimed.id,
+            accountId: claimed.socialAccountId,
+            provider: providerKey,
             dispatchKey,
             workflowRunRef: null,
             error: errorMessage,
@@ -258,7 +245,7 @@ export async function POST(
           continue;
         }
 
-        const nextDispatchAt = new Date(now.getTime() + backoffMs(attempts));
+        const nextDispatchAt = new Date(now.getTime() + backoffMs(attempt));
         await updatePostStatus(claimed.id, "queued", {
           dispatchStatus: "retry_scheduled",
           errorMessage: "Dispatch failed. Retry has been scheduled.",
@@ -271,18 +258,20 @@ export async function POST(
           workspaceId: claimed.workspaceId,
           eventType: "dispatch.failed",
           severity: "warn",
-          message: "Dispatch failed and was scheduled for retry.",
+          message: "Recovery failed and retry was scheduled.",
           postId: claimed.id,
           dispatchKey,
           metadata: {
-            attempts,
+            attempts: attempt,
             error: errorMessage,
             retryAt: nextDispatchAt.toISOString(),
           },
         });
-        logger.warn("system", "Internal social dispatch scheduled retry", {
+        logger.warn("system", "Recovery scheduled retry", {
           workspaceId: claimed.workspaceId,
           postId: claimed.id,
+          accountId: claimed.socialAccountId,
+          provider: providerKey,
           dispatchKey,
           workflowRunRef: null,
           error: errorMessage,
@@ -304,6 +293,7 @@ export async function POST(
       success: true,
       summary: {
         scanned: duePosts.length,
+        recovered,
         dispatched,
         retryScheduled,
         failed,
@@ -317,9 +307,21 @@ export async function POST(
         error:
           error instanceof Error
             ? error.message
-            : "Failed to dispatch queued social posts",
+            : "Failed to recover missing social dispatches",
       },
       { status: 500 },
     );
   }
+}
+
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse<RecoverMissingDispatchResponse>> {
+  return handleRecover(request);
+}
+
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<RecoverMissingDispatchResponse>> {
+  return handleRecover(request);
 }

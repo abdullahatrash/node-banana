@@ -1,18 +1,42 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
+  socialAutomationRules,
+  socialAutomationTasks,
   socialAccounts,
+  socialDispatchRuns,
   socialEvents,
+  socialEventReads,
+  socialNotificationPreferences,
   socialOAuthSelectionSessions,
   socialOAuthStates,
+  socialTokenRefreshLeases,
+  socialWebhookDeliveryDeadLetters,
   socialWebhookDeliveries,
+  socialWebhookSubscriptions,
   socialWebhooks,
   socialPosts,
+  type AutomationTaskState,
+  type SocialDispatchRunState,
   type SocialEventSeverity,
   type SocialEventType,
   type SocialPlatform,
   type SocialPostStatus,
+  type SocialTokenRefreshLeaseState,
+  type SocialWebhookDeadLetterReplayState,
 } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
@@ -87,6 +111,196 @@ export class SocialEventNotFoundError extends Error {
     super(id ? `Social event "${id}" not found.` : "Social event not found.");
     this.name = "SocialEventNotFoundError";
   }
+}
+
+export class SocialDispatchRunNotFoundError extends Error {
+  constructor(dispatchKey?: string) {
+    super(
+      dispatchKey
+        ? `Social dispatch run "${dispatchKey}" not found.`
+        : "Social dispatch run not found.",
+    );
+    this.name = "SocialDispatchRunNotFoundError";
+  }
+}
+
+export class SocialTokenRefreshLeaseNotFoundError extends Error {
+  constructor(id?: string) {
+    super(
+      id
+        ? `Social token refresh lease "${id}" not found.`
+        : "Social token refresh lease not found.",
+    );
+    this.name = "SocialTokenRefreshLeaseNotFoundError";
+  }
+}
+
+export class SocialEventReadNotFoundError extends Error {
+  constructor(id?: string) {
+    super(
+      id
+        ? `Social event read "${id}" not found.`
+        : "Social event read not found.",
+    );
+    this.name = "SocialEventReadNotFoundError";
+  }
+}
+
+export class SocialNotificationPreferencesNotFoundError extends Error {
+  constructor(userId?: string) {
+    super(
+      userId
+        ? `Social notification preferences for user "${userId}" not found.`
+        : "Social notification preferences not found.",
+    );
+    this.name = "SocialNotificationPreferencesNotFoundError";
+  }
+}
+
+export class SocialWebhookSubscriptionNotFoundError extends Error {
+  constructor(id?: string) {
+    super(
+      id
+        ? `Social webhook subscription "${id}" not found.`
+        : "Social webhook subscription not found.",
+    );
+    this.name = "SocialWebhookSubscriptionNotFoundError";
+  }
+}
+
+export class SocialWebhookDeliveryDeadLetterNotFoundError extends Error {
+  constructor(id?: string) {
+    super(
+      id
+        ? `Social webhook dead letter "${id}" not found.`
+        : "Social webhook dead letter not found.",
+    );
+    this.name = "SocialWebhookDeliveryDeadLetterNotFoundError";
+  }
+}
+
+export class AutomationRuleNotFoundError extends Error {
+  constructor(id?: string) {
+    super(id ? `Automation rule "${id}" not found.` : "Automation rule not found.");
+    this.name = "AutomationRuleNotFoundError";
+  }
+}
+
+export class AutomationTaskNotFoundError extends Error {
+  constructor(id?: string) {
+    super(id ? `Automation task "${id}" not found.` : "Automation task not found.");
+    this.name = "AutomationTaskNotFoundError";
+  }
+}
+
+type SocialWebhookSubscriptionFilters = {
+  eventTypes?: SocialEventType[];
+  severities?: SocialEventSeverity[];
+  platforms?: SocialPlatform[];
+  userFacing?: boolean;
+  postIds?: string[];
+  accountIds?: string[];
+  dispatchKeys?: string[];
+  rootPostIds?: string[];
+  kinds?: string[];
+  triggerSources?: string[];
+  metadata?: Record<string, unknown>;
+};
+
+type SocialWebhookMatchInput = {
+  workspaceId: string;
+  eventType?: SocialEventType;
+  severity?: SocialEventSeverity;
+  platform?: SocialPlatform;
+  userFacing?: boolean;
+  postId?: string | null;
+  accountId?: string | null;
+  dispatchKey?: string | null;
+  rootPostId?: string | null;
+  kind?: string | null;
+  triggerSource?: string | null;
+  metadata?: Record<string, unknown> | null;
+  webhookId?: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function includesFilter<T extends string>(
+  filterValue: unknown,
+  actual: T | null | undefined,
+): boolean {
+  if (filterValue == null) {
+    return true;
+  }
+
+  if (!Array.isArray(filterValue)) {
+    return filterValue === actual;
+  }
+
+  return actual !== undefined && actual !== null && filterValue.includes(actual);
+}
+
+function matchesMetadataFilter(
+  expected: Record<string, unknown> | undefined,
+  actual: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!expected) {
+    return true;
+  }
+
+  if (!actual) {
+    return false;
+  }
+
+  return Object.entries(expected).every(([key, value]) => {
+    if (Array.isArray(value)) {
+      return Array.isArray(actual[key])
+        ? value.every((item) => (actual[key] as unknown[]).includes(item))
+        : false;
+    }
+
+    if (isRecord(value)) {
+      return isRecord(actual[key]) && matchesMetadataFilter(value, actual[key]);
+    }
+
+    return actual[key] === value;
+  });
+}
+
+function matchesWebhookSubscriptionFilter(
+  filters: unknown,
+  event: SocialWebhookMatchInput,
+): boolean {
+  if (!isRecord(filters)) {
+    return true;
+  }
+
+  const typedFilters = filters as SocialWebhookSubscriptionFilters;
+
+  if (
+    !includesFilter(typedFilters.eventTypes, event.eventType) ||
+    !includesFilter(typedFilters.severities, event.severity) ||
+    !includesFilter(typedFilters.platforms, event.platform) ||
+    !includesFilter(typedFilters.postIds, event.postId ?? null) ||
+    !includesFilter(typedFilters.accountIds, event.accountId ?? null) ||
+    !includesFilter(typedFilters.dispatchKeys, event.dispatchKey ?? null) ||
+    !includesFilter(typedFilters.rootPostIds, event.rootPostId ?? null) ||
+    !includesFilter(typedFilters.kinds, event.kind ?? null) ||
+    !includesFilter(typedFilters.triggerSources, event.triggerSource ?? null)
+  ) {
+    return false;
+  }
+
+  if (
+    typedFilters.userFacing !== undefined &&
+    typedFilters.userFacing !== event.userFacing
+  ) {
+    return false;
+  }
+
+  return matchesMetadataFilter(typedFilters.metadata, event.metadata ?? undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +653,12 @@ export async function createSocialPost(input: {
   mediaUrls?: Array<{ type: string; url: string; alt?: string }>;
   platformSettings?: Record<string, unknown>;
   scheduledAt?: Date;
+  rootPostId?: string | null;
+  kind?: string;
+  delaySeconds?: number | null;
+  position?: number | null;
+  sourceTemplatePostId?: string | null;
+  triggerSource?: string | null;
   studioAssetId?: string;
   createdByUserId: string;
 }) {
@@ -453,10 +673,16 @@ export async function createSocialPost(input: {
       workspaceId: input.workspaceId,
       socialAccountId: input.socialAccountId,
       status: "draft",
+      rootPostId: input.rootPostId ?? null,
       content: input.content ?? null,
       mediaUrls: input.mediaUrls ?? null,
       platformSettings: input.platformSettings ?? null,
       scheduledAt: input.scheduledAt ?? null,
+      kind: input.kind ?? "post",
+      delaySeconds: input.delaySeconds ?? null,
+      position: input.position ?? null,
+      sourceTemplatePostId: input.sourceTemplatePostId ?? null,
+      triggerSource: input.triggerSource ?? null,
       studioAssetId: input.studioAssetId ?? null,
       createdByUserId: input.createdByUserId,
       createdAt: now,
@@ -472,6 +698,10 @@ export async function listSocialPosts(
   filters?: {
     status?: SocialPostStatus;
     socialAccountId?: string;
+    rootPostId?: string;
+    kind?: string;
+    sourceTemplatePostId?: string;
+    triggerSource?: string;
     startDate?: Date;
     endDate?: Date;
     limit?: number;
@@ -486,6 +716,20 @@ export async function listSocialPosts(
   }
   if (filters?.socialAccountId) {
     conditions.push(eq(socialPosts.socialAccountId, filters.socialAccountId));
+  }
+  if (filters?.rootPostId) {
+    conditions.push(eq(socialPosts.rootPostId, filters.rootPostId));
+  }
+  if (filters?.kind) {
+    conditions.push(eq(socialPosts.kind, filters.kind));
+  }
+  if (filters?.sourceTemplatePostId) {
+    conditions.push(
+      eq(socialPosts.sourceTemplatePostId, filters.sourceTemplatePostId),
+    );
+  }
+  if (filters?.triggerSource) {
+    conditions.push(eq(socialPosts.triggerSource, filters.triggerSource));
   }
   if (filters?.startDate) {
     conditions.push(gte(socialPosts.scheduledAt, filters.startDate));
@@ -550,6 +794,34 @@ export async function listDueQueuedPosts(input?: {
     .limit(limit);
 }
 
+export async function listQueuedDispatchedPostsMissingWorkflow(input?: {
+  now?: Date;
+  lockStaleBefore?: Date;
+  limit?: number;
+}) {
+  const db = getDb();
+  const now = input?.now ?? new Date();
+  const lockStaleBefore =
+    input?.lockStaleBefore ?? new Date(now.getTime() - 10 * 60 * 1000);
+  const limit = input?.limit ?? 50;
+
+  return db
+    .select()
+    .from(socialPosts)
+    .where(
+      and(
+        eq(socialPosts.status, "queued"),
+        eq(socialPosts.dispatchStatus, "dispatched"),
+        isNull(socialPosts.workflowRunRef),
+        or(isNull(socialPosts.scheduledAt), lte(socialPosts.scheduledAt, now)),
+        or(isNull(socialPosts.nextDispatchAt), lte(socialPosts.nextDispatchAt, now)),
+        or(isNull(socialPosts.lockedAt), lt(socialPosts.lockedAt, lockStaleBefore)),
+      ),
+    )
+    .orderBy(desc(socialPosts.createdAt))
+    .limit(limit);
+}
+
 export async function claimPostForDispatch(input: {
   postId: string;
   now?: Date;
@@ -577,6 +849,41 @@ export async function claimPostForDispatch(input: {
           eq(socialPosts.dispatchStatus, "pending"),
           eq(socialPosts.dispatchStatus, "retry_scheduled"),
         ),
+        or(
+          isNull(socialPosts.lockedAt),
+          lt(socialPosts.lockedAt, lockStaleBefore),
+        ),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
+}
+
+export async function claimQueuedDispatchedPostForRecovery(input: {
+  postId: string;
+  now?: Date;
+  lockStaleBefore?: Date;
+}) {
+  const db = getDb();
+  const now = input.now ?? new Date();
+  const lockStaleBefore =
+    input.lockStaleBefore ?? new Date(now.getTime() - 10 * 60 * 1000);
+
+  const [row] = await db
+    .update(socialPosts)
+    .set({
+      lockedAt: now,
+      dispatchStatus: "pending",
+      dispatchAttempts: sql`${socialPosts.dispatchAttempts} + 1`,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(socialPosts.id, input.postId),
+        eq(socialPosts.status, "queued"),
+        eq(socialPosts.dispatchStatus, "dispatched"),
+        isNull(socialPosts.workflowRunRef),
         or(
           isNull(socialPosts.lockedAt),
           lt(socialPosts.lockedAt, lockStaleBefore),
@@ -722,6 +1029,12 @@ export async function updateSocialPost(
     mediaUrls?: Array<{ type: string; url: string; alt?: string }>;
     platformSettings?: Record<string, unknown>;
     scheduledAt?: Date | null;
+    rootPostId?: string | null;
+    kind?: string;
+    delaySeconds?: number | null;
+    position?: number | null;
+    sourceTemplatePostId?: string | null;
+    triggerSource?: string | null;
   },
 ) {
   const db = getDb();
@@ -741,6 +1054,16 @@ export async function updateSocialPost(
         platformSettings: data.platformSettings,
       }),
       ...(data.scheduledAt !== undefined && { scheduledAt: data.scheduledAt }),
+      ...(data.rootPostId !== undefined && { rootPostId: data.rootPostId }),
+      ...(data.kind !== undefined && { kind: data.kind }),
+      ...(data.delaySeconds !== undefined && { delaySeconds: data.delaySeconds }),
+      ...(data.position !== undefined && { position: data.position }),
+      ...(data.sourceTemplatePostId !== undefined && {
+        sourceTemplatePostId: data.sourceTemplatePostId,
+      }),
+      ...(data.triggerSource !== undefined && {
+        triggerSource: data.triggerSource,
+      }),
       updatedAt: new Date(),
     })
     .where(
@@ -859,6 +1182,413 @@ export async function incrementRetryCount(postId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Social parity primitives: dispatch runs, refresh leases, reads, prefs
+// ---------------------------------------------------------------------------
+
+export async function claimSocialDispatchRun(input: {
+  workspaceId: string;
+  dispatchKey: string;
+  claimToken?: string;
+  staleClaimBefore?: Date;
+  kind?: string;
+  postId?: string | null;
+  eventId?: string | null;
+  accountId?: string | null;
+  provider?: SocialPlatform | null;
+  payload?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
+  now?: Date;
+}) {
+  const db = getDb();
+  const now = input.now ?? new Date();
+  const claimToken = input.claimToken ?? randomUUID();
+  const staleClaimBefore =
+    input.staleClaimBefore ?? new Date(now.getTime() - 10 * 60 * 1000);
+  const id = `sdrun_${randomUUID()}`;
+
+  const [inserted] = await db
+    .insert(socialDispatchRuns)
+    .values({
+      id,
+      workspaceId: input.workspaceId,
+      dispatchKey: input.dispatchKey,
+      state: "claimed",
+      kind: input.kind ?? "post",
+      postId: input.postId ?? null,
+      eventId: input.eventId ?? null,
+      accountId: input.accountId ?? null,
+      provider: input.provider ?? null,
+      claimToken,
+      claimedAt: now,
+      finalizedAt: null,
+      errorMessage: null,
+      result: null,
+      payload: input.payload ?? null,
+      metadata: input.metadata ?? null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: socialDispatchRuns.dispatchKey,
+      set: {
+        workspaceId: input.workspaceId,
+        state: "claimed",
+        kind: input.kind ?? "post",
+        postId: input.postId ?? null,
+        eventId: input.eventId ?? null,
+        accountId: input.accountId ?? null,
+        provider: input.provider ?? null,
+        claimToken,
+        claimedAt: now,
+        finalizedAt: null,
+        errorMessage: null,
+        payload: input.payload ?? null,
+        metadata: input.metadata ?? null,
+        updatedAt: now,
+      },
+      where: or(
+        eq(socialDispatchRuns.state, "pending"),
+        eq(socialDispatchRuns.state, "failed"),
+        and(
+          eq(socialDispatchRuns.state, "claimed"),
+          or(
+            isNull(socialDispatchRuns.claimedAt),
+            lt(socialDispatchRuns.claimedAt, staleClaimBefore),
+          ),
+        ),
+      ),
+    })
+    .returning();
+
+  if (inserted) {
+    return inserted;
+  }
+
+  const [existing] = await db
+    .select()
+    .from(socialDispatchRuns)
+    .where(eq(socialDispatchRuns.dispatchKey, input.dispatchKey));
+
+  return existing ?? null;
+}
+
+export async function finalizeSocialDispatchRun(input: {
+  dispatchKey: string;
+  state: "succeeded" | "failed";
+  errorMessage?: string | null;
+  result?: Record<string, unknown> | null;
+  finalizedAt?: Date;
+  now?: Date;
+}) {
+  const db = getDb();
+  const now = input.now ?? new Date();
+
+  const [row] = await db
+    .update(socialDispatchRuns)
+    .set({
+      state: input.state,
+      errorMessage: input.errorMessage ?? null,
+      result: input.result ?? null,
+      finalizedAt: input.finalizedAt ?? now,
+      updatedAt: now,
+    })
+    .where(eq(socialDispatchRuns.dispatchKey, input.dispatchKey))
+    .returning();
+
+  if (!row) {
+    throw new SocialDispatchRunNotFoundError(input.dispatchKey);
+  }
+
+  return row;
+}
+
+export async function claimSocialTokenRefreshLease(input: {
+  workspaceId: string;
+  socialAccountId: string;
+  claimedBy?: string | null;
+  leaseSeconds?: number;
+  now?: Date;
+}) {
+  const db = getDb();
+  const now = input.now ?? new Date();
+  const leaseSeconds = input.leaseSeconds ?? 15 * 60;
+  const leaseToken = randomUUID();
+  const leaseExpiresAt = new Date(now.getTime() + leaseSeconds * 1000);
+
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(socialTokenRefreshLeases)
+      .where(
+        and(
+          eq(socialTokenRefreshLeases.workspaceId, input.workspaceId),
+          eq(socialTokenRefreshLeases.socialAccountId, input.socialAccountId),
+        ),
+      );
+
+    if (
+      current &&
+      current.state === "active" &&
+      current.leaseExpiresAt > now &&
+      current.releasedAt == null
+    ) {
+      return null;
+    }
+
+    if (current) {
+      const [row] = await tx
+        .update(socialTokenRefreshLeases)
+        .set({
+          leaseToken,
+          state: "active",
+          leasedAt: now,
+          leaseExpiresAt,
+          releasedAt: null,
+          claimedBy: input.claimedBy ?? null,
+          lastError: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(socialTokenRefreshLeases.workspaceId, input.workspaceId),
+            eq(socialTokenRefreshLeases.socialAccountId, input.socialAccountId),
+          ),
+        )
+        .returning();
+
+      return row ?? null;
+    }
+
+    const [row] = await tx
+      .insert(socialTokenRefreshLeases)
+      .values({
+        id: `stl_${randomUUID()}`,
+        workspaceId: input.workspaceId,
+        socialAccountId: input.socialAccountId,
+        leaseToken,
+        state: "active",
+        leasedAt: now,
+        leaseExpiresAt,
+        releasedAt: null,
+        claimedBy: input.claimedBy ?? null,
+        lastError: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+
+    return row ?? null;
+  });
+}
+
+export async function releaseSocialTokenRefreshLease(input: {
+  workspaceId: string;
+  socialAccountId: string;
+  leaseToken: string;
+  now?: Date;
+}) {
+  const db = getDb();
+  const now = input.now ?? new Date();
+
+  const [row] = await db
+    .update(socialTokenRefreshLeases)
+    .set({
+      state: "released",
+      releasedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(socialTokenRefreshLeases.workspaceId, input.workspaceId),
+        eq(socialTokenRefreshLeases.socialAccountId, input.socialAccountId),
+        eq(socialTokenRefreshLeases.leaseToken, input.leaseToken),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
+}
+
+export async function markSocialEventReadForUser(input: {
+  workspaceId: string;
+  eventId: string;
+  userId: string;
+  readAt?: Date;
+}) {
+  const db = getDb();
+  const readAt = input.readAt ?? new Date();
+
+  const [row] = await db
+    .insert(socialEventReads)
+    .values({
+      eventId: input.eventId,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      readAt,
+      createdAt: readAt,
+    })
+    .onConflictDoUpdate({
+      target: [socialEventReads.eventId, socialEventReads.userId],
+      set: {
+        workspaceId: input.workspaceId,
+        readAt,
+      },
+    })
+    .returning();
+
+  return row;
+}
+
+export async function unmarkSocialEventReadForUser(input: {
+  workspaceId: string;
+  eventId: string;
+  userId: string;
+}) {
+  const db = getDb();
+  const [row] = await db
+    .delete(socialEventReads)
+    .where(
+      and(
+        eq(socialEventReads.workspaceId, input.workspaceId),
+        eq(socialEventReads.eventId, input.eventId),
+        eq(socialEventReads.userId, input.userId),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
+}
+
+export async function getSocialEventReadForUser(input: {
+  workspaceId: string;
+  eventId: string;
+  userId: string;
+}) {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(socialEventReads)
+    .where(
+      and(
+        eq(socialEventReads.workspaceId, input.workspaceId),
+        eq(socialEventReads.eventId, input.eventId),
+        eq(socialEventReads.userId, input.userId),
+      ),
+    );
+
+  if (!row) {
+    throw new SocialEventReadNotFoundError(input.eventId);
+  }
+
+  return row;
+}
+
+export async function listSocialEventReadsForUser(
+  workspaceId: string,
+  userId: string,
+) {
+  const db = getDb();
+  return db
+    .select()
+    .from(socialEventReads)
+    .where(
+      and(
+        eq(socialEventReads.workspaceId, workspaceId),
+        eq(socialEventReads.userId, userId),
+      ),
+    )
+    .orderBy(desc(socialEventReads.readAt));
+}
+
+export async function upsertSocialNotificationPreferences(input: {
+  workspaceId: string;
+  userId: string;
+  inAppEnabled?: boolean;
+  emailEnabled?: boolean;
+  webhookEnabled?: boolean;
+  muteAll?: boolean;
+  preferences?: Record<string, unknown> | null;
+}) {
+  const db = getDb();
+  const now = new Date();
+
+  const [row] = await db
+    .insert(socialNotificationPreferences)
+    .values({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      inAppEnabled: input.inAppEnabled ?? true,
+      emailEnabled: input.emailEnabled ?? false,
+      webhookEnabled: input.webhookEnabled ?? false,
+      muteAll: input.muteAll ?? false,
+      preferences: input.preferences ?? null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        socialNotificationPreferences.workspaceId,
+        socialNotificationPreferences.userId,
+      ],
+      set: {
+        inAppEnabled: input.inAppEnabled ?? true,
+        emailEnabled: input.emailEnabled ?? false,
+        webhookEnabled: input.webhookEnabled ?? false,
+        muteAll: input.muteAll ?? false,
+        preferences: input.preferences ?? null,
+        updatedAt: now,
+      },
+    })
+    .returning();
+
+  return row;
+}
+
+export async function getSocialNotificationPreferences(
+  workspaceId: string,
+  userId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(socialNotificationPreferences)
+    .where(
+      and(
+        eq(socialNotificationPreferences.workspaceId, workspaceId),
+        eq(socialNotificationPreferences.userId, userId),
+      ),
+    );
+
+  if (!row) {
+    throw new SocialNotificationPreferencesNotFoundError(userId);
+  }
+
+  return row;
+}
+
+export async function deleteSocialNotificationPreferences(
+  workspaceId: string,
+  userId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .delete(socialNotificationPreferences)
+    .where(
+      and(
+        eq(socialNotificationPreferences.workspaceId, workspaceId),
+        eq(socialNotificationPreferences.userId, userId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new SocialNotificationPreferencesNotFoundError(userId);
+  }
+
+  return row;
+}
+
+// ---------------------------------------------------------------------------
 // Social observability: events + webhooks + deliveries
 // ---------------------------------------------------------------------------
 
@@ -896,6 +1626,361 @@ export async function listSocialWebhooks(workspaceId: string) {
     .from(socialWebhooks)
     .where(eq(socialWebhooks.workspaceId, workspaceId))
     .orderBy(desc(socialWebhooks.createdAt));
+}
+
+export async function createSocialWebhookSubscription(input: {
+  workspaceId: string;
+  webhookId: string;
+  name?: string;
+  enabled?: boolean;
+  filters?: Record<string, unknown> | null;
+  createdByUserId: string;
+}) {
+  const db = getDb();
+  const id = `swhsub_${randomUUID()}`;
+  const now = new Date();
+
+  const [row] = await db
+    .insert(socialWebhookSubscriptions)
+    .values({
+      id,
+      workspaceId: input.workspaceId,
+      webhookId: input.webhookId,
+      name: input.name ?? null,
+      enabled: input.enabled ?? true,
+      filters: input.filters ?? null,
+      createdByUserId: input.createdByUserId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  return row;
+}
+
+export async function listSocialWebhookSubscriptions(
+  workspaceId: string,
+  filters?: {
+    webhookId?: string;
+    enabled?: boolean;
+  },
+) {
+  const db = getDb();
+  const conditions = [eq(socialWebhookSubscriptions.workspaceId, workspaceId)];
+
+  if (filters?.webhookId) {
+    conditions.push(eq(socialWebhookSubscriptions.webhookId, filters.webhookId));
+  }
+  if (filters?.enabled !== undefined) {
+    conditions.push(eq(socialWebhookSubscriptions.enabled, filters.enabled));
+  }
+
+  return db
+    .select()
+    .from(socialWebhookSubscriptions)
+    .where(and(...conditions))
+    .orderBy(desc(socialWebhookSubscriptions.createdAt));
+}
+
+export async function getSocialWebhookSubscription(
+  workspaceId: string,
+  subscriptionId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(socialWebhookSubscriptions)
+    .where(
+      and(
+        eq(socialWebhookSubscriptions.workspaceId, workspaceId),
+        eq(socialWebhookSubscriptions.id, subscriptionId),
+      ),
+    );
+
+  if (!row) {
+    throw new SocialWebhookSubscriptionNotFoundError(subscriptionId);
+  }
+
+  return row;
+}
+
+export async function updateSocialWebhookSubscription(
+  workspaceId: string,
+  subscriptionId: string,
+  data: {
+    name?: string | null;
+    enabled?: boolean;
+    filters?: Record<string, unknown> | null;
+  },
+) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialWebhookSubscriptions)
+    .set({
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.enabled !== undefined && { enabled: data.enabled }),
+      ...(data.filters !== undefined && { filters: data.filters }),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(socialWebhookSubscriptions.workspaceId, workspaceId),
+        eq(socialWebhookSubscriptions.id, subscriptionId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new SocialWebhookSubscriptionNotFoundError(subscriptionId);
+  }
+
+  return row;
+}
+
+export async function deleteSocialWebhookSubscription(
+  workspaceId: string,
+  subscriptionId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .delete(socialWebhookSubscriptions)
+    .where(
+      and(
+        eq(socialWebhookSubscriptions.workspaceId, workspaceId),
+        eq(socialWebhookSubscriptions.id, subscriptionId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new SocialWebhookSubscriptionNotFoundError(subscriptionId);
+  }
+
+  return row;
+}
+
+export async function listMatchingSocialWebhookSubscriptions(
+  input: SocialWebhookMatchInput,
+) {
+  const db = getDb();
+  const rows = await db
+    .select({
+      subscriptionId: socialWebhookSubscriptions.id,
+      workspaceId: socialWebhookSubscriptions.workspaceId,
+      webhookId: socialWebhookSubscriptions.webhookId,
+      name: socialWebhookSubscriptions.name,
+      enabled: socialWebhookSubscriptions.enabled,
+      filters: socialWebhookSubscriptions.filters,
+      createdByUserId: socialWebhookSubscriptions.createdByUserId,
+      createdAt: socialWebhookSubscriptions.createdAt,
+      updatedAt: socialWebhookSubscriptions.updatedAt,
+      targetUrl: socialWebhooks.targetUrl,
+      signingSecretEncrypted: socialWebhooks.signingSecretEncrypted,
+      webhookEnabled: socialWebhooks.enabled,
+    })
+    .from(socialWebhookSubscriptions)
+    .innerJoin(socialWebhooks, eq(socialWebhookSubscriptions.webhookId, socialWebhooks.id))
+    .where(
+      and(
+        eq(socialWebhookSubscriptions.workspaceId, input.workspaceId),
+        eq(socialWebhookSubscriptions.enabled, true),
+        eq(socialWebhooks.enabled, true),
+        ...(input.webhookId
+          ? [eq(socialWebhookSubscriptions.webhookId, input.webhookId)]
+          : []),
+      ),
+    )
+    .orderBy(desc(socialWebhookSubscriptions.createdAt));
+
+  return rows.filter((row) =>
+    matchesWebhookSubscriptionFilter(row.filters, input),
+  );
+}
+
+export async function createSocialWebhookDeliveryDeadLetter(input: {
+  workspaceId: string;
+  deliveryId: string;
+  webhookId: string;
+  eventId: string;
+  deadLetterReason: string;
+  responseStatus?: number | null;
+  responseBody?: string | null;
+  replayMetadata?: Record<string, unknown> | null;
+  replayRequestedByUserId?: string | null;
+  replayState?: SocialWebhookDeadLetterReplayState;
+  replayRequestedAt?: Date | null;
+  replayedAt?: Date | null;
+  replayDeliveryId?: string | null;
+  replayError?: string | null;
+}) {
+  const db = getDb();
+  const now = new Date();
+  const id = `swhdl_${randomUUID()}`;
+
+  const [row] = await db
+    .insert(socialWebhookDeliveryDeadLetters)
+    .values({
+      id,
+      workspaceId: input.workspaceId,
+      deliveryId: input.deliveryId,
+      webhookId: input.webhookId,
+      eventId: input.eventId,
+      deadLetterReason: input.deadLetterReason,
+      responseStatus: input.responseStatus ?? null,
+      responseBody: input.responseBody ?? null,
+      replayState: input.replayState ?? "dead_lettered",
+      deadLetteredAt: now,
+      replayRequestedAt: input.replayRequestedAt ?? null,
+      replayRequestedByUserId: input.replayRequestedByUserId ?? null,
+      replayMetadata: input.replayMetadata ?? null,
+      replayDeliveryId: input.replayDeliveryId ?? null,
+      replayedAt: input.replayedAt ?? null,
+      replayError: input.replayError ?? null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: socialWebhookDeliveryDeadLetters.deliveryId,
+      set: {
+        workspaceId: input.workspaceId,
+        webhookId: input.webhookId,
+        eventId: input.eventId,
+        deadLetterReason: input.deadLetterReason,
+        responseStatus: input.responseStatus ?? null,
+        responseBody: input.responseBody ?? null,
+        replayState: input.replayState ?? "dead_lettered",
+        deadLetteredAt: now,
+        replayRequestedAt: input.replayRequestedAt ?? null,
+        replayRequestedByUserId: input.replayRequestedByUserId ?? null,
+        replayMetadata: input.replayMetadata ?? null,
+        replayDeliveryId: input.replayDeliveryId ?? null,
+        replayedAt: input.replayedAt ?? null,
+        replayError: input.replayError ?? null,
+        updatedAt: now,
+      },
+    })
+    .returning();
+
+  return row;
+}
+
+export async function listSocialWebhookDeliveryDeadLetters(
+  workspaceId: string,
+  filters?: {
+    webhookId?: string;
+    replayState?: SocialWebhookDeadLetterReplayState;
+    limit?: number;
+    offset?: number;
+  },
+) {
+  const db = getDb();
+  const conditions = [eq(socialWebhookDeliveryDeadLetters.workspaceId, workspaceId)];
+
+  if (filters?.webhookId) {
+    conditions.push(eq(socialWebhookDeliveryDeadLetters.webhookId, filters.webhookId));
+  }
+  if (filters?.replayState) {
+    conditions.push(eq(socialWebhookDeliveryDeadLetters.replayState, filters.replayState));
+  }
+
+  const query = db
+    .select({
+      deadLetterId: socialWebhookDeliveryDeadLetters.id,
+      workspaceId: socialWebhookDeliveryDeadLetters.workspaceId,
+      deliveryId: socialWebhookDeliveryDeadLetters.deliveryId,
+      webhookId: socialWebhookDeliveryDeadLetters.webhookId,
+      eventId: socialWebhookDeliveryDeadLetters.eventId,
+      deadLetterReason: socialWebhookDeliveryDeadLetters.deadLetterReason,
+      responseStatus: socialWebhookDeliveryDeadLetters.responseStatus,
+      responseBody: socialWebhookDeliveryDeadLetters.responseBody,
+      replayState: socialWebhookDeliveryDeadLetters.replayState,
+      deadLetteredAt: socialWebhookDeliveryDeadLetters.deadLetteredAt,
+      replayRequestedAt: socialWebhookDeliveryDeadLetters.replayRequestedAt,
+      replayRequestedByUserId: socialWebhookDeliveryDeadLetters.replayRequestedByUserId,
+      replayMetadata: socialWebhookDeliveryDeadLetters.replayMetadata,
+      replayDeliveryId: socialWebhookDeliveryDeadLetters.replayDeliveryId,
+      replayedAt: socialWebhookDeliveryDeadLetters.replayedAt,
+      replayError: socialWebhookDeliveryDeadLetters.replayError,
+      createdAt: socialWebhookDeliveryDeadLetters.createdAt,
+      updatedAt: socialWebhookDeliveryDeadLetters.updatedAt,
+      targetUrl: socialWebhooks.targetUrl,
+      deliveryStatus: socialWebhookDeliveries.status,
+      attemptCount: socialWebhookDeliveries.attemptCount,
+      eventType: socialEvents.eventType,
+      eventMessage: socialEvents.message,
+    })
+    .from(socialWebhookDeliveryDeadLetters)
+    .innerJoin(
+      socialWebhookDeliveries,
+      eq(socialWebhookDeliveryDeadLetters.deliveryId, socialWebhookDeliveries.id),
+    )
+    .innerJoin(socialWebhooks, eq(socialWebhookDeliveryDeadLetters.webhookId, socialWebhooks.id))
+    .innerJoin(socialEvents, eq(socialWebhookDeliveryDeadLetters.eventId, socialEvents.id))
+    .where(and(...conditions))
+    .orderBy(desc(socialWebhookDeliveryDeadLetters.deadLetteredAt));
+
+  if (filters?.limit) {
+    query.limit(filters.limit);
+  }
+  if (filters?.offset) {
+    query.offset(filters.offset);
+  }
+
+  return query;
+}
+
+export async function markSocialWebhookDeliveryDeadLetterReplayRequested(input: {
+  deadLetterId: string;
+  replayRequestedByUserId?: string | null;
+  replayMetadata?: Record<string, unknown> | null;
+  replayRequestedAt?: Date;
+}) {
+  const db = getDb();
+  const now = input.replayRequestedAt ?? new Date();
+  const [row] = await db
+    .update(socialWebhookDeliveryDeadLetters)
+    .set({
+      replayState: "replay_requested",
+      replayRequestedAt: now,
+      replayRequestedByUserId: input.replayRequestedByUserId ?? null,
+      replayMetadata: input.replayMetadata ?? null,
+      updatedAt: now,
+    })
+    .where(eq(socialWebhookDeliveryDeadLetters.id, input.deadLetterId))
+    .returning();
+
+  if (!row) {
+    throw new SocialWebhookDeliveryDeadLetterNotFoundError(input.deadLetterId);
+  }
+
+  return row;
+}
+
+export async function markSocialWebhookDeliveryDeadLetterReplayed(input: {
+  deadLetterId: string;
+  replayDeliveryId?: string | null;
+  replayMetadata?: Record<string, unknown> | null;
+  replayedAt?: Date;
+}) {
+  const db = getDb();
+  const now = input.replayedAt ?? new Date();
+  const [row] = await db
+    .update(socialWebhookDeliveryDeadLetters)
+    .set({
+      replayState: "replayed",
+      replayDeliveryId: input.replayDeliveryId ?? null,
+      replayMetadata: input.replayMetadata ?? null,
+      replayedAt: now,
+      updatedAt: now,
+    })
+    .where(eq(socialWebhookDeliveryDeadLetters.id, input.deadLetterId))
+    .returning();
+
+  if (!row) {
+    throw new SocialWebhookDeliveryDeadLetterNotFoundError(input.deadLetterId);
+  }
+
+  return row;
 }
 
 export async function getSocialWebhook(workspaceId: string, webhookId: string) {
@@ -977,15 +2062,54 @@ export async function recordSocialEvent(input: {
       })
       .returning();
 
-    const activeWebhooks = await tx
-      .select({ id: socialWebhooks.id })
-      .from(socialWebhooks)
+    const subscriptionRows = await tx
+      .select({
+        webhookId: socialWebhookSubscriptions.webhookId,
+        filters: socialWebhookSubscriptions.filters,
+      })
+      .from(socialWebhookSubscriptions)
+      .innerJoin(
+        socialWebhooks,
+        eq(socialWebhookSubscriptions.webhookId, socialWebhooks.id),
+      )
       .where(
         and(
-          eq(socialWebhooks.workspaceId, input.workspaceId),
+          eq(socialWebhookSubscriptions.workspaceId, input.workspaceId),
+          eq(socialWebhookSubscriptions.enabled, true),
           eq(socialWebhooks.enabled, true),
         ),
       );
+
+    const matchedSubscriptionWebhooks = new Set(
+      subscriptionRows
+        .filter((row) =>
+          matchesWebhookSubscriptionFilter(row.filters, {
+            workspaceId: input.workspaceId,
+            eventType: input.eventType,
+            severity: input.severity,
+            platform: input.provider,
+            userFacing: input.userFacing ?? false,
+            postId: input.postId,
+            accountId: input.accountId,
+            dispatchKey: input.dispatchKey,
+            metadata: input.metadata,
+          }),
+        )
+        .map((row) => row.webhookId),
+    );
+
+    const activeWebhooks =
+      matchedSubscriptionWebhooks.size > 0
+        ? Array.from(matchedSubscriptionWebhooks).map((id) => ({ id }))
+        : await tx
+            .select({ id: socialWebhooks.id })
+            .from(socialWebhooks)
+            .where(
+              and(
+                eq(socialWebhooks.workspaceId, input.workspaceId),
+                eq(socialWebhooks.enabled, true),
+              ),
+            );
 
     if (activeWebhooks.length > 0) {
       await tx.insert(socialWebhookDeliveries).values(
@@ -1278,4 +2402,404 @@ export async function listWebhookDeliveriesForWorkspace(
   }
 
   return query;
+}
+
+// ---------------------------------------------------------------------------
+// Automation rules + tasks
+// ---------------------------------------------------------------------------
+
+export async function createAutomationRule(input: {
+  workspaceId: string;
+  name: string;
+  triggerSource: string;
+  triggerFilters?: Record<string, unknown> | null;
+  actionType?: string;
+  actionConfig?: Record<string, unknown> | null;
+  enabled?: boolean;
+  createdByUserId: string;
+}) {
+  const db = getDb();
+  const id = `arule_${randomUUID()}`;
+  const now = new Date();
+
+  const [row] = await db
+    .insert(socialAutomationRules)
+    .values({
+      id,
+      workspaceId: input.workspaceId,
+      name: input.name,
+      enabled: input.enabled ?? true,
+      triggerSource: input.triggerSource,
+      triggerFilters: input.triggerFilters ?? null,
+      actionType: input.actionType ?? "create_social_post",
+      actionConfig: input.actionConfig ?? null,
+      createdByUserId: input.createdByUserId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  return row;
+}
+
+export async function listAutomationRules(
+  workspaceId: string,
+  filters?: {
+    enabled?: boolean;
+    triggerSource?: string;
+    limit?: number;
+    offset?: number;
+  },
+) {
+  const db = getDb();
+  const conditions = [eq(socialAutomationRules.workspaceId, workspaceId)];
+
+  if (filters?.enabled !== undefined) {
+    conditions.push(eq(socialAutomationRules.enabled, filters.enabled));
+  }
+  if (filters?.triggerSource) {
+    conditions.push(eq(socialAutomationRules.triggerSource, filters.triggerSource));
+  }
+
+  const query = db
+    .select()
+    .from(socialAutomationRules)
+    .where(and(...conditions))
+    .orderBy(desc(socialAutomationRules.createdAt));
+
+  if (filters?.limit) {
+    query.limit(filters.limit);
+  }
+  if (filters?.offset) {
+    query.offset(filters.offset);
+  }
+
+  return query;
+}
+
+export async function getAutomationRule(workspaceId: string, ruleId: string) {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(socialAutomationRules)
+    .where(
+      and(
+        eq(socialAutomationRules.workspaceId, workspaceId),
+        eq(socialAutomationRules.id, ruleId),
+      ),
+    );
+
+  if (!row) {
+    throw new AutomationRuleNotFoundError(ruleId);
+  }
+
+  return row;
+}
+
+export async function updateAutomationRule(
+  workspaceId: string,
+  ruleId: string,
+  data: {
+    name?: string;
+    triggerSource?: string;
+    triggerFilters?: Record<string, unknown> | null;
+    actionType?: string;
+    actionConfig?: Record<string, unknown> | null;
+    enabled?: boolean;
+  },
+) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialAutomationRules)
+    .set({
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.triggerSource !== undefined && {
+        triggerSource: data.triggerSource,
+      }),
+      ...(data.triggerFilters !== undefined && {
+        triggerFilters: data.triggerFilters,
+      }),
+      ...(data.actionType !== undefined && { actionType: data.actionType }),
+      ...(data.actionConfig !== undefined && {
+        actionConfig: data.actionConfig,
+      }),
+      ...(data.enabled !== undefined && { enabled: data.enabled }),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(socialAutomationRules.workspaceId, workspaceId),
+        eq(socialAutomationRules.id, ruleId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new AutomationRuleNotFoundError(ruleId);
+  }
+
+  return row;
+}
+
+export async function deleteAutomationRule(
+  workspaceId: string,
+  ruleId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .delete(socialAutomationRules)
+    .where(
+      and(
+        eq(socialAutomationRules.workspaceId, workspaceId),
+        eq(socialAutomationRules.id, ruleId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new AutomationRuleNotFoundError(ruleId);
+  }
+
+  return row;
+}
+
+export async function createAutomationTask(input: {
+  workspaceId: string;
+  ruleId: string;
+  dueAt?: Date | null;
+  input?: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
+  errorMessage?: string | null;
+  sourcePostId?: string | null;
+  sourceEventId?: string | null;
+  state?: AutomationTaskState;
+  claimedBy?: string | null;
+  claimedAt?: Date | null;
+  claimToken?: string | null;
+}) {
+  const db = getDb();
+  const id = `atask_${randomUUID()}`;
+  const now = new Date();
+
+  const [row] = await db
+    .insert(socialAutomationTasks)
+    .values({
+      id,
+      workspaceId: input.workspaceId,
+      ruleId: input.ruleId,
+      state: input.state ?? "pending",
+      dueAt: input.dueAt ?? null,
+      claimToken: input.claimToken ?? null,
+      claimedAt: input.claimedAt ?? null,
+      claimedBy: input.claimedBy ?? null,
+      attemptCount: 0,
+      input: input.input ?? null,
+      result: input.result ?? null,
+      errorMessage: input.errorMessage ?? null,
+      sourcePostId: input.sourcePostId ?? null,
+      sourceEventId: input.sourceEventId ?? null,
+      completedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  return row;
+}
+
+export async function listAutomationTasks(
+  workspaceId: string,
+  filters?: {
+    ruleId?: string;
+    state?: AutomationTaskState;
+    limit?: number;
+    offset?: number;
+  },
+) {
+  const db = getDb();
+  const conditions = [eq(socialAutomationTasks.workspaceId, workspaceId)];
+
+  if (filters?.ruleId) {
+    conditions.push(eq(socialAutomationTasks.ruleId, filters.ruleId));
+  }
+  if (filters?.state) {
+    conditions.push(eq(socialAutomationTasks.state, filters.state));
+  }
+
+  const query = db
+    .select()
+    .from(socialAutomationTasks)
+    .where(and(...conditions))
+    .orderBy(desc(socialAutomationTasks.createdAt));
+
+  if (filters?.limit) {
+    query.limit(filters.limit);
+  }
+  if (filters?.offset) {
+    query.offset(filters.offset);
+  }
+
+  return query;
+}
+
+export async function getAutomationTask(workspaceId: string, taskId: string) {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(socialAutomationTasks)
+    .where(
+      and(
+        eq(socialAutomationTasks.workspaceId, workspaceId),
+        eq(socialAutomationTasks.id, taskId),
+      ),
+    );
+
+  if (!row) {
+    throw new AutomationTaskNotFoundError(taskId);
+  }
+
+  return row;
+}
+
+export async function updateAutomationTask(
+  workspaceId: string,
+  taskId: string,
+  data: {
+    state?: AutomationTaskState;
+    dueAt?: Date | null;
+    claimToken?: string | null;
+    claimedAt?: Date | null;
+    claimedBy?: string | null;
+    attemptCount?: number;
+    input?: Record<string, unknown> | null;
+    result?: Record<string, unknown> | null;
+    errorMessage?: string | null;
+    sourcePostId?: string | null;
+    sourceEventId?: string | null;
+    completedAt?: Date | null;
+  },
+) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialAutomationTasks)
+    .set({
+      ...(data.state !== undefined && { state: data.state }),
+      ...(data.dueAt !== undefined && { dueAt: data.dueAt }),
+      ...(data.claimToken !== undefined && { claimToken: data.claimToken }),
+      ...(data.claimedAt !== undefined && { claimedAt: data.claimedAt }),
+      ...(data.claimedBy !== undefined && { claimedBy: data.claimedBy }),
+      ...(data.attemptCount !== undefined && { attemptCount: data.attemptCount }),
+      ...(data.input !== undefined && { input: data.input }),
+      ...(data.result !== undefined && { result: data.result }),
+      ...(data.errorMessage !== undefined && { errorMessage: data.errorMessage }),
+      ...(data.sourcePostId !== undefined && { sourcePostId: data.sourcePostId }),
+      ...(data.sourceEventId !== undefined && { sourceEventId: data.sourceEventId }),
+      ...(data.completedAt !== undefined && { completedAt: data.completedAt }),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(socialAutomationTasks.workspaceId, workspaceId),
+        eq(socialAutomationTasks.id, taskId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new AutomationTaskNotFoundError(taskId);
+  }
+
+  return row;
+}
+
+export async function deleteAutomationTask(
+  workspaceId: string,
+  taskId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .delete(socialAutomationTasks)
+    .where(
+      and(
+        eq(socialAutomationTasks.workspaceId, workspaceId),
+        eq(socialAutomationTasks.id, taskId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new AutomationTaskNotFoundError(taskId);
+  }
+
+  return row;
+}
+
+export async function claimDueAutomationTasks(input?: {
+  workspaceId?: string;
+  ruleId?: string;
+  now?: Date;
+  lockStaleBefore?: Date;
+  limit?: number;
+}) {
+  const db = getDb();
+  const now = input?.now ?? new Date();
+  const lockStaleBefore =
+    input?.lockStaleBefore ?? new Date(now.getTime() - 10 * 60 * 1000);
+  const limit = input?.limit ?? 25;
+
+  const conditions = [
+    eq(socialAutomationTasks.state, "pending"),
+    or(isNull(socialAutomationTasks.dueAt), lte(socialAutomationTasks.dueAt, now)),
+    or(
+      isNull(socialAutomationTasks.claimedAt),
+      lt(socialAutomationTasks.claimedAt, lockStaleBefore),
+    ),
+  ];
+
+  if (input?.workspaceId) {
+    conditions.push(eq(socialAutomationTasks.workspaceId, input.workspaceId));
+  }
+  if (input?.ruleId) {
+    conditions.push(eq(socialAutomationTasks.ruleId, input.ruleId));
+  }
+
+  const candidates = await db
+    .select()
+    .from(socialAutomationTasks)
+    .where(and(...conditions))
+    .orderBy(asc(socialAutomationTasks.dueAt), asc(socialAutomationTasks.createdAt))
+    .limit(limit);
+
+  const claimToken = randomUUID();
+  const claimedRows: Array<(typeof candidates)[number]> = [];
+
+  for (const task of candidates) {
+    const updated = await db
+      .update(socialAutomationTasks)
+      .set({
+        state: "claimed",
+        claimToken,
+        claimedAt: now,
+        attemptCount: sql`${socialAutomationTasks.attemptCount} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(socialAutomationTasks.id, task.id),
+          eq(socialAutomationTasks.state, "pending"),
+          or(
+            isNull(socialAutomationTasks.claimedAt),
+            lt(socialAutomationTasks.claimedAt, lockStaleBefore),
+          ),
+        ),
+      )
+      .returning();
+
+    const row = updated[0];
+    if (row) {
+      claimedRows.push(row);
+    }
+  }
+
+  return claimedRows;
 }
