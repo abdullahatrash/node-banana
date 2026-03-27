@@ -17,8 +17,18 @@ function makeVideo(url = "https://example.com/vid.mp4"): PublishMediaItem {
 
 describe("social/media", () => {
   describe("PLATFORM_MEDIA_CONSTRAINTS", () => {
-    it("defines constraints for all 6 platforms", () => {
-      const platforms = ["x", "linkedin", "instagram", "tiktok", "facebook", "youtube"] as const;
+    it("defines constraints for all supported social platforms", () => {
+      const platforms = [
+        "x",
+        "linkedin",
+        "instagram",
+        "tiktok",
+        "threads",
+        "pinterest",
+        "reddit",
+        "facebook",
+        "youtube",
+      ] as const;
       for (const platform of platforms) {
         expect(PLATFORM_MEDIA_CONSTRAINTS[platform]).toBeDefined();
         expect(PLATFORM_MEDIA_CONSTRAINTS[platform].maxImages).toBeTypeOf("number");
