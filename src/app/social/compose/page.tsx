@@ -1,9 +1,10 @@
-"use client";
+import { ComposePageClient } from "@/components/social/compose/ComposePageClient"
 
-export default function ComposePage() {
-  return (
-    <div className="flex items-center justify-center p-8 text-neutral-500">
-      Compose — coming soon
-    </div>
-  );
+interface ComposePageProps {
+  searchParams: Promise<{ date?: string }>
+}
+
+export default async function ComposePage({ searchParams }: ComposePageProps) {
+  const params = await searchParams
+  return <ComposePageClient initialDate={params.date ?? null} />
 }

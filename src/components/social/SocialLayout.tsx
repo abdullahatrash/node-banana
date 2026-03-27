@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useRef } from "react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { SocialAppSidebar } from "./SocialAppSidebar"
 import { SocialSiteHeader } from "./SocialSiteHeader"
@@ -12,10 +12,13 @@ interface SocialLayoutProps {
 
 export function SocialLayout({ children }: SocialLayoutProps) {
   const fetchAccounts = useSocialAccountsStore((s) => s.fetchAccounts)
+  const initialized = useRef(false)
 
-  useEffect(() => {
+  // Fetch accounts once on first render — no useEffect
+  if (!initialized.current) {
+    initialized.current = true
     fetchAccounts()
-  }, [fetchAccounts])
+  }
 
   return (
     <SidebarProvider
