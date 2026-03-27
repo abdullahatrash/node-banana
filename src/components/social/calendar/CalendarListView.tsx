@@ -1,0 +1,126 @@
+"use client"
+
+import { useMemo } from "react"
+import { format } from "date-fns"
+import { useRouter } from "next/navigation"
+import { useSocialCalendarStore } from "@/store/socialCalendarStore"
+import { PlatformIcon } from "@/components/social/shared/PlatformIcon"
+import { POST_STATUS_CONFIG } from "@/lib/social/constants"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { retrySocialPost } from "@/lib/social/client"
+import { useToast } from "@/components/Toast"
+import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
+
+export function CalendarListView() {
+  const { posts } = useSocialCalendarStore()
+  const router = useRouter()
+  const { show: showToast } = useToast()
+  const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
+
+  // Group by date
+  const grouped = useMemo(() => {
+    const map = new Map<string, typeof posts>()
+    for (const post of posts) {
+      const dateStr = post.scheduledAt || post.publishedAt || post.createdAt
+      const dateKey = dateStr ? format(new Date(dateStr), "yyyy-MM-dd") : "unknown"
+      const existing = map.get(dateKey) ?? []
+      existing.push(post)
+      map.set(dateKey, existing)
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
+  }, [posts])
+
+  if (posts.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center py-12">
+        <p className="text-sm text-muted-foreground">No posts this week</p>
+      </div>
+    )
+  }
+
+  async function handleRetry(postId: string) {
+    try {
+      await retrySocialPost(postId)
+      showToast("Post re-queued", "success")
+      fetchPosts()
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Retry failed",
+        "error",
+      )
+    }
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4">
+      {grouped.map(([dateKey, datePosts]) => (
+        <div key={dateKey} className="mb-6">
+          <h3 className="mb-2 text-xs font-medium text-muted-foreground">
+            {dateKey !== "unknown"
+              ? format(new Date(dateKey), "EEEE, MMMM d, yyyy")
+              : "Unscheduled"}
+          </h3>
+          <div className="space-y-1.5">
+            {datePosts.map((post) => {
+              const statusConfig =
+                POST_STATUS_CONFIG[post.status as SocialPostStatus]
+              const time = post.scheduledAt || post.publishedAt || post.createdAt
+
+              return (
+                <div
+                  key={post.id}
+                  className="flex items-center gap-3 rounded-lg border bg-card p-3"
+                >
+                  <PlatformIcon
+                    platform={
+                      (post as any).platform ??
+                      ("linkedin" as SocialPlatform)
+                    }
+                    size={16}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs">
+                      {post.content?.slice(0, 80) || "No content"}
+                    </p>
+                  </div>
+                  <Badge
+                    variant="secondary"
+                    className={`text-[10px] ${statusConfig?.color ?? ""}`}
+                  >
+                    {statusConfig?.label ?? post.status}
+                  </Badge>
+                  {time && (
+                    <span className="text-[10px] text-muted-foreground">
+                      {format(new Date(time), "HH:mm")}
+                    </span>
+                  )}
+                  {post.status === "draft" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px]"
+                      onClick={() => router.push(`/social/compose/${post.id}`)}
+                    >
+                      Edit
+                    </Button>
+                  )}
+                  {post.status === "failed" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px] text-destructive"
+                      onClick={() => handleRetry(post.id)}
+                    >
+                      Retry
+                    </Button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
