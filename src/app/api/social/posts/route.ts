@@ -30,6 +30,13 @@ interface PostsPostRequest {
   chainRunId?: string;
   automationRunId?: string;
   workflowContext?: Record<string, unknown>;
+  rootPostId?: string;
+  kind?: string;
+  delaySeconds?: number;
+  position?: number;
+  sourceTemplatePostId?: string;
+  triggerSource?: string;
+  parentPostId?: string;
 }
 
 interface PostsPostResponse {
@@ -46,6 +53,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
 function readMediaUrls(value: unknown): Array<{ type: string; url: string; alt?: string }> | undefined {
@@ -207,6 +225,7 @@ export async function POST(
     const content = resolveContent(bodyRecord);
     const mediaUrls = resolveMediaUrls(bodyRecord);
     const workflowContext = extractWorkflowContext(bodyRecord);
+    const chainRecord = isRecord(body.chain) ? body.chain : undefined;
     const platformSettings = isRecord(body.platformSettings)
       ? { ...body.platformSettings }
       : undefined;
@@ -246,6 +265,29 @@ export async function POST(
     }
 
     const scheduledAtValue = readString(body.scheduledAt);
+    const rootPostId =
+      readString(body.rootPostId) ??
+      readString(chainRecord?.rootPostId) ??
+      undefined;
+    const kind = readString(body.kind) ?? readString(chainRecord?.kind);
+    const delaySeconds =
+      readOptionalNumber(body.delaySeconds) ??
+      readOptionalNumber(chainRecord?.delaySeconds);
+    const position =
+      readOptionalNumber(body.position) ??
+      readOptionalNumber(chainRecord?.position);
+    const sourceTemplatePostId =
+      readString(body.sourceTemplatePostId) ??
+      readString(chainRecord?.sourceTemplatePostId) ??
+      undefined;
+    const triggerSource =
+      readString(body.triggerSource) ??
+      readString(chainRecord?.triggerSource) ??
+      undefined;
+    const parentPostId =
+      readString(body.parentPostId) ??
+      readString(chainRecord?.parentPostId) ??
+      undefined;
 
     const post = await createSocialPost({
       workspaceId: result.session.workspace.id,
@@ -254,6 +296,13 @@ export async function POST(
       mediaUrls,
       platformSettings: mergedPlatformSettings,
       scheduledAt: scheduledAtValue ? new Date(scheduledAtValue) : undefined,
+      rootPostId,
+      kind,
+      delaySeconds,
+      position,
+      sourceTemplatePostId,
+      triggerSource,
+      parentPostId,
       studioAssetId: body.studioAssetId,
       createdByUserId: result.session.user.id,
     });

@@ -10,6 +10,7 @@ const mockDeleteSocialPost = vi.fn();
 const mockUpdatePostStatus = vi.fn();
 const mockClaimSocialDispatchRun = vi.fn();
 const mockFinalizeSocialDispatchRun = vi.fn();
+const mockHasChainChildren = vi.fn();
 const mockCountSocialPostsCreatedInRange = vi.fn();
 const mockWorkflowStart = vi.fn();
 const mockEmitSocialEvent = vi.fn();
@@ -33,6 +34,7 @@ vi.mock("@/lib/social/repository", () => ({
   updatePostStatus: mockUpdatePostStatus,
   claimSocialDispatchRun: mockClaimSocialDispatchRun,
   finalizeSocialDispatchRun: mockFinalizeSocialDispatchRun,
+  hasChainChildren: mockHasChainChildren,
   countSocialPostsCreatedInRange: mockCountSocialPostsCreatedInRange,
   SocialPostNotFoundError: class extends Error {
     constructor(id?: string) { super(`Post "${id}" not found.`); this.name = "SocialPostNotFoundError"; }
@@ -176,6 +178,48 @@ describe("/api/social/posts", () => {
       expect(data.post.status).toBe("draft");
     });
 
+    it("creates a chain child post with chain metadata", async () => {
+      authorized();
+      mockCountSocialPostsCreatedInRange.mockResolvedValue(1);
+      mockCreateSocialPost.mockResolvedValue({
+        id: "spost_child_1",
+        status: "draft",
+        rootPostId: "spost_root_1",
+        kind: "chain_child",
+        delaySeconds: 120,
+        position: 2,
+      });
+
+      const { POST } = await import("../../posts/route");
+      const response = await POST(
+        createRequest("http://localhost:3000/api/social/posts", {
+          method: "POST",
+          body: JSON.stringify({
+            socialAccountId: "sacct_1",
+            content: "child",
+            rootPostId: "spost_root_1",
+            kind: "chain_child",
+            delaySeconds: 120,
+            position: 2,
+            triggerSource: "chain",
+            parentPostId: "spost_root_1",
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockCreateSocialPost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rootPostId: "spost_root_1",
+          kind: "chain_child",
+          delaySeconds: 120,
+          position: 2,
+          triggerSource: "chain",
+          parentPostId: "spost_root_1",
+        }),
+      );
+    });
+
     it("returns 400 when socialAccountId is missing", async () => {
       authorized();
       const { POST } = await import("../../posts/route");
@@ -235,6 +279,7 @@ describe("/api/social/posts", () => {
 describe("/api/social/posts/[postId]/publish", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockHasChainChildren.mockResolvedValue(false);
     mockClaimSocialDispatchRun.mockImplementation(
       (input: { claimToken?: string; dispatchKey: string }) => ({
         id: "sdrun_1",
@@ -373,6 +418,41 @@ describe("/api/social/posts/[postId]/publish", () => {
       workflowRunRef: null,
       lockedAt: null,
     });
+  });
+
+  it("selects chain workflow when post has chain children", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_root",
+      status: "draft",
+      dispatchAttempts: 0,
+      rootPostId: null,
+      kind: "post",
+    });
+    mockHasChainChildren.mockResolvedValue(true);
+    mockUpdatePostStatus
+      .mockResolvedValueOnce({ id: "spost_root", status: "queued" })
+      .mockResolvedValueOnce({
+        id: "spost_root",
+        status: "queued",
+        dispatchStatus: "dispatched",
+      });
+    mockWorkflowStart.mockResolvedValue({ runId: "workflow-run-chain" });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_root/publish", {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ postId: "spost_root" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const [workflowFn] = mockWorkflowStart.mock.calls[0] ?? [];
+    expect(typeof workflowFn).toBe("function");
+    expect((workflowFn as { name?: string }).name).toBe(
+      "publishPostChainWorkflow",
+    );
   });
 
   it("returns 400 for published post", async () => {

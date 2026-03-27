@@ -17,6 +17,11 @@
         "stepId": "step//workflow@4.2.0-beta.72//fetch"
       }
     },
+    "workflows/token-refresh.ts": {
+      "doRefresh": {
+        "stepId": "step//./workflows/token-refresh//doRefresh"
+      }
+    },
     "workflows/social-publish.ts": {
       "finalizeStep": {
         "stepId": "step//./workflows/social-publish//finalizeStep"
@@ -36,6 +41,39 @@
     }
   },
   "workflows": {
+    "workflows/token-refresh.ts": {
+      "tokenRefreshWorkflow": {
+        "workflowId": "workflow//./workflows/token-refresh//tokenRefreshWorkflow",
+        "graph": {
+          "nodes": [
+            {
+              "id": "start",
+              "type": "workflowStart",
+              "data": {
+                "label": "Start: tokenRefreshWorkflow",
+                "nodeKind": "workflow_start"
+              }
+            },
+            {
+              "id": "end",
+              "type": "workflowEnd",
+              "data": {
+                "label": "Return",
+                "nodeKind": "workflow_end"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_start_end",
+              "source": "start",
+              "target": "end",
+              "type": "default"
+            }
+          ]
+        }
+      }
+    },
     "workflows/social-publish.ts": {
       "publishPostWorkflow": {
         "workflowId": "workflow//./workflows/social-publish//publishPostWorkflow",

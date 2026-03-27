@@ -659,6 +659,7 @@ export async function createSocialPost(input: {
   position?: number | null;
   sourceTemplatePostId?: string | null;
   triggerSource?: string | null;
+  parentPostId?: string | null;
   studioAssetId?: string;
   createdByUserId: string;
 }) {
@@ -683,6 +684,7 @@ export async function createSocialPost(input: {
       position: input.position ?? null,
       sourceTemplatePostId: input.sourceTemplatePostId ?? null,
       triggerSource: input.triggerSource ?? null,
+      parentPostId: input.parentPostId ?? null,
       studioAssetId: input.studioAssetId ?? null,
       createdByUserId: input.createdByUserId,
       createdAt: now,
@@ -699,6 +701,7 @@ export async function listSocialPosts(
     status?: SocialPostStatus;
     socialAccountId?: string;
     rootPostId?: string;
+    parentPostId?: string;
     kind?: string;
     sourceTemplatePostId?: string;
     triggerSource?: string;
@@ -719,6 +722,9 @@ export async function listSocialPosts(
   }
   if (filters?.rootPostId) {
     conditions.push(eq(socialPosts.rootPostId, filters.rootPostId));
+  }
+  if (filters?.parentPostId) {
+    conditions.push(eq(socialPosts.parentPostId, filters.parentPostId));
   }
   if (filters?.kind) {
     conditions.push(eq(socialPosts.kind, filters.kind));
@@ -752,6 +758,57 @@ export async function listSocialPosts(
   }
 
   return query;
+}
+
+export async function hasChainChildren(
+  workspaceId: string,
+  rootPostId: string,
+) {
+  const db = getDb();
+  const rows = await db
+    .select({ id: socialPosts.id })
+    .from(socialPosts)
+    .where(
+      and(
+        eq(socialPosts.workspaceId, workspaceId),
+        eq(socialPosts.rootPostId, rootPostId),
+      ),
+    )
+    .limit(1);
+
+  return rows.length > 0;
+}
+
+export async function listOrderedChainChildren(
+  workspaceId: string,
+  rootPostId: string,
+) {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(socialPosts)
+    .where(
+      and(
+        eq(socialPosts.workspaceId, workspaceId),
+        eq(socialPosts.rootPostId, rootPostId),
+      ),
+    );
+
+  return rows.sort((a, b) => {
+    const positionA = a.position ?? Number.MAX_SAFE_INTEGER;
+    const positionB = b.position ?? Number.MAX_SAFE_INTEGER;
+    if (positionA !== positionB) {
+      return positionA - positionB;
+    }
+
+    const createdAtA = a.createdAt?.getTime?.() ?? 0;
+    const createdAtB = b.createdAt?.getTime?.() ?? 0;
+    if (createdAtA !== createdAtB) {
+      return createdAtA - createdAtB;
+    }
+
+    return a.id.localeCompare(b.id);
+  });
 }
 
 export async function listDueQueuedPosts(input?: {
@@ -1035,6 +1092,7 @@ export async function updateSocialPost(
     position?: number | null;
     sourceTemplatePostId?: string | null;
     triggerSource?: string | null;
+    parentPostId?: string | null;
   },
 ) {
   const db = getDb();
@@ -1063,6 +1121,9 @@ export async function updateSocialPost(
       }),
       ...(data.triggerSource !== undefined && {
         triggerSource: data.triggerSource,
+      }),
+      ...(data.parentPostId !== undefined && {
+        parentPostId: data.parentPostId,
       }),
       updatedAt: new Date(),
     })

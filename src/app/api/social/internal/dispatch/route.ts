@@ -10,12 +10,16 @@ import {
   claimSocialDispatchRun,
   finalizeSocialDispatchRun,
   getSocialAccountById,
+  hasChainChildren,
   listDueQueuedPosts,
   updatePostStatus,
 } from "@/lib/social/repository";
 import { getProvider } from "@/lib/social/provider-registry";
 import { resolveWorkflowRunRef } from "@/lib/social/workflow-utils";
-import { publishPostWorkflow } from "@/../workflows/social-publish";
+import {
+  publishPostChainWorkflow,
+  publishPostWorkflow,
+} from "@/../workflows/social-publish";
 import { logger } from "@/utils/logger";
 
 interface DispatchResponse {
@@ -188,10 +192,16 @@ export async function POST(
           continue;
         }
 
-        const workflowRun = await start(publishPostWorkflow, [
-          claimed.id,
-          claimed.workspaceId,
-        ]);
+        const isChainRoot =
+          claimed.rootPostId === null &&
+          ((claimed.kind ?? "post") === "chain_root" ||
+            (await hasChainChildren(claimed.workspaceId, claimed.id)));
+        const workflowRun = isChainRoot
+          ? await start(publishPostChainWorkflow, [
+              claimed.id,
+              claimed.workspaceId,
+            ])
+          : await start(publishPostWorkflow, [claimed.id, claimed.workspaceId]);
         const workflowRunRef = resolveWorkflowRunRef(workflowRun, dispatchKey);
 
         await updatePostStatus(claimed.id, "queued", {
@@ -211,6 +221,7 @@ export async function POST(
           postId: claimed.id,
           dispatchKey,
           workflowRunRef,
+          chainWorkflow: isChainRoot,
         });
         dispatched += 1;
       } catch (error) {

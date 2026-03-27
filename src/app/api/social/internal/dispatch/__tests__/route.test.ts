@@ -7,6 +7,7 @@ const mockClaimPostForDispatch = vi.fn();
 const mockClaimSocialDispatchRun = vi.fn();
 const mockFinalizeSocialDispatchRun = vi.fn();
 const mockGetSocialAccountById = vi.fn();
+const mockHasChainChildren = vi.fn();
 const mockUpdatePostStatus = vi.fn();
 const mockWorkflowStart = vi.fn();
 const mockEmitSocialEvent = vi.fn();
@@ -23,6 +24,7 @@ vi.mock("@/lib/social/repository", () => ({
   claimSocialDispatchRun: mockClaimSocialDispatchRun,
   finalizeSocialDispatchRun: mockFinalizeSocialDispatchRun,
   getSocialAccountById: mockGetSocialAccountById,
+  hasChainChildren: mockHasChainChildren,
   updatePostStatus: mockUpdatePostStatus,
 }));
 
@@ -74,6 +76,7 @@ describe("/api/social/internal/dispatch POST", () => {
       identifier: "linkedin",
       maxConcurrentJobs: 5,
     });
+    mockHasChainChildren.mockResolvedValue(false);
   });
 
   it("returns 401 for unauthorized request", async () => {
@@ -226,5 +229,30 @@ describe("/api/social/internal/dispatch POST", () => {
     });
 
     nowSpy.mockRestore();
+  });
+
+  it("uses chain workflow for root posts with children", async () => {
+    mockListDueQueuedPosts.mockResolvedValue([{ id: "spost_root", workspaceId: "ws_1" }]);
+    mockClaimPostForDispatch.mockResolvedValue({
+      id: "spost_root",
+      workspaceId: "ws_1",
+      rootPostId: null,
+      kind: "post",
+      dispatchAttempts: 1,
+    });
+    mockHasChainChildren.mockResolvedValue(true);
+    mockWorkflowStart.mockResolvedValue({ runId: "run_chain_1" });
+    mockUpdatePostStatus.mockResolvedValue({});
+
+    const { POST } = await import("../route");
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockWorkflowStart).toHaveBeenCalledTimes(1);
+    const [workflowFn] = mockWorkflowStart.mock.calls[0] ?? [];
+    expect(typeof workflowFn).toBe("function");
+    expect((workflowFn as { name?: string }).name).toBe(
+      "publishPostChainWorkflow",
+    );
   });
 });

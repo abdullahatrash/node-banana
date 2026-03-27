@@ -6,6 +6,7 @@ import {
   claimSocialDispatchRun,
   finalizeSocialDispatchRun,
   getSocialPost,
+  hasChainChildren,
   updatePostStatus,
   SocialPostNotFoundError,
   SocialPostStateTransitionError,
@@ -13,7 +14,10 @@ import {
 import { resolveWorkflowRunRef } from "@/lib/social/workflow-utils";
 import { emitSocialEvent } from "@/lib/social/events";
 import { start } from "workflow/api";
-import { publishPostWorkflow } from "@/../workflows/social-publish";
+import {
+  publishPostChainWorkflow,
+  publishPostWorkflow,
+} from "@/../workflows/social-publish";
 import { logger } from "@/utils/logger";
 
 interface PublishResponse {
@@ -187,7 +191,19 @@ export async function POST(
     // Start the durable publish workflow — returns immediately
     // Workflow handles sleep (scheduled), token refresh, media processing, and publish
     try {
-      const workflowRun = await start(publishPostWorkflow, [postId, result.session.workspace.id]);
+      const isChainRoot =
+        post.rootPostId === null &&
+        ((post.kind ?? "post") === "chain_root" ||
+          (await hasChainChildren(workspaceId, postId)));
+      const workflowRun = isChainRoot
+        ? await start(publishPostChainWorkflow, [
+            postId,
+            result.session.workspace.id,
+          ])
+        : await start(publishPostWorkflow, [
+            postId,
+            result.session.workspace.id,
+          ]);
       const workflowRunRef = resolveWorkflowRunRef(workflowRun, dispatchKey);
       const updated = await updatePostStatus(postId, "queued", {
         dispatchStatus: "dispatched",
@@ -205,6 +221,7 @@ export async function POST(
         accountId: post.socialAccountId,
         dispatchKey,
         workflowRunRef,
+        chainWorkflow: isChainRoot,
       });
       return NextResponse.json({ success: true, post: updated });
     } catch (workflowError) {

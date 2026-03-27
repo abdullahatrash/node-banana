@@ -97,7 +97,7 @@ This file tracks the remaining social backend parity slices as independently gra
 - Type: AFK
 - Blocked by: Issue 1
 - User stories: US5 behavioral parity
-- Status: In Progress
+- Status: Completed
 - Scope:
   - Extend social post model with chain context.
   - Add deterministic child scheduling behavior.
