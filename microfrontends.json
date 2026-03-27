@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/microfrontends.json",
+  "applications": {
+    "node-banana": {
+      "development": {
+        "fallback": "https://banana.app"
+      }
+    },
+    "opencut-editor": {
+      "routing": [
+        {
+          "flag": "editor-enabled",
+          "paths": ["/editor/:path*"]
+        }
+      ]
+    }
+  },
+  "options": {
+    "localProxyPort": 3024
+  }
+}
