@@ -10,9 +10,10 @@ import {
   Loader2Icon,
 } from "lucide-react"
 import { useSocialComposerStore } from "@/store/socialComposerStore"
-import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformSelector } from "./PlatformSelector"
 import { PostEditor } from "./PostEditor"
+import { PreviewPanel } from "./PreviewPanel"
+import { MediaPool } from "./MediaPool"
 import { SchedulePicker } from "./SchedulePicker"
 import { MediaAttachments } from "./MediaAttachments"
 import {
@@ -31,6 +32,7 @@ export function ComposeView() {
   const [isSubmitting, setIsSubmitting] = useState<
     "draft" | "schedule" | "publish" | null
   >(null)
+  const [mediaPoolOpen, setMediaPoolOpen] = useState(false)
 
   const {
     content,
@@ -41,8 +43,6 @@ export function ComposeView() {
     isDirty,
     reset,
   } = useSocialComposerStore()
-
-  const accounts = useSocialAccountsStore((s) => s.accounts)
 
   const hasContent = content.trim().length > 0 || mediaUrls.length > 0
   const hasChannels = selectedAccountIds.length > 0
@@ -162,76 +162,14 @@ export function ComposeView() {
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-6">
           <PlatformSelector />
           <PostEditor />
-          <MediaAttachments />
+          <MediaAttachments onOpenMediaPool={() => setMediaPoolOpen(true)} />
+          <MediaPool open={mediaPoolOpen} onOpenChange={setMediaPoolOpen} />
           <SchedulePicker />
         </div>
 
-        {/* Right: preview placeholder (Issue #24) */}
-        <div className="hidden w-[340px] flex-col border-l bg-muted/30 lg:flex">
-          <div className="p-4">
-            <h3 className="text-xs font-medium text-muted-foreground">
-              Live Preview
-            </h3>
-          </div>
-          <div className="flex flex-1 items-center justify-center p-4">
-            {selectedAccountIds.length === 0 ? (
-              <p className="text-center text-xs text-muted-foreground">
-                Select a channel to see preview
-              </p>
-            ) : content.trim().length === 0 ? (
-              <p className="text-center text-xs text-muted-foreground">
-                Start typing to see preview
-              </p>
-            ) : (
-              <div className="w-full space-y-3">
-                {selectedAccountIds.map((id) => {
-                  const account = accounts.find((a) => a.id === id)
-                  if (!account) return null
-                  return (
-                    <div
-                      key={id}
-                      className="rounded-lg border bg-card p-3"
-                    >
-                      <div className="mb-2 flex items-center gap-2">
-                        <div className="size-8 rounded-full bg-muted" />
-                        <div>
-                          <p className="text-xs font-medium">
-                            {account.displayName}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">
-                            {account.platform} · Just now
-                          </p>
-                        </div>
-                      </div>
-                      <p className="text-xs leading-relaxed">
-                        {content.length > 200
-                          ? content.slice(0, 200) + "..."
-                          : content}
-                      </p>
-                      {mediaUrls.length > 0 && (
-                        <div className="mt-2 grid grid-cols-2 gap-1">
-                          {mediaUrls.slice(0, 4).map((m, i) => (
-                            <div
-                              key={i}
-                              className="aspect-square rounded bg-muted"
-                            >
-                              {m.type === "image" && (
-                                <img
-                                  src={m.url}
-                                  alt=""
-                                  className="size-full rounded object-cover"
-                                />
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+        {/* Right: live preview panel */}
+        <div className="hidden w-[340px] border-l bg-muted/30 lg:flex lg:flex-col">
+          <PreviewPanel />
         </div>
       </div>
 
