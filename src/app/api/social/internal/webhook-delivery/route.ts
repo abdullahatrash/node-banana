@@ -52,10 +52,10 @@ function webhookBackoffMs(attempt: number): number {
   return Math.min(6 * 60 * 60 * 1000, exponential);
 }
 
-function normalizeResponseBody(value: string | null): string | null {
-  if (!value) return null;
+function normalizeResponseBody(value: string | null): string | undefined {
+  if (!value) return undefined;
   const trimmed = value.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return undefined;
   return trimmed.slice(0, 2000);
 }
 
