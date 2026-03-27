@@ -7,6 +7,7 @@
       }
     },
     "opencut-editor": {
+      "packageName": "@opencut/web",
       "routing": [
         {
           "flag": "editor-enabled",
