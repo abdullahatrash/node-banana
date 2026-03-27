@@ -132,7 +132,7 @@ This file tracks the remaining social backend parity slices as independently gra
 - Type: AFK
 - Blocked by: Issue 1, Issue 5, Issue 8, Issue 11, Issue 12
 - User stories: US2/US4/US5 continuity
-- Status: In Progress
+- Status: Completed
 - Scope:
   - Add additive migrations + safe defaults.
   - Add backfill steps for nullable compatibility fields.
