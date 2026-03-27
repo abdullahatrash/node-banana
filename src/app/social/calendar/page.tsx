@@ -1,9 +1,68 @@
-"use client";
+"use client"
+
+import { useRef } from "react"
+import { useSocialCalendarStore } from "@/store/socialCalendarStore"
+import { useSocialAccountsStore } from "@/store/socialAccountsStore"
+import { CalendarFilters } from "@/components/social/calendar/CalendarFilters"
+import { CalendarWeek } from "@/components/social/calendar/CalendarWeek"
+import { CalendarListView } from "@/components/social/calendar/CalendarListView"
+import { Button } from "@/components/ui/button"
+import { PlusIcon, Loader2Icon } from "lucide-react"
+import Link from "next/link"
 
 export default function CalendarPage() {
+  const { viewMode, isLoading, fetchPosts, currentDate, channelFilter } =
+    useSocialCalendarStore()
+  const accounts = useSocialAccountsStore((s) => s.accounts)
+  const initialized = useRef(false)
+
+  // Fetch posts on first render
+  if (!initialized.current) {
+    initialized.current = true
+    fetchPosts()
+  }
+
+  // Refetch when date or filter changes — track previous values via ref
+  const prevKey = useRef("")
+  const key = `${currentDate.toISOString()}-${channelFilter}`
+  if (prevKey.current && prevKey.current !== key) {
+    fetchPosts()
+  }
+  prevKey.current = key
+
+  // Empty state: no channels
+  if (accounts.length === 0) {
+    return (
+      <div className="flex flex-1 flex-col">
+        <CalendarFilters />
+        <div className="flex flex-1 items-center justify-center">
+          <div className="max-w-sm text-center">
+            <h2 className="mb-2 text-lg font-semibold">No channels connected</h2>
+            <p className="mb-6 text-sm text-muted-foreground">
+              Connect a social account to start scheduling posts.
+            </p>
+            <Button render={<a href="/social/channels" />} nativeButton={false}>
+              <PlusIcon className="size-4" />
+              Connect Channel
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="flex items-center justify-center p-8 text-neutral-500">
-      Calendar — coming soon
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <CalendarFilters />
+      {isLoading ? (
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : viewMode === "week" ? (
+        <CalendarWeek />
+      ) : (
+        <CalendarListView />
+      )}
     </div>
-  );
+  )
 }
