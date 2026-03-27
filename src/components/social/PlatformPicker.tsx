@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import type { ProviderCapabilities } from "@/lib/social/provider-interface"
 import {
   connectSocialAccount,
@@ -18,23 +18,35 @@ import {
 } from "@/components/ui/dialog"
 import type { SocialPlatform } from "@/lib/db/schema"
 
+// Module-level cache — fetched once, reused across all PlatformPicker renders
+let providerCache: ProviderCapabilities[] | null = null
+
+function getProviders(): Promise<ProviderCapabilities[]> {
+  if (providerCache) return Promise.resolve(providerCache)
+  return listSocialProviders().then((data) => {
+    providerCache = data
+    return data
+  })
+}
+
 interface PlatformPickerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
 export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
-  const [providers, setProviders] = useState<ProviderCapabilities[]>([])
+  const [providers, setProviders] = useState<ProviderCapabilities[]>(
+    providerCache ?? [],
+  )
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null)
   const { show: showToast } = useToast()
 
-  useEffect(() => {
-    if (open && providers.length === 0) {
-      listSocialProviders()
-        .then(setProviders)
-        .catch(() => showToast("Failed to load providers", "error"))
-    }
-  }, [open])
+  // Fetch on open if not cached — triggered by state check, not useEffect
+  if (open && providers.length === 0 && !providerCache) {
+    getProviders()
+      .then(setProviders)
+      .catch(() => showToast("Failed to load providers", "error"))
+  }
 
   async function handleConnect(platform: string) {
     setConnectingPlatform(platform)
@@ -57,17 +69,7 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
           name: p.displayName,
         }))
       : (
-          [
-            "linkedin",
-            "instagram",
-            "x",
-            "tiktok",
-            "threads",
-            "pinterest",
-            "reddit",
-            "facebook",
-            "youtube",
-          ] as const
+          ["linkedin", "instagram", "x", "tiktok", "facebook", "youtube"] as const
         ).map((id) => ({ identifier: id, name: PLATFORM_LABELS[id] }))
 
   return (
