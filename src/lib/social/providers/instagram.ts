@@ -31,6 +31,7 @@ import type {
   SocialProviderAdapter,
   SocialProviderError,
 } from "@/lib/social/provider-interface";
+import { registerProvider } from "@/lib/social/provider-registry";
 import {
   classifyMetaError,
   exchangeCodeForToken,
@@ -596,3 +597,5 @@ export const instagramProvider: SocialProviderAdapter = {
     };
   },
 };
+
+registerProvider(instagramProvider);
