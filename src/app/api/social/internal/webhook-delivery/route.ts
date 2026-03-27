@@ -4,6 +4,7 @@ import { decryptToken } from "@/lib/social/crypto";
 import { ensureInternalSocialAuth } from "@/lib/social/internal-auth";
 import {
   claimWebhookDelivery,
+  createSocialWebhookDeliveryDeadLetter,
   listDueWebhookDeliveries,
   markWebhookDeliveryFailed,
   markWebhookDeliveryPendingRetry,
@@ -163,6 +164,15 @@ export async function POST(
             responseBody,
             lastError: `Webhook responded with status ${response.status}.`,
           });
+          await createSocialWebhookDeliveryDeadLetter({
+            workspaceId: delivery.workspaceId,
+            deliveryId: delivery.deliveryId,
+            webhookId: delivery.webhookId,
+            eventId: delivery.eventId,
+            deadLetterReason: `status_${response.status}`,
+            responseStatus: response.status,
+            responseBody: responseBody ?? null,
+          });
           failed += 1;
           logger.error("system", "Social webhook delivery failed permanently", {
             workspaceId: delivery.workspaceId,
@@ -206,6 +216,17 @@ export async function POST(
           await markWebhookDeliveryFailed({
             deliveryId: delivery.deliveryId,
             lastError,
+          });
+          await createSocialWebhookDeliveryDeadLetter({
+            workspaceId: delivery.workspaceId,
+            deliveryId: delivery.deliveryId,
+            webhookId: delivery.webhookId,
+            eventId: delivery.eventId,
+            deadLetterReason: "delivery_error",
+            responseBody: null,
+            replayMetadata: {
+              error: lastError,
+            },
           });
           failed += 1;
           logger.error("system", "Social webhook delivery errored permanently", {

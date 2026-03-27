@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { withApiPermission } from "@/lib/studio/authz";
-import { markSocialEventRead, SocialEventNotFoundError } from "@/lib/social/repository";
+import {
+  markSocialEventRead,
+  markSocialEventReadForUser,
+  SocialEventNotFoundError,
+} from "@/lib/social/repository";
 
 interface ReadEventResponse {
   success: boolean;
-  event?: Awaited<ReturnType<typeof markSocialEventRead>>;
+  event?: Record<string, unknown>;
   error?: string;
+}
+
+function parseBoolean(value: string | null): boolean {
+  return value === "true";
 }
 
 export async function POST(
@@ -31,7 +39,15 @@ export async function POST(
     }
 
     const { eventId } = await params;
-    const event = await markSocialEventRead(result.session.workspace.id, eventId);
+    const url = new URL(request.url);
+    const perUserReads = parseBoolean(url.searchParams.get("perUserReads"));
+    const event = perUserReads
+      ? await markSocialEventReadForUser({
+          workspaceId: result.session.workspace.id,
+          eventId,
+          userId: result.session.user.id,
+        })
+      : await markSocialEventRead(result.session.workspace.id, eventId);
 
     return NextResponse.json({ success: true, event });
   } catch (error) {

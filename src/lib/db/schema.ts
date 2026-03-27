@@ -483,6 +483,27 @@ export const socialWebhookDeliveryStatusEnum = pgEnum(
   "social_webhook_delivery_status",
   ["pending", "success", "failed"],
 );
+export const socialDispatchRunStateEnum = pgEnum("social_dispatch_run_state", [
+  "pending",
+  "claimed",
+  "succeeded",
+  "failed",
+]);
+export const socialTokenRefreshLeaseStateEnum = pgEnum(
+  "social_token_refresh_lease_state",
+  ["active", "released", "expired"],
+);
+export const socialWebhookDeadLetterReplayStateEnum = pgEnum(
+  "social_webhook_dead_letter_replay_state",
+  ["dead_lettered", "replay_requested", "replayed", "failed"],
+);
+export const automationTaskStateEnum = pgEnum("automation_task_state", [
+  "pending",
+  "claimed",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
 
 export const socialAccounts = pgTable(
   "social_accounts",
@@ -535,12 +556,18 @@ export const socialPosts = pgTable(
       .notNull()
       .references(() => socialAccounts.id, { onDelete: "cascade" }),
     status: socialPostStatusEnum("status").default("draft").notNull(),
+    rootPostId: text("root_post_id"),
     dispatchStatus: socialDispatchStatusEnum("dispatch_status"),
     dispatchAttempts: integer("dispatch_attempts").default(0).notNull(),
     workflowRunRef: text("workflow_run_ref"),
     nextDispatchAt: timestamp("next_dispatch_at", { withTimezone: true }),
     lastDispatchError: text("last_dispatch_error"),
     lockedAt: timestamp("locked_at", { withTimezone: true }),
+    kind: text("kind").default("post").notNull(),
+    delaySeconds: integer("delay_seconds"),
+    position: integer("position"),
+    sourceTemplatePostId: text("source_template_post_id"),
+    triggerSource: text("trigger_source"),
     content: text("content"),
     mediaUrls: jsonb("media_urls").$type<
       Array<{ type: string; url: string; alt?: string }>
@@ -572,6 +599,14 @@ export const socialPosts = pgTable(
     workspaceIdx: index("social_posts_workspace_idx").on(table.workspaceId),
     socialAccountIdx: index("social_posts_account_idx").on(
       table.socialAccountId,
+    ),
+    rootPostIdx: index("social_posts_root_post_idx").on(table.rootPostId),
+    sourceTemplatePostIdx: index(
+      "social_posts_source_template_post_idx",
+    ).on(table.sourceTemplatePostId),
+    kindIdx: index("social_posts_kind_idx").on(table.kind),
+    triggerSourceIdx: index("social_posts_trigger_source_idx").on(
+      table.triggerSource,
     ),
     statusIdx: index("social_posts_status_idx").on(table.status),
     dispatchStatusIdx: index("social_posts_dispatch_status_idx").on(
@@ -756,6 +791,354 @@ export const socialWebhookDeliveries = pgTable(
   }),
 );
 
+export const socialDispatchRuns = pgTable(
+  "social_dispatch_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    dispatchKey: text("dispatch_key").notNull(),
+    state: socialDispatchRunStateEnum("state").default("pending").notNull(),
+    kind: text("kind").default("post").notNull(),
+    postId: text("post_id").references(() => socialPosts.id, {
+      onDelete: "set null",
+    }),
+    eventId: text("event_id").references(() => socialEvents.id, {
+      onDelete: "set null",
+    }),
+    accountId: text("account_id").references(() => socialAccounts.id, {
+      onDelete: "set null",
+    }),
+    provider: socialPlatformEnum("provider"),
+    claimToken: text("claim_token"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    errorMessage: text("error_message"),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    dispatchKeyUnique: uniqueIndex(
+      "social_dispatch_runs_dispatch_key_unique",
+    ).on(table.dispatchKey),
+    workspaceIdx: index("social_dispatch_runs_workspace_idx").on(
+      table.workspaceId,
+    ),
+    stateIdx: index("social_dispatch_runs_state_idx").on(table.state),
+    createdAtIdx: index("social_dispatch_runs_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
+export const socialTokenRefreshLeases = pgTable(
+  "social_token_refresh_leases",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    socialAccountId: text("social_account_id")
+      .notNull()
+      .references(() => socialAccounts.id, { onDelete: "cascade" }),
+    leaseToken: text("lease_token").notNull(),
+    state: socialTokenRefreshLeaseStateEnum("state")
+      .default("active")
+      .notNull(),
+    leasedAt: timestamp("leased_at", { withTimezone: true }).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true })
+      .notNull(),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    claimedBy: text("claimed_by"),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    socialAccountUnique: uniqueIndex(
+      "social_token_refresh_leases_social_account_unique",
+    ).on(table.socialAccountId),
+    workspaceIdx: index("social_token_refresh_leases_workspace_idx").on(
+      table.workspaceId,
+    ),
+    stateIdx: index("social_token_refresh_leases_state_idx").on(table.state),
+    leaseExpiresAtIdx: index("social_token_refresh_leases_expires_at_idx").on(
+      table.leaseExpiresAt,
+    ),
+  }),
+);
+
+export const socialEventReads = pgTable(
+  "social_event_reads",
+  {
+    eventId: text("event_id")
+      .notNull()
+      .references(() => socialEvents.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    readAt: timestamp("read_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "social_event_reads_pk",
+      columns: [table.eventId, table.userId],
+    }),
+    workspaceIdx: index("social_event_reads_workspace_idx").on(table.workspaceId),
+    userIdx: index("social_event_reads_user_idx").on(table.userId),
+    readAtIdx: index("social_event_reads_read_at_idx").on(table.readAt),
+  }),
+);
+
+export const socialNotificationPreferences = pgTable(
+  "social_notification_preferences",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    inAppEnabled: boolean("in_app_enabled").default(true).notNull(),
+    emailEnabled: boolean("email_enabled").default(false).notNull(),
+    webhookEnabled: boolean("webhook_enabled").default(false).notNull(),
+    muteAll: boolean("mute_all").default(false).notNull(),
+    preferences: jsonb("preferences").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "social_notification_preferences_pk",
+      columns: [table.workspaceId, table.userId],
+    }),
+    userIdx: index("social_notification_preferences_user_idx").on(table.userId),
+  }),
+);
+
+export const socialWebhookSubscriptions = pgTable(
+  "social_webhook_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    webhookId: text("webhook_id")
+      .notNull()
+      .references(() => socialWebhooks.id, { onDelete: "cascade" }),
+    name: text("name"),
+    enabled: boolean("enabled").default(true).notNull(),
+    filters: jsonb("filters").$type<Record<string, unknown>>(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("social_webhook_subscriptions_workspace_idx").on(
+      table.workspaceId,
+    ),
+    webhookIdx: index("social_webhook_subscriptions_webhook_idx").on(
+      table.webhookId,
+    ),
+    enabledIdx: index("social_webhook_subscriptions_enabled_idx").on(
+      table.enabled,
+    ),
+    createdAtIdx: index("social_webhook_subscriptions_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
+export const socialWebhookDeliveryDeadLetters = pgTable(
+  "social_webhook_delivery_dead_letters",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    deliveryId: text("delivery_id")
+      .notNull()
+      .references(() => socialWebhookDeliveries.id, { onDelete: "cascade" }),
+    webhookId: text("webhook_id")
+      .notNull()
+      .references(() => socialWebhooks.id, { onDelete: "cascade" }),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => socialEvents.id, { onDelete: "cascade" }),
+    deadLetterReason: text("dead_letter_reason").notNull(),
+    responseStatus: integer("response_status"),
+    responseBody: text("response_body"),
+    replayState: socialWebhookDeadLetterReplayStateEnum("replay_state")
+      .default("dead_lettered")
+      .notNull(),
+    deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    replayRequestedAt: timestamp("replay_requested_at", { withTimezone: true }),
+    replayRequestedByUserId: text("replay_requested_by_user_id").references(
+      () => user.id,
+      { onDelete: "set null" },
+    ),
+    replayMetadata: jsonb("replay_metadata").$type<Record<string, unknown>>(),
+    replayDeliveryId: text("replay_delivery_id").references(
+      () => socialWebhookDeliveries.id,
+      { onDelete: "set null" },
+    ),
+    replayedAt: timestamp("replayed_at", { withTimezone: true }),
+    replayError: text("replay_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    deliveryUnique: uniqueIndex(
+      "social_webhook_delivery_dead_letters_delivery_unique",
+    ).on(table.deliveryId),
+    workspaceIdx: index("social_webhook_delivery_dead_letters_workspace_idx").on(
+      table.workspaceId,
+    ),
+    replayStateIdx: index(
+      "social_webhook_delivery_dead_letters_replay_state_idx",
+    ).on(table.replayState),
+    createdAtIdx: index("social_webhook_delivery_dead_letters_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
+export const socialAutomationRules = pgTable(
+  "social_automation_rules",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    triggerSource: text("trigger_source").notNull(),
+    triggerFilters: jsonb("trigger_filters").$type<Record<string, unknown>>(),
+    repeatIntervalSeconds: integer("repeat_interval_seconds"),
+    maxRuns: integer("max_runs"),
+    totalRuns: integer("total_runs").default(0).notNull(),
+    actionType: text("action_type").notNull().default("create_social_post"),
+    actionConfig: jsonb("action_config").$type<Record<string, unknown>>(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("social_automation_rules_workspace_idx").on(
+      table.workspaceId,
+    ),
+    enabledIdx: index("social_automation_rules_enabled_idx").on(table.enabled),
+    triggerSourceIdx: index("social_automation_rules_trigger_source_idx").on(
+      table.triggerSource,
+    ),
+    createdAtIdx: index("social_automation_rules_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
+export const socialAutomationTasks = pgTable(
+  "social_automation_tasks",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    ruleId: text("rule_id")
+      .notNull()
+      .references(() => socialAutomationRules.id, { onDelete: "cascade" }),
+    taskKey: text("task_key").notNull(),
+    runIndex: integer("run_index").default(1).notNull(),
+    state: automationTaskStateEnum("state").default("pending").notNull(),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    claimToken: text("claim_token"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    claimedBy: text("claimed_by"),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    input: jsonb("input").$type<Record<string, unknown>>(),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    errorMessage: text("error_message"),
+    sourcePostId: text("source_post_id").references(() => socialPosts.id, {
+      onDelete: "set null",
+    }),
+    sourceEventId: text("source_event_id").references(() => socialEvents.id, {
+      onDelete: "set null",
+    }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("social_automation_tasks_workspace_idx").on(
+      table.workspaceId,
+    ),
+    ruleIdx: index("social_automation_tasks_rule_idx").on(table.ruleId),
+    taskKeyUnique: uniqueIndex("social_automation_tasks_task_key_unique").on(
+      table.taskKey,
+    ),
+    ruleRunIndexUnique: uniqueIndex(
+      "social_automation_tasks_rule_run_index_unique",
+    ).on(table.ruleId, table.runIndex),
+    stateIdx: index("social_automation_tasks_state_idx").on(table.state),
+    dueAtIdx: index("social_automation_tasks_due_at_idx").on(table.dueAt),
+    runIndexIdx: index("social_automation_tasks_run_index_idx").on(
+      table.runIndex,
+    ),
+    claimedAtIdx: index("social_automation_tasks_claimed_at_idx").on(
+      table.claimedAt,
+    ),
+    createdAtIdx: index("social_automation_tasks_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
@@ -767,3 +1150,10 @@ export type SocialEventType = typeof socialEventTypeEnum.enumValues[number];
 export type SocialEventSeverity = typeof socialEventSeverityEnum.enumValues[number];
 export type SocialWebhookDeliveryStatus =
   typeof socialWebhookDeliveryStatusEnum.enumValues[number];
+export type SocialDispatchRunState =
+  typeof socialDispatchRunStateEnum.enumValues[number];
+export type SocialTokenRefreshLeaseState =
+  typeof socialTokenRefreshLeaseStateEnum.enumValues[number];
+export type SocialWebhookDeadLetterReplayState =
+  typeof socialWebhookDeadLetterReplayStateEnum.enumValues[number];
+export type AutomationTaskState = typeof automationTaskStateEnum.enumValues[number];

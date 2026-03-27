@@ -1,8 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { withApiPermission } from "@/lib/studio/authz";
 import {
+  claimSocialDispatchRun,
+  finalizeSocialDispatchRun,
   getSocialPost,
+  hasChainChildren,
   updatePostStatus,
   SocialPostNotFoundError,
   SocialPostStateTransitionError,
@@ -10,7 +14,10 @@ import {
 import { resolveWorkflowRunRef } from "@/lib/social/workflow-utils";
 import { emitSocialEvent } from "@/lib/social/events";
 import { start } from "workflow/api";
-import { publishPostWorkflow } from "@/../workflows/social-publish";
+import {
+  publishPostChainWorkflow,
+  publishPostWorkflow,
+} from "@/../workflows/social-publish";
 import { logger } from "@/utils/logger";
 
 interface PublishResponse {
@@ -21,6 +28,58 @@ interface PublishResponse {
 
 const PUBLISHABLE_STATES = new Set(["draft", "failed"]);
 const DISPATCH_RETRY_DELAY_MS = 5 * 60 * 1000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function readOptionalJsonBody(
+  request: NextRequest,
+): Promise<Record<string, unknown>> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength === "0") {
+    return {};
+  }
+
+  const text = await request.clone().text();
+  if (!text.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function extractWorkflowContext(
+  body: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const context: Record<string, unknown> = {};
+
+  const chain = isRecord(body.chain) ? body.chain : undefined;
+  const automation = isRecord(body.automation) ? body.automation : undefined;
+
+  const chainId = readString(body.chainId);
+  const automationId = readString(body.automationId);
+  const chainRunId = readString(body.chainRunId);
+  const automationRunId = readString(body.automationRunId);
+
+  if (chainId) context.chainId = chainId;
+  if (automationId) context.automationId = automationId;
+  if (chainRunId) context.chainRunId = chainRunId;
+  if (automationRunId) context.automationRunId = automationRunId;
+  if (chain) context.chain = chain;
+  if (automation) context.automation = automation;
+
+  return Object.keys(context).length > 0 ? context : undefined;
+}
 
 export async function POST(
   request: NextRequest,
@@ -45,6 +104,8 @@ export async function POST(
 
     const { postId } = await params;
     const workspaceId = result.session.workspace.id;
+    const body = await readOptionalJsonBody(request);
+    const workflowContext = extractWorkflowContext(body);
     const post = await getSocialPost(workspaceId, postId);
 
     if (!PUBLISHABLE_STATES.has(post.status)) {
@@ -59,6 +120,12 @@ export async function POST(
 
     const dispatchAttempts = (post.dispatchAttempts ?? 0) + 1;
     const dispatchKey = `publish:${postId}:${dispatchAttempts}`;
+    const dispatchClaimToken = randomUUID();
+    const eventMetadata = {
+      previousStatus: post.status,
+      scheduledAt: post.scheduledAt?.toISOString() ?? null,
+      ...(workflowContext ? { workflowContext } : {}),
+    };
 
     // Transition to "queued" and persist dispatch intent metadata first.
     await updatePostStatus(postId, "queued", {
@@ -79,10 +146,7 @@ export async function POST(
       postId,
       accountId: post.socialAccountId,
       dispatchKey,
-      metadata: {
-        previousStatus: post.status,
-        scheduledAt: post.scheduledAt?.toISOString() ?? null,
-      },
+      metadata: eventMetadata,
       createdByUserId: result.session.user.id,
     });
     logger.info("system", "Social post queued for publish", {
@@ -93,15 +157,63 @@ export async function POST(
       workflowRunRef: null,
     });
 
+    const dispatchRun = await claimSocialDispatchRun({
+      workspaceId,
+      dispatchKey,
+      claimToken: dispatchClaimToken,
+      kind: "post",
+      postId,
+      accountId: post.socialAccountId,
+      payload: {
+        postId,
+        workspaceId,
+      },
+      metadata: {
+        source: "publish-route",
+      },
+    });
+
+    if (!dispatchRun || dispatchRun.claimToken !== dispatchClaimToken) {
+      const duplicate = await updatePostStatus(postId, "queued", {
+        dispatchStatus: "dispatched",
+        lockedAt: null,
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          post: duplicate,
+          error: "Dispatch already claimed by another run.",
+        },
+        { status: 409 },
+      );
+    }
+
     // Start the durable publish workflow — returns immediately
     // Workflow handles sleep (scheduled), token refresh, media processing, and publish
     try {
-      const workflowRun = await start(publishPostWorkflow, [postId, result.session.workspace.id]);
-      const workflowRunRef = resolveWorkflowRunRef(workflowRun, `publish:${postId}`);
+      const isChainRoot =
+        post.rootPostId === null &&
+        ((post.kind ?? "post") === "chain_root" ||
+          (await hasChainChildren(workspaceId, postId)));
+      const workflowRun = isChainRoot
+        ? await start(publishPostChainWorkflow, [
+            postId,
+            result.session.workspace.id,
+          ])
+        : await start(publishPostWorkflow, [
+            postId,
+            result.session.workspace.id,
+          ]);
+      const workflowRunRef = resolveWorkflowRunRef(workflowRun, dispatchKey);
       const updated = await updatePostStatus(postId, "queued", {
         dispatchStatus: "dispatched",
         workflowRunRef,
         lockedAt: null,
+      });
+      await finalizeSocialDispatchRun({
+        dispatchKey,
+        state: "succeeded",
+        result: { workflowRunRef },
       });
       logger.info("system", "Social publish workflow dispatched", {
         workspaceId,
@@ -109,6 +221,7 @@ export async function POST(
         accountId: post.socialAccountId,
         dispatchKey,
         workflowRunRef,
+        chainWorkflow: isChainRoot,
       });
       return NextResponse.json({ success: true, post: updated });
     } catch (workflowError) {
@@ -117,6 +230,11 @@ export async function POST(
         workflowError instanceof Error
           ? workflowError.message
           : "Unknown workflow dispatch error";
+      await finalizeSocialDispatchRun({
+        dispatchKey,
+        state: "failed",
+        errorMessage: workflowMessage,
+      });
       const updated = await updatePostStatus(postId, "queued", {
         errorMessage: "Dispatch failed. Automatic retry has been scheduled.",
         dispatchStatus: "retry_scheduled",
@@ -136,6 +254,7 @@ export async function POST(
         metadata: {
           error: workflowMessage,
           retryAt: retryAt.toISOString(),
+          ...(workflowContext ? { workflowContext } : {}),
         },
       });
       logger.warn("system", "Social publish dispatch failed", {

@@ -7,11 +7,16 @@ import { getSocialPlanLimits, quotaExceededPayload } from "@/lib/social/limits";
 import {
   countActiveSocialWebhooks,
   createSocialWebhook,
+  createSocialWebhookSubscription,
   listSocialWebhooks,
 } from "@/lib/social/repository";
+import { validateMediaUrl } from "@/utils/urlValidation";
 
 interface WebhookPostRequest {
   targetUrl: string;
+  name?: string;
+  enabled?: boolean;
+  filters?: Record<string, unknown>;
 }
 
 interface WebhooksGetResponse {
@@ -45,13 +50,27 @@ interface WebhooksPostResponse {
   billingUrl?: string;
 }
 
-function isValidHttpsOrHttpUrl(input: string): boolean {
+function isValidWebhookTargetUrl(input: string): boolean {
   try {
     const parsed = new URL(input);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
+    if (parsed.protocol !== "https:") {
+      return false;
+    }
+    if (parsed.username || parsed.password) {
+      return false;
+    }
+
+    return validateMediaUrl(input).valid;
   } catch {
     return false;
   }
+}
+
+function parseBooleanFilter(value: string | null): boolean | undefined {
+  if (value === null) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
 }
 
 export async function GET(
@@ -74,10 +93,28 @@ export async function GET(
       return result.response;
     }
 
+    const url = new URL(request.url);
+    const enabledFilter = parseBooleanFilter(url.searchParams.get("enabled"));
+    const targetUrlIncludes = url.searchParams.get("targetUrlContains")?.trim();
+    const createdByUserId = url.searchParams.get("createdByUserId")?.trim();
+
     const webhooks = await listSocialWebhooks(result.session.workspace.id);
-    const safeWebhooks = webhooks.map(
+    const safeWebhooks = webhooks
+      .filter((webhook) => {
+        if (enabledFilter !== undefined && webhook.enabled !== enabledFilter) {
+          return false;
+        }
+        if (createdByUserId && webhook.createdByUserId !== createdByUserId) {
+          return false;
+        }
+        if (targetUrlIncludes && !webhook.targetUrl.includes(targetUrlIncludes)) {
+          return false;
+        }
+        return true;
+      })
+      .map(
       ({ signingSecretEncrypted, ...rest }) => rest,
-    );
+      );
 
     return NextResponse.json({
       success: true,
@@ -124,9 +161,9 @@ export async function POST(
       );
     }
 
-    if (!isValidHttpsOrHttpUrl(targetUrl)) {
+    if (!isValidWebhookTargetUrl(targetUrl)) {
       return NextResponse.json(
-        { success: false, error: "targetUrl must be a valid http(s) URL." },
+        { success: false, error: "targetUrl must be a valid https URL." },
         { status: 400 },
       );
     }
@@ -151,6 +188,18 @@ export async function POST(
       workspaceId: result.session.workspace.id,
       targetUrl,
       signingSecretEncrypted: encryptToken(signingSecret),
+      createdByUserId: result.session.user.id,
+    });
+
+    await createSocialWebhookSubscription({
+      workspaceId: result.session.workspace.id,
+      webhookId: webhook.id,
+      name: body.name?.trim() || undefined,
+      enabled: body.enabled ?? true,
+      filters:
+        body.filters && typeof body.filters === "object" && !Array.isArray(body.filters)
+          ? body.filters
+          : undefined,
       createdByUserId: result.session.user.id,
     });
 

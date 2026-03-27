@@ -22,6 +22,62 @@ export async function publishPostWorkflow(
 ) {
   "use workflow";
 
+  return publishSinglePostWorkflow(postId, workspaceId);
+}
+
+export async function publishPostChainWorkflow(
+  rootPostId: string,
+  workspaceId: string,
+) {
+  "use workflow";
+
+  const rootResult = await publishSinglePostWorkflow(rootPostId, workspaceId);
+  const chainChildren = await loadChainChildren(rootPostId, workspaceId);
+
+  let cumulativeDelayMs = 0;
+  const chainAnchorMs = Date.now();
+
+  for (const child of chainChildren) {
+    if (child.status === "published") {
+      continue;
+    }
+    if (child.status === "publishing") {
+      continue;
+    }
+
+    cumulativeDelayMs += Math.max(0, child.delaySeconds ?? 0) * 1000;
+    const chainedTargetMs = chainAnchorMs + cumulativeDelayMs;
+    const scheduledTargetMs = child.scheduledAt
+      ? new Date(child.scheduledAt).getTime()
+      : null;
+    const targetMs =
+      scheduledTargetMs && Number.isFinite(scheduledTargetMs)
+        ? Math.max(chainedTargetMs, scheduledTargetMs)
+        : chainedTargetMs;
+    const waitMs = targetMs - Date.now();
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+
+    await queueChainChildStep({
+      rootPostId,
+      childPostId: child.id,
+      workspaceId,
+      socialAccountId: child.socialAccountId,
+      previousStatus: child.status,
+      position: child.position,
+      delaySeconds: child.delaySeconds,
+    });
+    await publishSinglePostWorkflow(child.id, workspaceId);
+  }
+
+  return rootResult;
+}
+
+async function publishSinglePostWorkflow(
+  postId: string,
+  workspaceId: string,
+) {
   // Step 1: Load the post and transition to "publishing"
   const post = await loadPost(postId, workspaceId);
 
@@ -64,6 +120,75 @@ export async function publishPostWorkflow(
   );
 
   return result;
+}
+
+interface ChainChildData {
+  id: string;
+  workspaceId: string;
+  socialAccountId: string;
+  status: string;
+  scheduledAt: string | null;
+  delaySeconds: number | null;
+  position: number | null;
+}
+
+async function loadChainChildren(
+  rootPostId: string,
+  workspaceId: string,
+): Promise<ChainChildData[]> {
+  "use step";
+
+  const { listOrderedChainChildren } = await import("@/lib/social/repository");
+
+  const rows = await listOrderedChainChildren(workspaceId, rootPostId);
+  return rows.map((row) => ({
+    id: row.id,
+    workspaceId: row.workspaceId,
+    socialAccountId: row.socialAccountId,
+    status: row.status,
+    scheduledAt: row.scheduledAt?.toISOString() ?? null,
+    delaySeconds: row.delaySeconds ?? null,
+    position: row.position ?? null,
+  }));
+}
+
+async function queueChainChildStep(input: {
+  rootPostId: string;
+  childPostId: string;
+  workspaceId: string;
+  socialAccountId: string;
+  previousStatus: string;
+  position: number | null;
+  delaySeconds: number | null;
+}) {
+  "use step";
+
+  const { updatePostStatus } = await import("@/lib/social/repository");
+  const { emitSocialEvent } = await import("@/lib/social/events");
+
+  await updatePostStatus(input.childPostId, "queued", {
+    errorMessage: null,
+    retryCount: input.previousStatus === "failed" ? 0 : undefined,
+    dispatchStatus: "dispatched",
+    workflowRunRef: `chain:${input.rootPostId}`,
+    nextDispatchAt: null,
+    lastDispatchError: null,
+    lockedAt: null,
+  });
+
+  await emitSocialEvent({
+    workspaceId: input.workspaceId,
+    eventType: "post.queued",
+    severity: "info",
+    message: "Chain child post queued for publishing.",
+    postId: input.childPostId,
+    accountId: input.socialAccountId,
+    metadata: {
+      rootPostId: input.rootPostId,
+      position: input.position,
+      delaySeconds: input.delaySeconds,
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------

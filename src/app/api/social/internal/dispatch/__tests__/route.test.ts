@@ -4,26 +4,41 @@ import { NextRequest } from "next/server";
 const mockIsDatabaseConfigured = vi.fn(() => true);
 const mockListDueQueuedPosts = vi.fn();
 const mockClaimPostForDispatch = vi.fn();
+const mockClaimSocialDispatchRun = vi.fn();
+const mockFinalizeSocialDispatchRun = vi.fn();
+const mockGetSocialAccountById = vi.fn();
+const mockHasChainChildren = vi.fn();
 const mockUpdatePostStatus = vi.fn();
 const mockWorkflowStart = vi.fn();
 const mockEmitSocialEvent = vi.fn();
+const mockGetProvider = vi.fn();
+const mockRegisterProvider = vi.fn();
 
 vi.mock("@/lib/db", () => ({
-  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...args),
+  isDatabaseConfigured: mockIsDatabaseConfigured,
 }));
 
 vi.mock("@/lib/social/repository", () => ({
-  listDueQueuedPosts: (...args: unknown[]) => mockListDueQueuedPosts(...args),
-  claimPostForDispatch: (...args: unknown[]) => mockClaimPostForDispatch(...args),
-  updatePostStatus: (...args: unknown[]) => mockUpdatePostStatus(...args),
+  listDueQueuedPosts: mockListDueQueuedPosts,
+  claimPostForDispatch: mockClaimPostForDispatch,
+  claimSocialDispatchRun: mockClaimSocialDispatchRun,
+  finalizeSocialDispatchRun: mockFinalizeSocialDispatchRun,
+  getSocialAccountById: mockGetSocialAccountById,
+  hasChainChildren: mockHasChainChildren,
+  updatePostStatus: mockUpdatePostStatus,
+}));
+
+vi.mock("@/lib/social/provider-registry", () => ({
+  getProvider: mockGetProvider,
+  registerProvider: mockRegisterProvider,
 }));
 
 vi.mock("workflow/api", () => ({
-  start: (...args: unknown[]) => mockWorkflowStart(...args),
+  start: mockWorkflowStart,
 }));
 
 vi.mock("@/lib/social/events", () => ({
-  emitSocialEvent: (...args: unknown[]) => mockEmitSocialEvent(...args),
+  emitSocialEvent: mockEmitSocialEvent,
 }));
 
 vi.mock("@/utils/logger", () => ({
@@ -48,6 +63,20 @@ describe("/api/social/internal/dispatch POST", () => {
     vi.clearAllMocks();
     process.env.SOCIAL_INTERNAL_API_SECRET = "secret_123";
     delete process.env.SOCIAL_DISPATCH_MAX_ATTEMPTS;
+    mockClaimSocialDispatchRun.mockImplementation(
+      (input: { claimToken?: string; dispatchKey: string }) => ({
+        id: "sdrun_1",
+        dispatchKey: input.dispatchKey,
+        claimToken: input.claimToken,
+        state: "claimed",
+      }),
+    );
+    mockFinalizeSocialDispatchRun.mockResolvedValue({});
+    mockGetProvider.mockReturnValue({
+      identifier: "linkedin",
+      maxConcurrentJobs: 5,
+    });
+    mockHasChainChildren.mockResolvedValue(false);
   });
 
   it("returns 401 for unauthorized request", async () => {
@@ -121,6 +150,19 @@ describe("/api/social/internal/dispatch POST", () => {
       lastDispatchError: "workflow start failed",
       lockedAt: null,
     });
+    expect(mockEmitSocialEvent).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      eventType: "dispatch.failed",
+      severity: "warn",
+      message: "Dispatch failed and was scheduled for retry.",
+      postId: "spost_1",
+      dispatchKey: "publish:spost_1:1",
+      metadata: expect.objectContaining({
+        attempts: 1,
+        error: "workflow start failed",
+        retryAt: expect.any(String),
+      }),
+    });
   });
 
   it("marks post failed when max dispatch attempts reached", async () => {
@@ -148,5 +190,69 @@ describe("/api/social/internal/dispatch POST", () => {
       lastDispatchError: "workflow start failed",
       lockedAt: null,
     });
+    expect(mockEmitSocialEvent).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      eventType: "post.failed",
+      severity: "error",
+      message: "Post failed after repeated dispatch failures.",
+      userFacing: true,
+      postId: "spost_1",
+      dispatchKey: "publish:spost_1:2",
+      metadata: {
+        attempts: 2,
+        error: "workflow start failed",
+      },
+    });
+  });
+
+  it("falls back to a dispatch-key-based workflow ref when the workflow run lacks ids", async () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    mockListDueQueuedPosts.mockResolvedValue([{ id: "spost_1", workspaceId: "ws_1" }]);
+    mockClaimPostForDispatch.mockResolvedValue({
+      id: "spost_1",
+      workspaceId: "ws_1",
+      dispatchAttempts: 1,
+    });
+    mockWorkflowStart.mockResolvedValue({});
+    mockUpdatePostStatus.mockResolvedValue({});
+
+    const { POST } = await import("../route");
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockUpdatePostStatus).toHaveBeenCalledWith("spost_1", "queued", {
+      dispatchStatus: "dispatched",
+      workflowRunRef: "publish:spost_1:1:1700000000000",
+      nextDispatchAt: null,
+      lastDispatchError: null,
+      lockedAt: null,
+    });
+
+    nowSpy.mockRestore();
+  });
+
+  it("uses chain workflow for root posts with children", async () => {
+    mockListDueQueuedPosts.mockResolvedValue([{ id: "spost_root", workspaceId: "ws_1" }]);
+    mockClaimPostForDispatch.mockResolvedValue({
+      id: "spost_root",
+      workspaceId: "ws_1",
+      rootPostId: null,
+      kind: "post",
+      dispatchAttempts: 1,
+    });
+    mockHasChainChildren.mockResolvedValue(true);
+    mockWorkflowStart.mockResolvedValue({ runId: "run_chain_1" });
+    mockUpdatePostStatus.mockResolvedValue({});
+
+    const { POST } = await import("../route");
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockWorkflowStart).toHaveBeenCalledTimes(1);
+    const [workflowFn] = mockWorkflowStart.mock.calls[0] ?? [];
+    expect(typeof workflowFn).toBe("function");
+    expect((workflowFn as { name?: string }).name).toBe(
+      "publishPostChainWorkflow",
+    );
   });
 });

@@ -28,6 +28,19 @@ interface WebhookDeleteResponse {
   error?: string;
 }
 
+function parseBooleanFilter(value: string | null): boolean | undefined {
+  if (value === null) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
+function parsePositiveInteger(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ webhookId: string }> },
@@ -51,16 +64,38 @@ export async function GET(
 
     const { webhookId } = await params;
     const webhook = await getSocialWebhook(result.session.workspace.id, webhookId);
+    const url = new URL(request.url);
+    const statusFilter = url.searchParams.get("status")?.trim();
+    const eventTypeFilter = url.searchParams.get("eventType")?.trim();
+    const replayableOnly = parseBooleanFilter(url.searchParams.get("replayableOnly"));
+    const limit = parsePositiveInteger(url.searchParams.get("limit")) ?? 100;
+    const offset = parsePositiveInteger(url.searchParams.get("offset"));
     const deliveries = await listWebhookDeliveriesForWorkspace(
       result.session.workspace.id,
-      { webhookId, limit: 100 },
+      { webhookId, limit, offset },
     );
     const { signingSecretEncrypted, ...safeWebhook } = webhook;
+    const safeDeliveries = deliveries.filter((delivery) => {
+      if (statusFilter && delivery.status !== statusFilter) {
+        return false;
+      }
+      if (eventTypeFilter && delivery.eventType !== eventTypeFilter) {
+        return false;
+      }
+      if (
+        replayableOnly &&
+        delivery.status !== "failed" &&
+        delivery.status !== "pending"
+      ) {
+        return false;
+      }
+      return true;
+    });
 
     return NextResponse.json({
       success: true,
       webhook: safeWebhook,
-      deliveries,
+      deliveries: safeDeliveries,
     });
   } catch (error) {
     if (error instanceof SocialWebhookNotFoundError) {

@@ -77,6 +77,10 @@ describe("/api/social/webhooks/[webhookId]", () => {
     expect(data.success).toBe(true);
     expect(data.webhook).not.toHaveProperty("signingSecretEncrypted");
     expect(data.deliveries).toHaveLength(1);
+    expect(mockListWebhookDeliveriesForWorkspace).toHaveBeenCalledWith("ws_1", {
+      webhookId: "swh_1",
+      limit: 100,
+    });
   });
 
   it("deletes webhook", async () => {
