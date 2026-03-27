@@ -1,27 +1,10 @@
-"use client"
+import { ComposePageClient } from "@/components/social/compose/ComposePageClient"
 
-import { useEffect } from "react"
-import { useSearchParams } from "next/navigation"
-import { useSocialComposerStore } from "@/store/socialComposerStore"
-import { ComposeView } from "@/components/social/compose/ComposeView"
+interface ComposePageProps {
+  searchParams: Promise<{ date?: string }>
+}
 
-export default function ComposePage() {
-  const searchParams = useSearchParams()
-  const { reset, setScheduledAt } = useSocialComposerStore()
-
-  useEffect(() => {
-    // Reset store for new post
-    reset()
-
-    // Pre-fill schedule from query param (from calendar click)
-    const dateParam = searchParams.get("date")
-    if (dateParam) {
-      const date = new Date(dateParam)
-      if (!isNaN(date.getTime())) {
-        setScheduledAt(date)
-      }
-    }
-  }, [])
-
-  return <ComposeView />
+export default async function ComposePage({ searchParams }: ComposePageProps) {
+  const params = await searchParams
+  return <ComposePageClient initialDate={params.date ?? null} />
 }
