@@ -115,7 +115,7 @@ This file tracks the remaining social backend parity slices as independently gra
 - Type: AFK
 - Blocked by: Issue 12
 - User stories: US5 automation safety
-- Status: Planned
+- Status: Completed
 - Scope:
   - Loop prevention.
   - Max limits and tenant isolation guards.

@@ -7,8 +7,11 @@ import {
   getAutomationRule,
   getNextAutomationRunIndex,
   listAutomationTasks,
+  socialEventBelongsToWorkspace,
+  socialPostBelongsToWorkspace,
 } from "@/lib/social/repository";
 import type { AutomationTaskState } from "@/lib/db/schema";
+import { validateAutomationTaskPayload } from "@/lib/social/automation-guards";
 
 interface TasksGetResponse {
   success: boolean;
@@ -158,6 +161,48 @@ export async function POST(
       : {};
     const sourcePostId = readString(body.sourcePostId);
     const sourceEventId = readString(body.sourceEventId);
+    const guardError = validateAutomationTaskPayload({
+      runIndex,
+      payload: inputPayload,
+    });
+    if (guardError) {
+      return NextResponse.json(
+        { success: false, error: guardError },
+        { status: 400 },
+      );
+    }
+
+    if (sourcePostId) {
+      const sourcePostOwned = await socialPostBelongsToWorkspace(
+        rule.workspaceId,
+        sourcePostId,
+      );
+      if (!sourcePostOwned) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "sourcePostId does not belong to this workspace.",
+          },
+          { status: 404 },
+        );
+      }
+    }
+
+    if (sourceEventId) {
+      const sourceEventOwned = await socialEventBelongsToWorkspace(
+        rule.workspaceId,
+        sourceEventId,
+      );
+      if (!sourceEventOwned) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "sourceEventId does not belong to this workspace.",
+          },
+          { status: 404 },
+        );
+      }
+    }
 
     const task = await createAutomationTask({
       workspaceId: rule.workspaceId,

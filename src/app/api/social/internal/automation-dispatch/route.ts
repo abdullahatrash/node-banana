@@ -6,11 +6,16 @@ import {
   claimDueAutomationTasks,
   createAutomationTask,
   createSocialPost,
+  getSocialAccount,
   getAutomationRule,
   incrementAutomationRuleRunCount,
   updateAutomationTask,
   updatePostStatus,
 } from "@/lib/social/repository";
+import {
+  validateAutomationRulePayload,
+  validateAutomationTaskPayload,
+} from "@/lib/social/automation-guards";
 import { logger } from "@/utils/logger";
 
 interface AutomationDispatchResponse {
@@ -29,10 +34,6 @@ interface AutomationDispatchResponse {
 
 const DEFAULT_BATCH_SIZE = 20;
 const MAX_BATCH_SIZE = 100;
-const MIN_REPEAT_INTERVAL_SECONDS = 60;
-const MAX_REPEAT_INTERVAL_SECONDS = 60 * 60 * 24 * 30;
-const MAX_ALLOWED_RUNS = 1000;
-
 function positiveInt(value: string | null): number | null {
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
@@ -74,28 +75,6 @@ function readMediaUrls(
   return media.length > 0 ? media : undefined;
 }
 
-function validateRuleBounds(rule: {
-  repeatIntervalSeconds: number | null;
-  maxRuns: number | null;
-}) {
-  if (
-    rule.repeatIntervalSeconds !== null &&
-    (rule.repeatIntervalSeconds < MIN_REPEAT_INTERVAL_SECONDS ||
-      rule.repeatIntervalSeconds > MAX_REPEAT_INTERVAL_SECONDS)
-  ) {
-    return `repeatIntervalSeconds must be between ${MIN_REPEAT_INTERVAL_SECONDS} and ${MAX_REPEAT_INTERVAL_SECONDS}.`;
-  }
-
-  if (
-    rule.maxRuns !== null &&
-    (rule.maxRuns < 1 || rule.maxRuns > MAX_ALLOWED_RUNS)
-  ) {
-    return `maxRuns must be between 1 and ${MAX_ALLOWED_RUNS}.`;
-  }
-
-  return null;
-}
-
 export async function POST(
   request: NextRequest,
 ): Promise<NextResponse<AutomationDispatchResponse>> {
@@ -133,11 +112,19 @@ export async function POST(
     for (const task of claimedTasks) {
       try {
         const rule = await getAutomationRule(task.workspaceId, task.ruleId);
-        const boundsError = validateRuleBounds(rule);
-        if (boundsError) {
+        const ruleGuardError = validateAutomationRulePayload({
+          triggerSource: rule.triggerSource,
+          repeatIntervalSeconds: rule.repeatIntervalSeconds,
+          maxRuns: rule.maxRuns,
+          triggerFilters: rule.triggerFilters ?? null,
+          actionType: rule.actionType,
+          actionConfig: isRecord(rule.actionConfig) ? rule.actionConfig : null,
+          enforceKnownTriggerSource: false,
+        });
+        if (ruleGuardError) {
           await updateAutomationTask(task.workspaceId, task.id, {
             state: "cancelled",
-            errorMessage: boundsError,
+            errorMessage: ruleGuardError,
             completedAt: new Date(),
           });
           cancelled += 1;
@@ -176,6 +163,19 @@ export async function POST(
 
         const actionConfig = isRecord(rule.actionConfig) ? rule.actionConfig : {};
         const taskInput = isRecord(task.input) ? task.input : {};
+        const taskGuardError = validateAutomationTaskPayload({
+          runIndex: task.runIndex,
+          payload: taskInput,
+        });
+        if (taskGuardError) {
+          await updateAutomationTask(task.workspaceId, task.id, {
+            state: "cancelled",
+            errorMessage: taskGuardError,
+            completedAt: new Date(),
+          });
+          cancelled += 1;
+          continue;
+        }
 
         const socialAccountId =
           readString(taskInput.socialAccountId) ??
@@ -185,6 +185,18 @@ export async function POST(
             state: "failed",
             errorMessage:
               "Automation action requires actionConfig.socialAccountId or task input socialAccountId.",
+            completedAt: new Date(),
+          });
+          failed += 1;
+          continue;
+        }
+        try {
+          await getSocialAccount(task.workspaceId, socialAccountId);
+        } catch {
+          await updateAutomationTask(task.workspaceId, task.id, {
+            state: "failed",
+            errorMessage:
+              "Automation action socialAccountId does not belong to this workspace.",
             completedAt: new Date(),
           });
           failed += 1;

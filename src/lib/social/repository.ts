@@ -1078,6 +1078,20 @@ export async function getSocialPost(workspaceId: string, postId: string) {
   return row;
 }
 
+export async function socialPostBelongsToWorkspace(
+  workspaceId: string,
+  postId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: socialPosts.id })
+    .from(socialPosts)
+    .where(and(eq(socialPosts.workspaceId, workspaceId), eq(socialPosts.id, postId)))
+    .limit(1);
+
+  return Boolean(row);
+}
+
 export async function updateSocialPost(
   workspaceId: string,
   postId: string,
@@ -2251,6 +2265,22 @@ export async function markSocialEventRead(workspaceId: string, eventId: string) 
   }
 
   return row;
+}
+
+export async function socialEventBelongsToWorkspace(
+  workspaceId: string,
+  eventId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: socialEvents.id })
+    .from(socialEvents)
+    .where(
+      and(eq(socialEvents.workspaceId, workspaceId), eq(socialEvents.id, eventId)),
+    )
+    .limit(1);
+
+  return Boolean(row);
 }
 
 export async function listDueWebhookDeliveries(input?: {

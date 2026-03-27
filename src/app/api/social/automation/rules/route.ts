@@ -7,6 +7,7 @@ import {
   createAutomationTask,
   listAutomationRules,
 } from "@/lib/social/repository";
+import { validateAutomationRulePayload } from "@/lib/social/automation-guards";
 
 interface RulesGetResponse {
   success: boolean;
@@ -20,10 +21,6 @@ interface RulesPostResponse {
   initialTask?: Awaited<ReturnType<typeof createAutomationTask>>;
   error?: string;
 }
-
-const MIN_REPEAT_INTERVAL_SECONDS = 60;
-const MAX_REPEAT_INTERVAL_SECONDS = 60 * 60 * 24 * 30;
-const MAX_ALLOWED_RUNS = 1000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -145,33 +142,6 @@ export async function POST(
     const repeatIntervalSeconds = readOptionalInt(body.repeatIntervalSeconds);
     const maxRuns = readOptionalInt(body.maxRuns);
 
-    if (
-      repeatIntervalSeconds !== undefined &&
-      (repeatIntervalSeconds < MIN_REPEAT_INTERVAL_SECONDS ||
-        repeatIntervalSeconds > MAX_REPEAT_INTERVAL_SECONDS)
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `repeatIntervalSeconds must be between ${MIN_REPEAT_INTERVAL_SECONDS} and ${MAX_REPEAT_INTERVAL_SECONDS}.`,
-        },
-        { status: 400 },
-      );
-    }
-
-    if (
-      maxRuns !== undefined &&
-      (maxRuns < 1 || maxRuns > MAX_ALLOWED_RUNS)
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `maxRuns must be between 1 and ${MAX_ALLOWED_RUNS}.`,
-        },
-        { status: 400 },
-      );
-    }
-
     const enabled = readBoolean(body.enabled);
     const actionType = readString(body.actionType);
     const actionConfig = isRecord(body.actionConfig)
@@ -181,6 +151,20 @@ export async function POST(
       ? body.triggerFilters
       : undefined;
     const startAt = readOptionalDate(body.startAt) ?? new Date();
+    const guardError = validateAutomationRulePayload({
+      triggerSource,
+      repeatIntervalSeconds,
+      maxRuns,
+      triggerFilters,
+      actionType,
+      actionConfig,
+    });
+    if (guardError) {
+      return NextResponse.json(
+        { success: false, error: guardError },
+        { status: 400 },
+      );
+    }
 
     const rule = await createAutomationRule({
       workspaceId: auth.session.workspace.id,

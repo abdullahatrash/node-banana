@@ -5,6 +5,7 @@ const mockIsDatabaseConfigured = vi.fn(() => true);
 const mockClaimDueAutomationTasks = vi.fn();
 const mockGetAutomationRule = vi.fn();
 const mockCreateSocialPost = vi.fn();
+const mockGetSocialAccount = vi.fn();
 const mockUpdatePostStatus = vi.fn();
 const mockUpdateAutomationTask = vi.fn();
 const mockIncrementAutomationRuleRunCount = vi.fn();
@@ -18,6 +19,7 @@ vi.mock("@/lib/social/repository", () => ({
   claimDueAutomationTasks: (...args: unknown[]) => mockClaimDueAutomationTasks(...args),
   getAutomationRule: (...args: unknown[]) => mockGetAutomationRule(...args),
   createSocialPost: (...args: unknown[]) => mockCreateSocialPost(...args),
+  getSocialAccount: (...args: unknown[]) => mockGetSocialAccount(...args),
   updatePostStatus: (...args: unknown[]) => mockUpdatePostStatus(...args),
   updateAutomationTask: (...args: unknown[]) => mockUpdateAutomationTask(...args),
   incrementAutomationRuleRunCount: (...args: unknown[]) =>
@@ -60,6 +62,10 @@ describe("/api/social/internal/automation-dispatch POST", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SOCIAL_INTERNAL_API_SECRET = "secret_123";
+    mockGetSocialAccount.mockResolvedValue({
+      id: "sacct_1",
+      workspaceId: "ws_1",
+    });
   });
 
   it("returns 401 for unauthorized request", async () => {
@@ -89,6 +95,8 @@ describe("/api/social/internal/automation-dispatch POST", () => {
       repeatIntervalSeconds: 3600,
       maxRuns: 3,
       totalRuns: 0,
+      triggerSource: "schedule",
+      triggerFilters: null,
       actionType: "create_social_post",
       actionConfig: { socialAccountId: "sacct_1", content: "hello" },
       createdByUserId: "user_1",
@@ -161,6 +169,8 @@ describe("/api/social/internal/automation-dispatch POST", () => {
       repeatIntervalSeconds: 3600,
       maxRuns: 5,
       totalRuns: 5,
+      triggerSource: "schedule",
+      triggerFilters: null,
       actionType: "create_social_post",
       actionConfig: { socialAccountId: "sacct_1" },
       createdByUserId: "user_1",
@@ -179,6 +189,101 @@ describe("/api/social/internal/automation-dispatch POST", () => {
       "atask_1",
       expect.objectContaining({
         state: "cancelled",
+      }),
+    );
+  });
+
+  it("cancels task on nested automation context input", async () => {
+    mockClaimDueAutomationTasks.mockResolvedValue([
+      {
+        id: "atask_1",
+        workspaceId: "ws_1",
+        ruleId: "arule_1",
+        taskKey: "ws_1:arule_1:1",
+        runIndex: 1,
+        dueAt: new Date(),
+        input: {
+          workflowContext: {
+            automation: {
+              ruleId: "arule_loop",
+            },
+          },
+        },
+      },
+    ]);
+    mockGetAutomationRule.mockResolvedValue({
+      id: "arule_1",
+      workspaceId: "ws_1",
+      enabled: true,
+      repeatIntervalSeconds: 3600,
+      maxRuns: 10,
+      totalRuns: 0,
+      triggerSource: "schedule",
+      triggerFilters: null,
+      actionType: "create_social_post",
+      actionConfig: { socialAccountId: "sacct_1" },
+      createdByUserId: "user_1",
+    });
+    mockUpdateAutomationTask.mockResolvedValue({});
+
+    const { POST } = await import("../route");
+    const response = await POST(createRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.summary.cancelled).toBe(1);
+    expect(mockCreateSocialPost).not.toHaveBeenCalled();
+    expect(mockUpdateAutomationTask).toHaveBeenCalledWith(
+      "ws_1",
+      "atask_1",
+      expect.objectContaining({
+        state: "cancelled",
+        errorMessage: expect.stringContaining("Nested automation context"),
+      }),
+    );
+  });
+
+  it("fails task when socialAccountId is outside workspace", async () => {
+    mockClaimDueAutomationTasks.mockResolvedValue([
+      {
+        id: "atask_1",
+        workspaceId: "ws_1",
+        ruleId: "arule_1",
+        taskKey: "ws_1:arule_1:1",
+        runIndex: 1,
+        dueAt: new Date(),
+        input: {},
+      },
+    ]);
+    mockGetAutomationRule.mockResolvedValue({
+      id: "arule_1",
+      workspaceId: "ws_1",
+      enabled: true,
+      repeatIntervalSeconds: 3600,
+      maxRuns: 10,
+      totalRuns: 0,
+      triggerSource: "schedule",
+      triggerFilters: null,
+      actionType: "create_social_post",
+      actionConfig: { socialAccountId: "sacct_foreign" },
+      createdByUserId: "user_1",
+    });
+    mockGetSocialAccount.mockRejectedValue(new Error("not found"));
+    mockUpdateAutomationTask.mockResolvedValue({});
+
+    const { POST } = await import("../route");
+    const response = await POST(createRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.summary.failed).toBe(1);
+    expect(mockCreateSocialPost).not.toHaveBeenCalled();
+    expect(mockUpdateAutomationTask).toHaveBeenCalledWith(
+      "ws_1",
+      "atask_1",
+      expect.objectContaining({
+        state: "failed",
+        errorMessage: expect.stringContaining("does not belong to this workspace"),
       }),
     );
   });

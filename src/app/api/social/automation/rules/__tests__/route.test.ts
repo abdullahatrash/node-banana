@@ -108,6 +108,53 @@ describe("/api/social/automation/rules", () => {
     expect(mockCreateAutomationRule).not.toHaveBeenCalled();
   });
 
+  it("rejects triggerSource automation to prevent loops", async () => {
+    authorized();
+    const { POST } = await import("../route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/automation/rules", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Loop rule",
+          triggerSource: "automation",
+        }),
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(String(data.error)).toContain("blocked");
+    expect(mockCreateAutomationRule).not.toHaveBeenCalled();
+  });
+
+  it("rejects nested automation context in action config", async () => {
+    authorized();
+    const { POST } = await import("../route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/automation/rules", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Nested context rule",
+          actionConfig: {
+            socialAccountId: "sacct_1",
+            workflowContext: {
+              automation: {
+                ruleId: "arule_existing",
+              },
+            },
+          },
+        }),
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(String(data.error)).toContain("Nested automation context");
+    expect(mockCreateAutomationRule).not.toHaveBeenCalled();
+  });
+
   it("creates rule and initial task with deterministic task key", async () => {
     authorized();
     mockCreateAutomationRule.mockResolvedValue({
