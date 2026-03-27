@@ -7,8 +7,11 @@ import {
   SocialPostNotFoundError,
   SocialPostStateTransitionError,
 } from "@/lib/social/repository";
+import { resolveWorkflowRunRef } from "@/lib/social/workflow-utils";
+import { emitSocialEvent } from "@/lib/social/events";
 import { start } from "workflow/api";
 import { publishPostWorkflow } from "@/../workflows/social-publish";
+import { logger } from "@/utils/logger";
 
 interface PublishResponse {
   success: boolean;
@@ -17,6 +20,7 @@ interface PublishResponse {
 }
 
 const PUBLISHABLE_STATES = new Set(["draft", "failed"]);
+const DISPATCH_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 export async function POST(
   request: NextRequest,
@@ -40,7 +44,8 @@ export async function POST(
     }
 
     const { postId } = await params;
-    const post = await getSocialPost(result.session.workspace.id, postId);
+    const workspaceId = result.session.workspace.id;
+    const post = await getSocialPost(workspaceId, postId);
 
     if (!PUBLISHABLE_STATES.has(post.status)) {
       return NextResponse.json(
@@ -52,24 +57,104 @@ export async function POST(
       );
     }
 
-    // Transition to "queued" — the Vercel Workflow will pick it up
-    // On retry (failed → queued), reset retryCount and clear error
-    const updated = await updatePostStatus(postId, "queued", {
-      errorMessage: undefined,
+    const dispatchAttempts = (post.dispatchAttempts ?? 0) + 1;
+    const dispatchKey = `publish:${postId}:${dispatchAttempts}`;
+
+    // Transition to "queued" and persist dispatch intent metadata first.
+    await updatePostStatus(postId, "queued", {
+      errorMessage: null,
       retryCount: post.status === "failed" ? 0 : undefined,
+      dispatchStatus: "pending",
+      dispatchAttempts,
+      workflowRunRef: null,
+      nextDispatchAt: null,
+      lastDispatchError: null,
+      lockedAt: new Date(),
+    });
+    await emitSocialEvent({
+      workspaceId,
+      eventType: "post.queued",
+      severity: "info",
+      message: "Social post queued for publishing.",
+      postId,
+      accountId: post.socialAccountId,
+      dispatchKey,
+      metadata: {
+        previousStatus: post.status,
+        scheduledAt: post.scheduledAt?.toISOString() ?? null,
+      },
+      createdByUserId: result.session.user.id,
+    });
+    logger.info("system", "Social post queued for publish", {
+      workspaceId,
+      postId,
+      accountId: post.socialAccountId,
+      dispatchKey,
+      workflowRunRef: null,
     });
 
     // Start the durable publish workflow — returns immediately
     // Workflow handles sleep (scheduled), token refresh, media processing, and publish
     try {
-      await start(publishPostWorkflow, [postId, result.session.workspace.id]);
+      const workflowRun = await start(publishPostWorkflow, [postId, result.session.workspace.id]);
+      const workflowRunRef = resolveWorkflowRunRef(workflowRun, `publish:${postId}`);
+      const updated = await updatePostStatus(postId, "queued", {
+        dispatchStatus: "dispatched",
+        workflowRunRef,
+        lockedAt: null,
+      });
+      logger.info("system", "Social publish workflow dispatched", {
+        workspaceId,
+        postId,
+        accountId: post.socialAccountId,
+        dispatchKey,
+        workflowRunRef,
+      });
+      return NextResponse.json({ success: true, post: updated });
     } catch (workflowError) {
-      // Workflow start failure shouldn't block the response —
-      // the post is already queued and can be retried
-      console.error("Failed to start publish workflow:", workflowError);
+      const retryAt = new Date(Date.now() + DISPATCH_RETRY_DELAY_MS);
+      const workflowMessage =
+        workflowError instanceof Error
+          ? workflowError.message
+          : "Unknown workflow dispatch error";
+      const updated = await updatePostStatus(postId, "queued", {
+        errorMessage: "Dispatch failed. Automatic retry has been scheduled.",
+        dispatchStatus: "retry_scheduled",
+        nextDispatchAt: retryAt,
+        lastDispatchError: workflowMessage,
+        workflowRunRef: null,
+        lockedAt: null,
+      });
+      await emitSocialEvent({
+        workspaceId,
+        eventType: "dispatch.failed",
+        severity: "warn",
+        message: "Dispatch failed and retry was scheduled.",
+        postId,
+        accountId: post.socialAccountId,
+        dispatchKey,
+        metadata: {
+          error: workflowMessage,
+          retryAt: retryAt.toISOString(),
+        },
+      });
+      logger.warn("system", "Social publish dispatch failed", {
+        workspaceId,
+        postId,
+        accountId: post.socialAccountId,
+        dispatchKey,
+        workflowRunRef: null,
+        error: workflowMessage,
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          post: updated,
+          error: "Failed to dispatch workflow. Automatic retry has been scheduled.",
+        },
+        { status: 503 },
+      );
     }
-
-    return NextResponse.json({ success: true, post: updated });
   } catch (error) {
     if (error instanceof SocialPostNotFoundError) {
       return NextResponse.json(

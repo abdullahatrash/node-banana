@@ -21,6 +21,7 @@
  */
 
 import type {
+  AuthenticateParams,
   AuthenticateResult,
   GenerateAuthUrlResult,
   PageInfo,
@@ -30,6 +31,7 @@ import type {
   SocialProviderAdapter,
   SocialProviderError,
 } from "@/lib/social/provider-interface";
+import { registerProvider } from "@/lib/social/provider-registry";
 import {
   classifyMetaError,
   exchangeCodeForToken,
@@ -254,18 +256,8 @@ export const instagramProvider: SocialProviderAdapter = {
     return { url, state, codeVerifier: makeOAuthState(10) };
   },
 
-  async authenticate(params: {
-    code: string;
-    codeVerifier?: string;
-    state?: string;
-  }): Promise<AuthenticateResult> {
-    // We don't know the exact callbackUrl here — the caller must have stored it
-    // (or passed it). We accept the redirect_uri via codeVerifier field as a
-    // convention: codeVerifier is overloaded as the redirect_uri by the OAuth
-    // callback handler. If absent we fall back to a placeholder (this path is
-    // typically not hit in production — the callback route calls authenticate
-    // with the correct redirect_uri encoded in codeVerifier).
-    const redirectUri = params.codeVerifier ?? "";
+  async authenticate(params: AuthenticateParams): Promise<AuthenticateResult> {
+    const redirectUri = params.redirectUri;
 
     const shortToken = await exchangeCodeForToken(params.code, redirectUri);
     const longToken = await exchangeForLongLivedToken(shortToken.access_token);
@@ -605,3 +597,5 @@ export const instagramProvider: SocialProviderAdapter = {
     };
   },
 };
+
+registerProvider(instagramProvider);

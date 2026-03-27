@@ -137,7 +137,8 @@ describe("instagramProvider.authenticate", () => {
     const provider = await loadProvider();
     const result = await provider.authenticate({
       code: "auth-code",
-      codeVerifier: "https://example.com/callback",
+      state: "oauth-state",
+      redirectUri: "https://example.com/callback",
     });
 
     expect(result.platformUserId).toBe("123456");
@@ -165,7 +166,11 @@ describe("instagramProvider.authenticate", () => {
 
     const provider = await loadProvider();
     await expect(
-      provider.authenticate({ code: "auth-code", codeVerifier: "https://example.com/cb" }),
+      provider.authenticate({
+        code: "auth-code",
+        state: "oauth-state",
+        redirectUri: "https://example.com/cb",
+      }),
     ).rejects.toThrow(/instagram_content_publish/);
   });
 });

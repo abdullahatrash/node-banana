@@ -29,7 +29,9 @@ async function doRefresh(accountId: string): Promise<RefreshResult> {
   const { getSocialAccountById, updateSocialAccountTokens, markRequiresReauth } =
     await import("@/lib/social/repository");
   const { decryptToken, encryptToken } = await import("@/lib/social/crypto");
+  await import("@/lib/social/runtime-bootstrap");
   const { getProvider } = await import("@/lib/social/provider-registry");
+  const { emitSocialEvent } = await import("@/lib/social/events");
 
   const account = await getSocialAccountById(accountId);
 
@@ -59,6 +61,18 @@ async function doRefresh(accountId: string): Promise<RefreshResult> {
         : undefined,
       tokenExpiresAt: newExpiresAt,
     });
+    await emitSocialEvent({
+      workspaceId: account.workspaceId,
+      eventType: "token.refreshed",
+      severity: "info",
+      message: "Social access token refreshed proactively.",
+      accountId: account.id,
+      provider: account.platform as import("@/lib/db/schema").SocialPlatform,
+      metadata: {
+        previousExpiresAt: account.tokenExpiresAt?.toISOString() ?? null,
+        newExpiresAt: newExpiresAt?.toISOString() ?? null,
+      },
+    });
 
     return {
       accountId,
@@ -69,6 +83,15 @@ async function doRefresh(accountId: string): Promise<RefreshResult> {
   } catch {
     // Refresh failed — mark account for re-authentication
     await markRequiresReauth(accountId);
+    await emitSocialEvent({
+      workspaceId: account.workspaceId,
+      eventType: "account.reauth_required",
+      severity: "error",
+      message: "Token refresh failed. User reconnection is required.",
+      userFacing: true,
+      accountId: account.id,
+      provider: account.platform as import("@/lib/db/schema").SocialPlatform,
+    });
 
     throw new FatalError(
       `Token refresh failed for account ${accountId}. User must reconnect.`,

@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { withApiPermission } from "@/lib/studio/authz";
+import { getSocialPlanLimits, quotaExceededPayload } from "@/lib/social/limits";
 import {
+  countSocialPostsCreatedInRange,
   createSocialPost,
   listSocialPosts,
 } from "@/lib/social/repository";
 import type { SocialPostStatus } from "@/lib/db/schema";
+import { logger } from "@/utils/logger";
 
 interface PostsGetResponse {
   success: boolean;
@@ -26,6 +29,8 @@ interface PostsPostResponse {
   success: boolean;
   post?: Awaited<ReturnType<typeof createSocialPost>>;
   error?: string;
+  code?: string;
+  billingUrl?: string;
 }
 
 export async function GET(
@@ -116,6 +121,30 @@ export async function POST(
       );
     }
 
+    const limits = getSocialPlanLimits(result.session.planTier);
+    const now = new Date();
+    const monthStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    );
+    const monthEnd = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+    );
+    const monthlyPosts = await countSocialPostsCreatedInRange(
+      result.session.workspace.id,
+      monthStart,
+      monthEnd,
+    );
+    if (monthlyPosts >= limits.postsPerMonth) {
+      return NextResponse.json(
+        quotaExceededPayload({
+          section: "posts_per_month",
+          current: monthlyPosts,
+          limit: limits.postsPerMonth,
+        }),
+        { status: 402 },
+      );
+    }
+
     const post = await createSocialPost({
       workspaceId: result.session.workspace.id,
       socialAccountId: body.socialAccountId,
@@ -125,6 +154,14 @@ export async function POST(
       scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : undefined,
       studioAssetId: body.studioAssetId,
       createdByUserId: result.session.user.id,
+    });
+    logger.info("system", "Social draft post created", {
+      workspaceId: result.session.workspace.id,
+      postId: post.id,
+      accountId: post.socialAccountId,
+      provider: null,
+      dispatchKey: null,
+      workflowRunRef: null,
     });
 
     return NextResponse.json({ success: true, post });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import "@/lib/social/runtime-bootstrap";
 import type { ProviderCapabilities } from "@/lib/social/provider-interface";
 import { listProviderCapabilities } from "@/lib/social/provider-registry";
 

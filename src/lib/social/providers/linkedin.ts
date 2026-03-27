@@ -16,6 +16,7 @@
  */
 
 import type {
+  AuthenticateParams,
   AuthenticateResult,
   GenerateAuthUrlResult,
   PageInfo,
@@ -274,12 +275,8 @@ export const linkedInProvider: SocialProviderAdapter = {
     return { url, state };
   },
 
-  async authenticate(params: {
-    code: string;
-    codeVerifier?: string;
-    state?: string;
-  }): Promise<AuthenticateResult> {
-    const redirectUri = params.codeVerifier ?? "";
+  async authenticate(params: AuthenticateParams): Promise<AuthenticateResult> {
+    const redirectUri = params.redirectUri;
 
     const tokenBody = new URLSearchParams({
       grant_type: "authorization_code",

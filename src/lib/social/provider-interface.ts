@@ -40,6 +40,16 @@ export interface AuthenticateResult {
 }
 
 /**
+ * Input for exchanging an OAuth callback code into tokens.
+ */
+export interface AuthenticateParams {
+  code: string;
+  state: string;
+  redirectUri: string;
+  codeVerifier?: string;
+}
+
+/**
  * Result from refreshing an expired token.
  */
 export interface RefreshTokenResult {
@@ -87,6 +97,13 @@ export interface PublishResult {
   platformPostId: string; // Platform-specific post ID
   platformPostUrl: string; // Direct link to the published post
   status: "published" | "processing"; // Some platforms (IG, TikTok) publish async
+}
+
+export interface PublishStatusResult {
+  platformPostId: string;
+  platformPostUrl: string;
+  status: "published" | "processing" | "failed";
+  errorMessage?: string;
 }
 
 /**
@@ -148,11 +165,7 @@ export interface SocialProviderAdapter {
    * Exchange an OAuth authorization code for access tokens.
    * Called after the user approves the OAuth prompt.
    */
-  authenticate(params: {
-    code: string;
-    codeVerifier?: string;
-    state?: string;
-  }): Promise<AuthenticateResult>;
+  authenticate(params: AuthenticateParams): Promise<AuthenticateResult>;
 
   /**
    * Refresh an expired access token.
@@ -185,6 +198,17 @@ export interface SocialProviderAdapter {
    * Only implemented by providers where requiresPageSelection is true.
    */
   fetchPageInformation?(accessToken: string): Promise<PageInfo[]>;
+
+  /**
+   * Fetch the current status of a previously created platform post.
+   * Implemented only by providers that support asynchronous publish states.
+   */
+  getPostStatus?(
+    platformUserId: string,
+    accessToken: string,
+    platformPostId: string,
+    options?: { accessTokenSecret?: string },
+  ): Promise<PublishStatusResult>;
 
   /**
    * Get the provider's capabilities for UI display.

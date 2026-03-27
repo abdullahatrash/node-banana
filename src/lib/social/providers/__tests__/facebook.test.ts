@@ -142,7 +142,8 @@ describe("facebookProvider.authenticate", () => {
     const provider = await loadProvider();
     const result = await provider.authenticate({
       code: "auth-code",
-      codeVerifier: "https://example.com/callback",
+      state: "oauth-state",
+      redirectUri: "https://example.com/callback",
     });
 
     expect(result.platformUserId).toBe("fb-user-123");
@@ -168,7 +169,11 @@ describe("facebookProvider.authenticate", () => {
 
     const provider = await loadProvider();
     await expect(
-      provider.authenticate({ code: "auth-code", codeVerifier: "https://example.com/cb" }),
+      provider.authenticate({
+        code: "auth-code",
+        state: "oauth-state",
+        redirectUri: "https://example.com/cb",
+      }),
     ).rejects.toThrow(/pages_manage_posts/);
   });
 });

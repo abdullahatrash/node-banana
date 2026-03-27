@@ -181,7 +181,11 @@ describe("YouTube provider", () => {
         },
       });
 
-      const result = await youTubeProvider.authenticate({ code: "auth-code" });
+      const result = await youTubeProvider.authenticate({
+        code: "auth-code",
+        state: "oauth-state",
+        redirectUri: "https://app.example.com/callback/youtube",
+      });
 
       expect(result.platformUserId).toBe("google-user-123");
       expect(result.accessToken).toBe(FAKE_ACCESS_TOKEN);
@@ -206,7 +210,11 @@ describe("YouTube provider", () => {
         data: { id: "uid", name: "User", picture: null },
       });
 
-      await youTubeProvider.authenticate({ code: "code" });
+      await youTubeProvider.authenticate({
+        code: "code",
+        state: "oauth-state",
+        redirectUri: "https://app.example.com/callback/youtube",
+      });
 
       expect(mocks.setCredentials).toHaveBeenCalledWith(
         expect.objectContaining({ access_token: FAKE_ACCESS_TOKEN }),

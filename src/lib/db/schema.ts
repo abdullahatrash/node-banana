@@ -441,8 +441,11 @@ export const socialPlatformEnum = pgEnum("social_platform", [
   "linkedin",
   "instagram",
   "tiktok",
+  "threads",
+  "pinterest",
   "facebook",
   "youtube",
+  "reddit",
 ]);
 
 export const socialPostStatusEnum = pgEnum("social_post_status", [
@@ -452,6 +455,34 @@ export const socialPostStatusEnum = pgEnum("social_post_status", [
   "published",
   "failed",
 ]);
+
+export const socialDispatchStatusEnum = pgEnum("social_dispatch_status", [
+  "pending",
+  "dispatched",
+  "retry_scheduled",
+  "failed",
+]);
+
+export const socialEventTypeEnum = pgEnum("social_event_type", [
+  "post.queued",
+  "post.publishing",
+  "post.published",
+  "post.failed",
+  "account.reauth_required",
+  "token.refreshed",
+  "dispatch.failed",
+]);
+
+export const socialEventSeverityEnum = pgEnum("social_event_severity", [
+  "info",
+  "warn",
+  "error",
+]);
+
+export const socialWebhookDeliveryStatusEnum = pgEnum(
+  "social_webhook_delivery_status",
+  ["pending", "success", "failed"],
+);
 
 export const socialAccounts = pgTable(
   "social_accounts",
@@ -504,6 +535,12 @@ export const socialPosts = pgTable(
       .notNull()
       .references(() => socialAccounts.id, { onDelete: "cascade" }),
     status: socialPostStatusEnum("status").default("draft").notNull(),
+    dispatchStatus: socialDispatchStatusEnum("dispatch_status"),
+    dispatchAttempts: integer("dispatch_attempts").default(0).notNull(),
+    workflowRunRef: text("workflow_run_ref"),
+    nextDispatchAt: timestamp("next_dispatch_at", { withTimezone: true }),
+    lastDispatchError: text("last_dispatch_error"),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
     content: text("content"),
     mediaUrls: jsonb("media_urls").$type<
       Array<{ type: string; url: string; alt?: string }>
@@ -537,6 +574,12 @@ export const socialPosts = pgTable(
       table.socialAccountId,
     ),
     statusIdx: index("social_posts_status_idx").on(table.status),
+    dispatchStatusIdx: index("social_posts_dispatch_status_idx").on(
+      table.dispatchStatus,
+    ),
+    nextDispatchAtIdx: index("social_posts_next_dispatch_at_idx").on(
+      table.nextDispatchAt,
+    ),
     scheduledAtIdx: index("social_posts_scheduled_at_idx").on(
       table.scheduledAt,
     ),
@@ -568,6 +611,151 @@ export const socialOAuthStates = pgTable(
   }),
 );
 
+export const socialOAuthSelectionSessions = pgTable(
+  "social_oauth_selection_sessions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    platform: socialPlatformEnum("platform").notNull(),
+    accessTokenEncrypted: text("access_token_encrypted").notNull(),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    accessTokenSecret: text("access_token_secret"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("social_oauth_selection_sessions_workspace_idx").on(
+      table.workspaceId,
+    ),
+    expiresAtIdx: index("social_oauth_selection_sessions_expires_at_idx").on(
+      table.expiresAt,
+    ),
+  }),
+);
+
+export const socialEvents = pgTable(
+  "social_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    eventType: socialEventTypeEnum("event_type").notNull(),
+    severity: socialEventSeverityEnum("severity").default("info").notNull(),
+    message: text("message").notNull(),
+    userFacing: boolean("user_facing").default(false).notNull(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    postId: text("post_id").references(() => socialPosts.id, {
+      onDelete: "set null",
+    }),
+    accountId: text("account_id").references(() => socialAccounts.id, {
+      onDelete: "set null",
+    }),
+    provider: socialPlatformEnum("provider"),
+    dispatchKey: text("dispatch_key"),
+    workflowRunRef: text("workflow_run_ref"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("social_events_workspace_idx").on(table.workspaceId),
+    eventTypeIdx: index("social_events_event_type_idx").on(table.eventType),
+    userFacingIdx: index("social_events_user_facing_idx").on(table.userFacing),
+    readAtIdx: index("social_events_read_at_idx").on(table.readAt),
+    postIdx: index("social_events_post_idx").on(table.postId),
+    accountIdx: index("social_events_account_idx").on(table.accountId),
+    createdAtIdx: index("social_events_created_at_idx").on(table.createdAt),
+  }),
+);
+
+export const socialWebhooks = pgTable(
+  "social_webhooks",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    targetUrl: text("target_url").notNull(),
+    signingSecretEncrypted: text("signing_secret_encrypted").notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("social_webhooks_workspace_idx").on(table.workspaceId),
+    enabledIdx: index("social_webhooks_enabled_idx").on(table.enabled),
+    createdAtIdx: index("social_webhooks_created_at_idx").on(table.createdAt),
+  }),
+);
+
+export const socialWebhookDeliveries = pgTable(
+  "social_webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    webhookId: text("webhook_id")
+      .notNull()
+      .references(() => socialWebhooks.id, { onDelete: "cascade" }),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => socialEvents.id, { onDelete: "cascade" }),
+    status: socialWebhookDeliveryStatusEnum("status")
+      .default("pending")
+      .notNull(),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    responseStatus: integer("response_status"),
+    responseBody: text("response_body"),
+    lastError: text("last_error"),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("social_webhook_deliveries_workspace_idx").on(
+      table.workspaceId,
+    ),
+    webhookIdx: index("social_webhook_deliveries_webhook_idx").on(table.webhookId),
+    eventIdx: index("social_webhook_deliveries_event_idx").on(table.eventId),
+    statusIdx: index("social_webhook_deliveries_status_idx").on(table.status),
+    nextAttemptAtIdx: index("social_webhook_deliveries_next_attempt_at_idx").on(
+      table.nextAttemptAt,
+    ),
+    lockedAtIdx: index("social_webhook_deliveries_locked_at_idx").on(table.lockedAt),
+    createdAtIdx: index("social_webhook_deliveries_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
@@ -575,3 +763,7 @@ export type StorageProvider = typeof storageProviderEnum.enumValues[number];
 export type GenerationStatus = typeof generationStatusEnum.enumValues[number];
 export type SocialPlatform = typeof socialPlatformEnum.enumValues[number];
 export type SocialPostStatus = typeof socialPostStatusEnum.enumValues[number];
+export type SocialEventType = typeof socialEventTypeEnum.enumValues[number];
+export type SocialEventSeverity = typeof socialEventSeverityEnum.enumValues[number];
+export type SocialWebhookDeliveryStatus =
+  typeof socialWebhookDeliveryStatusEnum.enumValues[number];

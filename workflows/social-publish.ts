@@ -53,7 +53,15 @@ export async function publishPostWorkflow(
   );
 
   // Step 6: Finalize — update post with platform URL
-  await finalizeStep(postId, result);
+  await finalizeStep(
+    {
+      id: post.id,
+      workspaceId: post.workspaceId,
+      socialAccountId: post.socialAccountId,
+    },
+    { platform: account.platform },
+    result,
+  );
 
   return result;
 }
@@ -64,6 +72,7 @@ export async function publishPostWorkflow(
 
 interface PostData {
   id: string;
+  workspaceId: string;
   content: string | null;
   mediaUrls: Array<{ type: string; url: string; alt?: string }> | null;
   socialAccountId: string;
@@ -79,14 +88,24 @@ async function loadPost(
   const { getSocialPost, updatePostStatus } = await import(
     "@/lib/social/repository"
   );
+  const { emitSocialEvent } = await import("@/lib/social/events");
 
   const post = await getSocialPost(workspaceId, postId);
 
   // Transition to "publishing"
   await updatePostStatus(postId, "publishing");
+  await emitSocialEvent({
+    workspaceId,
+    eventType: "post.publishing",
+    severity: "info",
+    message: "Social post moved to publishing state.",
+    postId,
+    accountId: post.socialAccountId,
+  });
 
   return {
     id: post.id,
+    workspaceId,
     content: post.content,
     mediaUrls: post.mediaUrls,
     socialAccountId: post.socialAccountId,
@@ -96,6 +115,7 @@ async function loadPost(
 
 interface AccountData {
   id: string;
+  workspaceId: string;
   platform: string;
   platformUserId: string;
   accessTokenEncrypted: string;
@@ -114,7 +134,9 @@ async function refreshTokenStep(
   const { getSocialAccountById, updateSocialAccountTokens, markRequiresReauth } =
     await import("@/lib/social/repository");
   const { decryptToken, encryptToken } = await import("@/lib/social/crypto");
+  await import("@/lib/social/runtime-bootstrap");
   const { getProvider } = await import("@/lib/social/provider-registry");
+  const { emitSocialEvent } = await import("@/lib/social/events");
 
   const account = await getSocialAccountById(accountId);
 
@@ -139,9 +161,18 @@ async function refreshTokenStep(
           ? new Date(Date.now() + refreshed.expiresIn * 1000)
           : undefined,
       });
+      await emitSocialEvent({
+        workspaceId: account.workspaceId,
+        eventType: "token.refreshed",
+        severity: "info",
+        message: "Social access token refreshed successfully.",
+        accountId: account.id,
+        provider: account.platform as import("@/lib/db/schema").SocialPlatform,
+      });
 
       return {
         id: account.id,
+        workspaceId: account.workspaceId,
         platform: account.platform,
         platformUserId: account.platformUserId,
         accessTokenEncrypted: encryptToken(refreshed.accessToken),
@@ -156,6 +187,15 @@ async function refreshTokenStep(
     } catch {
       // Token refresh failed — mark account for re-auth
       await markRequiresReauth(accountId);
+      await emitSocialEvent({
+        workspaceId: account.workspaceId,
+        eventType: "account.reauth_required",
+        severity: "error",
+        message: "Token refresh failed. Reconnection is required.",
+        userFacing: true,
+        accountId: account.id,
+        provider: account.platform as import("@/lib/db/schema").SocialPlatform,
+      });
       throw new FatalError(
         "Token refresh failed. Please reconnect your account.",
       );
@@ -164,6 +204,7 @@ async function refreshTokenStep(
 
   return {
     id: account.id,
+    workspaceId: account.workspaceId,
     platform: account.platform,
     platformUserId: account.platformUserId,
     accessTokenEncrypted: account.accessTokenEncrypted,
@@ -225,6 +266,7 @@ async function processMediaStep(
 interface PublishResultData {
   platformPostId: string;
   platformPostUrl: string;
+  status: "published" | "processing";
 }
 
 async function publishStep(
@@ -235,11 +277,13 @@ async function publishStep(
 ): Promise<PublishResultData> {
   "use step";
 
+  await import("@/lib/social/runtime-bootstrap");
   const { getProvider } = await import("@/lib/social/provider-registry");
   const { decryptToken } = await import("@/lib/social/crypto");
   const { updatePostStatus, markRequiresReauth } = await import(
     "@/lib/social/repository"
   );
+  const { emitSocialEvent } = await import("@/lib/social/events");
 
   const provider = getProvider(account.platform);
   const accessToken = decryptToken(account.accessTokenEncrypted);
@@ -269,6 +313,7 @@ async function publishStep(
     return {
       platformPostId: result.platformPostId,
       platformPostUrl: result.platformPostUrl,
+      status: result.status,
     };
   } catch (error) {
     // Classify the error to determine retry behavior
@@ -278,6 +323,16 @@ async function publishStep(
       // Non-recoverable — content is invalid
       await updatePostStatus(postId, "failed", {
         errorMessage: classified.message,
+      });
+      await emitSocialEvent({
+        workspaceId: account.workspaceId,
+        eventType: "post.failed",
+        severity: "error",
+        message: classified.message,
+        userFacing: true,
+        postId,
+        accountId: account.id,
+        provider: account.platform as import("@/lib/db/schema").SocialPlatform,
       });
       throw new FatalError(classified.message);
     }
@@ -289,6 +344,16 @@ async function publishStep(
         errorMessage:
           "Authentication expired. Please reconnect your account.",
       });
+      await emitSocialEvent({
+        workspaceId: account.workspaceId,
+        eventType: "account.reauth_required",
+        severity: "error",
+        message: "Authentication expired. Reconnection is required.",
+        userFacing: true,
+        postId,
+        accountId: account.id,
+        provider: account.platform as import("@/lib/db/schema").SocialPlatform,
+      });
       throw new FatalError("Token expired — requires re-authentication");
     }
 
@@ -298,16 +363,54 @@ async function publishStep(
 }
 
 async function finalizeStep(
-  postId: string,
+  post: Pick<PostData, "id" | "workspaceId" | "socialAccountId">,
+  account: Pick<AccountData, "platform">,
   result: PublishResultData,
 ): Promise<void> {
   "use step";
 
   const { updatePostStatus } = await import("@/lib/social/repository");
+  const { emitSocialEvent } = await import("@/lib/social/events");
 
-  await updatePostStatus(postId, "published", {
+  if (result.status === "processing") {
+    await updatePostStatus(post.id, "publishing", {
+      platformPostId: result.platformPostId,
+      platformPostUrl: result.platformPostUrl,
+      errorMessage: null,
+    });
+    await emitSocialEvent({
+      workspaceId: post.workspaceId,
+      eventType: "post.publishing",
+      severity: "info",
+      message: "Provider accepted the post and is still processing it.",
+      postId: post.id,
+      accountId: post.socialAccountId,
+      provider: account.platform as import("@/lib/db/schema").SocialPlatform,
+      metadata: {
+        platformPostId: result.platformPostId,
+        platformPostUrl: result.platformPostUrl,
+      },
+    });
+    return;
+  }
+
+  await updatePostStatus(post.id, "published", {
     platformPostId: result.platformPostId,
     platformPostUrl: result.platformPostUrl,
     publishedAt: new Date(),
+    errorMessage: null,
+  });
+  await emitSocialEvent({
+    workspaceId: post.workspaceId,
+    eventType: "post.published",
+    severity: "info",
+    message: "Social post published successfully.",
+    postId: post.id,
+    accountId: post.socialAccountId,
+    provider: account.platform as import("@/lib/db/schema").SocialPlatform,
+    metadata: {
+      platformPostId: result.platformPostId,
+      platformPostUrl: result.platformPostUrl,
+    },
   });
 }

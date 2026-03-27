@@ -145,7 +145,8 @@ describe("linkedInProvider.authenticate", () => {
     const provider = await loadProvider();
     const result = await provider.authenticate({
       code: "auth-code",
-      codeVerifier: "https://example.com/callback/linkedin",
+      state: "oauth-state",
+      redirectUri: "https://example.com/callback/linkedin",
     });
 
     expect(result.platformUserId).toBe("user-sub-001");
@@ -170,7 +171,11 @@ describe("linkedInProvider.authenticate", () => {
 
     const provider = await loadProvider();
     await expect(
-      provider.authenticate({ code: "bad-code", codeVerifier: "https://example.com/cb" }),
+      provider.authenticate({
+        code: "bad-code",
+        state: "oauth-state",
+        redirectUri: "https://example.com/cb",
+      }),
     ).rejects.toThrow(/Authorization code expired/);
   });
 });

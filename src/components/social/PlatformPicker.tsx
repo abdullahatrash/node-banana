@@ -57,7 +57,17 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
           name: p.displayName,
         }))
       : (
-          ["linkedin", "instagram", "x", "tiktok", "facebook", "youtube"] as const
+          [
+            "linkedin",
+            "instagram",
+            "x",
+            "tiktok",
+            "threads",
+            "pinterest",
+            "reddit",
+            "facebook",
+            "youtube",
+          ] as const
         ).map((id) => ({ identifier: id, name: PLATFORM_LABELS[id] }))
 
   return (

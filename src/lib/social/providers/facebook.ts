@@ -16,6 +16,7 @@
  */
 
 import type {
+  AuthenticateParams,
   AuthenticateResult,
   GenerateAuthUrlResult,
   PageInfo,
@@ -25,6 +26,7 @@ import type {
   SocialProviderAdapter,
   SocialProviderError,
 } from "@/lib/social/provider-interface";
+import { registerProvider } from "@/lib/social/provider-registry";
 import {
   classifyMetaError,
   exchangeCodeForToken,
@@ -118,12 +120,8 @@ export const facebookProvider: SocialProviderAdapter = {
     return { url, state, codeVerifier: makeOAuthState(10) };
   },
 
-  async authenticate(params: {
-    code: string;
-    codeVerifier?: string;
-    state?: string;
-  }): Promise<AuthenticateResult> {
-    const redirectUri = params.codeVerifier ?? "";
+  async authenticate(params: AuthenticateParams): Promise<AuthenticateResult> {
+    const redirectUri = params.redirectUri;
 
     const shortToken = await exchangeCodeForToken(params.code, redirectUri);
     const longToken = await exchangeForLongLivedToken(shortToken.access_token);
@@ -419,3 +417,5 @@ export const facebookProvider: SocialProviderAdapter = {
     };
   },
 };
+
+registerProvider(facebookProvider);

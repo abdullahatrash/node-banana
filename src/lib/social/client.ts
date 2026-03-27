@@ -141,6 +141,7 @@ export async function handleOAuthCallback(
   account?: SocialAccount;
   pages?: PageInfo[];
   requiresPageSelection?: boolean;
+  selectionSessionId?: string;
 }> {
   const data = await socialFetch("/api/social/accounts/callback", {
     method: "POST",
@@ -152,20 +153,19 @@ export async function handleOAuthCallback(
     account: data.account as SocialAccount | undefined,
     pages: data.pages as PageInfo[] | undefined,
     requiresPageSelection: data.requiresPageSelection as boolean | undefined,
+    selectionSessionId: data.selectionSessionId as string | undefined,
   };
 }
 
 export async function selectPage(
   platform: string,
   pageId: string,
-  accessToken: string,
-  refreshToken?: string,
-  expiresIn?: number,
+  selectionSessionId: string,
 ): Promise<SocialAccount> {
   const data = await socialFetch("/api/social/accounts/select-page", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ platform, pageId, accessToken, refreshToken, expiresIn }),
+    body: JSON.stringify({ platform, pageId, selectionSessionId }),
   });
   return data.account as SocialAccount;
 }
