@@ -3,6 +3,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as crypto from "crypto";
 import { logger } from "@/utils/logger";
+import { isCloudMode } from "@/lib/storage";
 
 // Helper to get file extension from MIME type
 function getExtensionFromMime(mimeType: string): string {
@@ -135,6 +136,56 @@ export async function POST(request: NextRequest) {
         { success: false, error: "Missing required fields" },
         { status: 400 }
       );
+    }
+
+    // In cloud mode, skip filesystem save — assets go directly to R2 via studioAssetSync
+    if (isCloudMode()) {
+      let extension: string;
+      let contentHash: string;
+
+      if (isHttpUrl(content)) {
+        contentHash = crypto.createHash("md5").update(content).digest("hex");
+        extension = isAudio ? "mp3" : isVideo ? "mp4" : isModel ? "glb" : "png";
+      } else {
+        const dataUrlMatch = content.match(/^data:([\w/+-]+);base64,/);
+        extension = dataUrlMatch
+          ? getExtensionFromMime(dataUrlMatch[1])
+          : (isAudio ? "mp3" : isVideo ? "mp4" : "png");
+        const base64Data = dataUrlMatch
+          ? content.replace(/^data:[\w/+-]+;base64,/, "")
+          : content;
+        const buffer = Buffer.from(base64Data, "base64");
+        contentHash = computeContentHash(buffer);
+      }
+
+      // Safety net for "bin" extension
+      if (extension === "bin") {
+        extension = isModel ? "glb" : isAudio ? "mp3" : isVideo ? "mp4" : "png";
+      }
+
+      const promptSnippet = prompt
+        ? prompt.slice(0, 30).replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").toLowerCase()
+        : "generation";
+      const filename = customFilename
+        ? `${customFilename.replace(/[^a-zA-Z0-9-_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "")}_${contentHash}.${extension}`
+        : `${promptSnippet}_${contentHash}.${extension}`;
+
+      logger.info('file.save', 'Cloud mode: skipping filesystem save', {
+        filename,
+        contentHash,
+        isVideo,
+        isModel,
+        isAudio,
+      });
+
+      return NextResponse.json({
+        success: true,
+        filePath: null,
+        filename,
+        imageId: filename.replace(`.${extension}`, ''),
+        isDuplicate: false,
+        skippedLocalSave: true,
+      });
     }
 
     // Validate directory exists (or create if requested)

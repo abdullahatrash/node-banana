@@ -3,6 +3,26 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { logger } from "@/utils/logger";
 import { validateWorkflowPath } from "@/utils/pathValidation";
+import { isCloudMode } from "@/lib/storage";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+// Helper to create S3 client from env vars (used only in cloud mode)
+function getCloudStorageClient() {
+  return new S3Client({
+    region: process.env.S3_REGION || "auto",
+    endpoint: process.env.S3_ENDPOINT || undefined,
+    forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
+    credentials: {
+      accessKeyId: process.env.S3_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
+    },
+  });
+}
+
+function getCloudBucket(): string {
+  return process.env.S3_BUCKET_NAME!;
+}
 
 export const maxDuration = 300; // 5 minute timeout for large image operations
 
@@ -145,6 +165,50 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Cloud mode: upload image directly to R2
+    if (isCloudMode()) {
+      try {
+        const client = getCloudStorageClient();
+        const bucket = getCloudBucket();
+
+        const { extension } = getMimeAndExtension(imageData);
+        const mimeType = extension === "jpg" || extension === "jpeg" ? "image/jpeg" : `image/${extension}`;
+
+        // Build storage key: workflows/{workflowPath}/{folder}/{imageId}.{ext}
+        const storageKey = `workflows/${encodeURIComponent(workflowPath!)}/${folder}/${safeImageId}.${extension}`;
+
+        const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64Data, "base64");
+
+        await client.send(new PutObjectCommand({
+          Bucket: bucket,
+          Key: storageKey,
+          Body: buffer,
+          ContentType: mimeType,
+        }));
+
+        logger.info('file.save', 'Workflow image saved to R2', {
+          storageKey,
+          imageId: safeImageId,
+          fileSize: buffer.length,
+        });
+
+        return NextResponse.json({
+          success: true,
+          imageId: storageKey, // Return full storage key as imageId for cloud mode
+          filePath: storageKey,
+        });
+      } catch (error) {
+        logger.error('file.error', 'Failed to upload workflow image to R2', {
+          imageId,
+        }, error instanceof Error ? error : undefined);
+        return NextResponse.json(
+          { success: false, error: "Failed to save image to cloud storage" },
+          { status: 500 }
+        );
+      }
+    }
+
     // Extract MIME type and determine file extension
     const { extension } = getMimeAndExtension(imageData);
     const filename = `${safeImageId}.${extension}`;
@@ -220,7 +284,60 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Sanitize imageId to prevent path traversal
+    // Cloud mode: generate presigned GET URL from R2
+    // Note: must come before the local-mode safeImageId check since cloud imageIds
+    // are full storage keys (contain slashes) that would fail path.basename comparison
+    if (isCloudMode()) {
+      try {
+        const client = getCloudStorageClient();
+        const bucket = getCloudBucket();
+
+        // In cloud mode, imageId is the full R2 storage key
+        const storageKey = imageId;
+
+        // Check if object exists
+        try {
+          await client.send(new HeadObjectCommand({
+            Bucket: bucket,
+            Key: storageKey,
+          }));
+        } catch {
+          return NextResponse.json({
+            success: false,
+            error: "Image file not found",
+            notFound: true,
+          });
+        }
+
+        // Generate presigned GET URL (valid for 1 hour)
+        const getCommand = new GetObjectCommand({
+          Bucket: bucket,
+          Key: storageKey,
+        });
+        const downloadUrl = await getSignedUrl(client, getCommand, { expiresIn: 3600 });
+
+        logger.info('file.load', 'Generated presigned URL for workflow image', {
+          storageKey,
+          imageId,
+        });
+
+        return NextResponse.json({
+          success: true,
+          imageId,
+          downloadUrl,
+        });
+      } catch (error) {
+        logger.error('file.error', 'Failed to generate presigned URL for workflow image', {
+          imageId,
+        }, error instanceof Error ? error : undefined);
+        return NextResponse.json(
+          { success: false, error: "Failed to load image from cloud storage" },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Sanitize imageId to prevent path traversal (local mode only)
     const safeImageId = path.basename(imageId);
     if (safeImageId !== imageId || imageId.includes('..')) {
       return NextResponse.json(

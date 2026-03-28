@@ -4,10 +4,19 @@ import { promisify } from "util";
 import { stat } from "fs/promises";
 import path from "path";
 import os from "os";
+import { isCloudMode } from "@/lib/storage";
 
 const execFileAsync = promisify(execFile);
 
 export async function POST(req: NextRequest) {
+    // Guard against cloud deployments where OS commands are not available
+    if (isCloudMode()) {
+        return NextResponse.json(
+            { success: false, error: "This operation is only available in local mode." },
+            { status: 501 }
+        );
+    }
+
     try {
         const body = await req.json();
         const { path: inputPath } = body;

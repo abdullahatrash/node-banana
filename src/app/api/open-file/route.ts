@@ -4,6 +4,7 @@ import { promisify } from "util";
 import { stat } from "fs/promises";
 import path from "path";
 import os from "os";
+import { isCloudMode } from "@/lib/storage";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +27,14 @@ function isLocalhostRequest(req: NextRequest): boolean {
 }
 
 export async function POST(req: NextRequest) {
+    // Guard against cloud deployments where OS commands are not available
+    if (isCloudMode()) {
+        return NextResponse.json(
+            { success: false, error: "This operation is only available in local mode." },
+            { status: 501 }
+        );
+    }
+
     // Only allow requests from localhost
     if (!isLocalhostRequest(req)) {
         return NextResponse.json(
