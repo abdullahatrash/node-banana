@@ -8,6 +8,9 @@
     },
     "opencut-editor": {
       "packageName": "@opencut/web",
+      "development": {
+        "local": 3001
+      },
       "routing": [
         {
           "paths": ["/editor/:path*"]
