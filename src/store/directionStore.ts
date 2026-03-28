@@ -25,10 +25,11 @@ export const useDirectionStore = create<DirectionState>((set) => ({
   setLocale: (locale: Locale) => {
     const direction = directionFromLocale(locale);
 
-    document.documentElement.dir = direction;
-    document.documentElement.lang = locale;
-
-    document.cookie = `${LOCALE_COOKIE_NAME}=${locale}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
+    if (typeof document !== "undefined") {
+      document.documentElement.dir = direction;
+      document.documentElement.lang = locale;
+      document.cookie = `${LOCALE_COOKIE_NAME}=${locale}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
+    }
 
     set({ locale, direction });
   },

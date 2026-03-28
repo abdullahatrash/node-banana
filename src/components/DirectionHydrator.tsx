@@ -6,7 +6,7 @@ import { useDirectionStore, type Locale } from "@/store/directionStore";
 export function DirectionHydrator({ locale }: { locale: Locale }) {
   const initialized = useRef(false);
 
-  if (!initialized.current) {
+  if (!initialized.current && typeof document !== "undefined") {
     initialized.current = true;
     const store = useDirectionStore.getState();
     if (store.locale !== locale) {
