@@ -4,6 +4,7 @@ import { promisify } from "util";
 import { writeFile, unlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { isCloudMode } from "@/lib/storage";
 
 const execAsync = promisify(exec);
 
@@ -36,6 +37,14 @@ export function normalizeSelectedPath(selectedPath: string, platform: string): s
 
 // GET: Open native directory picker and return the selected path
 export async function GET() {
+  // Guard against cloud deployments where OS commands are not available
+  if (isCloudMode()) {
+    return NextResponse.json(
+      { success: false, error: "This operation is only available in local mode." },
+      { status: 501 }
+    );
+  }
+
   const platform = process.platform;
 
   try {
