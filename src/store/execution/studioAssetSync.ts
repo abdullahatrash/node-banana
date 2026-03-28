@@ -46,7 +46,7 @@ function getMimeFromPath(filePath: string, assetType: StudioAssetType): string {
 
 interface SaveGenerationResult {
   success?: boolean;
-  filePath?: string;
+  filePath?: string | null;
 }
 
 interface WorkflowStoreLike {
@@ -154,10 +154,11 @@ export async function syncStudioAssetFromSaveResult(params: {
   assetType: StudioAssetType;
   prompt?: string | null;
   getStoreState: () => unknown;
+  contentBlob?: Blob;
 }): Promise<void> {
   if (!params.saveResult?.success) return;
   const filePath = params.saveResult.filePath;
-  if (!filePath || typeof filePath !== "string") return;
+  if (!filePath && !params.contentBlob) return;
 
   if (!getActiveWorkspaceId()) {
     await listStudioWorkspaces();
@@ -170,12 +171,16 @@ export async function syncStudioAssetFromSaveResult(params: {
     typeof state.workflowId === "string" && state.workflowId.trim()
       ? state.workflowId
       : null;
-  const mimeType = getMimeFromPath(filePath, params.assetType);
-  const fileName = getFileNameFromPath(filePath);
+  const mimeType = filePath
+    ? getMimeFromPath(filePath, params.assetType)
+    : (params.contentBlob?.type || "application/octet-stream");
+  const fileName = filePath
+    ? getFileNameFromPath(filePath)
+    : `asset-${Date.now()}`;
   let presignedAssetId: string | null = null;
 
   try {
-    const blob = await readSavedFileBlob(filePath, mimeType);
+    const blob = params.contentBlob || await readSavedFileBlob(filePath!, mimeType);
 
     const presign = await createStudioAssetPresign({
       projectId,
@@ -205,7 +210,7 @@ export async function syncStudioAssetFromSaveResult(params: {
     });
     return;
   } catch (error) {
-    if (isS3ConfigFallbackError(error)) {
+    if (isS3ConfigFallbackError(error) && filePath) {
       await recordLocalStudioAsset({
         workspaceId,
         projectId,
