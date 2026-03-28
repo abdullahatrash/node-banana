@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (
@@ -60,6 +61,9 @@ export default function SignUpPage() {
 
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center px-4">
+      <div className="fixed top-4 end-4 z-10">
+        <LanguageSwitcher />
+      </div>
       <div className="w-full max-w-md border border-neutral-800 bg-neutral-900 rounded-xl p-6">
         <h1 className="text-xl font-semibold">Create account</h1>
         <p className="text-sm text-neutral-400 mt-1">Create your workspace access account.</p>

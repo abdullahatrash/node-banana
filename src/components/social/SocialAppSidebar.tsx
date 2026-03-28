@@ -74,7 +74,7 @@ export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sideb
         <SidebarMenu>
           <SidebarMenuItem>
             <DropdownMenu>
-              <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md p-1.5 text-left text-sm font-semibold hover:bg-sidebar-accent">
+              <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md p-1.5 text-start text-sm font-semibold hover:bg-sidebar-accent">
                 <BananaIcon className="size-5" />
                 <span className="text-base font-semibold">Social Hub</span>
               </DropdownMenuTrigger>
@@ -84,7 +84,7 @@ export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sideb
                     <item.icon className="size-4" />
                     <span>{item.label}</span>
                     {item.href === "/social" && (
-                      <span className="ml-auto text-[10px] text-muted-foreground">current</span>
+                      <span className="ms-auto text-[10px] text-muted-foreground">current</span>
                     )}
                   </DropdownMenuItem>
                 ))}

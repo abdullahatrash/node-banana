@@ -168,7 +168,7 @@ export function ComposeView() {
         </div>
 
         {/* Right: live preview panel */}
-        <div className="hidden w-[340px] border-l bg-muted/30 lg:flex lg:flex-col">
+        <div className="hidden w-[340px] border-s bg-muted/30 lg:flex lg:flex-col">
           <PreviewPanel />
         </div>
       </div>

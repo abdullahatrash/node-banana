@@ -65,7 +65,7 @@ export function PillarSwitcher({
             >
               <span>{pillar.label}</span>
               {pillar.id === currentPillar && (
-                <span className="ml-auto text-[9px] text-neutral-600">
+                <span className="ms-auto text-[9px] text-neutral-600">
                   current
                 </span>
               )}

@@ -83,7 +83,7 @@ export function Toast() {
   if (!message) return null;
 
   return (
-    <div className="fixed top-6 right-6 z-[200] animate-in fade-in slide-in-from-top-4 duration-300 max-w-md">
+    <div className="fixed top-6 end-6 z-[200] animate-in fade-in slide-in-from-top-4 duration-300 max-w-md">
       <div
         className={`flex flex-col rounded-lg border shadow-xl ${typeStyles[type]}`}
       >
@@ -119,7 +119,7 @@ export function Toast() {
           <>
             <button
               onClick={() => setIsExpanded(!isExpanded)}
-              className="px-4 py-1 text-xs opacity-70 hover:opacity-100 transition-opacity text-left border-t border-white/10"
+              className="px-4 py-1 text-xs opacity-70 hover:opacity-100 transition-opacity text-start border-t border-white/10"
             >
               {isExpanded ? "Hide details" : "Show details"}
             </button>

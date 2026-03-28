@@ -21,7 +21,7 @@ export function SocialSidebar() {
     useSocialAccountsStore();
 
   return (
-    <aside className="flex w-[220px] flex-shrink-0 flex-col border-r border-neutral-900 bg-[#0a0a0a]">
+    <aside className="flex w-[220px] flex-shrink-0 flex-col border-e border-neutral-900 bg-[#0a0a0a]">
       {/* Navigation */}
       <nav className="flex flex-col gap-0.5 p-3">
         <div className="mb-1 px-2 text-[9px] font-semibold uppercase tracking-[0.08em] text-neutral-600">
@@ -68,14 +68,14 @@ export function SocialSidebar() {
                 onClick={() =>
                   setChannelFilter(isFiltered ? null : account.id)
                 }
-                className={`group relative flex items-center gap-2 rounded-[5px] px-2 py-1.5 text-left text-[11px] transition-all duration-150 ${
+                className={`group relative flex items-center gap-2 rounded-[5px] px-2 py-1.5 text-start text-[11px] transition-all duration-150 ${
                   isFiltered
                     ? "bg-neutral-900 text-neutral-100"
                     : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-300"
                 }`}
               >
                 {/* Hover accent bar */}
-                <div className="absolute left-0 top-1 bottom-1 w-0.5 rounded-sm bg-gradient-to-b from-green-400 to-cyan-400 opacity-0 transition-opacity group-hover:opacity-100" />
+                <div className="absolute start-0 top-1 bottom-1 w-0.5 rounded-sm bg-gradient-to-b from-green-400 to-cyan-400 opacity-0 transition-opacity group-hover:opacity-100" />
                 <ChannelAvatar
                   platform={account.platform as SocialPlatform}
                   displayName={account.displayName}
