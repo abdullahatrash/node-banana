@@ -50,7 +50,7 @@ export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
         {platform && <PlatformIcon platform={platform} size={10} />}
         <span className="flex-1 truncate">
           {post.status === "draft" && (
-            <span className="mr-1 text-muted-foreground">Draft:</span>
+            <span className="me-1 text-muted-foreground">Draft:</span>
           )}
           {post.content?.slice(0, 40) || "No content"}
         </span>

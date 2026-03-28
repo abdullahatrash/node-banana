@@ -189,7 +189,7 @@ export function ChannelsPageClient({ oauthCallback }: ChannelsPageClientProps) {
               <button
                 key={page.id}
                 onClick={() => handlePageSelect(page)}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-start transition-colors hover:bg-accent"
               >
                 {page.picture ? (
                   <img
