@@ -1,42 +1,57 @@
-import Link from "next/link";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { getServerAuthSession } from "@/lib/auth/session";
-import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import Link from "next/link"
+import { headers } from "next/headers"
+import { getServerAuthSession } from "@/lib/auth/session"
+import { HomeHeader } from "@/components/HomeHeader"
+import { HomeFooter } from "@/components/HomeFooter"
 
 export default async function HomePage() {
-  const session = await getServerAuthSession(await headers());
-
-  if (session?.user) {
-    redirect("/studio");
-  }
+  const session = await getServerAuthSession(await headers())
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center px-4">
-      <div className="fixed top-4 end-4 z-10">
-        <LanguageSwitcher />
-      </div>
-      <div className="w-full max-w-md border border-neutral-800 bg-neutral-900 rounded-xl p-6">
-        <h1 className="text-xl font-semibold">Node Banana</h1>
-        <p className="text-sm text-neutral-400 mt-1">
-          Sign in to open AI Studio.
-        </p>
+    <div className="min-h-screen flex flex-col bg-neutral-950 text-neutral-100">
+      <HomeHeader />
 
-        <div className="mt-6 flex items-center gap-3">
-          <Link
-            href="/sign-in"
-            className="inline-flex items-center justify-center rounded-md bg-neutral-100 text-neutral-900 px-4 py-2 text-sm font-medium hover:bg-neutral-200"
-          >
-            Sign in
-          </Link>
-          <Link
-            href="/sign-up"
-            className="inline-flex items-center justify-center rounded-md border border-neutral-700 text-neutral-100 px-4 py-2 text-sm font-medium hover:border-neutral-500"
-          >
-            Sign up
-          </Link>
+      <main className="flex-1 flex items-center justify-center px-6 md:px-12">
+        <div className="flex flex-col md:flex-row items-center gap-12 max-w-5xl w-full">
+          {/* Left: text + CTAs */}
+          <div className="flex-1 flex flex-col items-start gap-6">
+            <h2 className="text-5xl md:text-6xl font-bold tracking-tight">
+              Node Banana
+            </h2>
+            <p className="text-lg text-neutral-400 max-w-md">
+              Node-based AI image generation workflow editor
+            </p>
+            <div className="flex items-center gap-3">
+              <Link
+                href="/studio"
+                className="inline-flex items-center justify-center rounded-md bg-neutral-100 text-neutral-900 px-5 py-2.5 text-sm font-medium hover:bg-neutral-200 transition-colors"
+              >
+                Open Studio
+              </Link>
+              {!session?.user && (
+                <Link
+                  href="/sign-in"
+                  className="inline-flex items-center justify-center rounded-md border border-neutral-700 text-neutral-100 px-5 py-2.5 text-sm font-medium hover:border-neutral-500 transition-colors"
+                >
+                  Sign in
+                </Link>
+              )}
+            </div>
+          </div>
+
+          {/* Right: hero image */}
+          <div className="flex-1 flex justify-center">
+            <img
+              src="/hero-horse.png"
+              alt="Node Banana"
+              className="w-full max-w-[450px] h-auto object-contain"
+              draggable={false}
+            />
+          </div>
         </div>
-      </div>
-    </main>
-  );
+      </main>
+
+      <HomeFooter />
+    </div>
+  )
 }
