@@ -12,6 +12,14 @@ export function canUseS3Storage(): boolean {
   return getStorageBackend() === "s3" && isS3Configured();
 }
 
+/**
+ * Returns true when the app should use cloud storage (R2/S3 + DB) instead of local filesystem.
+ * Alias for canUseS3Storage — named for clarity at call sites.
+ */
+export function isCloudMode(): boolean {
+  return canUseS3Storage();
+}
+
 export {
   buildAssetObjectKey,
   createPresignedUpload,
