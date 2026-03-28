@@ -12,6 +12,7 @@ import {
   BananaIcon,
   PaletteIcon,
   BarChart3Icon,
+  VideoIcon,
 } from "lucide-react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformIcon } from "./shared/PlatformIcon"
@@ -50,6 +51,7 @@ const NAV_ITEMS = [
 
 const PILLAR_ITEMS = [
   { href: "/studio", label: "AI Studio", icon: PaletteIcon },
+  { href: "/editor/projects", label: "Video Editor", icon: VideoIcon },
   { href: "/social", label: "Social Hub", icon: ActivityIcon },
   { href: "/analytics", label: "Analytics", icon: BarChart3Icon },
 ]

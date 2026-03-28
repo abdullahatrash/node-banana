@@ -6,6 +6,7 @@ import { ChannelsIcon, ChevronDownIcon } from "./icons";
 
 const PILLARS = [
   { id: "studio", label: "AI Studio", href: "/studio" },
+  { id: "editor", label: "Video Editor", href: "/editor/projects" },
   { id: "social", label: "Social Hub", href: "/social" },
   { id: "analytics", label: "Analytics", href: "/analytics" },
 ] as const;
