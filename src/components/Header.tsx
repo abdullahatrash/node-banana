@@ -401,7 +401,7 @@ export function Header() {
               Revert AI Changes
             </button>
           )}
-          <LanguageSwitcher />
+          <LanguageSwitcher className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800" />
           <CommentsNavigationIcon />
           {session?.user ? (
             <>

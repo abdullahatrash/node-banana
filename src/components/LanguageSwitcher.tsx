@@ -5,7 +5,7 @@ import { useDirectionStore } from "@/store/directionStore";
 import { Button } from "@/components/ui/button";
 import { LanguagesIcon } from "lucide-react";
 
-export function LanguageSwitcher() {
+export function LanguageSwitcher({ className }: { className?: string }) {
   const router = useRouter();
   const { locale, setLocale } = useDirectionStore();
 
@@ -16,7 +16,7 @@ export function LanguageSwitcher() {
   }
 
   return (
-    <Button variant="ghost" size="sm" onClick={toggle}>
+    <Button variant="ghost" size="sm" onClick={toggle} className={className}>
       <LanguagesIcon data-icon="inline-start" />
       {locale === "en" ? "العربية" : "English"}
     </Button>
