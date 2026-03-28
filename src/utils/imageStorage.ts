@@ -557,13 +557,25 @@ async function loadImageById(
   }
 
   const response = await fetch(`/api/workflow-images?${params.toString()}`);
-
   const result = await response.json();
 
   if (!result.success) {
-    // Missing images are expected when refs point to deleted/moved files
     console.log(`Image not found: ${imageId}`);
-    return ""; // Return empty string to avoid breaking the workflow
+    return "";
+  }
+
+  // Cloud mode returns a downloadUrl; local mode returns base64 image data
+  if (result.downloadUrl) {
+    const imgResponse = await fetch(result.downloadUrl);
+    const blob = await imgResponse.blob();
+    const arrayBuffer = await blob.arrayBuffer();
+    const base64 = btoa(
+      new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+    );
+    const mimeType = blob.type || "image/png";
+    const dataUrl = `data:${mimeType};base64,${base64}`;
+    loadedImages.set(imageId, dataUrl);
+    return dataUrl;
   }
 
   loadedImages.set(imageId, result.image);
