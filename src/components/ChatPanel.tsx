@@ -142,10 +142,10 @@ export function ChatPanel({ isOpen, onClose, onBuildWorkflow, isBuildingWorkflow
   if (!isOpen) return null;
 
   return (
-    <div className="fixed top-16 bottom-[220px] right-5 w-[380px] bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl flex flex-col overflow-hidden z-40">
+    <div className="fixed top-16 bottom-[220px] end-5 w-[380px] bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl flex flex-col overflow-hidden z-40">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-700">
-        <h3 className="text-sm font-medium text-neutral-200">Workflow Assistant <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded px-1.5 py-0.5">Beta</span></h3>
+        <h3 className="text-sm font-medium text-neutral-200">Workflow Assistant <span className="ms-1.5 text-[10px] font-semibold uppercase tracking-wider bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded px-1.5 py-0.5">Beta</span></h3>
         <div className="flex items-center gap-1">
           {messages.length > 0 && (
             <button
@@ -266,10 +266,10 @@ export function ChatPanel({ isOpen, onClose, onBuildWorkflow, isBuildingWorkflow
                           p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
                           strong: ({ children }) => <strong className="font-semibold text-neutral-100">{children}</strong>,
                           em: ({ children }) => <em className="italic">{children}</em>,
-                          ul: ({ children }) => <ul className="list-disc pl-4 mb-2 last:mb-0 space-y-1">{children}</ul>,
-                          ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 last:mb-0 space-y-1">{children}</ol>,
+                          ul: ({ children }) => <ul className="list-disc ps-4 mb-2 last:mb-0 space-y-1">{children}</ul>,
+                          ol: ({ children }) => <ol className="list-decimal ps-4 mb-2 last:mb-0 space-y-1">{children}</ol>,
                           li: ({ children }) => <li>{children}</li>,
-                          blockquote: ({ children }) => <blockquote className="border-l-2 border-neutral-500 pl-2 my-2 text-neutral-300 italic">{children}</blockquote>,
+                          blockquote: ({ children }) => <blockquote className="border-s-2 border-neutral-500 ps-2 my-2 text-neutral-300 italic">{children}</blockquote>,
                           code: ({ children }) => <code className="bg-neutral-600 px-1 rounded text-xs">{children}</code>,
                         }}
                       >
