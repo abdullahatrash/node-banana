@@ -11,6 +11,7 @@ import { ProjectSetupModal } from "./ProjectSetupModal";
 import { ProjectBrowserModal } from "./ProjectBrowserModal";
 import { CostIndicator } from "./CostIndicator";
 import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 
 function CommentsNavigationIcon() {
   // Subscribe to nodes so we re-render when comments change
@@ -55,7 +56,7 @@ function CommentsNavigationIcon() {
         <path fillRule="evenodd" d="M4.848 2.771A49.144 49.144 0 0112 2.25c2.43 0 4.817.178 7.152.52 1.978.292 3.348 2.024 3.348 3.97v6.02c0 1.946-1.37 3.678-3.348 3.97a48.901 48.901 0 01-3.476.383.39.39 0 00-.297.17l-2.755 4.133a.75.75 0 01-1.248 0l-2.755-4.133a.39.39 0 00-.297-.17 48.9 48.9 0 01-3.476-.384c-1.978-.29-3.348-2.024-3.348-3.97V6.741c0-1.946 1.37-3.68 3.348-3.97z" clipRule="evenodd" />
       </svg>
       {unviewedCount > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] flex items-center justify-center text-[9px] font-bold text-white bg-blue-500 rounded-full px-0.5">
+        <span className="absolute -top-0.5 -end-0.5 min-w-[14px] h-[14px] flex items-center justify-center text-[9px] font-bold text-white bg-blue-500 rounded-full px-0.5">
           {displayCount}
         </span>
       )}
@@ -204,7 +205,7 @@ export function Header() {
   }, [revertToSnapshot]);
 
   const settingsButtons = (
-    <div className="flex items-center gap-0.5 ml-1 pl-1 border-l border-neutral-700/50">
+    <div className="flex items-center gap-0.5 ms-1 ps-1 border-s border-neutral-700/50">
       <button
         onClick={handleOpenSettings}
         className="p-1.5 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 rounded transition-colors"
@@ -261,7 +262,7 @@ export function Header() {
             </h1>
           </button>
 
-          <div className="flex items-center gap-2 ml-4 pl-4 border-l border-neutral-700">
+          <div className="flex items-center gap-2 ms-4 ps-4 border-s border-neutral-700">
             {isProjectConfigured ? (
               <>
                 <span className="text-sm text-neutral-300">{workflowName}</span>
@@ -269,7 +270,7 @@ export function Header() {
                 <CostIndicator />
 
                 {/* File operations group */}
-                <div className="flex items-center gap-0.5 ml-2 pl-2 border-l border-neutral-700/50">
+                <div className="flex items-center gap-0.5 ms-2 ps-2 border-s border-neutral-700/50">
                   <button
                     onClick={() => canSave ? saveToFile() : handleOpenSettings()}
                     disabled={isSaving}
@@ -290,7 +291,7 @@ export function Header() {
                       />
                     </svg>
                     {hasUnsavedChanges && !isSaving && (
-                      <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-neutral-900" />
+                      <span className="absolute top-0.5 end-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-neutral-900" />
                     )}
                   </button>
                   {saveDirectoryPath && (
@@ -342,7 +343,7 @@ export function Header() {
                 <span className="text-sm text-neutral-500 italic">Untitled</span>
 
                 {/* File operations group */}
-                <div className="flex items-center gap-0.5 ml-2 pl-2 border-l border-neutral-700/50">
+                <div className="flex items-center gap-0.5 ms-2 ps-2 border-s border-neutral-700/50">
                   <button
                     onClick={handleNewProject}
                     className="relative p-1.5 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 rounded transition-colors"
@@ -361,7 +362,7 @@ export function Header() {
                         d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m.75 12 3 3m0 0 3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
                       />
                     </svg>
-                    <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-neutral-900" />
+                    <span className="absolute top-0.5 end-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-neutral-900" />
                   </button>
                   <button
                     onClick={handleOpenFile}
@@ -400,6 +401,7 @@ export function Header() {
               Revert AI Changes
             </button>
           )}
+          <LanguageSwitcher />
           <CommentsNavigationIcon />
           {session?.user ? (
             <>
