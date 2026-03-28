@@ -1914,7 +1914,9 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       };
 
       // If external image storage is enabled, externalize images before saving
-      if (useExternalImageStorage) {
+      // saveDirectoryPath is guaranteed non-null here: in local mode the early return checks it,
+      // in cloud mode it's used as a logical project identifier for R2 key paths
+      if (useExternalImageStorage && saveDirectoryPath) {
         workflow = await externalizeWorkflowImages(workflow, saveDirectoryPath);
       }
 
@@ -2019,7 +2021,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         saveSaveConfig({
           workflowId,
           name: workflowName,
-          directoryPath: saveDirectoryPath,
+          directoryPath: saveDirectoryPath || "",
           generationsPath: get().generationsPath,
           lastSavedAt: timestamp,
           useExternalImageStorage,
