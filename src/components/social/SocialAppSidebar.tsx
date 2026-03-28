@@ -10,9 +10,6 @@ import {
   ActivityIcon,
   PlusIcon,
   BananaIcon,
-  PaletteIcon,
-  BarChart3Icon,
-  VideoIcon,
 } from "lucide-react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformIcon } from "./shared/PlatformIcon"
@@ -31,13 +28,7 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from "@/components/ui/sidebar"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { AppSwitcher } from "@/components/AppSwitcher"
 import type { SocialPlatform } from "@/lib/db/schema"
 import { PLATFORM_LABELS } from "@/lib/social/constants"
 import { authClient } from "@/lib/auth/client"
@@ -49,12 +40,6 @@ const NAV_ITEMS = [
   { href: "/social/channels", label: "Channels", icon: ActivityIcon },
 ]
 
-const PILLAR_ITEMS = [
-  { href: "/studio", label: "AI Studio", icon: PaletteIcon },
-  { href: "/editor/projects", label: "Video Editor", icon: VideoIcon },
-  { href: "/social", label: "Social Hub", icon: ActivityIcon },
-  { href: "/analytics", label: "Analytics", icon: BarChart3Icon },
-]
 
 export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
@@ -73,28 +58,12 @@ export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sideb
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md p-1.5 text-start text-sm font-semibold hover:bg-sidebar-accent">
+            <AppSwitcher>
+              <button className="flex w-full items-center gap-2 rounded-md p-1.5 text-start text-sm font-semibold hover:bg-sidebar-accent">
                 <BananaIcon className="size-5" />
                 <span className="text-base font-semibold">Social Hub</span>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-48">
-                {PILLAR_ITEMS.map((item) => (
-                  <DropdownMenuItem key={item.href} onClick={() => window.location.href = item.href}>
-                    <item.icon className="size-4" />
-                    <span>{item.label}</span>
-                    {item.href === "/social" && (
-                      <span className="ms-auto text-[10px] text-muted-foreground">current</span>
-                    )}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => window.location.href = "/dashboard"}>
-                  <BarChart3Icon className="size-4" />
-                  <span>Command Center</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </button>
+            </AppSwitcher>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
