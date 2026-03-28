@@ -8,7 +8,7 @@ export default async function HomePage() {
   const session = await getServerAuthSession(await headers())
 
   return (
-    <div className="min-h-screen flex flex-col bg-neutral-950 text-neutral-100">
+    <div className="min-h-screen flex flex-col bg-neutral-900 text-neutral-100">
       <HomeHeader />
 
       <main className="flex-1 flex items-center justify-center px-6 md:px-12">
@@ -44,7 +44,7 @@ export default async function HomePage() {
             <img
               src="/hero-horse.png"
               alt="Node Banana"
-              className="w-full max-w-[450px] h-auto object-contain"
+              className="w-full max-w-[600px] h-auto object-contain"
               draggable={false}
             />
           </div>
