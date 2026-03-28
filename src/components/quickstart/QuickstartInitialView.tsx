@@ -20,9 +20,9 @@ export function QuickstartInitialView({
         <div className="flex-1 flex flex-col">
           <div className="mb-4">
             <div className="flex items-center gap-2">
-              <img src="/banana_icon.png" alt="" className="w-7 h-7" />
+              <img src="/logo-node.svg" alt="" className="w-12 h-12" />
               <h1 className="text-2xl font-medium text-neutral-100">
-                Node Banana
+                Tasmeem
               </h1>
             </div>
           </div>
@@ -162,7 +162,7 @@ function OptionButton({
   return (
     <button
       onClick={onClick}
-      className="group text-left p-4 rounded-lg border border-neutral-700/50 hover:border-neutral-600 hover:bg-neutral-800/40 transition-all duration-150"
+      className="group text-start p-4 rounded-lg border border-neutral-700/50 hover:border-neutral-600 hover:bg-neutral-800/40 transition-all duration-150"
     >
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 rounded-md bg-neutral-700/50 flex items-center justify-center flex-shrink-0 group-hover:bg-neutral-700 transition-colors">

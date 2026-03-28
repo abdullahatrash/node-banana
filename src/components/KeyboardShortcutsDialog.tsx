@@ -118,7 +118,7 @@ export function KeyboardShortcutsDialog({ isOpen, onClose }: KeyboardShortcutsDi
                     <span className="text-sm text-neutral-300">
                       {shortcut.description}
                     </span>
-                    <div className="flex items-center gap-1 ml-4 shrink-0">
+                    <div className="flex items-center gap-1 ms-4 shrink-0">
                       {shortcut.keys.map((key, keyIdx) => (
                         <span key={keyIdx} className="flex items-center gap-1">
                           {keyIdx > 0 && (

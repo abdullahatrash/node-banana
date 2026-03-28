@@ -719,7 +719,7 @@ export function ConnectionDropMenu({
             key={option.type}
             onClick={() => onSelect({ type: option.type, isAction: option.isAction || false })}
             onMouseEnter={() => setSelectedIndex(index)}
-            className={`w-full px-3 py-2 text-left text-[11px] font-medium flex items-center gap-2 transition-colors ${
+            className={`w-full px-3 py-2 text-start text-[11px] font-medium flex items-center gap-2 transition-colors ${
               index === selectedIndex
                 ? "bg-neutral-700 text-neutral-100"
                 : "text-neutral-300 hover:bg-neutral-700 hover:text-neutral-100"

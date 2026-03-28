@@ -63,7 +63,7 @@ export function CalendarColumn({ date, hour, posts }: CalendarColumnProps) {
     <div
       ref={dropRef as unknown as React.Ref<HTMLDivElement>}
       onClick={posts.length === 0 ? handleClickSlot : undefined}
-      className={`min-h-[48px] border-b border-r p-0.5 transition-colors ${
+      className={`min-h-[48px] border-b border-e p-0.5 transition-colors ${
         isInPast
           ? "cursor-not-allowed bg-muted/30"
           : posts.length === 0

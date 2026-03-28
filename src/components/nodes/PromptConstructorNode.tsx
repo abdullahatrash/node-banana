@@ -239,7 +239,7 @@ export function PromptConstructorNode({ id, data, selected }: NodeProps<PromptCo
                     e.preventDefault();
                     handleAutocompleteSelect(variable.name);
                   }}
-                  className={`w-full px-3 py-2 text-left text-[11px] flex flex-col gap-0.5 transition-colors ${
+                  className={`w-full px-3 py-2 text-start text-[11px] flex flex-col gap-0.5 transition-colors ${
                     index === selectedAutocompleteIndex
                       ? "bg-neutral-700 text-neutral-100"
                       : "text-neutral-300 hover:bg-neutral-700"

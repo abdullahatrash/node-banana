@@ -157,12 +157,12 @@ export function CostDialog({ predictedCost, incurredCost, onClose }: CostDialogP
               <div className="flex items-center gap-2 mb-2">
                 <ProviderIcon provider="gemini" />
                 <span className="text-sm text-neutral-300">Gemini Cost</span>
-                <span className="ml-auto text-lg font-semibold text-green-400">
+                <span className="ms-auto text-lg font-semibold text-green-400">
                   {formatCost(geminiTotal)}
                 </span>
               </div>
 
-              <div className="space-y-1 pl-7">
+              <div className="space-y-1 ps-7">
                 {geminiItems.map((item, idx) => (
                   <div key={idx} className="flex justify-between text-xs">
                     <span className="text-neutral-500">
@@ -194,7 +194,7 @@ export function CostDialog({ predictedCost, incurredCost, onClose }: CostDialogP
                       <ProviderIcon provider={provider} />
                       <span>{getProviderDisplayName(provider)}</span>
                     </div>
-                    <div className="space-y-1 pl-7">
+                    <div className="space-y-1 ps-7">
                       {items.map((item, idx) => {
                         const modelUrl = getModelUrl(provider, item.modelId);
                         return (

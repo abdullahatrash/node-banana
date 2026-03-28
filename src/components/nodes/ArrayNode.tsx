@@ -303,7 +303,7 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
                         selectedOutputIndex: isSelected ? null : index,
                       })
                     }
-                    className={`nodrag nopan w-[calc(100%-1rem)] mx-2 my-0.5 rounded-md px-2 py-1 text-[11px] text-left truncate transition-colors ${
+                    className={`nodrag nopan w-[calc(100%-1rem)] mx-2 my-0.5 rounded-md px-2 py-1 text-[11px] text-start truncate transition-colors ${
                       isSelected
                         ? "bg-blue-900/40 text-blue-200 ring-1 ring-blue-500/60"
                         : "bg-neutral-800/60 text-neutral-300 hover:bg-neutral-700/60"

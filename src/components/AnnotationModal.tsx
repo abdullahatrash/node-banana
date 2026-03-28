@@ -478,7 +478,7 @@ export function AnnotationModal() {
       <div className="h-14 bg-neutral-900 flex items-center justify-center gap-6 px-4 border-t border-neutral-800">
         {/* Colors */}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-neutral-500 uppercase tracking-wide mr-1">Color</span>
+          <span className="text-[10px] text-neutral-500 uppercase tracking-wide me-1">Color</span>
           {COLORS.map((color) => (
             <button
               key={color}
@@ -495,7 +495,7 @@ export function AnnotationModal() {
 
         {/* Stroke Width */}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-neutral-500 uppercase tracking-wide mr-1">Size</span>
+          <span className="text-[10px] text-neutral-500 uppercase tracking-wide me-1">Size</span>
           {STROKE_WIDTHS.map((width) => (
             <button
               key={width}
@@ -522,7 +522,7 @@ export function AnnotationModal() {
         </button>
 
         {/* Zoom */}
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="flex items-center gap-2 ms-auto">
           <button onClick={() => setScale(Math.max(scale - 0.1, 0.1))} className="w-7 h-7 rounded text-neutral-400 hover:text-white text-sm">-</button>
           <span className="text-[10px] text-neutral-400 w-10 text-center">{Math.round(scale * 100)}%</span>
           <button onClick={() => setScale(Math.min(scale + 0.1, 5))} className="w-7 h-7 rounded text-neutral-400 hover:text-white text-sm">+</button>

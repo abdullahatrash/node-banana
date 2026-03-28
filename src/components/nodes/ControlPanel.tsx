@@ -472,7 +472,7 @@ function GenerateImageControls({ node }: { node: Node }) {
                   onChange={handleGoogleSearchToggle}
                   className="nodrag nopan w-3 h-3 text-blue-600 bg-neutral-700 border-neutral-600 rounded focus:ring-blue-500"
                 />
-                <label htmlFor={`google-search-${node.id}`} className="ml-2 text-xs text-neutral-300">
+                <label htmlFor={`google-search-${node.id}`} className="ms-2 text-xs text-neutral-300">
                   Google Search
                 </label>
               </div>
@@ -487,7 +487,7 @@ function GenerateImageControls({ node }: { node: Node }) {
                   onChange={handleImageSearchToggle}
                   className="nodrag nopan w-3 h-3 text-blue-600 bg-neutral-700 border-neutral-600 rounded focus:ring-blue-500"
                 />
-                <label htmlFor={`image-search-${node.id}`} className="ml-2 text-xs text-neutral-300">
+                <label htmlFor={`image-search-${node.id}`} className="ms-2 text-xs text-neutral-300">
                   Image Search
                 </label>
               </div>
