@@ -44,12 +44,12 @@ export function HomeHeader() {
     <header className="h-11 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 sticky top-0 z-50">
       <div className="flex items-center gap-2">
         <AppSwitcher>
-          <button className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+          <div className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer">
             <img src="/banana_icon.png" alt="Banana" className="w-6 h-6" />
-            <h1 className="text-2xl font-semibold text-neutral-100 tracking-tight">
+            <span className="text-2xl font-semibold text-neutral-100 tracking-tight">
               Node Banana
-            </h1>
-          </button>
+            </span>
+          </div>
         </AppSwitcher>
       </div>
 
