@@ -46,13 +46,13 @@ export function CalendarWeek() {
     <DndProvider backend={HTML5Backend}>
       <div className="flex flex-1 overflow-auto">
         {/* Time labels */}
-        <div className="w-[60px] flex-shrink-0 border-r">
+        <div className="w-[60px] flex-shrink-0 border-e">
           {/* Header spacer */}
           <div className="h-8 border-b" />
           {HOURS.map((hour) => (
             <div
               key={hour}
-              className="flex h-12 items-start justify-end border-b pr-2 pt-0.5 text-[10px] text-muted-foreground"
+              className="flex h-12 items-start justify-end border-b pe-2 pt-0.5 text-[10px] text-muted-foreground"
             >
               {format(new Date().setHours(hour, 0), "HH:mm")}
             </div>
@@ -65,7 +65,7 @@ export function CalendarWeek() {
             <div key={day.toISOString()} className="min-w-0">
               {/* Day header */}
               <div
-                className={`flex h-8 items-center justify-center border-b border-r text-xs font-medium ${
+                className={`flex h-8 items-center justify-center border-b border-e text-xs font-medium ${
                   isToday(day)
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground"

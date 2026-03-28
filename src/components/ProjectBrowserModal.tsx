@@ -397,7 +397,7 @@ export function ProjectBrowserModal({
                     <button
                       key={project.id}
                       onClick={() => void loadProjectDetail(project.id)}
-                      className={`w-full text-left px-3 py-2 border-b border-neutral-800 hover:bg-neutral-800/60 transition-colors ${
+                      className={`w-full text-start px-3 py-2 border-b border-neutral-800 hover:bg-neutral-800/60 transition-colors ${
                         selectedProjectId === project.id ? "bg-neutral-800/80" : ""
                       }`}
                     >

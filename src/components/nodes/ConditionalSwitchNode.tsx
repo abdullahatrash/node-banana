@@ -216,13 +216,13 @@ export const ConditionalSwitchNode = memo(({ id, data, selected }: NodeProps<Wor
         <div className="absolute top-2 right-2 z-10">
           <button
             onClick={handleClear}
-            className="nodrag nopan p-0.5 rounded transition-all duration-200 ease-in-out flex items-center overflow-hidden group pr-2 text-neutral-500 hover:text-neutral-200 border border-neutral-600 bg-neutral-800/90"
+            className="nodrag nopan p-0.5 rounded transition-all duration-200 ease-in-out flex items-center overflow-hidden group pe-2 text-neutral-500 hover:text-neutral-200 border border-neutral-600 bg-neutral-800/90"
             title="Clear evaluation"
           >
             <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
-            <span className="text-[9px] whitespace-nowrap ml-1">
+            <span className="text-[9px] whitespace-nowrap ms-1">
               Clear
             </span>
           </button>
@@ -376,7 +376,7 @@ export const ConditionalSwitchNode = memo(({ id, data, selected }: NodeProps<Wor
             )}
           </div>
 
-          <span className="text-[10px] text-neutral-300 ml-4">Fallback</span>
+          <span className="text-[10px] text-neutral-300 ms-4">Fallback</span>
         </div>
 
         {/* Add rule button — after Default so it doesn't displace handle alignment */}

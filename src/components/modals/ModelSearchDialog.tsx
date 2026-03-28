@@ -613,7 +613,7 @@ export function ModelSearchDialog({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search models..."
-                className="w-full pl-10 pr-4 py-2 text-sm bg-neutral-700 border border-neutral-600 rounded text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+                className="w-full ps-10 pe-4 py-2 text-sm bg-neutral-700 border border-neutral-600 rounded text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-1 focus:ring-neutral-500"
               />
             </div>
 
@@ -835,7 +835,7 @@ export function ModelSearchDialog({
                         <button
                           key={`recent-${recent.modelId}`}
                           onClick={() => handleSelectModel(model)}
-                          className="flex items-center gap-3 p-3 bg-neutral-700/50 hover:bg-neutral-700 border border-neutral-600/30 hover:border-neutral-500 rounded-lg transition-colors text-left cursor-pointer group"
+                          className="flex items-center gap-3 p-3 bg-neutral-700/50 hover:bg-neutral-700 border border-neutral-600/30 hover:border-neutral-500 rounded-lg transition-colors text-start cursor-pointer group"
                         >
                           {/* Small cover image */}
                           <div className="w-10 h-10 rounded bg-neutral-600 overflow-hidden flex-shrink-0">
@@ -886,7 +886,7 @@ export function ModelSearchDialog({
                 <button
                   key={`${model.provider}-${model.id}`}
                   onClick={() => handleSelectModel(model)}
-                  className="flex items-start gap-3 p-4 bg-neutral-700/50 hover:bg-neutral-700 border border-neutral-600/50 hover:border-neutral-500 rounded-lg transition-colors text-left cursor-pointer group"
+                  className="flex items-start gap-3 p-4 bg-neutral-700/50 hover:bg-neutral-700 border border-neutral-600/50 hover:border-neutral-500 rounded-lg transition-colors text-start cursor-pointer group"
                 >
                   {/* Cover Image - larger */}
                   <div className="w-20 h-20 rounded bg-neutral-600 overflow-hidden flex-shrink-0">

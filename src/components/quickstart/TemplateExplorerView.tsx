@@ -293,7 +293,7 @@ export function TemplateExplorerView({
       {/* Content - Sidebar + Main Grid */}
       <div className="flex-1 flex min-h-0 overflow-clip">
         {/* Sidebar */}
-        <div className="w-48 flex-shrink-0 bg-neutral-900/80 border-r border-neutral-700 p-4 space-y-5 overflow-y-auto">
+        <div className="w-48 flex-shrink-0 bg-neutral-900/80 border-e border-neutral-700 p-4 space-y-5 overflow-y-auto">
           {/* Search Input */}
           <div className="relative">
             <svg
@@ -314,7 +314,7 @@ export function TemplateExplorerView({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search templates..."
-              className="w-full pl-8 pr-3 py-2 text-sm bg-neutral-700/50 border border-neutral-600 rounded-lg text-neutral-200 placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full ps-8 pe-3 py-2 text-sm bg-neutral-700/50 border border-neutral-600 rounded-lg text-neutral-200 placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
 
@@ -329,7 +329,7 @@ export function TemplateExplorerView({
                   key={option.id}
                   onClick={() => setCategoryFilter(option.id)}
                   className={`
-                    px-3 py-1.5 text-xs font-medium rounded-md text-left transition-colors
+                    px-3 py-1.5 text-xs font-medium rounded-md text-start transition-colors
                     ${
                       categoryFilter === option.id
                         ? "bg-blue-500/20 border border-blue-500/50 text-blue-300"
@@ -354,7 +354,7 @@ export function TemplateExplorerView({
                   key={tag}
                   onClick={() => toggleTag(tag)}
                   className={`
-                    px-3 py-1.5 text-xs font-medium rounded-md text-left transition-colors
+                    px-3 py-1.5 text-xs font-medium rounded-md text-start transition-colors
                     ${
                       selectedTags.has(tag)
                         ? "bg-blue-500/20 border border-blue-500/50 text-blue-300"

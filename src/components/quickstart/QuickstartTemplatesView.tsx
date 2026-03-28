@@ -141,7 +141,7 @@ export function QuickstartTemplatesView({
                 onClick={() => handlePresetSelect(preset.id)}
                 disabled={isLoading}
                 className={`
-                  group flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-all text-left
+                  group flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-all text-start
                   ${
                     loadingWorkflowId === preset.id
                       ? "bg-blue-600/20 border-blue-500/50"
@@ -253,7 +253,7 @@ export function QuickstartTemplatesView({
                   onClick={() => handleCommunitySelect(workflow.id)}
                   disabled={isLoading}
                   className={`
-                    group flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-all text-left
+                    group flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-all text-start
                     ${
                       loadingWorkflowId === workflow.id
                         ? "bg-purple-600/20 border-purple-500/50"

@@ -325,7 +325,7 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
         onPointerDown={handleHeaderPointerDown}
       >
         {/* Title Section */}
-        <div className="flex-1 min-w-0 max-w-[60%] flex items-center gap-1.5 pl-2">
+        <div className="flex-1 min-w-0 max-w-[60%] flex items-center gap-1.5 ps-2">
           {provider && <ProviderBadge provider={provider} />}
           {isEditingTitle ? (
             <input
@@ -350,7 +350,7 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
         </div>
 
         {/* Controls - right-aligned, fade in on hover/selected */}
-        <div className={`shrink-0 flex items-center gap-1 pr-1 transition-opacity duration-200 -translate-y-1 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+        <div className={`shrink-0 flex items-center gap-1 pe-1 transition-opacity duration-200 -translate-y-1 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
           {/* Header Action (e.g. Browse button) */}
           {headerAction}
 
@@ -477,7 +477,7 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
             <div className="relative shrink-0 group">
               <button
                 onClick={() => onExpandNode(id, type)}
-                className="nodrag nopan p-0.5 rounded transition-all duration-200 ease-in-out text-neutral-500 group-hover:text-neutral-200 border border-neutral-600 flex items-center overflow-hidden group-hover:pr-2"
+                className="nodrag nopan p-0.5 rounded transition-all duration-200 ease-in-out text-neutral-500 group-hover:text-neutral-200 border border-neutral-600 flex items-center overflow-hidden group-hover:pe-2"
                 title="Expand editor"
               >
                 <svg
@@ -494,7 +494,7 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
                   <line x1="21" y1="3" x2="14" y2="10" />
                   <line x1="3" y1="21" x2="10" y2="14" />
                 </svg>
-                <span className="max-w-0 opacity-0 whitespace-nowrap text-[10px] transition-all duration-200 ease-in-out overflow-hidden group-hover:max-w-[60px] group-hover:opacity-100 group-hover:ml-1">
+                <span className="max-w-0 opacity-0 whitespace-nowrap text-[10px] transition-all duration-200 ease-in-out overflow-hidden group-hover:max-w-[60px] group-hover:opacity-100 group-hover:ms-1">
                   Expand
                 </span>
               </button>
@@ -507,13 +507,13 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
               <button
                 onClick={() => onRunNode(id)}
                 disabled={isExecuting}
-                className="nodrag nopan p-0.5 rounded transition-all duration-200 ease-in-out text-neutral-500 group-hover:text-neutral-200 border border-neutral-600 flex items-center overflow-hidden group-hover:pr-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="nodrag nopan p-0.5 rounded transition-all duration-200 ease-in-out text-neutral-500 group-hover:text-neutral-200 border border-neutral-600 flex items-center overflow-hidden group-hover:pe-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Run this node"
               >
                 <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z" />
                 </svg>
-                <span className="max-w-0 opacity-0 whitespace-nowrap text-[10px] transition-all duration-200 ease-in-out overflow-hidden group-hover:max-w-[60px] group-hover:opacity-100 group-hover:ml-1">
+                <span className="max-w-0 opacity-0 whitespace-nowrap text-[10px] transition-all duration-200 ease-in-out overflow-hidden group-hover:max-w-[60px] group-hover:opacity-100 group-hover:ms-1">
                   Run node
                 </span>
               </button>
