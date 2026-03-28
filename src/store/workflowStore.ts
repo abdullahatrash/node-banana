@@ -1855,7 +1855,10 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       imageRefBasePath,
     } = get();
 
-    if (!workflowId || !workflowName || !saveDirectoryPath) {
+    if (!workflowId || !workflowName) {
+      return false;
+    }
+    if (!isCloudMode() && !saveDirectoryPath) {
       return false;
     }
 
@@ -2097,12 +2100,13 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
     autoSaveIntervalId = setInterval(async () => {
       const state = get();
+      const hasRequiredPath = isCloudMode() || !!state.saveDirectoryPath;
       if (
         state.autoSaveEnabled &&
         state.hasUnsavedChanges &&
         state.workflowId &&
         state.workflowName &&
-        state.saveDirectoryPath &&
+        hasRequiredPath &&
         !state.isSaving
       ) {
         await state.saveToFile();
