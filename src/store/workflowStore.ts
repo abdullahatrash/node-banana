@@ -66,6 +66,7 @@ import {
 } from "./utils/executionUtils";
 import { getConnectedInputsPure, validateWorkflowPure } from "./utils/connectedInputs";
 import { evaluateRule } from "./utils/ruleEvaluation";
+import { isCloudMode } from "@/lib/storage";
 import { computeDimmedNodes } from "./utils/dimmingUtils";
 import {
   executeAnnotation,
@@ -1914,19 +1915,53 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         workflow = await externalizeWorkflowImages(workflow, saveDirectoryPath);
       }
 
-      const response = await fetch("/api/workflow", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          directoryPath: saveDirectoryPath,
-          filename: workflowName,
-          workflow,
-        }),
-      });
+      let saveSuccess = false;
 
-      const result = await response.json();
+      if (isCloudMode()) {
+        // Cloud mode: save workflow JSON directly to database (primary store)
+        try {
+          if (!getActiveWorkspaceId()) {
+            await listStudioWorkspaces();
+          }
+          if (!getActiveWorkspaceId()) {
+            throw new Error("No active workspace. Select a workspace to continue.");
+          }
 
-      if (result.success) {
+          await upsertStudioProject({
+            projectId: workflowId,
+            name: workflowName,
+            workflowJson: workflow as unknown as Record<string, unknown>,
+            sourceDirectoryPath: saveDirectoryPath,
+          });
+          saveSuccess = true;
+        } catch (studioError) {
+          useToast.getState().show(
+            `Save failed: ${studioError instanceof Error ? studioError.message : "Unknown error"}`,
+            "error"
+          );
+          saveSuccess = false;
+        }
+      } else {
+        // Local mode: save to filesystem via /api/workflow (existing behavior)
+        const response = await fetch("/api/workflow", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            directoryPath: saveDirectoryPath,
+            filename: workflowName,
+            workflow,
+          }),
+        });
+
+        const result = await response.json();
+        saveSuccess = result.success;
+
+        if (!saveSuccess) {
+          useToast.getState().show(`Auto-save failed: ${result.error}`, "error");
+        }
+      }
+
+      if (saveSuccess) {
         const timestamp = Date.now();
 
         // If we externalized images, update store nodes with the refs
@@ -1987,33 +2022,34 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           useExternalImageStorage,
         });
 
-        // Non-blocking protected Studio API sync for project metadata/workflow JSON.
-        void (async () => {
-          try {
-            if (!getActiveWorkspaceId()) {
-              await listStudioWorkspaces();
-            }
-            if (!getActiveWorkspaceId()) return;
+        // Non-blocking DB sync only in local mode (cloud mode already saved to DB above)
+        if (!isCloudMode()) {
+          void (async () => {
+            try {
+              if (!getActiveWorkspaceId()) {
+                await listStudioWorkspaces();
+              }
+              if (!getActiveWorkspaceId()) return;
 
-            await upsertStudioProject({
-              projectId: workflowId,
-              name: workflowName,
-              workflowJson: workflow as unknown as Record<string, unknown>,
-              sourceDirectoryPath: saveDirectoryPath,
-            });
-          } catch (studioSyncError) {
-            logger.warn("file.save", "Studio project sync failed (non-fatal)", {
-              error:
-                studioSyncError instanceof Error
-                  ? studioSyncError.message
-                  : "Unknown error",
-            });
-          }
-        })();
+              await upsertStudioProject({
+                projectId: workflowId,
+                name: workflowName,
+                workflowJson: workflow as unknown as Record<string, unknown>,
+                sourceDirectoryPath: saveDirectoryPath,
+              });
+            } catch (studioSyncError) {
+              logger.warn("file.save", "Studio project sync failed (non-fatal)", {
+                error:
+                  studioSyncError instanceof Error
+                    ? studioSyncError.message
+                    : "Unknown error",
+              });
+            }
+          })();
+        }
 
         return true;
       } else {
-        useToast.getState().show(`Auto-save failed: ${result.error}`, "error");
         return false;
       }
     } catch (error) {
