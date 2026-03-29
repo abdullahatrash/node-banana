@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { stat } from "fs/promises";
-import path from "path";
-import os from "os";
-import { isCloudMode } from "@/lib/storage";
 
-const execFileAsync = promisify(execFile);
+/** Local-only route — check env directly to avoid pulling heavy @/lib/storage deps into the bundle */
+function isCloudMode() {
+  return process.env.STORAGE_BACKEND === "s3" || !!process.env.VERCEL;
+}
 
 export async function POST(req: NextRequest) {
     // Guard against cloud deployments where OS commands are not available
@@ -16,6 +13,13 @@ export async function POST(req: NextRequest) {
             { status: 501 }
         );
     }
+
+    const { execFile } = await import("child_process");
+    const { promisify } = await import("util");
+    const { stat } = await import("fs/promises");
+    const path = await import("path");
+    const os = await import("os");
+    const execFileAsync = promisify(execFile);
 
     try {
         const body = await req.json();

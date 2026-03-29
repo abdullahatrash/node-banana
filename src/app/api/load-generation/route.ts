@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as fs from "fs/promises";
-import * as path from "path";
-import { logger } from "@/utils/logger";
-import { isCloudMode } from "@/lib/storage";
+
+/** Local-only route — check env directly to avoid pulling heavy @/lib/storage deps into the bundle */
+function isCloudMode() {
+  return process.env.STORAGE_BACKEND === "s3" || !!process.env.VERCEL;
+}
 
 // Supported file extensions
 const SUPPORTED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm', 'mov'];
@@ -30,6 +31,11 @@ export async function POST(request: NextRequest) {
       { status: 501 },
     );
   }
+
+  // Dynamic imports — only loaded in local mode, keeps serverless bundle small
+  const fs = await import("fs/promises");
+  const path = await import("path");
+  const { logger } = await import("@/utils/logger");
 
   let directoryPath: string | undefined;
   let imageId: string | undefined;

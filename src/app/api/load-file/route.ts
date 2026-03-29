@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile, stat } from "fs/promises";
-import path from "path";
-import os from "os";
-import { isCloudMode } from "@/lib/storage";
+
+/** Local-only route — check env directly to avoid pulling heavy @/lib/storage deps into the bundle */
+function isCloudMode() {
+  return process.env.STORAGE_BACKEND === "s3" || !!process.env.VERCEL;
+}
 
 const EXT_TO_MIME: Record<string, string> = {
   png: "image/png",
@@ -55,11 +56,6 @@ function isLocalhostRequest(req: NextRequest): boolean {
   return true;
 }
 
-function getMimeTypeForPath(filePath: string): string {
-  const ext = path.extname(filePath).replace(/^\./, "").toLowerCase();
-  return EXT_TO_MIME[ext] || "application/octet-stream";
-}
-
 export async function POST(request: NextRequest) {
   if (isCloudMode()) {
     return NextResponse.json(
@@ -73,6 +69,15 @@ export async function POST(request: NextRequest) {
       { success: false, error: "Forbidden: localhost only" },
       { status: 403 },
     );
+  }
+
+  const { readFile, stat } = await import("fs/promises");
+  const path = await import("path");
+  const os = await import("os");
+
+  function getMimeTypeForPath(filePath: string): string {
+    const ext = path.extname(filePath).replace(/^\./, "").toLowerCase();
+    return EXT_TO_MIME[ext] || "application/octet-stream";
   }
 
   try {
