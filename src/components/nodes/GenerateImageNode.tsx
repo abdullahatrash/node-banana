@@ -16,6 +16,8 @@ import { useInlineParameters } from "@/hooks/useInlineParameters";
 import { InlineParameterPanel } from "./InlineParameterPanel";
 import { browseRegistry } from "@/utils/browseRegistry";
 import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
+import { isCloudMode } from "@/lib/storage";
+import { getLegacyStudioAssetDownloadUrl, getStudioAssetDownloadUrl } from "@/lib/studio/client";
 
 /** Reorder items so they read column-first in a row-based CSS grid.
  *  e.g. [1,2,3,4,5,6,7,8] with 2 cols → [1,5,2,6,3,7,4,8] */
@@ -58,6 +60,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
   const adaptiveOutputImage = useAdaptiveImageSrc(data.outputImage, id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const generationsPath = useWorkflowStore((state) => state.generationsPath);
+  const workflowId = useWorkflowStore((state) => state.workflowId);
   // Use stable selector for API keys to prevent unnecessary re-fetches
   const { replicateApiKey, falApiKey, kieApiKey, replicateEnabled, kieEnabled } = useProviderApiKeys();
   const [isLoadingCarouselImage, setIsLoadingCarouselImage] = useState(false);
@@ -313,6 +316,20 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
   }, [id, regenerateNode]);
 
   const loadImageById = useCallback(async (imageId: string) => {
+    if (isCloudMode()) {
+      try {
+        const signed = imageId.startsWith("asset_")
+          ? await getStudioAssetDownloadUrl(imageId)
+          : workflowId
+            ? await getLegacyStudioAssetDownloadUrl({ projectId: workflowId, legacyKey: imageId })
+            : null;
+        return signed?.downloadUrl || null;
+      } catch (error) {
+        console.warn("Error loading cloud image:", error);
+        return null;
+      }
+    }
+
     if (!generationsPath) {
       console.error("Generations path not configured");
       return null;
@@ -339,7 +356,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
       console.warn("Error loading image:", error);
       return null;
     }
-  }, [generationsPath]);
+  }, [generationsPath, workflowId]);
 
   const handleCarouselPrevious = useCallback(async () => {
     const history = nodeData.imageHistory || [];

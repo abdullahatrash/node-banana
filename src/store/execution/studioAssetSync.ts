@@ -2,6 +2,7 @@ import {
   createStudioAssetPresign,
   finalizeStudioAssetUpload,
   getActiveWorkspaceId,
+  ingestStudioAsset,
   listStudioWorkspaces,
   StudioApiError,
 } from "@/lib/studio/client";
@@ -116,6 +117,8 @@ async function recordLocalStudioAsset(params: {
   if (!response.ok || record?.success !== true) {
     throw new Error(errorMessage);
   }
+
+  return;
 }
 
 async function readSavedFileBlob(filePath: string, mimeType: string): Promise<Blob> {
@@ -248,4 +251,61 @@ export async function syncStudioAssetFromSaveResult(params: {
 
     throw new Error(`Studio asset upload failed: ${uploadError}`);
   }
+}
+
+function resolveProjectId(
+  explicitProjectId: string | null | undefined,
+  getStoreState: () => unknown,
+): string | null {
+  if (typeof explicitProjectId === "string" && explicitProjectId.trim()) {
+    return explicitProjectId.trim();
+  }
+
+  const state = getStoreState() as WorkflowStoreLike;
+  return typeof state.workflowId === "string" && state.workflowId.trim()
+    ? state.workflowId
+    : null;
+}
+
+export async function syncStudioAssetFromSource(params: {
+  assetType: StudioAssetType;
+  source: string;
+  fileName?: string;
+  contentType?: string;
+  projectId?: string | null;
+  getStoreState: () => unknown;
+}): Promise<string> {
+  const source = params.source?.trim();
+  if (!source) {
+    throw new Error("Missing source for studio asset ingest.");
+  }
+
+  if (!getActiveWorkspaceId()) {
+    await listStudioWorkspaces();
+  }
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) {
+    throw new Error("Select a workspace to continue.");
+  }
+
+  const projectId = resolveProjectId(params.projectId, params.getStoreState);
+  const sourceUrl = source.startsWith("http://") || source.startsWith("https:")
+    ? source
+    : undefined;
+  const sourceDataUrl = source.startsWith("data:") ? source : undefined;
+
+  if (!sourceUrl && !sourceDataUrl) {
+    throw new Error("Unsupported media source format.");
+  }
+
+  const ingested = await ingestStudioAsset({
+    projectId,
+    assetType: params.assetType,
+    sourceUrl,
+    sourceDataUrl,
+    fileName: params.fileName,
+    contentType: params.contentType,
+  });
+
+  return ingested.assetId;
 }

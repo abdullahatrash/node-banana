@@ -7,7 +7,8 @@
 
 import type { GenerateVideoNodeData } from "@/types";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
-import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
+import { isCloudMode } from "@/lib/storage";
+import { syncStudioAssetFromSaveResult, syncStudioAssetFromSource } from "./studioAssetSync";
 import type { NodeExecutionContext } from "./types";
 
 export interface GenerateVideoOptions {
@@ -143,6 +144,7 @@ export async function executeGenerateVideo(
 
       updateNodeData(node.id, {
         outputVideo: outputContent,
+        outputVideoRef: videoId,
         status: "complete",
         error: null,
         videoHistory: updatedHistory,
@@ -154,8 +156,34 @@ export async function executeGenerateVideo(
         addIncurredCost(nodeData.selectedModel.pricing.amount);
       }
 
-      // Auto-save to generations folder if configured
-      if (generationsPath) {
+      if (isCloudMode()) {
+        const source = typeof outputContent === "string" ? outputContent : "";
+        const savePromise = syncStudioAssetFromSource({
+          assetType: "video",
+          source,
+          projectId: (get() as { workflowId?: string | null }).workflowId || null,
+          getStoreState: () => get(),
+        })
+          .then((assetId) => {
+            const currentNode = getNodes().find((n) => n.id === node.id);
+            if (!currentNode) return;
+            const currentData = currentNode.data as GenerateVideoNodeData;
+            const histCopy = [...(currentData.videoHistory || [])];
+            const entryIndex = histCopy.findIndex((h) => h.id === videoId);
+            if (entryIndex !== -1) {
+              histCopy[entryIndex] = { ...histCopy[entryIndex], id: assetId };
+            }
+            updateNodeData(node.id, {
+              videoHistory: histCopy,
+              outputVideoRef: assetId,
+            });
+          })
+          .catch((err) => {
+            console.error("Failed to ingest cloud video generation:", err);
+          });
+
+        trackSaveGeneration(videoId, savePromise);
+      } else if (generationsPath) {
         const saveContent = videoData
           ? { video: videoData }
           : { image: result.image };
@@ -180,7 +208,7 @@ export async function executeGenerateVideo(
                 const entryIndex = histCopy.findIndex((h) => h.id === videoId);
                 if (entryIndex !== -1) {
                   histCopy[entryIndex] = { ...histCopy[entryIndex], id: saveResult.imageId };
-                  updateNodeData(node.id, { videoHistory: histCopy });
+                  updateNodeData(node.id, { videoHistory: histCopy, outputVideoRef: saveResult.imageId });
                 }
               }
             }

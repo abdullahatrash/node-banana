@@ -17,6 +17,8 @@ import { useVideoAutoplay } from "@/hooks/useVideoAutoplay";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
 import { InlineParameterPanel } from "./InlineParameterPanel";
 import { browseRegistry } from "@/utils/browseRegistry";
+import { isCloudMode } from "@/lib/storage";
+import { getLegacyStudioAssetDownloadUrl, getStudioAssetDownloadUrl } from "@/lib/studio/client";
 
 // Video generation capabilities
 const VIDEO_CAPABILITIES: ModelCapability[] = ["text-to-video", "image-to-video"];
@@ -49,6 +51,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
   // Use stable selector for API keys to prevent unnecessary re-fetches
   const { geminiApiKey, replicateApiKey, falApiKey, kieApiKey, replicateEnabled, kieEnabled } = useProviderApiKeys();
   const generationsPath = useWorkflowStore((state) => state.generationsPath);
+  const workflowId = useWorkflowStore((state) => state.workflowId);
   const [externalModels, setExternalModels] = useState<ProviderModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelsFetchError, setModelsFetchError] = useState<string | null>(null);
@@ -229,6 +232,20 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
 
   // Load video by ID from generations folder
   const loadVideoById = useCallback(async (videoId: string) => {
+    if (isCloudMode()) {
+      try {
+        const signed = videoId.startsWith("asset_")
+          ? await getStudioAssetDownloadUrl(videoId)
+          : workflowId
+            ? await getLegacyStudioAssetDownloadUrl({ projectId: workflowId, legacyKey: videoId })
+            : null;
+        return signed?.downloadUrl || null;
+      } catch (error) {
+        console.warn("Error loading cloud video:", error);
+        return null;
+      }
+    }
+
     if (!generationsPath) {
       console.error("Generations path not configured");
       return null;
@@ -255,7 +272,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
       console.warn("Error loading video:", error);
       return null;
     }
-  }, [generationsPath]);
+  }, [generationsPath, workflowId]);
 
   // Carousel navigation handlers
   const handleCarouselPrevious = useCallback(async () => {

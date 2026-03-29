@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { logger } from "@/utils/logger";
+import { isCloudMode } from "@/lib/storage";
 
 // Supported file extensions
 const SUPPORTED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm', 'mov'];
@@ -23,6 +24,13 @@ const EXT_TO_MIME: Record<string, string> = {
 
 // POST: Load a generated image or video from the generations folder by ID
 export async function POST(request: NextRequest) {
+  if (isCloudMode()) {
+    return NextResponse.json(
+      { success: false, error: "This operation is only available in local mode." },
+      { status: 501 },
+    );
+  }
+
   let directoryPath: string | undefined;
   let imageId: string | undefined;
   try {

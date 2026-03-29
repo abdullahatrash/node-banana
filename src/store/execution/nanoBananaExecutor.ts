@@ -10,7 +10,8 @@ import type {
 } from "@/types";
 import { calculateGenerationCost } from "@/utils/costCalculator";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
-import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
+import { isCloudMode } from "@/lib/storage";
+import { syncStudioAssetFromSaveResult, syncStudioAssetFromSource } from "./studioAssetSync";
 import type { NodeExecutionContext } from "./types";
 
 export interface NanoBananaOptions {
@@ -169,6 +170,7 @@ export async function executeNanoBanana(
 
       updateNodeData(node.id, {
         outputImage: result.image,
+        outputImageRef: imageId,
         status: "complete",
         error: null,
         imageHistory: updatedHistory,
@@ -195,8 +197,33 @@ export async function executeNanoBanana(
         addIncurredCost(generationCost);
       }
 
-      // Auto-save to generations folder if configured
-      if (generationsPath) {
+      // Persist generated media:
+      // - cloud mode: direct Studio ingest (assetId becomes canonical ref/history ID)
+      // - local mode: save file locally, then optional Studio sync
+      if (isCloudMode()) {
+        const savePromise = syncStudioAssetFromSource({
+          assetType: "image",
+          source: result.image,
+          projectId: (get() as { workflowId?: string | null }).workflowId || null,
+          getStoreState: () => get(),
+        })
+          .then((assetId) => {
+            const currentNode = getNodes().find((n) => n.id === node.id);
+            if (!currentNode) return;
+            const currentData = currentNode.data as NanoBananaNodeData;
+            const histCopy = [...(currentData.imageHistory || [])];
+            const entryIndex = histCopy.findIndex((h) => h.id === imageId);
+            if (entryIndex !== -1) {
+              histCopy[entryIndex] = { ...histCopy[entryIndex], id: assetId };
+            }
+            updateNodeData(node.id, { imageHistory: histCopy, outputImageRef: assetId });
+          })
+          .catch((err) => {
+            console.error("Failed to ingest cloud generation:", err);
+          });
+
+        trackSaveGeneration(imageId, savePromise);
+      } else if (generationsPath) {
         const savePromise = fetch("/api/save-generation", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -217,7 +244,7 @@ export async function executeNanoBanana(
                 const entryIndex = histCopy.findIndex((h) => h.id === imageId);
                 if (entryIndex !== -1) {
                   histCopy[entryIndex] = { ...histCopy[entryIndex], id: saveResult.imageId };
-                  updateNodeData(node.id, { imageHistory: histCopy });
+                  updateNodeData(node.id, { imageHistory: histCopy, outputImageRef: saveResult.imageId });
                 }
               }
             }

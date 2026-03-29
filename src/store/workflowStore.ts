@@ -296,7 +296,7 @@ interface WorkflowStore {
   imageRefBasePath: string | null;  // Directory from which current imageRefs are valid
 
   // Auto-save actions
-  setWorkflowMetadata: (id: string, name: string, path: string, generationsPath?: string | null) => void;
+  setWorkflowMetadata: (id: string, name: string, path: string | null, generationsPath?: string | null) => void;
   setWorkflowName: (name: string) => void;
   setGenerationsPath: (path: string | null) => void;
   setAutoSaveEnabled: (enabled: boolean) => void;
@@ -1704,11 +1704,14 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     // Determine the workflow directory path (passed in, from saved config, or embedded in legacy workflow JSON)
     const directoryPath = workflowPath || savedConfig?.directoryPath || workflow.directoryPath || null;
 
-    // Hydrate images if we have a directory path and the workflow has image refs
+    // Hydrate external refs (local filesystem refs or cloud asset IDs/legacy keys)
     let hydratedWorkflow = workflow;
-    if (directoryPath) {
+    if (directoryPath || isCloudMode()) {
       try {
-        hydratedWorkflow = await hydrateWorkflowImages(workflow, directoryPath);
+        hydratedWorkflow = await hydrateWorkflowImages(workflow, {
+          workflowPath: directoryPath,
+          projectId: workflow.id || null,
+        });
       } catch (error) {
         console.error("Failed to hydrate workflow images:", error);
         // Continue with original workflow if hydration fails
@@ -1744,7 +1747,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       // Restore cost data
       incurredCost: costData?.incurredCost || 0,
       // Track where imageRefs are valid from
-      imageRefBasePath: directoryPath || null,
+      imageRefBasePath: isCloudMode() ? null : directoryPath || null,
       // Restore image storage setting (default to true for backwards compatibility)
       useExternalImageStorage: savedConfig?.useExternalImageStorage ?? true,
       // Reset viewed comments when loading new workflow
@@ -1804,15 +1807,16 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   },
 
   // Auto-save actions
-  setWorkflowMetadata: (id: string, name: string, path: string, generationsPath?: string | null) => {
+  setWorkflowMetadata: (id: string, name: string, path: string | null, generationsPath?: string | null) => {
+    const normalizedPath = path?.trim() ? path.trim() : null;
     // Auto-derive generationsPath: use provided value, fall back to existing, then auto-derive
     const currentGenPath = get().generationsPath;
-    const derivedGenerationsPath = generationsPath ?? currentGenPath ?? `${path}/generations`;
+    const derivedGenerationsPath = generationsPath ?? currentGenPath ?? (normalizedPath ? `${normalizedPath}/generations` : null);
 
     set({
       workflowId: id,
       workflowName: name,
-      saveDirectoryPath: path,
+      saveDirectoryPath: normalizedPath,
       generationsPath: derivedGenerationsPath,
     });
   },
@@ -1882,7 +1886,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
       // If saving to a different directory than where refs point, clear refs
       // so images will be re-saved to the new location
-      const isNewDirectory = useExternalImageStorage && (
+      const isNewDirectory = !isCloudMode() && useExternalImageStorage && (
         // Case 1: Known different directory
         (imageRefBasePath !== null && imageRefBasePath !== saveDirectoryPath) ||
         // Case 2: Has refs but unknown where they came from - treat as new directory to be safe
@@ -1916,8 +1920,11 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       // If external image storage is enabled, externalize images before saving
       // saveDirectoryPath is guaranteed non-null here: in local mode the early return checks it,
       // in cloud mode it's used as a logical project identifier for R2 key paths
-      if (useExternalImageStorage && saveDirectoryPath) {
-        workflow = await externalizeWorkflowImages(workflow, saveDirectoryPath);
+      if (useExternalImageStorage && (saveDirectoryPath || isCloudMode())) {
+        workflow = await externalizeWorkflowImages(workflow, {
+          workflowPath: saveDirectoryPath,
+          projectId: workflowId,
+        });
       }
 
       let saveSuccess = false;
@@ -2006,14 +2013,15 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
             lastSavedAt: timestamp,
             hasUnsavedChanges: false,
             // Update imageRefBasePath to reflect new save location
-            imageRefBasePath: saveDirectoryPath,
+            imageRefBasePath: isCloudMode() ? null : saveDirectoryPath,
           });
         } else {
           set({
             lastSavedAt: timestamp,
             hasUnsavedChanges: false,
             // Update imageRefBasePath to reflect save location
-            imageRefBasePath: useExternalImageStorage ? saveDirectoryPath : null,
+            imageRefBasePath:
+              useExternalImageStorage && !isCloudMode() ? saveDirectoryPath : null,
           });
         }
 
@@ -2077,7 +2085,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     }
 
     const { saveDirectoryPath, workflowId: prevId, workflowName: prevName, hasUnsavedChanges: prevUnsaved } = get();
-    if (!saveDirectoryPath) {
+    if (!isCloudMode() && !saveDirectoryPath) {
       return false;
     }
 

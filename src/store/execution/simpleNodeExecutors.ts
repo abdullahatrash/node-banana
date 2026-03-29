@@ -20,7 +20,8 @@ import type {
 import type { NodeExecutionContext } from "./types";
 import { parseTextToArray } from "@/utils/arrayParser";
 import { parseVarTags } from "@/utils/parseVarTags";
-import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
+import { isCloudMode } from "@/lib/storage";
+import { syncStudioAssetFromSaveResult, syncStudioAssetFromSource } from "./studioAssetSync";
 
 /**
  * Annotation node: receives upstream image as source, passes through if no annotations.
@@ -202,34 +203,45 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
       contentType: "audio",
     });
 
-    // Save to /outputs directory if we have a project path
-    if (saveDirectoryPath) {
+    // Persist output media:
+    // - cloud mode: direct Studio ingest
+    // - local mode: save to /outputs folder then optional Studio sync
+    if (isCloudMode() || saveDirectoryPath) {
       const outputNodeData = node.data as OutputNodeData;
-      const outputsPath = `${saveDirectoryPath}/outputs`;
-
-      const savePromise = fetch("/api/save-generation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          directoryPath: outputsPath,
-          audio: audioContent,
-          customFilename: outputNodeData.outputFilename || undefined,
-          createDirectory: true,
-        }),
-      })
-        .then((res) => res.json())
-        .then((saveResult) =>
-          syncStudioAssetFromSaveResult({
-            saveResult,
+      const savePromise = isCloudMode()
+        ? syncStudioAssetFromSource({
             assetType: "audio",
+            source: audioContent,
+            fileName: outputNodeData.outputFilename || undefined,
+            projectId: (get() as { workflowId?: string | null }).workflowId || null,
             getStoreState: () => get(),
-          }).catch((syncError) => {
+          }).then(() => undefined)
+          .catch((syncError) => {
             console.error("Failed to sync studio output audio asset:", syncError);
-          }),
-        )
-        .catch((err) => {
-          console.error("Failed to save output:", err);
-        });
+          })
+        : fetch("/api/save-generation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              directoryPath: `${saveDirectoryPath}/outputs`,
+              audio: audioContent,
+              customFilename: outputNodeData.outputFilename || undefined,
+              createDirectory: true,
+            }),
+          })
+            .then((res) => res.json())
+            .then((saveResult) =>
+              syncStudioAssetFromSaveResult({
+                saveResult,
+                assetType: "audio",
+                getStoreState: () => get(),
+              }).catch((syncError) => {
+                console.error("Failed to sync studio output audio asset:", syncError);
+              }),
+            )
+            .catch((err) => {
+              console.error("Failed to save output:", err);
+            });
 
       trackSaveGeneration(`output-${node.id}-audio-${Date.now()}`, savePromise);
     }
@@ -245,34 +257,42 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
       contentType: "video",
     });
 
-    // Save to /outputs directory if we have a project path
-    if (saveDirectoryPath) {
+    if (isCloudMode() || saveDirectoryPath) {
       const outputNodeData = node.data as OutputNodeData;
-      const outputsPath = `${saveDirectoryPath}/outputs`;
-
-      const savePromise = fetch("/api/save-generation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          directoryPath: outputsPath,
-          video: videoContent,
-          customFilename: outputNodeData.outputFilename || undefined,
-          createDirectory: true,
-        }),
-      })
-        .then((res) => res.json())
-        .then((saveResult) =>
-          syncStudioAssetFromSaveResult({
-            saveResult,
+      const savePromise = isCloudMode()
+        ? syncStudioAssetFromSource({
             assetType: "video",
+            source: videoContent,
+            fileName: outputNodeData.outputFilename || undefined,
+            projectId: (get() as { workflowId?: string | null }).workflowId || null,
             getStoreState: () => get(),
-          }).catch((syncError) => {
+          }).then(() => undefined)
+          .catch((syncError) => {
             console.error("Failed to sync studio output video asset:", syncError);
-          }),
-        )
-        .catch((err) => {
-          console.error("Failed to save output:", err);
-        });
+          })
+        : fetch("/api/save-generation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              directoryPath: `${saveDirectoryPath}/outputs`,
+              video: videoContent,
+              customFilename: outputNodeData.outputFilename || undefined,
+              createDirectory: true,
+            }),
+          })
+            .then((res) => res.json())
+            .then((saveResult) =>
+              syncStudioAssetFromSaveResult({
+                saveResult,
+                assetType: "video",
+                getStoreState: () => get(),
+              }).catch((syncError) => {
+                console.error("Failed to sync studio output video asset:", syncError);
+              }),
+            )
+            .catch((err) => {
+              console.error("Failed to save output:", err);
+            });
 
       trackSaveGeneration(`output-${node.id}-video-${Date.now()}`, savePromise);
     }
@@ -299,35 +319,43 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
       });
     }
 
-    // Save to /outputs directory if we have a project path
-    if (saveDirectoryPath) {
+    if (isCloudMode() || saveDirectoryPath) {
       const outputNodeData = node.data as OutputNodeData;
-      const outputsPath = `${saveDirectoryPath}/outputs`;
-
-      const savePromise = fetch("/api/save-generation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          directoryPath: outputsPath,
-          image: isVideoContent ? undefined : content,
-          video: isVideoContent ? content : undefined,
-          customFilename: outputNodeData.outputFilename || undefined,
-          createDirectory: true,
-        }),
-      })
-        .then((res) => res.json())
-        .then((saveResult) =>
-          syncStudioAssetFromSaveResult({
-            saveResult,
+      const savePromise = isCloudMode()
+        ? syncStudioAssetFromSource({
             assetType: isVideoContent ? "video" : "image",
+            source: content,
+            fileName: outputNodeData.outputFilename || undefined,
+            projectId: (get() as { workflowId?: string | null }).workflowId || null,
             getStoreState: () => get(),
-          }).catch((syncError) => {
+          }).then(() => undefined)
+          .catch((syncError) => {
             console.error("Failed to sync studio output asset:", syncError);
-          }),
-        )
-        .catch((err) => {
-          console.error("Failed to save output:", err);
-        });
+          })
+        : fetch("/api/save-generation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              directoryPath: `${saveDirectoryPath}/outputs`,
+              image: isVideoContent ? undefined : content,
+              video: isVideoContent ? content : undefined,
+              customFilename: outputNodeData.outputFilename || undefined,
+              createDirectory: true,
+            }),
+          })
+            .then((res) => res.json())
+            .then((saveResult) =>
+              syncStudioAssetFromSaveResult({
+                saveResult,
+                assetType: isVideoContent ? "video" : "image",
+                getStoreState: () => get(),
+              }).catch((syncError) => {
+                console.error("Failed to sync studio output asset:", syncError);
+              }),
+            )
+            .catch((err) => {
+              console.error("Failed to save output:", err);
+            });
 
       trackSaveGeneration(
         `output-${node.id}-${isVideoContent ? "video" : "image"}-${Date.now()}`,

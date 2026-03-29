@@ -49,6 +49,13 @@ function getMimeAndExtension(dataUrl: string): { mime: string; extension: string
 
 // POST: Save an image to the workflow's inputs or generations folder
 export async function POST(request: NextRequest) {
+  if (isCloudMode()) {
+    return NextResponse.json(
+      { success: false, error: "This operation is only available in local mode." },
+      { status: 501 },
+    );
+  }
+
   let workflowPath: string | undefined;
   let imageId: string | undefined;
   let folder: string | undefined;
@@ -249,6 +256,13 @@ export async function POST(request: NextRequest) {
 
 // GET: Load an image from the workflow's folders (inputs, generations, or legacy .images)
 export async function GET(request: NextRequest) {
+  if (isCloudMode()) {
+    return NextResponse.json(
+      { success: false, error: "This operation is only available in local mode." },
+      { status: 501 },
+    );
+  }
+
   const workflowPath = request.nextUrl.searchParams.get("workflowPath");
   const imageId = request.nextUrl.searchParams.get("imageId");
   const folder = request.nextUrl.searchParams.get("folder"); // Optional hint for which folder to check first

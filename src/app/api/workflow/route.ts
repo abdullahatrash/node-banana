@@ -3,11 +3,19 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { logger } from "@/utils/logger";
 import { validateWorkflowPath } from "@/utils/pathValidation";
+import { isCloudMode } from "@/lib/storage";
 
 export const maxDuration = 300; // 5 minute timeout for large workflow files
 
 // POST: Save workflow to file
 export async function POST(request: NextRequest) {
+  if (isCloudMode()) {
+    return NextResponse.json(
+      { success: false, error: "This operation is only available in local mode." },
+      { status: 501 },
+    );
+  }
+
   let directoryPath: string | undefined;
   let filename: string | undefined;
   try {
@@ -143,6 +151,13 @@ export async function POST(request: NextRequest) {
 
 // GET: Validate directory path
 export async function GET(request: NextRequest) {
+  if (isCloudMode()) {
+    return NextResponse.json(
+      { success: false, error: "This operation is only available in local mode." },
+      { status: 501 },
+    );
+  }
+
   const directoryPath = request.nextUrl.searchParams.get("path");
 
   logger.info('file.load', 'Directory validation request received', {
