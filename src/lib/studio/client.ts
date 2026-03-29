@@ -308,6 +308,16 @@ export async function listStudioProjects(): Promise<StudioProjectSummary[]> {
   return parsed;
 }
 
+export async function getStudioProjectCount(): Promise<{
+  count: number;
+  max: number;
+}> {
+  const data = await fetchApi("/api/studio/projects");
+  const count = typeof data.projectCount === "number" ? data.projectCount : 0;
+  const max = typeof data.maxProjects === "number" ? data.maxProjects : Infinity;
+  return { count, max };
+}
+
 export async function getStudioProject(projectId: string): Promise<StudioProjectDetail> {
   const data = await fetchApi(`/api/studio/projects/${encodeURIComponent(projectId)}`);
   const project = parseProjectDetail(data.project);
