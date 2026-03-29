@@ -12,14 +12,34 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
-  // Prevent heavy packages from being bundled into every serverless function
-  serverExternalPackages: ["googleapis", "three", "three-stdlib", "konva"],
+  // Prevent heavy client-only packages from being traced into serverless functions
+  serverExternalPackages: [
+    "googleapis",
+    "three",
+    "three-stdlib",
+    "konva",
+    "@react-three/fiber",
+    "@react-three/drei",
+    "hls.js",
+    "@mediapipe/tasks-vision",
+    "@dimforge/rapier3d-compat",
+  ],
   outputFileTracingExcludes: {
     "*": [
-      "./node_modules/.pnpm/googleapis@*/**",
-      "./node_modules/.pnpm/three@*/**",
-      "./node_modules/.pnpm/three-stdlib@*/**",
-      "./node_modules/.pnpm/konva@*/**",
+      "**/googleapis/**",
+      "**/three/**",
+      "**/three-stdlib/**",
+      "**/konva/**",
+      "**/three-mesh-bvh/**",
+      "**/hls.js/**",
+      "**/@mediapipe/**",
+      "**/@dimforge/**",
+      "**/@react-three/**",
+      "**/@swc/core*/**",
+      "**/lucide-react/**",
+      "**/recharts/**",
+      "**/public/sample-images/**",
+      "**/examples/**",
     ],
   },
 };
