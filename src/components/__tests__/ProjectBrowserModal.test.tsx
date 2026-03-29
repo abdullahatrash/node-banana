@@ -3,26 +3,27 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ProjectBrowserModal } from "@/components/ProjectBrowserModal";
 import type { WorkflowFile } from "@/store/workflowStore";
 
-const mockListStudioProjects = vi.fn();
-const mockGetStudioProject = vi.fn();
-const mockDeleteStudioProject = vi.fn();
-const mockListStudioAssets = vi.fn();
-const mockDeleteStudioAsset = vi.fn();
+const mockFetchWorkspaces = vi.fn();
+const mockFetchProjects = vi.fn();
+const mockFetchProjectDetail = vi.fn();
+const mockDeleteProject = vi.fn();
+const mockDeleteAsset = vi.fn();
 const mockIsWorkflowFile = vi.fn();
-const mockListStudioWorkspaces = vi.fn();
 const mockGetActiveWorkspaceId = vi.fn();
 const mockSetActiveWorkspaceId = vi.fn();
 
 vi.mock("@/lib/studio/client", () => ({
-  listStudioWorkspaces: (...args: unknown[]) => mockListStudioWorkspaces(...args),
   getActiveWorkspaceId: (...args: unknown[]) => mockGetActiveWorkspaceId(...args),
   setActiveWorkspaceId: (...args: unknown[]) => mockSetActiveWorkspaceId(...args),
-  listStudioProjects: (...args: unknown[]) => mockListStudioProjects(...args),
-  getStudioProject: (...args: unknown[]) => mockGetStudioProject(...args),
-  deleteStudioProject: (...args: unknown[]) => mockDeleteStudioProject(...args),
-  listStudioAssets: (...args: unknown[]) => mockListStudioAssets(...args),
-  deleteStudioAsset: (...args: unknown[]) => mockDeleteStudioAsset(...args),
   isWorkflowFile: (...args: unknown[]) => mockIsWorkflowFile(...args),
+}));
+
+vi.mock("@/app/studio/actions", () => ({
+  fetchWorkspaces: (...args: unknown[]) => mockFetchWorkspaces(...args),
+  fetchProjects: (...args: unknown[]) => mockFetchProjects(...args),
+  fetchProjectDetail: (...args: unknown[]) => mockFetchProjectDetail(...args),
+  deleteProject: (...args: unknown[]) => mockDeleteProject(...args),
+  deleteAsset: (...args: unknown[]) => mockDeleteAsset(...args),
 }));
 
 const sampleWorkflow: WorkflowFile = {
@@ -37,7 +38,7 @@ const sampleWorkflow: WorkflowFile = {
 describe("ProjectBrowserModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockListStudioWorkspaces.mockResolvedValue([
+    mockFetchWorkspaces.mockResolvedValue([
       {
         id: "ws_1",
         name: "Default Workspace",
@@ -46,7 +47,7 @@ describe("ProjectBrowserModal", () => {
       },
     ]);
     mockGetActiveWorkspaceId.mockReturnValue("ws_1");
-    mockListStudioProjects.mockResolvedValue([
+    mockFetchProjects.mockResolvedValue([
       {
         id: "proj_1",
         workspaceId: "ws_1",
@@ -58,31 +59,33 @@ describe("ProjectBrowserModal", () => {
         updatedAt: "2026-03-21T08:00:00.000Z",
       },
     ]);
-    mockGetStudioProject.mockResolvedValue({
-      id: "proj_1",
-      workspaceId: "ws_1",
-      name: "Project One",
-      slug: "project-one",
-      description: null,
-      status: "active",
-      sourceDirectoryPath: "/tmp/project-one",
-      updatedAt: "2026-03-21T08:00:00.000Z",
-      createdAt: "2026-03-21T07:00:00.000Z",
-      workflowJson: sampleWorkflow,
-    });
-    mockListStudioAssets.mockResolvedValue([
-      {
-        id: "asset_1",
+    mockFetchProjectDetail.mockResolvedValue({
+      project: {
+        id: "proj_1",
         workspaceId: "ws_1",
-        type: "image",
-        storageProvider: "local",
-        storageKey: "/tmp/project-one/generations/a.png",
-        mimeType: "image/png",
-        sizeBytes: 1024,
-        createdAt: "2026-03-21T08:00:00.000Z",
+        name: "Project One",
+        slug: "project-one",
+        description: null,
+        status: "active",
+        sourceDirectoryPath: "/tmp/project-one",
         updatedAt: "2026-03-21T08:00:00.000Z",
+        createdAt: "2026-03-21T07:00:00.000Z",
+        workflowJson: sampleWorkflow,
       },
-    ]);
+      assets: [
+        {
+          id: "asset_1",
+          workspaceId: "ws_1",
+          type: "image",
+          storageProvider: "local",
+          storageKey: "/tmp/project-one/generations/a.png",
+          mimeType: "image/png",
+          sizeBytes: 1024,
+          createdAt: "2026-03-21T08:00:00.000Z",
+          updatedAt: "2026-03-21T08:00:00.000Z",
+        },
+      ],
+    });
     mockIsWorkflowFile.mockImplementation((payload: unknown) => {
       const record = payload as Record<string, unknown> | null;
       return Boolean(record?.version === 1 && Array.isArray(record?.nodes) && Array.isArray(record?.edges));
@@ -95,8 +98,8 @@ describe("ProjectBrowserModal", () => {
     );
 
     await waitFor(() => {
-      expect(mockListStudioWorkspaces).toHaveBeenCalledTimes(1);
-      expect(mockListStudioProjects).toHaveBeenCalledTimes(1);
+      expect(mockFetchWorkspaces).toHaveBeenCalledTimes(1);
+      expect(mockFetchProjects).toHaveBeenCalledTimes(1);
     });
 
     expect(screen.getByTestId("open-project-button")).toBeInTheDocument();
@@ -122,7 +125,7 @@ describe("ProjectBrowserModal", () => {
 
   it("soft-deletes an asset from the list", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    mockDeleteStudioAsset.mockResolvedValue(undefined);
+    mockDeleteAsset.mockResolvedValue(undefined);
 
     render(
       <ProjectBrowserModal isOpen onClose={vi.fn()} onLoadWorkflow={vi.fn()} />,
@@ -135,15 +138,18 @@ describe("ProjectBrowserModal", () => {
     fireEvent.click(screen.getByTestId("delete-asset-asset_1"));
 
     await waitFor(() => {
-      expect(mockDeleteStudioAsset).toHaveBeenCalledWith("asset_1");
+      expect(mockDeleteAsset).toHaveBeenCalledWith("asset_1");
     });
   });
 
   it("restores an optimistically removed asset when delete is forbidden", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    mockDeleteStudioAsset.mockRejectedValue(
+    mockDeleteAsset.mockRejectedValue(
       new Error("You do not have access to this workspace."),
     );
+
+    // Ensure mockGetActiveWorkspaceId returns a value for delete calls
+    mockGetActiveWorkspaceId.mockReturnValue("ws_1");
 
     render(
       <ProjectBrowserModal isOpen onClose={vi.fn()} onLoadWorkflow={vi.fn()} />,
@@ -156,7 +162,7 @@ describe("ProjectBrowserModal", () => {
     fireEvent.click(screen.getByTestId("delete-asset-asset_1"));
 
     await waitFor(() => {
-      expect(mockDeleteStudioAsset).toHaveBeenCalledWith("asset_1");
+      expect(mockDeleteAsset).toHaveBeenCalledWith("asset_1");
     });
 
     expect(screen.getByTestId("delete-asset-asset_1")).toBeInTheDocument();
@@ -167,7 +173,7 @@ describe("ProjectBrowserModal", () => {
 
   it("restores an optimistically removed project when delete is forbidden", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    mockDeleteStudioProject.mockRejectedValue(
+    mockDeleteProject.mockRejectedValue(
       new Error("You do not have access to this workspace."),
     );
 
@@ -182,7 +188,7 @@ describe("ProjectBrowserModal", () => {
     fireEvent.click(screen.getByTestId("delete-project-button"));
 
     await waitFor(() => {
-      expect(mockDeleteStudioProject).toHaveBeenCalledWith("proj_1");
+      expect(mockDeleteProject).toHaveBeenCalledWith("ws_1", "proj_1");
     });
 
     expect(screen.getAllByText("Project One").length).toBeGreaterThan(0);
@@ -193,7 +199,7 @@ describe("ProjectBrowserModal", () => {
   });
 
   it("shows a clear sign-in message for 401-style failures", async () => {
-    mockListStudioProjects.mockRejectedValue(
+    mockFetchProjects.mockRejectedValue(
       new Error("Please sign in to access AI Studio."),
     );
 
@@ -209,7 +215,7 @@ describe("ProjectBrowserModal", () => {
   });
 
   it("shows a clear access message for 403-style failures", async () => {
-    mockListStudioProjects.mockRejectedValue(
+    mockFetchProjects.mockRejectedValue(
       new Error("You do not have access to this workspace."),
     );
 

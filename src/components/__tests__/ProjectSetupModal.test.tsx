@@ -291,7 +291,7 @@ describe("ProjectSetupModal", () => {
       });
       expect(screen.queryByText("Browse")).not.toBeInTheDocument();
       expect(
-        screen.getByText("Cloud storage mode is enabled. Project files and assets are stored in your configured S3/R2 bucket.")
+        screen.getByText("Your project will be saved to the cloud. No local folder needed.")
       ).toBeInTheDocument();
     });
   });
