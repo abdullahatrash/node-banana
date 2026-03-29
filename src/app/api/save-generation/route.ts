@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
 
   const fs = await import("fs/promises");
   const path = await import("path");
-  const crypto = await import("crypto");
+  const crypto = await import("node:crypto");
   const { logger } = await import("@/utils/logger");
 
   let directoryPath: string | undefined;
