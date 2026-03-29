@@ -27,7 +27,7 @@ export default function StudioProjectPage({
   const workflowId = useWorkflowStore((state) => state.workflowId);
 
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(workflowId !== projectId);
 
   // Load project from URL param on mount (only if not already loaded)
   useEffect(() => {
