@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
-import { listProjects, upsertProject } from "@/lib/studio/repository";
+import { countProjects, listProjects, upsertProject } from "@/lib/studio/repository";
+import { MAX_PROJECTS_PER_WORKSPACE } from "@/lib/studio/constants";
 
 interface ProjectsGetResponse {
   success: boolean;
   projects?: Awaited<ReturnType<typeof listProjects>>;
+  projectCount?: number;
+  maxProjects?: number;
   error?: string;
 }
 
@@ -46,10 +49,15 @@ export async function GET(
       return authzErrorResponse(authz);
     }
 
-    const projects = await listProjects(authz.workspaceId);
+    const [projectsList, projectCount] = await Promise.all([
+      listProjects(authz.workspaceId),
+      countProjects(authz.workspaceId),
+    ]);
     return NextResponse.json({
       success: true,
-      projects,
+      projects: projectsList,
+      projectCount,
+      maxProjects: MAX_PROJECTS_PER_WORKSPACE,
     });
   } catch (error) {
     return NextResponse.json(
@@ -91,6 +99,20 @@ export async function POST(
     });
     if (!authz.authorized) {
       return authzErrorResponse(authz);
+    }
+
+    // Enforce project limit on new project creation (skip for updates to existing projects)
+    if (!body.projectId) {
+      const currentCount = await countProjects(authz.workspaceId);
+      if (currentCount >= MAX_PROJECTS_PER_WORKSPACE) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Project limit reached (${MAX_PROJECTS_PER_WORKSPACE}). Delete an existing project to create a new one.`,
+          },
+          { status: 403 },
+        );
+      }
     }
 
     const project = await upsertProject({
