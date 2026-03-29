@@ -131,6 +131,7 @@ export function Header() {
   const handleProjectSave = async (id: string, name: string, path: string) => {
     setWorkflowMetadata(id, name, path); // generationsPath is auto-derived
     setShowProjectModal(false);
+    router.replace(`/studio/${encodeURIComponent(id)}`);
     // Small delay to let state update
     setTimeout(() => {
       saveToFile().catch((error) => {
@@ -247,6 +248,10 @@ export function Header() {
         onLoadWorkflow={async (workflow: WorkflowFile, workflowPath?: string) => {
           await loadWorkflow(workflow, workflowPath);
           setShowProjectBrowserModal(false);
+          const loadedId = useWorkflowStore.getState().workflowId;
+          if (loadedId) {
+            router.replace(`/studio/${encodeURIComponent(loadedId)}`);
+          }
         }}
       />
       <header className="h-11 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
