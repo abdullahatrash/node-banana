@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isCloudMode } from "@/lib/storage";
 
 export interface EnvStatusResponse {
   gemini: boolean;
@@ -8,6 +9,7 @@ export interface EnvStatusResponse {
   fal: boolean;
   kie: boolean;
   wavespeed: boolean;
+  cloudMode: boolean;
 }
 
 export async function GET() {
@@ -20,6 +22,7 @@ export async function GET() {
     fal: !!process.env.FAL_API_KEY,
     kie: !!process.env.KIE_API_KEY,
     wavespeed: !!process.env.WAVESPEED_API_KEY,
+    cloudMode: isCloudMode(),
   };
 
   return NextResponse.json(status);

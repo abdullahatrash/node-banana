@@ -87,6 +87,28 @@ vi.mock("@/utils/logger", () => ({
   },
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    replace: vi.fn(),
+    push: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    refresh: vi.fn(),
+    prefetch: vi.fn(),
+  }),
+  usePathname: () => "/studio",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+vi.mock("@/lib/studio/client", () => ({
+  upsertStudioProject: vi.fn().mockResolvedValue(null),
+  getStudioProjectCount: vi.fn().mockResolvedValue({ count: 0, max: 3 }),
+}));
+
+vi.mock("@/lib/storage", () => ({
+  isCloudMode: vi.fn(() => false),
+}));
+
 // Create mock nodes for testing
 const createMockNode = (id: string, type: string, overrides = {}) => ({
   id,

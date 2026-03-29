@@ -15,9 +15,9 @@ const notoArabic = Noto_Sans_Arabic({
 });
 
 export const metadata: Metadata = {
-  title: "Node Banana - AI Image Workflow",
+  title: "Tasmeemai - AI Content Studio",
   description:
-    "Node-based image annotation and generation workflow using Nano Banana Pro",
+    "AI Content Studio for creating and managing content pipelines using AI. Create workflows to generate images, videos, text, and more.",
 };
 
 export default async function RootLayout({

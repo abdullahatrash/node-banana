@@ -74,6 +74,9 @@ import { useInlineParameters } from "@/hooks/useInlineParameters";
 import { SplitGridSettingsModal } from "./SplitGridSettingsModal";
 import { createPortal } from "react-dom";
 import { useAnnotationStore } from "@/store/annotationStore";
+import { useRouter } from "next/navigation";
+import { upsertStudioProject, getStudioProjectCount } from "@/lib/studio/client";
+import { isCloudMode } from "@/lib/storage";
 
 const nodeTypes: NodeTypes = {
   imageInput: ImageInputNode,
@@ -306,6 +309,7 @@ export function WorkflowCanvas() {
   const openAnnotationModal = useAnnotationStore((state) => state.openModal);
   const { screenToFlowPosition, getViewport, zoomIn, zoomOut, setViewport, setCenter } = useReactFlow();
   const { show: showToast } = useToast();
+  const router = useRouter();
   const [isDragOver, setIsDragOver] = useState(false);
   const [dropType, setDropType] = useState<"image" | "audio" | "workflow" | "node" | null>(null);
   const [connectionDrop, setConnectionDrop] = useState<ConnectionDropState | null>(null);
@@ -1933,8 +1937,52 @@ export function WorkflowCanvas() {
       {showQuickstart && (
         <WelcomeModal
           onWorkflowGenerated={async (workflow) => {
+            // In cloud mode, ensure workspace is initialized before any API calls
+            if (isCloudMode()) {
+              const { getActiveWorkspaceId, listStudioWorkspaces } = await import("@/lib/studio/client");
+              if (!getActiveWorkspaceId()) {
+                try {
+                  await listStudioWorkspaces();
+                } catch {
+                  // Workspace init failed — proceed without DB persistence
+                }
+              }
+
+              // Enforce project limit
+              try {
+                const { count, max } = await getStudioProjectCount();
+                if (count >= max) {
+                  showToast(
+                    `Project limit reached (${max}). Delete an existing project to create a new one.`,
+                    "error"
+                  );
+                  return;
+                }
+              } catch {
+                // If count check fails, proceed anyway — the API will enforce the limit on save
+              }
+            }
+
             await loadWorkflow(workflow);
             setShowQuickstart(false);
+
+            // In cloud mode, create a DB record immediately so auto-save works
+            const loadedId = useWorkflowStore.getState().workflowId;
+            const loadedName = useWorkflowStore.getState().workflowName;
+            if (isCloudMode() && loadedId && loadedName) {
+              try {
+                await upsertStudioProject({
+                  projectId: loadedId,
+                  name: loadedName,
+                  workflowJson: null, // Will be populated on first auto-save
+                });
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.error("Failed to create project record for template:", msg);
+                showToast(`Failed to save project: ${msg}`, "error");
+              }
+              router.replace(`/studio/${encodeURIComponent(loadedId)}`);
+            }
           }}
           onClose={() => setShowQuickstart(false)}
           onNewProject={() => {
@@ -1964,6 +2012,10 @@ export function WorkflowCanvas() {
             await loadWorkflow(workflow, workflowPath);
             setShowProjectBrowser(false);
             setRestoreQuickstartOnProjectBrowserClose(false);
+            const loadedId = useWorkflowStore.getState().workflowId;
+            if (loadedId) {
+              router.replace(`/studio/${encodeURIComponent(loadedId)}`);
+            }
           }}
         />
       )}
@@ -1973,9 +2025,16 @@ export function WorkflowCanvas() {
         <ProjectSetupModal
           isOpen={showNewProjectSetup}
           mode="new"
-          onSave={(id, name, directoryPath) => {
+          onSave={async (id, name, directoryPath) => {
             setWorkflowMetadata(id, name, directoryPath);
             setShowNewProjectSetup(false);
+            router.replace(`/studio/${encodeURIComponent(id)}`);
+            // Trigger initial save
+            setTimeout(() => {
+              useWorkflowStore.getState().saveToFile().catch((error) => {
+                console.error("Failed to save new project:", error);
+              });
+            }, 50);
           }}
           onClose={() => {
             setShowNewProjectSetup(false);

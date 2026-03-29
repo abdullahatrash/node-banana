@@ -45,9 +45,9 @@ export function HomeHeader() {
       <div className="flex items-center gap-2">
         <AppSwitcher>
           <div className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer">
-            <img src="/banana_icon.png" alt="Banana" className="w-6 h-6" />
+            <img src="/logo-node.svg" alt="Tasmeemai" className="w-12 h-12" />
             <span className="text-2xl font-semibold text-neutral-100 tracking-tight">
-              Node Banana
+              Tasmeemai
             </span>
           </div>
         </AppSwitcher>

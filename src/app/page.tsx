@@ -16,7 +16,7 @@ export default async function HomePage() {
           {/* Left: text + CTAs */}
           <div className="flex-1 flex flex-col items-start gap-6">
             <h2 className="text-5xl md:text-6xl font-bold tracking-tight">
-              Node Banana
+              Tasmeemai
             </h2>
             <p className="text-lg text-neutral-400 max-w-md">
               Node-based AI image generation workflow editor
@@ -43,7 +43,7 @@ export default async function HomePage() {
           <div className="flex-1 flex justify-center">
             <img
               src="/hero-horse.png"
-              alt="Node Banana"
+              alt="Tasmeemai"
               className="w-full max-w-[600px] h-auto object-contain"
               draggable={false}
             />

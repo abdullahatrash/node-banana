@@ -1,6 +1,11 @@
 {
   "version": "1.0.0",
   "steps": {
+    "node_modules/.pnpm/workflow@4.2.0-beta.72_@nestjs+common@11.1.17_reflect-metadata@0.2.2_rxjs@7.8.2__@nestj_d91d58ad101201f7805191d3e9ff1801/node_modules/workflow/dist/stdlib.js": {
+      "fetch": {
+        "stepId": "step//workflow@4.2.0-beta.72//fetch"
+      }
+    },
     "node_modules/.pnpm/workflow@4.2.0-beta.72_@nestjs+common@11.1.17_reflect-metadata@0.2.2_rxjs@7.8.2__@nestj_d91d58ad101201f7805191d3e9ff1801/node_modules/workflow/dist/internal/builtins.js": {
       "__builtin_response_array_buffer": {
         "stepId": "__builtin_response_array_buffer"
@@ -12,11 +17,6 @@
         "stepId": "__builtin_response_text"
       }
     },
-    "node_modules/.pnpm/workflow@4.2.0-beta.72_@nestjs+common@11.1.17_reflect-metadata@0.2.2_rxjs@7.8.2__@nestj_d91d58ad101201f7805191d3e9ff1801/node_modules/workflow/dist/stdlib.js": {
-      "fetch": {
-        "stepId": "step//workflow@4.2.0-beta.72//fetch"
-      }
-    },
     "workflows/token-refresh.ts": {
       "doRefresh": {
         "stepId": "step//./workflows/token-refresh//doRefresh"
@@ -26,6 +26,9 @@
       "finalizeStep": {
         "stepId": "step//./workflows/social-publish//finalizeStep"
       },
+      "loadChainChildren": {
+        "stepId": "step//./workflows/social-publish//loadChainChildren"
+      },
       "loadPost": {
         "stepId": "step//./workflows/social-publish//loadPost"
       },
@@ -34,6 +37,9 @@
       },
       "publishStep": {
         "stepId": "step//./workflows/social-publish//publishStep"
+      },
+      "queueChainChildStep": {
+        "stepId": "step//./workflows/social-publish//queueChainChildStep"
       },
       "refreshTokenStep": {
         "stepId": "step//./workflows/social-publish//refreshTokenStep"
@@ -75,6 +81,194 @@
       }
     },
     "workflows/social-publish.ts": {
+      "publishPostChainWorkflow": {
+        "workflowId": "workflow//./workflows/social-publish//publishPostChainWorkflow",
+        "graph": {
+          "nodes": [
+            {
+              "id": "start",
+              "type": "workflowStart",
+              "data": {
+                "label": "Start: publishPostChainWorkflow",
+                "nodeKind": "workflow_start"
+              }
+            },
+            {
+              "id": "cond_0_node",
+              "type": "conditional",
+              "data": {
+                "label": "post.scheduledAt",
+                "nodeKind": "conditional"
+              }
+            },
+            {
+              "id": "cond_1_node",
+              "type": "conditional",
+              "data": {
+                "label": "scheduledTime > now",
+                "nodeKind": "conditional"
+              },
+              "metadata": {
+                "conditionalId": "cond_0",
+                "conditionalBranch": "Then"
+              }
+            },
+            {
+              "id": "node_0",
+              "type": "primitive",
+              "data": {
+                "label": "sleep",
+                "nodeKind": "primitive"
+              },
+              "metadata": {
+                "conditionalId": "cond_0",
+                "conditionalBranch": "Then"
+              }
+            },
+            {
+              "id": "cond_4_node",
+              "type": "conditional",
+              "data": {
+                "label": "waitMs > 0",
+                "nodeKind": "conditional"
+              },
+              "metadata": {
+                "loopId": "loop_0",
+                "loopIsAwait": false
+              }
+            },
+            {
+              "id": "node_1",
+              "type": "primitive",
+              "data": {
+                "label": "sleep",
+                "nodeKind": "primitive"
+              },
+              "metadata": {
+                "loopId": "loop_0",
+                "conditionalId": "cond_4",
+                "conditionalBranch": "Then",
+                "loopIsAwait": false
+              }
+            },
+            {
+              "id": "cond_5_node",
+              "type": "conditional",
+              "data": {
+                "label": "post.scheduledAt",
+                "nodeKind": "conditional"
+              },
+              "metadata": {
+                "loopId": "loop_0",
+                "loopIsAwait": false
+              }
+            },
+            {
+              "id": "cond_6_node",
+              "type": "conditional",
+              "data": {
+                "label": "scheduledTime > now",
+                "nodeKind": "conditional"
+              },
+              "metadata": {
+                "loopId": "loop_0",
+                "conditionalId": "cond_5",
+                "conditionalBranch": "Then",
+                "loopIsAwait": false
+              }
+            },
+            {
+              "id": "node_2",
+              "type": "primitive",
+              "data": {
+                "label": "sleep",
+                "nodeKind": "primitive"
+              },
+              "metadata": {
+                "loopId": "loop_0",
+                "conditionalId": "cond_5",
+                "conditionalBranch": "Then",
+                "loopIsAwait": false
+              }
+            },
+            {
+              "id": "end",
+              "type": "workflowEnd",
+              "data": {
+                "label": "Return",
+                "nodeKind": "workflow_end"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_cond_1_node_node_0_true",
+              "source": "cond_1_node",
+              "target": "node_0",
+              "type": "conditional",
+              "label": "true"
+            },
+            {
+              "id": "e_cond_0_node_cond_1_node_true",
+              "source": "cond_0_node",
+              "target": "cond_1_node",
+              "type": "conditional",
+              "label": "true"
+            },
+            {
+              "id": "e_start_cond_0_node",
+              "source": "start",
+              "target": "cond_0_node",
+              "type": "default"
+            },
+            {
+              "id": "e_cond_4_node_node_1_true",
+              "source": "cond_4_node",
+              "target": "node_1",
+              "type": "conditional",
+              "label": "true"
+            },
+            {
+              "id": "e_cond_6_node_node_2_true",
+              "source": "cond_6_node",
+              "target": "node_2",
+              "type": "conditional",
+              "label": "true"
+            },
+            {
+              "id": "e_cond_5_node_cond_6_node_true",
+              "source": "cond_5_node",
+              "target": "cond_6_node",
+              "type": "conditional",
+              "label": "true"
+            },
+            {
+              "id": "e_node_1_cond_5_node",
+              "source": "node_1",
+              "target": "cond_5_node",
+              "type": "default"
+            },
+            {
+              "id": "e_node_2_back_cond_4_node",
+              "source": "node_2",
+              "target": "cond_4_node",
+              "type": "loop"
+            },
+            {
+              "id": "e_node_0_cond_4_node",
+              "source": "node_0",
+              "target": "cond_4_node",
+              "type": "default"
+            },
+            {
+              "id": "e_node_2_end",
+              "source": "node_2",
+              "target": "end",
+              "type": "default"
+            }
+          ]
+        }
+      },
       "publishPostWorkflow": {
         "workflowId": "workflow//./workflows/social-publish//publishPostWorkflow",
         "graph": {

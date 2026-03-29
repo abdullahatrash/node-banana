@@ -471,7 +471,10 @@ export async function upsertProject(input: UpsertProjectInput) {
       )
       .returning();
 
-    return updated ?? null;
+    if (updated) {
+      return updated;
+    }
+    // No existing row matched — fall through to INSERT with the provided ID
   }
 
   const candidateSlug = `${projectSlugBase}-${timestampSuffix()}`;
@@ -503,6 +506,15 @@ export async function listProjects(workspaceId: string) {
     .from(projects)
     .where(and(eq(projects.workspaceId, workspaceId), isNull(projects.deletedAt)))
     .orderBy(desc(projects.updatedAt));
+}
+
+export async function countProjects(workspaceId: string): Promise<number> {
+  const db = getDb();
+  const [result] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(projects)
+    .where(and(eq(projects.workspaceId, workspaceId), isNull(projects.deletedAt)));
+  return result?.count ?? 0;
 }
 
 export async function getProject(workspaceId: string, projectId: string) {

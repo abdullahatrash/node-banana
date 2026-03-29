@@ -190,7 +190,7 @@ describe("EaseCurveNode", () => {
 
     it("should show Discord link when encoder is unsupported", () => {
       render(<EaseCurveNode {...createNodeProps({ encoderSupported: false })} />);
-      const link = screen.getByText(/Message Willie on Discord/);
+      const link = screen.getByText(/Message abodi on Discord/);
       expect(link).toBeInTheDocument();
       expect(link.closest("a")).toHaveAttribute(
         "href",

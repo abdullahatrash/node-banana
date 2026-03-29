@@ -3,20 +3,21 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkflowFile } from "@/store/workflowStore";
 import {
-  deleteStudioAsset,
-  deleteStudioProject,
   getActiveWorkspaceId,
-  getStudioProject,
   isWorkflowFile,
-  listStudioAssets,
-  listStudioProjects,
-  listStudioWorkspaces,
   setActiveWorkspaceId,
-  StudioAsset,
-  StudioProjectDetail,
-  StudioProjectSummary,
-  StudioWorkspace,
 } from "@/lib/studio/client";
+import {
+  fetchWorkspaces,
+  fetchProjects,
+  fetchProjectDetail,
+  deleteProject as deleteProjectAction,
+  deleteAsset as deleteAssetAction,
+  type SAWorkspace as StudioWorkspace,
+  type SAProjectSummary as StudioProjectSummary,
+  type SAProjectDetail as StudioProjectDetail,
+  type SAAsset as StudioAsset,
+} from "@/app/studio/actions";
 
 interface ProjectBrowserModalProps {
   isOpen: boolean;
@@ -78,7 +79,7 @@ export function ProjectBrowserModal({
   const loadWorkspaces = async (): Promise<string | null> => {
     setIsLoadingWorkspaces(true);
     try {
-      const nextWorkspaces = await listStudioWorkspaces();
+      const nextWorkspaces = await fetchWorkspaces();
       setWorkspaces(nextWorkspaces);
 
       if (nextWorkspaces.length === 0) {
@@ -105,7 +106,9 @@ export function ProjectBrowserModal({
     setIsLoadingProjects(true);
     setError(null);
     try {
-      const list = await listStudioProjects();
+      const wsId = getActiveWorkspaceId();
+      if (!wsId) throw new Error("No active workspace.");
+      const list = await fetchProjects(wsId);
       setProjects(list);
 
       const nextSelectedId =
@@ -135,10 +138,9 @@ export function ProjectBrowserModal({
     const requestId = ++selectionRequestIdRef.current;
 
     try {
-      const [project, projectAssets] = await Promise.all([
-        getStudioProject(projectId),
-        listStudioAssets(projectId),
-      ]);
+      const wsId = getActiveWorkspaceId();
+      if (!wsId) throw new Error("No active workspace.");
+      const { project, assets: projectAssets } = await fetchProjectDetail(wsId, projectId);
 
       if (requestId !== selectionRequestIdRef.current) return;
       setSelectedProject(project);
@@ -157,10 +159,19 @@ export function ProjectBrowserModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
+
     setActiveTab("projects");
+    setSelectedProjectId(null);
+    setSelectedProject(null);
+    setAssets([]);
+    setError(null);
+    setIsLoadingProjects(true);
+
     void (async () => {
       try {
         const resolvedWorkspaceId = await loadWorkspaces();
+        if (cancelled) return;
         if (!resolvedWorkspaceId) {
           setProjects([]);
           setSelectedProjectId(null);
@@ -170,9 +181,12 @@ export function ProjectBrowserModal({
         }
         await loadProjects();
       } catch (loadError) {
+        if (cancelled) return;
         setError(loadError instanceof Error ? loadError.message : "Failed to load workspaces.");
       }
     })();
+
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -232,7 +246,9 @@ export function ProjectBrowserModal({
     setError(null);
 
     try {
-      await deleteStudioProject(projectId);
+      const wsId = getActiveWorkspaceId();
+      if (!wsId) throw new Error("No active workspace.");
+      await deleteProjectAction(wsId, projectId);
 
       if (selectedProjectId === projectId) {
         const remainingProjects = previousProjects.filter((project) => project.id !== projectId);
@@ -261,7 +277,7 @@ export function ProjectBrowserModal({
     setError(null);
 
     try {
-      await deleteStudioAsset(assetId);
+      await deleteAssetAction(assetId);
     } catch (deleteError) {
       setAssets(previousAssets);
       setError(deleteError instanceof Error ? deleteError.message : "Failed to delete asset.");
