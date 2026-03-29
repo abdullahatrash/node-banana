@@ -12,6 +12,16 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // Prevent heavy packages from being bundled into every serverless function
+  serverExternalPackages: ["googleapis", "three", "three-stdlib", "konva"],
+  outputFileTracingExcludes: {
+    "*": [
+      "./node_modules/.pnpm/googleapis@*/**",
+      "./node_modules/.pnpm/three@*/**",
+      "./node_modules/.pnpm/three-stdlib@*/**",
+      "./node_modules/.pnpm/konva@*/**",
+    ],
+  },
 };
 
 export default withWorkflow(withMicrofrontends(nextConfig));
