@@ -101,26 +101,20 @@ describe("Header", () => {
   describe("Basic Rendering", () => {
     it("should render the app title", () => {
       render(<Header />);
-      expect(screen.getByText("Node Banana")).toBeInTheDocument();
+      expect(screen.getByText("Tasmeemai")).toBeInTheDocument();
     });
 
-    it("should render the banana icon", () => {
+    it("should render the logo", () => {
       render(<Header />);
-      const icon = screen.getByAltText("Banana");
+      const icon = screen.getByAltText("Tasmeemai");
       expect(icon).toBeInTheDocument();
-      expect(icon).toHaveAttribute("src", "/banana_icon.png");
+      expect(icon).toHaveAttribute("src", "/logo-node.svg");
     });
 
     it("should render 'Made by abodi' link", () => {
       render(<Header />);
       const link = screen.getByText("Made by abodi");
       expect(link).toHaveAttribute("href", "https://x.com/abodiatrash");
-    });
-
-    it("should render Discord support link", () => {
-      render(<Header />);
-      const link = screen.getByTitle("Support");
-      expect(link).toHaveAttribute("href", "https://discord.com/invite/89Nr6EKkTf");
     });
 
     it("should render sign-in and sign-up links when unauthenticated", () => {
