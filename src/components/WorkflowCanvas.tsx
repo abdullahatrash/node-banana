@@ -1977,7 +1977,9 @@ export function WorkflowCanvas() {
                   workflowJson: null, // Will be populated on first auto-save
                 });
               } catch (err) {
-                console.error("Failed to create project record for template:", err);
+                const msg = err instanceof Error ? err.message : String(err);
+                console.error("Failed to create project record for template:", msg);
+                showToast(`Failed to save project: ${msg}`, "error");
               }
               router.replace(`/studio/${encodeURIComponent(loadedId)}`);
             }
