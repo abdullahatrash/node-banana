@@ -159,10 +159,19 @@ export function ProjectBrowserModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
+
     setActiveTab("projects");
+    setSelectedProjectId(null);
+    setSelectedProject(null);
+    setAssets([]);
+    setError(null);
+    setIsLoadingProjects(true);
+
     void (async () => {
       try {
         const resolvedWorkspaceId = await loadWorkspaces();
+        if (cancelled) return;
         if (!resolvedWorkspaceId) {
           setProjects([]);
           setSelectedProjectId(null);
@@ -172,9 +181,12 @@ export function ProjectBrowserModal({
         }
         await loadProjects();
       } catch (loadError) {
+        if (cancelled) return;
         setError(loadError instanceof Error ? loadError.message : "Failed to load workspaces.");
       }
     })();
+
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
