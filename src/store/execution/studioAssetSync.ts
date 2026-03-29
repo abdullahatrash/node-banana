@@ -78,7 +78,7 @@ async function recordLocalStudioAsset(params: {
   filePath: string;
   mimeType: string;
   prompt?: string | null;
-}): Promise<string | null> {
+}): Promise<void> {
   const response = await fetch("/api/studio/assets", {
     method: "POST",
     headers: {
@@ -118,15 +118,7 @@ async function recordLocalStudioAsset(params: {
     throw new Error(errorMessage);
   }
 
-  const asset = record?.asset;
-  if (asset && typeof asset === "object" && !Array.isArray(asset)) {
-    const maybeId = (asset as Record<string, unknown>).id;
-    if (typeof maybeId === "string" && maybeId.trim()) {
-      return maybeId;
-    }
-  }
-
-  return null;
+  return;
 }
 
 async function readSavedFileBlob(filePath: string, mimeType: string): Promise<Blob> {
@@ -166,16 +158,16 @@ export async function syncStudioAssetFromSaveResult(params: {
   prompt?: string | null;
   getStoreState: () => unknown;
   contentBlob?: Blob;
-}): Promise<string | null> {
-  if (!params.saveResult?.success) return null;
+}): Promise<void> {
+  if (!params.saveResult?.success) return;
   const filePath = params.saveResult.filePath;
-  if (!filePath && !params.contentBlob) return null;
+  if (!filePath && !params.contentBlob) return;
 
   if (!getActiveWorkspaceId()) {
     await listStudioWorkspaces();
   }
   const workspaceId = getActiveWorkspaceId();
-  if (!workspaceId) return null;
+  if (!workspaceId) return;
 
   const state = params.getStoreState() as WorkflowStoreLike;
   const projectId =
@@ -219,10 +211,10 @@ export async function syncStudioAssetFromSaveResult(params: {
       sizeBytes: blob.size,
       mimeType,
     });
-    return presign.assetId;
+    return;
   } catch (error) {
     if (isS3ConfigFallbackError(error) && filePath) {
-      return await recordLocalStudioAsset({
+      await recordLocalStudioAsset({
         workspaceId,
         projectId,
         assetType: params.assetType,
@@ -230,6 +222,7 @@ export async function syncStudioAssetFromSaveResult(params: {
         mimeType,
         prompt: params.prompt,
       });
+      return;
     }
 
     if (

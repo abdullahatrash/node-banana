@@ -215,7 +215,8 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
             fileName: outputNodeData.outputFilename || undefined,
             projectId: (get() as { workflowId?: string | null }).workflowId || null,
             getStoreState: () => get(),
-          }).catch((syncError) => {
+          }).then(() => undefined)
+          .catch((syncError) => {
             console.error("Failed to sync studio output audio asset:", syncError);
           })
         : fetch("/api/save-generation", {
@@ -265,7 +266,8 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
             fileName: outputNodeData.outputFilename || undefined,
             projectId: (get() as { workflowId?: string | null }).workflowId || null,
             getStoreState: () => get(),
-          }).catch((syncError) => {
+          }).then(() => undefined)
+          .catch((syncError) => {
             console.error("Failed to sync studio output video asset:", syncError);
           })
         : fetch("/api/save-generation", {
@@ -326,7 +328,8 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
             fileName: outputNodeData.outputFilename || undefined,
             projectId: (get() as { workflowId?: string | null }).workflowId || null,
             getStoreState: () => get(),
-          }).catch((syncError) => {
+          }).then(() => undefined)
+          .catch((syncError) => {
             console.error("Failed to sync studio output asset:", syncError);
           })
         : fetch("/api/save-generation", {
