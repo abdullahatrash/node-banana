@@ -1,6 +1,7 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { useEffect, useRef, useCallback } from "react";
+import { useParams } from "next/navigation";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Header } from "@/components/Header";
 import { WorkflowCanvas } from "@/components/WorkflowCanvas";
@@ -11,13 +12,20 @@ import type { WorkflowFile } from "@/store/workflowStore";
 import { getStudioProject, isWorkflowFile } from "@/lib/studio/client";
 import { loadSaveConfigs } from "@/store/utils/localStorage";
 import { isCloudMode } from "@/lib/storage";
+import { useToast } from "@/components/Toast";
 
-export default function StudioProjectPage({
-  params,
-}: {
-  params: Promise<{ projectId: string }>;
-}) {
-  const { projectId } = use(params);
+/**
+ * Unified studio page handling both /studio and /studio/[projectId].
+ *
+ * Uses an optional catch-all route so router.replace('/studio/wf_123')
+ * updates the URL without unmounting — no flicker.
+ *
+ * Project loading only triggers on direct URL access (refresh, bookmark)
+ * when the store doesn't already have the matching workflow loaded.
+ */
+export default function StudioPage() {
+  const params = useParams<{ projectId?: string[] }>();
+  const projectId = params.projectId?.[0] ?? null;
 
   const initializeAutoSave = useWorkflowStore(
     (state) => state.initializeAutoSave
@@ -25,86 +33,70 @@ export default function StudioProjectPage({
   const cleanupAutoSave = useWorkflowStore((state) => state.cleanupAutoSave);
   const loadWorkflow = useWorkflowStore((state) => state.loadWorkflow);
   const workflowId = useWorkflowStore((state) => state.workflowId);
+  const { show: showToast } = useToast();
 
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(workflowId !== projectId);
+  // Track whether we've attempted to load this projectId already
+  const loadAttemptedRef = useRef<string | null>(null);
 
-  // Load project from URL param on mount (only if not already loaded)
-  useEffect(() => {
-    if (workflowId === projectId) {
-      setIsLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadProject() {
-      setIsLoading(true);
-      setLoadError(null);
-
+  // Load project from URL on direct access (bookmark, refresh, pasted URL).
+  // Skipped when the store already has the matching workflow (e.g., after
+  // template load or project create, where router.replace just updates URL).
+  const loadProjectFromUrl = useCallback(
+    async (id: string) => {
       try {
         if (isCloudMode()) {
-          const project = await getStudioProject(projectId);
-          if (cancelled) return;
-
+          const project = await getStudioProject(id);
           if (!project.workflowJson || !isWorkflowFile(project.workflowJson)) {
-            setLoadError("Project has no valid workflow data.");
-            setIsLoading(false);
+            showToast("Project has no valid workflow data.", "error");
             return;
           }
-
           await loadWorkflow(
             project.workflowJson as unknown as WorkflowFile,
             project.sourceDirectoryPath || undefined
           );
         } else {
-          // Local mode: look up in localStorage configs, then load from filesystem
           const configs = loadSaveConfigs();
-          const config = configs[projectId];
-
+          const config = configs[id];
           if (!config) {
-            setLoadError("Project not found in local storage.");
-            setIsLoading(false);
+            showToast("Project not found.", "error");
             return;
           }
-
           const response = await fetch(
             `/api/workflow?path=${encodeURIComponent(config.directoryPath)}&name=${encodeURIComponent(config.name || "")}`
           );
           const result = await response.json();
-          if (cancelled) return;
-
           if (!result.success || !result.workflow) {
-            setLoadError(result.error || "Failed to load workflow file.");
-            setIsLoading(false);
+            showToast(result.error || "Failed to load workflow.", "error");
             return;
           }
-
           await loadWorkflow(result.workflow, config.directoryPath);
         }
-
-        if (!cancelled) {
-          setIsLoading(false);
-        }
       } catch (err) {
-        if (!cancelled) {
-          setLoadError(
-            err instanceof Error ? err.message : "Failed to load project."
-          );
-          setIsLoading(false);
-        }
+        showToast(
+          err instanceof Error ? err.message : "Failed to load project.",
+          "error"
+        );
       }
-    }
+    },
+    [loadWorkflow, showToast]
+  );
 
-    loadProject();
-    return () => { cancelled = true; };
-  }, [projectId, workflowId, loadWorkflow]);
+  useEffect(() => {
+    if (!projectId) return;
+    if (workflowId === projectId) return;
+    if (loadAttemptedRef.current === projectId) return;
 
+    loadAttemptedRef.current = projectId;
+    loadProjectFromUrl(projectId);
+  }, [projectId, workflowId, loadProjectFromUrl]);
+
+  // Auto-save lifecycle
   useEffect(() => {
     initializeAutoSave();
     return () => cleanupAutoSave();
   }, [initializeAutoSave, cleanupAutoSave]);
 
+  // Unsaved changes warning
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (useWorkflowStore.getState().hasUnsavedChanges) {
@@ -114,33 +106,6 @@ export default function StudioProjectPage({
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, []);
-
-  if (isLoading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-neutral-900 text-neutral-400">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-6 h-6 border-2 border-neutral-600 border-t-neutral-300 rounded-full animate-spin" />
-          <span className="text-sm">Loading project...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (loadError) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-neutral-900 text-neutral-400">
-        <div className="flex flex-col items-center gap-3 max-w-md text-center">
-          <span className="text-red-400 text-sm">{loadError}</span>
-          <a
-            href="/studio"
-            className="text-sm text-blue-400 hover:text-blue-300 underline"
-          >
-            Go to Studio
-          </a>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <ReactFlowProvider>
