@@ -1,7 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/microfrontends.json",
   "applications": {
-    "node-banana": {
+    "tasmeemai": {
+      "packageName": "node-banana",
       "development": {
         "fallback": "https://banana.app"
       }
