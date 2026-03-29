@@ -92,6 +92,7 @@ export function Header() {
     setWorkflowMetadata: state.setWorkflowMetadata,
     saveToFile: state.saveToFile,
     loadWorkflow: state.loadWorkflow,
+    clearWorkflow: state.clearWorkflow,
     previousWorkflowSnapshot: state.previousWorkflowSnapshot,
     revertToSnapshot: state.revertToSnapshot,
     shortcutsDialogOpen: state.shortcutsDialogOpen,
@@ -105,7 +106,7 @@ export function Header() {
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   const isProjectConfigured = !!workflowName;
-  const canSave = !!(workflowId && workflowName && saveDirectoryPath);
+  const canSave = !!(workflowId && workflowName && (isCloudMode() || saveDirectoryPath));
 
   const formatTime = (timestamp: number) => {
     return new Date(timestamp).toLocaleTimeString([], {
@@ -126,6 +127,15 @@ export function Header() {
 
   const handleOpenFile = () => {
     setShowProjectBrowserModal(true);
+  };
+
+  const handleCloseProject = () => {
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm("You have unsaved changes. Close project anyway?");
+      if (!confirmed) return;
+    }
+    clearWorkflow();
+    router.replace("/studio");
   };
 
   const handleProjectSave = async (id: string, name: string, path: string) => {
@@ -342,6 +352,29 @@ export function Header() {
                 </div>
 
                 {settingsButtons}
+
+                {/* Close project button */}
+                <div className="flex items-center gap-0.5 ms-1 ps-1 border-s border-neutral-700/50">
+                  <button
+                    onClick={handleCloseProject}
+                    className="p-1.5 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 rounded transition-colors"
+                    title="Close project"
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
               </>
             ) : (
               <>

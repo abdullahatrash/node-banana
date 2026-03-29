@@ -1961,6 +1961,11 @@ export function WorkflowCanvas() {
             const loadedName = useWorkflowStore.getState().workflowName;
             if (isCloudMode() && loadedId && loadedName) {
               try {
+                // Ensure workspace is initialized before upserting
+                const { getActiveWorkspaceId, listStudioWorkspaces } = await import("@/lib/studio/client");
+                if (!getActiveWorkspaceId()) {
+                  await listStudioWorkspaces();
+                }
                 await upsertStudioProject({
                   projectId: loadedId,
                   name: loadedName,
