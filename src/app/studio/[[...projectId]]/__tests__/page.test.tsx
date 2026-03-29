@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
-import StudioPage from "../page";
+import { StudioClient } from "../StudioClient";
 
 vi.mock("next/navigation", () => ({
   useParams: vi.fn(() => ({ projectId: undefined })),
@@ -36,8 +36,9 @@ vi.mock("@/components/AnnotationModal", () => ({
   AnnotationModal: () => null,
 }));
 
+const mockShowToast = vi.fn();
 vi.mock("@/components/Toast", () => ({
-  useToast: () => ({ show: vi.fn() }),
+  useToast: () => ({ show: mockShowToast }),
 }));
 
 const mockLoadWorkflow = vi.fn();
@@ -66,27 +67,44 @@ vi.mock("@/store/workflowStore", () => {
 });
 
 vi.mock("@/lib/studio/client", () => ({
-  getStudioProject: vi.fn(),
   isWorkflowFile: vi.fn(() => true),
 }));
 
-vi.mock("@/store/utils/localStorage", () => ({
-  loadSaveConfigs: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/storage", () => ({
-  isCloudMode: vi.fn(() => true),
-}));
-
-describe("StudioPage", () => {
+describe("StudioClient", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockWorkflowId = null;
   });
 
-  it("renders canvas immediately without loading screen for /studio", async () => {
+  it("renders canvas immediately for /studio (no projectId)", async () => {
     await act(async () => {
-      render(<StudioPage />);
+      render(
+        <StudioClient
+          projectId={null}
+          initialProject={null}
+          loadError={null}
+        />
+      );
+    });
+
+    expect(screen.getByTestId("header")).toBeInTheDocument();
+    expect(screen.getByTestId("canvas")).toBeInTheDocument();
+  });
+
+  it("renders canvas without loading screen when project data is provided", async () => {
+    await act(async () => {
+      render(
+        <StudioClient
+          projectId="wf_123_abc"
+          initialProject={{
+            id: "wf_123_abc",
+            name: "Test Project",
+            workflowJson: { version: 1, name: "Test", nodes: [], edges: [] },
+            sourceDirectoryPath: null,
+          }}
+          loadError={null}
+        />
+      );
     });
 
     expect(screen.getByTestId("header")).toBeInTheDocument();
@@ -94,33 +112,38 @@ describe("StudioPage", () => {
     expect(screen.queryByText("Loading project...")).not.toBeInTheDocument();
   });
 
-  it("renders canvas immediately when workflowId matches projectId", async () => {
-    const { useParams } = await import("next/navigation");
-    vi.mocked(useParams).mockReturnValue({ projectId: ["wf_123_abc"] });
+  it("does not re-hydrate when workflowId already matches", async () => {
     mockWorkflowId = "wf_123_abc";
 
     await act(async () => {
-      render(<StudioPage />);
+      render(
+        <StudioClient
+          projectId="wf_123_abc"
+          initialProject={{
+            id: "wf_123_abc",
+            name: "Test Project",
+            workflowJson: { version: 1, name: "Test", nodes: [], edges: [] },
+            sourceDirectoryPath: null,
+          }}
+          loadError={null}
+        />
+      );
     });
 
-    expect(screen.getByTestId("header")).toBeInTheDocument();
-    expect(screen.getByTestId("canvas")).toBeInTheDocument();
     expect(mockLoadWorkflow).not.toHaveBeenCalled();
   });
 
-  it("attempts to load project from URL when workflowId does not match", async () => {
-    const { useParams } = await import("next/navigation");
-    vi.mocked(useParams).mockReturnValue({ projectId: ["wf_missing"] });
-    const { getStudioProject } = await import("@/lib/studio/client");
-    vi.mocked(getStudioProject).mockRejectedValue(new Error("Not found"));
-
+  it("shows toast when loadError is provided", async () => {
     await act(async () => {
-      render(<StudioPage />);
+      render(
+        <StudioClient
+          projectId="wf_nonexistent"
+          initialProject={null}
+          loadError="Project not found."
+        />
+      );
     });
 
-    // Canvas still renders (no blocking loading screen)
-    expect(screen.getByTestId("canvas")).toBeInTheDocument();
-    // But project load was attempted
-    expect(getStudioProject).toHaveBeenCalledWith("wf_missing");
+    expect(mockShowToast).toHaveBeenCalledWith("Project not found.", "error");
   });
 });
