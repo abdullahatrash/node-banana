@@ -505,6 +505,15 @@ export async function listProjects(workspaceId: string) {
     .orderBy(desc(projects.updatedAt));
 }
 
+export async function countProjects(workspaceId: string): Promise<number> {
+  const db = getDb();
+  const [result] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(projects)
+    .where(and(eq(projects.workspaceId, workspaceId), isNull(projects.deletedAt)));
+  return result?.count ?? 0;
+}
+
 export async function getProject(workspaceId: string, projectId: string) {
   const db = getDb();
   const [project] = await db
