@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const mockAuthorizeStudioRequest = vi.fn();
 const mockListProjects = vi.fn();
+const mockCountProjects = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -24,6 +25,7 @@ vi.mock("@/lib/studio/authz", () => {
 
 vi.mock("@/lib/studio/repository", () => ({
   listProjects: (...args: unknown[]) => mockListProjects(...args),
+  countProjects: (...args: unknown[]) => mockCountProjects(...args),
   upsertProject: vi.fn(),
 }));
 
@@ -85,6 +87,7 @@ describe("/api/studio/projects GET auth hardening", () => {
       role: "member",
     });
     mockListProjects.mockResolvedValue([{ id: "proj_1", name: "Project One" }]);
+    mockCountProjects.mockResolvedValue(1);
 
     const response = await GET(createRequest());
     const data = await response.json();
@@ -92,6 +95,8 @@ describe("/api/studio/projects GET auth hardening", () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.projects).toHaveLength(1);
+    expect(data.projectCount).toBe(1);
+    expect(typeof data.maxProjects).toBe("number");
     expect(mockAuthorizeStudioRequest).toHaveBeenCalledWith(
       expect.anything(),
       {
