@@ -493,7 +493,7 @@ export function ProjectSetupModal({
             ) : (
               <div className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2">
                 <p className="text-xs text-neutral-300">
-                  Cloud storage mode is enabled. Project files and assets are stored in your configured S3/R2 bucket.
+                  Your project will be saved to the cloud. No local folder needed.
                 </p>
               </div>
             )}
