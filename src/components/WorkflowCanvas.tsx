@@ -1937,8 +1937,18 @@ export function WorkflowCanvas() {
       {showQuickstart && (
         <WelcomeModal
           onWorkflowGenerated={async (workflow) => {
-            // Enforce project limit in cloud mode before creating a new project
+            // In cloud mode, ensure workspace is initialized before any API calls
             if (isCloudMode()) {
+              const { getActiveWorkspaceId, listStudioWorkspaces } = await import("@/lib/studio/client");
+              if (!getActiveWorkspaceId()) {
+                try {
+                  await listStudioWorkspaces();
+                } catch {
+                  // Workspace init failed — proceed without DB persistence
+                }
+              }
+
+              // Enforce project limit
               try {
                 const { count, max } = await getStudioProjectCount();
                 if (count >= max) {
@@ -1961,11 +1971,6 @@ export function WorkflowCanvas() {
             const loadedName = useWorkflowStore.getState().workflowName;
             if (isCloudMode() && loadedId && loadedName) {
               try {
-                // Ensure workspace is initialized before upserting
-                const { getActiveWorkspaceId, listStudioWorkspaces } = await import("@/lib/studio/client");
-                if (!getActiveWorkspaceId()) {
-                  await listStudioWorkspaces();
-                }
                 await upsertStudioProject({
                   projectId: loadedId,
                   name: loadedName,
