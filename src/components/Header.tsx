@@ -78,6 +78,7 @@ export function Header() {
     setWorkflowMetadata,
     saveToFile,
     loadWorkflow,
+    clearWorkflow,
     previousWorkflowSnapshot,
     revertToSnapshot,
     shortcutsDialogOpen,
