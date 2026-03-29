@@ -253,6 +253,47 @@ describe("ProjectSetupModal", () => {
 
       expect(screen.getByText("Embed images as base64")).toBeInTheDocument();
     });
+
+    it("should hide local directory controls in cloud mode", async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url === "/api/env-status") {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              gemini: false,
+              openai: false,
+              anthropic: false,
+              replicate: false,
+              fal: false,
+              kie: false,
+              wavespeed: false,
+              cloudMode: true,
+            }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        });
+      });
+
+      render(
+        <ProjectSetupModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+          mode="new"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByText("Project Directory")).not.toBeInTheDocument();
+      });
+      expect(screen.queryByText("Browse")).not.toBeInTheDocument();
+      expect(
+        screen.getByText("Cloud storage mode is enabled. Project files and assets are stored in your configured S3/R2 bucket.")
+      ).toBeInTheDocument();
+    });
   });
 
   describe("Project Tab - Settings Mode", () => {
@@ -351,6 +392,55 @@ describe("ProjectSetupModal", () => {
         expect(screen.getByText("Project directory is required")).toBeInTheDocument();
       });
       expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it("should allow save without project directory in cloud mode", async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url === "/api/env-status") {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              gemini: false,
+              openai: false,
+              anthropic: false,
+              replicate: false,
+              fal: false,
+              kie: false,
+              wavespeed: false,
+              cloudMode: true,
+            }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        });
+      });
+
+      const onSave = vi.fn();
+
+      render(
+        <ProjectSetupModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onSave={onSave}
+          mode="new"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByText("Project Directory")).not.toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByPlaceholderText("my-project"), {
+        target: { value: "My Cloud Project" },
+      });
+      fireEvent.click(screen.getByText("Create"));
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith("mock-workflow-id", "My Cloud Project", null);
+      });
+      expect(mockFetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/workflow"));
     });
 
     it("should allow save when directory does not exist yet", async () => {

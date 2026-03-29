@@ -136,7 +136,7 @@ export function EaseCurveNode({ id, data, selected }: NodeProps<EaseCurveNodeTyp
             rel="noopener noreferrer"
             className="text-[10px] text-blue-400 hover:text-blue-300 underline"
           >
-            Doesn&apos;t seem right? Message Willie on Discord.
+            Doesn&apos;t seem right? Message abodi on Discord.
           </a>
         </div>
       </BaseNode>

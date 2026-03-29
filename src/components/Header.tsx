@@ -140,7 +140,7 @@ export function Header() {
     router.replace("/studio");
   };
 
-  const handleProjectSave = async (id: string, name: string, path: string) => {
+  const handleProjectSave = async (id: string, name: string, path: string | null) => {
     setWorkflowMetadata(id, name, path); // generationsPath is auto-derived
     setShowProjectModal(false);
     router.replace(`/studio/${encodeURIComponent(id)}`);
@@ -311,7 +311,7 @@ export function Header() {
                       <span className="absolute top-0.5 end-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-neutral-900" />
                     )}
                   </button>
-                  {saveDirectoryPath && (
+                  {saveDirectoryPath && !isCloudMode() && (
                     <button
                       onClick={handleOpenDirectory}
                       className="p-1.5 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 rounded transition-colors"

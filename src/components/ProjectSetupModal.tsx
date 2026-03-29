@@ -9,6 +9,7 @@ import { loadNodeDefaults, saveNodeDefaults } from "@/store/utils/localStorage";
 import { ProviderModel } from "@/lib/providers/types";
 import { ModelSearchDialog } from "@/components/modals/ModelSearchDialog";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
+import { setRuntimeCloudModeOverride } from "@/lib/storage";
 
 // LLM provider and model options (mirrored from LLMGenerateNode)
 const LLM_PROVIDERS: { value: LLMProvider; label: string }[] = [
@@ -83,7 +84,7 @@ const getProviderIcon = (provider: ProviderType) => {
 interface ProjectSetupModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (id: string, name: string, directoryPath: string) => void;
+  onSave: (id: string, name: string, directoryPath: string | null) => void;
   mode: "new" | "settings";
 }
 
@@ -176,6 +177,7 @@ export function ProjectSetupModal({
     wavespeed: false,
   });
   const [envStatus, setEnvStatus] = useState<EnvStatusResponse | null>(null);
+  const cloudMode = envStatus?.cloudMode ?? false;
 
   // Node defaults tab state
   const [localNodeDefaults, setLocalNodeDefaults] = useState<NodeDefaultsConfig>({});
@@ -229,8 +231,14 @@ export function ProjectSetupModal({
       // Fetch env status
       fetch("/api/env-status")
         .then((res) => res.json())
-        .then((data: EnvStatusResponse) => setEnvStatus(data))
-        .catch(() => setEnvStatus(null));
+        .then((data: EnvStatusResponse) => {
+          setEnvStatus(data);
+          setRuntimeCloudModeOverride(Boolean(data.cloudMode));
+        })
+        .catch(() => {
+          setEnvStatus(null);
+          setRuntimeCloudModeOverride(null);
+        });
     }
   }, [isOpen, mode, workflowName, saveDirectoryPath, useExternalImageStorage, providerSettings, canvasNavigationSettings]);
 
@@ -266,6 +274,13 @@ export function ProjectSetupModal({
   const handleSaveProject = async () => {
     if (!name.trim()) {
       setError("Project name is required");
+      return;
+    }
+
+    if (cloudMode) {
+      const id = mode === "new" ? generateWorkflowId() : useWorkflowStore.getState().workflowId || generateWorkflowId();
+      setUseExternalImageStorage(externalStorage);
+      onSave(id, name.trim(), null);
       return;
     }
 
@@ -449,31 +464,39 @@ export function ProjectSetupModal({
               />
             </div>
 
-            <div>
-              <label className="block text-sm text-neutral-400 mb-1">
-                Project Directory
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={directoryPath}
-                  onChange={(e) => setDirectoryPath(e.target.value)}
-                  placeholder="/Users/username/projects/my-project"
-                  className="flex-1 px-3 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-neutral-100 text-sm focus:outline-none focus:border-neutral-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleBrowse}
-                  disabled={isBrowsing}
-                  className="px-3 py-2 bg-neutral-700 hover:bg-neutral-600 disabled:bg-neutral-700 disabled:opacity-50 text-neutral-200 text-sm rounded-lg transition-colors"
-                >
-                  {isBrowsing ? "..." : "Browse"}
-                </button>
+            {!cloudMode ? (
+              <div>
+                <label className="block text-sm text-neutral-400 mb-1">
+                  Project Directory
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={directoryPath}
+                    onChange={(e) => setDirectoryPath(e.target.value)}
+                    placeholder="/Users/username/projects/my-project"
+                    className="flex-1 px-3 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-neutral-100 text-sm focus:outline-none focus:border-neutral-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleBrowse}
+                    disabled={isBrowsing}
+                    className="px-3 py-2 bg-neutral-700 hover:bg-neutral-600 disabled:bg-neutral-700 disabled:opacity-50 text-neutral-200 text-sm rounded-lg transition-colors"
+                  >
+                    {isBrowsing ? "..." : "Browse"}
+                  </button>
+                </div>
+                <p className="text-xs text-neutral-400 mt-1">
+                  Workflow files and images will be saved here. Subfolders for inputs and generations will be auto-created.
+                </p>
               </div>
-              <p className="text-xs text-neutral-400 mt-1">
-                Workflow files and images will be saved here. Subfolders for inputs and generations will be auto-created.
-              </p>
-            </div>
+            ) : (
+              <div className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2">
+                <p className="text-xs text-neutral-300">
+                  Cloud storage mode is enabled. Project files and assets are stored in your configured S3/R2 bucket.
+                </p>
+              </div>
+            )}
 
             <div className="pt-2 border-t border-neutral-700">
               <label className="flex items-center justify-between gap-3 cursor-pointer">
@@ -1228,7 +1251,7 @@ export function ProjectSetupModal({
           </button>
           <button
             onClick={handleSave}
-            disabled={activeTab === "project" && (isValidating || isBrowsing)}
+            disabled={activeTab === "project" && (isValidating || (!cloudMode && isBrowsing))}
             className="px-4 py-2 text-sm bg-white text-neutral-900 rounded-lg hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {activeTab === "project"
