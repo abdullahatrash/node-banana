@@ -1,12 +1,9 @@
 import { NextResponse } from "next/server";
-import { exec } from "child_process";
-import { promisify } from "util";
-import { writeFile, unlink } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
-import { isCloudMode } from "@/lib/storage";
 
-const execAsync = promisify(exec);
+/** Local-only route — check env directly to avoid pulling heavy @/lib/storage deps into the bundle */
+function isCloudMode() {
+  return process.env.STORAGE_BACKEND === "s3" || !!process.env.VERCEL;
+}
 
 /**
  * Normalize a path returned by native directory pickers.
@@ -44,6 +41,13 @@ export async function GET() {
       { status: 501 }
     );
   }
+
+  const { exec } = await import("child_process");
+  const { promisify } = await import("util");
+  const { writeFile, unlink } = await import("fs/promises");
+  const { tmpdir } = await import("os");
+  const { join } = await import("path");
+  const execAsync = promisify(exec);
 
   const platform = process.platform;
 

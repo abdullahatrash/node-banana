@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as fs from "fs/promises";
-import * as path from "path";
-import * as crypto from "crypto";
-import { logger } from "@/utils/logger";
-import { isCloudMode } from "@/lib/storage";
+
+/** Local-only route — check env directly to avoid pulling heavy @/lib/storage deps into the bundle */
+function isCloudMode() {
+  return process.env.STORAGE_BACKEND === "s3" || !!process.env.VERCEL;
+}
 
 // Helper to get file extension from MIME type
 function getExtensionFromMime(mimeType: string): string {
@@ -76,28 +76,6 @@ export function getExtensionFromUrl(url: string): string | null {
   }
 }
 
-// Helper to compute MD5 hash of buffer content
-function computeContentHash(buffer: Buffer): string {
-  return crypto.createHash("md5").update(buffer).digest("hex");
-}
-
-// Helper to find existing file by hash suffix
-async function findExistingFileByHash(
-  directoryPath: string,
-  hash: string,
-  extension: string
-): Promise<string | null> {
-  try {
-    const files = await fs.readdir(directoryPath);
-    // Look for files ending with this hash before extension
-    const hashSuffix = `_${hash}.${extension}`;
-    const matching = files.find((f) => f.endsWith(hashSuffix));
-    return matching || null;
-  } catch {
-    return null;
-  }
-}
-
 // POST: Save a generated image or video to the generations folder (or outputs folder)
 export async function POST(request: NextRequest) {
   if (isCloudMode()) {
@@ -105,6 +83,30 @@ export async function POST(request: NextRequest) {
       { success: false, error: "This operation is only available in local mode." },
       { status: 501 },
     );
+  }
+
+  const fs = await import("fs/promises");
+  const path = await import("path");
+  const crypto = await import("node:crypto");
+  const { logger } = await import("@/utils/logger");
+
+  function computeContentHash(buffer: Buffer): string {
+    return crypto.createHash("md5").update(buffer).digest("hex");
+  }
+
+  async function findExistingFileByHash(
+    directoryPath: string,
+    hash: string,
+    extension: string
+  ): Promise<string | null> {
+    try {
+      const files = await fs.readdir(directoryPath);
+      const hashSuffix = `_${hash}.${extension}`;
+      const matching = files.find((f: string) => f.endsWith(hashSuffix));
+      return matching || null;
+    } catch {
+      return null;
+    }
   }
 
   let directoryPath: string | undefined;
