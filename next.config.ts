@@ -54,11 +54,20 @@ const nextConfig: NextConfig = {
     "@dimforge/rapier3d-compat",
   ],
   outputFileTracingExcludes: {
-    // Scope excludes only to local-only routes to avoid impacting APIs that really need these deps
+    // Exclude non-runtime files from ALL serverless functions
+    "*": [
+      "./.git/**",
+      "./.swc/**",
+      "./drizzle/**",
+      "./public/**",
+      "./examples/**",
+      "./docs/**",
+      "./scripts/**",
+      "./.next/cache/**",
+    ],
+    // Additionally exclude heavy deps from local-only routes
     "/api/load-generation": localOnlyRouteExcludes,
     "/api/save-generation": localOnlyRouteExcludes,
-    "/api/load-generation/route": localOnlyRouteExcludes,
-    "/api/save-generation/route": localOnlyRouteExcludes,
   },
 };
 
