@@ -12,6 +12,7 @@ import { ProjectBrowserModal } from "./ProjectBrowserModal";
 import { CostIndicator } from "./CostIndicator";
 import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { isCloudMode } from "@/lib/storage";
 
 function CommentsNavigationIcon() {
   // Subscribe to nodes so we re-render when comments change
