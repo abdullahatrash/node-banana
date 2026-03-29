@@ -50,6 +50,7 @@ function createBase64DataUrl(content: string, mimeType = "image/png"): string {
 describe("/api/save-generation route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     // Reset fetch mock
     global.fetch = originalFetch;
   });
@@ -60,6 +61,26 @@ describe("/api/save-generation route", () => {
   });
 
   describe("POST - Save generation", () => {
+    it("returns 501 in cloud mode", async () => {
+      vi.stubEnv("STORAGE_BACKEND", "s3");
+      vi.stubEnv("S3_BUCKET_NAME", "test-bucket");
+      vi.stubEnv("S3_REGION", "auto");
+      vi.stubEnv("S3_ACCESS_KEY_ID", "key");
+      vi.stubEnv("S3_SECRET_ACCESS_KEY", "secret");
+
+      const request = createMockPostRequest({
+        directoryPath: "/test/generations",
+        image: createBase64DataUrl("content"),
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(501);
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("local mode");
+    });
+
     it("should save base64 image with hash-based filename", async () => {
       const imageContent = "test-image-content";
       const base64Image = createBase64DataUrl(imageContent, "image/png");

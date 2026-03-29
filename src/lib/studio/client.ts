@@ -188,6 +188,29 @@ export interface StudioAssetFinalizeInput {
   error?: string;
 }
 
+export interface StudioAssetDownloadResult {
+  assetId: string;
+  key: string;
+  downloadUrl: string;
+  expiresInSeconds: number;
+}
+
+export interface StudioAssetIngestInput {
+  projectId?: string | null;
+  assetType: "image" | "video" | "audio" | "model3d" | "workflow";
+  sourceDataUrl?: string;
+  sourceUrl?: string;
+  fileName?: string;
+  contentType?: string;
+}
+
+export interface StudioAssetIngestResult {
+  assetId: string;
+  key: string;
+  downloadUrl: string;
+  expiresInSeconds: number;
+}
+
 function parseWorkspace(value: unknown): StudioWorkspace | null {
   const row = asRecord(value);
   if (!row) return null;
@@ -384,6 +407,80 @@ export async function finalizeStudioAssetUpload(
 
   setActiveWorkspaceId(asset.workspaceId);
   return asset;
+}
+
+export async function getStudioAssetDownloadUrl(
+  assetId: string,
+): Promise<StudioAssetDownloadResult> {
+  const data = await fetchApi(
+    `/api/studio/assets/${encodeURIComponent(assetId)}/download`,
+  );
+
+  const parsedAssetId = asString(data.assetId);
+  const key = asString(data.key);
+  const downloadUrl = asString(data.downloadUrl);
+  const expiresInSeconds = asNumber(data.expiresInSeconds);
+
+  if (!parsedAssetId || !key || !downloadUrl || expiresInSeconds === null) {
+    throw new Error("Asset download payload is invalid");
+  }
+
+  return {
+    assetId: parsedAssetId,
+    key,
+    downloadUrl,
+    expiresInSeconds,
+  };
+}
+
+export async function ingestStudioAsset(
+  input: StudioAssetIngestInput,
+): Promise<StudioAssetIngestResult> {
+  const data = await fetchApi("/api/studio/assets/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const assetId = asString(data.assetId);
+  const key = asString(data.key);
+  const downloadUrl = asString(data.downloadUrl);
+  const expiresInSeconds = asNumber(data.expiresInSeconds);
+
+  if (!assetId || !key || !downloadUrl || expiresInSeconds === null) {
+    throw new Error("Asset ingest payload is invalid");
+  }
+
+  return {
+    assetId,
+    key,
+    downloadUrl,
+    expiresInSeconds,
+  };
+}
+
+export async function getLegacyStudioAssetDownloadUrl(
+  input: { projectId: string; legacyKey: string },
+): Promise<{ key: string; downloadUrl: string; expiresInSeconds: number }> {
+  const data = await fetchApi("/api/studio/assets/legacy-download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const key = asString(data.key);
+  const downloadUrl = asString(data.downloadUrl);
+  const expiresInSeconds = asNumber(data.expiresInSeconds);
+
+  if (!key || !downloadUrl || expiresInSeconds === null) {
+    throw new Error("Legacy asset download payload is invalid");
+  }
+
+  return {
+    key,
+    downloadUrl,
+    expiresInSeconds,
+  };
 }
 
 export function isWorkflowFile(value: unknown): value is WorkflowFile {

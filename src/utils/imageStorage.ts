@@ -1,6 +1,12 @@
 import { WorkflowNode, WorkflowNodeData } from "@/types";
 import { WorkflowFile } from "@/store/workflowStore";
 import crypto from "crypto";
+import { isCloudMode } from "@/lib/storage";
+import {
+  getLegacyStudioAssetDownloadUrl,
+  getStudioAssetDownloadUrl,
+  ingestStudioAsset,
+} from "@/lib/studio/client";
 
 /**
  * Fetch with timeout support using AbortController
@@ -58,13 +64,35 @@ function isBase64DataUrl(str: string | null | undefined): str is string {
   return typeof str === "string" && str.startsWith("data:");
 }
 
+const ASSET_ID_PREFIX = "asset_";
+
+function isAssetIdRef(value: string): boolean {
+  return value.startsWith(ASSET_ID_PREFIX);
+}
+
+function canPreserveExistingRef(existingRef: string | undefined, expectedRef?: string | null): boolean {
+  if (!existingRef) return false;
+  if (isCloudMode() && !isAssetIdRef(existingRef)) {
+    return false;
+  }
+  if (expectedRef === undefined || expectedRef === null) {
+    return true;
+  }
+  return existingRef === expectedRef;
+}
+
+interface WorkflowImageStorageContext {
+  workflowPath?: string | null;
+  projectId?: string | null;
+}
+
 /**
  * Extract and save all images from a workflow, replacing base64 data with refs
  * Returns a new workflow object with image refs instead of base64 data
  */
 export async function externalizeWorkflowImages(
   workflow: WorkflowFile,
-  workflowPath: string
+  context: WorkflowImageStorageContext
 ): Promise<WorkflowFile> {
   const savedImageIds = new Map<string, string>(); // base64 hash -> imageId (for deduplication)
 
@@ -76,7 +104,7 @@ export async function externalizeWorkflowImages(
     const batch = workflow.nodes.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(
       batch.map((node, batchIndex) =>
-        externalizeNodeImages(node, workflowPath, savedImageIds)
+        externalizeNodeImages(node, context, savedImageIds)
           .then(result => ({ index: i + batchIndex, result }))
       )
     );
@@ -97,7 +125,7 @@ export async function externalizeWorkflowImages(
  */
 async function externalizeNodeImages(
   node: WorkflowNode,
-  workflowPath: string,
+  context: WorkflowImageStorageContext,
   savedImageIds: Map<string, string>
 ): Promise<WorkflowNode> {
   const data = node.data as WorkflowNodeData;
@@ -107,10 +135,10 @@ async function externalizeNodeImages(
     case "imageInput": {
       const d = data as import("@/types").ImageInputNodeData;
       // Skip if already has a valid imageRef (prevents duplicates on re-save after hydration)
-      if (d.imageRef && isBase64DataUrl(d.image)) {
+      if (canPreserveExistingRef(d.imageRef) && isBase64DataUrl(d.image)) {
         newData = { ...d, image: null };
       } else if (isBase64DataUrl(d.image)) {
-        const imageId = await saveImageAndGetId(d.image, workflowPath, savedImageIds, "inputs");
+        const imageId = await saveImageAndGetId(d.image, context, savedImageIds, "inputs");
         newData = { ...d, image: null, imageRef: imageId };
       } else {
         newData = d;
@@ -127,16 +155,16 @@ async function externalizeNodeImages(
 
       // Annotation images are user-created, save to inputs
       // Skip if already has ref (prevents duplicates on re-save after hydration)
-      if (d.sourceImageRef && isBase64DataUrl(d.sourceImage)) {
+      if (canPreserveExistingRef(d.sourceImageRef) && isBase64DataUrl(d.sourceImage)) {
         sourceImage = null;
       } else if (isBase64DataUrl(d.sourceImage)) {
-        sourceImageRef = await saveImageAndGetId(d.sourceImage, workflowPath, savedImageIds, "inputs");
+        sourceImageRef = await saveImageAndGetId(d.sourceImage, context, savedImageIds, "inputs");
         sourceImage = null;
       }
-      if (d.outputImageRef && isBase64DataUrl(d.outputImage)) {
+      if (canPreserveExistingRef(d.outputImageRef) && isBase64DataUrl(d.outputImage)) {
         outputImage = null;
       } else if (isBase64DataUrl(d.outputImage)) {
-        outputImageRef = await saveImageAndGetId(d.outputImage, workflowPath, savedImageIds, "inputs");
+        outputImageRef = await saveImageAndGetId(d.outputImage, context, savedImageIds, "inputs");
         outputImage = null;
       }
 
@@ -163,17 +191,16 @@ async function externalizeNodeImages(
       const expectedRef = d.imageHistory?.[selectedIndex]?.id;
 
       if (d.outputImageRef && isBase64DataUrl(d.outputImage)) {
-        // Verify existing ref matches expected history ID
-        if (d.outputImageRef === expectedRef) {
+        if (canPreserveExistingRef(d.outputImageRef, expectedRef)) {
           outputImage = null; // Ref is correct, just clear base64
         } else {
           // Ref doesn't match history - re-save with correct ID
-          outputImageRef = await saveImageAndGetId(d.outputImage, workflowPath, savedImageIds, "generations", expectedRef);
+          outputImageRef = await saveImageAndGetId(d.outputImage, context, savedImageIds, "generations", expectedRef);
           outputImage = null;
         }
       } else if (isBase64DataUrl(d.outputImage)) {
         // No existing ref - save with expected history ID for consistency
-        outputImageRef = await saveImageAndGetId(d.outputImage, workflowPath, savedImageIds, "generations", expectedRef);
+        outputImageRef = await saveImageAndGetId(d.outputImage, context, savedImageIds, "generations", expectedRef);
         outputImage = null;
       }
 
@@ -182,10 +209,10 @@ async function externalizeNodeImages(
       for (let i = 0; i < (d.inputImages?.length || 0); i++) {
         const img = d.inputImages[i];
         const existingRef = d.inputImageRefs?.[i];
-        if (existingRef && isBase64DataUrl(img)) {
+        if (canPreserveExistingRef(existingRef) && isBase64DataUrl(img)) {
           inputImages.push(""); // Already has ref, just clear the base64
         } else if (isBase64DataUrl(img)) {
-          const ref = await saveImageAndGetId(img, workflowPath, savedImageIds, "inputs");
+          const ref = await saveImageAndGetId(img, context, savedImageIds, "inputs");
           inputImageRefs[i] = ref;
           inputImages.push(""); // Empty placeholder
         } else {
@@ -213,10 +240,10 @@ async function externalizeNodeImages(
       for (let i = 0; i < (d.inputImages?.length || 0); i++) {
         const img = d.inputImages[i];
         const existingRef = d.inputImageRefs?.[i];
-        if (existingRef && isBase64DataUrl(img)) {
+        if (canPreserveExistingRef(existingRef) && isBase64DataUrl(img)) {
           inputImages.push(""); // Already has ref, just clear the base64
         } else if (isBase64DataUrl(img)) {
-          const ref = await saveImageAndGetId(img, workflowPath, savedImageIds, "inputs");
+          const ref = await saveImageAndGetId(img, context, savedImageIds, "inputs");
           inputImageRefs[i] = ref;
           inputImages.push(""); // Empty placeholder
         } else {
@@ -242,10 +269,10 @@ async function externalizeNodeImages(
       for (let i = 0; i < (d.inputImages?.length || 0); i++) {
         const img = d.inputImages[i];
         const existingRef = d.inputImageRefs?.[i];
-        if (existingRef && isBase64DataUrl(img)) {
+        if (canPreserveExistingRef(existingRef) && isBase64DataUrl(img)) {
           inputImages.push(""); // Already has ref, just clear the base64
         } else if (isBase64DataUrl(img)) {
-          const ref = await saveImageAndGetId(img, workflowPath, savedImageIds, "inputs");
+          const ref = await saveImageAndGetId(img, context, savedImageIds, "inputs");
           inputImageRefs[i] = ref;
           inputImages.push(""); // Empty placeholder
         } else {
@@ -274,10 +301,10 @@ async function externalizeNodeImages(
       const d = data as import("@/types").SplitGridNodeData;
       // SplitGrid source is input content, save to inputs
       // Skip if already has ref (prevents duplicates on re-save after hydration)
-      if (d.sourceImageRef && isBase64DataUrl(d.sourceImage)) {
+      if (canPreserveExistingRef(d.sourceImageRef) && isBase64DataUrl(d.sourceImage)) {
         newData = { ...d, sourceImage: null };
       } else if (isBase64DataUrl(d.sourceImage)) {
-        const imageId = await saveImageAndGetId(d.sourceImage, workflowPath, savedImageIds, "inputs");
+        const imageId = await saveImageAndGetId(d.sourceImage, context, savedImageIds, "inputs");
         newData = { ...d, sourceImage: null, sourceImageRef: imageId };
       } else {
         newData = d;
@@ -305,7 +332,7 @@ const inFlightSaves = new Map<string, Promise<string>>();
  */
 async function saveImageAndGetId(
   imageData: string,
-  workflowPath: string,
+  context: WorkflowImageStorageContext,
   savedImageIds: Map<string, string>,
   folder: "inputs" | "generations" = "inputs",
   existingId?: string
@@ -329,6 +356,22 @@ async function saveImageAndGetId(
   const imageId = existingId || generateImageId();
 
   const savePromise = (async () => {
+    if (isCloudMode()) {
+      const projectId = context.projectId?.trim() || null;
+      const ingested = await ingestStudioAsset({
+        projectId,
+        assetType: "image",
+        sourceDataUrl: imageData,
+      });
+      savedImageIds.set(hash, ingested.assetId);
+      return ingested.assetId;
+    }
+
+    const workflowPath = context.workflowPath?.trim();
+    if (!workflowPath) {
+      throw new Error("workflowPath is required when externalizing images in local mode.");
+    }
+
     const response = await fetchWithTimeout(
       "/api/workflow-images",
       {
@@ -372,13 +415,13 @@ async function saveImageAndGetId(
  */
 export async function hydrateWorkflowImages(
   workflow: WorkflowFile,
-  workflowPath: string
+  context: WorkflowImageStorageContext
 ): Promise<WorkflowFile> {
   const hydratedNodes: WorkflowNode[] = [];
   const loadedImages = new Map<string, string>(); // imageId -> base64 (for caching)
 
   for (const node of workflow.nodes) {
-    const newNode = await hydrateNodeImages(node, workflowPath, loadedImages);
+    const newNode = await hydrateNodeImages(node, context, loadedImages);
     hydratedNodes.push(newNode);
   }
 
@@ -393,7 +436,7 @@ export async function hydrateWorkflowImages(
  */
 async function hydrateNodeImages(
   node: WorkflowNode,
-  workflowPath: string,
+  context: WorkflowImageStorageContext,
   loadedImages: Map<string, string>
 ): Promise<WorkflowNode> {
   const data = node.data as WorkflowNodeData;
@@ -403,7 +446,7 @@ async function hydrateNodeImages(
     case "imageInput": {
       const d = data as import("@/types").ImageInputNodeData;
       if (d.imageRef && !d.image) {
-        const image = await loadImageById(d.imageRef, workflowPath, loadedImages, "inputs");
+        const image = await loadImageById(d.imageRef, context, loadedImages, "inputs");
         newData = {
           ...d,
           image,
@@ -420,10 +463,10 @@ async function hydrateNodeImages(
       let outputImage = d.outputImage;
 
       if (d.sourceImageRef && !d.sourceImage) {
-        sourceImage = await loadImageById(d.sourceImageRef, workflowPath, loadedImages, "inputs");
+        sourceImage = await loadImageById(d.sourceImageRef, context, loadedImages, "inputs");
       }
       if (d.outputImageRef && !d.outputImage) {
-        outputImage = await loadImageById(d.outputImageRef, workflowPath, loadedImages, "inputs");
+        outputImage = await loadImageById(d.outputImageRef, context, loadedImages, "inputs");
       }
 
       newData = {
@@ -440,7 +483,7 @@ async function hydrateNodeImages(
       const inputImages = [...(d.inputImages || [])];
 
       if (d.outputImageRef && !d.outputImage) {
-        outputImage = await loadImageById(d.outputImageRef, workflowPath, loadedImages, "generations");
+        outputImage = await loadImageById(d.outputImageRef, context, loadedImages, "generations");
       }
 
       // Hydrate input images from refs
@@ -448,7 +491,7 @@ async function hydrateNodeImages(
         for (let i = 0; i < d.inputImageRefs.length; i++) {
           const ref = d.inputImageRefs[i];
           if (ref) {
-            inputImages[i] = await loadImageById(ref, workflowPath, loadedImages, "inputs");
+            inputImages[i] = await loadImageById(ref, context, loadedImages, "inputs");
           }
         }
       }
@@ -470,7 +513,7 @@ async function hydrateNodeImages(
         for (let i = 0; i < d.inputImageRefs.length; i++) {
           const ref = d.inputImageRefs[i];
           if (ref) {
-            inputImages[i] = await loadImageById(ref, workflowPath, loadedImages, "inputs");
+            inputImages[i] = await loadImageById(ref, context, loadedImages, "inputs");
           }
         }
       }
@@ -491,7 +534,7 @@ async function hydrateNodeImages(
         for (let i = 0; i < d.inputImageRefs.length; i++) {
           const ref = d.inputImageRefs[i];
           if (ref) {
-            inputImages[i] = await loadImageById(ref, workflowPath, loadedImages, "inputs");
+            inputImages[i] = await loadImageById(ref, context, loadedImages, "inputs");
           }
         }
       }
@@ -513,7 +556,7 @@ async function hydrateNodeImages(
     case "splitGrid": {
       const d = data as import("@/types").SplitGridNodeData;
       if (d.sourceImageRef && !d.sourceImage) {
-        const sourceImage = await loadImageById(d.sourceImageRef, workflowPath, loadedImages, "inputs");
+        const sourceImage = await loadImageById(d.sourceImageRef, context, loadedImages, "inputs");
         newData = {
           ...d,
           sourceImage,
@@ -540,12 +583,53 @@ async function hydrateNodeImages(
  */
 async function loadImageById(
   imageId: string,
-  workflowPath: string,
+  context: WorkflowImageStorageContext,
   loadedImages: Map<string, string>,
   folder?: "inputs" | "generations"
 ): Promise<string> {
   if (loadedImages.has(imageId)) {
     return loadedImages.get(imageId)!;
+  }
+
+  if (isCloudMode()) {
+    try {
+      const signed = isAssetIdRef(imageId)
+        ? await getStudioAssetDownloadUrl(imageId)
+        : context.projectId
+          ? await getLegacyStudioAssetDownloadUrl({
+              projectId: context.projectId,
+              legacyKey: imageId,
+            })
+          : null;
+      if (!signed?.downloadUrl) {
+        return "";
+      }
+
+      const imgResponse = await fetch(signed.downloadUrl);
+      if (!imgResponse.ok) {
+        return "";
+      }
+      const blob = await imgResponse.blob();
+      const arrayBuffer = await blob.arrayBuffer();
+      const base64 = btoa(
+        new Uint8Array(arrayBuffer).reduce(
+          (data, byte) => data + String.fromCharCode(byte),
+          "",
+        ),
+      );
+      const mimeType = blob.type || "image/png";
+      const dataUrl = `data:${mimeType};base64,${base64}`;
+      loadedImages.set(imageId, dataUrl);
+      return dataUrl;
+    } catch (error) {
+      console.log("Image not found:", imageId, error);
+      return "";
+    }
+  }
+
+  const workflowPath = context.workflowPath?.trim();
+  if (!workflowPath) {
+    return "";
   }
 
   const params = new URLSearchParams({

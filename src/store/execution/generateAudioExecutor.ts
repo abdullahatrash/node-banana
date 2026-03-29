@@ -7,7 +7,8 @@
 
 import type { GenerateAudioNodeData } from "@/types";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
-import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
+import { isCloudMode } from "@/lib/storage";
+import { syncStudioAssetFromSaveResult, syncStudioAssetFromSource } from "./studioAssetSync";
 import type { NodeExecutionContext } from "./types";
 
 export interface GenerateAudioOptions {
@@ -139,6 +140,7 @@ export async function executeGenerateAudio(
 
       updateNodeData(node.id, {
         outputAudio: audioData,
+        outputAudioRef: audioId,
         status: "complete",
         error: null,
         audioHistory: updatedHistory,
@@ -150,8 +152,34 @@ export async function executeGenerateAudio(
         addIncurredCost(nodeData.selectedModel.pricing.amount);
       }
 
-      // Auto-save to generations folder if configured
-      if (generationsPath) {
+      if (isCloudMode()) {
+        const source = typeof audioData === "string" ? audioData : "";
+        const savePromise = syncStudioAssetFromSource({
+          assetType: "audio",
+          source,
+          projectId: (get() as { workflowId?: string | null }).workflowId || null,
+          getStoreState: () => get(),
+        })
+          .then((assetId) => {
+            const currentNode = getNodes().find((n) => n.id === node.id);
+            if (!currentNode) return;
+            const currentData = currentNode.data as GenerateAudioNodeData;
+            const histCopy = [...(currentData.audioHistory || [])];
+            const entryIndex = histCopy.findIndex((h) => h.id === audioId);
+            if (entryIndex !== -1) {
+              histCopy[entryIndex] = { ...histCopy[entryIndex], id: assetId };
+            }
+            updateNodeData(node.id, {
+              audioHistory: histCopy,
+              outputAudioRef: assetId,
+            });
+          })
+          .catch((err) => {
+            console.error("Failed to ingest cloud audio generation:", err);
+          });
+
+        trackSaveGeneration(audioId, savePromise);
+      } else if (generationsPath) {
         const savePromise = fetch("/api/save-generation", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -172,7 +200,7 @@ export async function executeGenerateAudio(
                 const entryIndex = histCopy.findIndex((h) => h.id === audioId);
                 if (entryIndex !== -1) {
                   histCopy[entryIndex] = { ...histCopy[entryIndex], id: saveResult.imageId };
-                  updateNodeData(node.id, { audioHistory: histCopy });
+                  updateNodeData(node.id, { audioHistory: histCopy, outputAudioRef: saveResult.imageId });
                 }
               }
             }

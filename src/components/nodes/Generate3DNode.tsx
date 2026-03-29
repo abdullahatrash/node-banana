@@ -14,6 +14,7 @@ import { getModelPageUrl, getProviderDisplayName } from "@/utils/providerUrls";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
 import { InlineParameterPanel } from "./InlineParameterPanel";
 import { browseRegistry } from "@/utils/browseRegistry";
+import { isCloudMode } from "@/lib/storage";
 
 // 3D generation capabilities
 const THREE_D_CAPABILITIES: ModelCapability[] = ["text-to-3d", "image-to-3d"];
@@ -361,7 +362,7 @@ export function Generate3DNode({ id, data, selected }: NodeProps<Generate3DNodeT
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-2.25-1.313M21 7.5v2.25m0-2.25l-2.25 1.313M3 7.5l2.25-1.313M3 7.5l2.25 1.313M3 7.5v2.25m9 3l2.25-1.313M12 12.75l-2.25-1.313M12 12.75V15m0 6.75l2.25-1.313M12 21.75V19.5m0 2.25l-2.25-1.313m0-16.875L12 2.25l2.25 1.313M21 14.25v2.25l-2.25 1.313m-13.5 0L3 16.5v-2.25" />
             </svg>
             <span className="text-[11px] text-orange-400 font-medium">3D Model Generated</span>
-            {nodeData.savedFilename ? (
+            {nodeData.savedFilename && !isCloudMode() ? (
               <button
                 onClick={async (e) => {
                   e.stopPropagation();

@@ -7,7 +7,8 @@
 
 import type { Generate3DNodeData } from "@/types";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
-import { syncStudioAssetFromSaveResult } from "./studioAssetSync";
+import { isCloudMode } from "@/lib/storage";
+import { syncStudioAssetFromSaveResult, syncStudioAssetFromSource } from "./studioAssetSync";
 import type { NodeExecutionContext } from "./types";
 
 export interface Generate3DOptions {
@@ -122,8 +123,25 @@ export async function executeGenerate3D(
         addIncurredCost(nodeData.selectedModel.pricing.amount);
       }
 
-      // Auto-save 3D model to generations folder if configured
-      if (generationsPath) {
+      if (isCloudMode()) {
+        const savePromise = syncStudioAssetFromSource({
+          assetType: "model3d",
+          source: result.model3dUrl,
+          projectId: (get() as { workflowId?: string | null }).workflowId || null,
+          getStoreState: () => get(),
+        })
+          .then((assetId) => {
+            updateNodeData(node.id, {
+              savedFilename: null,
+              savedFilePath: assetId,
+            });
+          })
+          .catch((syncError) => {
+            console.error("Failed to sync studio 3D asset:", syncError);
+          });
+
+        trackSaveGeneration(`3d-${Date.now()}`, savePromise);
+      } else if (generationsPath) {
         const savePromise = fetch("/api/save-generation", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

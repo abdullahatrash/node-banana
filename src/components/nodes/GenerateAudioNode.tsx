@@ -14,6 +14,8 @@ import { useAudioPlayback } from "@/hooks/useAudioPlayback";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
 import { InlineParameterPanel } from "./InlineParameterPanel";
 import { browseRegistry } from "@/utils/browseRegistry";
+import { isCloudMode } from "@/lib/storage";
+import { getLegacyStudioAssetDownloadUrl, getStudioAssetDownloadUrl } from "@/lib/studio/client";
 
 type GenerateAudioNodeType = Node<GenerateAudioNodeData, "generateAudio">;
 
@@ -21,6 +23,7 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
   const nodeData = data;
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const generationsPath = useWorkflowStore((state) => state.generationsPath);
+  const workflowId = useWorkflowStore((state) => state.workflowId);
   const [isBrowseDialogOpen, setIsBrowseDialogOpen] = useState(false);
   const [isLoadingCarouselAudio, setIsLoadingCarouselAudio] = useState(false);
 
@@ -116,6 +119,20 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
 
   // Load audio by ID from generations folder
   const loadAudioById = useCallback(async (audioId: string) => {
+    if (isCloudMode()) {
+      try {
+        const signed = audioId.startsWith("asset_")
+          ? await getStudioAssetDownloadUrl(audioId)
+          : workflowId
+            ? await getLegacyStudioAssetDownloadUrl({ projectId: workflowId, legacyKey: audioId })
+            : null;
+        return signed?.downloadUrl || null;
+      } catch (error) {
+        console.warn("Error loading cloud audio:", error);
+        return null;
+      }
+    }
+
     if (!generationsPath) {
       console.error("Generations path not configured");
       return null;
@@ -141,7 +158,7 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
       console.warn("Error loading audio:", error);
       return null;
     }
-  }, [generationsPath]);
+  }, [generationsPath, workflowId]);
 
   // Carousel navigation handlers
   const handleCarouselPrevious = useCallback(async () => {

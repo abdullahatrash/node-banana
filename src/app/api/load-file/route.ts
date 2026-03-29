@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFile, stat } from "fs/promises";
 import path from "path";
 import os from "os";
+import { isCloudMode } from "@/lib/storage";
 
 const EXT_TO_MIME: Record<string, string> = {
   png: "image/png",
@@ -60,6 +61,13 @@ function getMimeTypeForPath(filePath: string): string {
 }
 
 export async function POST(request: NextRequest) {
+  if (isCloudMode()) {
+    return NextResponse.json(
+      { success: false, error: "This operation is only available in local mode." },
+      { status: 501 },
+    );
+  }
+
   if (!isLocalhostRequest(request)) {
     return NextResponse.json(
       { success: false, error: "Forbidden: localhost only" },

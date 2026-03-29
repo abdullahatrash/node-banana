@@ -19,7 +19,7 @@ vi.mock("@/utils/logger", () => ({
   },
 }));
 
-import { POST } from "../route";
+import { GET, POST } from "../route";
 
 function createMockPostRequest(body: unknown): NextRequest {
   return {
@@ -30,6 +30,7 @@ function createMockPostRequest(body: unknown): NextRequest {
 describe("/api/workflow-images route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   afterEach(() => {
@@ -37,6 +38,28 @@ describe("/api/workflow-images route", () => {
   });
 
   describe("POST - Save workflow image", () => {
+    it("returns 501 in cloud mode", async () => {
+      vi.stubEnv("STORAGE_BACKEND", "s3");
+      vi.stubEnv("S3_BUCKET_NAME", "test-bucket");
+      vi.stubEnv("S3_REGION", "auto");
+      vi.stubEnv("S3_ACCESS_KEY_ID", "key");
+      vi.stubEnv("S3_SECRET_ACCESS_KEY", "secret");
+
+      const request = createMockPostRequest({
+        workflowPath: "/test/workflow",
+        imageId: "img_123",
+        folder: "inputs",
+        imageData: "data:image/png;base64,aGVsbG8=",
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(501);
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("local mode");
+    });
+
     it("should save image when workflow directory exists", async () => {
       mockStat.mockResolvedValue({
         isDirectory: () => true,
@@ -127,6 +150,27 @@ describe("/api/workflow-images route", () => {
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
       expect(data.error).toBe("Access to /etc is not allowed");
+    });
+  });
+
+  describe("GET - Load workflow image", () => {
+    it("returns 501 in cloud mode", async () => {
+      vi.stubEnv("STORAGE_BACKEND", "s3");
+      vi.stubEnv("S3_BUCKET_NAME", "test-bucket");
+      vi.stubEnv("S3_REGION", "auto");
+      vi.stubEnv("S3_ACCESS_KEY_ID", "key");
+      vi.stubEnv("S3_SECRET_ACCESS_KEY", "secret");
+
+      const request = {
+        nextUrl: new URL("http://localhost:3000/api/workflow-images?workflowPath=/test/workflow&imageId=img_123"),
+      } as unknown as NextRequest;
+
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(501);
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("local mode");
     });
   });
 });
