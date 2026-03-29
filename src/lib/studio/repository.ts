@@ -471,7 +471,10 @@ export async function upsertProject(input: UpsertProjectInput) {
       )
       .returning();
 
-    return updated ?? null;
+    if (updated) {
+      return updated;
+    }
+    // No existing row matched — fall through to INSERT with the provided ID
   }
 
   const candidateSlug = `${projectSlugBase}-${timestampSuffix()}`;
