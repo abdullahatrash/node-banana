@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
-import { withApiPermission, authzErrorResponse } from "@/lib/studio/authz";
+import { withApiPermission } from "@/lib/studio/authz";
 import { listSocialAccounts } from "@/lib/social/repository";
 
 interface AccountsResponse {

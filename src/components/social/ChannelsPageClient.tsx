@@ -27,9 +27,13 @@ interface ChannelsPageClientProps {
     code: string
     state: string
   } | null
+  oauthError?: string | null
 }
 
-export function ChannelsPageClient({ oauthCallback }: ChannelsPageClientProps) {
+export function ChannelsPageClient({
+  oauthCallback,
+  oauthError,
+}: ChannelsPageClientProps) {
   const router = useRouter()
   const { accounts, isLoading, fetchAccounts } = useSocialAccountsStore()
   const [showPicker, setShowPicker] = useState(false)
@@ -52,6 +56,10 @@ export function ChannelsPageClient({ oauthCallback }: ChannelsPageClientProps) {
     )
   } else if (!initialized.current) {
     initialized.current = true
+    if (oauthError) {
+      showToast(oauthError, "error")
+      router.replace("/social/channels")
+    }
   }
 
   async function processOAuthCallback(

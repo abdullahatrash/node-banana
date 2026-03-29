@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   ChevronDownIcon,
+  CopyIcon,
   ExternalLinkIcon,
   PencilIcon,
   RefreshCwIcon,
@@ -13,6 +14,7 @@ import { format } from "date-fns"
 import { PostStatusBadge } from "./PostStatusBadge"
 import { Button } from "@/components/ui/button"
 import {
+  createSocialPost,
   deleteSocialPost,
   retrySocialPost,
 } from "@/lib/social/client"
@@ -59,6 +61,26 @@ export function PostRow({ post, onMutate }: PostRowProps) {
     } catch (error) {
       showToast(
         error instanceof Error ? error.message : "Delete failed",
+        "error",
+      )
+    } finally {
+      setIsActing(false)
+    }
+  }
+
+  async function handleDuplicate() {
+    setIsActing(true)
+    try {
+      const duplicated = await createSocialPost({
+        socialAccountId: post.socialAccountId,
+        content: post.content ?? undefined,
+        mediaUrls: (post.mediaUrls as Array<{ type: string; url: string; alt?: string }>) ?? undefined,
+      })
+      showToast("Post duplicated as draft", "success")
+      router.push(`/social/compose/${duplicated.id}`)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Duplicate failed",
         "error",
       )
     } finally {
@@ -136,6 +158,15 @@ export function PostRow({ post, onMutate }: PostRowProps) {
               <Trash2Icon className="size-3.5" />
             </Button>
           )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={handleDuplicate}
+            disabled={isActing}
+          >
+            <CopyIcon className="size-3.5" />
+          </Button>
         </div>
       </div>
 

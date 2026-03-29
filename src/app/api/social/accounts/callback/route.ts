@@ -7,6 +7,7 @@ import { encryptToken } from "@/lib/social/crypto";
 import {
   createOAuthSelectionSession,
   consumeOAuthState,
+  getOAuthStateByState,
   upsertSocialAccount,
   OAuthStateNotFoundError,
   OAuthStateExpiredError,
@@ -31,6 +32,70 @@ interface CallbackResponse {
 }
 
 const OAUTH_SELECTION_SESSION_TTL_MS = 10 * 60 * 1000;
+
+function socialChannelsRedirect(
+  request: NextRequest,
+  params: Record<string, string | undefined>,
+) {
+  const url = new URL("/social/channels", request.url);
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      url.searchParams.set(key, value);
+    }
+  }
+  return NextResponse.redirect(url);
+}
+
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse> {
+  const incoming = new URL(request.url);
+  const code = incoming.searchParams.get("code");
+  const state = incoming.searchParams.get("state");
+  const oauthToken = incoming.searchParams.get("oauth_token");
+  const oauthVerifier = incoming.searchParams.get("oauth_verifier");
+  const error = incoming.searchParams.get("error");
+  const errorDescription =
+    incoming.searchParams.get("error_description") ||
+    incoming.searchParams.get("message");
+
+  if (error) {
+    return socialChannelsRedirect(request, {
+      error: errorDescription || error,
+    });
+  }
+
+  const normalizedCode = code || oauthVerifier || "";
+  const normalizedState = state || oauthToken || "";
+  if (!normalizedCode || !normalizedState) {
+    return socialChannelsRedirect(request, {
+      error: "OAuth callback is missing required parameters.",
+    });
+  }
+
+  let platform = incoming.searchParams.get("platform") || "";
+  if (!platform) {
+    try {
+      const oauthState = await getOAuthStateByState(normalizedState);
+      platform = oauthState?.platform || "";
+    } catch {
+      platform = "";
+    }
+  }
+
+  if (!platform) {
+    return socialChannelsRedirect(request, {
+      error: "Missing OAuth platform. Please reconnect the channel.",
+    });
+  }
+
+  return socialChannelsRedirect(request, {
+    platform,
+    ...(code && state
+      ? { code: normalizedCode, state: normalizedState }
+      : { oauth_token: normalizedState, oauth_verifier: normalizedCode }),
+  });
+}
 
 export async function POST(
   request: NextRequest,

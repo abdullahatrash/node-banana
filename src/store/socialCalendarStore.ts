@@ -2,15 +2,23 @@
 
 import { create } from "zustand"
 import {
+  startOfDay,
+  endOfDay,
   startOfWeek,
   endOfWeek,
+  startOfMonth,
+  endOfMonth,
+  addDays,
   addWeeks,
+  addMonths,
+  subDays,
   subWeeks,
+  subMonths,
   format,
 } from "date-fns"
 import { listSocialPosts, type SocialPost } from "@/lib/social/client"
 
-type ViewMode = "week" | "list"
+type ViewMode = "day" | "week" | "month" | "list"
 
 interface SocialCalendarState {
   viewMode: ViewMode
@@ -32,7 +40,11 @@ interface SocialCalendarState {
 
 function loadViewMode(): ViewMode {
   if (typeof window === "undefined") return "week"
-  return (localStorage.getItem("social-calendar-view") as ViewMode) ?? "week"
+  const stored = localStorage.getItem("social-calendar-view") as ViewMode | null
+  if (stored === "day" || stored === "week" || stored === "month" || stored === "list") {
+    return stored
+  }
+  return "week"
 }
 
 export const useSocialCalendarStore = create<SocialCalendarState>(
@@ -51,11 +63,25 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
     },
 
     navigateNext: () => {
-      set((s) => ({ currentDate: addWeeks(s.currentDate, 1) }))
+      set((s) => ({
+        currentDate:
+          s.viewMode === "day"
+            ? addDays(s.currentDate, 1)
+            : s.viewMode === "month" || s.viewMode === "list"
+              ? addMonths(s.currentDate, 1)
+              : addWeeks(s.currentDate, 1),
+      }))
     },
 
     navigatePrev: () => {
-      set((s) => ({ currentDate: subWeeks(s.currentDate, 1) }))
+      set((s) => ({
+        currentDate:
+          s.viewMode === "day"
+            ? subDays(s.currentDate, 1)
+            : s.viewMode === "month" || s.viewMode === "list"
+              ? subMonths(s.currentDate, 1)
+              : subWeeks(s.currentDate, 1),
+      }))
     },
 
     goToToday: () => {
@@ -71,11 +97,24 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
       if (get().isLoading) return
       set({ isLoading: true })
       try {
-        const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
-        const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 })
+        const range =
+          get().viewMode === "day"
+            ? {
+                start: startOfDay(currentDate),
+                end: endOfDay(currentDate),
+              }
+            : get().viewMode === "month" || get().viewMode === "list"
+              ? {
+                  start: startOfMonth(currentDate),
+                  end: endOfMonth(currentDate),
+                }
+              : {
+                  start: startOfWeek(currentDate, { weekStartsOn: 1 }),
+                  end: endOfWeek(currentDate, { weekStartsOn: 1 }),
+                }
         const posts = await listSocialPosts({
-          startDate: weekStart.toISOString(),
-          endDate: weekEnd.toISOString(),
+          startDate: range.start.toISOString(),
+          endDate: range.end.toISOString(),
           socialAccountId: channelFilter ?? undefined,
         })
         set({ posts, isLoading: false })
@@ -88,6 +127,13 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
     getWeekEnd: () => endOfWeek(get().currentDate, { weekStartsOn: 1 }),
 
     getDateRangeLabel: () => {
+      const viewMode = get().viewMode
+      if (viewMode === "day") {
+        return format(get().currentDate, "EEEE, MMM d, yyyy")
+      }
+      if (viewMode === "month" || viewMode === "list") {
+        return format(get().currentDate, "MMMM yyyy")
+      }
       const start = startOfWeek(get().currentDate, { weekStartsOn: 1 })
       const end = endOfWeek(get().currentDate, { weekStartsOn: 1 })
       return `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")}`

@@ -357,6 +357,16 @@ export async function consumeOAuthState(state: string) {
   return row;
 }
 
+export async function getOAuthStateByState(state: string) {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(socialOAuthStates)
+    .where(eq(socialOAuthStates.state, state));
+
+  return row ?? null;
+}
+
 export async function cleanupExpiredOAuthStates() {
   const db = getDb();
   const rows = await db
@@ -412,6 +422,34 @@ export async function consumeOAuthSelectionSession(input: {
       ),
     )
     .returning();
+
+  if (!row) {
+    throw new OAuthSelectionSessionNotFoundError();
+  }
+
+  if (row.expiresAt < new Date()) {
+    throw new OAuthSelectionSessionExpiredError();
+  }
+
+  return row;
+}
+
+export async function getOAuthSelectionSession(input: {
+  selectionSessionId: string;
+  workspaceId: string;
+  platform: SocialPlatform;
+}) {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(socialOAuthSelectionSessions)
+    .where(
+      and(
+        eq(socialOAuthSelectionSessions.id, input.selectionSessionId),
+        eq(socialOAuthSelectionSessions.workspaceId, input.workspaceId),
+        eq(socialOAuthSelectionSessions.platform, input.platform),
+      ),
+    );
 
   if (!row) {
     throw new OAuthSelectionSessionNotFoundError();
@@ -640,6 +678,61 @@ export async function disconnectSocialAccount(
 
   // Hard delete — cascades to associated posts
   await db.delete(socialAccounts).where(eq(socialAccounts.id, accountId));
+}
+
+export async function updateSocialAccount(
+  workspaceId: string,
+  accountId: string,
+  data: {
+    displayName?: string;
+    disabled?: boolean;
+    additionalSettings?: Record<string, unknown> | null;
+  },
+) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialAccounts)
+    .set({
+      ...(data.displayName !== undefined && { displayName: data.displayName }),
+      ...(data.disabled !== undefined && { disabled: data.disabled }),
+      ...(data.additionalSettings !== undefined && {
+        additionalSettings: data.additionalSettings,
+      }),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(socialAccounts.workspaceId, workspaceId),
+        eq(socialAccounts.id, accountId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new SocialAccountNotFoundError(accountId);
+  }
+
+  return row;
+}
+
+export async function countSocialPostsForAccount(
+  workspaceId: string,
+  accountId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      count: sql<number>`cast(count(*) as int)`,
+    })
+    .from(socialPosts)
+    .where(
+      and(
+        eq(socialPosts.workspaceId, workspaceId),
+        eq(socialPosts.socialAccountId, accountId),
+      ),
+    );
+
+  return row?.count ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,9 +1204,27 @@ export async function updateSocialPost(
 ) {
   const db = getDb();
 
-  // Verify post exists and is a draft
+  // Verify post exists
   const existing = await getSocialPost(workspaceId, postId);
-  if (existing.status !== "draft") {
+  const onlyScheduledAtUpdate =
+    data.scheduledAt !== undefined &&
+    data.content === undefined &&
+    data.mediaUrls === undefined &&
+    data.platformSettings === undefined &&
+    data.rootPostId === undefined &&
+    data.kind === undefined &&
+    data.delaySeconds === undefined &&
+    data.position === undefined &&
+    data.sourceTemplatePostId === undefined &&
+    data.triggerSource === undefined &&
+    data.parentPostId === undefined;
+
+  const canEditAsDraft = existing.status === "draft";
+  const canRescheduleQueued =
+    onlyScheduledAtUpdate &&
+    (existing.status === "queued" || existing.status === "failed");
+
+  if (!canEditAsDraft && !canRescheduleQueued) {
     throw new SocialPostStateTransitionError(existing.status, "draft");
   }
 
@@ -1703,6 +1814,37 @@ export async function listSocialWebhooks(workspaceId: string) {
     .orderBy(desc(socialWebhooks.createdAt));
 }
 
+export async function updateSocialWebhook(
+  workspaceId: string,
+  webhookId: string,
+  data: {
+    targetUrl?: string;
+    enabled?: boolean;
+  },
+) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialWebhooks)
+    .set({
+      ...(data.targetUrl !== undefined && { targetUrl: data.targetUrl }),
+      ...(data.enabled !== undefined && { enabled: data.enabled }),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(socialWebhooks.workspaceId, workspaceId),
+        eq(socialWebhooks.id, webhookId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new SocialWebhookNotFoundError(webhookId);
+  }
+
+  return row;
+}
+
 export async function createSocialWebhookSubscription(input: {
   workspaceId: string;
   webhookId: string;
@@ -2251,6 +2393,31 @@ export async function markSocialEventRead(workspaceId: string, eventId: string) 
     .update(socialEvents)
     .set({
       readAt: new Date(),
+    })
+    .where(
+      and(
+        eq(socialEvents.workspaceId, workspaceId),
+        eq(socialEvents.id, eventId),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new SocialEventNotFoundError(eventId);
+  }
+
+  return row;
+}
+
+export async function markSocialEventUnread(
+  workspaceId: string,
+  eventId: string,
+) {
+  const db = getDb();
+  const [row] = await db
+    .update(socialEvents)
+    .set({
+      readAt: null,
     })
     .where(
       and(

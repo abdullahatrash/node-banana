@@ -4,6 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 const mockWithApiPermission = vi.fn();
 const mockListSocialEvents = vi.fn();
 const mockMarkSocialEventRead = vi.fn();
+const mockListSocialEventReadsForUser = vi.fn();
+const mockMarkSocialEventReadForUser = vi.fn();
+const mockMarkSocialEventUnread = vi.fn();
+const mockUnmarkSocialEventReadForUser = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -17,11 +21,24 @@ vi.mock("@/lib/studio/authz", () => ({
 
 vi.mock("@/lib/social/repository", () => ({
   listSocialEvents: (...args: unknown[]) => mockListSocialEvents(...args),
+  listSocialEventReadsForUser: (...args: unknown[]) =>
+    mockListSocialEventReadsForUser(...args),
   markSocialEventRead: (...args: unknown[]) => mockMarkSocialEventRead(...args),
+  markSocialEventReadForUser: (...args: unknown[]) =>
+    mockMarkSocialEventReadForUser(...args),
+  markSocialEventUnread: (...args: unknown[]) => mockMarkSocialEventUnread(...args),
+  unmarkSocialEventReadForUser: (...args: unknown[]) =>
+    mockUnmarkSocialEventReadForUser(...args),
   SocialEventNotFoundError: class extends Error {
     constructor(id?: string) {
       super(`Social event "${id}" not found.`);
       this.name = "SocialEventNotFoundError";
+    }
+  },
+  SocialEventReadNotFoundError: class extends Error {
+    constructor(id?: string) {
+      super(`Social event read "${id}" not found.`);
+      this.name = "SocialEventReadNotFoundError";
     }
   },
 }));
@@ -55,6 +72,7 @@ function request(url: string, init?: RequestInit): NextRequest {
 describe("/api/social/events", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockListSocialEventReadsForUser.mockResolvedValue([]);
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -109,6 +127,25 @@ describe("/api/social/events/[eventId]/read", () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(mockMarkSocialEventRead).toHaveBeenCalledWith("ws_1", "sevt_1");
+  });
+
+  it("marks an event as unread", async () => {
+    authorized();
+    mockMarkSocialEventUnread.mockResolvedValue({
+      id: "sevt_1",
+      readAt: null,
+    });
+
+    const { DELETE } = await import("../[eventId]/read/route");
+    const response = await DELETE(
+      request("http://localhost:3000/api/social/events/sevt_1/read", { method: "DELETE" }),
+      { params: Promise.resolve({ eventId: "sevt_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockMarkSocialEventUnread).toHaveBeenCalledWith("ws_1", "sevt_1");
   });
 
   it("returns 404 when event does not exist", async () => {

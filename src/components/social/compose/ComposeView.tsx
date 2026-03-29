@@ -24,7 +24,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/components/Toast"
-import type { SocialPlatform } from "@/lib/db/schema"
 
 export function ComposeView() {
   const router = useRouter()
@@ -40,6 +39,7 @@ export function ComposeView() {
     mediaUrls,
     scheduledAt,
     postId,
+    editSourceAccountId,
     isDirty,
     reset,
   } = useSocialComposerStore()
@@ -48,27 +48,31 @@ export function ComposeView() {
   const hasChannels = selectedAccountIds.length > 0
   const canPublish = hasContent && hasChannels
   const canSchedule = canPublish && scheduledAt && scheduledAt > new Date()
+  const sourceAccountId = editSourceAccountId ?? selectedAccountIds[0] ?? null
 
   async function handleSaveDraft() {
     if (!hasContent || !hasChannels) return
     setIsSubmitting("draft")
     try {
-      // Create one draft per selected account
-      for (const accountId of selectedAccountIds) {
-        if (postId) {
-          await updateSocialPost(postId, {
-            content,
-            mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-            scheduledAt: scheduledAt?.toISOString(),
-          })
-        } else {
-          await createSocialPost({
-            socialAccountId: accountId,
-            content,
-            mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-            scheduledAt: scheduledAt?.toISOString(),
-          })
-        }
+      if (postId) {
+        await updateSocialPost(postId, {
+          content,
+          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          scheduledAt: scheduledAt ? scheduledAt.toISOString() : null,
+        })
+      }
+
+      const extraAccountIds = postId
+        ? selectedAccountIds.filter((accountId) => accountId !== sourceAccountId)
+        : selectedAccountIds
+
+      for (const accountId of extraAccountIds) {
+        await createSocialPost({
+          socialAccountId: accountId,
+          content,
+          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          scheduledAt: scheduledAt?.toISOString(),
+        })
       }
       showToast("Draft saved", "success")
       reset()
@@ -87,14 +91,33 @@ export function ComposeView() {
     if (!canSchedule) return
     setIsSubmitting("schedule")
     try {
-      for (const accountId of selectedAccountIds) {
-        const post = await createSocialPost({
+      const publishQueue: string[] = []
+
+      if (postId) {
+        const updated = await updateSocialPost(postId, {
+          content,
+          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          scheduledAt: scheduledAt!.toISOString(),
+        })
+        publishQueue.push(updated.id)
+      }
+
+      const extraAccountIds = postId
+        ? selectedAccountIds.filter((accountId) => accountId !== sourceAccountId)
+        : selectedAccountIds
+
+      for (const accountId of extraAccountIds) {
+        const created = await createSocialPost({
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
           scheduledAt: scheduledAt!.toISOString(),
         })
-        await publishSocialPost(post.id)
+        publishQueue.push(created.id)
+      }
+
+      for (const publishPostId of publishQueue) {
+        await publishSocialPost(publishPostId)
       }
       showToast("Post scheduled", "success")
       reset()
@@ -113,13 +136,32 @@ export function ComposeView() {
     if (!canPublish) return
     setIsSubmitting("publish")
     try {
-      for (const accountId of selectedAccountIds) {
-        const post = await createSocialPost({
+      const publishQueue: string[] = []
+
+      if (postId) {
+        const updated = await updateSocialPost(postId, {
+          content,
+          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          scheduledAt: null,
+        })
+        publishQueue.push(updated.id)
+      }
+
+      const extraAccountIds = postId
+        ? selectedAccountIds.filter((accountId) => accountId !== sourceAccountId)
+        : selectedAccountIds
+
+      for (const accountId of extraAccountIds) {
+        const created = await createSocialPost({
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
         })
-        await publishSocialPost(post.id)
+        publishQueue.push(created.id)
+      }
+
+      for (const publishPostId of publishQueue) {
+        await publishSocialPost(publishPostId)
       }
       showToast("Publishing...", "success")
       reset()

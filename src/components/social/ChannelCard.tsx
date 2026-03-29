@@ -5,6 +5,7 @@ import type { SocialAccount } from "@/lib/social/client"
 import {
   connectSocialAccount,
   disconnectSocialAccount,
+  updateSocialAccount,
 } from "@/lib/social/client"
 import { PlatformIcon } from "./shared/PlatformIcon"
 import { PLATFORM_LABELS } from "@/lib/social/constants"
@@ -14,6 +15,15 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import type { SocialPlatform } from "@/lib/db/schema"
 
 interface ChannelCardProps {
@@ -22,17 +32,26 @@ interface ChannelCardProps {
 
 export function ChannelCard({ account }: ChannelCardProps) {
   const [showConfirm, setShowConfirm] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
   const [isReconnecting, setIsReconnecting] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [displayName, setDisplayName] = useState(account.displayName)
+  const [postingTimes, setPostingTimes] = useState(
+    Array.isArray(account.additionalSettings?.postingTimes)
+      ? (account.additionalSettings?.postingTimes as number[]).join(",")
+      : "",
+  )
+  const [customerName, setCustomerName] = useState(
+    typeof account.additionalSettings?.customerName === "string"
+      ? account.additionalSettings.customerName
+      : "",
+  )
   const { show: showToast } = useToast()
-  const removeAccount = useSocialAccountsStore((s) => s.removeAccount)
-
-  const initials = account.displayName
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
+  const { removeAccount, addOrUpdateAccount } = useSocialAccountsStore((s) => ({
+    removeAccount: s.removeAccount,
+    addOrUpdateAccount: s.addOrUpdateAccount,
+  }))
 
   async function handleDisconnect() {
     setIsDisconnecting(true)
@@ -41,6 +60,26 @@ export function ChannelCard({ account }: ChannelCardProps) {
       removeAccount(account.id)
       showToast(`${account.displayName} disconnected`, "success")
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("existing posts") &&
+        confirm("This channel has linked posts. Force disconnect and remove linked posts?")
+      ) {
+        try {
+          await disconnectSocialAccount(account.id, true)
+          removeAccount(account.id)
+          showToast(`${account.displayName} force-disconnected`, "success")
+          return
+        } catch (forceError) {
+          showToast(
+            forceError instanceof Error
+              ? forceError.message
+              : "Force disconnect failed",
+            "error",
+          )
+          return
+        }
+      }
       showToast(
         error instanceof Error ? error.message : "Failed to disconnect",
         "error",
@@ -54,7 +93,7 @@ export function ChannelCard({ account }: ChannelCardProps) {
   async function handleReconnect() {
     setIsReconnecting(true)
     try {
-      const { authUrl } = await connectSocialAccount(account.platform)
+      const { authUrl } = await connectSocialAccount(account.platform, account.id)
       window.location.href = authUrl
     } catch (error) {
       showToast(
@@ -63,6 +102,63 @@ export function ChannelCard({ account }: ChannelCardProps) {
       )
       setIsReconnecting(false)
     }
+  }
+
+  async function handleToggleDisabled() {
+    setIsSaving(true)
+    try {
+      const updated = await updateSocialAccount(account.id, {
+        disabled: !account.disabled,
+      })
+      addOrUpdateAccount(updated)
+      showToast(
+        updated.disabled ? "Channel disabled" : "Channel enabled",
+        "success",
+      )
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Failed to update channel",
+        "error",
+      )
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  async function handleSaveSettings() {
+    setIsSaving(true)
+    try {
+      const parsedTimes = postingTimes
+        .split(",")
+        .map((v) => Number.parseInt(v.trim(), 10))
+        .filter((v) => Number.isInteger(v) && v >= 0 && v <= 23)
+      const mergedSettings = {
+        ...(account.additionalSettings || {}),
+        postingTimes: parsedTimes,
+        customerName: customerName.trim() || null,
+      }
+      const updated = await updateSocialAccount(account.id, {
+        displayName: displayName.trim(),
+        additionalSettings: mergedSettings,
+      })
+      addOrUpdateAccount(updated)
+      showToast("Channel settings updated", "success")
+      setShowSettings(false)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Failed to save settings",
+        "error",
+      )
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  function handleCopyId() {
+    navigator.clipboard
+      .writeText(account.id)
+      .then(() => showToast("Channel ID copied", "success"))
+      .catch(() => showToast("Failed to copy channel ID", "error"))
   }
 
   return (
@@ -90,6 +186,10 @@ export function ChannelCard({ account }: ChannelCardProps) {
       </CardHeader>
 
       <CardFooter className="gap-2 pt-0">
+        <Button size="sm" variant="outline" className="flex-1" render={<a href={`/social/compose?accountId=${account.id}`} />} nativeButton={false}>
+          Create Post
+        </Button>
+
         {account.requiresReauth ? (
           <Button
             size="sm"
@@ -101,8 +201,34 @@ export function ChannelCard({ account }: ChannelCardProps) {
             {isReconnecting ? "Reconnecting..." : "Reconnect"}
           </Button>
         ) : (
-          <Button size="sm" variant="outline" className="flex-1">
+          <Button
+            size="sm"
+            variant="outline"
+            className="flex-1"
+            onClick={() => setShowSettings(true)}
+          >
             Settings
+          </Button>
+        )}
+
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-xs"
+          onClick={handleCopyId}
+        >
+          Copy ID
+        </Button>
+
+        {!account.requiresReauth && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-xs"
+            onClick={handleToggleDisabled}
+            disabled={isSaving}
+          >
+            {account.disabled ? "Enable" : "Disable"}
           </Button>
         )}
 
@@ -136,6 +262,51 @@ export function ChannelCard({ account }: ChannelCardProps) {
           </Button>
         )}
       </CardFooter>
+
+      <Dialog open={showSettings} onOpenChange={setShowSettings}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Channel settings</DialogTitle>
+            <DialogDescription>
+              Update display name and channel-specific scheduling metadata.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Display name</Label>
+              <Input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Channel name"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Posting times (0-23, comma separated)</Label>
+              <Input
+                value={postingTimes}
+                onChange={(e) => setPostingTimes(e.target.value)}
+                placeholder="9,12,18"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Customer/Group name</Label>
+              <Input
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                placeholder="Acme Social Team"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowSettings(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveSettings} disabled={isSaving}>
+                {isSaving ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }

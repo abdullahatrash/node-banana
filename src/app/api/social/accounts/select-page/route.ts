@@ -6,6 +6,7 @@ import { getProvider } from "@/lib/social/provider-registry";
 import { decryptToken, encryptToken } from "@/lib/social/crypto";
 import {
   consumeOAuthSelectionSession,
+  getOAuthSelectionSession,
   upsertSocialAccount,
   OAuthSelectionSessionNotFoundError,
   OAuthSelectionSessionExpiredError,
@@ -70,7 +71,7 @@ export async function POST(
       );
     }
 
-    const selectionSession = await consumeOAuthSelectionSession({
+    const selectionSession = await getOAuthSelectionSession({
       selectionSessionId: body.selectionSessionId,
       workspaceId: result.session.workspace.id,
       platform: body.platform as SocialPlatform,
@@ -88,10 +89,17 @@ export async function POST(
       );
     }
 
+    // Consume only after selection is validated so users can retry selection safely.
+    const consumedSession = await consumeOAuthSelectionSession({
+      selectionSessionId: body.selectionSessionId,
+      workspaceId: result.session.workspace.id,
+      platform: body.platform as SocialPlatform,
+    });
+
     // Use page-specific token if available, otherwise use the original token
     const accessTokenEncrypted = selectedPage.accessToken
       ? encryptToken(selectedPage.accessToken)
-      : selectionSession.accessTokenEncrypted;
+      : consumedSession.accessTokenEncrypted;
 
     const account = await upsertSocialAccount({
       workspaceId: result.session.workspace.id,
@@ -101,9 +109,9 @@ export async function POST(
       username: selectedPage.username,
       avatarUrl: selectedPage.picture,
       accessTokenEncrypted,
-      refreshTokenEncrypted: selectionSession.refreshTokenEncrypted ?? undefined,
-      accessTokenSecret: selectionSession.accessTokenSecret ?? undefined,
-      tokenExpiresAt: selectionSession.tokenExpiresAt ?? undefined,
+      refreshTokenEncrypted: consumedSession.refreshTokenEncrypted ?? undefined,
+      accessTokenSecret: consumedSession.accessTokenSecret ?? undefined,
+      tokenExpiresAt: consumedSession.tokenExpiresAt ?? undefined,
       createdByUserId: result.session.user.id,
     });
     logger.info("system", "Social page selection completed", {

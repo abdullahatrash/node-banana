@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -20,7 +20,11 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 export default function SignInPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session, isPending } = authClient.useSession();
+  const nextParam = searchParams.get("next");
+  const nextPath =
+    nextParam && nextParam.startsWith("/") ? nextParam : "/studio";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29,9 +33,9 @@ export default function SignInPage() {
 
   useEffect(() => {
     if (session?.user) {
-      router.replace("/studio");
+      router.replace(nextPath);
     }
-  }, [router, session]);
+  }, [router, session, nextPath]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -49,7 +53,7 @@ export default function SignInPage() {
         return;
       }
 
-      router.replace("/studio");
+      router.replace(nextPath);
     } catch (submitError) {
       setError(getErrorMessage(submitError, "Sign in failed."));
     } finally {

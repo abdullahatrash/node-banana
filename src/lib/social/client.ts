@@ -75,6 +75,7 @@ export interface SocialAccount {
   tokenExpiresAt?: string | null;
   requiresReauth: boolean;
   disabled: boolean;
+  additionalSettings?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -124,11 +125,15 @@ export async function listSocialAccounts(): Promise<SocialAccount[]> {
 
 export async function connectSocialAccount(
   platform: string,
+  accountId?: string,
 ): Promise<{ authUrl: string }> {
   const data = await socialFetch("/api/social/accounts/connect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ platform }),
+    body: JSON.stringify({
+      platform,
+      ...(accountId ? { accountId } : {}),
+    }),
   });
   return { authUrl: data.authUrl as string };
 }
@@ -179,10 +184,28 @@ export async function getSocialAccount(
 
 export async function disconnectSocialAccount(
   accountId: string,
+  force = false,
 ): Promise<void> {
-  await socialFetch(`/api/social/accounts/${accountId}`, {
+  const qs = force ? "?force=true" : "";
+  await socialFetch(`/api/social/accounts/${accountId}${qs}`, {
     method: "DELETE",
   });
+}
+
+export async function updateSocialAccount(
+  accountId: string,
+  input: {
+    displayName?: string;
+    disabled?: boolean;
+    additionalSettings?: Record<string, unknown> | null;
+  },
+): Promise<SocialAccount> {
+  const data = await socialFetch(`/api/social/accounts/${accountId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return data.account as SocialAccount;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,4 +285,264 @@ export async function publishSocialPost(postId: string): Promise<SocialPost> {
 export async function retrySocialPost(postId: string): Promise<SocialPost> {
   // Retry uses the same publish endpoint — it accepts "failed" posts too
   return publishSocialPost(postId);
+}
+
+// ---------------------------------------------------------------------------
+// Events / Ops
+// ---------------------------------------------------------------------------
+
+export interface SocialEvent {
+  id: string;
+  workspaceId: string;
+  eventType: string;
+  severity: string;
+  message: string;
+  createdAt: string;
+  readAt?: string | null;
+  readByCurrentUser?: boolean;
+}
+
+export async function listSocialEvents(filters?: {
+  userFacing?: boolean;
+  unreadOnly?: boolean;
+  perUserReads?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<SocialEvent[]> {
+  const params = new URLSearchParams();
+  if (filters?.userFacing !== undefined) {
+    params.set("userFacing", String(filters.userFacing));
+  }
+  if (filters?.unreadOnly !== undefined) {
+    params.set("unreadOnly", String(filters.unreadOnly));
+  }
+  if (filters?.perUserReads !== undefined) {
+    params.set("perUserReads", String(filters.perUserReads));
+  }
+  if (filters?.limit) params.set("limit", String(filters.limit));
+  if (filters?.offset) params.set("offset", String(filters.offset));
+
+  const qs = params.toString();
+  const data = await socialFetch(`/api/social/events${qs ? `?${qs}` : ""}`);
+  return (data.events as SocialEvent[]) || [];
+}
+
+export async function markSocialEventRead(
+  eventId: string,
+  options?: { perUserReads?: boolean },
+): Promise<SocialEvent> {
+  const params = new URLSearchParams();
+  if (options?.perUserReads !== undefined) {
+    params.set("perUserReads", String(options.perUserReads));
+  }
+  const qs = params.toString();
+  const data = await socialFetch(
+    `/api/social/events/${eventId}/read${qs ? `?${qs}` : ""}`,
+    { method: "POST" },
+  );
+  return data.event as SocialEvent;
+}
+
+export async function markSocialEventUnread(
+  eventId: string,
+  options?: { perUserReads?: boolean },
+): Promise<SocialEvent> {
+  const params = new URLSearchParams();
+  if (options?.perUserReads !== undefined) {
+    params.set("perUserReads", String(options.perUserReads));
+  }
+  const qs = params.toString();
+  const data = await socialFetch(
+    `/api/social/events/${eventId}/read${qs ? `?${qs}` : ""}`,
+    { method: "DELETE" },
+  );
+  return data.event as SocialEvent;
+}
+
+export interface SocialWebhook {
+  id: string;
+  workspaceId: string;
+  targetUrl: string;
+  enabled: boolean;
+  createdByUserId?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export async function listSocialWebhooks(): Promise<SocialWebhook[]> {
+  const data = await socialFetch("/api/social/webhooks");
+  return (data.webhooks as SocialWebhook[]) || [];
+}
+
+export async function createSocialWebhook(input: {
+  targetUrl: string;
+  name?: string;
+  enabled?: boolean;
+  filters?: Record<string, unknown>;
+}): Promise<{ webhook: SocialWebhook; signingSecret?: string }> {
+  const data = await socialFetch("/api/social/webhooks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return {
+    webhook: data.webhook as SocialWebhook,
+    signingSecret: data.signingSecret as string | undefined,
+  };
+}
+
+export async function updateSocialWebhook(
+  webhookId: string,
+  input: {
+    targetUrl?: string;
+    enabled?: boolean;
+    subscription?: {
+      name?: string | null;
+      enabled?: boolean;
+      filters?: Record<string, unknown> | null;
+    };
+  },
+): Promise<{
+  webhook: SocialWebhook;
+  subscription?: Record<string, unknown> | null;
+}> {
+  const data = await socialFetch(`/api/social/webhooks/${webhookId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return {
+    webhook: data.webhook as SocialWebhook,
+    subscription: data.subscription as Record<string, unknown> | null | undefined,
+  };
+}
+
+export async function deleteSocialWebhook(webhookId: string): Promise<void> {
+  await socialFetch(`/api/social/webhooks/${webhookId}`, {
+    method: "DELETE",
+  });
+}
+
+export interface AutomationRule {
+  id: string;
+  workspaceId: string;
+  name: string;
+  triggerSource: string;
+  enabled: boolean;
+  repeatIntervalSeconds?: number | null;
+  maxRuns?: number | null;
+  totalRuns?: number;
+  actionType?: string | null;
+  actionConfig?: Record<string, unknown> | null;
+  triggerFilters?: Record<string, unknown> | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AutomationTask {
+  id: string;
+  workspaceId: string;
+  ruleId: string;
+  taskKey: string;
+  runIndex: number;
+  state: "pending" | "claimed" | "succeeded" | "failed" | "cancelled";
+  dueAt?: string | null;
+  claimedBy?: string | null;
+  errorMessage?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export async function listAutomationRules(): Promise<AutomationRule[]> {
+  const data = await socialFetch("/api/social/automation/rules");
+  return (data.rules as AutomationRule[]) || [];
+}
+
+export async function getAutomationRule(ruleId: string): Promise<AutomationRule> {
+  const data = await socialFetch(`/api/social/automation/rules/${ruleId}`);
+  return data.rule as AutomationRule;
+}
+
+export async function updateAutomationRule(
+  ruleId: string,
+  input: Record<string, unknown>,
+): Promise<AutomationRule> {
+  const data = await socialFetch(`/api/social/automation/rules/${ruleId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return data.rule as AutomationRule;
+}
+
+export async function deleteAutomationRule(ruleId: string): Promise<void> {
+  await socialFetch(`/api/social/automation/rules/${ruleId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function listAutomationTasks(): Promise<AutomationTask[]> {
+  const data = await socialFetch("/api/social/automation/tasks");
+  return (data.tasks as AutomationTask[]) || [];
+}
+
+export async function getAutomationTask(taskId: string): Promise<AutomationTask> {
+  const data = await socialFetch(`/api/social/automation/tasks/${taskId}`);
+  return data.task as AutomationTask;
+}
+
+export async function updateAutomationTask(
+  taskId: string,
+  input: Record<string, unknown>,
+): Promise<AutomationTask> {
+  const data = await socialFetch(`/api/social/automation/tasks/${taskId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return data.task as AutomationTask;
+}
+
+export async function deleteAutomationTask(taskId: string): Promise<void> {
+  await socialFetch(`/api/social/automation/tasks/${taskId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getSocialNotificationPreferences(): Promise<{
+  inAppEnabled: boolean;
+  emailEnabled: boolean;
+  webhookEnabled: boolean;
+  muteAll: boolean;
+  preferences: Record<string, unknown> | null;
+}> {
+  const data = await socialFetch("/api/social/notifications/preferences");
+  return data.preferences as {
+    inAppEnabled: boolean;
+    emailEnabled: boolean;
+    webhookEnabled: boolean;
+    muteAll: boolean;
+    preferences: Record<string, unknown> | null;
+  };
+}
+
+export async function updateSocialNotificationPreferences(input: {
+  inAppEnabled?: boolean;
+  emailEnabled?: boolean;
+  webhookEnabled?: boolean;
+  muteAll?: boolean;
+  preferences?: Record<string, unknown> | null;
+}) {
+  const data = await socialFetch("/api/social/notifications/preferences", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return data.preferences as {
+    inAppEnabled: boolean;
+    emailEnabled: boolean;
+    webhookEnabled: boolean;
+    muteAll: boolean;
+    preferences: Record<string, unknown> | null;
+  };
 }

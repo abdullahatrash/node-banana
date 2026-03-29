@@ -19,6 +19,7 @@ interface SocialComposerState {
 
   // Edit mode
   postId: string | null
+  editSourceAccountId: string | null
   isDirty: boolean
   autoSaveTimer: ReturnType<typeof setTimeout> | null
 
@@ -52,6 +53,7 @@ const INITIAL_STATE = {
   scheduledAt: null,
   platformSettings: {},
   postId: null,
+  editSourceAccountId: null,
   isDirty: false,
   autoSaveTimer: null,
 }
@@ -128,6 +130,7 @@ export const useSocialComposerStore = create<SocialComposerState>(
     loadDraft: (draft) => {
       set({
         postId: draft.postId,
+        editSourceAccountId: draft.socialAccountId,
         content: draft.content ?? "",
         mediaUrls: (draft.mediaUrls as ComposerMediaItem[]) ?? [],
         scheduledAt: draft.scheduledAt ? new Date(draft.scheduledAt) : null,

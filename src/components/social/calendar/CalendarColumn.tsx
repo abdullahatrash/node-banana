@@ -8,7 +8,6 @@ import { updateSocialPost } from "@/lib/social/client"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useToast } from "@/components/Toast"
 import type { SocialPost } from "@/lib/social/client"
-import type { SocialPlatform } from "@/lib/db/schema"
 
 interface CalendarColumnProps {
   date: Date
@@ -27,11 +26,17 @@ export function CalendarColumn({ date, hour, posts }: CalendarColumnProps) {
 
   const [{ isOver, canDrop }, dropRef] = useDrop(() => ({
     accept: POST_DND_TYPE,
-    canDrop: () => !isInPast,
+    canDrop: (item: { postId: string; status: string }) =>
+      !isInPast && item.status !== "published" && item.status !== "publishing",
     drop: async (item: { postId: string; status: string }) => {
       if (isInPast) return
 
-      if (item.status === "published" || item.status === "queued") {
+      if (item.status === "published" || item.status === "publishing") {
+        showToast("Published posts cannot be rescheduled.", "warning")
+        return
+      }
+
+      if (item.status === "queued") {
         if (!confirm("Reschedule this post to the new time?")) return
       }
 
@@ -74,11 +79,7 @@ export function CalendarColumn({ date, hour, posts }: CalendarColumnProps) {
       }`}
     >
       {posts.map((post) => (
-        <CalendarPostCard
-          key={post.id}
-          post={post}
-          platform={post.socialAccountId ? undefined : undefined}
-        />
+        <CalendarPostCard key={post.id} post={post} />
       ))}
     </div>
   )

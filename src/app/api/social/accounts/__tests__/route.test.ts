@@ -5,10 +5,14 @@ const mockWithApiPermission = vi.fn();
 const mockListSocialAccounts = vi.fn();
 const mockGetSocialAccount = vi.fn();
 const mockDisconnectSocialAccount = vi.fn();
+const mockUpdateSocialAccount = vi.fn();
+const mockCountSocialPostsForAccount = vi.fn();
 const mockCreateOAuthState = vi.fn();
 const mockConsumeOAuthState = vi.fn();
+const mockGetOAuthStateByState = vi.fn();
 const mockCreateOAuthSelectionSession = vi.fn();
 const mockConsumeOAuthSelectionSession = vi.fn();
+const mockGetOAuthSelectionSession = vi.fn();
 const mockCountActiveSocialAccounts = vi.fn();
 const mockUpsertSocialAccount = vi.fn();
 const mockGetProvider = vi.fn();
@@ -30,10 +34,16 @@ vi.mock("@/lib/social/repository", () => ({
   listSocialAccounts: (...args: unknown[]) => mockListSocialAccounts(...args),
   getSocialAccount: (...args: unknown[]) => mockGetSocialAccount(...args),
   disconnectSocialAccount: (...args: unknown[]) => mockDisconnectSocialAccount(...args),
+  updateSocialAccount: (...args: unknown[]) => mockUpdateSocialAccount(...args),
+  countSocialPostsForAccount: (...args: unknown[]) =>
+    mockCountSocialPostsForAccount(...args),
   createOAuthState: (...args: unknown[]) => mockCreateOAuthState(...args),
   consumeOAuthState: (...args: unknown[]) => mockConsumeOAuthState(...args),
+  getOAuthStateByState: (...args: unknown[]) => mockGetOAuthStateByState(...args),
   createOAuthSelectionSession: (...args: unknown[]) => mockCreateOAuthSelectionSession(...args),
   consumeOAuthSelectionSession: (...args: unknown[]) => mockConsumeOAuthSelectionSession(...args),
+  getOAuthSelectionSession: (...args: unknown[]) =>
+    mockGetOAuthSelectionSession(...args),
   countActiveSocialAccounts: (...args: unknown[]) => mockCountActiveSocialAccounts(...args),
   upsertSocialAccount: (...args: unknown[]) => mockUpsertSocialAccount(...args),
   SocialAccountNotFoundError: class extends Error {
@@ -97,6 +107,7 @@ function createRequest(
 describe("/api/social/accounts GET", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCountSocialPostsForAccount.mockResolvedValue(0);
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -407,7 +418,7 @@ describe("/api/social/accounts/select-page POST", () => {
 
   it("uses selection session to complete page connect without raw client tokens", async () => {
     authorized();
-    mockConsumeOAuthSelectionSession.mockResolvedValue({
+    const selectionSession = {
       id: "sosel_1",
       workspaceId: "ws_1",
       platform: "facebook",
@@ -416,7 +427,9 @@ describe("/api/social/accounts/select-page POST", () => {
       accessTokenSecret: null,
       tokenExpiresAt: new Date("2026-01-01T00:00:00.000Z"),
       expiresAt: new Date("2026-01-01T00:10:00.000Z"),
-    });
+    };
+    mockGetOAuthSelectionSession.mockResolvedValue(selectionSession);
+    mockConsumeOAuthSelectionSession.mockResolvedValue(selectionSession);
     mockDecryptToken.mockReturnValue("plain_access");
     mockGetProvider.mockReturnValue({
       fetchPageInformation: vi.fn().mockResolvedValue([
@@ -448,6 +461,11 @@ describe("/api/social/accounts/select-page POST", () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.account).not.toHaveProperty("accessTokenEncrypted");
+    expect(mockGetOAuthSelectionSession).toHaveBeenCalledWith({
+      selectionSessionId: "sosel_1",
+      workspaceId: "ws_1",
+      platform: "facebook",
+    });
     expect(mockConsumeOAuthSelectionSession).toHaveBeenCalledWith({
       selectionSessionId: "sosel_1",
       workspaceId: "ws_1",
@@ -473,6 +491,7 @@ describe("/api/social/accounts/[accountId] DELETE", () => {
 
   it("disconnects account successfully", async () => {
     authorized();
+    mockCountSocialPostsForAccount.mockResolvedValue(0);
     mockDisconnectSocialAccount.mockResolvedValue(undefined);
 
     const mod = await import("../../accounts/[accountId]/route");
@@ -484,11 +503,13 @@ describe("/api/social/accounts/[accountId] DELETE", () => {
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
+    expect(mockCountSocialPostsForAccount).toHaveBeenCalledWith("ws_1", "sacct_1");
     expect(mockDisconnectSocialAccount).toHaveBeenCalledWith("ws_1", "sacct_1");
   });
 
   it("returns 404 for unknown account", async () => {
     authorized();
+    mockCountSocialPostsForAccount.mockResolvedValue(0);
     const { SocialAccountNotFoundError } = await import("@/lib/social/repository");
     mockDisconnectSocialAccount.mockRejectedValue(new SocialAccountNotFoundError("sacct_missing"));
 
@@ -499,5 +520,38 @@ describe("/api/social/accounts/[accountId] DELETE", () => {
     );
 
     expect(response.status).toBe(404);
+  });
+
+  it("returns 409 when account has linked posts without force", async () => {
+    authorized();
+    mockCountSocialPostsForAccount.mockResolvedValue(3);
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.DELETE(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+
+    expect(response.status).toBe(409);
+    expect(mockDisconnectSocialAccount).not.toHaveBeenCalled();
+  });
+
+  it("allows force disconnect when account has linked posts", async () => {
+    authorized();
+    mockCountSocialPostsForAccount.mockResolvedValue(3);
+    mockDisconnectSocialAccount.mockResolvedValue(undefined);
+
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.DELETE(
+      createRequest(
+        "http://localhost:3000/api/social/accounts/sacct_1?force=true",
+        { method: "DELETE" },
+      ),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockDisconnectSocialAccount).toHaveBeenCalledWith("ws_1", "sacct_1");
   });
 });
