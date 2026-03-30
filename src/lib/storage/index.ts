@@ -1,9 +1,18 @@
 import {
+  abortMultipartUpload,
   buildAssetObjectKey,
+  buildCdnDownloadUrl,
+  completeMultipartUpload,
+  copyObjectInS3,
+  createMultipartUpload,
   createPresignedDownload,
   createPresignedUpload,
+  deleteObjectFromS3,
+  listObjectsInS3,
   objectExistsInS3,
+  presignUploadPart,
   putObjectToS3,
+  streamUploadToS3,
   isS3Configured,
 } from "./s3";
 
@@ -65,10 +74,19 @@ export function isCloudMode(): boolean {
 }
 
 export {
+  abortMultipartUpload,
   buildAssetObjectKey,
+  buildCdnDownloadUrl,
+  completeMultipartUpload,
+  copyObjectInS3,
+  createMultipartUpload,
   createPresignedDownload,
   createPresignedUpload,
+  deleteObjectFromS3,
+  listObjectsInS3,
   objectExistsInS3,
+  presignUploadPart,
   putObjectToS3,
+  streamUploadToS3,
   isS3Configured,
 };

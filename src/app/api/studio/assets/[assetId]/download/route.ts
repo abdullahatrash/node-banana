@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
-import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
+import { buildCdnDownloadUrl, canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { getAsset } from "@/lib/studio/repository";
 
@@ -99,6 +99,16 @@ export async function GET(
         },
         { status: 409 },
       );
+    }
+
+    const cdnUrl = buildCdnDownloadUrl({ key: asset.storageKey });
+    if (cdnUrl) {
+      return NextResponse.json({
+        success: true,
+        assetId: asset.id,
+        key: asset.storageKey,
+        downloadUrl: cdnUrl,
+      });
     }
 
     const signed = await createPresignedDownload({

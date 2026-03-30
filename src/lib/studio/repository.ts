@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   assetTypeEnum,
@@ -902,4 +902,73 @@ export async function softDeleteAsset(workspaceId: string, assetId: string) {
     .returning();
 
   return asset ?? null;
+}
+
+export async function listExpiredPendingAssets(params: {
+  limit?: number;
+}) {
+  const db = getDb();
+  const limit = params.limit ?? 100;
+
+  return db
+    .select({
+      id: assets.id,
+      workspaceId: assets.workspaceId,
+      storageKey: assets.storageKey,
+    })
+    .from(assets)
+    .where(
+      and(
+        isNull(assets.deletedAt),
+        eq(assets.storageProvider, "s3"),
+        sql`${assets.metadata} ->> 'uploadState' = 'pending'`,
+        sql`(${assets.metadata} ->> 'pendingExpiresAt')::timestamptz < now()`,
+      ),
+    )
+    .orderBy(asc(assets.createdAt))
+    .limit(limit);
+}
+
+export async function listPurgeableSoftDeletedAssets(params: {
+  retentionDays?: number;
+  limit?: number;
+}) {
+  const db = getDb();
+  const retentionDays = params.retentionDays ?? 30;
+  const limit = params.limit ?? 100;
+
+  return db
+    .select({
+      id: assets.id,
+      workspaceId: assets.workspaceId,
+      storageProvider: assets.storageProvider,
+      storageKey: assets.storageKey,
+      sizeBytes: assets.sizeBytes,
+    })
+    .from(assets)
+    .where(
+      and(
+        isNotNull(assets.deletedAt),
+        eq(assets.storageProvider, "s3"),
+        lt(assets.deletedAt, sql`now() - make_interval(days => ${retentionDays})`),
+      ),
+    )
+    .orderBy(asc(assets.deletedAt))
+    .limit(limit);
+}
+
+export async function hardDeleteAsset(params: { assetId: string }): Promise<boolean> {
+  const db = getDb();
+
+  const deleted = await db
+    .delete(assets)
+    .where(
+      and(
+        eq(assets.id, params.assetId),
+        isNotNull(assets.deletedAt),
+      ),
+    )
+    .returning({ id: assets.id });
+
+  return deleted.length > 0;
 }
