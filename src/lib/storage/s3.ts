@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
+  CopyObjectCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
@@ -332,6 +334,45 @@ export async function abortMultipartUpload(params: {
       Bucket: config.bucket,
       Key: params.key,
       UploadId: params.uploadId,
+    }),
+  );
+}
+
+export async function listObjectsInS3(params: {
+  prefix: string;
+  maxKeys?: number;
+  continuationToken?: string;
+}): Promise<{ keys: string[]; nextContinuationToken?: string }> {
+  const config = getS3ConfigFromEnv();
+  const client = createS3Client(config);
+  const result = await client.send(
+    new ListObjectsV2Command({
+      Bucket: config.bucket,
+      Prefix: params.prefix,
+      MaxKeys: params.maxKeys ?? 1000,
+      ContinuationToken: params.continuationToken,
+    }),
+  );
+  const keys = (result.Contents ?? [])
+    .map((obj) => obj.Key)
+    .filter((key): key is string => Boolean(key));
+  return {
+    keys,
+    nextContinuationToken: result.NextContinuationToken ?? undefined,
+  };
+}
+
+export async function copyObjectInS3(params: {
+  sourceKey: string;
+  destinationKey: string;
+}): Promise<void> {
+  const config = getS3ConfigFromEnv();
+  const client = createS3Client(config);
+  await client.send(
+    new CopyObjectCommand({
+      Bucket: config.bucket,
+      CopySource: `${config.bucket}/${params.sourceKey}`,
+      Key: params.destinationKey,
     }),
   );
 }
