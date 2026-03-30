@@ -1,10 +1,14 @@
 import {
+  abortMultipartUpload,
   buildAssetObjectKey,
   buildCdnDownloadUrl,
+  completeMultipartUpload,
+  createMultipartUpload,
   createPresignedDownload,
   createPresignedUpload,
   deleteObjectFromS3,
   objectExistsInS3,
+  presignUploadPart,
   putObjectToS3,
   streamUploadToS3,
   isS3Configured,
@@ -68,12 +72,16 @@ export function isCloudMode(): boolean {
 }
 
 export {
+  abortMultipartUpload,
   buildAssetObjectKey,
   buildCdnDownloadUrl,
+  completeMultipartUpload,
+  createMultipartUpload,
   createPresignedDownload,
   createPresignedUpload,
   deleteObjectFromS3,
   objectExistsInS3,
+  presignUploadPart,
   putObjectToS3,
   streamUploadToS3,
   isS3Configured,

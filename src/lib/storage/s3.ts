@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -255,6 +259,81 @@ export function buildCdnDownloadUrl(params: { key: string }): string | null {
   if (!cdnBaseUrl) return null;
   const base = cdnBaseUrl.replace(/\/+$/, "");
   return `${base}/${params.key}`;
+}
+
+export async function createMultipartUpload(params: {
+  key: string;
+  contentType: string;
+}): Promise<{ uploadId: string; key: string }> {
+  const config = getS3ConfigFromEnv();
+  const client = createS3Client(config);
+  const result = await client.send(
+    new CreateMultipartUploadCommand({
+      Bucket: config.bucket,
+      Key: params.key,
+      ContentType: params.contentType,
+    }),
+  );
+  if (!result.UploadId) {
+    throw new Error("Failed to initiate multipart upload: no UploadId returned.");
+  }
+  return { uploadId: result.UploadId, key: params.key };
+}
+
+export async function presignUploadPart(params: {
+  key: string;
+  uploadId: string;
+  partNumber: number;
+  expiresInSeconds?: number;
+}): Promise<{ uploadUrl: string; partNumber: number }> {
+  const config = getS3ConfigFromEnv();
+  const client = createS3Client(config);
+  const expiresInSeconds = params.expiresInSeconds ?? 900;
+  const command = new UploadPartCommand({
+    Bucket: config.bucket,
+    Key: params.key,
+    UploadId: params.uploadId,
+    PartNumber: params.partNumber,
+  });
+  const uploadUrl = await getSignedUrl(client, command, { expiresIn: expiresInSeconds });
+  return { uploadUrl, partNumber: params.partNumber };
+}
+
+export async function completeMultipartUpload(params: {
+  key: string;
+  uploadId: string;
+  parts: Array<{ partNumber: number; eTag: string }>;
+}): Promise<void> {
+  const config = getS3ConfigFromEnv();
+  const client = createS3Client(config);
+  await client.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: config.bucket,
+      Key: params.key,
+      UploadId: params.uploadId,
+      MultipartUpload: {
+        Parts: params.parts.map((p) => ({
+          PartNumber: p.partNumber,
+          ETag: p.eTag,
+        })),
+      },
+    }),
+  );
+}
+
+export async function abortMultipartUpload(params: {
+  key: string;
+  uploadId: string;
+}): Promise<void> {
+  const config = getS3ConfigFromEnv();
+  const client = createS3Client(config);
+  await client.send(
+    new AbortMultipartUploadCommand({
+      Bucket: config.bucket,
+      Key: params.key,
+      UploadId: params.uploadId,
+    }),
+  );
 }
 
 export function isS3Configured(): boolean {
