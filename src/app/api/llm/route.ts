@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { LLMGenerateRequest, LLMGenerateResponse, LLMModelType } from "@/types";
 import { logger } from "@/utils/logger";
+import { resolveAssetRefsInPayload } from "../generate/assetResolver";
+import { isS3Configured } from "@/lib/storage/s3";
 
 export const maxDuration = 60; // 1 minute timeout
 
@@ -299,14 +301,21 @@ export async function POST(request: NextRequest) {
     const anthropicApiKey = request.headers.get("X-Anthropic-API-Key");
 
     const body: LLMGenerateRequest = await request.json();
+    let { images } = body;
     const {
       prompt,
-      images,
       provider,
       model,
       temperature = 0.7,
       maxTokens = 1024
     } = body;
+
+    // Resolve asset references (asset_xxx → base64) when S3 is configured
+    const workspaceId = request.headers.get("x-workspace-id");
+    if (isS3Configured() && workspaceId && images && images.length > 0) {
+      const resolved = await resolveAssetRefsInPayload({ images, workspaceId });
+      images = resolved.images;
+    }
 
     logger.info('api.llm', 'LLM generation request received', {
       requestId,

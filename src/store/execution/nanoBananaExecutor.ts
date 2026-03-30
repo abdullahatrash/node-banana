@@ -12,6 +12,7 @@ import { calculateGenerationCost } from "@/utils/costCalculator";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
 import { isCloudMode } from "@/lib/storage";
 import { syncStudioAssetFromSaveResult, syncStudioAssetFromSource } from "./studioAssetSync";
+import { uploadImagesToR2 } from "./uploadInputAssets";
 import type { NodeExecutionContext } from "./types";
 
 export interface NanoBananaOptions {
@@ -96,8 +97,17 @@ export async function executeNanoBanana(
   const sanitizedDynamicInputs = { ...dynamicInputs };
   delete sanitizedDynamicInputs.prompt;
 
+  // Upload images to R2 in cloud mode to avoid Vercel payload limits
+  const projectId = (get() as { workflowId?: string | null } | undefined)?.workflowId ?? null;
+  const { images: resolvedImages, dynamicInputs: resolvedDynamicInputs } =
+    await uploadImagesToR2({
+      images,
+      dynamicInputs: sanitizedDynamicInputs,
+      projectId,
+    });
+
   const requestPayload = {
-    images,
+    images: resolvedImages,
     prompt: promptText,
     aspectRatio: nodeData.aspectRatio,
     resolution: nodeData.resolution,
@@ -106,7 +116,7 @@ export async function executeNanoBanana(
     useImageSearch: nodeData.useImageSearch,
     selectedModel: nodeData.selectedModel,
     parameters: nodeData.parameters,
-    dynamicInputs: sanitizedDynamicInputs,
+    dynamicInputs: resolvedDynamicInputs,
   };
 
   // Final guard: assert that prompt is a string before sending to API
