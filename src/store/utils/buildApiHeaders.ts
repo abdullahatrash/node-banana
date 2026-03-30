@@ -5,6 +5,8 @@
  * across executeWorkflow and regenerateNode.
  */
 
+import { isCloudMode } from "@/lib/storage";
+import { getActiveWorkspaceId } from "@/lib/studio/client";
 import { ProviderType, ProviderSettings, LLMProvider } from "@/types";
 
 /**
@@ -19,6 +21,15 @@ const PROVIDER_HEADER_MAP: Record<ProviderType, string> = {
   openai: "X-OpenAI-API-Key",
   anthropic: "X-Anthropic-API-Key",
 };
+
+function addWorkspaceHeader(headers: Record<string, string>): void {
+  if (isCloudMode()) {
+    const workspaceId = getActiveWorkspaceId();
+    if (workspaceId) {
+      headers["x-workspace-id"] = workspaceId;
+    }
+  }
+}
 
 /**
  * Build headers for image/video generation API calls.
@@ -41,6 +52,7 @@ export function buildGenerateHeaders(
     }
   }
 
+  addWorkspaceHeader(headers);
   return headers;
 }
 
@@ -73,5 +85,6 @@ export function buildLlmHeaders(
     }
   }
 
+  addWorkspaceHeader(headers);
   return headers;
 }
