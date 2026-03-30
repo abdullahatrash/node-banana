@@ -1,10 +1,12 @@
 import {
   buildAssetObjectKey,
+  buildCdnDownloadUrl,
   createPresignedDownload,
   createPresignedUpload,
   deleteObjectFromS3,
   objectExistsInS3,
   putObjectToS3,
+  streamUploadToS3,
   isS3Configured,
 } from "./s3";
 
@@ -67,10 +69,12 @@ export function isCloudMode(): boolean {
 
 export {
   buildAssetObjectKey,
+  buildCdnDownloadUrl,
   createPresignedDownload,
   createPresignedUpload,
   deleteObjectFromS3,
   objectExistsInS3,
   putObjectToS3,
+  streamUploadToS3,
   isS3Configured,
 };

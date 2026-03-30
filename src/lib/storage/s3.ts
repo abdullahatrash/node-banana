@@ -6,7 +6,9 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Readable } from "node:stream";
 
 export interface S3StorageConfig {
   bucket: string;
@@ -195,6 +197,64 @@ export async function deleteObjectFromS3(params: { key: string }): Promise<void>
       Key: params.key,
     }),
   );
+}
+
+export async function streamUploadToS3(params: {
+  key: string;
+  body: ReadableStream<Uint8Array> | NodeJS.ReadableStream;
+  contentType: string;
+  contentLength?: number;
+}): Promise<{ sizeBytes: number }> {
+  const config = getS3ConfigFromEnv();
+  const client = createS3Client(config);
+
+  // Convert web ReadableStream to Node.js Readable if needed
+  const nodeStream =
+    params.body instanceof Readable
+      ? params.body
+      : Readable.fromWeb(params.body as import("node:stream/web").ReadableStream);
+
+  let sizeBytes = 0;
+  const countingStream = new Readable({
+    read() {
+      // no-op — data is pushed from the pipe
+    },
+  });
+
+  nodeStream.on("data", (chunk: Buffer | Uint8Array) => {
+    sizeBytes += chunk.length;
+    countingStream.push(chunk);
+  });
+  nodeStream.on("end", () => {
+    countingStream.push(null);
+  });
+  nodeStream.on("error", (err) => {
+    countingStream.destroy(err);
+  });
+
+  const upload = new Upload({
+    client,
+    params: {
+      Bucket: config.bucket,
+      Key: params.key,
+      Body: countingStream,
+      ContentType: params.contentType,
+      ...(params.contentLength != null ? { ContentLength: params.contentLength } : {}),
+    },
+    partSize: 10 * 1024 * 1024, // 10 MB
+    queueSize: 2,
+  });
+
+  await upload.done();
+
+  return { sizeBytes };
+}
+
+export function buildCdnDownloadUrl(params: { key: string }): string | null {
+  const cdnBaseUrl = process.env.CDN_BASE_URL;
+  if (!cdnBaseUrl) return null;
+  const base = cdnBaseUrl.replace(/\/+$/, "");
+  return `${base}/${params.key}`;
 }
 
 export function isS3Configured(): boolean {

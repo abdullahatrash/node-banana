@@ -5,7 +5,9 @@ import {
   buildAssetObjectKey,
   canUseS3Storage,
   createPresignedDownload,
+  deleteObjectFromS3,
   putObjectToS3,
+  streamUploadToS3,
 } from "@/lib/storage";
 import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import {
@@ -98,7 +100,11 @@ function sanitizeFileName(fileName?: string): string | null {
   return trimmed.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-async function fetchRemoteBytes(sourceUrl: string): Promise<{ mimeType: string | null; bytes: Buffer }> {
+async function fetchRemoteStream(sourceUrl: string): Promise<{
+  mimeType: string | null;
+  body: ReadableStream<Uint8Array>;
+  contentLength: number | null;
+}> {
   let parsed: URL;
   try {
     parsed = new URL(sourceUrl);
@@ -119,34 +125,39 @@ async function fetchRemoteBytes(sourceUrl: string): Promise<{ mimeType: string |
       throw new Error(`Failed to fetch sourceUrl: HTTP ${response.status}`);
     }
 
-    const contentLength = response.headers.get("content-length");
-    if (contentLength) {
-      const length = Number(contentLength);
-      if (Number.isFinite(length) && length > MAX_INGEST_BYTES) {
-        throw new Error(`Source size exceeds ${MAX_INGEST_BYTES} bytes.`);
+    const contentLengthHeader = response.headers.get("content-length");
+    let contentLength: number | null = null;
+    if (contentLengthHeader) {
+      const length = Number(contentLengthHeader);
+      if (Number.isFinite(length)) {
+        if (length > MAX_INGEST_BYTES) {
+          throw new Error(`Source size exceeds ${MAX_INGEST_BYTES} bytes.`);
+        }
+        contentLength = length;
       }
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    if (arrayBuffer.byteLength > MAX_INGEST_BYTES) {
-      throw new Error(`Source size exceeds ${MAX_INGEST_BYTES} bytes.`);
     }
 
     const contentType = response.headers.get("content-type");
     const mimeType = contentType ? contentType.split(";")[0].trim().toLowerCase() : null;
 
+    if (!response.body) {
+      throw new Error("sourceUrl response has no body.");
+    }
+
     return {
       mimeType,
-      bytes: Buffer.from(arrayBuffer),
+      body: response.body,
+      contentLength,
     };
   } catch (error) {
+    clearTimeout(timeout);
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error(`sourceUrl fetch timed out after ${FETCH_TIMEOUT_MS}ms.`);
     }
     throw error;
-  } finally {
-    clearTimeout(timeout);
   }
+  // Note: timeout is NOT cleared here — it stays active during streaming
+  // to enforce the overall fetch timeout for the stream consumption.
 }
 
 export async function POST(
@@ -228,38 +239,75 @@ export async function POST(
       }
     }
 
-    let bytes: Buffer;
-    let sourceMimeType: string | null;
-
     if (hasDataUrl) {
+      // Data URL path: already in memory, use direct putObject
       const parsed = parseDataUrl(body.sourceDataUrl!);
-      bytes = parsed.bytes;
-      sourceMimeType = parsed.mimeType;
-    } else {
-      const fetched = await fetchRemoteBytes(body.sourceUrl!.trim());
-      bytes = fetched.bytes;
-      sourceMimeType = fetched.mimeType;
+      const bytes = parsed.bytes;
+      const sourceMimeType = parsed.mimeType;
+
+      if (bytes.length === 0) {
+        return NextResponse.json(
+          { success: false, error: "Source content is empty." },
+          { status: 400 },
+        );
+      }
+
+      if (bytes.length > MAX_INGEST_BYTES) {
+        return NextResponse.json(
+          { success: false, error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.` },
+          { status: 413 },
+        );
+      }
+
+      uploadMimeType = (body.contentType?.trim().toLowerCase() || sourceMimeType || pickDefaultMimeType(body.assetType));
+      const sanitizedName = sanitizeFileName(body.fileName);
+      const extension =
+        getExtensionFromFileName(sanitizedName || undefined) ||
+        getExtensionForMimeType(uploadMimeType, "bin");
+
+      const key = buildAssetObjectKey({
+        workspaceId: authz.workspaceId,
+        projectId,
+        assetType: body.assetType,
+        fileExtension: extension,
+      });
+
+      const pending = await recordPendingS3AssetWithQuota({
+        workspaceId: authz.workspaceId,
+        userId: authz.userId,
+        projectId,
+        type: body.assetType,
+        storageBucket: process.env.S3_BUCKET_NAME || null,
+        storageKey: key,
+        mimeType: uploadMimeType,
+        originalFileName: sanitizedName,
+        expectedSizeBytes: bytes.length,
+      });
+      createdAssetId = pending.id;
+
+      await putObjectToS3({ key, body: bytes, contentType: uploadMimeType });
+
+      await finalizeAssetUpload({
+        workspaceId: authz.workspaceId,
+        assetId: pending.id,
+        uploadState: "ready",
+        sizeBytes: bytes.length,
+        mimeType: uploadMimeType,
+      });
+
+      const signed = await createPresignedDownload({ key });
+      return NextResponse.json({
+        success: true,
+        assetId: pending.id,
+        key,
+        downloadUrl: signed.downloadUrl,
+        expiresInSeconds: signed.expiresInSeconds,
+      });
     }
 
-    if (bytes.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Source content is empty.",
-        },
-        { status: 400 },
-      );
-    }
-
-    if (bytes.length > MAX_INGEST_BYTES) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.`,
-        },
-        { status: 413 },
-      );
-    }
+    // Remote URL path: stream directly to S3 without buffering
+    const fetched = await fetchRemoteStream(body.sourceUrl!.trim());
+    const sourceMimeType = fetched.mimeType;
 
     uploadMimeType = (body.contentType?.trim().toLowerCase() || sourceMimeType || pickDefaultMimeType(body.assetType));
     const sanitizedName = sanitizeFileName(body.fileName);
@@ -274,6 +322,9 @@ export async function POST(
       fileExtension: extension,
     });
 
+    // Use content-length for quota if available, otherwise reserve max
+    const expectedSizeBytes = fetched.contentLength ?? MAX_INGEST_BYTES;
+
     const pending = await recordPendingS3AssetWithQuota({
       workspaceId: authz.workspaceId,
       userId: authz.userId,
@@ -283,26 +334,54 @@ export async function POST(
       storageKey: key,
       mimeType: uploadMimeType,
       originalFileName: sanitizedName,
-      expectedSizeBytes: bytes.length,
+      expectedSizeBytes,
     });
     createdAssetId = pending.id;
 
-    await putObjectToS3({
+    const { sizeBytes } = await streamUploadToS3({
       key,
-      body: bytes,
+      body: fetched.body,
       contentType: uploadMimeType,
+      contentLength: fetched.contentLength ?? undefined,
     });
+
+    if (sizeBytes === 0) {
+      await deleteObjectFromS3({ key }).catch(() => {});
+      await finalizeAssetUpload({
+        workspaceId: authz.workspaceId,
+        assetId: pending.id,
+        uploadState: "failed",
+        error: "Source content is empty.",
+      });
+      return NextResponse.json(
+        { success: false, error: "Source content is empty." },
+        { status: 400 },
+      );
+    }
+
+    if (sizeBytes > MAX_INGEST_BYTES) {
+      await deleteObjectFromS3({ key }).catch(() => {});
+      await finalizeAssetUpload({
+        workspaceId: authz.workspaceId,
+        assetId: pending.id,
+        uploadState: "failed",
+        error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.`,
+      });
+      return NextResponse.json(
+        { success: false, error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.` },
+        { status: 413 },
+      );
+    }
 
     await finalizeAssetUpload({
       workspaceId: authz.workspaceId,
       assetId: pending.id,
       uploadState: "ready",
-      sizeBytes: bytes.length,
+      sizeBytes,
       mimeType: uploadMimeType,
     });
 
     const signed = await createPresignedDownload({ key });
-
     return NextResponse.json({
       success: true,
       assetId: pending.id,
