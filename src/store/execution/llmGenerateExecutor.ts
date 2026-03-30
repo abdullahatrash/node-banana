@@ -7,6 +7,7 @@
 
 import type { LLMGenerateNodeData } from "@/types";
 import { buildLlmHeaders } from "@/store/utils/buildApiHeaders";
+import { uploadImagesToR2 } from "./uploadInputAssets";
 import type { NodeExecutionContext } from "./types";
 
 export interface LlmGenerateOptions {
@@ -24,6 +25,7 @@ export async function executeLlmGenerate(
     updateNodeData,
     signal,
     providerSettings,
+    get,
   } = ctx;
 
   const { useStoredFallback = false } = options;
@@ -60,13 +62,17 @@ export async function executeLlmGenerate(
 
   const headers = buildLlmHeaders(nodeData.provider, providerSettings);
 
+  // Upload images to R2 in cloud mode to avoid Vercel payload limits
+  const projectId = (get() as { workflowId?: string | null }).workflowId || null;
+  const { images: resolvedImages } = await uploadImagesToR2({ images, projectId });
+
   try {
     const response = await fetch("/api/llm", {
       method: "POST",
       headers,
       body: JSON.stringify({
         prompt: text,
-        ...(images.length > 0 && { images }),
+        ...(resolvedImages.length > 0 && { images: resolvedImages }),
         provider: nodeData.provider,
         model: nodeData.model,
         temperature: nodeData.temperature,

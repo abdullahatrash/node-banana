@@ -9,6 +9,7 @@ import type { Generate3DNodeData } from "@/types";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
 import { isCloudMode } from "@/lib/storage";
 import { syncStudioAssetFromSaveResult, syncStudioAssetFromSource } from "./studioAssetSync";
+import { uploadImagesToR2 } from "./uploadInputAssets";
 import type { NodeExecutionContext } from "./types";
 
 export interface Generate3DOptions {
@@ -75,12 +76,17 @@ export async function executeGenerate3D(
   const provider = nodeData.selectedModel?.provider || "fal";
   const headers = buildGenerateHeaders(provider, providerSettings);
 
+  // Upload images to R2 in cloud mode to avoid Vercel payload limits
+  const projectId = (get() as { workflowId?: string | null }).workflowId || null;
+  const { images: resolvedImages, dynamicInputs: resolvedDynamicInputs } =
+    await uploadImagesToR2({ images, dynamicInputs, projectId });
+
   const requestPayload = {
-    images,
+    images: resolvedImages,
     prompt: promptText || "",
     selectedModel: nodeData.selectedModel,
     parameters: nodeData.parameters,
-    dynamicInputs,
+    dynamicInputs: resolvedDynamicInputs,
     mediaType: "3d" as const,
   };
 
