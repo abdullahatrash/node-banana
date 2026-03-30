@@ -9,45 +9,59 @@ import {
   parseJSONFromResponse,
 } from "@/lib/quickstart/validation";
 import { ImageInputNodeData } from "@/types";
-import fs from "fs/promises";
-import path from "path";
+import { headers } from "next/headers";
 
 export const maxDuration = 60; // 1 minute timeout
 
 /**
- * Convert local image paths (e.g., /sample-images/model.jpg) to base64 data URLs
+ * Build the base URL for fetching public assets.
+ * Works both locally (localhost) and on Vercel (where fs.readFile can't access public/).
  */
-async function convertLocalImagesToBase64(workflow: WorkflowFile): Promise<WorkflowFile> {
+function getBaseUrl(requestHeaders: Headers): string {
+  const forwardedProto = requestHeaders.get("x-forwarded-proto") || "http";
+  const host = requestHeaders.get("host") || "localhost:3000";
+  return `${forwardedProto}://${host}`;
+}
+
+/**
+ * Convert local image paths (e.g., /sample-images/model.jpg) to base64 data URLs.
+ * Uses HTTP fetch instead of fs.readFile so it works on serverless platforms (Vercel)
+ * where the public/ folder is served via CDN, not available on the filesystem.
+ */
+async function convertLocalImagesToBase64(
+  workflow: WorkflowFile,
+  baseUrl: string,
+): Promise<WorkflowFile> {
   const updatedNodes = await Promise.all(
     workflow.nodes.map(async (node) => {
       if (node.type === "imageInput") {
         const data = node.data as ImageInputNodeData;
-        // Check if image is a local path (starts with /sample-images/)
         if (data.image && data.image.startsWith("/sample-images/")) {
           try {
-            // Read file from public folder
-            const publicPath = path.join(process.cwd(), "public", data.image);
-            const fileBuffer = await fs.readFile(publicPath);
-            const base64 = fileBuffer.toString("base64");
+            const imageUrl = `${baseUrl}${data.image}`;
+            const response = await fetch(imageUrl);
+            if (!response.ok) {
+              console.error(`Failed to fetch sample image: ${imageUrl} (${response.status})`);
+              return node;
+            }
 
-            // Determine MIME type from extension
-            const ext = path.extname(data.image).toLowerCase();
-            const mimeType = ext === ".png" ? "image/png"
-              : ext === ".webp" ? "image/webp"
+            const buffer = await response.arrayBuffer();
+            const base64 = Buffer.from(buffer).toString("base64");
+
+            const ext = data.image.split(".").pop()?.toLowerCase() || "jpg";
+            const mimeType = ext === "png" ? "image/png"
+              : ext === "webp" ? "image/webp"
               : "image/jpeg";
-
-            const dataUrl = `data:${mimeType};base64,${base64}`;
 
             return {
               ...node,
               data: {
                 ...data,
-                image: dataUrl,
+                image: `data:${mimeType};base64,${base64}`,
               },
             };
           } catch (error) {
             console.error(`Failed to convert image to base64: ${data.image}`, error);
-            // Return node unchanged if conversion fails
             return node;
           }
         }
@@ -94,8 +108,10 @@ export async function POST(request: NextRequest) {
       console.log(`[Quickstart:${requestId}] Using preset template: ${templateId}`);
       try {
         const workflow = getPresetTemplate(templateId, contentLevel);
-        // Convert any local image paths to base64 for the Gemini API
-        const workflowWithBase64 = await convertLocalImagesToBase64(workflow);
+        // Convert any local image paths to base64 via HTTP fetch (works on Vercel)
+        const requestHeaders = await headers();
+        const baseUrl = getBaseUrl(requestHeaders);
+        const workflowWithBase64 = await convertLocalImagesToBase64(workflow, baseUrl);
         console.log(`[Quickstart:${requestId}] Preset template loaded successfully`);
         return NextResponse.json<QuickstartResponse>({
           success: true,
