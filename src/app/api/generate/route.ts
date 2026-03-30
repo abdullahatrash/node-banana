@@ -13,6 +13,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GenerateRequest, GenerateResponse, ModelType, SelectedModel, ProviderType } from "@/types";
 import { GenerationInput, ModelCapability } from "@/lib/providers/types";
+import { resolveAssetRefsInPayload } from "./assetResolver";
+import { isS3Configured } from "@/lib/storage/s3";
 import { generateWithGemini, generateWithGeminiVideo } from "./providers/gemini";
 import { generateWithReplicate } from "./providers/replicate";
 import { clearFalInputMappingCache as _clearFalInputMappingCache, generateWithFalQueue } from "./providers/fal";
@@ -88,9 +90,12 @@ export async function POST(request: NextRequest) {
 
   try {
     const body: MultiProviderGenerateRequest = await request.json();
-    const {
+    let {
       images,
       prompt,
+      dynamicInputs,
+    } = body;
+    const {
       model = "nano-banana-pro",
       aspectRatio,
       resolution,
@@ -98,9 +103,20 @@ export async function POST(request: NextRequest) {
       useImageSearch,
       selectedModel,
       parameters,
-      dynamicInputs,
       mediaType,
     } = body;
+
+    // Resolve asset references (asset_xxx → base64) when S3 is configured
+    const workspaceId = request.headers.get("x-workspace-id");
+    if (isS3Configured() && workspaceId) {
+      const resolved = await resolveAssetRefsInPayload({
+        images,
+        dynamicInputs,
+        workspaceId,
+      });
+      images = resolved.images;
+      dynamicInputs = resolved.dynamicInputs as typeof dynamicInputs;
+    }
 
     // Prompt is required unless:
     // - Provided via dynamicInputs
