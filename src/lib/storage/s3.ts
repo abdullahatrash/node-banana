@@ -194,6 +194,25 @@ export async function createPresignedDownload(params: {
   };
 }
 
+export async function getObjectFromS3(params: {
+  key: string;
+}): Promise<{ body: Buffer; contentType: string | null }> {
+  const config = getS3ConfigFromEnv();
+  const client = createS3Client(config);
+  const response = await client.send(
+    new GetObjectCommand({
+      Bucket: config.bucket,
+      Key: params.key,
+    }),
+  );
+  const bytes = await response.Body?.transformToByteArray();
+  if (!bytes) throw new Error("Empty response body from S3");
+  return {
+    body: Buffer.from(bytes),
+    contentType: response.ContentType ?? null,
+  };
+}
+
 export async function deleteObjectFromS3(params: { key: string }): Promise<void> {
   const config = getS3ConfigFromEnv();
   const client = createS3Client(config);
