@@ -1958,8 +1958,10 @@ export function WorkflowCanvas() {
                   );
                   return;
                 }
-              } catch {
-                // If count check fails, proceed anyway — the API will enforce the limit on save
+              } catch (err) {
+                console.error("Failed to check project limit:", err);
+                showToast("Could not verify project limit. Please try again.", "error");
+                return;
               }
             }
 

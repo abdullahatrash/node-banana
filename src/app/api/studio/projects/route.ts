@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
-import { countProjects, listProjects, upsertProject } from "@/lib/studio/repository";
+import { countProjects, getProject, listProjects, upsertProject } from "@/lib/studio/repository";
 import { MAX_PROJECTS_PER_WORKSPACE } from "@/lib/studio/constants";
 
 interface ProjectsGetResponse {
@@ -101,8 +101,12 @@ export async function POST(
       return authzErrorResponse(authz);
     }
 
-    // Enforce project limit on new project creation (skip for updates to existing projects)
-    if (!body.projectId) {
+    // Enforce project limit: skip only for updates to projects that already exist in the DB
+    const isExistingProject = body.projectId
+      ? Boolean(await getProject(authz.workspaceId, body.projectId))
+      : false;
+
+    if (!isExistingProject) {
       const currentCount = await countProjects(authz.workspaceId);
       if (currentCount >= MAX_PROJECTS_PER_WORKSPACE) {
         return NextResponse.json(
