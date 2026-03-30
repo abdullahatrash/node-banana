@@ -32,31 +32,32 @@ export async function uploadImagesToR2(params: {
     return { images: params.images, dynamicInputs };
   }
 
-  // Dedup cache: data URL → asset ID
-  const uploadCache = new Map<string, string>();
+  // Dedup cache: data URL → promise of asset ID (prevents concurrent duplicate uploads)
+  const inflightUploads = new Map<string, Promise<string>>();
 
-  async function uploadOne(value: string): Promise<string> {
+  function uploadOne(value: string): Promise<string> {
     // Already an asset ref — no upload needed
-    if (isAssetIdRef(value)) return value;
+    if (isAssetIdRef(value)) return Promise.resolve(value);
     // Not a data URL — pass through (text, URLs, etc.)
-    if (!isDataUrl(value)) return value;
+    if (!isDataUrl(value)) return Promise.resolve(value);
 
-    // Check dedup cache
-    const cached = uploadCache.get(value);
-    if (cached) return cached;
+    // Return existing in-flight promise for same data URL
+    const inflight = inflightUploads.get(value);
+    if (inflight) return inflight;
 
-    try {
-      const result = await ingestStudioAsset({
-        projectId: params.projectId,
-        assetType: "image",
-        sourceDataUrl: value,
+    const uploadPromise = ingestStudioAsset({
+      projectId: params.projectId,
+      assetType: "image",
+      sourceDataUrl: value,
+    })
+      .then((result) => result.assetId)
+      .catch((err) => {
+        console.error("Failed to upload image to R2, falling back to base64:", err);
+        return value;
       });
-      uploadCache.set(value, result.assetId);
-      return result.assetId;
-    } catch (err) {
-      console.error("Failed to upload image to R2, falling back to base64:", err);
-      return value;
-    }
+
+    inflightUploads.set(value, uploadPromise);
+    return uploadPromise;
   }
 
   // Upload images array

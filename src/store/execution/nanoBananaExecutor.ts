@@ -98,7 +98,7 @@ export async function executeNanoBanana(
   delete sanitizedDynamicInputs.prompt;
 
   // Upload images to R2 in cloud mode to avoid Vercel payload limits
-  const projectId = (get() as { workflowId?: string | null }).workflowId || null;
+  const projectId = (get() as { workflowId?: string | null } | undefined)?.workflowId ?? null;
   const { images: resolvedImages, dynamicInputs: resolvedDynamicInputs } =
     await uploadImagesToR2({
       images,

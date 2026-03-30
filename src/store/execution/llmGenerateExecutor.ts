@@ -63,7 +63,7 @@ export async function executeLlmGenerate(
   const headers = buildLlmHeaders(nodeData.provider, providerSettings);
 
   // Upload images to R2 in cloud mode to avoid Vercel payload limits
-  const projectId = (get() as { workflowId?: string | null }).workflowId || null;
+  const projectId = (get() as { workflowId?: string | null } | undefined)?.workflowId ?? null;
   const { images: resolvedImages } = await uploadImagesToR2({ images, projectId });
 
   try {

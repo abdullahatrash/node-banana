@@ -6,6 +6,14 @@ import type { WorkflowNode } from "@/types";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
+// Mock uploadImagesToR2 to pass through (no R2 in tests)
+vi.mock("../uploadInputAssets", () => ({
+  uploadImagesToR2: vi.fn(async (params: { images: string[] }) => ({
+    images: params.images,
+    dynamicInputs: {},
+  })),
+}));
+
 const defaultProviderSettings = {
   providers: {
     gemini: { apiKey: "gkey" },
