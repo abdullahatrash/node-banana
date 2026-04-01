@@ -62,6 +62,8 @@ export interface SimpleStudioState {
   setDialogueText: (text: string) => void;
   dialogueLanguage: "ar" | "en";
   setDialogueLanguage: (lang: "ar" | "en") => void;
+  copyModelId: string;
+  setCopyModelId: (id: string) => void;
   tone: string;
   setTone: (tone: string) => void;
   platform: string;
@@ -148,6 +150,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setDialogueText: (text) => set({ dialogueText: text }),
   dialogueLanguage: "en",
   setDialogueLanguage: (lang) => set({ dialogueLanguage: lang }),
+  copyModelId: "gemini-2.5-flash",
+  setCopyModelId: (id) => set({ copyModelId: id }),
   tone: "professional",
   setTone: (tone) => set({ tone }),
   platform: "general",
@@ -221,29 +225,53 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         let result: string | null = null;
 
         if (state.mode === "copy") {
-          // Use /api/llm for copy mode
+          // Use /api/studio/copy streaming endpoint
           const langDirective = state.outputLanguage === "ar"
             ? "Write in Arabic only."
             : state.outputLanguage === "both"
               ? "Write in both Arabic and English."
               : "Write in English only.";
-          const fullPrompt = `You are a professional copywriter. ${langDirective} Platform: ${state.platform}. Tone: ${state.tone}. Return ONLY the copy text, no explanations or meta-commentary.\n\n${finalPrompt}`;
+          const systemPrompt = `You are a professional copywriter. ${langDirective} Platform: ${state.platform}. Tone: ${state.tone}. Return ONLY the copy text, no explanations or meta-commentary.`;
 
-          const res = await fetch("/api/llm", {
+          const res = await fetch("/api/studio/copy", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              prompt: fullPrompt,
-              provider: "google",
-              model: "gemini-2.5-flash",
-              temperature: 0.9,
-              maxTokens: 1024,
+              messages: [{ id: entry.id, role: "user", parts: [{ type: "text", text: finalPrompt }] }],
+              model: state.copyModelId,
+              system: systemPrompt,
             }),
             signal: sig,
           });
-          const data = await res.json();
-          if (!data.success) throw new Error(data.error || "LLM generation failed");
-          result = data.text || data.response;
+
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(errText || "Copy generation failed");
+          }
+
+          // Read the streaming response to completion
+          const reader = res.body?.getReader();
+          if (!reader) throw new Error("No response body");
+          const decoder = new TextDecoder();
+          let fullText = "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            fullText += decoder.decode(value, { stream: true });
+          }
+
+          // Extract text from AI SDK UI message stream format
+          // The stream contains lines like: 0:"text chunk"\n
+          const textParts = fullText
+            .split("\n")
+            .filter((line) => line.startsWith("0:"))
+            .map((line) => {
+              try { return JSON.parse(line.slice(2)); }
+              catch { return ""; }
+            })
+            .join("");
+
+          result = textParts || fullText;
         } else {
           // Use /api/generate for photo/video
           const body: Record<string, unknown> = {
@@ -393,6 +421,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
             dialogueEnabled: state.dialogueEnabled,
             dialogueText: state.dialogueText,
             dialogueLanguage: state.dialogueLanguage,
+            copyModelId: state.copyModelId,
           },
         }),
       });
@@ -447,6 +476,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       dialogueEnabled: (config.dialogueEnabled as boolean) || false,
       dialogueText: (config.dialogueText as string) || "",
       dialogueLanguage: (config.dialogueLanguage as "ar" | "en") || "en",
+      copyModelId: (config.copyModelId as string) || "gemini-2.5-flash",
     });
   },
 }));

@@ -48,6 +48,16 @@ const BATCH_PRESETS = [1, 4, 8, 12, 20];
 const VIDEO_BATCH_PRESETS = [1, 2, 4, 8];
 const TONES = ["professional", "casual", "creative", "persuasive"];
 const PLATFORMS = ["general", "instagram", "x", "linkedin"];
+
+const LLM_MODELS: { id: string; name: string; provider: string }[] = [
+  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "Google" },
+  { id: "gemini-3-flash-preview", name: "Gemini 3 Flash", provider: "Google" },
+  { id: "gemini-3-pro-preview", name: "Gemini 3 Pro", provider: "Google" },
+  { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", provider: "OpenAI" },
+  { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", provider: "OpenAI" },
+  { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", provider: "Anthropic" },
+  { id: "claude-haiku-4.5", name: "Claude Haiku 4.5", provider: "Anthropic" },
+];
 const OUTPUT_LANGUAGES: { value: "ar" | "en" | "both"; label: string }[] = [
   { value: "en", label: "English" },
   { value: "ar", label: "عربي" },
@@ -512,6 +522,26 @@ export function Sidebar() {
               </>
             )}
           </>
+        )}
+
+        {/* LLM Model (copy mode) */}
+        {store.mode === "copy" && (
+          <fieldset>
+            <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+              Model
+            </label>
+            <select
+              value={store.copyModelId}
+              onChange={(e) => store.setCopyModelId(e.target.value)}
+              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-neutral-600"
+            >
+              {LLM_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.provider})
+                </option>
+              ))}
+            </select>
+          </fieldset>
         )}
 
         {/* Tone (copy mode) */}
