@@ -10,6 +10,7 @@ import {
 import { PlatformIcon } from "./shared/PlatformIcon"
 import { PLATFORM_LABELS } from "@/lib/social/constants"
 import { useToast } from "@/components/Toast"
+import { useShallow } from "zustand/shallow"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -48,10 +49,10 @@ export function ChannelCard({ account }: ChannelCardProps) {
       : "",
   )
   const { show: showToast } = useToast()
-  const { removeAccount, addOrUpdateAccount } = useSocialAccountsStore((s) => ({
+  const { removeAccount, addOrUpdateAccount } = useSocialAccountsStore(useShallow((s) => ({
     removeAccount: s.removeAccount,
     addOrUpdateAccount: s.addOrUpdateAccount,
-  }))
+  })))
 
   async function handleDisconnect() {
     setIsDisconnecting(true)

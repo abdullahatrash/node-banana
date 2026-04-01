@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
+import { useShallow } from "zustand/shallow"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { CalendarFilters } from "@/components/social/calendar/CalendarFilters"
@@ -21,10 +22,10 @@ export default function CalendarPage() {
     setChannelFilter,
   } =
     useSocialCalendarStore()
-  const { accounts, selectedChannelFilter } = useSocialAccountsStore((s) => ({
+  const { accounts, selectedChannelFilter } = useSocialAccountsStore(useShallow((s) => ({
     accounts: s.accounts,
     selectedChannelFilter: s.selectedChannelFilter,
-  }))
+  })))
   const initialized = useRef(false)
 
   // Fetch posts on first render
