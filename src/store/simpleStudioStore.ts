@@ -7,6 +7,10 @@
  */
 
 import { create } from "zustand";
+import {
+  createStudioAssetPresign,
+  finalizeStudioAssetUpload,
+} from "@/lib/studio/client";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -115,6 +119,53 @@ async function processInChunks<T>(
     if (signal.aborted) break;
     const chunk = items.slice(i, i + concurrency);
     await Promise.allSettled(chunk.map((item) => processor(item, signal)));
+  }
+}
+
+/**
+ * Persist a base64 data URL result to R2 via presign → PUT → finalize.
+ * Returns the assetId on success, null on failure (non-fatal).
+ */
+async function persistToR2(
+  dataUrl: string,
+  mode: SimpleStudioMode,
+  prompt: string,
+  batchId: string,
+): Promise<string | null> {
+  try {
+    // Convert base64 data URL to blob
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+
+    const assetType = mode === "video" ? "video" : "image";
+    const ext = mode === "video" ? "mp4" : "png";
+
+    // Presign
+    const presign = await createStudioAssetPresign({
+      assetType,
+      contentType: blob.type || `${assetType}/${ext}`,
+      expectedSizeBytes: blob.size,
+      fileName: `simple-${mode}-${Date.now()}.${ext}`,
+    });
+
+    // Upload to R2
+    await fetch(presign.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": blob.type || `${assetType}/${ext}` },
+      body: blob,
+    });
+
+    // Finalize
+    await finalizeStudioAssetUpload(presign.assetId, {
+      uploadState: "ready",
+      sizeBytes: blob.size,
+      mimeType: blob.type || `${assetType}/${ext}`,
+    });
+
+    return presign.assetId;
+  } catch {
+    // Non-fatal — generation still shows in UI, just not persisted
+    return null;
   }
 }
 
@@ -330,6 +381,17 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         setGenerations(set, get, (prev) =>
           prev.map((g) => g.id === entry.id ? { ...g, status: "complete" as const, result } : g),
         );
+
+        // Persist image/video results to R2 in the background (non-blocking)
+        if (result && state.mode !== "copy" && result.startsWith("data:")) {
+          persistToR2(result, state.mode, finalPrompt, batchId).then((assetId) => {
+            if (assetId) {
+              setGenerations(set, get, (prev) =>
+                prev.map((g) => g.id === entry.id ? { ...g, assetId } : g),
+              );
+            }
+          });
+        }
       } catch (err) {
         if (sig.aborted) return;
         setGenerations(set, get, (prev) =>
