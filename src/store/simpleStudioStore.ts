@@ -124,7 +124,7 @@ async function processInChunks<T>(
 export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   // Mode
   mode: "photo",
-  setMode: (mode) => set({ mode, rewrittenPrompt: null }),
+  setMode: (mode) => set({ mode, rewrittenPrompt: null, generations: [] }),
 
   // Form state
   prompt: "",
