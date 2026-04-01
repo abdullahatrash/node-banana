@@ -1,18 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { GenerationCard } from "./GenerationCard";
 
 export function ResultsGallery() {
   const generations = useSimpleStudioStore((s) => s.generations);
   const mode = useSimpleStudioStore((s) => s.mode);
-  const loadRecentResults = useSimpleStudioStore((s) => s.loadRecentResults);
-
-  // Load persisted results on mount
-  useEffect(() => {
-    loadRecentResults();
-  }, [loadRecentResults]);
 
   if (generations.length === 0) {
     return (

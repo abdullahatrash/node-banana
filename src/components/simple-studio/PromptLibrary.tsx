@@ -18,10 +18,11 @@ export function PromptLibrary() {
   const saveCurrentPrompt = useSimpleStudioStore((s) => s.saveCurrentPrompt);
   const loadSavedPrompts = useSimpleStudioStore((s) => s.loadSavedPrompts);
 
-  // Load saved prompts on mount and mode change
+  // Load saved prompts once on mount (silently fails if DB not migrated)
   useEffect(() => {
     loadSavedPrompts();
-  }, [loadSavedPrompts, mode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Filter templates by current mode
   const filteredTemplates = PROMPT_TEMPLATES.filter((t) => t.mode === mode);
