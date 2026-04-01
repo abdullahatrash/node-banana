@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSimpleStudioStore, type SimpleStudioMode } from "@/store/simpleStudioStore";
 import { PromptLibrary } from "./PromptLibrary";
 
@@ -14,6 +14,24 @@ interface ProviderModel {
   provider: string;
   capabilities?: string[];
 }
+
+// Recommended models — curated best picks per mode
+const RECOMMENDED_IMAGE_MODELS = new Set([
+  "nano-banana",          // Gemini 2.5 Flash — fast, cheap
+  "nano-banana-pro",      // Gemini 3 Pro — high quality
+  "nano-banana-2",        // Gemini 3.1 Flash — balanced
+  "flux-2/pro-text-to-image",  // FLUX.2 Pro — excellent quality
+  "seedream/4.5-text-to-image", // Seedream 4.5 — great prompt following
+  "gpt-image/1.5-text-to-image", // GPT Image — good understanding
+]);
+
+const RECOMMENDED_VIDEO_MODELS = new Set([
+  "veo-3.1/text-to-video",      // Veo 3.1 — best quality + audio
+  "veo-3.1-fast/text-to-video",  // Veo 3.1 Fast — cheaper
+  "kling-2.6/text-to-video",     // Kling 2.6 — good quality + audio
+  "veo3/text-to-video",          // Veo 3 via Kie — alternative
+  "wan/2-6-text-to-video",       // Wan 2.6 — affordable
+]);
 
 // ---------------------------------------------------------------------------
 // Mode tabs
@@ -44,6 +62,9 @@ export function Sidebar() {
   const store = useSimpleStudioStore();
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Fetch models on mount and mode change
   useEffect(() => {
@@ -77,9 +98,30 @@ export function Sidebar() {
     return () => { cancelled = true; };
   }, [store.mode]);
 
+  // Close dropdown on click outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setModelDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
   const isPhotoOrVideo = store.mode === "photo" || store.mode === "video";
   const maxBatch = store.mode === "video" ? 8 : 20;
   const batchPresets = store.mode === "video" ? VIDEO_BATCH_PRESETS : BATCH_PRESETS;
+
+  // Split models into recommended + others, filtered by search
+  const recommendedSet = store.mode === "video" ? RECOMMENDED_VIDEO_MODELS : RECOMMENDED_IMAGE_MODELS;
+  const searchLower = modelSearch.toLowerCase();
+  const filteredModels = models.filter(
+    (m) => !searchLower || m.name.toLowerCase().includes(searchLower) || m.id.toLowerCase().includes(searchLower) || m.provider.toLowerCase().includes(searchLower),
+  );
+  const recommendedModels = filteredModels.filter((m) => recommendedSet.has(m.id));
+  const otherModels = filteredModels.filter((m) => !recommendedSet.has(m.id));
+  const selectedModel = models.find((m) => m.id === store.selectedModelId);
 
   return (
     <div className="flex flex-col h-full">
@@ -249,19 +291,103 @@ export function Sidebar() {
             <label className="block text-xs font-medium text-neutral-400 mb-1.5">
               Model
             </label>
-            <select
-              value={store.selectedModelId || ""}
-              onChange={(e) => store.setSelectedModelId(e.target.value || null)}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-neutral-600"
-            >
-              <option value="">Auto (default)</option>
-              {isLoadingModels && <option disabled>Loading models...</option>}
-              {models.map((m, i) => (
-                <option key={`${m.id}-${i}`} value={m.id}>
-                  {m.name} ({m.provider})
-                </option>
-              ))}
-            </select>
+            <div className="relative" ref={dropdownRef}>
+              {/* Trigger button */}
+              <button
+                type="button"
+                onClick={() => setModelDropdownOpen(!modelDropdownOpen)}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 text-start flex items-center justify-between hover:border-neutral-600 transition-colors"
+              >
+                <span className="truncate">
+                  {selectedModel ? `${selectedModel.name}` : "Auto (default)"}
+                </span>
+                <svg className={`w-4 h-4 text-neutral-500 shrink-0 transition-transform ${modelDropdownOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </button>
+
+              {/* Dropdown */}
+              {modelDropdownOpen && (
+                <div className="absolute z-50 mt-1 w-full bg-neutral-800 border border-neutral-700 rounded-md shadow-xl overflow-hidden">
+                  {/* Search input */}
+                  <div className="p-2 border-b border-neutral-700">
+                    <input
+                      type="text"
+                      value={modelSearch}
+                      onChange={(e) => setModelSearch(e.target.value)}
+                      placeholder="Search models..."
+                      className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-neutral-600"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="max-h-[280px] overflow-y-auto">
+                    {/* Auto option */}
+                    <button
+                      type="button"
+                      onClick={() => { store.setSelectedModelId(null); setModelDropdownOpen(false); setModelSearch(""); }}
+                      className={`w-full text-start px-3 py-2 text-xs hover:bg-neutral-700/50 transition-colors ${
+                        !store.selectedModelId ? "bg-neutral-700/30 text-blue-400" : "text-neutral-300"
+                      }`}
+                    >
+                      Auto (default)
+                    </button>
+
+                    {/* Recommended section */}
+                    {recommendedModels.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-blue-400 bg-neutral-800 sticky top-0">
+                          Recommended
+                        </div>
+                        {recommendedModels.map((m, i) => (
+                          <button
+                            key={`rec-${m.id}-${i}`}
+                            type="button"
+                            onClick={() => { store.setSelectedModelId(m.id); setModelDropdownOpen(false); setModelSearch(""); }}
+                            className={`w-full text-start px-3 py-2 text-xs hover:bg-neutral-700/50 transition-colors ${
+                              store.selectedModelId === m.id ? "bg-neutral-700/30 text-blue-400" : "text-neutral-300"
+                            }`}
+                          >
+                            <span>{m.name}</span>
+                            <span className="text-neutral-500 ms-1.5">{m.provider}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+
+                    {/* All models section */}
+                    {otherModels.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-neutral-500 bg-neutral-800 sticky top-0">
+                          All Models
+                        </div>
+                        {otherModels.map((m, i) => (
+                          <button
+                            key={`all-${m.id}-${i}`}
+                            type="button"
+                            onClick={() => { store.setSelectedModelId(m.id); setModelDropdownOpen(false); setModelSearch(""); }}
+                            className={`w-full text-start px-3 py-2 text-xs hover:bg-neutral-700/50 transition-colors ${
+                              store.selectedModelId === m.id ? "bg-neutral-700/30 text-blue-400" : "text-neutral-300"
+                            }`}
+                          >
+                            <span>{m.name}</span>
+                            <span className="text-neutral-500 ms-1.5">{m.provider}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+
+                    {isLoadingModels && (
+                      <div className="px-3 py-2 text-xs text-neutral-500">Loading models...</div>
+                    )}
+
+                    {!isLoadingModels && filteredModels.length === 0 && modelSearch && (
+                      <div className="px-3 py-2 text-xs text-neutral-500">No models match &quot;{modelSearch}&quot;</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </fieldset>
         )}
 
