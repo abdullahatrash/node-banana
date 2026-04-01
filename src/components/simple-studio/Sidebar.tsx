@@ -295,16 +295,97 @@ export function Sidebar() {
             <label className="block text-xs font-medium text-neutral-400 mb-1.5">
               Duration (seconds)
             </label>
-            <select
-              value={store.videoDuration}
-              onChange={(e) => store.setVideoDuration(Number(e.target.value))}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-neutral-600"
-            >
-              {[3, 5, 10, 15].map((d) => (
-                <option key={d} value={d}>{d}s</option>
+            <div className="flex gap-1.5">
+              {[4, 5, 6, 8, 10].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => store.setVideoDuration(d)}
+                  className={`flex-1 py-1.5 text-xs rounded-md border transition-colors ${
+                    store.videoDuration === d
+                      ? "bg-blue-600/20 border-blue-500 text-blue-400"
+                      : "border-neutral-700 text-neutral-400 hover:border-neutral-600"
+                  }`}
+                >
+                  {d}s
+                </button>
               ))}
-            </select>
+            </div>
+            <p className="text-[10px] text-neutral-600 mt-1">Duration depends on model (Veo: 4-8s, Kling: 5-10s)</p>
           </fieldset>
+        )}
+
+        {/* Dialogue / Audio (video mode) */}
+        {store.mode === "video" && (
+          <>
+            <fieldset className="flex items-center justify-between">
+              <label className="text-xs font-medium text-neutral-400">
+                Include Dialogue
+              </label>
+              <button
+                role="switch"
+                aria-checked={store.dialogueEnabled}
+                onClick={() => store.setDialogueEnabled(!store.dialogueEnabled)}
+                className={`relative w-9 h-5 rounded-full transition-colors ${
+                  store.dialogueEnabled ? "bg-blue-600" : "bg-neutral-700"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 start-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                    store.dialogueEnabled ? "translate-x-4 rtl:-translate-x-4" : ""
+                  }`}
+                />
+              </button>
+            </fieldset>
+
+            {store.dialogueEnabled && (
+              <>
+                <fieldset>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                    Dialogue Language
+                  </label>
+                  <div className="flex gap-1.5">
+                    {([
+                      { value: "en" as const, label: "English" },
+                      { value: "ar" as const, label: "عربي" },
+                    ]).map((lang) => (
+                      <button
+                        key={lang.value}
+                        onClick={() => store.setDialogueLanguage(lang.value)}
+                        className={`flex-1 py-1.5 text-xs rounded-md border transition-colors ${
+                          store.dialogueLanguage === lang.value
+                            ? "bg-blue-600/20 border-blue-500 text-blue-400"
+                            : "border-neutral-700 text-neutral-400 hover:border-neutral-600"
+                        }`}
+                      >
+                        {lang.label}
+                      </button>
+                    ))}
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                    Dialogue Text
+                  </label>
+                  <textarea
+                    value={store.dialogueText}
+                    onChange={(e) => store.setDialogueText(e.target.value)}
+                    placeholder={
+                      store.dialogueLanguage === "ar"
+                        ? "اكتب ما يقوله الشخص..."
+                        : "Write what the character says..."
+                    }
+                    rows={2}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 placeholder-neutral-500 resize-none focus:outline-none focus:border-neutral-600"
+                    dir="auto"
+                  />
+                  <p className="text-[10px] text-neutral-600 mt-1">
+                    Works best with Veo 3.1 and Kling 2.6. Dialogue is injected into the prompt.
+                  </p>
+                </fieldset>
+              </>
+            )}
+          </>
         )}
 
         {/* Tone (copy mode) */}

@@ -56,6 +56,12 @@ export interface SimpleStudioState {
   setSourceImage: (image: string | null) => void;
   videoDuration: number;
   setVideoDuration: (duration: number) => void;
+  dialogueEnabled: boolean;
+  setDialogueEnabled: (enabled: boolean) => void;
+  dialogueText: string;
+  setDialogueText: (text: string) => void;
+  dialogueLanguage: "ar" | "en";
+  setDialogueLanguage: (lang: "ar" | "en") => void;
   tone: string;
   setTone: (tone: string) => void;
   platform: string;
@@ -136,6 +142,12 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setSourceImage: (image) => set({ sourceImage: image }),
   videoDuration: 5,
   setVideoDuration: (duration) => set({ videoDuration: duration }),
+  dialogueEnabled: false,
+  setDialogueEnabled: (enabled) => set({ dialogueEnabled: enabled }),
+  dialogueText: "",
+  setDialogueText: (text) => set({ dialogueText: text }),
+  dialogueLanguage: "en",
+  setDialogueLanguage: (lang) => set({ dialogueLanguage: lang }),
   tone: "professional",
   setTone: (tone) => set({ tone }),
   platform: "general",
@@ -159,8 +171,17 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       if (!get().rewrittenPrompt) return; // rewrite failed
     }
 
-    const finalPrompt = get().rewrittenPrompt || get().prompt;
+    let finalPrompt = get().rewrittenPrompt || get().prompt;
     if (!finalPrompt.trim()) return;
+
+    // Inject dialogue into video prompts when enabled
+    if (state.mode === "video" && state.dialogueEnabled && state.dialogueText.trim()) {
+      const langHint = state.dialogueLanguage === "ar"
+        ? "speaking in Arabic"
+        : "speaking in English";
+      // Use colon-style dialogue to suppress subtitles (Veo 3.1 pattern)
+      finalPrompt = `${finalPrompt}. The character is ${langHint}, saying: "${state.dialogueText.trim()}"`;
+    }
 
     const batchId = crypto.randomUUID();
     abortController = new AbortController();
@@ -359,6 +380,9 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
             platform: state.platform,
             outputLanguage: state.outputLanguage,
             videoDuration: state.videoDuration,
+            dialogueEnabled: state.dialogueEnabled,
+            dialogueText: state.dialogueText,
+            dialogueLanguage: state.dialogueLanguage,
           },
         }),
       });
@@ -410,6 +434,9 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       platform: (config.platform as string) || "general",
       outputLanguage: (config.outputLanguage as "ar" | "en" | "both") || "en",
       videoDuration: (config.videoDuration as number) || 5,
+      dialogueEnabled: (config.dialogueEnabled as boolean) || false,
+      dialogueText: (config.dialogueText as string) || "",
+      dialogueLanguage: (config.dialogueLanguage as "ar" | "en") || "en",
     });
   },
 }));
