@@ -59,7 +59,14 @@ export function Sidebar() {
       .then((r) => r.json())
       .then((data) => {
         if (!cancelled && data.success) {
-          setModels(data.models || []);
+          // Deduplicate models by ID
+          const seen = new Set<string>();
+          const unique = (data.models || []).filter((m: ProviderModel) => {
+            if (seen.has(m.id)) return false;
+            seen.add(m.id);
+            return true;
+          });
+          setModels(unique);
         }
       })
       .catch(() => {})
@@ -121,14 +128,16 @@ export function Sidebar() {
               AI Prompt Enhance
             </label>
             <button
+              role="switch"
+              aria-checked={store.rewriteEnabled}
               onClick={() => store.setRewriteEnabled(!store.rewriteEnabled)}
               className={`relative w-9 h-5 rounded-full transition-colors ${
                 store.rewriteEnabled ? "bg-blue-600" : "bg-neutral-700"
               }`}
             >
               <span
-                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                  store.rewriteEnabled ? "translate-x-4" : "translate-x-0.5"
+                className={`absolute top-0.5 start-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                  store.rewriteEnabled ? "translate-x-4 rtl:-translate-x-4" : ""
                 }`}
               />
             </button>
