@@ -249,29 +249,39 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
             throw new Error(errText || "Copy generation failed");
           }
 
-          // Read the streaming response to completion
+          // Read AI SDK v6 UI message stream to completion
+          // Format: lines of `data: {"type":"text-delta","id":"0","delta":"..."}`
           const reader = res.body?.getReader();
           if (!reader) throw new Error("No response body");
           const decoder = new TextDecoder();
+          let buffer = "";
           let fullText = "";
+
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            fullText += decoder.decode(value, { stream: true });
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete lines
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith("data: ")) continue;
+              const payload = trimmed.slice(6);
+              if (payload === "[DONE]") continue;
+              try {
+                const parsed = JSON.parse(payload);
+                if (parsed.type === "text-delta" && parsed.delta) {
+                  fullText += parsed.delta;
+                }
+              } catch {
+                // skip unparseable lines
+              }
+            }
           }
 
-          // Extract text from AI SDK UI message stream format
-          // The stream contains lines like: 0:"text chunk"\n
-          const textParts = fullText
-            .split("\n")
-            .filter((line) => line.startsWith("0:"))
-            .map((line) => {
-              try { return JSON.parse(line.slice(2)); }
-              catch { return ""; }
-            })
-            .join("");
-
-          result = textParts || fullText;
+          result = fullText;
         } else {
           // Use /api/generate for photo/video
           const body: Record<string, unknown> = {
