@@ -204,7 +204,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
     set({
       isGenerating: true,
       currentBatchId: batchId,
-      generations: [...entries, ...state.generations],
+      generations: entries,
     });
 
     const processGeneration = async (entry: Generation, sig: AbortSignal) => {
@@ -222,13 +222,22 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
 
         if (state.mode === "copy") {
           // Use /api/llm for copy mode
+          const langDirective = state.outputLanguage === "ar"
+            ? "Write in Arabic only."
+            : state.outputLanguage === "both"
+              ? "Write in both Arabic and English."
+              : "Write in English only.";
+          const fullPrompt = `You are a professional copywriter. ${langDirective} Platform: ${state.platform}. Tone: ${state.tone}. Return ONLY the copy text, no explanations or meta-commentary.\n\n${finalPrompt}`;
+
           const res = await fetch("/api/llm", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              prompt: finalPrompt,
+              prompt: fullPrompt,
+              provider: "google",
               model: "gemini-2.5-flash",
-              systemPrompt: `You are a professional copywriter. Generate ${state.outputLanguage === "ar" ? "Arabic" : state.outputLanguage === "both" ? "bilingual Arabic and English" : "English"} marketing copy for ${state.platform}. Tone: ${state.tone}. Return ONLY the copy text, no explanations.`,
+              temperature: 0.9,
+              maxTokens: 1024,
             }),
             signal: sig,
           });
@@ -317,6 +326,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt: `Rewrite this prompt for better AI image/video generation results. Keep the same intent but make it more descriptive and detailed. Return ONLY the rewritten prompt, no explanations:\n\n${prompt}`,
+          provider: "google",
           model: "gemini-2.5-flash",
         }),
       });
