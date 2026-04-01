@@ -11,11 +11,11 @@ import { ResultsGallery } from "@/components/simple-studio/ResultsGallery";
  */
 export function SimpleStudioClient() {
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-neutral-950">
       <Header />
       <div className="flex-1 flex overflow-hidden">
         {/* Left sidebar — form */}
-        <aside className="w-[380px] shrink-0 border-e border-neutral-800 bg-neutral-900/50 overflow-y-auto">
+        <aside className="w-[380px] shrink-0 border-e border-neutral-800 bg-neutral-900 overflow-y-auto">
           <Sidebar />
         </aside>
 
