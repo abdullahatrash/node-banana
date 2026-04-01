@@ -1,3 +1,5 @@
+import { isRecord } from "@/lib/social/utils";
+
 const ALLOWED_TRIGGER_SOURCES = new Set(["schedule", "manual", "event"]);
 const LOOP_BLOCKED_TRIGGER_SOURCE = "automation";
 const SUPPORTED_ACTION_TYPE = "create_social_post";
@@ -7,10 +9,6 @@ export const MAX_REPEAT_INTERVAL_SECONDS = 60 * 60 * 24 * 30;
 export const MAX_ALLOWED_RUNS = 1000;
 export const MAX_AUTOMATION_CHAIN_LENGTH = 25;
 export const MAX_AUTOMATION_CHAIN_DELAY_SECONDS = 60 * 60 * 24 * 7;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;

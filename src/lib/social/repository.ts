@@ -13,6 +13,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { getDb } from "@/lib/db";
+import { isRecord } from "@/lib/social/utils";
 import {
   socialAutomationRules,
   socialAutomationTasks,
@@ -222,10 +223,6 @@ type SocialWebhookMatchInput = {
   metadata?: Record<string, unknown> | null;
   webhookId?: string;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function includesFilter<T extends string>(
   filterValue: unknown,

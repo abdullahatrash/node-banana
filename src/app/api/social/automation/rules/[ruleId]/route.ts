@@ -8,15 +8,12 @@ import {
   AutomationRuleNotFoundError,
 } from "@/lib/social/repository";
 import { validateAutomationRulePayload } from "@/lib/social/automation-guards";
+import { isRecord } from "@/lib/social/utils";
 
 interface RuleResponse {
   success: boolean;
   rule?: Awaited<ReturnType<typeof getAutomationRule>>;
   error?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function readString(value: unknown): string | undefined {

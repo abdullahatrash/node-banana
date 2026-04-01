@@ -12,6 +12,7 @@ import {
   SocialWebhookSubscriptionNotFoundError,
 } from "@/lib/social/repository";
 import { validateMediaUrl } from "@/utils/urlValidation";
+import { isRecord } from "@/lib/social/utils";
 
 interface WebhookGetResponse {
   success: boolean;
@@ -69,10 +70,6 @@ function parsePositiveInteger(value: string | null): number | undefined {
   if (!value) return undefined;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function isValidWebhookTargetUrl(input: string): boolean {

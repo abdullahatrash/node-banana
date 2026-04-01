@@ -13,6 +13,7 @@ import {
 } from "@/lib/social/repository";
 import { resolveWorkflowRunRef } from "@/lib/social/workflow-utils";
 import { emitSocialEvent } from "@/lib/social/events";
+import { isRecord } from "@/lib/social/utils";
 import { start } from "workflow/api";
 import {
   publishPostChainWorkflow,
@@ -28,10 +29,6 @@ interface PublishResponse {
 
 const PUBLISHABLE_STATES = new Set(["draft", "failed"]);
 const DISPATCH_RETRY_DELAY_MS = 5 * 60 * 1000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;

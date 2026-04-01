@@ -11,15 +11,12 @@ import {
 } from "@/lib/social/repository";
 import type { AutomationTaskState } from "@/lib/db/schema";
 import { validateAutomationTaskPayload } from "@/lib/social/automation-guards";
+import { isRecord } from "@/lib/social/utils";
 
 interface TaskResponse {
   success: boolean;
   task?: Awaited<ReturnType<typeof getAutomationTask>>;
   error?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function readOptionalDate(value: unknown): Date | null | undefined {
