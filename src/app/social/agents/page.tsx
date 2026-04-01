@@ -189,7 +189,14 @@ export default function SocialAgentsPage() {
       </div>
 
       <div className="rounded-lg border bg-card p-4">
-        <h3 className="text-sm font-medium">Tasks</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium">Tasks</h3>
+          {tasks.length > 40 && (
+            <span className="text-xs text-muted-foreground">
+              Showing 40 of {tasks.length}
+            </span>
+          )}
+        </div>
         {tasks.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">No automation tasks found.</p>
         ) : (

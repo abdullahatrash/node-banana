@@ -555,3 +555,163 @@ describe("/api/social/accounts/[accountId] DELETE", () => {
     expect(mockDisconnectSocialAccount).toHaveBeenCalledWith("ws_1", "sacct_1");
   });
 });
+
+describe("/api/social/accounts/[accountId] PATCH", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns 401 for unauthenticated requests", async () => {
+    unauthorized(401);
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "PATCH",
+        body: JSON.stringify({ displayName: "New Name" }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("updates displayName successfully", async () => {
+    authorized();
+    mockUpdateSocialAccount.mockResolvedValue({
+      id: "sacct_1",
+      platform: "linkedin",
+      displayName: "New Name",
+      accessTokenEncrypted: "enc_secret",
+      refreshTokenEncrypted: "enc_refresh",
+      accessTokenSecret: null,
+    });
+
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "PATCH",
+        body: JSON.stringify({ displayName: "New Name" }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.account.displayName).toBe("New Name");
+    expect(data.account).not.toHaveProperty("accessTokenEncrypted");
+    expect(mockUpdateSocialAccount).toHaveBeenCalledWith("ws_1", "sacct_1", {
+      displayName: "New Name",
+    });
+  });
+
+  it("returns 400 for empty displayName", async () => {
+    authorized();
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "PATCH",
+        body: JSON.stringify({ displayName: "" }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("displayName");
+  });
+
+  it("returns 400 for non-boolean disabled", async () => {
+    authorized();
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "PATCH",
+        body: JSON.stringify({ disabled: "yes" }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("disabled");
+  });
+
+  it("returns 400 for non-object additionalSettings", async () => {
+    authorized();
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "PATCH",
+        body: JSON.stringify({ additionalSettings: "invalid" }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("additionalSettings");
+  });
+
+  it("returns 400 for oversized additionalSettings", async () => {
+    authorized();
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "PATCH",
+        body: JSON.stringify({ additionalSettings: { data: "x".repeat(11_000) } }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("maximum size");
+  });
+
+  it("returns 404 for unknown account", async () => {
+    authorized();
+    const { SocialAccountNotFoundError } = await import("@/lib/social/repository");
+    mockUpdateSocialAccount.mockRejectedValue(new SocialAccountNotFoundError("sacct_missing"));
+
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_missing", {
+        method: "PATCH",
+        body: JSON.stringify({ displayName: "Test" }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_missing" }) },
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("updates disabled flag successfully", async () => {
+    authorized();
+    mockUpdateSocialAccount.mockResolvedValue({
+      id: "sacct_1",
+      platform: "linkedin",
+      displayName: "Test",
+      disabled: true,
+      accessTokenEncrypted: "enc_secret",
+      refreshTokenEncrypted: "enc_refresh",
+      accessTokenSecret: null,
+    });
+
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "PATCH",
+        body: JSON.stringify({ disabled: true }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.account.disabled).toBe(true);
+    expect(mockUpdateSocialAccount).toHaveBeenCalledWith("ws_1", "sacct_1", {
+      disabled: true,
+    });
+  });
+});

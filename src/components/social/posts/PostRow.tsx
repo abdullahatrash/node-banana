@@ -77,7 +77,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
         mediaUrls: (post.mediaUrls as Array<{ type: string; url: string; alt?: string }>) ?? undefined,
       })
       showToast("Post duplicated as draft", "success")
-      router.push(`/social/compose/${duplicated.id}`)
+      router.push(`/social/compose?postId=${duplicated.id}`)
     } catch (error) {
       showToast(
         error instanceof Error ? error.message : "Duplicate failed",
@@ -120,7 +120,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
               variant="ghost"
               size="icon"
               className="size-7"
-              onClick={() => router.push(`/social/compose/${post.id}`)}
+              onClick={() => router.push(`/social/compose?postId=${post.id}`)}
             >
               <PencilIcon className="size-3.5" />
             </Button>

@@ -16,6 +16,8 @@ import type { SocialPlatform } from "@/lib/db/schema";
 import type { PageInfo } from "@/lib/social/provider-interface";
 import { logger } from "@/utils/logger";
 
+const OAUTH_CALLBACK_COOKIE = "social_oauth_cb";
+
 interface CallbackRequest {
   platform: string;
   code: string;
@@ -76,6 +78,9 @@ export async function GET(
   let platform = incoming.searchParams.get("platform") || "";
   if (!platform) {
     try {
+      // Intentionally does not check expiration — the actual consume in the
+      // POST handler will reject expired states. This lookup only resolves the
+      // platform for the redirect.
       const oauthState = await getOAuthStateByState(normalizedState);
       platform = oauthState?.platform || "";
     } catch {
@@ -89,12 +94,25 @@ export async function GET(
     });
   }
 
-  return socialChannelsRedirect(request, {
+  // Store callback params in a short-lived HTTP-only cookie instead of
+  // forwarding raw code/state as query parameters (prevents leaking the
+  // authorization code via URL bar, browser history, and Referer headers).
+  const callbackData = JSON.stringify({
     platform,
-    ...(code && state
-      ? { code: normalizedCode, state: normalizedState }
-      : { oauth_token: normalizedState, oauth_verifier: normalizedCode }),
+    code: normalizedCode,
+    state: normalizedState,
   });
+  const redirectUrl = new URL("/social/channels", request.url);
+  redirectUrl.searchParams.set("oauth_pending", "1");
+  const response = NextResponse.redirect(redirectUrl);
+  response.cookies.set(OAUTH_CALLBACK_COOKIE, callbackData, {
+    httpOnly: true,
+    secure: incoming.protocol === "https:",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 120, // 2 minutes — enough to complete the redirect round-trip
+  });
+  return response;
 }
 
 export async function POST(

@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef } from "react"
+import { useEffect, useRef } from "react"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { CalendarFilters } from "@/components/social/calendar/CalendarFilters"
@@ -42,9 +42,11 @@ export default function CalendarPage() {
   prevKey.current = key
 
   // Keep calendar filter aligned with sidebar channel filter
-  if (selectedChannelFilter !== channelFilter) {
-    setChannelFilter(selectedChannelFilter)
-  }
+  useEffect(() => {
+    if (selectedChannelFilter !== channelFilter) {
+      setChannelFilter(selectedChannelFilter)
+    }
+  }, [selectedChannelFilter, channelFilter, setChannelFilter])
 
   // Empty state: no channels
   if (accounts.length === 0) {

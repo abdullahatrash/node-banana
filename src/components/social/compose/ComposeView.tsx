@@ -87,6 +87,21 @@ export function ComposeView() {
     }
   }
 
+  async function publishAll(postIds: string[]) {
+    const results = await Promise.allSettled(
+      postIds.map((id) => publishSocialPost(id)),
+    )
+    const failed = results.filter(
+      (r): r is PromiseRejectedResult => r.status === "rejected",
+    )
+    if (failed.length === results.length) {
+      throw failed[0].reason instanceof Error
+        ? failed[0].reason
+        : new Error("All publish attempts failed")
+    }
+    return { total: results.length, failed: failed.length }
+  }
+
   async function handleSchedule() {
     if (!canSchedule) return
     setIsSubmitting("schedule")
@@ -116,10 +131,15 @@ export function ComposeView() {
         publishQueue.push(created.id)
       }
 
-      for (const publishPostId of publishQueue) {
-        await publishSocialPost(publishPostId)
+      const { total, failed } = await publishAll(publishQueue)
+      if (failed > 0) {
+        showToast(
+          `Scheduled ${total - failed} of ${total} posts. ${failed} failed.`,
+          "error",
+        )
+      } else {
+        showToast("Post scheduled", "success")
       }
-      showToast("Post scheduled", "success")
       reset()
       router.push("/social/calendar")
     } catch (error) {
@@ -160,10 +180,15 @@ export function ComposeView() {
         publishQueue.push(created.id)
       }
 
-      for (const publishPostId of publishQueue) {
-        await publishSocialPost(publishPostId)
+      const { total, failed } = await publishAll(publishQueue)
+      if (failed > 0) {
+        showToast(
+          `Published ${total - failed} of ${total} posts. ${failed} failed.`,
+          "error",
+        )
+      } else {
+        showToast("Publishing...", "success")
       }
-      showToast("Publishing...", "success")
       reset()
       router.push("/social/calendar")
     } catch (error) {

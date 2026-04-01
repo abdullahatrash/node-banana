@@ -1,38 +1,39 @@
+import { cookies } from "next/headers"
 import { ChannelsPageClient } from "@/components/social/ChannelsPageClient"
+
+const OAUTH_CALLBACK_COOKIE = "social_oauth_cb"
 
 interface ChannelsPageProps {
   searchParams: Promise<{
-    code?: string
-    state?: string
-    platform?: string
-    oauth_token?: string
-    oauth_verifier?: string
+    oauth_pending?: string
     error?: string
   }>
 }
 
 export default async function ChannelsPage({ searchParams }: ChannelsPageProps) {
   const params = await searchParams
+  const cookieStore = await cookies()
 
-  // Normalize OAuth callback params (X uses oauth_token/oauth_verifier)
-  const normalizedCallback =
-    (params.code && params.state) || (params.oauth_token && params.oauth_verifier)
-      ? {
-          platform: params.platform ?? "",
-          code: params.code ?? params.oauth_verifier ?? "",
-          state: params.state ?? params.oauth_token ?? "",
-        }
-      : null
-  const hasInvalidCallback = normalizedCallback && !normalizedCallback.platform
-  const oauthCallback = hasInvalidCallback ? null : normalizedCallback
+  // Read OAuth callback data from the secure HTTP-only cookie set by the
+  // GET callback handler, then clear it immediately.
+  let oauthCallback: { platform: string; code: string; state: string } | null = null
+  const callbackCookie = cookieStore.get(OAUTH_CALLBACK_COOKIE)
+  if (callbackCookie) {
+    try {
+      const parsed = JSON.parse(callbackCookie.value)
+      if (parsed.platform && parsed.code && parsed.state) {
+        oauthCallback = parsed
+      }
+    } catch {
+      // Malformed cookie — ignore
+    }
+  }
 
   return (
     <ChannelsPageClient
       oauthCallback={oauthCallback}
-      oauthError={
-        params.error ??
-        (hasInvalidCallback ? "OAuth callback is missing platform information." : null)
-      }
+      oauthError={params.error ?? null}
+      clearCallbackCookie={!!callbackCookie}
     />
   )
 }

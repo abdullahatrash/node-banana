@@ -28,11 +28,13 @@ interface ChannelsPageClientProps {
     state: string
   } | null
   oauthError?: string | null
+  clearCallbackCookie?: boolean
 }
 
 export function ChannelsPageClient({
   oauthCallback,
   oauthError,
+  clearCallbackCookie,
 }: ChannelsPageClientProps) {
   const router = useRouter()
   const { accounts, isLoading, fetchAccounts } = useSocialAccountsStore()
@@ -45,6 +47,11 @@ export function ChannelsPageClient({
   } | null>(null)
   const { show: showToast } = useToast()
   const initialized = useRef(false)
+
+  // Clear the HTTP-only callback cookie now that the server component has read it
+  if (!initialized.current && clearCallbackCookie) {
+    document.cookie = "social_oauth_cb=; path=/; max-age=0"
+  }
 
   // Process OAuth callback on first render — no useEffect
   if (!initialized.current && oauthCallback) {

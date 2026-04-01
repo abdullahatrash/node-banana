@@ -184,6 +184,15 @@ export async function PATCH(
         { status: 400 },
       );
     }
+    if (
+      body.additionalSettings &&
+      JSON.stringify(body.additionalSettings).length > 10_240
+    ) {
+      return NextResponse.json(
+        { success: false, error: "additionalSettings exceeds maximum size (10 KB)." },
+        { status: 400 },
+      );
+    }
 
     const account = await updateSocialAccount(
       result.session.workspace.id,

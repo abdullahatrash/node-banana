@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
@@ -18,13 +18,25 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function isSafeRedirectPath(path: string): boolean {
+  return path.startsWith("/") && !path.startsWith("//") && !path.includes(":");
+}
+
 export default function SignInPage() {
+  return (
+    <Suspense>
+      <SignInForm />
+    </Suspense>
+  );
+}
+
+function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session, isPending } = authClient.useSession();
   const nextParam = searchParams.get("next");
   const nextPath =
-    nextParam && nextParam.startsWith("/") ? nextParam : "/studio";
+    nextParam && isSafeRedirectPath(nextParam) ? nextParam : "/studio";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
