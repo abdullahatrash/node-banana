@@ -71,11 +71,12 @@ export interface SimpleStudioState {
   outputLanguage: "ar" | "en" | "both";
   setOutputLanguage: (lang: "ar" | "en" | "both") => void;
 
-  // Generation
+  // Generation (per-mode)
   isGenerating: boolean;
   isRewriting: boolean;
   currentBatchId: string | null;
-  generations: Generation[];
+  generationsByMode: Record<SimpleStudioMode, Generation[]>;
+  generations: Generation[]; // derived — current mode's generations
   generate: () => Promise<void>;
   cancelGeneration: () => void;
   rewritePrompt: () => Promise<void>;
@@ -121,10 +122,33 @@ async function processInChunks<T>(
 // Store
 // ---------------------------------------------------------------------------
 
+/**
+ * Helper: update generations for the current mode.
+ * Syncs both `generations` (derived) and `generationsByMode[mode]`.
+ */
+function setGenerations(
+  set: (fn: (s: SimpleStudioState) => Partial<SimpleStudioState>) => void,
+  get: () => SimpleStudioState,
+  updater: (prev: Generation[]) => Generation[],
+) {
+  set((s) => {
+    const mode = get().mode;
+    const updated = updater(s.generationsByMode[mode]);
+    return {
+      generations: updated,
+      generationsByMode: { ...s.generationsByMode, [mode]: updated },
+    };
+  });
+}
+
 export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   // Mode
   mode: "photo",
-  setMode: (mode) => set({ mode, rewrittenPrompt: null, generations: [] }),
+  setMode: (mode) => set((s) => ({
+    mode,
+    rewrittenPrompt: null,
+    generations: s.generationsByMode[mode],
+  })),
 
   // Form state
   prompt: "",
@@ -163,6 +187,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   isGenerating: false,
   isRewriting: false,
   currentBatchId: null,
+  generationsByMode: { photo: [], video: [], copy: [] },
   generations: [],
 
   generate: async () => {
@@ -205,21 +230,16 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       }),
     );
 
-    set({
-      isGenerating: true,
-      currentBatchId: batchId,
-      generations: entries,
-    });
+    setGenerations(set, get, () => entries);
+    set({ isGenerating: true, currentBatchId: batchId });
 
     const processGeneration = async (entry: Generation, sig: AbortSignal) => {
       if (sig.aborted) return;
 
       // Mark as generating
-      set((s) => ({
-        generations: s.generations.map((g) =>
-          g.id === entry.id ? { ...g, status: "generating" as const } : g,
-        ),
-      }));
+      setGenerations(set, get, (prev) =>
+        prev.map((g) => g.id === entry.id ? { ...g, status: "generating" as const } : g),
+      );
 
       try {
         let result: string | null = null;
@@ -307,26 +327,18 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
           result = data.image || data.video || data.videoUrl || data.audio || null;
         }
 
-        set((s) => ({
-          generations: s.generations.map((g) =>
-            g.id === entry.id
-              ? { ...g, status: "complete" as const, result }
-              : g,
-          ),
-        }));
+        setGenerations(set, get, (prev) =>
+          prev.map((g) => g.id === entry.id ? { ...g, status: "complete" as const, result } : g),
+        );
       } catch (err) {
         if (sig.aborted) return;
-        set((s) => ({
-          generations: s.generations.map((g) =>
+        setGenerations(set, get, (prev) =>
+          prev.map((g) =>
             g.id === entry.id
-              ? {
-                  ...g,
-                  status: "failed" as const,
-                  error: err instanceof Error ? err.message : "Generation failed",
-                }
+              ? { ...g, status: "failed" as const, error: err instanceof Error ? err.message : "Generation failed" }
               : g,
           ),
-        }));
+        );
       }
     };
 
@@ -341,15 +353,14 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       abortController.abort();
       abortController = null;
     }
-    set((s) => ({
-      isGenerating: false,
-      currentBatchId: null,
-      generations: s.generations.map((g) =>
+    setGenerations(set, get, (prev) =>
+      prev.map((g) =>
         g.status === "pending" || g.status === "generating"
           ? { ...g, status: "failed" as const, error: "Cancelled" }
           : g,
       ),
-    }));
+    );
+    set({ isGenerating: false, currentBatchId: null });
   },
 
   rewritePrompt: async () => {
@@ -399,7 +410,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
             };
           },
         );
-        set({ generations: entries });
+        setGenerations(set, get, () => entries);
       }
     } catch {
       // Non-fatal — gallery just stays empty
