@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
@@ -18,9 +18,25 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function isSafeRedirectPath(path: string): boolean {
+  return path.startsWith("/") && !path.startsWith("//") && !path.includes(":");
+}
+
 export default function SignInPage() {
+  return (
+    <Suspense>
+      <SignInForm />
+    </Suspense>
+  );
+}
+
+function SignInForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session, isPending } = authClient.useSession();
+  const nextParam = searchParams.get("next");
+  const nextPath =
+    nextParam && isSafeRedirectPath(nextParam) ? nextParam : "/studio";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29,9 +45,9 @@ export default function SignInPage() {
 
   useEffect(() => {
     if (session?.user) {
-      router.replace("/studio");
+      router.replace(nextPath);
     }
-  }, [router, session]);
+  }, [router, session, nextPath]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -49,7 +65,7 @@ export default function SignInPage() {
         return;
       }
 
-      router.replace("/studio");
+      router.replace(nextPath);
     } catch (submitError) {
       setError(getErrorMessage(submitError, "Sign in failed."));
     } finally {

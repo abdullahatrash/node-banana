@@ -16,6 +16,7 @@ import {
   validateAutomationRulePayload,
   validateAutomationTaskPayload,
 } from "@/lib/social/automation-guards";
+import { isRecord } from "@/lib/social/utils";
 import { logger } from "@/utils/logger";
 
 interface AutomationDispatchResponse {
@@ -46,10 +47,6 @@ function getBatchSize(request: NextRequest): number {
     process.env.SOCIAL_AUTOMATION_DISPATCH_BATCH_SIZE ?? null,
   );
   return Math.min(MAX_BATCH_SIZE, queryBatch ?? envBatch ?? DEFAULT_BATCH_SIZE);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function readString(value: unknown): string | undefined {

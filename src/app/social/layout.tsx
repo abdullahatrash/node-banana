@@ -11,7 +11,7 @@ export default async function SocialRootLayout({
   const session = await getServerAuthSession(await headers());
 
   if (!session?.user) {
-    redirect("/sign-in");
+    redirect("/sign-in?next=%2Fsocial%2Fcalendar");
   }
 
   return <SocialLayout>{children}</SocialLayout>;

@@ -8,6 +8,7 @@ import {
   listAutomationRules,
 } from "@/lib/social/repository";
 import { validateAutomationRulePayload } from "@/lib/social/automation-guards";
+import { isRecord } from "@/lib/social/utils";
 
 interface RulesGetResponse {
   success: boolean;
@@ -20,10 +21,6 @@ interface RulesPostResponse {
   rule?: Awaited<ReturnType<typeof createAutomationRule>>;
   initialTask?: Awaited<ReturnType<typeof createAutomationTask>>;
   error?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function readString(value: unknown): string | undefined {

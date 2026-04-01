@@ -1,6 +1,5 @@
 "use client"
 
-import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { PlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -12,6 +11,12 @@ const PAGE_TITLES: Record<string, string> = {
   "/social/compose": "Compose",
   "/social/posts": "Posts",
   "/social/channels": "Channels",
+  "/social/events": "Events",
+  "/social/analytics": "Analytics",
+  "/social/media": "Media",
+  "/social/integrations": "Integrations",
+  "/social/plugs": "Plugs",
+  "/social/agents": "Agents",
 }
 
 export function SocialSiteHeader() {

@@ -1,19 +1,30 @@
 "use client"
 
-import { useRef } from "react"
+import { useEffect, useRef } from "react"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { CalendarFilters } from "@/components/social/calendar/CalendarFilters"
 import { CalendarWeek } from "@/components/social/calendar/CalendarWeek"
+import { CalendarDay } from "@/components/social/calendar/CalendarDay"
+import { CalendarMonth } from "@/components/social/calendar/CalendarMonth"
 import { CalendarListView } from "@/components/social/calendar/CalendarListView"
 import { Button } from "@/components/ui/button"
 import { PlusIcon, Loader2Icon } from "lucide-react"
-import Link from "next/link"
 
 export default function CalendarPage() {
-  const { viewMode, isLoading, fetchPosts, currentDate, channelFilter } =
+  const {
+    viewMode,
+    isLoading,
+    fetchPosts,
+    currentDate,
+    channelFilter,
+    setChannelFilter,
+  } =
     useSocialCalendarStore()
-  const accounts = useSocialAccountsStore((s) => s.accounts)
+  const { accounts, selectedChannelFilter } = useSocialAccountsStore((s) => ({
+    accounts: s.accounts,
+    selectedChannelFilter: s.selectedChannelFilter,
+  }))
   const initialized = useRef(false)
 
   // Fetch posts on first render
@@ -24,11 +35,18 @@ export default function CalendarPage() {
 
   // Refetch when date or filter changes — track previous values via ref
   const prevKey = useRef("")
-  const key = `${currentDate.toISOString()}-${channelFilter}`
+  const key = `${viewMode}-${currentDate.toISOString()}-${channelFilter}`
   if (prevKey.current && prevKey.current !== key) {
     fetchPosts()
   }
   prevKey.current = key
+
+  // Keep calendar filter aligned with sidebar channel filter
+  useEffect(() => {
+    if (selectedChannelFilter !== channelFilter) {
+      setChannelFilter(selectedChannelFilter)
+    }
+  }, [selectedChannelFilter, channelFilter, setChannelFilter])
 
   // Empty state: no channels
   if (accounts.length === 0) {
@@ -58,8 +76,12 @@ export default function CalendarPage() {
         <div className="flex flex-1 items-center justify-center">
           <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
         </div>
+      ) : viewMode === "day" ? (
+        <CalendarDay />
       ) : viewMode === "week" ? (
         <CalendarWeek />
+      ) : viewMode === "month" ? (
+        <CalendarMonth />
       ) : (
         <CalendarListView />
       )}

@@ -8,6 +8,7 @@ import {
   listSocialPosts,
 } from "@/lib/social/repository";
 import type { SocialPostStatus } from "@/lib/db/schema";
+import { isRecord } from "@/lib/social/utils";
 import { logger } from "@/utils/logger";
 
 interface PostsGetResponse {
@@ -45,10 +46,6 @@ interface PostsPostResponse {
   error?: string;
   code?: string;
   billingUrl?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function readString(value: unknown): string | undefined {

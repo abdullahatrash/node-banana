@@ -4,6 +4,7 @@ import { useMemo } from "react"
 import { format } from "date-fns"
 import { useRouter } from "next/navigation"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
+import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformIcon } from "@/components/social/shared/PlatformIcon"
 import { POST_STATUS_CONFIG } from "@/lib/social/constants"
 import { Badge } from "@/components/ui/badge"
@@ -14,6 +15,7 @@ import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
 
 export function CalendarListView() {
   const { posts } = useSocialCalendarStore()
+  const accounts = useSocialAccountsStore((s) => s.accounts)
   const router = useRouter()
   const { show: showToast } = useToast()
   const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
@@ -74,8 +76,8 @@ export function CalendarListView() {
                 >
                   <PlatformIcon
                     platform={
-                      (post as any).platform ??
-                      ("linkedin" as SocialPlatform)
+                      (accounts.find((account) => account.id === post.socialAccountId)
+                        ?.platform as SocialPlatform) ?? "linkedin"
                     }
                     size={16}
                   />

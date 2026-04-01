@@ -6,6 +6,7 @@ import {
   SocialNotificationPreferencesNotFoundError,
   upsertSocialNotificationPreferences,
 } from "@/lib/social/repository";
+import { isRecord } from "@/lib/social/utils";
 
 interface NotificationPreferencesResponse {
   success: boolean;
@@ -27,10 +28,6 @@ interface NotificationPreferencesBody {
   webhookEnabled?: boolean;
   muteAll?: boolean;
   preferences?: Record<string, unknown> | null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function isBooleanOrUndefined(value: unknown): value is boolean | undefined {

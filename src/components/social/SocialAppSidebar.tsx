@@ -10,6 +10,12 @@ import {
   ActivityIcon,
   PlusIcon,
   BananaIcon,
+  BarChart3Icon,
+  ImageIcon,
+  PlugIcon,
+  BotIcon,
+  PuzzleIcon,
+  BellIcon,
 } from "lucide-react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformIcon } from "./shared/PlatformIcon"
@@ -38,6 +44,12 @@ const NAV_ITEMS = [
   { href: "/social/compose", label: "Compose", icon: PenSquareIcon },
   { href: "/social/posts", label: "Posts", icon: FileTextIcon },
   { href: "/social/channels", label: "Channels", icon: ActivityIcon },
+  { href: "/social/events", label: "Events", icon: BellIcon },
+  { href: "/social/analytics", label: "Analytics", icon: BarChart3Icon },
+  { href: "/social/media", label: "Media", icon: ImageIcon },
+  { href: "/social/integrations", label: "Integrations", icon: PuzzleIcon },
+  { href: "/social/plugs", label: "Plugs", icon: PlugIcon },
+  { href: "/social/agents", label: "Agents", icon: BotIcon },
 ]
 
 
