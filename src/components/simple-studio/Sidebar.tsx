@@ -256,8 +256,8 @@ export function Sidebar() {
             >
               <option value="">Auto (default)</option>
               {isLoadingModels && <option disabled>Loading models...</option>}
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
+              {models.map((m, i) => (
+                <option key={`${m.id}-${i}`} value={m.id}>
                   {m.name} ({m.provider})
                 </option>
               ))}
