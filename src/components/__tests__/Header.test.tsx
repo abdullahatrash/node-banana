@@ -21,7 +21,9 @@ vi.mock("@/lib/studio/client", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     replace: (...args: unknown[]) => mockRouterReplace(...args),
+    push: vi.fn(),
   }),
+  usePathname: () => "/studio",
 }));
 
 // Mock the workflow store
