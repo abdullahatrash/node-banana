@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSimpleStudioStore, type SimpleStudioMode } from "@/store/simpleStudioStore";
+import { PromptLibrary } from "./PromptLibrary";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -381,6 +382,9 @@ export function Sidebar() {
           </div>
         </fieldset>
       </div>
+
+      {/* Prompt library */}
+      <PromptLibrary />
 
       {/* Generate button — pinned at bottom */}
       <div className="p-4 border-t border-neutral-800 shrink-0">
