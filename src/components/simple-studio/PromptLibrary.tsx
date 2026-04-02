@@ -63,7 +63,7 @@ export function PromptLibrary() {
         {prompt.trim() && (
           <button
             onClick={() => setSaveDialogOpen(true)}
-            className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+            className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
           >
             Save Prompt
           </button>
@@ -144,7 +144,7 @@ function PromptItem({
       <div className="text-xs font-medium text-neutral-300 group-hover:text-neutral-100 truncate" dir="auto">
         {prompt.name}
       </div>
-      <div className="text-[10px] text-neutral-500 mt-0.5 line-clamp-2" dir="auto">
+      <div className="text-[11px] text-neutral-500 mt-0.5 line-clamp-2" dir="auto">
         {prompt.promptText}
       </div>
     </button>

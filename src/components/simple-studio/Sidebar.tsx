@@ -295,7 +295,7 @@ export function Sidebar() {
         {/* Rewritten prompt preview */}
         {store.rewriteEnabled && store.rewrittenPrompt && (
           <div className="bg-neutral-800/50 border border-neutral-700/50 rounded-md p-3">
-            <div className="text-[10px] uppercase tracking-wide text-blue-400 mb-1">
+            <div className="text-[11px] uppercase tracking-wide text-blue-400 mb-1">
               Enhanced prompt
             </div>
             <p className="text-xs text-neutral-300 leading-relaxed" dir="auto">
@@ -442,7 +442,7 @@ export function Sidebar() {
                     {/* Recommended section */}
                     {recommendedModels.length > 0 && (
                       <>
-                        <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-blue-400 bg-neutral-800 sticky top-0">
+                        <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-blue-400 bg-neutral-800 sticky top-0">
                           Recommended
                         </div>
                         {recommendedModels.map((m, i) => (
@@ -464,7 +464,7 @@ export function Sidebar() {
                     {/* All models section */}
                     {otherModels.length > 0 && (
                       <>
-                        <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-neutral-500 bg-neutral-800 sticky top-0">
+                        <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-neutral-500 bg-neutral-800 sticky top-0">
                           All Models
                         </div>
                         {otherModels.map((m, i) => (
@@ -546,7 +546,7 @@ export function Sidebar() {
                 </button>
               ))}
             </div>
-            <p className="text-[10px] text-neutral-600 mt-1">Duration depends on model (Veo: 4-8s, Kling: 5-10s)</p>
+            <p className="text-[11px] text-neutral-600 mt-1">Duration depends on model (Veo: 4-8s, Kling: 5-10s)</p>
           </fieldset>
         )}
 
@@ -615,7 +615,7 @@ export function Sidebar() {
                     className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 placeholder-neutral-500 resize-none focus:outline-none focus:border-neutral-600"
                     dir="auto"
                   />
-                  <p className="text-[10px] text-neutral-600 mt-1">
+                  <p className="text-[11px] text-neutral-600 mt-1">
                     Works best with Veo 3.1 and Kling 2.6. Dialogue is injected into the prompt.
                   </p>
                 </fieldset>
