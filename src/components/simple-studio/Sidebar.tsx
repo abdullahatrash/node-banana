@@ -43,7 +43,8 @@ const MODES: { value: SimpleStudioMode; labelEn: string; labelAr: string }[] = [
   { value: "copy", labelEn: "Copy", labelAr: "نص" },
 ];
 
-const ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:5"];
+const PHOTO_ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:5"];
+const VIDEO_ASPECT_RATIOS = ["16:9", "9:16"];
 const BATCH_PRESETS = [1, 4, 8, 12, 20];
 const VIDEO_BATCH_PRESETS = [1, 2, 4, 8];
 const TONES = ["professional", "casual", "creative", "persuasive"];
@@ -122,6 +123,14 @@ export function Sidebar() {
   const isPhotoOrVideo = store.mode === "photo" || store.mode === "video";
   const maxBatch = store.mode === "video" ? 8 : 20;
   const batchPresets = store.mode === "video" ? VIDEO_BATCH_PRESETS : BATCH_PRESETS;
+  const aspectRatios = store.mode === "video" ? VIDEO_ASPECT_RATIOS : PHOTO_ASPECT_RATIOS;
+
+  // Reset aspect ratio when switching to video if current value isn't valid for video
+  useEffect(() => {
+    if (store.mode === "video" && !VIDEO_ASPECT_RATIOS.includes(store.aspectRatio)) {
+      store.setAspectRatio("16:9");
+    }
+  }, [store.mode, store.aspectRatio, store.setAspectRatio]);
 
   // Split models into recommended + others, filtered by search
   const recommendedSet = store.mode === "video" ? RECOMMENDED_VIDEO_MODELS : RECOMMENDED_IMAGE_MODELS;
@@ -335,7 +344,7 @@ export function Sidebar() {
                     {/* Auto option */}
                     <button
                       type="button"
-                      onClick={() => { store.setSelectedModelId(null); setModelDropdownOpen(false); setModelSearch(""); }}
+                      onClick={() => { store.setSelectedModel(null); setModelDropdownOpen(false); setModelSearch(""); }}
                       className={`w-full text-start px-3 py-2 text-xs hover:bg-neutral-700/50 transition-colors ${
                         !store.selectedModelId ? "bg-neutral-700/30 text-blue-400" : "text-neutral-300"
                       }`}
@@ -353,7 +362,7 @@ export function Sidebar() {
                           <button
                             key={`rec-${m.id}-${i}`}
                             type="button"
-                            onClick={() => { store.setSelectedModelId(m.id); setModelDropdownOpen(false); setModelSearch(""); }}
+                            onClick={() => { store.setSelectedModel(m.id, m.provider, m.name); setModelDropdownOpen(false); setModelSearch(""); }}
                             className={`w-full text-start px-3 py-2 text-xs hover:bg-neutral-700/50 transition-colors ${
                               store.selectedModelId === m.id ? "bg-neutral-700/30 text-blue-400" : "text-neutral-300"
                             }`}
@@ -375,7 +384,7 @@ export function Sidebar() {
                           <button
                             key={`all-${m.id}-${i}`}
                             type="button"
-                            onClick={() => { store.setSelectedModelId(m.id); setModelDropdownOpen(false); setModelSearch(""); }}
+                            onClick={() => { store.setSelectedModel(m.id, m.provider, m.name); setModelDropdownOpen(false); setModelSearch(""); }}
                             className={`w-full text-start px-3 py-2 text-xs hover:bg-neutral-700/50 transition-colors ${
                               store.selectedModelId === m.id ? "bg-neutral-700/30 text-blue-400" : "text-neutral-300"
                             }`}
@@ -408,7 +417,7 @@ export function Sidebar() {
               Aspect Ratio
             </label>
             <div className="flex gap-1.5">
-              {ASPECT_RATIOS.map((ratio) => (
+              {aspectRatios.map((ratio) => (
                 <button
                   key={ratio}
                   onClick={() => store.setAspectRatio(ratio)}

@@ -26,6 +26,7 @@ export interface Generation {
   assetId: string | null;
   error: string | null;
   mode: SimpleStudioMode;
+  aspectRatio: string;
 }
 
 export interface SavedPrompt {
@@ -49,6 +50,9 @@ export interface SimpleStudioState {
   setRewriteEnabled: (enabled: boolean) => void;
   rewrittenPrompt: string | null;
   selectedModelId: string | null;
+  selectedModelProvider: string | null;
+  selectedModelName: string | null;
+  setSelectedModel: (id: string | null, provider?: string | null, name?: string | null) => void;
   setSelectedModelId: (id: string | null) => void;
   aspectRatio: string;
   setAspectRatio: (ratio: string) => void;
@@ -133,17 +137,22 @@ async function persistToR2(
   batchId: string,
 ): Promise<string | null> {
   try {
-    // Convert base64 data URL to blob
+    // Convert data URL or remote URL to blob
     const res = await fetch(dataUrl);
     const blob = await res.blob();
 
     const assetType = mode === "video" ? "video" : "image";
     const ext = mode === "video" ? "mp4" : "png";
+    // Use mode-aware content type rather than trusting blob.type
+    // (e.g. video results may report as application/octet-stream)
+    const contentType = mode === "video"
+      ? "video/mp4"
+      : blob.type || `image/${ext}`;
 
     // Presign
     const presign = await createStudioAssetPresign({
       assetType,
-      contentType: blob.type || `${assetType}/${ext}`,
+      contentType,
       expectedSizeBytes: blob.size,
       fileName: `simple-${mode}-${Date.now()}.${ext}`,
     });
@@ -151,7 +160,7 @@ async function persistToR2(
     // Upload to R2
     await fetch(presign.uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": blob.type || `${assetType}/${ext}` },
+      headers: { "Content-Type": contentType },
       body: blob,
     });
 
@@ -159,7 +168,7 @@ async function persistToR2(
     await finalizeStudioAssetUpload(presign.assetId, {
       uploadState: "ready",
       sizeBytes: blob.size,
-      mimeType: blob.type || `${assetType}/${ext}`,
+      mimeType: contentType,
     });
 
     return presign.assetId;
@@ -208,7 +217,11 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setRewriteEnabled: (enabled) => set({ rewriteEnabled: enabled }),
   rewrittenPrompt: null,
   selectedModelId: null,
-  setSelectedModelId: (id) => set({ selectedModelId: id }),
+  selectedModelProvider: null,
+  selectedModelName: null,
+  setSelectedModel: (id, provider = null, name = null) =>
+    set({ selectedModelId: id, selectedModelProvider: provider, selectedModelName: name }),
+  setSelectedModelId: (id) => set({ selectedModelId: id, selectedModelProvider: null, selectedModelName: null }),
   aspectRatio: "1:1",
   setAspectRatio: (ratio) => set({ aspectRatio: ratio }),
   batchCount: 4,
@@ -278,6 +291,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         assetId: null,
         error: null,
         mode: state.mode,
+        aspectRatio: state.aspectRatio,
       }),
     );
 
@@ -355,12 +369,38 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
           result = fullText;
         } else {
           // Use /api/generate for photo/video
+          const images = state.mode === "photo"
+            ? state.referenceImages
+            : state.sourceImage ? [state.sourceImage] : [];
+          const hasSourceImage = state.mode === "video" && images.length > 0;
+
+          let modelId = state.selectedModelId;
+          let modelProvider = state.selectedModelProvider;
+          let modelName = state.selectedModelName;
+
+          // Auto-switch to image-to-video variant when source image is provided
+          if (hasSourceImage && modelId?.includes("/text-to-video")) {
+            modelId = modelId.replace("/text-to-video", "/image-to-video");
+          }
+
+          // Default to Veo when in video mode with no model selected
+          if (state.mode === "video" && !modelId) {
+            modelId = hasSourceImage ? "veo-3.1/image-to-video" : "veo-3.1/text-to-video";
+            modelProvider = null;
+            modelName = "Veo 3.1";
+          }
+
           const body: Record<string, unknown> = {
             prompt: finalPrompt,
-            images: state.mode === "photo" ? state.referenceImages : state.sourceImage ? [state.sourceImage] : [],
-            selectedModel: state.selectedModelId
-              ? { modelId: state.selectedModelId }
+            images,
+            selectedModel: modelId
+              ? {
+                  modelId,
+                  provider: modelProvider || undefined,
+                  displayName: modelName || modelId,
+                }
               : undefined,
+            mediaType: state.mode === "video" ? "video" : undefined,
             parameters: {
               aspectRatio: state.aspectRatio,
               ...(state.mode === "video" ? { duration: state.videoDuration } : {}),
@@ -375,7 +415,13 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
           });
           const data = await res.json();
           if (!data.success) throw new Error(data.error || "Generation failed");
-          result = data.image || data.video || data.videoUrl || data.audio || null;
+          // For video: prefer video (base64) or videoUrl (remote URL)
+          // For other modes: image, audio
+          if (state.mode === "video") {
+            result = data.video || data.videoUrl || null;
+          } else {
+            result = data.image || data.audio || null;
+          }
         }
 
         setGenerations(set, get, (prev) =>
@@ -383,7 +429,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         );
 
         // Persist image/video results to R2 in the background (non-blocking)
-        if (result && state.mode !== "copy" && result.startsWith("data:")) {
+        // Results can be base64 data URLs or remote URLs (for large videos)
+        if (result && state.mode !== "copy" && (result.startsWith("data:") || result.startsWith("http"))) {
           persistToR2(result, state.mode, finalPrompt, batchId).then((assetId) => {
             if (assetId) {
               setGenerations(set, get, (prev) =>
@@ -469,6 +516,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
               assetId: asset.id as string,
               error: null,
               mode: (metadata.mode as SimpleStudioMode) || "photo",
+              aspectRatio: (metadata.aspectRatio as string) || "1:1",
             };
           },
         );
@@ -495,6 +543,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
           promptText: state.prompt,
           formConfig: {
             selectedModelId: state.selectedModelId,
+            selectedModelProvider: state.selectedModelProvider,
+            selectedModelName: state.selectedModelName,
             aspectRatio: state.aspectRatio,
             batchCount: state.batchCount,
             tone: state.tone,
@@ -550,6 +600,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       prompt: prompt.promptText,
       rewrittenPrompt: null,
       selectedModelId: (config.selectedModelId as string) || null,
+      selectedModelProvider: (config.selectedModelProvider as string) || null,
+      selectedModelName: (config.selectedModelName as string) || null,
       aspectRatio: (config.aspectRatio as string) || "1:1",
       batchCount: (config.batchCount as number) || 4,
       tone: (config.tone as string) || "professional",
