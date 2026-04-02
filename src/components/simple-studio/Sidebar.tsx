@@ -77,6 +77,7 @@ export function Sidebar() {
   const [modelsFetchError, setModelsFetchError] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Fetch models on mount and mode change
@@ -184,9 +185,17 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* Prompt */}
         <fieldset>
-          <label className="block text-xs font-medium text-neutral-400 mb-1.5">
-            Prompt
-          </label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-medium text-neutral-400">
+              Prompt
+            </label>
+            <button
+              onClick={() => setPromptLibraryOpen(!promptLibraryOpen)}
+              className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              {promptLibraryOpen ? "Hide Library" : "Prompt Library"}
+            </button>
+          </div>
           <textarea
             value={store.prompt}
             onChange={(e) => store.setPrompt(e.target.value)}
@@ -199,6 +208,7 @@ export function Sidebar() {
             className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 placeholder-neutral-500 resize-none focus:outline-none focus:border-neutral-600"
             dir="auto"
           />
+          {promptLibraryOpen && <PromptLibrary />}
         </fieldset>
 
         {/* LLM Rewrite toggle (photo/video only) */}
@@ -660,9 +670,6 @@ export function Sidebar() {
           </div>
         </fieldset>
       </div>
-
-      {/* Prompt library */}
-      <PromptLibrary />
 
       {/* Generate button — pinned at bottom */}
       <div className="p-4 border-t border-neutral-800 shrink-0">

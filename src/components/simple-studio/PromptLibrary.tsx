@@ -35,9 +35,9 @@ export function PromptLibrary() {
   };
 
   return (
-    <div className="border-t border-neutral-800">
+    <div className="bg-neutral-800/30 border border-neutral-700/50 rounded-lg mt-2 overflow-hidden">
       {/* Tabs + save button */}
-      <div className="flex items-center justify-between px-4 pt-3">
+      <div className="flex items-center justify-between px-3 pt-2.5">
         <div className="flex gap-3">
           <button
             onClick={() => setActiveTab("templates")}
@@ -72,7 +72,7 @@ export function PromptLibrary() {
 
       {/* Save dialog */}
       {saveDialogOpen && (
-        <div className="px-4 py-2">
+        <div className="px-3 py-2">
           <div className="flex gap-2">
             <input
               value={saveName}
@@ -100,7 +100,7 @@ export function PromptLibrary() {
       )}
 
       {/* Prompt list */}
-      <div className="px-4 py-2 space-y-1.5 max-h-[200px] overflow-y-auto">
+      <div className="px-3 py-2 space-y-1.5 max-h-[200px] overflow-y-auto">
         {activeTab === "templates" && (
           <>
             {filteredTemplates.length === 0 ? (
