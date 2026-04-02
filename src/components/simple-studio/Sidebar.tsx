@@ -111,7 +111,7 @@ function GeneratingProgress({
 // Component
 // ---------------------------------------------------------------------------
 
-export function Sidebar() {
+export function Sidebar({ onGenerate }: { onGenerate?: () => void } = {}) {
   const store = useSimpleStudioStore();
   const mode = useSimpleStudioStore((s) => s.mode);
   const [models, setModels] = useState<ProviderModel[]>([]);
@@ -739,7 +739,10 @@ export function Sidebar() {
           />
         ) : (
           <button
-            onClick={() => store.generate()}
+            onClick={() => {
+              store.generate();
+              onGenerate?.();
+            }}
             disabled={!store.prompt.trim() || store.isRewriting}
             className="w-full py-2.5 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
