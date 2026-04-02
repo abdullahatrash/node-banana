@@ -414,6 +414,18 @@ export async function generateWithKie(
     Object.assign(inputParams, input.parameters);
   }
 
+  // Normalize parameter names for Kie API (expects snake_case)
+  // User's camelCase aspectRatio (from simple studio) overrides default aspect_ratio
+  if (inputParams.aspectRatio !== undefined) {
+    inputParams.aspect_ratio = inputParams.aspectRatio;
+    delete inputParams.aspectRatio;
+  }
+
+  // Coerce duration to string (Kie API requires string for duration)
+  if (inputParams.duration !== undefined && typeof inputParams.duration !== 'string') {
+    inputParams.duration = String(inputParams.duration);
+  }
+
   // GPT Image 1.5 does NOT support 'size' parameter - only 'aspect_ratio'
   // Remove any stale 'size' values from old workflow data
   if (modelId.startsWith("gpt-image/1.5")) {

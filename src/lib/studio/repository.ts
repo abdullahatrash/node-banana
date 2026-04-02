@@ -7,6 +7,7 @@ import {
   member,
   organization,
   projects,
+  savedPrompts,
   type WorkspaceRole,
   workspaceSettings,
   storageProviderEnum,
@@ -971,4 +972,141 @@ export async function hardDeleteAsset(params: { assetId: string }): Promise<bool
     .returning({ id: assets.id });
 
   return deleted.length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Saved Prompts CRUD
+// ---------------------------------------------------------------------------
+
+interface CreatePromptInput {
+  workspaceId: string;
+  mode: "photo" | "video" | "copy";
+  name: string;
+  promptText: string;
+  formConfig?: Record<string, unknown>;
+  isPublic?: boolean;
+}
+
+export async function createPrompt(input: CreatePromptInput) {
+  const db = getDb();
+  const now = new Date();
+
+  const [created] = await db
+    .insert(savedPrompts)
+    .values({
+      id: `sp_${randomUUID()}`,
+      workspaceId: input.workspaceId,
+      mode: input.mode,
+      name: input.name,
+      promptText: input.promptText,
+      formConfig: input.formConfig ?? {},
+      isPublic: input.isPublic ?? false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  return created;
+}
+
+export async function listPrompts(workspaceId: string, mode?: string) {
+  const db = getDb();
+  const conditions = [
+    eq(savedPrompts.workspaceId, workspaceId),
+    isNull(savedPrompts.deletedAt),
+  ];
+  if (mode) {
+    conditions.push(sql`${savedPrompts.mode} = ${mode}`);
+  }
+  return db
+    .select()
+    .from(savedPrompts)
+    .where(and(...conditions))
+    .orderBy(desc(savedPrompts.updatedAt));
+}
+
+export async function listPublicPrompts(mode?: string) {
+  const db = getDb();
+  const conditions = [
+    eq(savedPrompts.isPublic, true),
+    isNull(savedPrompts.deletedAt),
+  ];
+  if (mode) {
+    conditions.push(sql`${savedPrompts.mode} = ${mode}`);
+  }
+  return db
+    .select()
+    .from(savedPrompts)
+    .where(and(...conditions))
+    .orderBy(desc(savedPrompts.createdAt));
+}
+
+export async function getPrompt(workspaceId: string, promptId: string) {
+  const db = getDb();
+  const [prompt] = await db
+    .select()
+    .from(savedPrompts)
+    .where(
+      and(
+        eq(savedPrompts.workspaceId, workspaceId),
+        eq(savedPrompts.id, promptId),
+        isNull(savedPrompts.deletedAt),
+      ),
+    );
+  return prompt ?? null;
+}
+
+interface UpdatePromptInput {
+  name?: string;
+  promptText?: string;
+  formConfig?: Record<string, unknown>;
+  isPublic?: boolean;
+}
+
+export async function updatePrompt(
+  workspaceId: string,
+  promptId: string,
+  input: UpdatePromptInput,
+) {
+  const db = getDb();
+  const now = new Date();
+
+  const setFields: Record<string, unknown> = { updatedAt: now };
+  if (input.name !== undefined) setFields.name = input.name;
+  if (input.promptText !== undefined) setFields.promptText = input.promptText;
+  if (input.formConfig !== undefined) setFields.formConfig = input.formConfig;
+  if (input.isPublic !== undefined) setFields.isPublic = input.isPublic;
+
+  const [updated] = await db
+    .update(savedPrompts)
+    .set(setFields)
+    .where(
+      and(
+        eq(savedPrompts.workspaceId, workspaceId),
+        eq(savedPrompts.id, promptId),
+        isNull(savedPrompts.deletedAt),
+      ),
+    )
+    .returning();
+
+  return updated ?? null;
+}
+
+export async function softDeletePrompt(workspaceId: string, promptId: string) {
+  const db = getDb();
+  const now = new Date();
+
+  const [deleted] = await db
+    .update(savedPrompts)
+    .set({ deletedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(savedPrompts.workspaceId, workspaceId),
+        eq(savedPrompts.id, promptId),
+        isNull(savedPrompts.deletedAt),
+      ),
+    )
+    .returning();
+
+  return deleted ?? null;
 }

@@ -1139,6 +1139,52 @@ export const socialAutomationTasks = pgTable(
   }),
 );
 
+/**
+ * Simple Studio domain tables.
+ */
+export const savedPromptModeEnum = pgEnum("saved_prompt_mode", [
+  "photo",
+  "video",
+  "copy",
+]);
+
+export const savedPrompts = pgTable(
+  "saved_prompts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    mode: savedPromptModeEnum("mode").notNull(),
+    name: text("name").notNull(),
+    promptText: text("prompt_text").notNull(),
+    formConfig: jsonb("form_config")
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
+    isPublic: boolean("is_public").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => ({
+    workspaceDeletedIdx: index("saved_prompts_workspace_deleted_idx").on(
+      table.workspaceId,
+      table.deletedAt,
+    ),
+    publicModeDeletedIdx: index("saved_prompts_public_mode_deleted_idx").on(
+      table.isPublic,
+      table.mode,
+      table.deletedAt,
+    ),
+    createdAtIdx: index("saved_prompts_created_at_idx").on(table.createdAt),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
@@ -1157,3 +1203,4 @@ export type SocialTokenRefreshLeaseState =
 export type SocialWebhookDeadLetterReplayState =
   typeof socialWebhookDeadLetterReplayStateEnum.enumValues[number];
 export type AutomationTaskState = typeof automationTaskStateEnum.enumValues[number];
+export type SavedPromptMode = typeof savedPromptModeEnum.enumValues[number];

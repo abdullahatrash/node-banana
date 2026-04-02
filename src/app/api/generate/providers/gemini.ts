@@ -51,9 +51,18 @@ export async function generateWithGemini(
   // Initialize Gemini client
   const ai = new GoogleGenAI({ apiKey });
 
+  // Hint aspect ratio in the prompt text as a workaround for gemini-2.5-flash-image
+  // sometimes ignoring imageConfig.aspectRatio (known server-side issue)
+  const AR_LABELS: Record<string, string> = {
+    "9:16": "9:16 portrait", "16:9": "16:9 landscape",
+    "4:5": "4:5 portrait", "1:1": "1:1 square",
+  };
+  const arLabel = aspectRatio ? AR_LABELS[aspectRatio] : null;
+  const augmentedPrompt = arLabel && prompt ? `${prompt} [aspect ratio: ${arLabel}]` : prompt;
+
   // Build request parts array with prompt and all images
   const requestParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
-    { text: prompt },
+    { text: augmentedPrompt },
     ...imageData.map(({ data, mimeType }) => ({
       inlineData: {
         mimeType,
@@ -226,11 +235,14 @@ export async function generateWithGeminiVideo(
     numberOfVideos: 1,
   };
 
-  if (parameters.aspectRatio) {
-    config.aspectRatio = parameters.aspectRatio;
-  }
-  if (parameters.durationSeconds) {
-    config.durationSeconds = Number(parameters.durationSeconds);
+  // Veo only supports "16:9" and "9:16"; map anything else to "16:9"
+  const VALID_VEO_RATIOS = new Set(["16:9", "9:16"]);
+  const requestedRatio = parameters.aspectRatio as string | undefined;
+  config.aspectRatio = requestedRatio && VALID_VEO_RATIOS.has(requestedRatio) ? requestedRatio : "16:9";
+  const durationVal = parameters.durationSeconds ?? parameters.duration;
+  if (durationVal !== undefined && durationVal !== null && durationVal !== "") {
+    // Veo API accepts durationSeconds between 4 and 8 inclusive
+    config.durationSeconds = Math.min(8, Math.max(4, Number(durationVal)));
   }
   if (parameters.resolution) {
     config.resolution = parameters.resolution;

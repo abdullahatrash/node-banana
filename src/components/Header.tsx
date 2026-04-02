@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useState, useMemo, useCallback } from "react";
 import { useWorkflowStore, WorkflowFile } from "@/store/workflowStore";
 import { useShallow } from "zustand/shallow";
@@ -67,6 +67,8 @@ function CommentsNavigationIcon() {
 
 export function Header() {
   const router = useRouter();
+  const pathname = usePathname();
+  const isSimpleMode = pathname?.startsWith("/studio/simple");
   const { data: session } = authClient.useSession();
   const {
     workflowName,
@@ -279,7 +281,33 @@ export function Header() {
             </h1>
           </button>
 
-          <div className="flex items-center gap-2 ms-4 ps-4 border-s border-neutral-700">
+          {/* Mode switcher pill */}
+          <div className="flex items-center ms-4 ps-4 border-s border-neutral-700">
+            <div className="flex items-center bg-neutral-800 rounded-md p-0.5">
+              <button
+                onClick={() => router.push("/studio/simple")}
+                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+                  isSimpleMode
+                    ? "bg-neutral-700 text-neutral-100"
+                    : "text-neutral-400 hover:text-neutral-200"
+                }`}
+              >
+                Simple
+              </button>
+              <button
+                onClick={() => router.push("/studio")}
+                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+                  !isSimpleMode
+                    ? "bg-neutral-700 text-neutral-100"
+                    : "text-neutral-400 hover:text-neutral-200"
+                }`}
+              >
+                Workflow
+              </button>
+            </div>
+          </div>
+
+          {!isSimpleMode && <div className="flex items-center gap-2 ms-4 ps-4 border-s border-neutral-700">
             {isProjectConfigured ? (
               <>
                 <span className="text-sm text-neutral-300">{workflowName}</span>
@@ -428,11 +456,11 @@ export function Header() {
                 {settingsButtons}
               </>
             )}
-          </div>
+          </div>}
         </div>
 
         <div className="flex items-center gap-3 text-xs">
-          {previousWorkflowSnapshot && (
+          {!isSimpleMode && previousWorkflowSnapshot && (
             <button
               onClick={handleRevertAIChanges}
               className="px-2.5 py-1.5 text-xs text-neutral-300 hover:text-neutral-100 bg-neutral-700/50 hover:bg-neutral-700 border border-neutral-600 rounded transition-colors"
@@ -442,7 +470,7 @@ export function Header() {
             </button>
           )}
           <LanguageSwitcher className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800" />
-          <CommentsNavigationIcon />
+          {!isSimpleMode && <CommentsNavigationIcon />}
           {session?.user ? (
             <>
               <span className="text-neutral-300 truncate max-w-[220px]" title={sessionLabel}>
@@ -473,41 +501,45 @@ export function Header() {
               </Link>
             </>
           )}
-          <span className="text-neutral-500">·</span>
-          <span className="text-neutral-400">
-            {isProjectConfigured ? (
-              isSaving ? (
-                "Saving..."
-              ) : lastSavedAt ? (
-                `Saved ${formatTime(lastSavedAt)}`
-              ) : (
-                "Not saved"
-              )
-            ) : (
-              "Not saved"
-            )}
-          </span>
-          <span className="text-neutral-500">·</span>
-          <a
-            href="https://x.com/abodiatrash"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-neutral-400 hover:text-neutral-200 transition-colors"
-          >
-            Made by abodi
-          </a>
-          <span className="text-neutral-500">·</span>
-          <button
-            onClick={() => setShortcutsDialogOpen(true)}
-            className="text-neutral-400 hover:text-neutral-200 transition-colors"
-            title="Keyboard shortcuts (?)"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V6.75z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M8 16h8" />
-            </svg>
-          </button>
-          <span className="text-neutral-500">·</span>
+          {!isSimpleMode && (
+            <>
+              <span className="text-neutral-500">·</span>
+              <span className="text-neutral-400">
+                {isProjectConfigured ? (
+                  isSaving ? (
+                    "Saving..."
+                  ) : lastSavedAt ? (
+                    `Saved ${formatTime(lastSavedAt)}`
+                  ) : (
+                    "Not saved"
+                  )
+                ) : (
+                  "Not saved"
+                )}
+              </span>
+              <span className="text-neutral-500">·</span>
+              <a
+                href="https://x.com/abodiatrash"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-neutral-400 hover:text-neutral-200 transition-colors"
+              >
+                Made by abodi
+              </a>
+              <span className="text-neutral-500">·</span>
+              <button
+                onClick={() => setShortcutsDialogOpen(true)}
+                className="text-neutral-400 hover:text-neutral-200 transition-colors"
+                title="Keyboard shortcuts (?)"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V6.75z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M8 16h8" />
+                </svg>
+              </button>
+            </>
+          )}
+          {!isSimpleMode && <span className="text-neutral-500">·</span>}
           {/* <a
             href="https://discord.com/invite/89Nr6EKkTf"
             target="_blank"
