@@ -95,7 +95,7 @@ export function ResultsGallery() {
         } else if (mode === "video") {
           gridCols = "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
         } else {
-          gridCols = "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4";
+          gridCols = "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4";
         }
 
         const firstItem = batch.items[0];
@@ -108,7 +108,7 @@ export function ResultsGallery() {
           <div key={batch.batchId}>
             {/* Batch header */}
             {truncated && (
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
                 <p className="text-xs text-neutral-400 truncate max-w-[70%]" dir="auto">
                   {truncated}
                 </p>
