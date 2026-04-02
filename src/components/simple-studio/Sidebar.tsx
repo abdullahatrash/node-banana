@@ -66,6 +66,48 @@ const OUTPUT_LANGUAGES: { value: "ar" | "en" | "both"; label: string }[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function GeneratingProgress({
+  generations,
+  currentBatchId,
+  onCancel,
+}: {
+  generations: import("@/store/simpleStudioStore").Generation[];
+  currentBatchId: string | null;
+  onCancel: () => void;
+}) {
+  const batch = currentBatchId
+    ? generations.filter((g) => g.batchId === currentBatchId)
+    : [];
+  const total = batch.length;
+  const done = batch.filter((g) => g.status === "complete" || g.status === "failed").length;
+  const pct = total > 0 ? (done / total) * 100 : 0;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-xs text-neutral-400">
+        <span>Generating...</span>
+        <span>{done}/{total}</span>
+      </div>
+      <div className="w-full h-1 bg-neutral-700 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-blue-500 rounded-full transition-all duration-300"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <button
+        onClick={onCancel}
+        className="w-full py-2 text-sm font-medium rounded-md bg-red-600/20 text-red-400 border border-red-600/50 hover:bg-red-600/30 transition-colors"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -77,7 +119,24 @@ export function Sidebar() {
   const [modelsFetchError, setModelsFetchError] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
+
+  // Cmd/Ctrl+Enter to generate
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        const s = useSimpleStudioStore.getState();
+        if (s.prompt.trim() && !s.isGenerating && !s.isRewriting) {
+          s.generate();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Fetch models on mount and mode change
   useEffect(() => {
@@ -184,9 +243,17 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* Prompt */}
         <fieldset>
-          <label className="block text-xs font-medium text-neutral-400 mb-1.5">
-            Prompt
-          </label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-medium text-neutral-400">
+              Prompt
+            </label>
+            <button
+              onClick={() => setPromptLibraryOpen(!promptLibraryOpen)}
+              className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              {promptLibraryOpen ? "Hide Library" : "Prompt Library"}
+            </button>
+          </div>
           <textarea
             value={store.prompt}
             onChange={(e) => store.setPrompt(e.target.value)}
@@ -199,6 +266,7 @@ export function Sidebar() {
             className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 placeholder-neutral-500 resize-none focus:outline-none focus:border-neutral-600"
             dir="auto"
           />
+          {promptLibraryOpen && <PromptLibrary />}
         </fieldset>
 
         {/* LLM Rewrite toggle (photo/video only) */}
@@ -227,7 +295,7 @@ export function Sidebar() {
         {/* Rewritten prompt preview */}
         {store.rewriteEnabled && store.rewrittenPrompt && (
           <div className="bg-neutral-800/50 border border-neutral-700/50 rounded-md p-3">
-            <div className="text-[10px] uppercase tracking-wide text-blue-400 mb-1">
+            <div className="text-[11px] uppercase tracking-wide text-blue-400 mb-1">
               Enhanced prompt
             </div>
             <p className="text-xs text-neutral-300 leading-relaxed" dir="auto">
@@ -374,7 +442,7 @@ export function Sidebar() {
                     {/* Recommended section */}
                     {recommendedModels.length > 0 && (
                       <>
-                        <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-blue-400 bg-neutral-800 sticky top-0">
+                        <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-blue-400 bg-neutral-800 sticky top-0">
                           Recommended
                         </div>
                         {recommendedModels.map((m, i) => (
@@ -396,7 +464,7 @@ export function Sidebar() {
                     {/* All models section */}
                     {otherModels.length > 0 && (
                       <>
-                        <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-neutral-500 bg-neutral-800 sticky top-0">
+                        <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-neutral-500 bg-neutral-800 sticky top-0">
                           All Models
                         </div>
                         {otherModels.map((m, i) => (
@@ -478,7 +546,7 @@ export function Sidebar() {
                 </button>
               ))}
             </div>
-            <p className="text-[10px] text-neutral-600 mt-1">Duration depends on model (Veo: 4-8s, Kling: 5-10s)</p>
+            <p className="text-[11px] text-neutral-600 mt-1">Duration depends on model (Veo: 4-8s, Kling: 5-10s)</p>
           </fieldset>
         )}
 
@@ -547,7 +615,7 @@ export function Sidebar() {
                     className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 placeholder-neutral-500 resize-none focus:outline-none focus:border-neutral-600"
                     dir="auto"
                   />
-                  <p className="text-[10px] text-neutral-600 mt-1">
+                  <p className="text-[11px] text-neutral-600 mt-1">
                     Works best with Veo 3.1 and Kling 2.6. Dialogue is injected into the prompt.
                   </p>
                 </fieldset>
@@ -661,18 +729,14 @@ export function Sidebar() {
         </fieldset>
       </div>
 
-      {/* Prompt library */}
-      <PromptLibrary />
-
       {/* Generate button — pinned at bottom */}
       <div className="p-4 border-t border-neutral-800 shrink-0">
         {store.isGenerating ? (
-          <button
-            onClick={() => store.cancelGeneration()}
-            className="w-full py-2.5 text-sm font-medium rounded-md bg-red-600/20 text-red-400 border border-red-600/50 hover:bg-red-600/30 transition-colors"
-          >
-            Cancel Generation
-          </button>
+          <GeneratingProgress
+            generations={store.generations}
+            currentBatchId={store.currentBatchId}
+            onCancel={() => store.cancelGeneration()}
+          />
         ) : (
           <button
             onClick={() => store.generate()}
@@ -684,6 +748,9 @@ export function Sidebar() {
               : `Generate ${store.batchCount} ${store.mode === "copy" ? "variation" : store.mode}${store.batchCount > 1 ? "s" : ""}`}
           </button>
         )}
+        <p className="text-[11px] text-neutral-600 text-center mt-1.5">
+          {isMac ? "\u2318" : "Ctrl"}+Enter to generate
+        </p>
       </div>
     </div>
   );

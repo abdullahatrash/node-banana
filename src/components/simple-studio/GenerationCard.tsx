@@ -23,33 +23,61 @@ function aspectClass(ratio: string): string {
 // ---------------------------------------------------------------------------
 
 function Lightbox({
-  generation,
+  batchItems,
+  initialIndex,
   onClose,
 }: {
-  generation: Generation;
+  batchItems: Generation[];
+  initialIndex: number;
   onClose: () => void;
 }) {
-  const { result, mode, aspectRatio } = generation;
+  const [index, setIndex] = useState(initialIndex);
 
-  // Close on Escape
+  // Filter to only completed items with results for navigation
+  const navigable = batchItems.filter((g) => g.status === "complete" && g.result);
+  const navIndex = navigable.findIndex((g) => g.id === batchItems[index]?.id);
+  const current = navIndex >= 0 ? navigable[navIndex] : null;
+
+  const hasPrev = navIndex > 0;
+  const hasNext = navIndex < navigable.length - 1;
+
+  const goPrev = useCallback(() => {
+    if (hasPrev) {
+      const prev = navigable[navIndex - 1];
+      const realIndex = batchItems.findIndex((g) => g.id === prev.id);
+      if (realIndex >= 0) setIndex(realIndex);
+    }
+  }, [hasPrev, navIndex, navigable, batchItems]);
+
+  const goNext = useCallback(() => {
+    if (hasNext) {
+      const next = navigable[navIndex + 1];
+      const realIndex = batchItems.findIndex((g) => g.id === next.id);
+      if (realIndex >= 0) setIndex(realIndex);
+    }
+  }, [hasNext, navIndex, navigable, batchItems]);
+
+  // Keyboard: Escape, ArrowLeft, ArrowRight
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft") goPrev();
+      else if (e.key === "ArrowRight") goNext();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, goPrev, goNext]);
 
-  if (!result) return null;
+  if (!current?.result) return null;
 
-  const isVideo = mode === "video";
+  const isVideo = current.mode === "video";
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-lightbox-enter"
       onClick={onClose}
     >
-      {/* Content container — stop propagation so clicking media doesn't close */}
+      {/* Content container */}
       <div
         className="relative max-w-[90vw] max-h-[90vh] flex flex-col items-center"
         onClick={(e) => e.stopPropagation()}
@@ -65,33 +93,68 @@ function Lightbox({
           </svg>
         </button>
 
+        {/* Prev arrow */}
+        {hasPrev && (
+          <button
+            onClick={goPrev}
+            className="absolute start-0 top-1/2 -translate-y-1/2 -ms-12 p-2 text-neutral-400 hover:text-white transition-colors"
+            title="Previous"
+          >
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+          </button>
+        )}
+
+        {/* Next arrow */}
+        {hasNext && (
+          <button
+            onClick={goNext}
+            className="absolute end-0 top-1/2 -translate-y-1/2 -me-12 p-2 text-neutral-400 hover:text-white transition-colors"
+            title="Next"
+          >
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+          </button>
+        )}
+
         {isVideo ? (
           <video
-            src={result}
+            key={current.id}
+            src={current.result!}
             className="max-w-[90vw] max-h-[85vh] rounded-lg"
-            style={{ aspectRatio: aspectRatio.replace(":", "/") }}
+            style={{ aspectRatio: current.aspectRatio.replace(":", "/") }}
             controls
             autoPlay
           />
         ) : (
           <img
-            src={result}
+            key={current.id}
+            src={current.result!}
             alt=""
             className="max-w-[90vw] max-h-[85vh] rounded-lg object-contain"
           />
         )}
 
-        {/* Download button */}
-        <a
-          href={result}
-          download={`generation.${isVideo ? "mp4" : "png"}`}
-          className="mt-3 px-4 py-1.5 text-xs font-medium bg-neutral-800 text-neutral-200 rounded-md hover:bg-neutral-700 transition-colors flex items-center gap-1.5"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-          </svg>
-          Download
-        </a>
+        {/* Bottom bar: counter + download */}
+        <div className="mt-3 flex items-center gap-4">
+          {navigable.length > 1 && (
+            <span className="text-[11px] text-neutral-500">
+              {navIndex + 1} / {navigable.length}
+            </span>
+          )}
+          <a
+            href={current.result!}
+            download={`generation.${isVideo ? "mp4" : "png"}`}
+            className="px-4 py-1.5 text-xs font-medium bg-neutral-800 text-neutral-200 rounded-md hover:bg-neutral-700 transition-colors flex items-center gap-1.5"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            Download
+          </a>
+        </div>
       </div>
     </div>
   );
@@ -103,10 +166,12 @@ function Lightbox({
 
 interface GenerationCardProps {
   generation: Generation;
+  batchItems?: Generation[];
+  batchIndex?: number;
   onRetry?: () => void;
 }
 
-export function GenerationCard({ generation, onRetry }: GenerationCardProps) {
+export function GenerationCard({ generation, batchItems, batchIndex, onRetry }: GenerationCardProps) {
   const { status, result, error, mode, aspectRatio } = generation;
   const [previewOpen, setPreviewOpen] = useState(false);
 
@@ -114,14 +179,15 @@ export function GenerationCard({ generation, onRetry }: GenerationCardProps) {
   const closePreview = useCallback(() => setPreviewOpen(false), []);
 
   const aspect = aspectClass(aspectRatio);
+  const staggerDelay = batchIndex !== undefined ? { animationDelay: `${batchIndex * 50}ms` } : undefined;
 
   // Loading state
   if (status === "pending" || status === "generating") {
     return (
-      <div className={`${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg flex items-center justify-center`}>
+      <div className={`${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg flex items-center justify-center animate-card-enter`} style={staggerDelay}>
         <div className="flex flex-col items-center gap-2">
           <div className="w-6 h-6 border-2 border-neutral-600 border-t-neutral-300 rounded-full animate-spin" />
-          <span className="text-[10px] text-neutral-500">
+          <span className="text-[11px] text-neutral-500">
             {status === "pending" ? "Queued" : "Generating..."}
           </span>
         </div>
@@ -132,16 +198,16 @@ export function GenerationCard({ generation, onRetry }: GenerationCardProps) {
   // Error state
   if (status === "failed") {
     return (
-      <div className={`${aspect} bg-neutral-800/50 border border-red-900/30 rounded-lg flex items-center justify-center p-3`}>
+      <div className={`${aspect} bg-neutral-800/50 border border-red-900/30 rounded-lg flex items-center justify-center p-3 animate-card-enter`} style={staggerDelay}>
         <div className="flex flex-col items-center gap-2 text-center">
           <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
           </svg>
-          <span className="text-[10px] text-red-400 line-clamp-2">{error || "Failed"}</span>
+          <span className="text-[11px] text-red-400 line-clamp-2">{error || "Failed"}</span>
           {onRetry && (
             <button
               onClick={onRetry}
-              className="text-[10px] text-blue-400 hover:text-blue-300 underline"
+              className="text-[11px] text-blue-400 hover:text-blue-300 underline"
             >
               Retry
             </button>
@@ -154,14 +220,14 @@ export function GenerationCard({ generation, onRetry }: GenerationCardProps) {
   // Copy mode — text card
   if (mode === "copy" && result) {
     return (
-      <div className="bg-neutral-800/50 border border-neutral-700/50 rounded-lg p-4 min-h-[120px]">
+      <div className="bg-neutral-800/50 border border-neutral-700/50 rounded-lg p-4 min-h-[120px] animate-card-enter" style={staggerDelay}>
         <p className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap" dir="auto">
           {result}
         </p>
         <div className="mt-3 flex justify-end">
           <button
             onClick={() => navigator.clipboard.writeText(result)}
-            className="text-[10px] text-neutral-400 hover:text-neutral-200 transition-colors"
+            className="text-[11px] text-neutral-400 hover:text-neutral-200 transition-colors"
           >
             Copy
           </button>
@@ -170,12 +236,17 @@ export function GenerationCard({ generation, onRetry }: GenerationCardProps) {
     );
   }
 
+  const lightboxProps = batchItems && batchIndex !== undefined
+    ? { batchItems, initialIndex: batchIndex }
+    : { batchItems: [generation], initialIndex: 0 };
+
   // Video result
   if (mode === "video" && result) {
     return (
       <>
         <div
-          className={`relative ${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg overflow-hidden group cursor-pointer`}
+          className={`relative ${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg overflow-hidden group cursor-pointer animate-card-enter`}
+          style={staggerDelay}
           onClick={openPreview}
         >
           <video
@@ -197,7 +268,7 @@ export function GenerationCard({ generation, onRetry }: GenerationCardProps) {
           </div>
           <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
         </div>
-        {previewOpen && <Lightbox generation={generation} onClose={closePreview} />}
+        {previewOpen && <Lightbox {...lightboxProps} onClose={closePreview} />}
       </>
     );
   }
@@ -207,7 +278,8 @@ export function GenerationCard({ generation, onRetry }: GenerationCardProps) {
     return (
       <>
         <div
-          className={`relative ${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg overflow-hidden group cursor-pointer`}
+          className={`relative ${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg overflow-hidden group cursor-pointer animate-card-enter`}
+          style={staggerDelay}
           onClick={openPreview}
         >
           <img
@@ -218,7 +290,7 @@ export function GenerationCard({ generation, onRetry }: GenerationCardProps) {
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
         </div>
-        {previewOpen && <Lightbox generation={generation} onClose={closePreview} />}
+        {previewOpen && <Lightbox {...lightboxProps} onClose={closePreview} />}
       </>
     );
   }

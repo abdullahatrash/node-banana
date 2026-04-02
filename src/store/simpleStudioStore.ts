@@ -27,6 +27,9 @@ export interface Generation {
   error: string | null;
   mode: SimpleStudioMode;
   aspectRatio: string;
+  prompt: string;
+  createdAt: number;
+  modelName: string | null;
 }
 
 export interface SavedPrompt {
@@ -87,6 +90,7 @@ export interface SimpleStudioState {
   generations: Generation[]; // derived — current mode's generations
   generate: () => Promise<void>;
   cancelGeneration: () => void;
+  retryGeneration: (id: string) => Promise<void>;
   rewritePrompt: () => Promise<void>;
 
   // Gallery
@@ -296,6 +300,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
     const signal = abortController.signal;
 
     // Create pending generation entries
+    const now = Date.now();
+    const displayModelName = state.selectedModelName || "Auto";
     const entries: Generation[] = Array.from(
       { length: state.batchCount },
       (_, i) => ({
@@ -307,6 +313,9 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         error: null,
         mode: genMode,
         aspectRatio: state.aspectRatio,
+        prompt: finalPrompt,
+        createdAt: now,
+        modelName: displayModelName,
       }),
     );
 
@@ -501,6 +510,133 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
     set({ isGenerating: false, currentBatchId: null });
   },
 
+  retryGeneration: async (id: string) => {
+    const state = get();
+    const gen = state.generations.find((g) => g.id === id);
+    if (!gen || gen.status !== "failed") return;
+
+    const genMode = gen.mode;
+
+    // Mark as generating
+    setGenerations(set, genMode, (prev) =>
+      prev.map((g) => g.id === id ? { ...g, status: "generating" as const, error: null } : g),
+    );
+
+    const retryController = new AbortController();
+    const sig = retryController.signal;
+
+    try {
+      let result: string | null = null;
+
+      if (genMode === "copy") {
+        const langDirective = state.outputLanguage === "ar"
+          ? "Write in Arabic only."
+          : state.outputLanguage === "both"
+            ? "Write in both Arabic and English."
+            : "Write in English only.";
+        const systemPrompt = `You are a professional copywriter. ${langDirective} Platform: ${state.platform}. Tone: ${state.tone}. Return ONLY the copy text, no explanations or meta-commentary.`;
+
+        const res = await fetch("/api/studio/copy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ id, role: "user", parts: [{ type: "text", text: gen.prompt }] }],
+            model: state.copyModelId,
+            system: systemPrompt,
+          }),
+          signal: sig,
+        });
+
+        if (!res.ok) {
+          let errMsg = "Copy generation failed";
+          try { const errData = await res.json(); errMsg = errData.error || errMsg; } catch { errMsg = (await res.text()) || errMsg; }
+          throw new Error(errMsg);
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("No response body");
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let fullText = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (sig.aborted) { reader.cancel(); break; }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data: ")) continue;
+            const payload = trimmed.slice(6);
+            if (payload === "[DONE]") continue;
+            try { const parsed = JSON.parse(payload); if (parsed.type === "text-delta" && parsed.delta) fullText += parsed.delta; } catch { /* skip */ }
+          }
+        }
+        result = fullText;
+      } else {
+        const images = genMode === "photo"
+          ? state.referenceImages
+          : state.sourceImage ? [state.sourceImage] : [];
+        const hasSourceImage = genMode === "video" && images.length > 0;
+
+        let modelId = state.selectedModelId;
+        let modelProvider = state.selectedModelProvider;
+        let modelName = state.selectedModelName;
+
+        if (hasSourceImage && modelId?.includes("/text-to-video")) {
+          modelId = modelId.replace("/text-to-video", "/image-to-video");
+        }
+        if (genMode === "video" && !modelId) {
+          modelId = hasSourceImage ? "veo-3.1/image-to-video" : "veo-3.1/text-to-video";
+          modelProvider = null;
+          modelName = "Veo 3.1";
+        }
+
+        const body: Record<string, unknown> = {
+          prompt: gen.prompt,
+          images,
+          selectedModel: modelId ? { modelId, provider: modelProvider || undefined, displayName: modelName || modelId } : undefined,
+          mediaType: genMode === "video" ? "video" : undefined,
+          parameters: { aspectRatio: gen.aspectRatio, ...(genMode === "video" ? { duration: state.videoDuration } : {}) },
+        };
+
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: sig,
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || "Generation failed");
+        result = genMode === "video" ? (data.video || data.videoUrl || null) : (data.image || data.audio || null);
+      }
+
+      setGenerations(set, genMode, (prev) =>
+        prev.map((g) => g.id === id ? { ...g, status: "complete" as const, result } : g),
+      );
+
+      if (result && genMode !== "copy" && (result.startsWith("data:") || result.startsWith("http"))) {
+        persistToR2(result, genMode, gen.prompt, gen.batchId).then((assetId) => {
+          if (assetId) {
+            setGenerations(set, genMode, (prev) =>
+              prev.map((g) => g.id === id ? { ...g, assetId } : g),
+            );
+          }
+        }).catch(() => {});
+      }
+    } catch (err) {
+      if (sig.aborted) return;
+      setGenerations(set, genMode, (prev) =>
+        prev.map((g) =>
+          g.id === id
+            ? { ...g, status: "failed" as const, error: err instanceof Error ? err.message : "Generation failed" }
+            : g,
+        ),
+      );
+    }
+  },
+
   rewritePrompt: async () => {
     const { prompt } = get();
     if (!prompt.trim()) return;
@@ -547,6 +683,9 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
               error: null,
               mode: (metadata.mode as SimpleStudioMode) || "photo",
               aspectRatio: (metadata.aspectRatio as string) || "1:1",
+              prompt: (metadata.prompt as string) || "",
+              createdAt: (metadata.createdAt as number) || Date.now(),
+              modelName: (metadata.modelName as string) || null,
             };
           },
         );
