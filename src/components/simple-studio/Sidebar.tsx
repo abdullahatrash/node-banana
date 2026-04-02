@@ -79,6 +79,22 @@ export function Sidebar() {
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
+
+  // Cmd/Ctrl+Enter to generate
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        const s = useSimpleStudioStore.getState();
+        if (s.prompt.trim() && !s.isGenerating && !s.isRewriting) {
+          s.generate();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Fetch models on mount and mode change
   useEffect(() => {
@@ -691,6 +707,9 @@ export function Sidebar() {
               : `Generate ${store.batchCount} ${store.mode === "copy" ? "variation" : store.mode}${store.batchCount > 1 ? "s" : ""}`}
           </button>
         )}
+        <p className="text-[11px] text-neutral-600 text-center mt-1.5">
+          {isMac ? "\u2318" : "Ctrl"}+Enter to generate
+        </p>
       </div>
     </div>
   );
