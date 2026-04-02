@@ -346,8 +346,14 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
           });
 
           if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(errText || "Copy generation failed");
+            let errMsg = "Copy generation failed";
+            try {
+              const errData = await res.json();
+              errMsg = errData.error || errMsg;
+            } catch {
+              errMsg = (await res.text()) || errMsg;
+            }
+            throw new Error(errMsg);
           }
 
           // Read AI SDK v6 UI message stream to completion

@@ -33,48 +33,48 @@ export function ResultsGallery() {
     );
   }
 
-  // Group generations by batchId
+  // Group generations by batchId in a single pass
   const batches: { batchId: string; items: typeof generations }[] = [];
-  const seen = new Set<string>();
+  const batchMap = new Map<string, typeof generations>();
 
   for (const gen of generations) {
-    if (!seen.has(gen.batchId)) {
-      seen.add(gen.batchId);
-      batches.push({
-        batchId: gen.batchId,
-        items: generations.filter((g) => g.batchId === gen.batchId),
-      });
+    let items = batchMap.get(gen.batchId);
+    if (!items) {
+      items = [];
+      batchMap.set(gen.batchId, items);
+      batches.push({ batchId: gen.batchId, items });
     }
-  }
-
-  // Detect aspect ratio from the first item in the batch (all share the same)
-  const firstAspect = generations[0]?.aspectRatio || "1:1";
-  const isPortrait = firstAspect === "9:16";
-
-  // Grid columns based on mode and aspect ratio
-  let gridCols: string;
-  if (mode === "copy") {
-    gridCols = "grid-cols-1 md:grid-cols-2";
-  } else if (isPortrait) {
-    // Portrait (9:16) — narrower cards, more columns
-    gridCols = "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5";
-  } else if (mode === "video") {
-    gridCols = "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
-  } else {
-    gridCols = "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4";
+    items.push(gen);
   }
 
   return (
     <div className="p-4 space-y-6">
-      {batches.map((batch) => (
-        <div key={batch.batchId}>
-          <div className={`grid ${gridCols} gap-3`}>
-            {batch.items.map((gen) => (
-              <GenerationCard key={gen.id} generation={gen} />
-            ))}
+      {batches.map((batch) => {
+        // Determine grid columns per-batch based on its own aspect ratio
+        const batchAspect = batch.items[0]?.aspectRatio || "1:1";
+        const isPortrait = batchAspect === "9:16";
+
+        let gridCols: string;
+        if (mode === "copy") {
+          gridCols = "grid-cols-1 md:grid-cols-2";
+        } else if (isPortrait) {
+          gridCols = "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5";
+        } else if (mode === "video") {
+          gridCols = "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
+        } else {
+          gridCols = "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4";
+        }
+
+        return (
+          <div key={batch.batchId}>
+            <div className={`grid ${gridCols} gap-3`}>
+              {batch.items.map((gen) => (
+                <GenerationCard key={gen.id} generation={gen} />
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
