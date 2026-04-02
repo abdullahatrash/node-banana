@@ -3,9 +3,19 @@
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { GenerationCard } from "./GenerationCard";
 
+function formatRelativeTime(ts?: number): string {
+  if (!ts) return "";
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
 export function ResultsGallery() {
   const generations = useSimpleStudioStore((s) => s.generations);
   const mode = useSimpleStudioStore((s) => s.mode);
+  const retryGeneration = useSimpleStudioStore((s) => s.retryGeneration);
 
   if (generations.length === 0) {
     return (
@@ -65,11 +75,34 @@ export function ResultsGallery() {
           gridCols = "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4";
         }
 
+        const firstItem = batch.items[0];
+        const promptExcerpt = firstItem?.prompt || "";
+        const truncated = promptExcerpt.length > 80
+          ? promptExcerpt.slice(0, 80) + "..."
+          : promptExcerpt;
+
         return (
           <div key={batch.batchId}>
+            {/* Batch header */}
+            {truncated && (
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-neutral-400 truncate max-w-[70%]" dir="auto">
+                  {truncated}
+                </p>
+                <div className="flex items-center gap-2 text-[11px] text-neutral-500 shrink-0">
+                  {firstItem?.modelName && <span>{firstItem.modelName}</span>}
+                  <span>{formatRelativeTime(firstItem?.createdAt)}</span>
+                  <span>{batch.items.length} items</span>
+                </div>
+              </div>
+            )}
             <div className={`grid ${gridCols} gap-3`}>
               {batch.items.map((gen) => (
-                <GenerationCard key={gen.id} generation={gen} />
+                <GenerationCard
+                  key={gen.id}
+                  generation={gen}
+                  onRetry={() => retryGeneration(gen.id)}
+                />
               ))}
             </div>
           </div>
