@@ -120,10 +120,12 @@ export function ResultsGallery() {
               </div>
             )}
             <div className={`grid ${gridCols} gap-3`}>
-              {batch.items.map((gen) => (
+              {batch.items.map((gen, idx) => (
                 <GenerationCard
                   key={gen.id}
                   generation={gen}
+                  batchItems={batch.items}
+                  batchIndex={idx}
                   onRetry={() => retryGeneration(gen.id)}
                 />
               ))}
