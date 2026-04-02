@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSimpleStudioStore, type SimpleStudioMode } from "@/store/simpleStudioStore";
 import { PromptLibrary } from "./PromptLibrary";
 
@@ -71,26 +71,29 @@ const OUTPUT_LANGUAGES: { value: "ar" | "en" | "both"; label: string }[] = [
 
 export function Sidebar() {
   const store = useSimpleStudioStore();
+  const mode = useSimpleStudioStore((s) => s.mode);
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelsFetchError, setModelsFetchError] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Fetch models on mount and mode change
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setIsLoadingModels(true);
+    setModelsFetchError(false);
 
     const capabilities =
-      store.mode === "video"
+      mode === "video"
         ? "text-to-video,image-to-video"
         : "text-to-image,image-to-image";
 
-    fetch(`/api/models?capabilities=${capabilities}`)
+    fetch(`/api/models?capabilities=${capabilities}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled && data.success) {
+        if (data.success) {
           // Deduplicate models by ID
           const seen = new Set<string>();
           const unique = (data.models || []).filter((m: ProviderModel) => {
@@ -99,47 +102,63 @@ export function Sidebar() {
             return true;
           });
           setModels(unique);
+        } else {
+          setModelsFetchError(true);
         }
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (err?.name !== "AbortError") setModelsFetchError(true);
+      })
       .finally(() => {
-        if (!cancelled) setIsLoadingModels(false);
+        setIsLoadingModels(false);
       });
 
-    return () => { cancelled = true; };
-  }, [store.mode]);
+    return () => controller.abort();
+  }, [mode]);
 
-  // Close dropdown on click outside
+  // Reset dropdown state when mode changes
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setModelDropdownOpen(false);
-      }
+    setModelDropdownOpen(false);
+    setModelSearch("");
+  }, [mode]);
+
+  // Close dropdown on click outside — only listen when open
+  const handleClickOutside = useCallback((e: MouseEvent) => {
+    if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      setModelDropdownOpen(false);
     }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const isPhotoOrVideo = store.mode === "photo" || store.mode === "video";
-  const maxBatch = store.mode === "video" ? 8 : 20;
-  const batchPresets = store.mode === "video" ? VIDEO_BATCH_PRESETS : BATCH_PRESETS;
-  const aspectRatios = store.mode === "video" ? VIDEO_ASPECT_RATIOS : PHOTO_ASPECT_RATIOS;
+  useEffect(() => {
+    if (!modelDropdownOpen) return;
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [modelDropdownOpen, handleClickOutside]);
+
+  const isPhotoOrVideo = mode === "photo" || mode === "video";
+  const maxBatch = mode === "video" ? 8 : 20;
+  const batchPresets = mode === "video" ? VIDEO_BATCH_PRESETS : BATCH_PRESETS;
+  const aspectRatios = mode === "video" ? VIDEO_ASPECT_RATIOS : PHOTO_ASPECT_RATIOS;
 
   // Reset aspect ratio when switching to video if current value isn't valid for video
   useEffect(() => {
-    if (store.mode === "video" && !VIDEO_ASPECT_RATIOS.includes(store.aspectRatio)) {
+    if (mode === "video" && !VIDEO_ASPECT_RATIOS.includes(store.aspectRatio)) {
       store.setAspectRatio("16:9");
     }
-  }, [store.mode, store.aspectRatio, store.setAspectRatio]);
+  }, [mode, store.aspectRatio, store.setAspectRatio]);
 
-  // Split models into recommended + others, filtered by search
-  const recommendedSet = store.mode === "video" ? RECOMMENDED_VIDEO_MODELS : RECOMMENDED_IMAGE_MODELS;
-  const searchLower = modelSearch.toLowerCase();
-  const filteredModels = models.filter(
-    (m) => !searchLower || m.name.toLowerCase().includes(searchLower) || m.id.toLowerCase().includes(searchLower) || m.provider.toLowerCase().includes(searchLower),
-  );
-  const recommendedModels = filteredModels.filter((m) => recommendedSet.has(m.id));
-  const otherModels = filteredModels.filter((m) => !recommendedSet.has(m.id));
+  // Split models into recommended + others, filtered by search (memoized)
+  const recommendedSet = mode === "video" ? RECOMMENDED_VIDEO_MODELS : RECOMMENDED_IMAGE_MODELS;
+  const { recommendedModels, otherModels } = useMemo(() => {
+    const searchLower = modelSearch.toLowerCase();
+    const filtered = models.filter(
+      (m) => !searchLower || m.name.toLowerCase().includes(searchLower) || m.id.toLowerCase().includes(searchLower) || m.provider.toLowerCase().includes(searchLower),
+    );
+    return {
+      recommendedModels: filtered.filter((m) => recommendedSet.has(m.id)),
+      otherModels: filtered.filter((m) => !recommendedSet.has(m.id)),
+    };
+  }, [models, modelSearch, recommendedSet]);
   const selectedModel = models.find((m) => m.id === store.selectedModelId);
 
   return (
@@ -400,7 +419,11 @@ export function Sidebar() {
                       <div className="px-3 py-2 text-xs text-neutral-500">Loading models...</div>
                     )}
 
-                    {!isLoadingModels && filteredModels.length === 0 && modelSearch && (
+                    {modelsFetchError && !isLoadingModels && (
+                      <div className="px-3 py-2 text-xs text-red-400">Failed to load models</div>
+                    )}
+
+                    {!isLoadingModels && !modelsFetchError && recommendedModels.length === 0 && otherModels.length === 0 && modelSearch && (
                       <div className="px-3 py-2 text-xs text-neutral-500">No models match &quot;{modelSearch}&quot;</div>
                     )}
                   </div>
