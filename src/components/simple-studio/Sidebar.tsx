@@ -66,6 +66,48 @@ const OUTPUT_LANGUAGES: { value: "ar" | "en" | "both"; label: string }[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function GeneratingProgress({
+  generations,
+  currentBatchId,
+  onCancel,
+}: {
+  generations: import("@/store/simpleStudioStore").Generation[];
+  currentBatchId: string | null;
+  onCancel: () => void;
+}) {
+  const batch = currentBatchId
+    ? generations.filter((g) => g.batchId === currentBatchId)
+    : [];
+  const total = batch.length;
+  const done = batch.filter((g) => g.status === "complete" || g.status === "failed").length;
+  const pct = total > 0 ? (done / total) * 100 : 0;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-xs text-neutral-400">
+        <span>Generating...</span>
+        <span>{done}/{total}</span>
+      </div>
+      <div className="w-full h-1 bg-neutral-700 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-blue-500 rounded-full transition-all duration-300"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <button
+        onClick={onCancel}
+        className="w-full py-2 text-sm font-medium rounded-md bg-red-600/20 text-red-400 border border-red-600/50 hover:bg-red-600/30 transition-colors"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -690,12 +732,11 @@ export function Sidebar() {
       {/* Generate button — pinned at bottom */}
       <div className="p-4 border-t border-neutral-800 shrink-0">
         {store.isGenerating ? (
-          <button
-            onClick={() => store.cancelGeneration()}
-            className="w-full py-2.5 text-sm font-medium rounded-md bg-red-600/20 text-red-400 border border-red-600/50 hover:bg-red-600/30 transition-colors"
-          >
-            Cancel Generation
-          </button>
+          <GeneratingProgress
+            generations={store.generations}
+            currentBatchId={store.currentBatchId}
+            onCancel={() => store.cancelGeneration()}
+          />
         ) : (
           <button
             onClick={() => store.generate()}
