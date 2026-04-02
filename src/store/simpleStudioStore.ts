@@ -183,19 +183,21 @@ async function persistToR2(
 // ---------------------------------------------------------------------------
 
 /**
- * Helper: update generations for the current mode.
+ * Helper: update generations for a specific mode.
+ * Accepts an explicit `mode` to avoid stale-closure bugs when the user
+ * switches modes while a generation batch is in-flight.
  * Syncs both `generations` (derived) and `generationsByMode[mode]`.
  */
 function setGenerations(
   set: (fn: (s: SimpleStudioState) => Partial<SimpleStudioState>) => void,
-  get: () => SimpleStudioState,
+  mode: SimpleStudioMode,
   updater: (prev: Generation[]) => Generation[],
 ) {
   set((s) => {
-    const mode = get().mode;
     const updated = updater(s.generationsByMode[mode]);
     return {
-      generations: updated,
+      // Only update derived `generations` if the user is still viewing this mode
+      ...(s.mode === mode ? { generations: updated } : {}),
       generationsByMode: { ...s.generationsByMode, [mode]: updated },
     };
   });
@@ -258,14 +260,23 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
     const state = get();
     if (state.isGenerating) return;
 
+    // Lock generation immediately to prevent double-invocation during rewrite
+    set({ isGenerating: true });
+
     // Rewrite prompt if enabled and not already done
     if (state.rewriteEnabled && !state.rewrittenPrompt) {
       await get().rewritePrompt();
-      if (!get().rewrittenPrompt) return; // rewrite failed
+      if (!get().rewrittenPrompt) {
+        set({ isGenerating: false });
+        return; // rewrite failed
+      }
     }
 
     let finalPrompt = get().rewrittenPrompt || get().prompt;
-    if (!finalPrompt.trim()) return;
+    if (!finalPrompt.trim()) {
+      set({ isGenerating: false });
+      return;
+    }
 
     // Inject dialogue into video prompts when enabled
     if (state.mode === "video" && state.dialogueEnabled && state.dialogueText.trim()) {
@@ -275,6 +286,10 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       // Use colon-style dialogue to suppress subtitles (Veo 3.1 pattern)
       finalPrompt = `${finalPrompt}. The character is ${langHint}, saying: "${state.dialogueText.trim()}"`;
     }
+
+    // Capture mode at generation start so mode switches during generation
+    // don't corrupt the wrong mode's results
+    const genMode = state.mode;
 
     const batchId = crypto.randomUUID();
     abortController = new AbortController();
@@ -290,19 +305,20 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         result: null,
         assetId: null,
         error: null,
-        mode: state.mode,
+        mode: genMode,
         aspectRatio: state.aspectRatio,
       }),
     );
 
-    setGenerations(set, get, () => entries);
-    set({ isGenerating: true, currentBatchId: batchId });
+    // Prepend new batch entries (keep previous results)
+    setGenerations(set, genMode, (prev) => [...entries, ...prev]);
+    set({ currentBatchId: batchId });
 
     const processGeneration = async (entry: Generation, sig: AbortSignal) => {
       if (sig.aborted) return;
 
       // Mark as generating
-      setGenerations(set, get, (prev) =>
+      setGenerations(set, genMode, (prev) =>
         prev.map((g) => g.id === entry.id ? { ...g, status: "generating" as const } : g),
       );
 
@@ -345,6 +361,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            if (sig.aborted) { reader.cancel(); break; }
             buffer += decoder.decode(value, { stream: true });
 
             // Process complete lines
@@ -424,24 +441,26 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
           }
         }
 
-        setGenerations(set, get, (prev) =>
+        setGenerations(set, genMode, (prev) =>
           prev.map((g) => g.id === entry.id ? { ...g, status: "complete" as const, result } : g),
         );
 
         // Persist image/video results to R2 in the background (non-blocking)
         // Results can be base64 data URLs or remote URLs (for large videos)
-        if (result && state.mode !== "copy" && (result.startsWith("data:") || result.startsWith("http"))) {
-          persistToR2(result, state.mode, finalPrompt, batchId).then((assetId) => {
+        if (result && genMode !== "copy" && (result.startsWith("data:") || result.startsWith("http"))) {
+          persistToR2(result, genMode, finalPrompt, batchId).then((assetId) => {
             if (assetId) {
-              setGenerations(set, get, (prev) =>
+              setGenerations(set, genMode, (prev) =>
                 prev.map((g) => g.id === entry.id ? { ...g, assetId } : g),
               );
             }
+          }).catch(() => {
+            // Non-fatal — asset just won't be persisted
           });
         }
       } catch (err) {
         if (sig.aborted) return;
-        setGenerations(set, get, (prev) =>
+        setGenerations(set, genMode, (prev) =>
           prev.map((g) =>
             g.id === entry.id
               ? { ...g, status: "failed" as const, error: err instanceof Error ? err.message : "Generation failed" }
@@ -462,13 +481,17 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       abortController.abort();
       abortController = null;
     }
-    setGenerations(set, get, (prev) =>
-      prev.map((g) =>
-        g.status === "pending" || g.status === "generating"
-          ? { ...g, status: "failed" as const, error: "Cancelled" }
-          : g,
-      ),
-    );
+    // Cancel pending/generating entries across all modes
+    const modes: SimpleStudioMode[] = ["photo", "video", "copy"];
+    for (const m of modes) {
+      setGenerations(set, m, (prev) =>
+        prev.map((g) =>
+          g.status === "pending" || g.status === "generating"
+            ? { ...g, status: "failed" as const, error: "Cancelled" }
+            : g,
+        ),
+      );
+    }
     set({ isGenerating: false, currentBatchId: null });
   },
 
@@ -502,6 +525,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   // Gallery
   loadRecentResults: async () => {
     try {
+      const currentMode = get().mode;
       const res = await fetch("/api/studio/assets?source=simple");
       const data = await res.json();
       if (data.success && data.assets) {
@@ -520,7 +544,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
             };
           },
         );
-        setGenerations(set, get, () => entries);
+        setGenerations(set, currentMode, () => entries);
       }
     } catch {
       // Non-fatal — gallery just stays empty
