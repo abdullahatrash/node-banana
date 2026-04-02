@@ -74,7 +74,7 @@ function Lightbox({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-lightbox-enter"
       onClick={onClose}
     >
       {/* Content container */}
@@ -179,11 +179,12 @@ export function GenerationCard({ generation, batchItems, batchIndex, onRetry }: 
   const closePreview = useCallback(() => setPreviewOpen(false), []);
 
   const aspect = aspectClass(aspectRatio);
+  const staggerDelay = batchIndex !== undefined ? { animationDelay: `${batchIndex * 50}ms` } : undefined;
 
   // Loading state
   if (status === "pending" || status === "generating") {
     return (
-      <div className={`${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg flex items-center justify-center`}>
+      <div className={`${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg flex items-center justify-center animate-card-enter`} style={staggerDelay}>
         <div className="flex flex-col items-center gap-2">
           <div className="w-6 h-6 border-2 border-neutral-600 border-t-neutral-300 rounded-full animate-spin" />
           <span className="text-[11px] text-neutral-500">
@@ -197,7 +198,7 @@ export function GenerationCard({ generation, batchItems, batchIndex, onRetry }: 
   // Error state
   if (status === "failed") {
     return (
-      <div className={`${aspect} bg-neutral-800/50 border border-red-900/30 rounded-lg flex items-center justify-center p-3`}>
+      <div className={`${aspect} bg-neutral-800/50 border border-red-900/30 rounded-lg flex items-center justify-center p-3 animate-card-enter`} style={staggerDelay}>
         <div className="flex flex-col items-center gap-2 text-center">
           <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
@@ -219,7 +220,7 @@ export function GenerationCard({ generation, batchItems, batchIndex, onRetry }: 
   // Copy mode — text card
   if (mode === "copy" && result) {
     return (
-      <div className="bg-neutral-800/50 border border-neutral-700/50 rounded-lg p-4 min-h-[120px]">
+      <div className="bg-neutral-800/50 border border-neutral-700/50 rounded-lg p-4 min-h-[120px] animate-card-enter" style={staggerDelay}>
         <p className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap" dir="auto">
           {result}
         </p>
@@ -244,7 +245,8 @@ export function GenerationCard({ generation, batchItems, batchIndex, onRetry }: 
     return (
       <>
         <div
-          className={`relative ${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg overflow-hidden group cursor-pointer`}
+          className={`relative ${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg overflow-hidden group cursor-pointer animate-card-enter`}
+          style={staggerDelay}
           onClick={openPreview}
         >
           <video
@@ -276,7 +278,8 @@ export function GenerationCard({ generation, batchItems, batchIndex, onRetry }: 
     return (
       <>
         <div
-          className={`relative ${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg overflow-hidden group cursor-pointer`}
+          className={`relative ${aspect} bg-neutral-800/50 border border-neutral-700/50 rounded-lg overflow-hidden group cursor-pointer animate-card-enter`}
+          style={staggerDelay}
           onClick={openPreview}
         >
           <img
