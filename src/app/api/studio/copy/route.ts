@@ -73,8 +73,15 @@ export async function POST(request: Request) {
     return result.toUIMessageStreamResponse();
   } catch (error) {
     console.error("[Copy API Error]", error);
-    return new Response(
-      error instanceof Error ? error.message : "Copy generation failed",
+    const message = error instanceof Error ? error.message : "Copy generation failed";
+    // Don't leak internal details (env var names, stack traces) to the client
+    const safeMessage = message.includes("not configured")
+      ? "Model API key not configured"
+      : message.includes("Unknown model")
+        ? "Unsupported model selected"
+        : "Copy generation failed";
+    return Response.json(
+      { success: false, error: safeMessage },
       { status: 500 },
     );
   }
