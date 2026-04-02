@@ -1,6 +1,7 @@
 "use client";
 
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
+import { PROMPT_TEMPLATES } from "@/lib/simple-studio/promptTemplates";
 import { GenerationCard } from "./GenerationCard";
 
 function formatRelativeTime(ts?: number): string {
@@ -17,10 +18,14 @@ export function ResultsGallery() {
   const mode = useSimpleStudioStore((s) => s.mode);
   const retryGeneration = useSimpleStudioStore((s) => s.retryGeneration);
 
+  const applyPrompt = useSimpleStudioStore((s) => s.applyPrompt);
+
   if (generations.length === 0) {
+    const templates = PROMPT_TEMPLATES.filter((t) => t.mode === mode).slice(0, 6);
+
     return (
       <div className="h-full flex items-center justify-center text-neutral-500">
-        <div className="text-center">
+        <div className="text-center max-w-lg px-4">
           <svg
             className="w-12 h-12 mx-auto mb-3 text-neutral-700"
             fill="none"
@@ -35,9 +40,27 @@ export function ResultsGallery() {
             />
           </svg>
           <p className="text-sm">Your generated content will appear here</p>
-          <p className="text-xs mt-1 text-neutral-600">
-            Fill in the form and click Generate
+          <p className="text-xs mt-1 text-neutral-600 mb-5">
+            Fill in the form and click Generate, or try a template:
           </p>
+          {templates.length > 0 && (
+            <div className="grid grid-cols-2 gap-2">
+              {templates.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  onClick={() => applyPrompt(tpl)}
+                  className="text-start p-3 rounded-lg border border-neutral-800 bg-neutral-900/50 hover:border-neutral-700 hover:bg-neutral-800/50 transition-colors group"
+                >
+                  <div className="text-xs font-medium text-neutral-300 group-hover:text-neutral-100 truncate" dir="auto">
+                    {tpl.name}
+                  </div>
+                  <div className="text-[11px] text-neutral-500 mt-1 line-clamp-2" dir="auto">
+                    {tpl.promptText}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
