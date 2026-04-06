@@ -52,6 +52,6 @@ describe("ImageForm", () => {
   it("Generate button is disabled while generating", () => {
     useSimpleStudioStore.setState({ prompt: "A cat", isGenerating: true });
     render(<ImageForm />);
-    expect(screen.getByRole("button", { name: /generate/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /generat/i })).toBeDisabled();
   });
 });
