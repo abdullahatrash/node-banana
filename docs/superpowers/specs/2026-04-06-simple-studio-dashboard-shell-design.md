@@ -23,6 +23,8 @@ This spec describes a full rebuild of the simple-studio shell, mirroring the soc
   - `/simple-studio/prompt-library` — prompt templates + user-saved prompts.
 - **Form-first inline layout.** Each `/images`, `/videos`, `/copy` page renders the generation form as its main content (not in a drawer). The form occupies a center column and a right-side info panel shows aspect ratio picker, estimated cost, output example, and tips — matching the pattern used by tools like revid.ai. There is no drawer anywhere in the design.
 - **Library separation.** Past generations live on a dedicated `/simple-studio/library` route, not below or beside the form. This keeps the creation pages clean and single-purpose, and gives the library enough space to support mode filters and batch management.
+- **Reuse existing backend.** The project already has a `saved_prompts` table in Drizzle (`src/lib/db/schema.ts:1151`), a full CRUD API under `/api/studio/prompts` (list, create, update, delete, plus a `/public` variant for templates), and store actions on `useSimpleStudioStore` (`saveCurrentPrompt`, `loadSavedPrompts`, `loadPublicPrompts`, `applyPrompt`). The redesign reuses all of this unchanged — no new tables, no new routes, no duplication. "Templates" are simply saved prompts with `isPublic: true`, served by the existing public endpoint.
+- **URL-to-mode mapping.** The URL uses friendly English plurals — `/simple-studio/images`, `/videos`, `/copy` — while the internal mode enum stays `"photo" | "video" | "copy"` to match the existing store and DB enum. A small mapping in `SimpleStudioLayout` sets the correct mode on route change.
 - `AppSwitcher` gains a dedicated "Simple Studio" pillar entry alongside a renamed "Advanced Workflow" entry (formerly "AI Studio").
 
 ## Routing
@@ -71,13 +73,15 @@ src/components/simple-studio-shell/
   SimpleStudioAppSidebar.tsx
   SimpleStudioSiteHeader.tsx
   LibraryGallery.tsx
+  PromptLibraryTabs.tsx        templates + saved tabs for /prompt-library page
   SavePromptDialog.tsx
+  urlToMode.ts                 URL segment ↔ SimpleStudioMode mapping
   forms/
     FormPageLayout.tsx         shared 2-column shell (form body left, info panel right)
+    FormInfoPanel.tsx          aspect ratio + cost estimate + output example + tips
     ImageForm.tsx
     VideoForm.tsx
     CopyForm.tsx
-    FormInfoPanel.tsx          aspect ratio + cost estimate + output example + tips
 ```
 
 ### `SimpleStudioLayout.tsx` (client)
@@ -100,7 +104,8 @@ Thin wrapper over `SidebarProvider` + `SidebarInset`. Mirrors `SocialLayout.tsx`
 ```
 
 Also:
-- Hydrates prompt templates + saved prompts via `useSimpleStudioShellStore` on first mount (mirrors the `SocialLayout` `fetchAccounts` pattern using a `useRef` flag to avoid `useEffect`).
+- Watches `usePathname()` and calls `useSimpleStudioStore.setMode(modeFromPathname(pathname))` whenever the active route changes, so the store's internal mode stays in sync with the URL.
+- Triggers initial load of recent results via `useSimpleStudioStore.loadRecentResults()` on first mount (mirrors the `SocialLayout` `fetchAccounts` pattern using a `useRef` flag to avoid `useEffect`).
 - No keyboard shortcut for opening a drawer — forms are always visible inline, so there is nothing to toggle.
 
 ### `SimpleStudioAppSidebar.tsx` (client)
@@ -146,10 +151,10 @@ Mirrors `SocialSiteHeader.tsx`:
 
 A small shadcn `Dialog` used in two places:
 
-- Opened from the "Save prompt" ghost button on a form page — prefilled with the current form's prompt text and defaults. User confirms title and clicks Save. On success, dialog closes and a toast confirms.
-- Opened from the "New Saved Prompt" header button on `/simple-studio/prompt-library` — empty, user fills in title + prompt + kind. On success, dialog closes and the Saved tab refreshes (optimistically).
+- Opened from the "Save prompt" ghost button on a form page — the user enters a name and clicks Save. The dialog reads the current form state straight from `useSimpleStudioStore` and calls `saveCurrentPrompt(name)`, which posts to `/api/studio/prompts` and prepends the new row to `savedPrompts`.
+- Opened from the "New Saved Prompt" header button on `/simple-studio/prompt-library` — empty, user fills in name + prompt text. It sets the store's `prompt` and `mode` first, then calls `saveCurrentPrompt(name)` and refreshes the Saved tab.
 
-Calls `useSimpleStudioShellStore.saveSavedPrompt(input)`.
+The dialog's open state lives in `useSimpleStudioShellStore` (`savePromptDialogOpen`). All data operations go through the existing `useSimpleStudioStore` — this component does not talk to the API directly.
 
 ## Form components
 
@@ -215,134 +220,127 @@ New dedicated gallery route. Renders `LibraryGallery` as the main content:
 
 Renders a shadcn `Tabs` component with two tabs:
 
-- **Templates** (default) — grid of `PromptTemplate` cards. Each card shows title, description, prompt preview (first ~120 chars), kind badge, optional thumbnail, and a "Use" button. A kind filter (`All` / `Images` / `Videos` / `Copy`) filters the grid.
-- **Saved** — grid of the current user's saved prompts with edit and delete actions. Empty state: "No saved prompts yet" with a CTA to go generate and save one.
+- **Templates** (default) — grid of `SavedPrompt` cards where `isPublic === true`, loaded via `useSimpleStudioStore.loadPublicPrompts()`. Each card shows name, prompt text preview (first ~120 chars), mode badge, and a "Use" button. A mode filter (`All` / `Photo` / `Video` / `Copy`) filters the grid client-side. Empty state: "No templates yet" explaining that templates are coming soon (or seeded separately).
+- **Saved** — grid of the workspace's private saved prompts (`isPublic === false`), loaded via `useSimpleStudioStore.loadSavedPrompts()`. Each card has edit and delete actions. Empty state: "No saved prompts yet" with a CTA to go to a form page and save one.
 
-Clicking "Use" on a template or saved prompt calls `useSimpleStudioShellStore.applyTemplate(template)`, which:
-1. Writes the template's `prompt` and `defaults` into `useSimpleStudioStore` (matching the `kind`).
-2. Calls `router.push('/simple-studio/images' | '/videos' | '/copy')` based on `kind`.
+Clicking "Use" on any prompt (template or saved) calls:
+1. `useSimpleStudioStore.applyPrompt(prompt)` — writes the prompt's `mode`, `promptText`, and `formConfig` into the store.
+2. `router.push('/simple-studio/' + MODE_TO_URL_SEGMENT[prompt.mode])` — navigates to the corresponding form page.
 
-The target page already renders the form inline, so the prefilled fields are visible immediately on landing — no drawer to open, no extra click.
+The target form page already renders inline, so the prefilled fields are visible immediately on landing — no drawer to open, no extra click.
 
-## Data model & API
+Loading strategy: the prompt-library page calls `loadPublicPrompts()` and `loadSavedPrompts()` on mount. These are already throttled by the existing store (they don't refetch on every mount cycle in practice; plans can add a simple guard if needed).
 
-### Prompt templates (hardcoded, DB-shaped)
+## Data model & API — REUSE EXISTING
 
-```ts
-// src/lib/simple-studio/prompt-templates.ts
-export type PromptTemplateKind = 'image' | 'video' | 'copy';
+This redesign does NOT introduce any new database tables, API routes, or repository functions. Everything needed already exists and is reused unchanged.
 
-export interface PromptTemplate {
-  id: string;
-  kind: PromptTemplateKind;
-  title: string;
-  description: string;
-  prompt: string;
-  thumbnailUrl?: string;
-  defaults?: {
-    model?: string;
-    aspectRatio?: string;
-    tone?: string;
-    platform?: string;
-  };
-  tags?: string[];
-}
-
-export const PROMPT_TEMPLATES: PromptTemplate[] = [ /* ~15 curated entries */ ];
-```
-
-Served via `GET /api/simple-studio/templates`, which returns the in-memory array. Putting this behind an API boundary means migrating to a DB-backed store later only changes `route.ts`, not client code.
-
-Starter content: roughly 5 image templates, 5 video templates, 5 copy templates. Exact content TBD by whoever writes them; selection does not affect the architecture.
-
-### Saved prompts (Postgres via Drizzle)
-
-New table added to `src/lib/db/schema.ts`, referencing the existing Better Auth `user` table (exported as `user`, singular — not `users`):
+### Existing table: `saved_prompts` (`src/lib/db/schema.ts:1151`)
 
 ```ts
-export const simpleStudioSavedPrompts = pgTable('simple_studio_saved_prompts', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-  kind: text('kind', { enum: ['image', 'video', 'copy'] }).notNull(),
-  title: text('title').notNull(),
-  prompt: text('prompt').notNull(),
-  defaults: jsonb('defaults').$type<PromptTemplate['defaults']>(),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (t) => ({
-  userIdIdx: index('simple_studio_saved_prompts_user_id_idx').on(t.userId),
-}));
+export const savedPrompts = pgTable("saved_prompts", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  mode: savedPromptModeEnum("mode").notNull(), // "photo" | "video" | "copy"
+  name: text("name").notNull(),
+  promptText: text("prompt_text").notNull(),
+  formConfig: jsonb("form_config").$type<Record<string, unknown>>().default({}).notNull(),
+  isPublic: boolean("is_public").default(false).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (table) => ({ /* indexes */ }));
 ```
 
-Migration generated via Drizzle's standard `drizzle-kit generate` flow and committed to the project's Drizzle migrations directory. Cascade-on-user-delete because saved prompts are personal data that should follow the user.
+Key characteristics:
+- **Workspace-scoped, not user-scoped.** Matches the project's authz model — all prompts belong to a workspace, and access is gated by workspace membership via `authorizeStudioRequest`.
+- **Mode enum is `"photo" | "video" | "copy"`.** The spec's URL scheme uses `/images` for friendly English plural, but the internal mode is `"photo"`. A single constant in `SimpleStudioLayout` maps between the two.
+- **`isPublic` flag is the template mechanism.** A prompt with `isPublic: true` shows up in the Templates tab (via the public endpoint). A prompt with `isPublic: false` is private to the workspace and shows up in the Saved tab.
+- **Soft delete via `deletedAt`.** Existing routes and repository already handle this.
 
-Explicitly excluded from v1:
-- `tags` column.
-- `referenceImageUrl` column (reference image capture on save).
-- Sharing, folders, or categories.
-- Pagination.
+### Existing API routes
 
-### API routes
+All already implemented, tested, and wired into the old store. No changes needed:
 
 ```
-GET    /api/simple-studio/templates                 → PromptTemplate[]
-GET    /api/simple-studio/saved-prompts             → SavedPrompt[]
-POST   /api/simple-studio/saved-prompts             → SavedPrompt
-PATCH  /api/simple-studio/saved-prompts/[id]        → SavedPrompt
-DELETE /api/simple-studio/saved-prompts/[id]        → { ok: true }
+GET    /api/studio/prompts?mode=<photo|video|copy>   → workspace's saved prompts (src/app/api/studio/prompts/route.ts)
+POST   /api/studio/prompts                           → create (accepts isPublic)
+GET    /api/studio/prompts/public?mode=<mode>        → public prompts (templates) for Templates tab
+PATCH  /api/studio/prompts/[promptId]                → update
+DELETE /api/studio/prompts/[promptId]                → soft-delete
 ```
 
-All routes:
-- Use `getServerAuthSession` for auth. Return `401` with `{ error: 'Unauthorized' }` if no session.
-- On `PATCH` / `DELETE`, the `WHERE` clause includes `AND userId = :session.user.id`. If zero rows are affected, return `404` — do not leak existence of other users' rows.
-- Validate request bodies with Zod schemas (project already uses Zod in other routes; confirm and match style during planning).
-- `POST` body: `{ kind, title, prompt, defaults? }`. `PATCH` body: any subset of `{ title, prompt, defaults }` — `kind` is immutable.
+Authz lives in `src/lib/studio/authz.ts` (`authorizeStudioRequest`). Repository layer is `src/lib/studio/repository.ts` (`createPrompt`, `listPrompts`, etc.). Existing tests in `src/app/api/studio/prompts/__tests__/` and `src/app/api/studio/prompts/public/__tests__/` cover the routes.
+
+### Existing store actions (in `useSimpleStudioStore`)
+
+Also already wired — the new shell components call these directly:
+
+- `saveCurrentPrompt(name)` — POSTs `/api/studio/prompts` with the current form state as `formConfig`, prepends the result to `savedPrompts`.
+- `loadSavedPrompts()` — GETs `/api/studio/prompts?mode=<current mode>`.
+- `loadPublicPrompts()` — GETs `/api/studio/prompts/public?mode=<current mode>`.
+- `applyPrompt(prompt)` — writes `mode`, `prompt`, and all form fields from the given `SavedPrompt` into the store (used by the "Use" button on both tabs).
+
+### Templates seed content — out of scope
+
+The Templates tab will be empty on first load until public prompts exist in the database. Seeding the curated starter set of public prompts is explicitly out of scope for PR 1 and is tracked as a follow-up — either a SQL seed script, a one-off admin POST with `isPublic: true`, or a dedicated seed route. The Templates tab shows a clear empty state ("No templates yet") when there are none.
 
 ## State management
 
-### New `useSimpleStudioShellStore`
+### New `useSimpleStudioShellStore` — UI state only
 
-Separate from the existing `useSimpleStudioStore` because the shell's concerns (templates, saved prompts, save-dialog state, use-template navigation) are independent of the form/generation state:
+Because all data operations (templates, saved prompts, generations) already live in `useSimpleStudioStore`, the new shell store is drastically thinner than earlier spec drafts. It owns only UI state that the existing store does not need to know about:
 
 ```ts
 interface SimpleStudioShellState {
-  // Save prompt dialog
+  // SavePromptDialog open state (shared between form pages and prompt-library page)
   savePromptDialogOpen: boolean;
-  savePromptDialogSeed: Partial<SavedPromptInput> | null;
-  openSavePromptDialog: (seed?: Partial<SavedPromptInput>) => void;
+  openSavePromptDialog: () => void;
   closeSavePromptDialog: () => void;
 
-  // Library filter (syncs with URL ?mode=...)
-  libraryModeFilter: 'all' | 'image' | 'video' | 'copy';
-  setLibraryModeFilter: (mode: 'all' | 'image' | 'video' | 'copy') => void;
+  // Library mode filter (syncs with URL ?mode=... on /simple-studio/library)
+  libraryModeFilter: 'all' | 'photo' | 'video' | 'copy';
+  setLibraryModeFilter: (mode: 'all' | 'photo' | 'video' | 'copy') => void;
 
-  // Templates
-  templates: PromptTemplate[];
-  templatesLoaded: boolean;
-  hydrateTemplates: () => Promise<void>;
-
-  // Saved prompts
-  savedPrompts: SavedPrompt[];
-  savedPromptsLoaded: boolean;
-  hydrateSavedPrompts: () => Promise<void>;
-  saveSavedPrompt: (input: SavedPromptInput) => Promise<void>;   // optimistic
-  updateSavedPrompt: (id: string, patch: Partial<SavedPromptInput>) => Promise<void>;
-  deleteSavedPrompt: (id: string) => Promise<void>;              // optimistic
-
-  // Apply-template flow
-  applyTemplate: (template: PromptTemplate | SavedPrompt) => void; // writes to simpleStudioStore + router.push
+  // Prompt Library active tab
+  promptLibraryTab: 'templates' | 'saved';
+  setPromptLibraryTab: (tab: 'templates' | 'saved') => void;
 }
 ```
 
-Optimistic updates on `saveSavedPrompt` and `deleteSavedPrompt`: apply the change locally immediately, call the API, rollback on failure with a toast.
+That's the entire store. No API calls, no templates, no saved-prompts array, no optimistic update logic. All of that already exists in `useSimpleStudioStore`.
 
-Note: no `createDrawerOpen` state — the design has no drawer. The `savePromptDialog*` state is the only UI-overlay state in this store.
+### `useSimpleStudioStore` — reused directly, NOT touched
 
-### `useSimpleStudioStore` — untouched for PR 1
+The existing store continues to power both the old `/studio/simple` page AND the new shell's forms, galleries, and prompt library. The new shell components call its existing actions (`generate`, `saveCurrentPrompt`, `loadSavedPrompts`, `loadPublicPrompts`, `applyPrompt`, etc.) directly — no wrapper, no proxy, no parallel state.
 
-No changes. The old store continues to power both the old `/studio/simple` page AND the new per-mode forms. This is intentional: keeping the generation state machine exactly as-is minimizes regression risk.
+The store's `mode` field is still authoritative. On route change within the simple studio shell, `SimpleStudioLayout` calls `setMode()` with the mapped mode (see URL-to-mode mapping below).
 
-Under the new shell, the old store's `mode` field becomes vestigial (the route implies the mode). It stays in the store for PR 1 so the old page keeps working and can be removed or repurposed in PR 2 or a later follow-up.
+### URL-to-mode mapping
+
+```ts
+// src/components/simple-studio-shell/urlToMode.ts
+import type { SimpleStudioMode } from '@/store/simpleStudioStore';
+
+export const URL_SEGMENT_TO_MODE: Record<string, SimpleStudioMode> = {
+  images: 'photo',
+  videos: 'video',
+  copy: 'copy',
+};
+
+export const MODE_TO_URL_SEGMENT: Record<SimpleStudioMode, string> = {
+  photo: 'images',
+  video: 'videos',
+  copy: 'copy',
+};
+
+export function modeFromPathname(pathname: string): SimpleStudioMode | null {
+  const match = pathname.match(/^\/simple-studio\/(images|videos|copy)(\/|$)/);
+  return match ? URL_SEGMENT_TO_MODE[match[1]] ?? null : null;
+}
+```
+
+`SimpleStudioLayout` watches the pathname and calls `useSimpleStudioStore.setMode(...)` whenever the route mode changes. `applyPrompt` continues to set the mode internally when a template is applied, so navigation after apply uses `MODE_TO_URL_SEGMENT[prompt.mode]`.
 
 ## AppSwitcher updates
 
@@ -392,21 +390,18 @@ The existing `pathname?.startsWith(item.href + "/")` active-state logic already 
 ### Store tests
 
 - `src/store/__tests__/simpleStudioShellStore.test.ts`:
-  - `openSavePromptDialog` / `closeSavePromptDialog` toggle state and seed data.
-  - `setLibraryModeFilter` updates state.
-  - `hydrateTemplates` populates from a mocked `fetch`.
-  - `saveSavedPrompt` applies optimistically and rolls back on API failure.
-  - `applyTemplate` writes to `simpleStudioStore` and navigates via mocked `router.push`.
+  - `openSavePromptDialog` / `closeSavePromptDialog` toggle `savePromptDialogOpen`.
+  - `setLibraryModeFilter` updates state correctly for all four values.
+  - `setPromptLibraryTab` updates state between `templates` and `saved`.
+
+- `src/components/simple-studio-shell/__tests__/urlToMode.test.ts`:
+  - `modeFromPathname` returns the correct mode for each route.
+  - `modeFromPathname` returns `null` for non-form routes (library, prompt-library, root).
+  - `URL_SEGMENT_TO_MODE` and `MODE_TO_URL_SEGMENT` are inverses of each other for all three modes.
 
 ### API route tests
 
-- `src/app/api/simple-studio/templates/__tests__/route.test.ts` — returns array shape and length > 0.
-- `src/app/api/simple-studio/saved-prompts/__tests__/route.test.ts`:
-  - `401` without session on every verb.
-  - `POST` creates a row with `userId` from the session.
-  - `GET` returns only the session user's rows.
-  - `PATCH` and `DELETE` enforce ownership (`user A` gets `404` when targeting `user B`'s row).
-  - `POST` with invalid body returns `400`.
+No new API route tests. The existing tests under `src/app/api/studio/prompts/__tests__/` and `src/app/api/studio/prompts/public/__tests__/` already cover the routes this redesign uses, and those routes are not being modified.
 
 ### Explicitly untested
 
@@ -423,17 +418,17 @@ All tests under `src/app/studio/simple/__tests__/` stay untouched for PR 1 and a
 
 1. `/simple-studio` redirects to `/simple-studio/images`.
 2. All 5 sidebar nav items (Images, Videos, Copy, Library, Prompt Library) load and highlight correctly, grouped as Create / Browse.
-3. AppSwitcher dropdown shows "Simple Studio" and "Advanced Workflow" as separate entries; current route lights up.
-4. Each of `/images`, `/videos`, `/copy` renders the form inline with the info panel on the right (desktop) or stacked (mobile).
-5. Generate an image / video / copy from each respective form — progress appears in the info panel's "Output Example" area, and the result appears inline once complete.
-6. Clicking "View all in Library" from an inline result navigates to `/simple-studio/library` with the correct mode filter active.
-7. Library page shows all past generations with the correct filter; filter pills in the site header match.
-8. Prompt Library Templates tab: click a template → navigates to the correct form route (images/videos/copy), form fields are prefilled on arrival, no extra click required.
-9. "Save prompt" button on a form page opens `SavePromptDialog` prefilled with the current prompt text; saving adds it to the Saved tab.
-10. "New Saved Prompt" button on `/simple-studio/prompt-library` opens `SavePromptDialog` with empty fields; saving adds it to the Saved tab.
-11. Delete a saved prompt → removed from list (optimistic) and persists on reload.
-12. Sign out, sign in as a different user → previous user's saved prompts are not visible (ownership enforced).
-13. Old `/studio/simple` route still loads, renders the legacy UI, and is functionally untouched.
+3. AppSwitcher dropdown shows "Simple Studio" and "Advanced Workflow" as separate entries; current route lights up for any `/simple-studio/*` sub-route.
+4. Navigating between `/images`, `/videos`, `/copy` sets the correct internal mode in `useSimpleStudioStore` (verifiable via React DevTools or by observing model picker contents change).
+5. Each form route renders the form inline with the info panel on the right (desktop) or stacked (mobile).
+6. Generate an image / video / copy from each respective form — progress appears in the info panel's "Output Example" area, and the result appears inline once complete. Confirm the same generation appears in `/simple-studio/library`.
+7. Library page shows all past generations with the correct mode filter; filter pills in the site header match and URL query param updates.
+8. Prompt Library Templates tab: if the `saved_prompts` table contains rows with `isPublic: true` for the current mode, they appear. If not, the empty state is visible. Clicking "Use" on a template navigates to the correct form route (via `MODE_TO_URL_SEGMENT[prompt.mode]`) and prefills the form.
+9. "Save prompt" button on a form page opens `SavePromptDialog`. Entering a name and clicking Save calls `saveCurrentPrompt`, which POSTs to `/api/studio/prompts`, and the new prompt appears in the Saved tab immediately.
+10. "New Saved Prompt" button on `/simple-studio/prompt-library` opens `SavePromptDialog` with empty fields. Filling in name + prompt + mode and saving calls `saveCurrentPrompt` after seeding the store, and the prompt appears in the Saved tab.
+11. Delete a saved prompt → removed from list and persists on reload (the existing DELETE endpoint handles this).
+12. Switching workspaces (if applicable) shows that workspace's saved prompts only (existing workspace scoping verified to still work through the new UI).
+13. Old `/studio/simple` route still loads, renders the legacy UI, and is functionally untouched — the existing integration tests in `src/app/studio/simple/__tests__/` still pass.
 14. `pnpm test:run` passes, `pnpm lint` passes, `pnpm build` succeeds.
 
 ## Delivery plan
@@ -441,8 +436,10 @@ All tests under `src/app/studio/simple/__tests__/` stay untouched for PR 1 and a
 Two PRs against `develop`:
 
 **PR 1 — Build new shell in parallel.**
-- All new files and the `AppSwitcher` update.
-- Drizzle schema + generated migration for `simple_studio_saved_prompts`.
+- All new files (shell components, forms, pages, shell store, URL-to-mode mapping).
+- `AppSwitcher` update.
+- NO new DB schema, NO new API routes, NO new migrations — existing `/api/studio/prompts` infrastructure is reused unchanged.
+- `useSimpleStudioStore` is NOT modified.
 - All tests listed in the Testing strategy section.
 - Old `/studio/simple` tree is NOT touched.
 - Merged after the full verification checklist passes.
@@ -460,11 +457,13 @@ Two PRs keep rollback cheap: if PR 1 is in production and a regression surfaces,
 
 - Refactoring the old `Sidebar.tsx` to extract shared primitives before deletion.
 - Admin UI for managing prompt templates.
+- Seeding public prompt templates into the database (tracked as follow-up — templates tab shows empty state until seeded).
+- Any modification to the `saved_prompts` schema, existing API routes, or `useSimpleStudioStore`.
+- New DB tables or migrations of any kind.
 - Tags, folders, or categories on saved prompts.
-- Reference image capture in saved prompts.
-- Sharing saved prompts between users or organizations.
+- Sharing saved prompts across workspaces.
 - Import / export of prompt libraries.
-- Pagination of saved prompts endpoint.
+- Pagination on saved prompts endpoint (the existing endpoint does not paginate; v1 inherits this limitation).
 - A `/simple-studio` landing page beyond the redirect.
 - Touching the advanced workflow editor at `/studio/[[...projectId]]`.
 - Porting the mobile `MobileProgress` floating bar (replaced by inline info-panel progress).
