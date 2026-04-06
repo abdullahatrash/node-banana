@@ -4,6 +4,7 @@ import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { Button } from "@/components/ui/button";
 import { FormPageLayout } from "./FormPageLayout";
 import { FormInfoPanel } from "./FormInfoPanel";
+import { LatestResultsInline } from "./LatestResultsInline";
 
 const TONES = ["professional", "casual", "creative", "persuasive"];
 const PLATFORMS = ["general", "instagram", "x", "linkedin"];
@@ -127,6 +128,8 @@ export function CopyForm() {
         >
           {isGenerating ? "Generating…" : "Generate"}
         </Button>
+
+        <LatestResultsInline mode="copy" />
       </div>
     </FormPageLayout>
   );
