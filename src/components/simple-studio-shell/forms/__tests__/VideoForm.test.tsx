@@ -14,6 +14,8 @@ describe("VideoForm", () => {
       videoDuration: 5,
       isGenerating: false,
     });
+    // Stub fetch so ModelSelect's /api/models call doesn't race with test teardown
+    global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
   });
 
   it("renders a prompt textarea", () => {

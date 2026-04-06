@@ -4,6 +4,8 @@ import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { Button } from "@/components/ui/button";
 import { FormPageLayout } from "./FormPageLayout";
 import { FormInfoPanel } from "./FormInfoPanel";
+import { ModelSelect } from "./ModelSelect";
+import { LatestResultsInline } from "./LatestResultsInline";
 
 const ASPECT_RATIOS = [
   { value: "16:9", label: "16:9" },
@@ -24,7 +26,6 @@ export function VideoForm() {
   const setVideoDuration = useSimpleStudioStore((s) => s.setVideoDuration);
   const isGenerating = useSimpleStudioStore((s) => s.isGenerating);
   const generate = useSimpleStudioStore((s) => s.generate);
-  const selectedModelName = useSimpleStudioStore((s) => s.selectedModelName);
 
   const disabled = isGenerating || prompt.trim().length === 0;
 
@@ -80,8 +81,11 @@ export function VideoForm() {
           </div>
         </div>
 
-        <div className="text-xs text-muted-foreground">
-          Model: {selectedModelName || "Auto (Veo 3.1)"}
+        <div>
+          <label htmlFor="video-model" className="mb-2 block text-sm font-medium">
+            Model
+          </label>
+          <ModelSelect mode="video" id="video-model" />
         </div>
 
         <Button
@@ -94,6 +98,8 @@ export function VideoForm() {
         >
           {isGenerating ? "Generating…" : "Generate"}
         </Button>
+
+        <LatestResultsInline mode="video" />
       </div>
     </FormPageLayout>
   );

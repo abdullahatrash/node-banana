@@ -4,6 +4,8 @@ import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { Button } from "@/components/ui/button";
 import { FormPageLayout } from "./FormPageLayout";
 import { FormInfoPanel } from "./FormInfoPanel";
+import { ModelSelect } from "./ModelSelect";
+import { LatestResultsInline } from "./LatestResultsInline";
 
 const ASPECT_RATIOS = [
   { value: "1:1", label: "1:1" },
@@ -23,7 +25,6 @@ export function ImageForm() {
   const setBatchCount = useSimpleStudioStore((s) => s.setBatchCount);
   const isGenerating = useSimpleStudioStore((s) => s.isGenerating);
   const generate = useSimpleStudioStore((s) => s.generate);
-  const selectedModelName = useSimpleStudioStore((s) => s.selectedModelName);
 
   const disabled = isGenerating || prompt.trim().length === 0;
 
@@ -59,8 +60,11 @@ export function ImageForm() {
           />
         </div>
 
-        <div className="text-xs text-muted-foreground">
-          Model: {selectedModelName || "Auto"}
+        <div>
+          <label htmlFor="image-model" className="mb-2 block text-sm font-medium">
+            Model
+          </label>
+          <ModelSelect mode="photo" id="image-model" />
         </div>
 
         <Button
@@ -73,6 +77,8 @@ export function ImageForm() {
         >
           {isGenerating ? "Generating…" : "Generate"}
         </Button>
+
+        <LatestResultsInline mode="photo" />
       </div>
     </FormPageLayout>
   );
