@@ -1317,16 +1317,19 @@ export async function GET(
 
       try {
         let fresh: ProviderModel[] = [];
+        // Don't overwrite cache with an empty list — a transient upstream
+        // failure could otherwise wipe the shared per-provider cache key
+        // (replicate:models / wavespeed:models) for all subsequent searches.
         if (provider === "replicate") {
           const all = await fetchReplicateModels(replicateKey!);
-          setCachedModels(cacheKey, all);
+          if (all.length > 0) setCachedModels(cacheKey, all);
           fresh = searchQuery ? filterModelsBySearch(all, searchQuery) : all;
         } else if (provider === "fal") {
           fresh = await fetchFalModels(falKey, searchQuery);
-          setCachedModels(cacheKey, fresh);
+          if (fresh.length > 0) setCachedModels(cacheKey, fresh);
         } else if (provider === "wavespeed") {
           const all = await fetchWaveSpeedModels(wavespeedKey!);
-          setCachedModels(cacheKey, all);
+          if (all.length > 0) setCachedModels(cacheKey, all);
           fresh = searchQuery ? filterModelsBySearch(all, searchQuery) : all;
         }
         allModels.push(...fresh);
@@ -1335,9 +1338,12 @@ export async function GET(
           count: fresh.length,
           cached: false,
         };
+        // A successful retry means the response now includes fresh upstream data,
+        // so the top-level "cached" envelope must no longer claim full freshness.
+        allFromCache = false;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        console.warn(`[Models] ${provider} search-miss retry failed: ${errorMessage}`);
+        console.warn(`[Models] ${provider}: search-miss retry failed: ${errorMessage}`);
         // Leave the original empty-but-cached result in place
       }
     }
