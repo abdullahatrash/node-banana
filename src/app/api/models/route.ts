@@ -659,6 +659,25 @@ function filterModelsBySearch(
   });
 }
 
+/**
+ * Convert a raw model id (kebab-case, snake_case, dot-separated) to a display
+ * name by title-casing each segment.
+ *
+ * humanize("gemini-4-pro-image-preview") → "Gemini 4 Pro Image Preview"
+ * humanize("veo_3_fast")                 → "Veo 3 Fast"
+ * humanize("gemini-2.5-flash")           → "Gemini 2.5 Flash"
+ */
+export function humanize(id: string): string {
+  return id
+    .split(/[-_]/)
+    .map((segment) =>
+      segment.length === 0
+        ? segment
+        : segment[0].toUpperCase() + segment.slice(1)
+    )
+    .join(" ");
+}
+
 // ============ WaveSpeed Types ============
 
 interface WaveSpeedModel {

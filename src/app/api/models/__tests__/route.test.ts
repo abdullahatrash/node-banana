@@ -775,4 +775,26 @@ describe("/api/models route", () => {
       expect(data.models[10].name).toBe("zebra");
     });
   });
+
+  describe("humanize helper", () => {
+    it("converts kebab-case id to Title Case", async () => {
+      const { humanize } = await import("../route");
+      expect(humanize("gemini-4-pro-image-preview")).toBe("Gemini 4 Pro Image Preview");
+    });
+
+    it("handles snake_case ids", async () => {
+      const { humanize } = await import("../route");
+      expect(humanize("veo_3_fast")).toBe("Veo 3 Fast");
+    });
+
+    it("handles single-word ids", async () => {
+      const { humanize } = await import("../route");
+      expect(humanize("veo")).toBe("Veo");
+    });
+
+    it("preserves numeric segments", async () => {
+      const { humanize } = await import("../route");
+      expect(humanize("gemini-2.5-flash")).toBe("Gemini 2.5 Flash");
+    });
+  });
 });
