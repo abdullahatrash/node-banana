@@ -797,4 +797,119 @@ describe("/api/models route", () => {
       expect(humanize("gemini-2.5-flash")).toBe("Gemini 2.5 Flash");
     });
   });
+
+  describe("fetchGeminiModels", () => {
+    beforeEach(() => {
+      global.fetch = mockFetch as unknown as typeof global.fetch;
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it("returns only image/video models from the discovery response", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [
+              { name: "models/gemini-4-pro-image-preview", supportedGenerationMethods: ["generateContent"] },
+              { name: "models/veo-4-ultra", supportedGenerationMethods: ["predictLongRunning"] },
+              { name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] },
+              { name: "models/text-embedding-004", supportedGenerationMethods: ["embedContent"] },
+            ],
+          }),
+      });
+
+      const result = await fetchGeminiModels("fake-key");
+
+      expect(result.map((m) => m.id).sort()).toEqual(["gemini-4-pro-image-preview", "veo-4-ultra"]);
+    });
+
+    it("infers image capabilities for ids containing 'image'", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [{ name: "models/gemini-4-pro-image-preview", supportedGenerationMethods: ["generateContent"] }],
+          }),
+      });
+
+      const result = await fetchGeminiModels("fake-key");
+      expect(result[0]).toMatchObject({
+        id: "gemini-4-pro-image-preview",
+        name: "Gemini 4 Pro Image Preview",
+        provider: "gemini",
+        capabilities: ["text-to-image", "image-to-image"],
+      });
+      expect(result[0].pricing).toBeUndefined();
+      expect(result[0].coverImage).toBeUndefined();
+    });
+
+    it("infers video capabilities for veo-* ids", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [{ name: "models/veo-4-ultra", supportedGenerationMethods: ["predictLongRunning"] }],
+          }),
+      });
+
+      const result = await fetchGeminiModels("fake-key");
+      expect(result[0].capabilities).toEqual(["text-to-video", "image-to-video"]);
+    });
+
+    it("returns [] on HTTP error", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+      });
+
+      const result = await fetchGeminiModels("bad-key");
+      expect(result).toEqual([]);
+    });
+
+    it("returns [] on network throw", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockRejectedValueOnce(new Error("network down"));
+
+      const result = await fetchGeminiModels("fake-key");
+      expect(result).toEqual([]);
+    });
+
+    it("paginates when nextPageToken is present", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              models: [{ name: "models/gemini-5-image", supportedGenerationMethods: ["generateContent"] }],
+              nextPageToken: "page2",
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              models: [{ name: "models/veo-5", supportedGenerationMethods: ["predictLongRunning"] }],
+            }),
+        });
+
+      const result = await fetchGeminiModels("fake-key");
+      expect(result.map((m) => m.id).sort()).toEqual(["gemini-5-image", "veo-5"]);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
 });
