@@ -207,24 +207,29 @@ export function ModelSearchDialog({
       return { params, headers };
     };
 
-    // Helper: hash the model list by length + sorted id signature. Used to detect
-    // whether an SWR revalidation response actually changed anything.
+    // Helper: hash the model list by sorted "id:capabilities" pairs. Detects both
+    // list membership changes and capability drift — the latter matters because
+    // capability filters (image/video/3d/audio) will mis-route if stale.
     const signature = (models: ProviderModel[]): string =>
-      `${models.length}:${models
-        .map((m) => m.id)
+      models
+        .map((m) => `${m.id}:${[...m.capabilities].sort().join("+")}`)
         .sort()
-        .join(",")}`;
+        .join(",");
 
     // Check localStorage cache first (skip when bypassing)
     const cached = bypassCache ? null : getCachedModels(cacheKey);
     if (cached) {
       // Serve cached immediately, no spinner
       setModels(cached.models);
+      setError(null);
       if (cached.availableProviders) {
         setServerAvailableProviders(cached.availableProviders);
       }
 
-      // Background revalidate: fire and forget, only update if response differs
+      // Background revalidate: fire and forget, only update if response differs.
+      // Note: deduplicatedFetch has a 5s response cache, so reopening the dialog
+      // within 5s will short-circuit the network call. That's fine — the data we
+      // just cached is equally fresh in that window.
       (async () => {
         try {
           const { params, headers } = buildRequest(false);
@@ -246,14 +251,19 @@ export function ModelSearchDialog({
               freshCount: data.models.length,
             });
             setModels(data.models);
-            setCachedModels(cacheKey, data.models, data.availableProviders);
+            setCachedModels(
+              cacheKey,
+              data.models,
+              data.availableProviders ?? cached.availableProviders
+            );
             if (data.availableProviders) {
               setServerAvailableProviders(data.availableProviders);
             }
           }
         } catch (err) {
-          // Silent: cached data is still good. Log for devtools.
-          console.warn("[ModelSearch] SWR revalidate failed:", err);
+          // Silent: cached data is still good. Log at debug so we don't spam
+          // the user's console when the user is offline or the API is flaky.
+          console.debug("[ModelSearch] SWR revalidate failed:", err);
         }
       })();
 
