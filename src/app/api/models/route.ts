@@ -998,13 +998,15 @@ export async function fetchGeminiModels(apiKey: string): Promise<ProviderModel[]
 
     do {
       const url = new URL(`${GEMINI_API_BASE}/models`);
-      url.searchParams.set("key", apiKey);
       url.searchParams.set("pageSize", "100");
       if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-      const response = await fetch(url.toString(), { signal: controller.signal });
+      const response = await fetch(url.toString(), {
+        signal: controller.signal,
+        headers: { "x-goog-api-key": apiKey },
+      });
       if (!response.ok) {
-        console.warn(`[Models] gemini discovery HTTP ${response.status}`);
+        console.warn(`[Models] gemini: discovery HTTP ${response.status}`);
         return [];
       }
 
@@ -1032,7 +1034,7 @@ export async function fetchGeminiModels(apiKey: string): Promise<ProviderModel[]
     return discovered;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[Models] gemini discovery failed: ${message}`);
+    console.warn(`[Models] gemini: discovery failed: ${message}`);
     return [];
   } finally {
     clearTimeout(timeoutId);
