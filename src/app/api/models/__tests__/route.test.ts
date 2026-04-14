@@ -1012,5 +1012,44 @@ describe("/api/models route", () => {
       // Reset the cache mock so it doesn't leak to subsequent tests
       mockGetCachedModels.mockReturnValue(null);
     });
+
+    it("bypasses cache when refresh=true", async () => {
+      mockGetCachedModels.mockImplementation((key: string) => {
+        if (key === "gemini:models") {
+          return [
+            {
+              id: "stale-model",
+              name: "Stale Model",
+              description: "Should not appear",
+              provider: "gemini",
+              capabilities: ["text-to-image", "image-to-image"],
+            },
+          ];
+        }
+        return null;
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [
+              { name: "models/gemini-10-image", supportedGenerationMethods: ["generateContent"] },
+            ],
+          }),
+      });
+
+      const request = createMockGetRequest({ provider: "gemini", refresh: "true" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const ids = data.models.map((m: { id: string }) => m.id);
+      expect(ids).not.toContain("stale-model");
+      expect(ids).toContain("gemini-10-image");
+
+      // Reset the cache mock so it doesn't leak to subsequent tests
+      mockGetCachedModels.mockReturnValue(null);
+    });
   });
 });

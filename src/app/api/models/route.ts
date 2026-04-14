@@ -1163,6 +1163,8 @@ export async function GET(
         anyFromCache = true;
       } else {
         discovered = await fetchGeminiModels(geminiKey);
+        // Skip caching empty results so a transient upstream failure doesn't
+        // mask real data for the remainder of the TTL window.
         if (discovered.length > 0) {
           setCachedModels(cacheKey, discovered);
         }
@@ -1185,9 +1187,6 @@ export async function GET(
       count: geminiModels.length,
       cached: discoveryFromCache,
     };
-    if (discoveryFromCache) {
-      anyFromCache = true;
-    }
   }
 
   // Add Kie models if included (hardcoded, no API call needed)
