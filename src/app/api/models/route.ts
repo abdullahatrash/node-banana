@@ -43,6 +43,12 @@ const REPLICATE_API_BASE = "https://api.replicate.com/v1";
 const FAL_API_BASE = "https://api.fal.ai/v1";
 const WAVESPEED_API_BASE = "https://api.wavespeed.ai/api/v3";
 
+// Search-miss retry throttle: per-cache-key timestamp of last cache-bypass retry.
+// Prevents repeated upstream calls for gibberish searches.
+const SEARCH_MISS_RETRY_THROTTLE_MS = 60_000;
+// Exported for test isolation — tests can reset this between cases.
+export const searchMissRetryThrottle = new Map<string, number>();
+
 // Categories we care about for image/video/3D/audio generation (fal.ai)
 const RELEVANT_CATEGORIES = [
   "text-to-image",
@@ -659,6 +665,25 @@ function filterModelsBySearch(
   });
 }
 
+/**
+ * Convert a raw model id (kebab-case or snake_case; dots are preserved) to a
+ * display name by title-casing each hyphen/underscore-separated segment.
+ *
+ * humanize("gemini-4-pro-image-preview") → "Gemini 4 Pro Image Preview"
+ * humanize("veo_3_fast")                 → "Veo 3 Fast"
+ * humanize("gemini-2.5-flash")           → "Gemini 2.5 Flash"
+ */
+export function humanize(id: string): string {
+  return id
+    .split(/[-_]/)
+    .map((segment) =>
+      segment.length === 0
+        ? segment
+        : segment[0].toUpperCase() + segment.slice(1)
+    )
+    .join(" ");
+}
+
 // ============ WaveSpeed Types ============
 
 interface WaveSpeedModel {
@@ -932,6 +957,96 @@ async function fetchFalModels(
   return allModels;
 }
 
+// ============ Gemini Discovery ============
+
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_DISCOVERY_TIMEOUT_MS = 5000;
+
+interface GeminiDiscoveryModel {
+  name: string; // e.g. "models/gemini-4-pro-image-preview"
+  supportedGenerationMethods?: string[];
+}
+
+interface GeminiDiscoveryResponse {
+  models?: GeminiDiscoveryModel[];
+  nextPageToken?: string;
+}
+
+function inferGeminiCapabilities(id: string): ModelCapability[] | null {
+  const lower = id.toLowerCase();
+  if (lower.includes("image")) {
+    return ["text-to-image", "image-to-image"];
+  }
+  if (lower.startsWith("veo-") || lower.includes("video")) {
+    return ["text-to-video", "image-to-video"];
+  }
+  return null;
+}
+
+/**
+ * Discover Gemini models via the Google Generative Language API.
+ *
+ * Filters to image/video generation models only. Returns [] on any failure
+ * (network, auth, malformed response, timeout) — caller is expected to fall
+ * back to the hardcoded list.
+ *
+ * Timeout: 5s total across all pages (shared AbortSignal).
+ */
+export async function fetchGeminiModels(apiKey: string): Promise<ProviderModel[]> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GEMINI_DISCOVERY_TIMEOUT_MS);
+
+  try {
+    const discovered: ProviderModel[] = [];
+    let pageToken: string | undefined;
+    let pageCount = 0;
+    const maxPages = 10; // safety bound
+
+    do {
+      const url = new URL(`${GEMINI_API_BASE}/models`);
+      url.searchParams.set("pageSize", "100");
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+      const response = await fetch(url.toString(), {
+        signal: controller.signal,
+        headers: { "x-goog-api-key": apiKey },
+      });
+      if (!response.ok) {
+        console.warn(`[Models] gemini: discovery HTTP ${response.status}`);
+        return [];
+      }
+
+      const data = (await response.json()) as GeminiDiscoveryResponse;
+      const models = data.models ?? [];
+
+      for (const model of models) {
+        const rawId = model.name.replace(/^models\//, "");
+        const capabilities = inferGeminiCapabilities(rawId);
+        if (!capabilities) continue;
+
+        discovered.push({
+          id: rawId,
+          name: humanize(rawId),
+          description: "Newly discovered Gemini model. Metadata may be incomplete.",
+          provider: "gemini",
+          capabilities,
+        });
+      }
+
+      pageToken = data.nextPageToken;
+      pageCount++;
+    } while (pageToken && pageCount < maxPages);
+
+    return discovered;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[Models] gemini: discovery failed: ${message}`);
+    return [];
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // ============ Main Handler ============
 
 export async function GET(
@@ -1038,18 +1153,48 @@ export async function GET(
 
   // Add Gemini models first if included (they appear at the top)
   if (includeGemini) {
-    // Filter by search query if provided
-    let geminiModels = [...GEMINI_IMAGE_MODELS, ...GEMINI_VIDEO_MODELS];
+    const hardcoded = [...GEMINI_IMAGE_MODELS, ...GEMINI_VIDEO_MODELS];
+
+    // Discovery is additive: try cache first, then fresh fetch, then fall back to empty.
+    // Start from "hardcoded is cached" to match the Kie branch below — a live fetch
+    // flips this to false below.
+    let discovered: ProviderModel[] = [];
+    let geminiCached = true;
+    anyFromCache = true;
+    const geminiKey = process.env.GEMINI_API_KEY;
+
+    if (geminiKey) {
+      const cacheKey = getCacheKey("gemini");
+      const cached = refresh ? null : getCachedModels(cacheKey);
+      if (cached) {
+        discovered = cached;
+      } else {
+        discovered = await fetchGeminiModels(geminiKey);
+        // Skip caching empty results so a transient upstream failure doesn't
+        // mask real data for the remainder of the TTL window.
+        if (discovered.length > 0) {
+          setCachedModels(cacheKey, discovered);
+        }
+        geminiCached = false;
+        allFromCache = false;
+      }
+    }
+
+    // Hardcoded wins on ID collision
+    const hardcodedIds = new Set(hardcoded.map((m) => m.id));
+    const additions = discovered.filter((m) => !hardcodedIds.has(m.id));
+    let geminiModels: ProviderModel[] = [...hardcoded, ...additions];
+
     if (searchQuery) {
       geminiModels = filterModelsBySearch(geminiModels, searchQuery);
     }
+
     allModels.push(...geminiModels);
     providerResults["gemini"] = {
       success: true,
       count: geminiModels.length,
-      cached: true, // Hardcoded models are effectively "cached"
+      cached: geminiCached,
     };
-    anyFromCache = true;
   }
 
   // Add Kie models if included (hardcoded, no API call needed)
@@ -1144,6 +1289,66 @@ export async function GET(
       count: models.length,
       cached: fromCache,
     };
+  }
+
+  // Search-miss retry: if a search yielded zero matches but results came from cache,
+  // bypass cache once for the cache-hit providers and retry upstream.
+  if (
+    searchQuery &&
+    !refresh &&
+    allModels.length === 0 &&
+    anyFromCache
+  ) {
+    const cacheHitProviders = Object.entries(providerResults)
+      .filter(([, result]) => result.success && result.cached)
+      .map(([provider]) => provider as ProviderType)
+      .filter((p) => p === "replicate" || p === "fal" || p === "wavespeed");
+
+    for (const provider of cacheHitProviders) {
+      const cacheKey =
+        provider === "replicate" || provider === "wavespeed"
+          ? getCacheKey(provider)
+          : getCacheKey(provider, searchQuery);
+
+      // Throttle: skip if this cache key was revalidated within the window
+      const lastRetry = searchMissRetryThrottle.get(cacheKey) ?? 0;
+      if (Date.now() - lastRetry < SEARCH_MISS_RETRY_THROTTLE_MS) {
+        continue;
+      }
+      searchMissRetryThrottle.set(cacheKey, Date.now());
+
+      try {
+        let fresh: ProviderModel[] = [];
+        // Don't overwrite cache with an empty list — a transient upstream
+        // failure could otherwise wipe the shared per-provider cache key
+        // (replicate:models / wavespeed:models) for all subsequent searches.
+        if (provider === "replicate") {
+          const all = await fetchReplicateModels(replicateKey!);
+          if (all.length > 0) setCachedModels(cacheKey, all);
+          fresh = searchQuery ? filterModelsBySearch(all, searchQuery) : all;
+        } else if (provider === "fal") {
+          fresh = await fetchFalModels(falKey, searchQuery);
+          if (fresh.length > 0) setCachedModels(cacheKey, fresh);
+        } else if (provider === "wavespeed") {
+          const all = await fetchWaveSpeedModels(wavespeedKey!);
+          if (all.length > 0) setCachedModels(cacheKey, all);
+          fresh = searchQuery ? filterModelsBySearch(all, searchQuery) : all;
+        }
+        allModels.push(...fresh);
+        providerResults[provider] = {
+          success: true,
+          count: fresh.length,
+          cached: false,
+        };
+        // A successful retry means the response now includes fresh upstream data,
+        // so the top-level "cached" envelope must no longer claim full freshness.
+        allFromCache = false;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        console.warn(`[Models] ${provider}: search-miss retry failed: ${errorMessage}`);
+        // Leave the original empty-but-cached result in place
+      }
+    }
   }
 
   // Check if we got any models

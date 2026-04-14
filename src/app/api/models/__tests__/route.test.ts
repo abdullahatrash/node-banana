@@ -16,7 +16,7 @@ vi.mock("@/lib/providers/cache", () => ({
   getCacheKey: mockGetCacheKey,
 }));
 
-import { GET } from "../route";
+import { GET, searchMissRetryThrottle } from "../route";
 
 // Store original env and fetch
 const originalEnv = { ...process.env };
@@ -97,6 +97,7 @@ describe("/api/models route", () => {
     // Clear API keys
     delete process.env.REPLICATE_API_KEY;
     delete process.env.FAL_API_KEY;
+    delete process.env.GEMINI_API_KEY;
     // Set up mock fetch
     global.fetch = mockFetch;
     // Reset cache mock to default (miss)
@@ -773,6 +774,368 @@ describe("/api/models route", () => {
       expect(data.models[9].name).toBe("alpha");
       expect(data.models[10].provider).toBe("replicate");
       expect(data.models[10].name).toBe("zebra");
+    });
+  });
+
+  describe("humanize helper", () => {
+    it("converts kebab-case id to Title Case", async () => {
+      const { humanize } = await import("../route");
+      expect(humanize("gemini-4-pro-image-preview")).toBe("Gemini 4 Pro Image Preview");
+    });
+
+    it("handles snake_case ids", async () => {
+      const { humanize } = await import("../route");
+      expect(humanize("veo_3_fast")).toBe("Veo 3 Fast");
+    });
+
+    it("handles single-word ids", async () => {
+      const { humanize } = await import("../route");
+      expect(humanize("veo")).toBe("Veo");
+    });
+
+    it("preserves numeric segments", async () => {
+      const { humanize } = await import("../route");
+      expect(humanize("gemini-2.5-flash")).toBe("Gemini 2.5 Flash");
+    });
+  });
+
+  describe("fetchGeminiModels", () => {
+    beforeEach(() => {
+      global.fetch = mockFetch as unknown as typeof global.fetch;
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it("returns only image/video models from the discovery response", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [
+              { name: "models/gemini-4-pro-image-preview", supportedGenerationMethods: ["generateContent"] },
+              { name: "models/veo-4-ultra", supportedGenerationMethods: ["predictLongRunning"] },
+              { name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] },
+              { name: "models/text-embedding-004", supportedGenerationMethods: ["embedContent"] },
+            ],
+          }),
+      });
+
+      const result = await fetchGeminiModels("fake-key");
+
+      expect(result.map((m) => m.id).sort()).toEqual(["gemini-4-pro-image-preview", "veo-4-ultra"]);
+    });
+
+    it("infers image capabilities for ids containing 'image'", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [{ name: "models/gemini-4-pro-image-preview", supportedGenerationMethods: ["generateContent"] }],
+          }),
+      });
+
+      const result = await fetchGeminiModels("fake-key");
+      expect(result[0]).toMatchObject({
+        id: "gemini-4-pro-image-preview",
+        name: "Gemini 4 Pro Image Preview",
+        provider: "gemini",
+        capabilities: ["text-to-image", "image-to-image"],
+      });
+      expect(result[0].pricing).toBeUndefined();
+      expect(result[0].coverImage).toBeUndefined();
+    });
+
+    it("infers video capabilities for veo-* ids", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [{ name: "models/veo-4-ultra", supportedGenerationMethods: ["predictLongRunning"] }],
+          }),
+      });
+
+      const result = await fetchGeminiModels("fake-key");
+      expect(result[0].capabilities).toEqual(["text-to-video", "image-to-video"]);
+    });
+
+    it("returns [] on HTTP error", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+      });
+
+      const result = await fetchGeminiModels("bad-key");
+      expect(result).toEqual([]);
+    });
+
+    it("returns [] on network throw", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch.mockRejectedValueOnce(new Error("network down"));
+
+      const result = await fetchGeminiModels("fake-key");
+      expect(result).toEqual([]);
+    });
+
+    it("paginates when nextPageToken is present", async () => {
+      const { fetchGeminiModels } = await import("../route");
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              models: [{ name: "models/gemini-5-image", supportedGenerationMethods: ["generateContent"] }],
+              nextPageToken: "page2",
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              models: [{ name: "models/veo-5", supportedGenerationMethods: ["predictLongRunning"] }],
+            }),
+        });
+
+      const result = await fetchGeminiModels("fake-key");
+      expect(result.map((m) => m.id).sort()).toEqual(["gemini-5-image", "veo-5"]);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("Gemini hybrid discovery in GET", () => {
+    beforeEach(() => {
+      global.fetch = mockFetch as unknown as typeof global.fetch;
+      process.env.GEMINI_API_KEY = "test-gemini-key";
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+      delete process.env.GEMINI_API_KEY;
+    });
+
+    it("merges discovered models with hardcoded list (hardcoded wins on collision)", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [
+              { name: "models/nano-banana", supportedGenerationMethods: ["generateContent"] },
+              { name: "models/gemini-9-image", supportedGenerationMethods: ["generateContent"] },
+            ],
+          }),
+      });
+
+      const request = createMockGetRequest({ provider: "gemini" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+
+      const geminiModels = data.models.filter((m: { provider: string }) => m.provider === "gemini");
+      const nanoBanana = geminiModels.find((m: { id: string }) => m.id === "nano-banana");
+      const newModel = geminiModels.find((m: { id: string }) => m.id === "gemini-9-image");
+
+      expect(nanoBanana.description).toContain("Fast image generation");
+      expect(nanoBanana.pricing).toEqual({ type: "per-run", amount: 0.039, currency: "USD" });
+
+      expect(newModel).toMatchObject({
+        name: "Gemini 9 Image",
+        description: "Newly discovered Gemini model. Metadata may be incomplete.",
+        capabilities: ["text-to-image", "image-to-image"],
+      });
+      expect(newModel.pricing).toBeUndefined();
+    });
+
+    it("falls back to hardcoded list when discovery fails", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("boom"));
+
+      const request = createMockGetRequest({ provider: "gemini" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+      const ids = data.models.map((m: { id: string }) => m.id);
+      expect(ids).toContain("nano-banana");
+      expect(ids).toContain("nano-banana-2");
+      expect(ids.every((id: string) => !id.startsWith("gemini-9"))).toBe(true);
+    });
+
+    it("skips discovery and returns hardcoded only when GEMINI_API_KEY missing", async () => {
+      delete process.env.GEMINI_API_KEY;
+
+      const request = createMockGetRequest({ provider: "gemini" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+      const ids = data.models.map((m: { id: string }) => m.id);
+      expect(ids).toContain("nano-banana");
+    });
+
+    it("uses cached discovery when available", async () => {
+      mockGetCachedModels.mockImplementation((key: string) => {
+        if (key === "gemini:models") {
+          return [
+            {
+              id: "cached-gemini-model",
+              name: "Cached Gemini Model",
+              description: "From cache",
+              provider: "gemini",
+              capabilities: ["text-to-image", "image-to-image"],
+            },
+          ];
+        }
+        return null;
+      });
+
+      const request = createMockGetRequest({ provider: "gemini" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      const ids = data.models.map((m: { id: string }) => m.id);
+      expect(ids).toContain("cached-gemini-model");
+
+      // Reset the cache mock so it doesn't leak to subsequent tests
+      mockGetCachedModels.mockReturnValue(null);
+    });
+
+    it("bypasses cache when refresh=true", async () => {
+      mockGetCachedModels.mockImplementation((key: string) => {
+        if (key === "gemini:models") {
+          return [
+            {
+              id: "stale-model",
+              name: "Stale Model",
+              description: "Should not appear",
+              provider: "gemini",
+              capabilities: ["text-to-image", "image-to-image"],
+            },
+          ];
+        }
+        return null;
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [
+              { name: "models/gemini-10-image", supportedGenerationMethods: ["generateContent"] },
+            ],
+          }),
+      });
+
+      const request = createMockGetRequest({ provider: "gemini", refresh: "true" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const ids = data.models.map((m: { id: string }) => m.id);
+      expect(ids).not.toContain("stale-model");
+      expect(ids).toContain("gemini-10-image");
+
+      // Reset the cache mock so it doesn't leak to subsequent tests
+      mockGetCachedModels.mockReturnValue(null);
+    });
+  });
+
+  describe("Search-miss retry", () => {
+    beforeEach(() => {
+      global.fetch = mockFetch as unknown as typeof global.fetch;
+      process.env.REPLICATE_API_KEY = "fake-replicate-key";
+      delete process.env.GEMINI_API_KEY;
+      // Clear module-level throttle state between cases (tests using the same
+      // cache key — e.g. "replicate:models" — would otherwise leak throttle entries).
+      searchMissRetryThrottle.clear();
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+      delete process.env.REPLICATE_API_KEY;
+    });
+
+    it("retries with cache bypass when cache-hit returned zero matches for search", async () => {
+      mockGetCachedModels.mockImplementation((key: string) => {
+        if (key === "replicate:models") return [];
+        return null;
+      });
+
+      mockFetch.mockResolvedValueOnce(
+        createReplicateResponse(
+          [{ owner: "bytedance", name: "seedance-3", description: "new video model" }],
+          null
+        )
+      );
+
+      const request = createMockGetRequest({ search: "seedance-3", provider: "replicate" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+      expect(data.models.some((m: { id: string }) => m.id.includes("seedance-3"))).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockSetCachedModels).toHaveBeenCalledWith("replicate:models", expect.any(Array));
+
+      mockGetCachedModels.mockReturnValue(null);
+    });
+
+    it("does NOT retry when refresh=true is already set", async () => {
+      mockGetCachedModels.mockReturnValue(null);
+      mockFetch.mockResolvedValueOnce(createReplicateResponse([], null));
+
+      const request = createMockGetRequest({
+        search: "nonexistent-model",
+        provider: "replicate",
+        refresh: "true",
+      });
+      const response = await GET(request);
+      await response.json();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT retry when no providers were cache-hit", async () => {
+      mockGetCachedModels.mockReturnValue(null);
+      mockFetch.mockResolvedValueOnce(createReplicateResponse([], null));
+
+      const request = createMockGetRequest({ search: "nothing", provider: "replicate" });
+      const response = await GET(request);
+      await response.json();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT retry within 60s of a previous retry for the same cache key", async () => {
+      mockGetCachedModels.mockImplementation((key: string) => {
+        if (key === "replicate:models") return [];
+        return null;
+      });
+
+      mockFetch.mockResolvedValueOnce(createReplicateResponse([], null));
+      const r1 = await GET(createMockGetRequest({ search: "unicorn", provider: "replicate" }));
+      await r1.json();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      const r2 = await GET(createMockGetRequest({ search: "unicorn", provider: "replicate" }));
+      const data2 = await r2.json();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(data2.models).toEqual([]);
+
+      mockGetCachedModels.mockReturnValue(null);
     });
   });
 });

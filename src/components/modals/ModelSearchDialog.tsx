@@ -171,7 +171,8 @@ export function ModelSearchDialog({
     }
   }, [initialProvider]);
 
-  // Fetch models
+  // Fetch models with stale-while-revalidate: cache-hit returns immediately, then a
+  // background revalidate silently refreshes state + localStorage if upstream differs.
   const fetchModels = useCallback(async (bypassCache = false) => {
     // Increment version to track this request
     const thisVersion = ++requestVersionRef.current;
@@ -179,30 +180,11 @@ export function ModelSearchDialog({
     // Build cache key from filters
     const cacheKey = `${providerFilter}:${capabilityFilter}:${debouncedSearch}`;
 
-    // Check localStorage cache first (skip when bypassing)
-    if (!bypassCache) {
-      const cached = getCachedModels(cacheKey);
-      if (cached) {
-        setModels(cached.models);
-        if (cached.availableProviders) {
-          setServerAvailableProviders(cached.availableProviders);
-        }
-        return;
-      }
-    }
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // Build query params
+    // Helper: build query params + headers for an API call
+    const buildRequest = (forceRefresh: boolean) => {
       const params = new URLSearchParams();
-      if (debouncedSearch) {
-        params.set("search", debouncedSearch);
-      }
-      if (providerFilter !== "all") {
-        params.set("provider", providerFilter);
-      }
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (providerFilter !== "all") params.set("provider", providerFilter);
       if (capabilityFilter !== "all") {
         const capabilities =
           capabilityFilter === "image"
@@ -214,25 +196,86 @@ export function ModelSearchDialog({
             : "text-to-audio";
         params.set("capabilities", capabilities);
       }
-      if (bypassCache) {
-        params.set("refresh", "true");
-      }
+      if (forceRefresh) params.set("refresh", "true");
 
-      // Build headers with API keys
       const headers: Record<string, string> = {};
-      if (replicateApiKey) {
-        headers["X-Replicate-Key"] = replicateApiKey;
-      }
-      if (falApiKey) {
-        headers["X-Fal-Key"] = falApiKey;
-      }
-      if (kieApiKey) {
-        headers["X-Kie-Key"] = kieApiKey;
-      }
-      if (wavespeedApiKey) {
-        headers["X-WaveSpeed-Key"] = wavespeedApiKey;
+      if (replicateApiKey) headers["X-Replicate-Key"] = replicateApiKey;
+      if (falApiKey) headers["X-Fal-Key"] = falApiKey;
+      if (kieApiKey) headers["X-Kie-Key"] = kieApiKey;
+      if (wavespeedApiKey) headers["X-WaveSpeed-Key"] = wavespeedApiKey;
+
+      return { params, headers };
+    };
+
+    // Helper: hash the model list by sorted "id:capabilities" pairs. Detects both
+    // list membership changes and capability drift — the latter matters because
+    // capability filters (image/video/3d/audio) will mis-route if stale.
+    const signature = (list: ProviderModel[]): string =>
+      list
+        .map((m) => `${m.id}:${[...m.capabilities].sort().join("+")}`)
+        .sort()
+        .join(",");
+
+    // Check localStorage cache first (skip when bypassing)
+    const cached = bypassCache ? null : getCachedModels(cacheKey);
+    if (cached) {
+      // Serve cached immediately, no spinner
+      setModels(cached.models);
+      setError(null);
+      if (cached.availableProviders) {
+        setServerAvailableProviders(cached.availableProviders);
       }
 
+      // Background revalidate: fire and forget, only update if response differs.
+      // Note: deduplicatedFetch has a 5s response cache, so reopening the dialog
+      // within 5s will short-circuit the network call. That's fine — the data we
+      // just cached is equally fresh in that window.
+      (async () => {
+        try {
+          const { params, headers } = buildRequest(false);
+          const response = await deduplicatedFetch(`/api/models?${params.toString()}`, {
+            headers,
+          });
+
+          // Drop if filters changed while we were in flight
+          if (thisVersion !== requestVersionRef.current) return;
+
+          const data: ModelsResponse = await response.json();
+          if (!data.success || !data.models) return;
+
+          const cachedSig = signature(cached.models);
+          const freshSig = signature(data.models);
+          if (cachedSig !== freshSig) {
+            console.debug("[ModelSearch] SWR detected diff, updating", {
+              cachedCount: cached.models.length,
+              freshCount: data.models.length,
+            });
+            setModels(data.models);
+            setCachedModels(
+              cacheKey,
+              data.models,
+              data.availableProviders ?? cached.availableProviders
+            );
+            if (data.availableProviders) {
+              setServerAvailableProviders(data.availableProviders);
+            }
+          }
+        } catch (err) {
+          // Silent: cached data is still good. Log at debug so we don't spam
+          // the user's console when the user is offline or the API is flaky.
+          console.debug("[ModelSearch] SWR revalidate failed:", err);
+        }
+      })();
+
+      return;
+    }
+
+    // Cache miss: show spinner and fetch normally
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const { params, headers } = buildRequest(bypassCache);
       const response = await deduplicatedFetch(`/api/models?${params.toString()}`, {
         headers,
       });
@@ -246,9 +289,7 @@ export function ModelSearchDialog({
 
       if (data.success && data.models) {
         setModels(data.models);
-        // Cache the successful result (including available providers)
         setCachedModels(cacheKey, data.models, data.availableProviders);
-        // Update server-reported available providers
         if (data.availableProviders) {
           setServerAvailableProviders(data.availableProviders);
         }
@@ -257,14 +298,12 @@ export function ModelSearchDialog({
         setModels([]);
       }
     } catch (err) {
-      // Check if this request is still current
       if (thisVersion !== requestVersionRef.current) {
-        return; // Ignore stale error
+        return;
       }
       setError(err instanceof Error ? err.message : "Failed to fetch models");
       setModels([]);
     } finally {
-      // Only update loading state if this is still the current request
       if (thisVersion === requestVersionRef.current) {
         setIsLoading(false);
       }
