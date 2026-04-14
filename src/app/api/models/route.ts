@@ -519,7 +519,76 @@ type ModelsResponse = ModelsSuccessResponse | ModelsErrorResponse;
 
 // ============ Replicate Helpers ============
 
+/**
+ * Inspect `default_example.output` for an output URL and classify by extension.
+ * Returns null when no classifiable output is present, so callers can fall back
+ * to the keyword heuristic.
+ */
+function inferReplicateCapabilitiesFromExample(
+  model: ReplicateModel
+): ModelCapability[] | null {
+  const example = model.default_example as { output?: unknown } | undefined;
+  if (!example) return null;
+
+  // Output can be a string URL, an array of URLs, or something else (text, number).
+  const raw = example.output;
+  const urlCandidate =
+    typeof raw === "string"
+      ? raw
+      : Array.isArray(raw) && typeof raw[0] === "string"
+      ? (raw[0] as string)
+      : null;
+  if (!urlCandidate) return null;
+
+  // Strip query string, take the last path segment, take the extension.
+  const pathname = urlCandidate.split("?")[0];
+  const ext = pathname.split(".").pop()?.toLowerCase();
+  if (!ext) return null;
+
+  const name = model.name.toLowerCase();
+  const desc = (model.description ?? "").toLowerCase();
+  const searchText = `${name} ${desc}`;
+
+  if (["mp4", "webm", "mov", "avi", "mkv"].includes(ext)) {
+    const isImageToVideo =
+      searchText.includes("image-to-video") ||
+      searchText.includes("img2vid") ||
+      searchText.includes("i2v");
+    return isImageToVideo ? ["image-to-video"] : ["text-to-video"];
+  }
+  if (["mp3", "wav", "ogg", "flac", "m4a"].includes(ext)) {
+    return ["text-to-audio"];
+  }
+  if (["glb", "usdz", "ply", "obj", "stl", "gltf"].includes(ext)) {
+    const hasImageInput =
+      searchText.includes("image") ||
+      searchText.includes("img") ||
+      searchText.includes("photo");
+    return hasImageInput ? ["image-to-3d"] : ["text-to-3d"];
+  }
+  if (["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) {
+    const capabilities: ModelCapability[] = ["text-to-image"];
+    if (
+      searchText.includes("img2img") ||
+      searchText.includes("image-to-image") ||
+      searchText.includes("inpaint") ||
+      searchText.includes("controlnet") ||
+      searchText.includes("upscale") ||
+      searchText.includes("restore")
+    ) {
+      capabilities.push("image-to-image");
+    }
+    return capabilities;
+  }
+
+  return null;
+}
+
 function inferReplicateCapabilities(model: ReplicateModel): ModelCapability[] {
+  // Prefer the authoritative signal from the model's example output when available.
+  const fromExample = inferReplicateCapabilitiesFromExample(model);
+  if (fromExample) return fromExample;
+
   const capabilities: ModelCapability[] = [];
   const searchText = `${model.name} ${model.description ?? ""}`.toLowerCase();
 
