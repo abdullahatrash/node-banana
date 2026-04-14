@@ -1156,8 +1156,11 @@ export async function GET(
     const hardcoded = [...GEMINI_IMAGE_MODELS, ...GEMINI_VIDEO_MODELS];
 
     // Discovery is additive: try cache first, then fresh fetch, then fall back to empty.
+    // Start from "hardcoded is cached" to match the Kie branch below — a live fetch
+    // flips this to false below.
     let discovered: ProviderModel[] = [];
-    let discoveryFromCache = false;
+    let geminiCached = true;
+    anyFromCache = true;
     const geminiKey = process.env.GEMINI_API_KEY;
 
     if (geminiKey) {
@@ -1165,8 +1168,6 @@ export async function GET(
       const cached = refresh ? null : getCachedModels(cacheKey);
       if (cached) {
         discovered = cached;
-        discoveryFromCache = true;
-        anyFromCache = true;
       } else {
         discovered = await fetchGeminiModels(geminiKey);
         // Skip caching empty results so a transient upstream failure doesn't
@@ -1174,6 +1175,7 @@ export async function GET(
         if (discovered.length > 0) {
           setCachedModels(cacheKey, discovered);
         }
+        geminiCached = false;
         allFromCache = false;
       }
     }
@@ -1191,7 +1193,7 @@ export async function GET(
     providerResults["gemini"] = {
       success: true,
       count: geminiModels.length,
-      cached: discoveryFromCache,
+      cached: geminiCached,
     };
   }
 

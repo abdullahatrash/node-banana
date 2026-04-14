@@ -210,8 +210,8 @@ export function ModelSearchDialog({
     // Helper: hash the model list by sorted "id:capabilities" pairs. Detects both
     // list membership changes and capability drift — the latter matters because
     // capability filters (image/video/3d/audio) will mis-route if stale.
-    const signature = (models: ProviderModel[]): string =>
-      models
+    const signature = (list: ProviderModel[]): string =>
+      list
         .map((m) => `${m.id}:${[...m.capabilities].sort().join("+")}`)
         .sort()
         .join(",");
