@@ -660,8 +660,8 @@ function filterModelsBySearch(
 }
 
 /**
- * Convert a raw model id (kebab-case, snake_case, dot-separated) to a display
- * name by title-casing each segment.
+ * Convert a raw model id (kebab-case or snake_case; dots are preserved) to a
+ * display name by title-casing each hyphen/underscore-separated segment.
  *
  * humanize("gemini-4-pro-image-preview") → "Gemini 4 Pro Image Preview"
  * humanize("veo_3_fast")                 → "Veo 3 Fast"
