@@ -43,6 +43,12 @@ const REPLICATE_API_BASE = "https://api.replicate.com/v1";
 const FAL_API_BASE = "https://api.fal.ai/v1";
 const WAVESPEED_API_BASE = "https://api.wavespeed.ai/api/v3";
 
+// Search-miss retry throttle: per-cache-key timestamp of last cache-bypass retry.
+// Prevents repeated upstream calls for gibberish searches.
+const SEARCH_MISS_RETRY_THROTTLE_MS = 60_000;
+// Exported for test isolation — tests can reset this between cases.
+export const searchMissRetryThrottle = new Map<string, number>();
+
 // Categories we care about for image/video/3D/audio generation (fal.ai)
 const RELEVANT_CATEGORIES = [
   "text-to-image",
@@ -1281,6 +1287,60 @@ export async function GET(
       count: models.length,
       cached: fromCache,
     };
+  }
+
+  // Search-miss retry: if a search yielded zero matches but results came from cache,
+  // bypass cache once for the cache-hit providers and retry upstream.
+  if (
+    searchQuery &&
+    !refresh &&
+    allModels.length === 0 &&
+    anyFromCache
+  ) {
+    const cacheHitProviders = Object.entries(providerResults)
+      .filter(([, result]) => result.success && result.cached)
+      .map(([provider]) => provider as ProviderType)
+      .filter((p) => p === "replicate" || p === "fal" || p === "wavespeed");
+
+    for (const provider of cacheHitProviders) {
+      const cacheKey =
+        provider === "replicate" || provider === "wavespeed"
+          ? getCacheKey(provider)
+          : getCacheKey(provider, searchQuery);
+
+      // Throttle: skip if this cache key was revalidated within the window
+      const lastRetry = searchMissRetryThrottle.get(cacheKey) ?? 0;
+      if (Date.now() - lastRetry < SEARCH_MISS_RETRY_THROTTLE_MS) {
+        continue;
+      }
+      searchMissRetryThrottle.set(cacheKey, Date.now());
+
+      try {
+        let fresh: ProviderModel[] = [];
+        if (provider === "replicate") {
+          const all = await fetchReplicateModels(replicateKey!);
+          setCachedModels(cacheKey, all);
+          fresh = searchQuery ? filterModelsBySearch(all, searchQuery) : all;
+        } else if (provider === "fal") {
+          fresh = await fetchFalModels(falKey, searchQuery);
+          setCachedModels(cacheKey, fresh);
+        } else if (provider === "wavespeed") {
+          const all = await fetchWaveSpeedModels(wavespeedKey!);
+          setCachedModels(cacheKey, all);
+          fresh = searchQuery ? filterModelsBySearch(all, searchQuery) : all;
+        }
+        allModels.push(...fresh);
+        providerResults[provider] = {
+          success: true,
+          count: fresh.length,
+          cached: false,
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        console.warn(`[Models] ${provider} search-miss retry failed: ${errorMessage}`);
+        // Leave the original empty-but-cached result in place
+      }
+    }
   }
 
   // Check if we got any models

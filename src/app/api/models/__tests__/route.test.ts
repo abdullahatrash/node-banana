@@ -16,7 +16,7 @@ vi.mock("@/lib/providers/cache", () => ({
   getCacheKey: mockGetCacheKey,
 }));
 
-import { GET } from "../route";
+import { GET, searchMissRetryThrottle } from "../route";
 
 // Store original env and fetch
 const originalEnv = { ...process.env };
@@ -1049,6 +1049,92 @@ describe("/api/models route", () => {
       expect(ids).toContain("gemini-10-image");
 
       // Reset the cache mock so it doesn't leak to subsequent tests
+      mockGetCachedModels.mockReturnValue(null);
+    });
+  });
+
+  describe("Search-miss retry", () => {
+    beforeEach(() => {
+      global.fetch = mockFetch as unknown as typeof global.fetch;
+      process.env.REPLICATE_API_KEY = "fake-replicate-key";
+      delete process.env.GEMINI_API_KEY;
+      // Clear module-level throttle state between cases (tests using the same
+      // cache key — e.g. "replicate:models" — would otherwise leak throttle entries).
+      searchMissRetryThrottle.clear();
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+      delete process.env.REPLICATE_API_KEY;
+    });
+
+    it("retries with cache bypass when cache-hit returned zero matches for search", async () => {
+      mockGetCachedModels.mockImplementation((key: string) => {
+        if (key === "replicate:models") return [];
+        return null;
+      });
+
+      mockFetch.mockResolvedValueOnce(
+        createReplicateResponse(
+          [{ owner: "bytedance", name: "seedance-3", description: "new video model" }],
+          null
+        )
+      );
+
+      const request = createMockGetRequest({ search: "seedance-3", provider: "replicate" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+      expect(data.models.some((m: { id: string }) => m.id.includes("seedance-3"))).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockSetCachedModels).toHaveBeenCalledWith("replicate:models", expect.any(Array));
+
+      mockGetCachedModels.mockReturnValue(null);
+    });
+
+    it("does NOT retry when refresh=true is already set", async () => {
+      mockGetCachedModels.mockReturnValue(null);
+      mockFetch.mockResolvedValueOnce(createReplicateResponse([], null));
+
+      const request = createMockGetRequest({
+        search: "nonexistent-model",
+        provider: "replicate",
+        refresh: "true",
+      });
+      const response = await GET(request);
+      await response.json();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT retry when no providers were cache-hit", async () => {
+      mockGetCachedModels.mockReturnValue(null);
+      mockFetch.mockResolvedValueOnce(createReplicateResponse([], null));
+
+      const request = createMockGetRequest({ search: "nothing", provider: "replicate" });
+      const response = await GET(request);
+      await response.json();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT retry within 60s of a previous retry for the same cache key", async () => {
+      mockGetCachedModels.mockImplementation((key: string) => {
+        if (key === "replicate:models") return [];
+        return null;
+      });
+
+      mockFetch.mockResolvedValueOnce(createReplicateResponse([], null));
+      const r1 = await GET(createMockGetRequest({ search: "unicorn", provider: "replicate" }));
+      await r1.json();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      const r2 = await GET(createMockGetRequest({ search: "unicorn", provider: "replicate" }));
+      const data2 = await r2.json();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(data2.models).toEqual([]);
+
       mockGetCachedModels.mockReturnValue(null);
     });
   });
