@@ -1147,18 +1147,47 @@ export async function GET(
 
   // Add Gemini models first if included (they appear at the top)
   if (includeGemini) {
-    // Filter by search query if provided
-    let geminiModels = [...GEMINI_IMAGE_MODELS, ...GEMINI_VIDEO_MODELS];
+    const hardcoded = [...GEMINI_IMAGE_MODELS, ...GEMINI_VIDEO_MODELS];
+
+    // Discovery is additive: try cache first, then fresh fetch, then fall back to empty.
+    let discovered: ProviderModel[] = [];
+    let discoveryFromCache = false;
+    const geminiKey = process.env.GEMINI_API_KEY;
+
+    if (geminiKey) {
+      const cacheKey = getCacheKey("gemini");
+      const cached = refresh ? null : getCachedModels(cacheKey);
+      if (cached) {
+        discovered = cached;
+        discoveryFromCache = true;
+        anyFromCache = true;
+      } else {
+        discovered = await fetchGeminiModels(geminiKey);
+        if (discovered.length > 0) {
+          setCachedModels(cacheKey, discovered);
+        }
+        allFromCache = false;
+      }
+    }
+
+    // Hardcoded wins on ID collision
+    const hardcodedIds = new Set(hardcoded.map((m) => m.id));
+    const additions = discovered.filter((m) => !hardcodedIds.has(m.id));
+    let geminiModels: ProviderModel[] = [...hardcoded, ...additions];
+
     if (searchQuery) {
       geminiModels = filterModelsBySearch(geminiModels, searchQuery);
     }
+
     allModels.push(...geminiModels);
     providerResults["gemini"] = {
       success: true,
       count: geminiModels.length,
-      cached: true, // Hardcoded models are effectively "cached"
+      cached: discoveryFromCache,
     };
-    anyFromCache = true;
+    if (discoveryFromCache) {
+      anyFromCache = true;
+    }
   }
 
   // Add Kie models if included (hardcoded, no API call needed)

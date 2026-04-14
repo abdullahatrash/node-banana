@@ -97,6 +97,7 @@ describe("/api/models route", () => {
     // Clear API keys
     delete process.env.REPLICATE_API_KEY;
     delete process.env.FAL_API_KEY;
+    delete process.env.GEMINI_API_KEY;
     // Set up mock fetch
     global.fetch = mockFetch;
     // Reset cache mock to default (miss)
@@ -910,6 +911,106 @@ describe("/api/models route", () => {
       const result = await fetchGeminiModels("fake-key");
       expect(result.map((m) => m.id).sort()).toEqual(["gemini-5-image", "veo-5"]);
       expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("Gemini hybrid discovery in GET", () => {
+    beforeEach(() => {
+      global.fetch = mockFetch as unknown as typeof global.fetch;
+      process.env.GEMINI_API_KEY = "test-gemini-key";
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+      delete process.env.GEMINI_API_KEY;
+    });
+
+    it("merges discovered models with hardcoded list (hardcoded wins on collision)", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            models: [
+              { name: "models/nano-banana", supportedGenerationMethods: ["generateContent"] },
+              { name: "models/gemini-9-image", supportedGenerationMethods: ["generateContent"] },
+            ],
+          }),
+      });
+
+      const request = createMockGetRequest({ provider: "gemini" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+
+      const geminiModels = data.models.filter((m: { provider: string }) => m.provider === "gemini");
+      const nanoBanana = geminiModels.find((m: { id: string }) => m.id === "nano-banana");
+      const newModel = geminiModels.find((m: { id: string }) => m.id === "gemini-9-image");
+
+      expect(nanoBanana.description).toContain("Fast image generation");
+      expect(nanoBanana.pricing).toEqual({ type: "per-run", amount: 0.039, currency: "USD" });
+
+      expect(newModel).toMatchObject({
+        name: "Gemini 9 Image",
+        description: "Newly discovered Gemini model. Metadata may be incomplete.",
+        capabilities: ["text-to-image", "image-to-image"],
+      });
+      expect(newModel.pricing).toBeUndefined();
+    });
+
+    it("falls back to hardcoded list when discovery fails", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("boom"));
+
+      const request = createMockGetRequest({ provider: "gemini" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+      const ids = data.models.map((m: { id: string }) => m.id);
+      expect(ids).toContain("nano-banana");
+      expect(ids).toContain("nano-banana-2");
+      expect(ids.every((id: string) => !id.startsWith("gemini-9"))).toBe(true);
+    });
+
+    it("skips discovery and returns hardcoded only when GEMINI_API_KEY missing", async () => {
+      delete process.env.GEMINI_API_KEY;
+
+      const request = createMockGetRequest({ provider: "gemini" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+      const ids = data.models.map((m: { id: string }) => m.id);
+      expect(ids).toContain("nano-banana");
+    });
+
+    it("uses cached discovery when available", async () => {
+      mockGetCachedModels.mockImplementation((key: string) => {
+        if (key === "gemini:models") {
+          return [
+            {
+              id: "cached-gemini-model",
+              name: "Cached Gemini Model",
+              description: "From cache",
+              provider: "gemini",
+              capabilities: ["text-to-image", "image-to-image"],
+            },
+          ];
+        }
+        return null;
+      });
+
+      const request = createMockGetRequest({ provider: "gemini" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      const ids = data.models.map((m: { id: string }) => m.id);
+      expect(ids).toContain("cached-gemini-model");
+
+      // Reset the cache mock so it doesn't leak to subsequent tests
+      mockGetCachedModels.mockReturnValue(null);
     });
   });
 });
