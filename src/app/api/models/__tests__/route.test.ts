@@ -1138,4 +1138,185 @@ describe("/api/models route", () => {
       mockGetCachedModels.mockReturnValue(null);
     });
   });
+
+  describe("Replicate capability detection via default_example.output", () => {
+    beforeEach(() => {
+      process.env.REPLICATE_API_KEY = "fake-replicate-key";
+    });
+
+    afterEach(() => {
+      delete process.env.REPLICATE_API_KEY;
+    });
+
+    it("classifies video model (mp4 output) even when description mentions audio", async () => {
+      // Real-world case: Seedance 2.0 — "multimodal video generation ... with native audio"
+      // The keyword heuristic alone picks up "audio" first and mis-tags as text-to-audio.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            results: [
+              {
+                owner: "bytedance",
+                name: "seedance-2.0",
+                description:
+                  "ByteDance's multimodal video generation model with native audio, multimodal reference inputs, and intelligent duration control.",
+                visibility: "public",
+                run_count: 1000,
+                default_example: {
+                  output:
+                    "https://replicate.delivery/xezq/abcdef/tmp1234.mp4",
+                },
+              },
+            ],
+            next: null,
+            previous: null,
+          }),
+      });
+
+      const request = createMockGetRequest({ provider: "replicate" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      const seedance = data.models.find(
+        (m: { id: string }) => m.id === "bytedance/seedance-2.0"
+      );
+      expect(seedance).toBeDefined();
+      expect(seedance.capabilities).toContain("text-to-video");
+      expect(seedance.capabilities).not.toContain("text-to-audio");
+    });
+
+    it("classifies model when default_example.output is an array of URLs", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            results: [
+              {
+                owner: "test",
+                name: "array-output-image-model",
+                description: "Generates multiple images per run.",
+                visibility: "public",
+                run_count: 100,
+                default_example: {
+                  output: [
+                    "https://example.com/a.png",
+                    "https://example.com/b.png",
+                  ],
+                },
+              },
+            ],
+            next: null,
+            previous: null,
+          }),
+      });
+
+      const request = createMockGetRequest({ provider: "replicate" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      const model = data.models.find(
+        (m: { id: string }) => m.id === "test/array-output-image-model"
+      );
+      expect(model.capabilities).toContain("text-to-image");
+    });
+
+    it("classifies 3D model when output is .glb", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            results: [
+              {
+                owner: "test",
+                name: "three-d-model",
+                description: "Generates meshes from photos.",
+                visibility: "public",
+                run_count: 100,
+                default_example: {
+                  output: "https://example.com/result.glb",
+                },
+              },
+            ],
+            next: null,
+            previous: null,
+          }),
+      });
+
+      const request = createMockGetRequest({ provider: "replicate" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      const model = data.models.find(
+        (m: { id: string }) => m.id === "test/three-d-model"
+      );
+      // Description mentions "photos" so image-to-3d path
+      expect(model.capabilities).toContain("image-to-3d");
+    });
+
+    it("falls back to keyword heuristic when default_example is absent", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            results: [
+              {
+                owner: "test",
+                name: "plain-video-model",
+                description: "Text to video generation.",
+                visibility: "public",
+                run_count: 100,
+                // No default_example at all — forces keyword fallback
+              },
+            ],
+            next: null,
+            previous: null,
+          }),
+      });
+
+      const request = createMockGetRequest({ provider: "replicate" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      const model = data.models.find(
+        (m: { id: string }) => m.id === "test/plain-video-model"
+      );
+      expect(model.capabilities).toContain("text-to-video");
+    });
+
+    it("falls back to keyword heuristic when default_example.output is non-URL text", async () => {
+      // Some text-generation models have string outputs that aren't URLs,
+      // e.g. BLIP-2 outputs "san francisco bay". Ensure we don't mis-classify.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            results: [
+              {
+                owner: "test",
+                name: "text-output-model",
+                description: "Image-to-image style transfer.",
+                visibility: "public",
+                run_count: 100,
+                default_example: {
+                  output: "some plain text answer",
+                },
+              },
+            ],
+            next: null,
+            previous: null,
+          }),
+      });
+
+      const request = createMockGetRequest({ provider: "replicate" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      const model = data.models.find(
+        (m: { id: string }) => m.id === "test/text-output-model"
+      );
+      // Fallback heuristic: description has "image-to-image" so that capability is present
+      expect(model.capabilities).toContain("image-to-image");
+    });
+  });
 });
