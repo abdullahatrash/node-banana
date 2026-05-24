@@ -16,10 +16,10 @@ function dispatchCtrlEnter() {
 }
 
 describe("useGenerateShortcut", () => {
-  let generateSpy: ReturnType<typeof vi.fn>;
+  let generateSpy: ReturnType<typeof vi.fn<() => Promise<void>>>;
 
   beforeEach(() => {
-    generateSpy = vi.fn().mockResolvedValue(undefined);
+    generateSpy = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     useSimpleStudioStore.setState({
       prompt: "Hello world",
       isGenerating: false,

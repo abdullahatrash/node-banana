@@ -30,10 +30,10 @@ function makeGeneration(
 }
 
 describe("GenerateProgress", () => {
-  let cancelSpy: ReturnType<typeof vi.fn>;
+  let cancelSpy: ReturnType<typeof vi.fn<() => void>>;
 
   beforeEach(() => {
-    cancelSpy = vi.fn();
+    cancelSpy = vi.fn<() => void>();
     useSimpleStudioStore.setState({
       mode: "photo",
       currentBatchId: "b1",
