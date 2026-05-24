@@ -35,6 +35,19 @@ interface CallbackResponse {
 
 const OAUTH_SELECTION_SESSION_TTL_MS = 10 * 60 * 1000;
 
+function callbackJson(
+  body: CallbackResponse,
+  init?: ResponseInit,
+): NextResponse<CallbackResponse> {
+  const response = NextResponse.json(body, init);
+  response.cookies.set(OAUTH_CALLBACK_COOKIE, "", {
+    httpOnly: true,
+    path: "/",
+    maxAge: 0,
+  });
+  return response;
+}
+
 function socialChannelsRedirect(
   request: NextRequest,
   params: Record<string, string | undefined>,
@@ -119,7 +132,7 @@ export async function POST(
   request: NextRequest,
 ): Promise<NextResponse<CallbackResponse>> {
   if (!isDatabaseConfigured()) {
-    return NextResponse.json(
+    return callbackJson(
       { success: false, error: "DATABASE_URL is not configured." },
       { status: 503 },
     );
@@ -138,7 +151,7 @@ export async function POST(
     const body = (await request.json()) as CallbackRequest;
 
     if (!body.platform?.trim() || !body.code?.trim() || !body.state?.trim()) {
-      return NextResponse.json(
+      return callbackJson(
         { success: false, error: "Platform, code, and state are required." },
         { status: 400 },
       );
@@ -149,7 +162,7 @@ export async function POST(
 
     // Verify the platform matches the stored state
     if (oauthState.platform !== body.platform) {
-      return NextResponse.json(
+      return callbackJson(
         { success: false, error: "Platform mismatch with OAuth state." },
         { status: 400 },
       );
@@ -167,7 +180,7 @@ export async function POST(
         : null;
 
     if (!callbackUrl) {
-      return NextResponse.json(
+      return callbackJson(
         { success: false, error: "OAuth callback URL is missing. Please reconnect." },
         { status: 400 },
       );
@@ -211,7 +224,7 @@ export async function POST(
         workflowRunRef: null,
       });
 
-      return NextResponse.json({
+      return callbackJson({
         success: true,
         requiresPageSelection: true,
         pages,
@@ -220,7 +233,7 @@ export async function POST(
     }
 
     if (authResult.requiresPageSelection) {
-      return NextResponse.json(
+      return callbackJson(
         {
           success: false,
           error: `${body.platform} requires page selection but provider does not support it.`,
@@ -261,7 +274,7 @@ export async function POST(
     // Strip encrypted fields from response
     const { accessTokenEncrypted, refreshTokenEncrypted, accessTokenSecret, ...safeAccount } = account;
 
-    return NextResponse.json({
+    return callbackJson({
       success: true,
       account: safeAccount,
     });
@@ -270,13 +283,13 @@ export async function POST(
       error instanceof OAuthStateNotFoundError ||
       error instanceof OAuthStateExpiredError
     ) {
-      return NextResponse.json(
+      return callbackJson(
         { success: false, error: error.message },
         { status: 400 },
       );
     }
 
-    return NextResponse.json(
+    return callbackJson(
       {
         success: false,
         error:

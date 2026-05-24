@@ -108,7 +108,11 @@ describe("xProvider.generateAuthUrl", () => {
 
     expect(mocks.generateAuthLink).toHaveBeenCalledWith(
       "https://example.com/callback/x",
-      expect.objectContaining({ authAccessType: "write" }),
+      expect.objectContaining({
+        authAccessType: "write",
+        linkMode: "authorize",
+        forceLogin: true,
+      }),
     );
 
     expect(result.url).toContain("oauth_token=tok123");
@@ -315,6 +319,14 @@ describe("xProvider.classifyError", () => {
   it("classifies usage-capped as bad-body", () => {
     const result = xProvider.classifyError(new Error("usage-capped reached"));
     expect(result.type).toBe("bad-body");
+  });
+
+  it("classifies 402 payment/API access errors as bad-body", () => {
+    const result = xProvider.classifyError(
+      new Error("Request failed with code 402"),
+    );
+    expect(result.type).toBe("bad-body");
+    expect(result.message).toContain("X developer app");
   });
 
   it("classifies unknown errors as retry", () => {

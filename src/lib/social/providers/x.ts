@@ -112,8 +112,8 @@ export const xProvider: SocialProviderAdapter = {
     const { url, oauth_token, oauth_token_secret } =
       await client.generateAuthLink(callbackUrl, {
         authAccessType: "write",
-        linkMode: "authenticate",
-        forceLogin: false,
+        linkMode: "authorize",
+        forceLogin: true,
       });
 
     return {
@@ -255,6 +255,8 @@ export const xProvider: SocialProviderAdapter = {
 
     // Content policy / duplicate violations
     if (
+      body.includes("402") ||
+      body.includes("Payment Required") ||
       body.includes("duplicate") ||
       body.includes("usage-capped") ||
       body.includes("duplicate-rules") ||
@@ -264,8 +266,9 @@ export const xProvider: SocialProviderAdapter = {
     ) {
       return {
         type: "bad-body",
-        message:
-          error instanceof Error
+        message: body.includes("402")
+          ? "X rejected the publish request with HTTP 402. Check that your X developer app has paid/API access and write permissions enabled."
+          : error instanceof Error
             ? error.message
             : "The post was rejected by X.",
         original: error,

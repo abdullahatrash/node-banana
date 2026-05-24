@@ -23,4 +23,22 @@ describe("social runtime bootstrap", () => {
     expect(identifiers).toContain("instagram");
     expect(identifiers).toContain("facebook");
   });
+
+  it("can explicitly restore providers after the registry is empty", async () => {
+    const registry = await import("@/lib/social/provider-registry");
+    const bootstrap = await import("@/lib/social/runtime-bootstrap");
+    registry.clearRegistry();
+
+    await bootstrap.ensureSocialProvidersBootstrapped();
+    registry.clearRegistry();
+    await bootstrap.ensureSocialProvidersBootstrapped();
+
+    const identifiers = registry
+      .listProviderCapabilities()
+      .map((provider) => provider.identifier);
+
+    expect(identifiers).toContain("x");
+    expect(identifiers).toContain("instagram");
+    expect(identifiers).toContain("facebook");
+  });
 });
