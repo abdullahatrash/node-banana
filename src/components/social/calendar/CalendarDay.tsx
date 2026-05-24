@@ -7,21 +7,24 @@ import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { CalendarColumn } from "./CalendarColumn"
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
+const MINUTES = [0, 15, 30, 45]
 
 export function CalendarDay() {
   const { currentDate, posts } = useSocialCalendarStore()
   const day = new Date(currentDate)
 
-  function getPostsForHour(hour: number) {
+  function getPostsForSlot(hour: number, minute: number) {
     return posts.filter((post) => {
       const dateStr = post.scheduledAt || post.publishedAt || post.createdAt
       if (!dateStr) return false
       const d = new Date(dateStr)
+      const slotMinute = Math.floor(d.getMinutes() / 15) * 15
       return (
         d.getFullYear() === day.getFullYear() &&
         d.getMonth() === day.getMonth() &&
         d.getDate() === day.getDate() &&
-        d.getHours() === hour
+        d.getHours() === hour &&
+        slotMinute === minute
       )
     })
   }
@@ -34,7 +37,7 @@ export function CalendarDay() {
           {HOURS.map((hour) => (
             <div
               key={hour}
-              className="flex h-12 items-start justify-end border-b pe-2 pt-0.5 text-[10px] text-muted-foreground"
+              className="flex h-28 items-start justify-end border-b pe-2 pt-0.5 text-[10px] text-muted-foreground"
             >
               {format(new Date().setHours(hour, 0), "HH:mm")}
             </div>
@@ -45,16 +48,20 @@ export function CalendarDay() {
             {format(day, "EEEE, MMM d")}
           </div>
           {HOURS.map((hour) => (
-            <CalendarColumn
-              key={hour}
-              date={day}
-              hour={hour}
-              posts={getPostsForHour(hour)}
-            />
+            <div key={hour}>
+              {MINUTES.map((minute) => (
+                <CalendarColumn
+                  key={`${hour}-${minute}`}
+                  date={day}
+                  hour={hour}
+                  minute={minute}
+                  posts={getPostsForSlot(hour, minute)}
+                />
+              ))}
+            </div>
           ))}
         </div>
       </div>
     </DndProvider>
   )
 }
-

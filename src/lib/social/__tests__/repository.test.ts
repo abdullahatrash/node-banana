@@ -299,23 +299,69 @@ describe("social/repository", () => {
         updateSocialPost("ws_1", "spost_1", { content: "updated" }),
       ).rejects.toThrow(SocialPostStateTransitionError);
     });
+
+    it("allows scheduled-only update on queued post", async () => {
+      const scheduledAt = new Date("2026-05-01T12:15:00.000Z");
+      setupChainableMock([
+        { id: "spost_1", status: "queued", workspaceId: "ws_1" },
+      ]);
+
+      const { updateSocialPost } = await import("@/lib/social/repository");
+      await updateSocialPost("ws_1", "spost_1", { scheduledAt });
+
+      expect(mockSet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scheduledAt,
+          dispatchStatus: "pending",
+          nextDispatchAt: scheduledAt,
+          lockedAt: null,
+        }),
+      );
+    });
+
+    it("requeues publishing post on scheduled-only update", async () => {
+      const scheduledAt = new Date("2026-05-01T12:15:00.000Z");
+      setupChainableMock([
+        { id: "spost_1", status: "publishing", workspaceId: "ws_1" },
+      ]);
+
+      const { updateSocialPost } = await import("@/lib/social/repository");
+      await updateSocialPost("ws_1", "spost_1", { scheduledAt });
+
+      expect(mockSet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "queued",
+          scheduledAt,
+          dispatchStatus: "pending",
+          nextDispatchAt: scheduledAt,
+          lockedAt: null,
+        }),
+      );
+    });
   });
 
   describe("deleteSocialPost", () => {
-    it("rejects delete on queued post", async () => {
+    it("allows delete on queued post", async () => {
       setupChainableMock([
         { id: "spost_1", status: "queued", workspaceId: "ws_1" },
       ]);
 
       const { deleteSocialPost } = await import("@/lib/social/repository");
-      await expect(deleteSocialPost("ws_1", "spost_1")).rejects.toThrow(
-        SocialPostStateTransitionError,
-      );
+      await expect(deleteSocialPost("ws_1", "spost_1")).resolves.toBeUndefined();
     });
 
-    it("rejects delete on publishing post", async () => {
+    it("allows delete on publishing post", async () => {
       setupChainableMock([
         { id: "spost_1", status: "publishing", workspaceId: "ws_1" },
+      ]);
+
+      const { deleteSocialPost } = await import("@/lib/social/repository");
+      await expect(deleteSocialPost("ws_1", "spost_1")).resolves.toBeUndefined();
+    });
+
+    it("rejects delete on published post", async () => {
+      setupChainableMock([
+        { id: "spost_1", status: "published", workspaceId: "ws_1" },
       ]);
 
       const { deleteSocialPost } = await import("@/lib/social/repository");

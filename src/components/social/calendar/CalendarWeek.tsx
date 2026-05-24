@@ -14,6 +14,7 @@ import { CalendarColumn } from "./CalendarColumn"
 import type { SocialPost } from "@/lib/social/client"
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
+const MINUTES = [0, 15, 30, 45]
 
 export function CalendarWeek() {
   const { currentDate, posts } = useSocialCalendarStore()
@@ -28,7 +29,8 @@ export function CalendarWeek() {
       const dateStr = post.scheduledAt || post.publishedAt || post.createdAt
       if (!dateStr) continue
       const d = new Date(dateStr)
-      const key = `${format(d, "yyyy-MM-dd")}-${d.getHours()}`
+      const minute = Math.floor(d.getMinutes() / 15) * 15
+      const key = `${format(d, "yyyy-MM-dd")}-${d.getHours()}-${minute}`
       const existing = map.get(key) ?? []
       existing.push(post)
       map.set(key, existing)
@@ -36,8 +38,8 @@ export function CalendarWeek() {
     return map
   }, [posts])
 
-  function getPostsForSlot(day: Date, hour: number): SocialPost[] {
-    const key = `${format(day, "yyyy-MM-dd")}-${hour}`
+  function getPostsForSlot(day: Date, hour: number, minute: number): SocialPost[] {
+    const key = `${format(day, "yyyy-MM-dd")}-${hour}-${minute}`
     return postsBySlot.get(key) ?? []
   }
 
@@ -51,7 +53,7 @@ export function CalendarWeek() {
           {HOURS.map((hour) => (
             <div
               key={hour}
-              className="flex h-12 items-start justify-end border-b pe-2 pt-0.5 text-[10px] text-muted-foreground"
+              className="flex h-28 items-start justify-end border-b pe-2 pt-0.5 text-[10px] text-muted-foreground"
             >
               {format(new Date().setHours(hour, 0), "HH:mm")}
             </div>
@@ -75,12 +77,17 @@ export function CalendarWeek() {
 
               {/* Hour slots */}
               {HOURS.map((hour) => (
-                <CalendarColumn
-                  key={hour}
-                  date={day}
-                  hour={hour}
-                  posts={getPostsForSlot(day, hour)}
-                />
+                <div key={hour}>
+                  {MINUTES.map((minute) => (
+                    <CalendarColumn
+                      key={`${hour}-${minute}`}
+                      date={day}
+                      hour={hour}
+                      minute={minute}
+                      posts={getPostsForSlot(day, hour, minute)}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
           ))}

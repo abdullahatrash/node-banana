@@ -79,17 +79,12 @@ async function publishSinglePostWorkflow(
   workspaceId: string,
 ) {
   // Step 1: Load the post and transition to "publishing"
-  const post = await loadPost(postId, workspaceId);
+  let post = await loadPost(postId, workspaceId);
 
-  // Step 2: If scheduled for the future, sleep until publish time
-  if (post.scheduledAt) {
-    const scheduledTime = new Date(post.scheduledAt).getTime();
-    const now = Date.now();
-    if (scheduledTime > now) {
-      const delayMs = scheduledTime - now;
-      await sleep(delayMs);
-    }
-  }
+  // Step 2: If scheduled for the future, sleep until publish time.
+  // Reload after every sleep so reschedules and force-publish runs win over
+  // stale workflow state.
+  post = await waitForPublishWindow(postId, workspaceId, post);
 
   // Step 3: Refresh token if expiring soon
   const account = await refreshTokenStep(post.socialAccountId);
@@ -120,6 +115,27 @@ async function publishSinglePostWorkflow(
   );
 
   return result;
+}
+
+async function waitForPublishWindow(
+  postId: string,
+  workspaceId: string,
+  initialPost: PostData,
+): Promise<PostData> {
+  let post = initialPost;
+
+  while (post.scheduledAt) {
+    const scheduledTime = new Date(post.scheduledAt).getTime();
+    const delayMs = scheduledTime - Date.now();
+    if (delayMs <= 0) {
+      break;
+    }
+
+    await sleep(delayMs);
+    post = await reloadPostBeforePublish(postId, workspaceId);
+  }
+
+  return reloadPostBeforePublish(postId, workspaceId);
 }
 
 interface ChainChildData {
@@ -202,6 +218,7 @@ interface PostData {
   mediaUrls: Array<{ type: string; url: string; alt?: string }> | null;
   socialAccountId: string;
   scheduledAt: string | null;
+  status: string;
 }
 
 async function loadPost(
@@ -216,6 +233,18 @@ async function loadPost(
   const { emitSocialEvent } = await import("@/lib/social/events");
 
   const post = await getSocialPost(workspaceId, postId);
+
+  if (post.status === "published") {
+    throw new FatalError("Social post was already published.");
+  }
+  if (
+    post.status !== "draft" &&
+    post.status !== "failed" &&
+    post.status !== "queued" &&
+    post.status !== "publishing"
+  ) {
+    throw new FatalError(`Social post is not publishable from "${post.status}".`);
+  }
 
   // Transition to "publishing"
   await updatePostStatus(postId, "publishing");
@@ -235,6 +264,55 @@ async function loadPost(
     mediaUrls: post.mediaUrls,
     socialAccountId: post.socialAccountId,
     scheduledAt: post.scheduledAt?.toISOString() ?? null,
+    status: "publishing",
+  };
+}
+
+async function reloadPostBeforePublish(
+  postId: string,
+  workspaceId: string,
+): Promise<PostData> {
+  "use step";
+
+  const { getSocialPost, updatePostStatus } = await import(
+    "@/lib/social/repository"
+  );
+  const { emitSocialEvent } = await import("@/lib/social/events");
+
+  const post = await getSocialPost(workspaceId, postId);
+
+  if (post.status === "published") {
+    throw new FatalError("Social post was already published.");
+  }
+  if (
+    post.status !== "draft" &&
+    post.status !== "failed" &&
+    post.status !== "queued" &&
+    post.status !== "publishing"
+  ) {
+    throw new FatalError(`Social post is not publishable from "${post.status}".`);
+  }
+
+  if (post.status !== "publishing") {
+    await updatePostStatus(postId, "publishing");
+    await emitSocialEvent({
+      workspaceId,
+      eventType: "post.publishing",
+      severity: "info",
+      message: "Social post moved to publishing state.",
+      postId,
+      accountId: post.socialAccountId,
+    });
+  }
+
+  return {
+    id: post.id,
+    workspaceId,
+    content: post.content,
+    mediaUrls: post.mediaUrls,
+    socialAccountId: post.socialAccountId,
+    scheduledAt: post.scheduledAt?.toISOString() ?? null,
+    status: "publishing",
   };
 }
 
@@ -259,7 +337,10 @@ async function refreshTokenStep(
   const { getSocialAccountById, updateSocialAccountTokens, markRequiresReauth } =
     await import("@/lib/social/repository");
   const { decryptToken, encryptToken } = await import("@/lib/social/crypto");
-  await import("@/lib/social/runtime-bootstrap");
+  const { ensureSocialProvidersBootstrapped } = await import(
+    "@/lib/social/runtime-bootstrap"
+  );
+  await ensureSocialProvidersBootstrapped();
   const { getProvider } = await import("@/lib/social/provider-registry");
   const { emitSocialEvent } = await import("@/lib/social/events");
 
@@ -402,15 +483,42 @@ async function publishStep(
 ): Promise<PublishResultData> {
   "use step";
 
-  await import("@/lib/social/runtime-bootstrap");
-  const { getProvider } = await import("@/lib/social/provider-registry");
-  const { decryptToken } = await import("@/lib/social/crypto");
   const { updatePostStatus, markRequiresReauth } = await import(
     "@/lib/social/repository"
   );
   const { emitSocialEvent } = await import("@/lib/social/events");
+  const { ensureSocialProvidersBootstrapped } = await import(
+    "@/lib/social/runtime-bootstrap"
+  );
+  const { decryptToken } = await import("@/lib/social/crypto");
 
-  const provider = getProvider(account.platform);
+  let provider: import("@/lib/social/provider-interface").SocialProviderAdapter;
+  try {
+    await ensureSocialProvidersBootstrapped();
+    const { getProvider } = await import("@/lib/social/provider-registry");
+    provider = getProvider(account.platform);
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : `Social provider "${account.platform}" is not available.`;
+
+    await updatePostStatus(postId, "failed", {
+      errorMessage: message,
+    });
+    await emitSocialEvent({
+      workspaceId: account.workspaceId,
+      eventType: "post.failed",
+      severity: "error",
+      message,
+      userFacing: true,
+      postId,
+      accountId: account.id,
+      provider: account.platform as import("@/lib/db/schema").SocialPlatform,
+    });
+    throw new FatalError(message);
+  }
+
   const accessToken = decryptToken(account.accessTokenEncrypted);
   const accessTokenSecret = account.accessTokenSecret
     ? decryptToken(account.accessTokenSecret)
