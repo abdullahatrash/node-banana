@@ -12,6 +12,10 @@ describe("ImageForm", () => {
       aspectRatio: "1:1",
       batchCount: 4,
       isGenerating: false,
+      isRewriting: false,
+      referenceImages: [],
+      rewriteEnabled: false,
+      rewrittenPrompt: null,
     });
     // Stub fetch so ModelSelect's /api/models call doesn't race with test teardown
     global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
@@ -19,7 +23,7 @@ describe("ImageForm", () => {
 
   it("renders a prompt textarea", () => {
     render(<ImageForm />);
-    expect(screen.getByLabelText(/prompt/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Prompt")).toBeInTheDocument();
   });
 
   it("renders a Generate button", () => {
@@ -29,7 +33,7 @@ describe("ImageForm", () => {
 
   it("typing in the prompt textarea updates the store", async () => {
     render(<ImageForm />);
-    const textarea = screen.getByLabelText(/prompt/i);
+    const textarea = screen.getByLabelText("Prompt");
     await userEvent.type(textarea, "A cat");
     expect(useSimpleStudioStore.getState().prompt).toBe("A cat");
   });
@@ -55,5 +59,67 @@ describe("ImageForm", () => {
     useSimpleStudioStore.setState({ prompt: "A cat", isGenerating: true });
     render(<ImageForm />);
     expect(screen.getByRole("button", { name: /generat/i })).toBeDisabled();
+  });
+
+  it("renders existing reference images from the store", () => {
+    useSimpleStudioStore.setState({
+      referenceImages: [
+        "data:image/png;base64,AAA",
+        "data:image/png;base64,BBB",
+      ],
+    });
+    render(<ImageForm />);
+    expect(screen.getByAltText("Reference 1")).toBeInTheDocument();
+    expect(screen.getByAltText("Reference 2")).toBeInTheDocument();
+  });
+
+  it("removes a reference image when clicking ×", async () => {
+    useSimpleStudioStore.setState({
+      referenceImages: ["data:image/png;base64,AAA"],
+    });
+    render(<ImageForm />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /remove reference image 1/i })
+    );
+    expect(useSimpleStudioStore.getState().referenceImages).toEqual([]);
+  });
+
+  it("hides the upload button when 3 reference images are present", () => {
+    useSimpleStudioStore.setState({
+      referenceImages: [
+        "data:image/png;base64,AAA",
+        "data:image/png;base64,BBB",
+        "data:image/png;base64,CCC",
+      ],
+    });
+    render(<ImageForm />);
+    expect(
+      screen.queryByLabelText(/add reference image/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it("toggles AI Prompt Enhance via the store", async () => {
+    render(<ImageForm />);
+    const toggle = screen.getByRole("switch", { name: /ai prompt enhance/i });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await userEvent.click(toggle);
+    expect(useSimpleStudioStore.getState().rewriteEnabled).toBe(true);
+  });
+
+  it("shows enhanced prompt preview when rewriteEnabled and rewrittenPrompt set", () => {
+    useSimpleStudioStore.setState({
+      rewriteEnabled: true,
+      rewrittenPrompt: "A photorealistic cat sitting on a windowsill",
+    });
+    render(<ImageForm />);
+    expect(
+      screen.getByText("A photorealistic cat sitting on a windowsill")
+    ).toBeInTheDocument();
+  });
+
+  it("Generate button is disabled while rewriting", () => {
+    useSimpleStudioStore.setState({ prompt: "A cat", isRewriting: true });
+    render(<ImageForm />);
+    expect(screen.getByRole("button", { name: /enhanc/i })).toBeDisabled();
   });
 });

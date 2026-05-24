@@ -16,6 +16,8 @@ const ASPECT_RATIOS = [
 
 const BATCH_PRESETS = [1, 4, 8, 12];
 
+const MAX_REFERENCE_IMAGES = 3;
+
 export function ImageForm() {
   const prompt = useSimpleStudioStore((s) => s.prompt);
   const setPrompt = useSimpleStudioStore((s) => s.setPrompt);
@@ -24,9 +26,28 @@ export function ImageForm() {
   const batchCount = useSimpleStudioStore((s) => s.batchCount);
   const setBatchCount = useSimpleStudioStore((s) => s.setBatchCount);
   const isGenerating = useSimpleStudioStore((s) => s.isGenerating);
+  const isRewriting = useSimpleStudioStore((s) => s.isRewriting);
   const generate = useSimpleStudioStore((s) => s.generate);
+  const referenceImages = useSimpleStudioStore((s) => s.referenceImages);
+  const setReferenceImages = useSimpleStudioStore((s) => s.setReferenceImages);
+  const rewriteEnabled = useSimpleStudioStore((s) => s.rewriteEnabled);
+  const setRewriteEnabled = useSimpleStudioStore((s) => s.setRewriteEnabled);
+  const rewrittenPrompt = useSimpleStudioStore((s) => s.rewrittenPrompt);
 
-  const disabled = isGenerating || prompt.trim().length === 0;
+  const disabled = isGenerating || isRewriting || prompt.trim().length === 0;
+
+  const handleReferenceImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setReferenceImages([...referenceImages, reader.result]);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
 
   return (
     <FormPageLayout
@@ -60,6 +81,85 @@ export function ImageForm() {
           />
         </div>
 
+        <div className="flex items-center justify-between">
+          <label htmlFor="image-rewrite" className="text-sm font-medium">
+            AI Prompt Enhance
+          </label>
+          <button
+            id="image-rewrite"
+            type="button"
+            role="switch"
+            aria-checked={rewriteEnabled}
+            onClick={() => setRewriteEnabled(!rewriteEnabled)}
+            className={`relative h-5 w-9 rounded-full transition-colors ${
+              rewriteEnabled ? "bg-primary" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`absolute start-0.5 top-0.5 h-4 w-4 rounded-full bg-background transition-all ${
+                rewriteEnabled ? "translate-x-4 rtl:-translate-x-4" : ""
+              }`}
+            />
+          </button>
+        </div>
+
+        {rewriteEnabled && rewrittenPrompt && (
+          <div className="rounded-md border bg-muted/40 p-3">
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-primary">
+              Enhanced prompt
+            </div>
+            <p className="text-xs leading-relaxed" dir="auto">
+              {rewrittenPrompt}
+            </p>
+          </div>
+        )}
+
+        <div>
+          <label className="mb-2 block text-sm font-medium">
+            Reference images (optional)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {referenceImages.map((img, i) => (
+              <div
+                key={i}
+                className="relative h-20 w-20 overflow-hidden rounded-md border"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={img}
+                  alt={`Reference ${i + 1}`}
+                  className="h-full w-full object-cover"
+                />
+                <button
+                  type="button"
+                  aria-label={`Remove reference image ${i + 1}`}
+                  onClick={() =>
+                    setReferenceImages(referenceImages.filter((_, j) => j !== i))
+                  }
+                  className="absolute end-0 top-0 flex h-5 w-5 items-center justify-center rounded-bl bg-destructive text-xs text-destructive-foreground"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {referenceImages.length < MAX_REFERENCE_IMAGES && (
+              <label className="flex h-20 w-20 cursor-pointer items-center justify-center rounded-md border border-dashed text-muted-foreground transition-colors hover:border-foreground/40">
+                <span className="text-lg">+</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  aria-label="Add reference image"
+                  className="hidden"
+                  onChange={handleReferenceImageUpload}
+                />
+              </label>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Up to {MAX_REFERENCE_IMAGES} images. Used by the model as visual context.
+          </p>
+        </div>
+
         <div>
           <label htmlFor="image-model" className="mb-2 block text-sm font-medium">
             Model
@@ -75,7 +175,11 @@ export function ImageForm() {
             void generate();
           }}
         >
-          {isGenerating ? "Generating…" : "Generate"}
+          {isRewriting
+            ? "Enhancing prompt…"
+            : isGenerating
+              ? "Generating…"
+              : "Generate"}
         </Button>
 
         <LatestResultsInline mode="photo" />
