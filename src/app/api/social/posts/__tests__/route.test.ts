@@ -5,6 +5,7 @@ const mockWithApiPermission = vi.fn();
 const mockCreateSocialPost = vi.fn();
 const mockListSocialPosts = vi.fn();
 const mockGetSocialPost = vi.fn();
+const mockGetSocialAccountById = vi.fn();
 const mockUpdateSocialPost = vi.fn();
 const mockDeleteSocialPost = vi.fn();
 const mockUpdatePostStatus = vi.fn();
@@ -29,6 +30,7 @@ vi.mock("@/lib/social/repository", () => ({
   createSocialPost: mockCreateSocialPost,
   listSocialPosts: mockListSocialPosts,
   getSocialPost: mockGetSocialPost,
+  getSocialAccountById: mockGetSocialAccountById,
   updateSocialPost: mockUpdateSocialPost,
   deleteSocialPost: mockDeleteSocialPost,
   updatePostStatus: mockUpdatePostStatus,
@@ -87,7 +89,7 @@ function unauthorized(status: 401 | 403) {
 
 function createRequest(
   url = "http://localhost:3000/api/social/posts",
-  init?: RequestInit,
+  init?: ConstructorParameters<typeof NextRequest>[1],
 ): NextRequest {
   return new NextRequest(url, init);
 }
@@ -280,6 +282,11 @@ describe("/api/social/posts/[postId]/publish", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockHasChainChildren.mockResolvedValue(false);
+    mockGetSocialAccountById.mockResolvedValue({
+      id: "sacct_1",
+      platform: "x",
+      displayName: "X Channel",
+    });
     mockClaimSocialDispatchRun.mockImplementation(
       (input: { claimToken?: string; dispatchKey: string }) => ({
         id: "sdrun_1",
@@ -343,6 +350,39 @@ describe("/api/social/posts/[postId]/publish", () => {
       workflowRunRef: "workflow-run-1",
       lockedAt: null,
     });
+  });
+
+  it("returns 400 when Publishing Settings are invalid for the post Channel", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_1",
+      status: "draft",
+      dispatchAttempts: 0,
+      content: "Video description",
+      mediaUrls: [{ type: "video", url: "https://example.com/video.mp4" }],
+      platformSettings: { privacyStatus: "private" },
+      socialAccountId: "sacct_youtube",
+    });
+    mockGetSocialAccountById.mockResolvedValue({
+      id: "sacct_youtube",
+      platform: "youtube",
+      displayName: "Studio YouTube",
+    });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.error).toContain("Studio YouTube: YouTube title is required.");
+    expect(mockUpdatePostStatus).not.toHaveBeenCalled();
+    expect(mockWorkflowStart).not.toHaveBeenCalled();
   });
 
   it("resets retryCount when retrying a failed post", async () => {

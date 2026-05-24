@@ -34,6 +34,7 @@ export function EditDraftClient({ postId }: EditDraftClientProps) {
           postId: post.id,
           content: post.content,
           mediaUrls: post.mediaUrls as any,
+          platformSettings: post.platformSettings,
           scheduledAt: post.scheduledAt,
           socialAccountId: post.socialAccountId,
         })

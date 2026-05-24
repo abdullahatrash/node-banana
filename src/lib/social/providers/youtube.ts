@@ -140,6 +140,7 @@ export const youTubeProvider: SocialProviderAdapter = {
       const privacyStatus =
         (settings.privacyStatus as string | undefined) ?? "public";
       const tags = (settings.tags as string[] | undefined) ?? [];
+      const madeForKids = settings.madeForKids === true;
       const categoryId =
         (settings.categoryId as string | undefined) ?? "22"; // "People & Blogs"
 
@@ -156,6 +157,7 @@ export const youTubeProvider: SocialProviderAdapter = {
           },
           status: {
             privacyStatus,
+            selfDeclaredMadeForKids: madeForKids,
           },
         },
         media: {

@@ -1,0 +1,3 @@
+# Use Postiz as a Social Parity Reference, Not an Architecture Template
+
+Node Banana will use Postiz as a reference for social scheduling capabilities and provider-specific publishing behavior, but it will not copy Postiz's internal architecture one-to-one. We are adopting the useful product pattern of per-platform Publishing Settings while keeping Node Banana's existing composer state, workflow model, normalized JSON storage, safe defaults, and one post row to one channel publish result semantics. This avoids importing Postiz-specific form wrappers and fanout behavior that do not fit Node Banana's current social model.

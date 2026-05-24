@@ -1,6 +1,8 @@
 "use client"
 
 import { create } from "zustand"
+import type { SocialPlatform } from "@/lib/db/schema"
+import { getPublishingSettingsDefinition } from "@/lib/social/publishing-settings"
 
 export interface ComposerMediaItem {
   type: "image" | "video"
@@ -25,7 +27,7 @@ interface SocialComposerState {
 
   // Actions
   setContent: (content: string) => void
-  toggleAccount: (accountId: string) => void
+  toggleAccount: (accountId: string, platform?: SocialPlatform) => void
   setSelectedAccounts: (accountIds: string[]) => void
   addMedia: (media: ComposerMediaItem[]) => void
   removeMedia: (index: number) => void
@@ -35,12 +37,17 @@ interface SocialComposerState {
     accountId: string,
     settings: Record<string, unknown>,
   ) => void
+  hydratePlatformSettings: (
+    accountId: string,
+    platform: SocialPlatform,
+  ) => void
   markDirty: () => void
   reset: () => void
   loadDraft: (draft: {
     postId: string
     content?: string | null
     mediaUrls?: ComposerMediaItem[] | null
+    platformSettings?: Record<string, unknown> | null
     scheduledAt?: string | null
     socialAccountId: string
   }) => void
@@ -66,13 +73,23 @@ export const useSocialComposerStore = create<SocialComposerState>(
       set({ content, isDirty: true })
     },
 
-    toggleAccount: (accountId) => {
+    toggleAccount: (accountId, platform) => {
       set((state) => {
         const exists = state.selectedAccountIds.includes(accountId)
+        const nextSettings = { ...state.platformSettings }
+        if (!exists && platform && !nextSettings[accountId]) {
+          try {
+            const definition = getPublishingSettingsDefinition(platform)
+            nextSettings[accountId] = definition.normalize(definition.defaults)
+          } catch {
+            // Some platforms do not need Publishing Settings yet.
+          }
+        }
         return {
           selectedAccountIds: exists
             ? state.selectedAccountIds.filter((id) => id !== accountId)
             : [...state.selectedAccountIds, accountId],
+          platformSettings: nextSettings,
           isDirty: true,
         }
       })
@@ -119,6 +136,23 @@ export const useSocialComposerStore = create<SocialComposerState>(
       }))
     },
 
+    hydratePlatformSettings: (accountId, platform) => {
+      set((state) => {
+        if (state.platformSettings[accountId]) return state
+        try {
+          const definition = getPublishingSettingsDefinition(platform)
+          return {
+            platformSettings: {
+              ...state.platformSettings,
+              [accountId]: definition.normalize(definition.defaults),
+            },
+          }
+        } catch {
+          return state
+        }
+      })
+    },
+
     markDirty: () => set({ isDirty: true }),
 
     reset: () => {
@@ -133,6 +167,9 @@ export const useSocialComposerStore = create<SocialComposerState>(
         editSourceAccountId: draft.socialAccountId,
         content: draft.content ?? "",
         mediaUrls: (draft.mediaUrls as ComposerMediaItem[]) ?? [],
+        platformSettings: draft.platformSettings
+          ? { [draft.socialAccountId]: draft.platformSettings }
+          : {},
         scheduledAt: draft.scheduledAt ? new Date(draft.scheduledAt) : null,
         selectedAccountIds: [draft.socialAccountId],
         isDirty: false,

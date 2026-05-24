@@ -419,6 +419,48 @@ describe("TikTok provider", () => {
       expect(initBody.source_info.video_url).toBe("https://example.com/v.mp4");
     });
 
+    it("maps normalized Publishing Settings into video init body", async () => {
+      mockFetch
+        .mockResolvedValueOnce(mockFetchOk({ data: { publish_id: "pid" } }))
+        .mockResolvedValueOnce(
+          mockFetchOk({
+            data: {
+              user: {
+                open_id: "oid",
+                display_name: "U",
+                avatar_url: "",
+                username: "u",
+              },
+            },
+          }),
+        );
+
+      await tikTokProvider.post("uid", "tok", [
+        {
+          postId: "p",
+          content: "test",
+          media: [{ type: "video", url: "https://example.com/v.mp4" }],
+          platformSettings: {
+            privacyLevel: "SELF_ONLY",
+            contentPostingMethod: "UPLOAD",
+            allowComments: false,
+            allowDuet: false,
+            allowStitch: true,
+            videoMadeWithAi: true,
+            brandedContent: true,
+            yourBrand: true,
+          },
+        },
+      ]);
+
+      expect(mockFetch.mock.calls[0][0]).toContain("/inbox/video/init/");
+      const initBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(initBody.post_info).toEqual({
+        title: "test",
+      });
+      expect(initBody.source_info.video_url).toBe("https://example.com/v.mp4");
+    });
+
     it("initiates a photo carousel post with image URLs", async () => {
       mockFetch
         .mockResolvedValueOnce(
@@ -462,6 +504,50 @@ describe("TikTok provider", () => {
         "https://cdn.example.com/img1.jpg",
         "https://cdn.example.com/img2.jpg",
       ]);
+    });
+
+    it("maps normalized Publishing Settings into photo init body", async () => {
+      mockFetch
+        .mockResolvedValueOnce(
+          mockFetchOk({ data: { publish_id: "photo-publish-id" } }),
+        )
+        .mockResolvedValueOnce(
+          mockFetchOk({
+            data: {
+              user: {
+                open_id: "oid",
+                display_name: "User",
+                avatar_url: "",
+                username: "phototiktoker",
+              },
+            },
+          }),
+        );
+
+      await tikTokProvider.post("platform-user-id", "access-token", [
+        {
+          postId: "internal-post-2",
+          content: "My photo carousel",
+          media: [{ type: "image", url: "https://cdn.example.com/img1.jpg" }],
+          platformSettings: {
+            title: "Photo title",
+            privacyLevel: "SELF_ONLY",
+            contentPostingMethod: "DIRECT_POST",
+            allowComments: false,
+            autoAddMusic: true,
+          },
+        },
+      ]);
+
+      const initBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(initBody.post_mode).toBe("DIRECT_POST");
+      expect(initBody.post_info).toEqual({
+        title: "Photo title",
+        description: "My photo carousel",
+        privacy_level: "SELF_ONLY",
+        disable_comment: true,
+        auto_add_music: true,
+      });
     });
 
     it("throws when no media is provided", async () => {

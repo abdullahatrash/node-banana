@@ -408,6 +408,44 @@ describe("YouTube provider", () => {
       );
     });
 
+    it("maps normalized Publishing Settings into YouTube status metadata", async () => {
+      mockFetch.mockResolvedValue(videoFetchResponse());
+      mocks.videosInsert.mockResolvedValue({ data: { id: "abc123" } });
+
+      await youTubeProvider.post(
+        "uid",
+        FAKE_ACCESS_TOKEN,
+        [
+          {
+            postId: "p1",
+            content: "Description text",
+            media: [{ type: "video", url: "https://example.com/v.mp4" }],
+            platformSettings: {
+              title: "My Title",
+              privacyStatus: "private",
+              madeForKids: true,
+              tags: ["launch", "demo"],
+            },
+          },
+        ],
+      );
+
+      expect(mocks.videosInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: expect.objectContaining({
+            snippet: expect.objectContaining({
+              title: "My Title",
+              tags: ["launch", "demo"],
+            }),
+            status: expect.objectContaining({
+              privacyStatus: "private",
+              selfDeclaredMadeForKids: true,
+            }),
+          }),
+        }),
+      );
+    });
+
     it("uses content as description and first 100 chars as title if no title given", async () => {
       mockFetch.mockResolvedValue(videoFetchResponse());
       mocks.videosInsert.mockResolvedValue({ data: { id: "xyz" } });
