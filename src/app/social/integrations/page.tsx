@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { listSocialAccounts, listSocialProviders } from "@/lib/social/client"
 import type { SocialAccount } from "@/lib/social/client"
 import type { ProviderCapabilities } from "@/lib/social/provider-interface"
@@ -10,17 +10,28 @@ export default function SocialIntegrationsPage() {
   const [providers, setProviders] = useState<ProviderCapabilities[]>([])
   const [accounts, setAccounts] = useState<SocialAccount[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const initialized = useRef(false)
+  const [error, setError] = useState<string | null>(null)
 
-  if (!initialized.current) {
-    initialized.current = true
+  useEffect(() => {
+    let cancelled = false
     Promise.all([listSocialProviders(), listSocialAccounts()])
       .then(([loadedProviders, loadedAccounts]) => {
+        if (cancelled) return
         setProviders(loadedProviders)
         setAccounts(loadedAccounts)
       })
-      .finally(() => setIsLoading(false))
-  }
+      .catch((error) => {
+        if (cancelled) return
+        setError(error instanceof Error ? error.message : "Failed to load integrations")
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   if (isLoading) {
     return (
@@ -33,6 +44,11 @@ export default function SocialIntegrationsPage() {
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <h2 className="text-lg font-semibold">Integrations</h2>
+      {error ? (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          {error}
+        </div>
+      ) : null}
       <div className="rounded-lg border bg-card p-4">
         <div className="text-sm font-medium">Connected channels</div>
         <div className="mt-2 text-sm text-muted-foreground">{accounts.length}</div>

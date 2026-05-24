@@ -34,6 +34,11 @@ export function PostRow({ post, onMutate }: PostRowProps) {
   const [isActing, setIsActing] = useState(false)
 
   const time = post.scheduledAt || post.publishedAt || post.createdAt
+  const isWaitingForScheduledPublish =
+    post.status === "publishing" &&
+    post.scheduledAt !== null &&
+    post.scheduledAt !== undefined &&
+    new Date(post.scheduledAt).getTime() > Date.now()
 
   async function handleRetry() {
     setIsActing(true)
@@ -104,7 +109,14 @@ export function PostRow({ post, onMutate }: PostRowProps) {
         </div>
 
         {/* Status */}
-        <PostStatusBadge status={post.status as SocialPostStatus} />
+        <PostStatusBadge
+          status={
+            isWaitingForScheduledPublish
+              ? "queued"
+              : (post.status as SocialPostStatus)
+          }
+          label={isWaitingForScheduledPublish ? "Scheduled" : undefined}
+        />
 
         {/* Time */}
         {time && (
@@ -147,7 +159,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
               <ExternalLinkIcon className="size-3.5" />
             </Button>
           )}
-          {(post.status === "draft" || post.status === "failed") && (
+          {post.status !== "published" && (
             <Button
               variant="ghost"
               size="icon"
