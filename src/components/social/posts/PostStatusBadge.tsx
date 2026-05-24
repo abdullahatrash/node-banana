@@ -6,13 +6,14 @@ import type { SocialPostStatus } from "@/lib/db/schema"
 
 interface PostStatusBadgeProps {
   status: SocialPostStatus
+  label?: string
 }
 
-export function PostStatusBadge({ status }: PostStatusBadgeProps) {
+export function PostStatusBadge({ status, label }: PostStatusBadgeProps) {
   const config = POST_STATUS_CONFIG[status]
   return (
     <Badge variant="secondary" className={`text-[10px] ${config?.color ?? ""}`}>
-      {config?.label ?? status}
+      {label ?? config?.label ?? status}
     </Badge>
   )
 }

@@ -28,6 +28,7 @@ interface PublishResponse {
 }
 
 const PUBLISHABLE_STATES = new Set(["draft", "failed"]);
+const FORCE_NOW_STATES = new Set(["queued", "publishing"]);
 const DISPATCH_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 function readString(value: unknown): string | undefined {
@@ -104,12 +105,24 @@ export async function POST(
     const body = await readOptionalJsonBody(request);
     const workflowContext = extractWorkflowContext(body);
     const post = await getSocialPost(workspaceId, postId);
+    const forceNow = body.forceNow === true;
+    const now = new Date();
+    const isFuturePublishing =
+      post.status === "publishing" &&
+      post.scheduledAt !== null &&
+      post.scheduledAt !== undefined &&
+      post.scheduledAt.getTime() > now.getTime();
+    const canForceNow =
+      forceNow &&
+      (post.status === "queued" || isFuturePublishing);
 
-    if (!PUBLISHABLE_STATES.has(post.status)) {
+    if (!PUBLISHABLE_STATES.has(post.status) && !canForceNow) {
       return NextResponse.json(
         {
           success: false,
-          error: `Cannot publish a post with status "${post.status}". Only draft and failed posts can be published.`,
+          error: forceNow && FORCE_NOW_STATES.has(post.status)
+            ? `Cannot publish a post with status "${post.status}" immediately unless it is scheduled for the future.`
+            : `Cannot publish a post with status "${post.status}". Only draft and failed posts can be published.`,
         },
         { status: 400 },
       );
@@ -121,25 +134,29 @@ export async function POST(
     const eventMetadata = {
       previousStatus: post.status,
       scheduledAt: post.scheduledAt?.toISOString() ?? null,
+      forceNow,
       ...(workflowContext ? { workflowContext } : {}),
     };
 
     // Transition to "queued" and persist dispatch intent metadata first.
     await updatePostStatus(postId, "queued", {
+      ...(forceNow ? { scheduledAt: now } : {}),
       errorMessage: null,
       retryCount: post.status === "failed" ? 0 : undefined,
       dispatchStatus: "pending",
       dispatchAttempts,
       workflowRunRef: null,
-      nextDispatchAt: null,
+      nextDispatchAt: forceNow ? now : null,
       lastDispatchError: null,
-      lockedAt: new Date(),
+      lockedAt: now,
     });
     await emitSocialEvent({
       workspaceId,
       eventType: "post.queued",
       severity: "info",
-      message: "Social post queued for publishing.",
+      message: forceNow
+        ? "Social post queued for immediate publishing."
+        : "Social post queued for publishing.",
       postId,
       accountId: post.socialAccountId,
       dispatchKey,

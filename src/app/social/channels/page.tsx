@@ -33,7 +33,6 @@ export default async function ChannelsPage({ searchParams }: ChannelsPageProps) 
     <ChannelsPageClient
       oauthCallback={oauthCallback}
       oauthError={params.error ?? null}
-      clearCallbackCookie={!!callbackCookie}
     />
   )
 }

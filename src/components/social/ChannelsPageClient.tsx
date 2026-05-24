@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { PlusIcon, Loader2Icon } from "lucide-react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
@@ -28,13 +28,11 @@ interface ChannelsPageClientProps {
     state: string
   } | null
   oauthError?: string | null
-  clearCallbackCookie?: boolean
 }
 
 export function ChannelsPageClient({
   oauthCallback,
   oauthError,
-  clearCallbackCookie,
 }: ChannelsPageClientProps) {
   const router = useRouter()
   const { accounts, isLoading, fetchAccounts } = useSocialAccountsStore()
@@ -48,66 +46,89 @@ export function ChannelsPageClient({
   const { show: showToast } = useToast()
   const initialized = useRef(false)
 
-  // Clear the HTTP-only callback cookie now that the server component has read it
-  if (!initialized.current && clearCallbackCookie) {
-    document.cookie = "social_oauth_cb=; path=/; max-age=0"
+  function notifyOpener(success: boolean, message: string) {
+    if (typeof window === "undefined" || !window.opener) {
+      return false
+    }
+
+    window.opener.postMessage(
+      {
+        type: "social-oauth-complete",
+        success,
+        message,
+      },
+      window.location.origin,
+    )
+    window.close()
+    return true
   }
 
-  // Process OAuth callback on first render — no useEffect
-  if (!initialized.current && oauthCallback) {
+  const processOAuthCallback = useCallback(
+    async (platform: string, code: string, state: string) => {
+      try {
+        const result = await handleOAuthCallback(platform, code, state)
+
+        if (
+          result.requiresPageSelection &&
+          result.pages &&
+          result.selectionSessionId
+        ) {
+          setPageSelection({
+            pages: result.pages,
+            platform,
+            selectionSessionId: result.selectionSessionId,
+          })
+        } else if (result.requiresPageSelection) {
+          throw new Error("Missing secure selection session. Please reconnect.")
+        } else {
+          if (notifyOpener(true, "Channel connected successfully!")) {
+            return
+          }
+          showToast("Channel connected successfully!", "success")
+          fetchAccounts()
+        }
+
+        // Clean URL params
+        router.replace("/social/channels")
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to complete connection"
+        if (notifyOpener(false, message)) {
+          return
+        }
+        showToast(message, "error")
+        router.replace("/social/channels")
+      } finally {
+        setIsProcessingCallback(false)
+      }
+    },
+    [fetchAccounts, router, showToast],
+  )
+
+  useEffect(() => {
+    if (initialized.current) return
     initialized.current = true
-    processOAuthCallback(
-      oauthCallback.platform,
-      oauthCallback.code,
-      oauthCallback.state,
-    )
-  } else if (!initialized.current) {
-    initialized.current = true
+
+    if (oauthCallback) {
+      void processOAuthCallback(
+        oauthCallback.platform,
+        oauthCallback.code,
+        oauthCallback.state,
+      )
+      return
+    }
+
+    setIsProcessingCallback(false)
     if (oauthError) {
+      if (notifyOpener(false, oauthError)) {
+        return
+      }
       showToast(oauthError, "error")
       router.replace("/social/channels")
     }
-  }
-
-  async function processOAuthCallback(
-    platform: string,
-    code: string,
-    state: string,
-  ) {
-    try {
-      const result = await handleOAuthCallback(platform, code, state)
-
-      if (
-        result.requiresPageSelection &&
-        result.pages &&
-        result.selectionSessionId
-      ) {
-        setPageSelection({
-          pages: result.pages,
-          platform,
-          selectionSessionId: result.selectionSessionId,
-        })
-      } else if (result.requiresPageSelection) {
-        throw new Error("Missing secure selection session. Please reconnect.")
-      } else {
-        showToast("Channel connected successfully!", "success")
-        fetchAccounts()
-      }
-
-      // Clean URL params
-      router.replace("/social/channels")
-    } catch (error) {
-      showToast(
-        error instanceof Error
-          ? error.message
-          : "Failed to complete connection",
-        "error",
-      )
-      router.replace("/social/channels")
-    } finally {
-      setIsProcessingCallback(false)
-    }
-  }
+  }, [oauthCallback, oauthError, processOAuthCallback, router, showToast])
 
   async function handlePageSelect(page: PageInfo) {
     if (!pageSelection) return
@@ -117,6 +138,9 @@ export function ChannelsPageClient({
         page.id,
         pageSelection.selectionSessionId,
       )
+      if (notifyOpener(true, `Connected to ${page.name}!`)) {
+        return
+      }
       showToast(`Connected to ${page.name}!`, "success")
       fetchAccounts()
       setPageSelection(null)

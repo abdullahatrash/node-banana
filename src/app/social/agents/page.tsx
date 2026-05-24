@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   deleteAutomationRule,
   deleteAutomationTask,
@@ -30,24 +30,35 @@ export default function SocialAgentsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
-  const initialized = useRef(false)
+  const [error, setError] = useState<string | null>(null)
   const { show } = useToast()
 
-  async function load() {
-    const [loadedRules, loadedTasks, loadedPrefs] = await Promise.all([
-      listAutomationRules(),
-      listAutomationTasks(),
-      getSocialNotificationPreferences(),
-    ])
-    setRules(loadedRules)
-    setTasks(loadedTasks)
-    setPrefs(loadedPrefs)
-  }
+  const load = useCallback(async () => {
+    setError(null)
+    try {
+      const [loadedRules, loadedTasks, loadedPrefs] = await Promise.all([
+        listAutomationRules(),
+        listAutomationTasks(),
+        getSocialNotificationPreferences(),
+      ])
+      setRules(loadedRules)
+      setTasks(loadedTasks)
+      setPrefs(loadedPrefs)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load automation"
+      setError(message)
+      setRules([])
+      setTasks([])
+      setPrefs(null)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
 
-  if (!initialized.current) {
-    initialized.current = true
-    load().finally(() => setIsLoading(false))
-  }
+  useEffect(() => {
+    load()
+  }, [load])
 
   async function toggleMuteAll() {
     if (!prefs) return
@@ -130,6 +141,11 @@ export default function SocialAgentsPage() {
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <h2 className="text-lg font-semibold">Agents & Automation</h2>
+      {error ? (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          {error}
+        </div>
+      ) : null}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className="rounded-lg border bg-card p-4">
           <div className="text-xs text-muted-foreground">Automation rules</div>

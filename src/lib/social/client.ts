@@ -271,6 +271,13 @@ export async function updateSocialPost(
   return data.post as SocialPost;
 }
 
+export async function rescheduleSocialPost(
+  postId: string,
+  scheduledAt: string,
+): Promise<SocialPost> {
+  return updateSocialPost(postId, { scheduledAt });
+}
+
 export async function deleteSocialPost(postId: string): Promise<void> {
   await socialFetch(`/api/social/posts/${postId}`, { method: "DELETE" });
 }
@@ -278,6 +285,15 @@ export async function deleteSocialPost(postId: string): Promise<void> {
 export async function publishSocialPost(postId: string): Promise<SocialPost> {
   const data = await socialFetch(`/api/social/posts/${postId}/publish`, {
     method: "POST",
+  });
+  return data.post as SocialPost;
+}
+
+export async function publishSocialPostNow(postId: string): Promise<SocialPost> {
+  const data = await socialFetch(`/api/social/posts/${postId}/publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ forceNow: true }),
   });
   return data.post as SocialPost;
 }

@@ -1,11 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { ProviderCapabilities } from "@/lib/social/provider-interface"
 import {
   connectSocialAccount,
   listSocialProviders,
 } from "@/lib/social/client"
+import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformIcon } from "./shared/PlatformIcon"
 import { PLATFORM_LABELS } from "@/lib/social/constants"
 import { useToast } from "@/components/Toast"
@@ -20,6 +21,12 @@ import type { SocialPlatform } from "@/lib/db/schema"
 
 // Module-level cache — fetched once, reused across all PlatformPicker renders
 let providerCache: ProviderCapabilities[] | null = null
+
+interface SocialOAuthCompleteMessage {
+  type: "social-oauth-complete"
+  success: boolean
+  message: string
+}
 
 function getProviders(): Promise<ProviderCapabilities[]> {
   if (providerCache) return Promise.resolve(providerCache)
@@ -39,21 +46,91 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
     providerCache ?? [],
   )
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null)
+  const popupRef = useRef<Window | null>(null)
+  const popupCheckRef = useRef<number | null>(null)
   const { show: showToast } = useToast()
+  const { fetchAccounts } = useSocialAccountsStore()
 
-  // Fetch on open if not cached — triggered by state check, not useEffect
-  if (open && providers.length === 0 && !providerCache) {
+  const cleanupPopup = useCallback(() => {
+    if (popupCheckRef.current) {
+      window.clearInterval(popupCheckRef.current)
+      popupCheckRef.current = null
+    }
+    popupRef.current = null
+  }, [])
+
+  useEffect(() => {
+    function handleOAuthMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as Partial<SocialOAuthCompleteMessage>
+      if (data.type !== "social-oauth-complete") return
+
+      cleanupPopup()
+      setConnectingPlatform(null)
+
+      if (data.success) {
+        showToast(data.message || "Channel connected successfully!", "success")
+        fetchAccounts()
+        onOpenChange(false)
+      } else {
+        showToast(data.message || "Failed to complete connection", "error")
+      }
+    }
+
+    window.addEventListener("message", handleOAuthMessage)
+    return () => {
+      window.removeEventListener("message", handleOAuthMessage)
+      cleanupPopup()
+    }
+  }, [cleanupPopup, fetchAccounts, onOpenChange, showToast])
+
+  useEffect(() => {
+    if (!open || providers.length > 0 || providerCache) return
+
+    let cancelled = false
     getProviders()
-      .then(setProviders)
-      .catch(() => showToast("Failed to load providers", "error"))
-  }
+      .then((data) => {
+        if (!cancelled) setProviders(data)
+      })
+      .catch(() => {
+        if (!cancelled) showToast("Failed to load providers", "error")
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, providers.length, showToast])
 
   async function handleConnect(platform: string) {
     setConnectingPlatform(platform)
+    const width = 760
+    const height = 760
+    const left = Math.max(0, window.screenX + (window.outerWidth - width) / 2)
+    const top = Math.max(0, window.screenY + (window.outerHeight - height) / 2)
+    const popup = window.open(
+      "about:blank",
+      `connect-${platform}`,
+      `width=${width},height=${height},left=${left},top=${top}`,
+    )
+    popupRef.current = popup
+
     try {
       const { authUrl } = await connectSocialAccount(platform)
-      window.location.href = authUrl
+      if (!popup || popup.closed) {
+        window.location.href = authUrl
+        return
+      }
+
+      popup.location.href = authUrl
+      popup.focus()
+      popupCheckRef.current = window.setInterval(() => {
+        if (!popup.closed) return
+        cleanupPopup()
+        setConnectingPlatform(null)
+      }, 500)
     } catch (error) {
+      popup?.close()
+      cleanupPopup()
       showToast(
         error instanceof Error ? error.message : "Failed to connect",
         "error",

@@ -485,6 +485,81 @@ describe("/api/social/posts/[postId]/publish", () => {
     expect(data.error).toContain("queued");
   });
 
+  it("force-publishes queued post immediately", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_1",
+      status: "queued",
+      dispatchAttempts: 1,
+      socialAccountId: "sacct_1",
+      scheduledAt: new Date(Date.now() + 60 * 60 * 1000),
+      rootPostId: null,
+      kind: "post",
+    });
+    mockUpdatePostStatus
+      .mockResolvedValueOnce({ id: "spost_1", status: "queued" })
+      .mockResolvedValueOnce({
+        id: "spost_1",
+        status: "queued",
+        dispatchStatus: "dispatched",
+      });
+    mockWorkflowStart.mockResolvedValue({ runId: "workflow-run-now" });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", {
+        method: "POST",
+        body: JSON.stringify({ forceNow: true }),
+      }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdatePostStatus).toHaveBeenNthCalledWith(1, "spost_1", "queued", {
+      scheduledAt: expect.any(Date),
+      errorMessage: null,
+      retryCount: undefined,
+      dispatchStatus: "pending",
+      dispatchAttempts: 2,
+      workflowRunRef: null,
+      nextDispatchAt: expect.any(Date),
+      lastDispatchError: null,
+      lockedAt: expect.any(Date),
+    });
+  });
+
+  it("force-publishes future publishing post immediately", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_1",
+      status: "publishing",
+      dispatchAttempts: 1,
+      socialAccountId: "sacct_1",
+      scheduledAt: new Date(Date.now() + 60 * 60 * 1000),
+      rootPostId: null,
+      kind: "post",
+    });
+    mockUpdatePostStatus
+      .mockResolvedValueOnce({ id: "spost_1", status: "queued" })
+      .mockResolvedValueOnce({
+        id: "spost_1",
+        status: "queued",
+        dispatchStatus: "dispatched",
+      });
+    mockWorkflowStart.mockResolvedValue({ runId: "workflow-run-now" });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", {
+        method: "POST",
+        body: JSON.stringify({ forceNow: true }),
+      }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   it("returns 400 for publishing post", async () => {
     authorized();
     mockGetSocialPost.mockResolvedValue({ id: "spost_1", status: "publishing" });

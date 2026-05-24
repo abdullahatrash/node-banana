@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect } from "react"
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 import { useShallow } from "zustand/shallow"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
@@ -18,11 +19,16 @@ export function CalendarFilters() {
     navigateNext,
     goToToday,
     getDateRangeLabel,
+    hydrateFromStorage,
   } = useSocialCalendarStore()
   const { accounts, setSidebarChannelFilter } = useSocialAccountsStore(useShallow((s) => ({
     accounts: s.accounts,
     setSidebarChannelFilter: s.setChannelFilter,
   })))
+
+  useEffect(() => {
+    hydrateFromStorage()
+  }, [hydrateFromStorage])
 
   return (
     <div className="flex items-center gap-2 border-b px-4 py-2">

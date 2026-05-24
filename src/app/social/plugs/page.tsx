@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useRef, useState } from "react"
+import { FormEvent, useCallback, useEffect, useState } from "react"
 import {
   createSocialWebhook,
   deleteSocialWebhook,
@@ -19,19 +19,26 @@ export default function SocialPlugsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
   const [mutatingWebhookId, setMutatingWebhookId] = useState<string | null>(null)
-  const initialized = useRef(false)
+  const [error, setError] = useState<string | null>(null)
   const { show } = useToast()
 
-  function refresh() {
-    return listSocialWebhooks()
-      .then(setWebhooks)
-      .finally(() => setIsLoading(false))
-  }
+  const refresh = useCallback(async () => {
+    setError(null)
+    try {
+      setWebhooks(await listSocialWebhooks())
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load plugs"
+      setError(message)
+      setWebhooks([])
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
 
-  if (!initialized.current) {
-    initialized.current = true
+  useEffect(() => {
     refresh()
-  }
+  }, [refresh])
 
   async function onCreate(e: FormEvent) {
     e.preventDefault()
@@ -48,7 +55,10 @@ export default function SocialPlugsPage() {
       setTargetUrl("")
       await refresh()
     } catch (error) {
-      show(error instanceof Error ? error.message : "Failed to create webhook", "error")
+      const message =
+        error instanceof Error ? error.message : "Failed to create webhook"
+      setError(message)
+      show(message, "error")
     } finally {
       setIsCreating(false)
     }
@@ -92,6 +102,11 @@ export default function SocialPlugsPage() {
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <h2 className="text-lg font-semibold">Plugs (Webhooks)</h2>
+      {error ? (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          {error}
+        </div>
+      ) : null}
       <form onSubmit={onCreate} className="flex gap-2">
         <Input
           type="url"

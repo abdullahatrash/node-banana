@@ -33,23 +33,27 @@ interface SocialCalendarState {
   goToToday: () => void
   setChannelFilter: (accountId: string | null) => void
   fetchPosts: () => Promise<void>
+  applyOptimisticReschedule: (postId: string, scheduledAt: string) => SocialPost[] | null
+  restorePosts: (posts: SocialPost[]) => void
+  replacePost: (post: SocialPost) => void
   getWeekStart: () => Date
   getWeekEnd: () => Date
   getDateRangeLabel: () => string
+  hydrateFromStorage: () => void
 }
 
-function loadViewMode(): ViewMode {
-  if (typeof window === "undefined") return "week"
+function getStoredViewMode(): ViewMode | null {
+  if (typeof window === "undefined") return null
   const stored = localStorage.getItem("social-calendar-view") as ViewMode | null
   if (stored === "day" || stored === "week" || stored === "month" || stored === "list") {
     return stored
   }
-  return "week"
+  return null
 }
 
 export const useSocialCalendarStore = create<SocialCalendarState>(
   (set, get) => ({
-    viewMode: loadViewMode(),
+    viewMode: "week",
     currentDate: new Date(),
     channelFilter: null,
     posts: [],
@@ -123,8 +127,48 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
       }
     },
 
+    applyOptimisticReschedule: (postId, scheduledAt) => {
+      const previousPosts = get().posts
+      const foundPost = previousPosts.find((post) => post.id === postId)
+      if (!foundPost) return null
+
+      set({
+        posts: previousPosts.map((post) =>
+          post.id === postId
+            ? {
+                ...post,
+                status: post.status === "publishing" ? "queued" : post.status,
+                scheduledAt,
+                updatedAt: new Date().toISOString(),
+              }
+            : post,
+        ),
+      })
+
+      return previousPosts
+    },
+
+    restorePosts: (posts) => {
+      set({ posts })
+    },
+
+    replacePost: (updatedPost) => {
+      set((state) => ({
+        posts: state.posts.map((post) =>
+          post.id === updatedPost.id ? updatedPost : post,
+        ),
+      }))
+    },
+
     getWeekStart: () => startOfWeek(get().currentDate, { weekStartsOn: 1 }),
     getWeekEnd: () => endOfWeek(get().currentDate, { weekStartsOn: 1 }),
+
+    hydrateFromStorage: () => {
+      const stored = getStoredViewMode()
+      if (stored && stored !== get().viewMode) {
+        set({ viewMode: stored })
+      }
+    },
 
     getDateRangeLabel: () => {
       const viewMode = get().viewMode

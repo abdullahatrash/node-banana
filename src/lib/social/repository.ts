@@ -827,11 +827,12 @@ export async function listSocialPosts(
   if (filters?.triggerSource) {
     conditions.push(eq(socialPosts.triggerSource, filters.triggerSource));
   }
+  const calendarDate = sql<Date>`coalesce(${socialPosts.scheduledAt}, ${socialPosts.publishedAt}, ${socialPosts.createdAt})`;
   if (filters?.startDate) {
-    conditions.push(gte(socialPosts.scheduledAt, filters.startDate));
+    conditions.push(gte(calendarDate, filters.startDate));
   }
   if (filters?.endDate) {
-    conditions.push(lte(socialPosts.scheduledAt, filters.endDate));
+    conditions.push(lte(calendarDate, filters.endDate));
   }
 
   const query = db
@@ -1219,21 +1220,39 @@ export async function updateSocialPost(
   const canEditAsDraft = existing.status === "draft";
   const canRescheduleQueued =
     onlyScheduledAtUpdate &&
-    (existing.status === "queued" || existing.status === "failed");
+    (existing.status === "queued" ||
+      existing.status === "failed" ||
+      existing.status === "publishing");
 
   if (!canEditAsDraft && !canRescheduleQueued) {
     throw new SocialPostStateTransitionError(existing.status, "draft");
   }
 
+  const isCalendarReschedule = onlyScheduledAtUpdate && data.scheduledAt;
+  const shouldRequeuePublishing =
+    isCalendarReschedule && existing.status === "publishing";
+  const shouldRefreshQueuedDispatch =
+    isCalendarReschedule && existing.status === "queued";
+
   const [row] = await db
     .update(socialPosts)
     .set({
+      ...(shouldRequeuePublishing && { status: "queued" as const }),
       ...(data.content !== undefined && { content: data.content }),
       ...(data.mediaUrls !== undefined && { mediaUrls: data.mediaUrls }),
       ...(data.platformSettings !== undefined && {
         platformSettings: data.platformSettings,
       }),
       ...(data.scheduledAt !== undefined && { scheduledAt: data.scheduledAt }),
+      ...(shouldRequeuePublishing || shouldRefreshQueuedDispatch
+        ? {
+            dispatchStatus: "pending" as const,
+            workflowRunRef: null,
+            nextDispatchAt: data.scheduledAt,
+            lastDispatchError: null,
+            lockedAt: null,
+          }
+        : {}),
       ...(data.rootPostId !== undefined && { rootPostId: data.rootPostId }),
       ...(data.kind !== undefined && { kind: data.kind }),
       ...(data.delaySeconds !== undefined && { delaySeconds: data.delaySeconds }),
@@ -1270,6 +1289,7 @@ export async function updatePostStatus(
     platformPostId?: string;
     platformPostUrl?: string;
     publishedAt?: Date;
+    scheduledAt?: Date | null;
     errorMessage?: string | null;
     retryCount?: number;
     dispatchStatus?: "pending" | "dispatched" | "retry_scheduled" | "failed" | null;
@@ -1294,6 +1314,9 @@ export async function updatePostStatus(
       }),
       ...(extra?.publishedAt !== undefined && {
         publishedAt: extra.publishedAt,
+      }),
+      ...(extra?.scheduledAt !== undefined && {
+        scheduledAt: extra.scheduledAt,
       }),
       ...(extra?.errorMessage !== undefined && {
         errorMessage: extra.errorMessage,
@@ -1336,7 +1359,7 @@ export async function deleteSocialPost(workspaceId: string, postId: string) {
 
   // Verify post exists and is in a deletable state
   const existing = await getSocialPost(workspaceId, postId);
-  if (existing.status !== "draft" && existing.status !== "failed") {
+  if (existing.status === "published") {
     throw new SocialPostStateTransitionError(
       existing.status,
       "draft", // representing "deleted" intent

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect } from "react"
 import { useShallow } from "zustand/shallow"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
@@ -26,21 +26,10 @@ export default function CalendarPage() {
     accounts: s.accounts,
     selectedChannelFilter: s.selectedChannelFilter,
   })))
-  const initialized = useRef(false)
-
-  // Fetch posts on first render
-  if (!initialized.current) {
-    initialized.current = true
+  // Fetch posts on mount and when date/filter/view changes
+  useEffect(() => {
     fetchPosts()
-  }
-
-  // Refetch when date or filter changes — track previous values via ref
-  const prevKey = useRef("")
-  const key = `${viewMode}-${currentDate.toISOString()}-${channelFilter}`
-  if (prevKey.current && prevKey.current !== key) {
-    fetchPosts()
-  }
-  prevKey.current = key
+  }, [fetchPosts, viewMode, currentDate, channelFilter])
 
   // Keep calendar filter aligned with sidebar channel filter
   useEffect(() => {

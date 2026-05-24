@@ -1,42 +1,63 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Loader2Icon } from "lucide-react"
 import { listSocialPosts, type SocialPost } from "@/lib/social/client"
 import { PostRow } from "@/components/social/posts/PostRow"
 import type { SocialPostStatus } from "@/lib/db/schema"
 
-const STATUS_TABS: { value: SocialPostStatus | "all"; label: string }[] = [
+type PostStatusTab = SocialPostStatus | "all" | "scheduled"
+
+const STATUS_TABS: { value: PostStatusTab; label: string }[] = [
   { value: "all", label: "All" },
   { value: "draft", label: "Drafts" },
-  { value: "queued", label: "Scheduled" },
+  { value: "scheduled", label: "Scheduled" },
   { value: "published", label: "Published" },
   { value: "failed", label: "Failed" },
 ]
 
+function isWaitingForScheduledPublish(post: SocialPost) {
+  return (
+    post.status === "publishing" &&
+    post.scheduledAt !== null &&
+    post.scheduledAt !== undefined &&
+    new Date(post.scheduledAt).getTime() > Date.now()
+  )
+}
+
+function isScheduledPost(post: SocialPost) {
+  return post.status === "queued" || isWaitingForScheduledPublish(post)
+}
+
 export default function PostsPage() {
   const [posts, setPosts] = useState<SocialPost[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<SocialPostStatus | "all">("all")
-  const initialized = useRef(false)
+  const [activeTab, setActiveTab] = useState<PostStatusTab>("all")
+  const [error, setError] = useState<string | null>(null)
 
-  function fetchPosts(status?: SocialPostStatus | "all") {
+  const fetchPosts = useCallback((status?: PostStatusTab) => {
     setIsLoading(true)
+    setError(null)
     listSocialPosts({
-      status: status && status !== "all" ? status : undefined,
+      status: status && status !== "all" && status !== "scheduled"
+        ? status
+        : undefined,
     })
-      .then(setPosts)
-      .catch(() => {})
+      .then((posts) => {
+        setPosts(status === "scheduled" ? posts.filter(isScheduledPost) : posts)
+      })
+      .catch((error) => {
+        setError(error instanceof Error ? error.message : "Failed to load posts")
+        setPosts([])
+      })
       .finally(() => setIsLoading(false))
-  }
+  }, [])
 
-  // Fetch on first render — no useEffect
-  if (!initialized.current) {
-    initialized.current = true
+  useEffect(() => {
     fetchPosts()
-  }
+  }, [fetchPosts])
 
-  function handleTabChange(tab: SocialPostStatus | "all") {
+  function handleTabChange(tab: PostStatusTab) {
     setActiveTab(tab)
     fetchPosts(tab)
   }
@@ -62,6 +83,11 @@ export default function PostsPage() {
 
       {/* Posts list */}
       <div className="flex-1 overflow-y-auto p-4">
+        {error ? (
+          <div className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2Icon className="size-5 animate-spin text-muted-foreground" />

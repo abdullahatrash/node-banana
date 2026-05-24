@@ -4,7 +4,7 @@ import { useDrop } from "react-dnd"
 import { useRouter } from "next/navigation"
 import { isPast } from "date-fns"
 import { POST_DND_TYPE, CalendarPostCard } from "./CalendarPostCard"
-import { updateSocialPost } from "@/lib/social/client"
+import { rescheduleSocialPost } from "@/lib/social/client"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useToast } from "@/components/Toast"
 import type { SocialPost } from "@/lib/social/client"
@@ -12,41 +12,55 @@ import type { SocialPost } from "@/lib/social/client"
 interface CalendarColumnProps {
   date: Date
   hour: number
+  minute?: number
   posts: SocialPost[]
 }
 
-export function CalendarColumn({ date, hour, posts }: CalendarColumnProps) {
+interface CalendarDragItem {
+  postId: string
+  status: string
+  scheduledAt?: string | null
+  publishedAt?: string | null
+  createdAt?: string | null
+}
+
+function canRescheduleItem(item: CalendarDragItem, isInPast: boolean) {
+  if (isInPast || item.status === "published") return false
+  if (item.status !== "publishing") return true
+  return item.scheduledAt ? new Date(item.scheduledAt).getTime() > Date.now() : false
+}
+
+export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumnProps) {
   const router = useRouter()
   const { show: showToast } = useToast()
-  const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
+  const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
+  const restorePosts = useSocialCalendarStore((s) => s.restorePosts)
+  const replacePost = useSocialCalendarStore((s) => s.replacePost)
 
   const slotTime = new Date(date)
-  slotTime.setHours(hour, 0, 0, 0)
+  slotTime.setHours(hour, minute, 0, 0)
   const isInPast = isPast(slotTime)
 
   const [{ isOver, canDrop }, dropRef] = useDrop(() => ({
     accept: POST_DND_TYPE,
-    canDrop: (item: { postId: string; status: string }) =>
-      !isInPast && item.status !== "published" && item.status !== "publishing",
-    drop: async (item: { postId: string; status: string }) => {
+    canDrop: (item: CalendarDragItem) => canRescheduleItem(item, isInPast),
+    drop: async (item: CalendarDragItem) => {
       if (isInPast) return
 
-      if (item.status === "published" || item.status === "publishing") {
-        showToast("Published posts cannot be rescheduled.", "warning")
+      if (!canRescheduleItem(item, isInPast)) {
+        showToast("This post cannot be rescheduled.", "warning")
         return
       }
 
-      if (item.status === "queued") {
-        if (!confirm("Reschedule this post to the new time?")) return
-      }
+      const scheduledAt = slotTime.toISOString()
+      const previousPosts = applyOptimisticReschedule(item.postId, scheduledAt)
 
       try {
-        await updateSocialPost(item.postId, {
-          scheduledAt: slotTime.toISOString(),
-        })
-        await fetchPosts()
+        const updatedPost = await rescheduleSocialPost(item.postId, scheduledAt)
+        replacePost(updatedPost)
         showToast("Post rescheduled", "success")
       } catch (error) {
+        if (previousPosts) restorePosts(previousPosts)
         showToast(
           error instanceof Error ? error.message : "Failed to reschedule",
           "error",
@@ -68,7 +82,7 @@ export function CalendarColumn({ date, hour, posts }: CalendarColumnProps) {
     <div
       ref={dropRef as unknown as React.Ref<HTMLDivElement>}
       onClick={posts.length === 0 ? handleClickSlot : undefined}
-      className={`min-h-[48px] border-b border-e p-0.5 transition-colors ${
+      className={`min-h-[28px] border-b border-e p-0.5 transition-colors ${
         isInPast
           ? "cursor-not-allowed bg-muted/30"
           : posts.length === 0

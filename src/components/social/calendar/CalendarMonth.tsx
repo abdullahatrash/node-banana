@@ -1,6 +1,9 @@
 "use client"
 
 import { useMemo } from "react"
+import { useDrop } from "react-dnd"
+import { DndProvider } from "react-dnd"
+import { HTML5Backend } from "react-dnd-html5-backend"
 import {
   addDays,
   endOfMonth,
@@ -11,11 +14,151 @@ import {
   startOfWeek,
 } from "date-fns"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
+import { useSocialAccountsStore } from "@/store/socialAccountsStore"
+import { rescheduleSocialPost, type SocialPost } from "@/lib/social/client"
+import { useToast } from "@/components/Toast"
+import { CalendarPostCard, POST_DND_TYPE } from "./CalendarPostCard"
+import type { SocialPlatform } from "@/lib/db/schema"
 
 const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+const MAX_VISIBLE_POSTS = 3
+
+interface CalendarDragItem {
+  postId: string
+  status: string
+  scheduledAt?: string | null
+  publishedAt?: string | null
+  createdAt?: string | null
+}
+
+function getCalendarDate(post: SocialPost) {
+  return post.scheduledAt || post.publishedAt || post.createdAt
+}
+
+function canRescheduleItem(item: CalendarDragItem, targetTime: Date) {
+  if (item.status === "published" || targetTime.getTime() < Date.now()) {
+    return false
+  }
+  if (item.status !== "publishing") return true
+  return item.scheduledAt ? new Date(item.scheduledAt).getTime() > Date.now() : false
+}
+
+function CalendarMonthDayCell({
+  day,
+  inCurrentMonth,
+  posts,
+  platformForPost,
+}: {
+  day: Date
+  inCurrentMonth: boolean
+  posts: SocialPost[]
+  platformForPost: (post: SocialPost) => SocialPlatform | undefined
+}) {
+  const { show: showToast } = useToast()
+  const setViewMode = useSocialCalendarStore((s) => s.setViewMode)
+  const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
+  const restorePosts = useSocialCalendarStore((s) => s.restorePosts)
+  const replacePost = useSocialCalendarStore((s) => s.replacePost)
+
+  const [{ isOver, canDrop }, dropRef] = useDrop(() => ({
+    accept: POST_DND_TYPE,
+    canDrop: (item: CalendarDragItem) => {
+      const originalTime = item.scheduledAt || item.publishedAt || item.createdAt
+      const target = new Date(day)
+      if (originalTime) {
+        const original = new Date(originalTime)
+        target.setHours(original.getHours(), original.getMinutes(), 0, 0)
+      }
+      return canRescheduleItem(item, target)
+    },
+    drop: async (item: CalendarDragItem) => {
+      const originalTime = item.scheduledAt || item.publishedAt || item.createdAt
+      const target = new Date(day)
+      if (originalTime) {
+        const original = new Date(originalTime)
+        target.setHours(original.getHours(), original.getMinutes(), 0, 0)
+      }
+
+      if (!canRescheduleItem(item, target)) {
+        showToast("This post cannot be rescheduled.", "warning")
+        return
+      }
+
+      const scheduledAt = target.toISOString()
+      const previousPosts = applyOptimisticReschedule(item.postId, scheduledAt)
+
+      try {
+        const updatedPost = await rescheduleSocialPost(item.postId, scheduledAt)
+        replacePost(updatedPost)
+        showToast("Post rescheduled", "success")
+      } catch (error) {
+        if (previousPosts) restorePosts(previousPosts)
+        showToast(
+          error instanceof Error ? error.message : "Failed to reschedule",
+          "error",
+        )
+      }
+    },
+    collect: (monitor) => ({
+      isOver: monitor.isOver(),
+      canDrop: monitor.canDrop(),
+    }),
+  }), [applyOptimisticReschedule, day, replacePost, restorePosts, showToast])
+
+  const visiblePosts = posts.slice(0, MAX_VISIBLE_POSTS)
+  const hiddenCount = Math.max(0, posts.length - visiblePosts.length)
+
+  return (
+    <div
+      ref={dropRef as unknown as React.Ref<HTMLDivElement>}
+      className={`min-h-[120px] border-e border-b p-2 text-start transition-colors ${
+        inCurrentMonth ? "text-foreground" : "text-muted-foreground/50"
+      } ${isOver && canDrop ? "bg-purple-500/10 ring-1 ring-inset ring-purple-500/40" : ""} ${
+        isOver && !canDrop ? "bg-destructive/5" : "hover:bg-accent/30"
+      }`}
+      onDoubleClick={() => {
+        useSocialCalendarStore.setState({ currentDate: day })
+        setViewMode("day")
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          useSocialCalendarStore.setState({ currentDate: day })
+          setViewMode("day")
+        }}
+        className="mb-1 text-xs font-medium"
+      >
+        {format(day, "d")}
+      </button>
+      <div className="space-y-1">
+        {visiblePosts.map((post) => (
+          <CalendarPostCard
+            key={post.id}
+            post={post}
+            platform={platformForPost(post)}
+          />
+        ))}
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            className="rounded px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary/10"
+            onClick={() => {
+              useSocialCalendarStore.setState({ currentDate: day })
+              setViewMode("day")
+            }}
+          >
+            +{hiddenCount} more
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
 
 export function CalendarMonth() {
-  const { currentDate, posts, setViewMode } = useSocialCalendarStore()
+  const { currentDate, posts } = useSocialCalendarStore()
+  const accounts = useSocialAccountsStore((s) => s.accounts)
   const monthStart = startOfMonth(currentDate)
   const monthEnd = endOfMonth(currentDate)
   const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 })
@@ -31,57 +174,54 @@ export function CalendarMonth() {
     return values
   }, [calendarStart, calendarEnd])
 
-  function countPostsForDate(day: Date) {
-    return posts.filter((post) => {
-      const dateStr = post.scheduledAt || post.publishedAt || post.createdAt
-      if (!dateStr) return false
+  const postsByDate = useMemo(() => {
+    const map = new Map<string, SocialPost[]>()
+    for (const post of posts) {
+      const dateStr = getCalendarDate(post)
+      if (!dateStr) continue
       const d = new Date(dateStr)
-      return (
-        d.getFullYear() === day.getFullYear() &&
-        d.getMonth() === day.getMonth() &&
-        d.getDate() === day.getDate()
-      )
-    }).length
+      const key = format(d, "yyyy-MM-dd")
+      const existing = map.get(key) ?? []
+      existing.push(post)
+      map.set(key, existing)
+    }
+    return map
+  }, [posts])
+
+  function getPostsForDate(day: Date) {
+    return postsByDate.get(format(day, "yyyy-MM-dd")) ?? []
+  }
+
+  function platformForPost(post: SocialPost) {
+    return accounts.find((account) => account.id === post.socialAccountId)
+      ?.platform as SocialPlatform | undefined
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-auto">
-      <div className="grid grid-cols-7 border-b">
-        {WEEK_DAYS.map((day) => (
-          <div
-            key={day}
-            className="p-2 text-center text-xs font-medium text-muted-foreground"
-          >
-            {day}
-          </div>
-        ))}
-      </div>
-      <div className="grid flex-1 grid-cols-7 auto-rows-fr">
-        {days.map((day) => {
-          const inCurrentMonth = isSameMonth(day, currentDate)
-          const postCount = countPostsForDate(day)
-          return (
-            <button
-              key={day.toISOString()}
-              onClick={() => {
-                useSocialCalendarStore.setState({ currentDate: day })
-                setViewMode("day")
-              }}
-              className={`min-h-[90px] border-e border-b p-2 text-start transition-colors hover:bg-accent/30 ${
-                inCurrentMonth ? "text-foreground" : "text-muted-foreground/50"
-              }`}
+    <DndProvider backend={HTML5Backend}>
+      <div className="flex flex-1 flex-col overflow-auto">
+        <div className="grid grid-cols-7 border-b">
+          {WEEK_DAYS.map((day) => (
+            <div
+              key={day}
+              className="p-2 text-center text-xs font-medium text-muted-foreground"
             >
-              <div className="text-xs font-medium">{format(day, "d")}</div>
-              {postCount > 0 && (
-                <div className="mt-2 inline-flex rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">
-                  {postCount} post{postCount > 1 ? "s" : ""}
-                </div>
-              )}
-            </button>
-          )
-        })}
+              {day}
+            </div>
+          ))}
+        </div>
+        <div className="grid flex-1 grid-cols-7 auto-rows-fr">
+          {days.map((day) => (
+            <CalendarMonthDayCell
+              key={day.toISOString()}
+              day={day}
+              inCurrentMonth={isSameMonth(day, currentDate)}
+              posts={getPostsForDate(day)}
+              platformForPost={platformForPost}
+            />
+          ))}
+        </div>
       </div>
-    </div>
+    </DndProvider>
   )
 }
-

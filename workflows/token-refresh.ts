@@ -34,7 +34,10 @@ async function doRefresh(accountId: string): Promise<RefreshResult> {
     updateSocialAccountTokens,
   } = await import("@/lib/social/repository");
   const { decryptToken, encryptToken } = await import("@/lib/social/crypto");
-  await import("@/lib/social/runtime-bootstrap");
+  const { ensureSocialProvidersBootstrapped } = await import(
+    "@/lib/social/runtime-bootstrap"
+  );
+  await ensureSocialProvidersBootstrapped();
   const { getProvider } = await import("@/lib/social/provider-registry");
   const { emitSocialEvent } = await import("@/lib/social/events");
 
