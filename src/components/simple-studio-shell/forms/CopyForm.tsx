@@ -10,6 +10,12 @@ const TONES = ["professional", "casual", "creative", "persuasive"];
 const PLATFORMS = ["general", "instagram", "x", "linkedin"];
 const BATCH_PRESETS = [1, 4, 8];
 
+const OUTPUT_LANGUAGES: { value: "en" | "ar" | "both"; label: string }[] = [
+  { value: "en", label: "English" },
+  { value: "ar", label: "عربي" },
+  { value: "both", label: "Both" },
+];
+
 const LLM_MODELS: { id: string; name: string; provider: string }[] = [
   { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "Google" },
   { id: "gemini-3-flash-preview", name: "Gemini 3 Flash", provider: "Google" },
@@ -33,6 +39,8 @@ export function CopyForm() {
   const generate = useSimpleStudioStore((s) => s.generate);
   const copyModelId = useSimpleStudioStore((s) => s.copyModelId);
   const setCopyModelId = useSimpleStudioStore((s) => s.setCopyModelId);
+  const outputLanguage = useSimpleStudioStore((s) => s.outputLanguage);
+  const setOutputLanguage = useSimpleStudioStore((s) => s.setOutputLanguage);
 
   const disabled = isGenerating || prompt.trim().length === 0;
 
@@ -97,6 +105,26 @@ export function CopyForm() {
                 </option>
               ))}
             </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm font-medium">Output language</label>
+          <div className="flex gap-2">
+            {OUTPUT_LANGUAGES.map((lang) => (
+              <button
+                key={lang.value}
+                type="button"
+                className={`flex-1 rounded-md border px-3 py-1 text-xs ${
+                  outputLanguage === lang.value
+                    ? "border-primary bg-primary/10"
+                    : "border-border hover:bg-muted"
+                }`}
+                onClick={() => setOutputLanguage(lang.value)}
+              >
+                {lang.label}
+              </button>
+            ))}
           </div>
         </div>
 
