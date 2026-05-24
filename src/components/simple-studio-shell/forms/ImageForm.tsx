@@ -6,6 +6,7 @@ import { FormPageLayout } from "./FormPageLayout";
 import { FormInfoPanel } from "./FormInfoPanel";
 import { ModelSelect } from "./ModelSelect";
 import { LatestResultsInline } from "./LatestResultsInline";
+import { GenerateProgress } from "./GenerateProgress";
 
 const ASPECT_RATIOS = [
   { value: "1:1", label: "1:1" },
@@ -167,20 +168,20 @@ export function ImageForm() {
           <ModelSelect mode="photo" id="image-model" />
         </div>
 
-        <Button
-          type="button"
-          size="lg"
-          disabled={disabled}
-          onClick={() => {
-            void generate();
-          }}
-        >
-          {isRewriting
-            ? "Enhancing prompt…"
-            : isGenerating
-              ? "Generating…"
-              : "Generate"}
-        </Button>
+        {isGenerating ? (
+          <GenerateProgress />
+        ) : (
+          <Button
+            type="button"
+            size="lg"
+            disabled={disabled}
+            onClick={() => {
+              void generate();
+            }}
+          >
+            {isRewriting ? "Enhancing prompt…" : "Generate"}
+          </Button>
+        )}
 
         <LatestResultsInline mode="photo" />
       </div>

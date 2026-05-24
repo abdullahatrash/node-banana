@@ -55,10 +55,14 @@ describe("ImageForm", () => {
     expect(screen.getByRole("button", { name: /generate/i })).toBeDisabled();
   });
 
-  it("Generate button is disabled while generating", () => {
+  it("replaces Generate button with progress + Cancel while generating", () => {
     useSimpleStudioStore.setState({ prompt: "A cat", isGenerating: true });
     render(<ImageForm />);
-    expect(screen.getByRole("button", { name: /generat/i })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /^generate$/i })
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
   });
 
   it("renders existing reference images from the store", () => {

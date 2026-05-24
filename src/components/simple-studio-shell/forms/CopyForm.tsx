@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { FormPageLayout } from "./FormPageLayout";
 import { FormInfoPanel } from "./FormInfoPanel";
 import { LatestResultsInline } from "./LatestResultsInline";
+import { GenerateProgress } from "./GenerateProgress";
 
 const TONES = ["professional", "casual", "creative", "persuasive"];
 const PLATFORMS = ["general", "instagram", "x", "linkedin"];
@@ -146,16 +147,20 @@ export function CopyForm() {
           </select>
         </div>
 
-        <Button
-          type="button"
-          size="lg"
-          disabled={disabled}
-          onClick={() => {
-            void generate();
-          }}
-        >
-          {isGenerating ? "Generating…" : "Generate"}
-        </Button>
+        {isGenerating ? (
+          <GenerateProgress />
+        ) : (
+          <Button
+            type="button"
+            size="lg"
+            disabled={disabled}
+            onClick={() => {
+              void generate();
+            }}
+          >
+            Generate
+          </Button>
+        )}
 
         <LatestResultsInline mode="copy" />
       </div>
