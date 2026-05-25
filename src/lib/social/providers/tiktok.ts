@@ -32,6 +32,52 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+type TikTokPublishingSettings = {
+  title?: string;
+  privacyLevel: string;
+  contentPostingMethod: "DIRECT_POST" | "UPLOAD";
+  allowComments: boolean;
+  allowDuet: boolean;
+  allowStitch: boolean;
+  autoAddMusic: boolean;
+  videoMadeWithAi: boolean;
+  brandedContent: boolean;
+  yourBrand: boolean;
+};
+
+function normalizeTikTokSettings(
+  settings: Record<string, unknown> | undefined,
+): TikTokPublishingSettings {
+  const privacyLevels = new Set([
+    "PUBLIC_TO_EVERYONE",
+    "MUTUAL_FOLLOW_FRIENDS",
+    "FOLLOWER_OF_CREATOR",
+    "SELF_ONLY",
+  ]);
+  const privacyLevel =
+    typeof settings?.privacyLevel === "string" &&
+    privacyLevels.has(settings.privacyLevel)
+      ? settings.privacyLevel
+      : "SELF_ONLY";
+  const contentPostingMethod =
+    settings?.contentPostingMethod === "DIRECT_POST" ? "DIRECT_POST" : "UPLOAD";
+
+  return {
+    ...(typeof settings?.title === "string" && settings.title.trim()
+      ? { title: settings.title.trim().slice(0, 90) }
+      : {}),
+    privacyLevel,
+    contentPostingMethod,
+    allowComments: settings?.allowComments !== false,
+    allowDuet: settings?.allowDuet === true,
+    allowStitch: settings?.allowStitch === true,
+    autoAddMusic: settings?.autoAddMusic === true,
+    videoMadeWithAi: settings?.videoMadeWithAi === true,
+    brandedContent: settings?.brandedContent === true,
+    yourBrand: settings?.yourBrand === true,
+  };
+}
+
 async function fetchTikTokUserInfo(accessToken: string): Promise<{
   openId: string;
   displayName: string;
@@ -165,9 +211,15 @@ async function initiateVideoPost(
   videoUrl: string,
   content: string,
   accessToken: string,
+  settings: TikTokPublishingSettings,
 ): Promise<string> {
+  const endpoint =
+    settings.contentPostingMethod === "UPLOAD"
+      ? "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
+      : "https://open.tiktokapis.com/v2/post/publish/video/init/";
+  const isDirectPost = settings.contentPostingMethod === "DIRECT_POST";
   const response = await fetch(
-    "https://open.tiktokapis.com/v2/post/publish/video/init/",
+    endpoint,
     {
       method: "POST",
       headers: {
@@ -175,13 +227,20 @@ async function initiateVideoPost(
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
-        post_info: {
-          title: content.slice(0, 2200),
-          privacy_level: "PUBLIC_TO_EVERYONE",
-          disable_comment: false,
-          disable_duet: false,
-          disable_stitch: false,
-        },
+        post_info: isDirectPost
+          ? {
+              title: content.slice(0, 2200),
+              privacy_level: settings.privacyLevel,
+              disable_comment: !settings.allowComments,
+              disable_duet: !settings.allowDuet,
+              disable_stitch: !settings.allowStitch,
+              is_aigc: settings.videoMadeWithAi,
+              brand_content_toggle: settings.brandedContent,
+              brand_organic_toggle: settings.yourBrand,
+            }
+          : {
+              title: content.slice(0, 2200),
+            },
         source_info: {
           source: "PULL_FROM_URL",
           video_url: videoUrl,
@@ -203,6 +262,7 @@ async function initiatePhotoPost(
   imageUrls: string[],
   content: string,
   accessToken: string,
+  settings: TikTokPublishingSettings,
 ): Promise<string> {
   const response = await fetch(
     "https://open.tiktokapis.com/v2/post/publish/content/init/",
@@ -214,17 +274,21 @@ async function initiatePhotoPost(
       },
       body: JSON.stringify({
         post_info: {
+          ...(settings.title ? { title: settings.title } : {}),
           description: content.slice(0, 2200),
-          privacy_level: "PUBLIC_TO_EVERYONE",
-          disable_comment: false,
-          auto_add_music: false,
+          privacy_level: settings.privacyLevel,
+          disable_comment: !settings.allowComments,
+          auto_add_music: settings.autoAddMusic,
         },
         source_info: {
           source: "PULL_FROM_URL",
           photo_images: imageUrls,
           photo_cover_index: 0,
         },
-        post_mode: "DIRECT_POST",
+        post_mode:
+          settings.contentPostingMethod === "DIRECT_POST"
+            ? "DIRECT_POST"
+            : "MEDIA_UPLOAD",
         media_type: "PHOTO",
       }),
     },
@@ -344,6 +408,7 @@ export const tikTokProvider: SocialProviderAdapter = {
     const results: PublishResult[] = [];
     for (const request of requests) {
       const media = request.media ?? [];
+      const settings = normalizeTikTokSettings(request.platformSettings);
       const hasVideo = media.some((m) => m.type === "video");
       let publishId: string;
       if (hasVideo) {
@@ -351,10 +416,20 @@ export const tikTokProvider: SocialProviderAdapter = {
         if (!videoItem) {
           throw new Error("TikTok video post requires exactly one video item");
         }
-        publishId = await initiateVideoPost(videoItem.url, request.content, accessToken);
+        publishId = await initiateVideoPost(
+          videoItem.url,
+          request.content,
+          accessToken,
+          settings,
+        );
       } else if (media.length > 0) {
         const imageUrls = media.map((m) => m.url);
-        publishId = await initiatePhotoPost(imageUrls, request.content, accessToken);
+        publishId = await initiatePhotoPost(
+          imageUrls,
+          request.content,
+          accessToken,
+          settings,
+        );
       } else {
         throw new Error("TikTok requires at least one media item (video or images)");
       }

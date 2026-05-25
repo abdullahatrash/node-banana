@@ -171,6 +171,35 @@ describe("redditProvider", () => {
       expect(body.get("url")).toBe("https://example.com/article");
     });
 
+    it("creates a link post from normalized Publishing Settings", async () => {
+      mockFetch.mockResolvedValueOnce(
+        mockFetchOk({
+          json: { errors: [], data: { name: "t3_link" } },
+        }),
+      );
+
+      await redditProvider.post("user", "access-token", [
+        {
+          postId: "spost_2",
+          content: "Link post",
+          platformSettings: {
+            subreddit: "/r/test",
+            type: "link",
+            url: "https://example.com/article",
+            title: "Interesting read",
+          },
+        },
+      ]);
+
+      const body = new URLSearchParams(
+        mockFetch.mock.calls[0][1].body as string,
+      );
+      expect(body.get("kind")).toBe("link");
+      expect(body.get("sr")).toBe("test");
+      expect(body.get("url")).toBe("https://example.com/article");
+      expect(body.get("title")).toBe("Interesting read");
+    });
+
     it("throws when subreddit is missing", async () => {
       await expect(
         redditProvider.post("user", "access-token", [

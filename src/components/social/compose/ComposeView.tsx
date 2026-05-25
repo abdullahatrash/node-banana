@@ -16,14 +16,21 @@ import { PreviewPanel } from "./PreviewPanel"
 import { MediaPool } from "./MediaPool"
 import { SchedulePicker } from "./SchedulePicker"
 import { MediaAttachments } from "./MediaAttachments"
+import { PublishingSettingsPanels } from "./PublishingSettingsPanels"
 import {
   createSocialPost,
   updateSocialPost,
   publishSocialPost,
 } from "@/lib/social/client"
+import { useSocialAccountsStore } from "@/store/socialAccountsStore"
+import {
+  pickSelectedPublishingSettings,
+  validateSelectedPublishingSettings,
+} from "@/lib/social/publishing-settings"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/components/Toast"
+import type { SocialPlatform } from "@/lib/db/schema"
 
 export function ComposeView() {
   const router = useRouter()
@@ -38,11 +45,13 @@ export function ComposeView() {
     selectedAccountIds,
     mediaUrls,
     scheduledAt,
+    platformSettings,
     postId,
     editSourceAccountId,
     isDirty,
     reset,
   } = useSocialComposerStore()
+  const accounts = useSocialAccountsStore((state) => state.accounts)
 
   const hasContent = content.trim().length > 0 || mediaUrls.length > 0
   const hasChannels = selectedAccountIds.length > 0
@@ -50,14 +59,50 @@ export function ComposeView() {
   const canSchedule = canPublish && scheduledAt && scheduledAt > new Date()
   const sourceAccountId = editSourceAccountId ?? selectedAccountIds[0] ?? null
 
+  function getAccountMaps() {
+    const platformByChannelId: Record<string, SocialPlatform> = {}
+    const labelByChannelId: Record<string, string> = {}
+    for (const account of accounts) {
+      platformByChannelId[account.id] = account.platform as SocialPlatform
+      labelByChannelId[account.id] = account.displayName
+    }
+    return { platformByChannelId, labelByChannelId }
+  }
+
+  function getPreparedSettings() {
+    const { platformByChannelId } = getAccountMaps()
+    return pickSelectedPublishingSettings(
+      selectedAccountIds,
+      platformSettings,
+      platformByChannelId,
+    )
+  }
+
+  function validateBeforePublish() {
+    const { platformByChannelId, labelByChannelId } = getAccountMaps()
+    return validateSelectedPublishingSettings({
+      selectedChannelIds: selectedAccountIds,
+      settingsByChannelId: platformSettings,
+      platformByChannelId,
+      labelByChannelId,
+      content,
+      media: mediaUrls,
+    })
+  }
+
   async function handleSaveDraft() {
     if (!hasContent || !hasChannels) return
     setIsSubmitting("draft")
     try {
+      const preparedSettings = getPreparedSettings()
+
       if (postId) {
         await updateSocialPost(postId, {
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          platformSettings: sourceAccountId
+            ? preparedSettings[sourceAccountId]
+            : undefined,
           scheduledAt: scheduledAt ? scheduledAt.toISOString() : null,
         })
       }
@@ -71,6 +116,7 @@ export function ComposeView() {
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          platformSettings: preparedSettings[accountId],
           scheduledAt: scheduledAt?.toISOString(),
         })
       }
@@ -104,14 +150,23 @@ export function ComposeView() {
 
   async function handleSchedule() {
     if (!canSchedule) return
+    const validation = validateBeforePublish()
+    if (!validation.valid) {
+      showToast(validation.errors[0] ?? "Publishing settings need attention", "error")
+      return
+    }
     setIsSubmitting("schedule")
     try {
       const publishQueue: string[] = []
+      const preparedSettings = getPreparedSettings()
 
       if (postId) {
         const updated = await updateSocialPost(postId, {
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          platformSettings: sourceAccountId
+            ? preparedSettings[sourceAccountId]
+            : undefined,
           scheduledAt: scheduledAt!.toISOString(),
         })
         publishQueue.push(updated.id)
@@ -126,6 +181,7 @@ export function ComposeView() {
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          platformSettings: preparedSettings[accountId],
           scheduledAt: scheduledAt!.toISOString(),
         })
         publishQueue.push(created.id)
@@ -154,14 +210,23 @@ export function ComposeView() {
 
   async function handlePublishNow() {
     if (!canPublish) return
+    const validation = validateBeforePublish()
+    if (!validation.valid) {
+      showToast(validation.errors[0] ?? "Publishing settings need attention", "error")
+      return
+    }
     setIsSubmitting("publish")
     try {
       const publishQueue: string[] = []
+      const preparedSettings = getPreparedSettings()
 
       if (postId) {
         const updated = await updateSocialPost(postId, {
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          platformSettings: sourceAccountId
+            ? preparedSettings[sourceAccountId]
+            : undefined,
           scheduledAt: null,
         })
         publishQueue.push(updated.id)
@@ -176,6 +241,7 @@ export function ComposeView() {
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          platformSettings: preparedSettings[accountId],
         })
         publishQueue.push(created.id)
       }
@@ -228,6 +294,7 @@ export function ComposeView() {
         {/* Left: editor */}
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-6">
           <PlatformSelector />
+          <PublishingSettingsPanels />
           <PostEditor />
           <MediaAttachments onOpenMediaPool={() => setMediaPoolOpen(true)} />
           <MediaPool open={mediaPoolOpen} onOpenChange={setMediaPoolOpen} />

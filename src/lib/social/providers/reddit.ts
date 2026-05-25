@@ -35,6 +35,10 @@ function makeBasicAuth(clientId: string, clientSecret: string): string {
   return Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 }
 
+function normalizeSubreddit(value: string): string {
+  return value.trim().replace(/^\/?r\//i, "");
+}
+
 async function fetchRedditUser(
   accessToken: string,
 ): Promise<{ id: string; name: string; iconImg?: string }> {
@@ -195,23 +199,31 @@ export const redditProvider: SocialProviderAdapter = {
         throw new Error("Reddit post requires a non-empty title or content.");
       }
 
+      const postType = typeof settings.type === "string" ? settings.type : "self";
       const link =
-        typeof settings.link === "string" ? settings.link.trim() : "";
+        typeof settings.url === "string"
+          ? settings.url.trim()
+          : typeof settings.link === "string"
+            ? settings.link.trim()
+            : "";
       const hasMedia = (request.media?.length ?? 0) > 0;
       if (hasMedia && !link) {
         throw new Error(
           "Reddit provider currently supports text or link posts; media uploads are not supported.",
         );
       }
+      if (postType === "link" && !link) {
+        throw new Error("Reddit link posts require platformSettings.url.");
+      }
 
       const form = new URLSearchParams({
         api_type: "json",
-        sr: subreddit,
+        sr: normalizeSubreddit(subreddit),
         title,
-        kind: link ? "link" : "self",
+        kind: postType === "link" || link ? "link" : "self",
         resubmit: "true",
       });
-      if (link) {
+      if (postType === "link" || link) {
         form.set("url", link);
       } else {
         form.set("text", request.content);
@@ -248,8 +260,8 @@ export const redditProvider: SocialProviderAdapter = {
 
       results.push({
         postId: request.postId,
-        platformPostId: data.json?.data?.name ?? `reddit:${subreddit}:${Date.now()}`,
-        platformPostUrl: data.json?.data?.url ?? `https://www.reddit.com/r/${subreddit}/new`,
+        platformPostId: data.json?.data?.name ?? `reddit:${normalizeSubreddit(subreddit)}:${Date.now()}`,
+        platformPostUrl: data.json?.data?.url ?? `https://www.reddit.com/r/${normalizeSubreddit(subreddit)}/new`,
         status: "published",
       });
     }

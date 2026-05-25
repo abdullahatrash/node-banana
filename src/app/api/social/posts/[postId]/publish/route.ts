@@ -5,12 +5,16 @@ import { withApiPermission } from "@/lib/studio/authz";
 import {
   claimSocialDispatchRun,
   finalizeSocialDispatchRun,
+  getSocialAccountById,
   getSocialPost,
   hasChainChildren,
   updatePostStatus,
   SocialPostNotFoundError,
   SocialPostStateTransitionError,
 } from "@/lib/social/repository";
+import type { SocialPlatform } from "@/lib/db/schema";
+import type { PublishMediaItem } from "@/lib/social/provider-interface";
+import { validateSelectedPublishingSettings } from "@/lib/social/publishing-settings";
 import { resolveWorkflowRunRef } from "@/lib/social/workflow-utils";
 import { emitSocialEvent } from "@/lib/social/events";
 import { isRecord } from "@/lib/social/utils";
@@ -79,6 +83,30 @@ function extractWorkflowContext(
   return Object.keys(context).length > 0 ? context : undefined;
 }
 
+function toPublishMediaItems(
+  mediaUrls: Array<{ type: string; url: string; alt?: string }> | null | undefined,
+): PublishMediaItem[] {
+  if (!Array.isArray(mediaUrls)) return [];
+
+  return mediaUrls.flatMap((item) => {
+    if (
+      (item.type !== "image" && item.type !== "video") ||
+      typeof item.url !== "string" ||
+      !item.url.trim()
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        type: item.type,
+        url: item.url,
+        ...(item.alt ? { alt: item.alt } : {}),
+      },
+    ];
+  });
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ postId: string }> },
@@ -123,6 +151,32 @@ export async function POST(
           error: forceNow && FORCE_NOW_STATES.has(post.status)
             ? `Cannot publish a post with status "${post.status}" immediately unless it is scheduled for the future.`
             : `Cannot publish a post with status "${post.status}". Only draft and failed posts can be published.`,
+        },
+        { status: 400 },
+      );
+    }
+
+    const account = await getSocialAccountById(post.socialAccountId);
+    const publishingSettingsValidation = validateSelectedPublishingSettings({
+      selectedChannelIds: [post.socialAccountId],
+      settingsByChannelId: {
+        [post.socialAccountId]: post.platformSettings ?? {},
+      },
+      platformByChannelId: {
+        [post.socialAccountId]: account.platform as SocialPlatform,
+      },
+      labelByChannelId: {
+        [post.socialAccountId]: account.displayName ?? account.platform,
+      },
+      content: post.content ?? "",
+      media: toPublishMediaItems(post.mediaUrls),
+    });
+
+    if (!publishingSettingsValidation.valid) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: publishingSettingsValidation.errors[0],
         },
         { status: 400 },
       );

@@ -43,7 +43,7 @@ export function PlatformSelector() {
           return (
             <button
               key={account.id}
-              onClick={() => toggleAccount(account.id)}
+              onClick={() => toggleAccount(account.id, platform)}
               title={`${PLATFORM_LABELS[platform]}${account.username ? ` · @${account.username}` : ""}`}
               className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-all ${
                 isSelected

@@ -101,6 +101,7 @@ async function publishSinglePostWorkflow(
     post.content,
     processedMedia,
     account,
+    post.platformSettings,
   );
 
   // Step 6: Finalize — update post with platform URL
@@ -216,6 +217,7 @@ interface PostData {
   workspaceId: string;
   content: string | null;
   mediaUrls: Array<{ type: string; url: string; alt?: string }> | null;
+  platformSettings: Record<string, unknown> | null;
   socialAccountId: string;
   scheduledAt: string | null;
   status: string;
@@ -262,6 +264,7 @@ async function loadPost(
     workspaceId,
     content: post.content,
     mediaUrls: post.mediaUrls,
+    platformSettings: post.platformSettings,
     socialAccountId: post.socialAccountId,
     scheduledAt: post.scheduledAt?.toISOString() ?? null,
     status: "publishing",
@@ -310,6 +313,7 @@ async function reloadPostBeforePublish(
     workspaceId,
     content: post.content,
     mediaUrls: post.mediaUrls,
+    platformSettings: post.platformSettings,
     socialAccountId: post.socialAccountId,
     scheduledAt: post.scheduledAt?.toISOString() ?? null,
     status: "publishing",
@@ -480,6 +484,7 @@ async function publishStep(
   content: string | null,
   media: ProcessedMediaItem[],
   account: AccountData,
+  platformSettings: Record<string, unknown> | null,
 ): Promise<PublishResultData> {
   "use step";
 
@@ -533,6 +538,7 @@ async function publishStep(
           postId,
           content: content || "",
           media: media.length > 0 ? media : undefined,
+          platformSettings: platformSettings ?? undefined,
         },
       ],
       { accessTokenSecret },
