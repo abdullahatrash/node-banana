@@ -14,6 +14,7 @@ describe("CopyForm", () => {
       copyModelId: "gemini-2.5-flash",
       batchCount: 1,
       isGenerating: false,
+      outputLanguage: "en",
     });
   });
 
@@ -45,5 +46,18 @@ describe("CopyForm", () => {
     useSimpleStudioStore.setState({ prompt: "" });
     render(<CopyForm />);
     expect(screen.getByRole("button", { name: /generate/i })).toBeDisabled();
+  });
+
+  it("renders output language buttons", () => {
+    render(<CopyForm />);
+    expect(screen.getByRole("button", { name: "English" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "عربي" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Both" })).toBeInTheDocument();
+  });
+
+  it("clicking an output language updates the store", async () => {
+    render(<CopyForm />);
+    await userEvent.click(screen.getByRole("button", { name: "Both" }));
+    expect(useSimpleStudioStore.getState().outputLanguage).toBe("both");
   });
 });
