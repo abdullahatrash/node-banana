@@ -70,7 +70,7 @@ function CommentsNavigationIcon() {
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
-  const isSimpleMode = pathname?.startsWith("/studio/simple");
+  const isSimpleMode = pathname?.startsWith("/simple-studio");
   const { data: session } = authClient.useSession();
   const {
     workflowName,
@@ -316,7 +316,7 @@ export function Header() {
           <div className="flex items-center ms-2 md:ms-4 ps-2 md:ps-4 md:border-s border-neutral-700">
             <div className="flex items-center bg-neutral-800 rounded-md p-0.5">
               <button
-                onClick={() => router.push("/studio/simple")}
+                onClick={() => router.push("/simple-studio/images")}
                 className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
                   isSimpleMode
                     ? "bg-neutral-700 text-neutral-100"

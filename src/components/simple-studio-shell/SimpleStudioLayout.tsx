@@ -8,6 +8,7 @@ import { SimpleStudioSiteHeader } from "./SimpleStudioSiteHeader";
 import { SavePromptDialog } from "./SavePromptDialog";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { modeFromPathname } from "./urlToMode";
+import { useGenerateShortcut } from "./useGenerateShortcut";
 
 interface SimpleStudioLayoutProps {
   children: React.ReactNode;
@@ -26,6 +27,8 @@ export function SimpleStudioLayout({ children }: SimpleStudioLayoutProps) {
       setMode(mode);
     }
   }, [pathname, setMode]);
+
+  useGenerateShortcut(pathname);
 
   // Load recent results once on first mount
   if (!initialized.current) {
