@@ -56,6 +56,10 @@ _Avoid_: CW, spoiler text, sensitive flag
 A **Publishing Setting** that controls the audience reach of a post on federated platforms. Mastodon supports public, unlisted, private, and direct.
 _Avoid_: Privacy setting, audience
 
+**Social Copilot**:
+A human-in-the-loop conversational assistant inside the Social Hub that helps a creator draft and rewrite post content, generate and attach media, select **Channels**, run **Publish Validation**, and create a scheduled draft **Post**. It proposes actions and edits drafts, but never schedules or publishes without explicit creator confirmation. Distinct from **Automation** (the rules-and-tasks engine on the existing `/social/agents` page).
+_Avoid_: Agent, AI agent, copilot bot, assistant, bot
+
 ## Relationships
 
 - A **Workspace** has zero or more **Channels**.
