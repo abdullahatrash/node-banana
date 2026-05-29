@@ -10,6 +10,7 @@ import {
 } from "../drafts";
 import { getPublishingSettingsSchema } from "../settings";
 import { listMediaPoolAssets, attachMedia } from "../media";
+import { validatePublishForDraft } from "../validate";
 import type { SocialPlatform } from "@/lib/db/schema";
 
 /**
@@ -113,6 +114,17 @@ export function createCopilotTools(ctx: CopilotContext) {
         assetIds: z.array(z.string()).min(1).describe("Asset ids to attach"),
       }),
       execute: async ({ postId, assetIds }) => attachMedia(ctx, postId, assetIds),
+    }),
+
+    validatePublish: tool({
+      description:
+        "Check whether a draft is ready to publish. Returns per-channel readiness with reasons for anything blocking (content length, missing required Publishing Settings, empty post). Always run this before suggesting the user schedule or publish.",
+      inputSchema: z.object({
+        postId: z.string().describe("The draft post id"),
+      }),
+      execute: async ({ postId }) => ({
+        readiness: await validatePublishForDraft(ctx, postId),
+      }),
     }),
   };
 }

@@ -20,6 +20,7 @@ import { useWorkflowStore } from "@/store/workflowStore"
 import { buildLlmHeaders } from "@/store/utils/buildApiHeaders"
 import type { CopilotChannel } from "@/lib/social/copilot/channels"
 import type { CopilotDraft } from "@/lib/social/copilot/drafts"
+import type { CopilotReadiness } from "@/lib/social/copilot/validate"
 
 // SSR-safe "are we on the client yet" signal via useSyncExternalStore:
 // the server snapshot is false and the client snapshot is true, so the first
@@ -75,6 +76,30 @@ function DraftLinks({ drafts }: { drafts: CopilotDraft[] }) {
           {d.content ? `“${d.content.slice(0, 40)}${d.content.length > 40 ? "…" : ""}”` : "Draft"} · Open draft →
         </Link>
       ))}
+    </div>
+  )
+}
+
+/** Render per-channel publish readiness as a ready/blocked chip with reasons. */
+function ReadinessChip({ readiness }: { readiness: CopilotReadiness }) {
+  return (
+    <div
+      className={`rounded-md border px-2 py-1 text-xs ${
+        readiness.ready
+          ? "border-emerald-500/40 bg-emerald-500/10"
+          : "border-amber-500/40 bg-amber-500/10"
+      }`}
+    >
+      <span className="font-medium">
+        {readiness.platform}: {readiness.ready ? "Ready to publish" : "Not ready"}
+      </span>
+      {!readiness.ready && readiness.reasons.length > 0 && (
+        <ul className="mt-1 list-disc ps-4">
+          {readiness.reasons.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -222,6 +247,13 @@ export function CopilotChat() {
                 p.state === "output-available",
             ) ?? []
 
+            const readinessParts = message.parts?.filter(
+              (p) =>
+                p.type === "tool-validatePublish" &&
+                "state" in p &&
+                p.state === "output-available",
+            ) ?? []
+
             const draftParts = message.parts?.filter(
               (p) =>
                 (p.type === "tool-createDraft" ||
@@ -245,6 +277,12 @@ export function CopilotChat() {
                     }).output
                     const drafts = output?.drafts ?? (output?.draft ? [output.draft] : [])
                     return <DraftLinks key={`d${i}`} drafts={drafts} />
+                  })}
+                  {readinessParts.map((p, i) => {
+                    const output = (p as { output?: { readiness?: CopilotReadiness } }).output
+                    return output?.readiness ? (
+                      <ReadinessChip key={`r${i}`} readiness={output.readiness} />
+                    ) : null
                   })}
                   {text &&
                     (message.role === "assistant" ? (
