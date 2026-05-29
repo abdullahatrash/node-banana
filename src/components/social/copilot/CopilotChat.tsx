@@ -46,7 +46,9 @@ function ChannelsToolOutput({ channels }: { channels: CopilotChannel[] }) {
 
 export function CopilotChat() {
   const providerSettings = useWorkflowStore((s) => s.providerSettings)
+  const updateProviderApiKey = useWorkflowStore((s) => s.updateProviderApiKey)
   const anthropicKey = providerSettings.providers.anthropic?.apiKey ?? ""
+  const [keyInput, setKeyInput] = useState("")
 
   const headersRef = useRef<Record<string, string>>({})
   headersRef.current = buildLlmHeaders("anthropic", providerSettings)
@@ -93,11 +95,32 @@ export function CopilotChat() {
 
         {!anthropicKey && (
           <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-            Add your Anthropic API key in{" "}
-            <Link href="/settings" className="underline">
-              Settings
-            </Link>{" "}
-            to use the copilot.
+            <p className="font-medium">Add your Anthropic API key</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The copilot runs on your own key. It’s stored locally in this browser and only sent to call the model.
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const value = keyInput.trim()
+                if (!value) return
+                updateProviderApiKey("anthropic", value)
+                setKeyInput("")
+              }}
+              className="mt-2 flex gap-2"
+            >
+              <input
+                type="password"
+                value={keyInput}
+                onChange={(e) => setKeyInput(e.target.value)}
+                placeholder="sk-ant-…"
+                autoComplete="off"
+                className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+              <Button type="submit" size="sm" disabled={!keyInput.trim()}>
+                Save key
+              </Button>
+            </form>
           </div>
         )}
 
