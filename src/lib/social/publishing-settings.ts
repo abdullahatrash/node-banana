@@ -160,10 +160,38 @@ const redditDefinition: PublishingSettingsDefinition = {
   },
 };
 
+const mastodonVisibilities = new Set(["public", "unlisted", "private", "direct"])
+
+const mastodonDefinition: PublishingSettingsDefinition = {
+  platform: "mastodon",
+  label: "Mastodon",
+  defaults: {
+    visibility: "public",
+    contentWarning: "",
+  },
+  normalize(settings) {
+    return {
+      visibility:
+        typeof settings?.visibility === "string" &&
+        mastodonVisibilities.has(settings.visibility)
+          ? settings.visibility
+          : "public",
+      contentWarning:
+        typeof settings?.contentWarning === "string"
+          ? settings.contentWarning.trim()
+          : "",
+    }
+  },
+  validateForPublish(_settings, _context) {
+    return { valid: true, errors: [] }
+  },
+}
+
 const definitions = new Map<SocialPlatform, PublishingSettingsDefinition>([
   ["youtube", youtubeDefinition],
   ["tiktok", tiktokDefinition],
   ["reddit", redditDefinition],
+  ["mastodon", mastodonDefinition],
 ]);
 
 export function getPublishingSettingsDefinition(

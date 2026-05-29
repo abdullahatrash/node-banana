@@ -14,6 +14,8 @@ import "./youtube";
 import "./reddit";
 import "./threads";
 import "./pinterest";
+import "./bluesky";
+import "./mastodon";
 
 export { linkedInProvider } from "./linkedin";
 export { xProvider } from "./x";
@@ -24,3 +26,5 @@ export { instagramProvider } from "./instagram";
 export { redditProvider } from "./reddit";
 export { threadsProvider } from "./threads";
 export { pinterestProvider } from "./pinterest";
+export { blueskyProvider } from "./bluesky";
+export { mastodonProvider } from "./mastodon";

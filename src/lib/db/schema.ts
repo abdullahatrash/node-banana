@@ -446,6 +446,8 @@ export const socialPlatformEnum = pgEnum("social_platform", [
   "facebook",
   "youtube",
   "reddit",
+  "bluesky",
+  "mastodon",
 ]);
 
 export const socialPostStatusEnum = pgEnum("social_post_status", [
@@ -673,6 +675,28 @@ export const socialOAuthSelectionSessions = pgTable(
     expiresAtIdx: index("social_oauth_selection_sessions_expires_at_idx").on(
       table.expiresAt,
     ),
+  }),
+);
+
+export const socialMastodonInstances = pgTable(
+  "social_mastodon_instances",
+  {
+    id: text("id").primaryKey(),
+    instanceUrl: text("instance_url").notNull(),
+    clientId: text("client_id").notNull(),
+    clientSecret: text("client_secret").notNull(),
+    maxCharacters: integer("max_characters").notNull().default(500),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    instanceUrlUnique: uniqueIndex(
+      "social_mastodon_instances_url_unique",
+    ).on(table.instanceUrl),
   }),
 );
 

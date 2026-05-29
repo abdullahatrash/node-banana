@@ -131,3 +131,38 @@ describe("social/publishing-settings", () => {
     });
   });
 });
+
+describe("mastodon publishing settings", () => {
+  it("defaults to public visibility with no content warning", () => {
+    const definition = getPublishingSettingsDefinition("mastodon")
+    expect(definition.defaults).toEqual({
+      visibility: "public",
+      contentWarning: "",
+    })
+  })
+
+  it("normalizes valid visibility values", () => {
+    const definition = getPublishingSettingsDefinition("mastodon")
+    const result = definition.normalize({ visibility: "unlisted", contentWarning: "spoiler" })
+    expect(result.visibility).toBe("unlisted")
+    expect(result.contentWarning).toBe("spoiler")
+  })
+
+  it("falls back to public for invalid visibility", () => {
+    const definition = getPublishingSettingsDefinition("mastodon")
+    const result = definition.normalize({ visibility: "invalid" })
+    expect(result.visibility).toBe("public")
+  })
+
+  it("trims content warning whitespace", () => {
+    const definition = getPublishingSettingsDefinition("mastodon")
+    const result = definition.normalize({ contentWarning: "  spoiler  " })
+    expect(result.contentWarning).toBe("spoiler")
+  })
+
+  it("validates successfully with defaults", () => {
+    const definition = getPublishingSettingsDefinition("mastodon")
+    const result = definition.validateForPublish(definition.defaults, { content: "Hello", media: [] })
+    expect(result.valid).toBe(true)
+  })
+})

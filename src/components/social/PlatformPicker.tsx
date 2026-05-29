@@ -10,6 +10,8 @@ import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformIcon } from "./shared/PlatformIcon"
 import { PLATFORM_LABELS } from "@/lib/social/constants"
 import { useToast } from "@/components/Toast"
+import { BlueskyConnectModal } from "./BlueskyConnectModal"
+import { MastodonConnectModal } from "./MastodonConnectModal"
 import {
   Dialog,
   DialogContent,
@@ -46,6 +48,8 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
     providerCache ?? [],
   )
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null)
+  const [blueskyModalOpen, setBlueskyModalOpen] = useState(false)
+  const [mastodonModalOpen, setMastodonModalOpen] = useState(false)
   const popupRef = useRef<Window | null>(null)
   const popupCheckRef = useRef<number | null>(null)
   const { show: showToast } = useToast()
@@ -102,6 +106,15 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
   }, [open, providers.length, showToast])
 
   async function handleConnect(platform: string) {
+    if (platform === "bluesky") {
+      setBlueskyModalOpen(true)
+      return
+    }
+    if (platform === "mastodon") {
+      setMastodonModalOpen(true)
+      return
+    }
+
     setConnectingPlatform(platform)
     const width = 760
     const height = 760
@@ -179,6 +192,20 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
           })}
         </div>
       </DialogContent>
+      <BlueskyConnectModal
+        open={blueskyModalOpen}
+        onOpenChange={(v) => {
+          setBlueskyModalOpen(v)
+          if (!v) fetchAccounts()
+        }}
+      />
+      <MastodonConnectModal
+        open={mastodonModalOpen}
+        onOpenChange={(v) => {
+          setMastodonModalOpen(v)
+          if (!v) fetchAccounts()
+        }}
+      />
     </Dialog>
   )
 }

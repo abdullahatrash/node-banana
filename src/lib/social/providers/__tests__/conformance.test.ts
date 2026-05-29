@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  blueskyProvider,
   facebookProvider,
   instagramProvider,
   linkedInProvider,
+  mastodonProvider,
   pinterestProvider,
   redditProvider,
   threadsProvider,
@@ -22,6 +24,8 @@ const providers = [
   redditProvider,
   threadsProvider,
   pinterestProvider,
+  blueskyProvider,
+  mastodonProvider,
 ] as const;
 
 const classificationFixtures: Record<
@@ -72,6 +76,16 @@ const classificationFixtures: Record<
     token: "401 Unauthorized token expired",
     badBody: "400 board validation error",
     retry: "429 rate limit exceeded",
+  },
+  bluesky: {
+    token: "ExpiredToken session expired",
+    badBody: "InvalidRequest: record is invalid",
+    retry: "RateLimitExceeded",
+  },
+  mastodon: {
+    token: "401 Unauthorized token invalid",
+    badBody: "422 Unprocessable validation too long",
+    retry: "429 Rate limit exceeded",
   },
 };
 
