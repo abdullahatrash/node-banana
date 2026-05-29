@@ -5,7 +5,7 @@ import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport } from "ai"
 import ReactMarkdown from "react-markdown"
 import Link from "next/link"
-import { Loader2Icon, SendIcon, SparklesIcon } from "lucide-react"
+import { KeyRoundIcon, Loader2Icon, SendIcon, SparklesIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWorkflowStore } from "@/store/workflowStore"
 import { buildLlmHeaders } from "@/store/utils/buildApiHeaders"
@@ -49,6 +49,7 @@ export function CopilotChat() {
   const updateProviderApiKey = useWorkflowStore((s) => s.updateProviderApiKey)
   const anthropicKey = providerSettings.providers.anthropic?.apiKey ?? ""
   const [keyInput, setKeyInput] = useState("")
+  const [showKeyEntry, setShowKeyEntry] = useState(false)
 
   const headersRef = useRef<Record<string, string>>({})
   headersRef.current = buildLlmHeaders("anthropic", providerSettings)
@@ -71,7 +72,13 @@ export function CopilotChat() {
 
   const { messages, sendMessage, status } = useChat({
     transport,
-    onError: (error) => setErrorMessage(error.message),
+    onError: (error) => {
+      setErrorMessage(error.message)
+      // Anthropic rejected the key — resurface the key field so it can be fixed.
+      if (/x-api-key|api[- ]?key|unauthor|authentication|invalid.*key|\b401\b/i.test(error.message)) {
+        setShowKeyEntry(true)
+      }
+    },
   })
 
   const isLoading = status === "streaming" || status === "submitted"
@@ -82,6 +89,20 @@ export function CopilotChat() {
 
   return (
     <div className="flex flex-1 flex-col">
+      <div className="flex items-center justify-between border-b px-4 py-2">
+        <span className="text-sm font-medium">Copilot</span>
+        {anthropicKey && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowKeyEntry((v) => !v)}
+          >
+            <KeyRoundIcon className="mr-1 size-3.5" />
+            API key
+          </Button>
+        )}
+      </div>
       <div className="flex-1 space-y-4 overflow-y-auto p-4 md:p-6">
         {messages.length === 0 && (
           <div className="mx-auto max-w-md pt-10 text-center">
@@ -93,11 +114,13 @@ export function CopilotChat() {
           </div>
         )}
 
-        {!anthropicKey && (
+        {(!anthropicKey || showKeyEntry) && (
           <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-            <p className="font-medium">Add your Anthropic API key</p>
+            <p className="font-medium">
+              {anthropicKey ? "Update your Anthropic API key" : "Add your Anthropic API key"}
+            </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              The copilot runs on your own key. It’s stored locally in this browser and only sent to call the model.
+              The copilot runs on your own key (starts with <code>sk-ant-</code>). It’s stored locally in this browser and only sent to call the model.
             </p>
             <form
               onSubmit={(e) => {
@@ -106,6 +129,8 @@ export function CopilotChat() {
                 if (!value) return
                 updateProviderApiKey("anthropic", value)
                 setKeyInput("")
+                setShowKeyEntry(false)
+                setErrorMessage(null)
               }}
               className="mt-2 flex gap-2"
             >
@@ -120,6 +145,19 @@ export function CopilotChat() {
               <Button type="submit" size="sm" disabled={!keyInput.trim()}>
                 Save key
               </Button>
+              {anthropicKey && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setShowKeyEntry(false)
+                    setKeyInput("")
+                  }}
+                >
+                  Cancel
+                </Button>
+              )}
             </form>
           </div>
         )}
