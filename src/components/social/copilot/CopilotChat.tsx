@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport } from "ai"
 import Link from "next/link"
@@ -61,6 +61,12 @@ export function CopilotChat() {
   const [showKeyEntry, setShowKeyEntry] = useState(false)
   const [input, setInput] = useState("")
 
+  // providerSettings is hydrated from localStorage, which is empty during SSR.
+  // Gate key-dependent UI until mount so server and first client render agree.
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => setHydrated(true), [])
+  const hasKey = hydrated && Boolean(anthropicKey)
+
   // Inject the user's BYOK key on every request (read fresh from the store).
   const buildHeaders = useCallback(
     () => buildLlmHeaders("anthropic", useWorkflowStore.getState().providerSettings),
@@ -105,7 +111,7 @@ export function CopilotChat() {
     <div className="flex flex-1 flex-col">
       <div className="flex items-center justify-between border-b px-4 py-2">
         <span className="text-sm font-medium">Copilot</span>
-        {anthropicKey && (
+        {hasKey && (
           <Button
             type="button"
             variant="ghost"
@@ -118,10 +124,10 @@ export function CopilotChat() {
         )}
       </div>
 
-      {(!anthropicKey || showKeyEntry) && (
+      {hydrated && (!hasKey || showKeyEntry) && (
         <div className="m-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
           <p className="font-medium">
-            {anthropicKey ? "Update your Anthropic API key" : "Add your Anthropic API key"}
+            {hasKey ? "Update your Anthropic API key" : "Add your Anthropic API key"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             The copilot runs on your own key (starts with <code>sk-ant-</code>). It’s stored locally in this browser and only sent to call the model.
@@ -149,7 +155,7 @@ export function CopilotChat() {
             <Button type="submit" size="sm" disabled={!keyInput.trim()}>
               Save key
             </Button>
-            {anthropicKey && (
+            {hasKey && (
               <Button
                 type="button"
                 variant="ghost"
