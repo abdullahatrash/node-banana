@@ -2,7 +2,7 @@
 
 import { useCallback, useState, useSyncExternalStore } from "react"
 import { useChat } from "@ai-sdk/react"
-import { DefaultChatTransport } from "ai"
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithApprovalResponses } from "ai"
 import Link from "next/link"
 import { KeyRoundIcon, SendIcon, SparklesIcon, SquareIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -136,8 +136,9 @@ export function CopilotChat() {
   )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  const { messages, sendMessage, status, stop } = useChat({
+  const { messages, sendMessage, status, stop, addToolApprovalResponse } = useChat({
     transport,
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     onError: (error) => {
       setErrorMessage(error.message)
       if (/x-api-key|api[- ]?key|unauthor|authentication|invalid.*key|\b401\b/i.test(error.message)) {
@@ -254,6 +255,20 @@ export function CopilotChat() {
                 p.state === "output-available",
             ) ?? []
 
+            const approvalParts = message.parts?.filter(
+              (p) =>
+                (p.type === "tool-scheduleDraft" || p.type === "tool-publishNow") &&
+                "state" in p &&
+                p.state === "approval-requested",
+            ) ?? []
+
+            const commitResultParts = message.parts?.filter(
+              (p) =>
+                (p.type === "tool-scheduleDraft" || p.type === "tool-publishNow") &&
+                "state" in p &&
+                p.state === "output-available",
+            ) ?? []
+
             const draftParts = message.parts?.filter(
               (p) =>
                 (p.type === "tool-createDraft" ||
@@ -283,6 +298,58 @@ export function CopilotChat() {
                     return output?.readiness ? (
                       <ReadinessChip key={`r${i}`} readiness={output.readiness} />
                     ) : null
+                  })}
+                  {approvalParts.map((p, i) => {
+                    const action = p.type === "tool-scheduleDraft" ? "Schedule this post" : "Publish this post now"
+                    const input = (p as { input?: { scheduledAt?: string } }).input
+                    const approvalId = (p as { approval?: { id?: string } }).approval?.id
+                    return (
+                      <div
+                        key={`ap${i}`}
+                        className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs"
+                      >
+                        <p className="font-medium">{action}?</p>
+                        {input?.scheduledAt && (
+                          <p className="text-muted-foreground">
+                            At {new Date(input.scheduledAt).toLocaleString()}
+                          </p>
+                        )}
+                        <div className="mt-2 flex gap-2">
+                          <Button
+                            size="sm"
+                            disabled={!approvalId}
+                            onClick={() =>
+                              approvalId && addToolApprovalResponse({ id: approvalId, approved: true })
+                            }
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={!approvalId}
+                            onClick={() =>
+                              approvalId && addToolApprovalResponse({ id: approvalId, approved: false })
+                            }
+                          >
+                            Deny
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {commitResultParts.map((p, i) => {
+                    const out = (p as { output?: { scheduledAt?: string | null } }).output
+                    return (
+                      <div
+                        key={`cr${i}`}
+                        className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs"
+                      >
+                        {out?.scheduledAt
+                          ? `Scheduled for ${new Date(out.scheduledAt).toLocaleString()}`
+                          : "Queued to publish now"}
+                      </div>
+                    )
                   })}
                   {text &&
                     (message.role === "assistant" ? (

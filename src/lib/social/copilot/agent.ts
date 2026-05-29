@@ -11,7 +11,11 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { CopilotProvider } from "./byok";
 import type { CopilotContext } from "./context";
-import { createCopilotTools } from "./tools";
+import {
+  createCopilotTools,
+  COMMIT_TOOL_NAMES,
+  DRAFT_CONTEXT_TOOL_NAMES,
+} from "./tools";
 import { SOCIAL_COPILOT_SYSTEM_PROMPT } from "./prompt";
 
 export interface CopilotRunConfig {
@@ -48,11 +52,29 @@ export function buildSocialCopilotAgent({
   apiKey,
   ctx,
 }: CopilotRunConfig) {
+  const tools = createCopilotTools(ctx);
+  const stagedTools = Object.keys(tools).filter(
+    (name) => !COMMIT_TOOL_NAMES.includes(name),
+  );
+
   return new ToolLoopAgent({
     model: resolveModel(provider, modelId, apiKey),
     instructions: SOCIAL_COPILOT_SYSTEM_PROMPT,
-    tools: createCopilotTools(ctx),
+    tools,
     stopWhen: stepCountIs(12),
+    // Hide the irreversible commit tools until the agent is working with a
+    // concrete draft, so it can't try to schedule/publish nothing.
+    prepareStep: ({ steps }) => {
+      const hasDraftContext = steps.some((step) =>
+        step.toolCalls?.some((call) =>
+          DRAFT_CONTEXT_TOOL_NAMES.includes(call.toolName),
+        ),
+      );
+      if (!hasDraftContext) {
+        return { activeTools: stagedTools as Array<keyof typeof tools> };
+      }
+      return {};
+    },
   });
 }
 
