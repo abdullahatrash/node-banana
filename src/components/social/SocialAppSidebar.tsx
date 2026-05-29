@@ -16,6 +16,7 @@ import {
   BotIcon,
   PuzzleIcon,
   BellIcon,
+  SparklesIcon,
 } from "lucide-react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformIcon } from "./shared/PlatformIcon"
@@ -42,6 +43,7 @@ import { authClient } from "@/lib/auth/client"
 const NAV_ITEMS = [
   { href: "/social/calendar", label: "Calendar", icon: CalendarIcon },
   { href: "/social/compose", label: "Compose", icon: PenSquareIcon },
+  { href: "/social/copilot", label: "Copilot", icon: SparklesIcon },
   { href: "/social/posts", label: "Posts", icon: FileTextIcon },
   { href: "/social/channels", label: "Channels", icon: ActivityIcon },
   { href: "/social/events", label: "Events", icon: BellIcon },
