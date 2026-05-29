@@ -1,5 +1,6 @@
 import {
   createSocialPost,
+  deleteSocialPost,
   getSocialPost,
   listSocialAccounts,
   listSocialPosts,
@@ -23,6 +24,19 @@ type SocialPostRow = {
   content: string | null;
   scheduledAt: Date | string | null;
 };
+
+/** A committed (non-draft) post on the workspace calendar. */
+export interface CopilotCalendarEntry {
+  postId: string;
+  channelId: string;
+  status: string;
+  scheduledAt: string | null;
+  content: string | null;
+}
+
+function toIso(value: Date | string | null): string | null {
+  return value instanceof Date ? value.toISOString() : (value ?? null);
+}
 
 function toCopilotDraft(row: SocialPostRow): CopilotDraft {
   return {
@@ -108,4 +122,64 @@ export async function updateDraftForWorkspace(
 
   const row = await updateSocialPost(ctx.workspaceId, postId, data);
   return toCopilotDraft(row as SocialPostRow);
+}
+
+/** Delete a draft, scoped to the workspace. Backs the `deleteDraft` tool. */
+export async function deleteDraftForWorkspace(
+  ctx: CopilotContext,
+  postId: string,
+): Promise<{ postId: string; deleted: true }> {
+  await deleteSocialPost(ctx.workspaceId, postId);
+  return { postId, deleted: true };
+}
+
+/**
+ * Duplicate a draft into a new draft, optionally retargeting a different
+ * Channel (enables Reddit one-subreddit-per-post fanout and retargeting, ADR
+ * 0004). Backs the `duplicateDraft` tool.
+ */
+export async function duplicateDraftForWorkspace(
+  ctx: CopilotContext,
+  postId: string,
+  opts?: { channelId?: string },
+): Promise<CopilotDraft> {
+  const source = (await getSocialPost(ctx.workspaceId, postId)) as SocialPostRow & {
+    mediaUrls: Array<{ type: string; url: string; alt?: string }> | null;
+    platformSettings: Record<string, unknown> | null;
+  };
+
+  const row = await createSocialPost({
+    workspaceId: ctx.workspaceId,
+    socialAccountId: opts?.channelId ?? source.socialAccountId,
+    content: source.content ?? undefined,
+    mediaUrls: source.mediaUrls ?? undefined,
+    platformSettings: source.platformSettings ?? undefined,
+    createdByUserId: ctx.userId,
+  });
+  return toCopilotDraft(row as SocialPostRow);
+}
+
+/**
+ * List committed (non-draft) posts whose calendar date falls in the range, so
+ * the copilot can reason about cadence and avoid collisions. Backs the
+ * `listScheduledPosts` tool.
+ */
+export async function listScheduledPostsForWorkspace(
+  ctx: CopilotContext,
+  range: { start: string; end: string },
+): Promise<CopilotCalendarEntry[]> {
+  const rows = (await listSocialPosts(ctx.workspaceId, {
+    startDate: new Date(range.start),
+    endDate: new Date(range.end),
+  })) as SocialPostRow[];
+
+  return rows
+    .filter((row) => row.status !== "draft")
+    .map((row) => ({
+      postId: row.id,
+      channelId: row.socialAccountId,
+      status: row.status,
+      scheduledAt: toIso(row.scheduledAt),
+      content: row.content,
+    }));
 }
