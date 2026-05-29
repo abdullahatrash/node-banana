@@ -226,7 +226,8 @@ export function CopilotChat() {
               (p) =>
                 (p.type === "tool-createDraft" ||
                   p.type === "tool-listDrafts" ||
-                  p.type === "tool-getDraft") &&
+                  p.type === "tool-getDraft" ||
+                  p.type === "tool-updateDraft") &&
                 "state" in p &&
                 p.state === "output-available",
             ) ?? []

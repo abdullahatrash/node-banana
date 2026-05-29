@@ -6,7 +6,11 @@ import {
   createDrafts,
   listDraftsForWorkspace,
   getDraftForWorkspace,
+  updateDraftForWorkspace,
 } from "../drafts";
+import { getPublishingSettingsSchema } from "../settings";
+import { listMediaPoolAssets, attachMedia } from "../media";
+import type { SocialPlatform } from "@/lib/db/schema";
 
 /**
  * Build the Social Copilot tool set bound to a request context.
@@ -51,6 +55,64 @@ export function createCopilotTools(ctx: CopilotContext) {
         postId: z.string().describe("The draft post id"),
       }),
       execute: async ({ postId }) => ({ draft: await getDraftForWorkspace(ctx, postId) }),
+    }),
+
+    updateDraft: tool({
+      description:
+        "Update an existing draft: change its text, set per-platform Publishing Settings, and/or set a scheduled time (ISO 8601). Only provide the fields you want to change.",
+      inputSchema: z.object({
+        postId: z.string().describe("The draft post id"),
+        content: z.string().optional().describe("New post text"),
+        platformSettings: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe("Per-platform Publishing Settings (see getPublishingSettingsSchema)"),
+        scheduledAt: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("ISO 8601 time to schedule, or null to clear"),
+      }),
+      execute: async ({ postId, content, platformSettings, scheduledAt }) => ({
+        draft: await updateDraftForWorkspace(ctx, postId, {
+          content,
+          platformSettings,
+          scheduledAt,
+        }),
+      }),
+    }),
+
+    getPublishingSettingsSchema: tool({
+      description:
+        "Get the per-platform Publishing Settings fields and safe defaults for a platform (e.g. Reddit subreddit, Mastodon visibility). Returns null if the platform has no extra settings.",
+      inputSchema: z.object({
+        platform: z.string().describe("Platform identifier, e.g. youtube, mastodon, reddit"),
+      }),
+      execute: async ({ platform }) => ({
+        schema: getPublishingSettingsSchema(platform as SocialPlatform),
+      }),
+    }),
+
+    listMediaPoolAssets: tool({
+      description:
+        "List the workspace's media-pool assets (generated/uploaded images and videos) so they can be attached to a draft.",
+      inputSchema: z.object({
+        type: z.enum(["image", "video"]).optional().describe("Filter by media type"),
+        limit: z.number().int().positive().max(50).optional(),
+      }),
+      execute: async ({ type, limit }) => ({
+        assets: await listMediaPoolAssets(ctx, { type, limit }),
+      }),
+    }),
+
+    attachMedia: tool({
+      description:
+        "Attach one or more media-pool assets (by asset id from listMediaPoolAssets) to a draft.",
+      inputSchema: z.object({
+        postId: z.string().describe("The draft post id"),
+        assetIds: z.array(z.string()).min(1).describe("Asset ids to attach"),
+      }),
+      execute: async ({ postId, assetIds }) => attachMedia(ctx, postId, assetIds),
     }),
   };
 }
