@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useState, useSyncExternalStore } from "react"
 import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport } from "ai"
 import Link from "next/link"
@@ -19,6 +19,13 @@ import {
 import { useWorkflowStore } from "@/store/workflowStore"
 import { buildLlmHeaders } from "@/store/utils/buildApiHeaders"
 import type { CopilotChannel } from "@/lib/social/copilot/channels"
+
+// SSR-safe "are we on the client yet" signal via useSyncExternalStore:
+// the server snapshot is false and the client snapshot is true, so the first
+// (hydration) render matches the server, then React swaps to true — no effect.
+const noopSubscribe = () => () => {}
+const getClientSnapshot = () => true
+const getServerSnapshot = () => false
 
 /**
  * Render the output of the listChannels tool as a compact channel summary.
@@ -62,9 +69,8 @@ export function CopilotChat() {
   const [input, setInput] = useState("")
 
   // providerSettings is hydrated from localStorage, which is empty during SSR.
-  // Gate key-dependent UI until mount so server and first client render agree.
-  const [hydrated, setHydrated] = useState(false)
-  useEffect(() => setHydrated(true), [])
+  // Gate key-dependent UI until the client takes over so renders agree.
+  const hydrated = useSyncExternalStore(noopSubscribe, getClientSnapshot, getServerSnapshot)
   const hasKey = hydrated && Boolean(anthropicKey)
 
   // Inject the user's BYOK key on every request (read fresh from the store).
