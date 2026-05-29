@@ -19,6 +19,7 @@ import {
 import { useWorkflowStore } from "@/store/workflowStore"
 import { buildLlmHeaders } from "@/store/utils/buildApiHeaders"
 import type { CopilotChannel } from "@/lib/social/copilot/channels"
+import type { CopilotDraft } from "@/lib/social/copilot/drafts"
 
 // SSR-safe "are we on the client yet" signal via useSyncExternalStore:
 // the server snapshot is false and the client snapshot is true, so the first
@@ -55,6 +56,24 @@ function ChannelsToolOutput({ channels }: { channels: CopilotChannel[] }) {
           {c.disabled && <span className="text-destructive">· disabled</span>}
           {c.requiresReauth && <span className="text-amber-600">· reconnect</span>}
         </span>
+      ))}
+    </div>
+  )
+}
+
+/** Render created/fetched drafts as deep links into the composer. */
+function DraftLinks({ drafts }: { drafts: CopilotDraft[] }) {
+  if (drafts.length === 0) return null
+  return (
+    <div className="flex flex-col gap-1">
+      {drafts.map((d) => (
+        <Link
+          key={d.id}
+          href={`/social/compose/${d.id}`}
+          className="inline-flex w-fit items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-xs hover:bg-muted"
+        >
+          {d.content ? `“${d.content.slice(0, 40)}${d.content.length > 40 ? "…" : ""}”` : "Draft"} · Open draft →
+        </Link>
       ))}
     </div>
   )
@@ -203,12 +222,28 @@ export function CopilotChat() {
                 p.state === "output-available",
             ) ?? []
 
+            const draftParts = message.parts?.filter(
+              (p) =>
+                (p.type === "tool-createDraft" ||
+                  p.type === "tool-listDrafts" ||
+                  p.type === "tool-getDraft") &&
+                "state" in p &&
+                p.state === "output-available",
+            ) ?? []
+
             return (
               <Message key={message.id} from={message.role}>
                 <MessageContent>
                   {channelParts.map((p, i) => {
                     const output = (p as { output?: { channels?: CopilotChannel[] } }).output
                     return <ChannelsToolOutput key={i} channels={output?.channels ?? []} />
+                  })}
+                  {draftParts.map((p, i) => {
+                    const output = (p as {
+                      output?: { drafts?: CopilotDraft[]; draft?: CopilotDraft }
+                    }).output
+                    const drafts = output?.drafts ?? (output?.draft ? [output.draft] : [])
+                    return <DraftLinks key={`d${i}`} drafts={drafts} />
                   })}
                   {text &&
                     (message.role === "assistant" ? (
