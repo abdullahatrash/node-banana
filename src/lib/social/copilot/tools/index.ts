@@ -11,6 +11,18 @@ import {
 import { getPublishingSettingsSchema } from "../settings";
 import { listMediaPoolAssets, attachMedia } from "../media";
 import { validatePublishForDraft } from "../validate";
+import { scheduleDraftForWorkspace, publishNowForWorkspace } from "../commit";
+
+/** Tools whose use signals the agent is working with a concrete draft. */
+export const DRAFT_CONTEXT_TOOL_NAMES = [
+  "createDraft",
+  "getDraft",
+  "listDrafts",
+  "updateDraft",
+];
+
+/** Irreversible commit tools, gated behind needsApproval + staged until a draft exists. */
+export const COMMIT_TOOL_NAMES = ["scheduleDraft", "publishNow"];
 import type { SocialPlatform } from "@/lib/db/schema";
 
 /**
@@ -125,6 +137,28 @@ export function createCopilotTools(ctx: CopilotContext) {
       execute: async ({ postId }) => ({
         readiness: await validatePublishForDraft(ctx, postId),
       }),
+    }),
+
+    scheduleDraft: tool({
+      description:
+        "Schedule a draft to publish at a specific time (ISO 8601). Requires the user's explicit approval. Re-validates the draft server-side and refuses if it isn't ready.",
+      inputSchema: z.object({
+        postId: z.string().describe("The draft post id"),
+        scheduledAt: z.string().describe("ISO 8601 time to publish"),
+      }),
+      needsApproval: true,
+      execute: async ({ postId, scheduledAt }) =>
+        scheduleDraftForWorkspace(ctx, postId, scheduledAt),
+    }),
+
+    publishNow: tool({
+      description:
+        "Publish a draft immediately. Requires the user's explicit approval. Re-validates the draft server-side and refuses if it isn't ready.",
+      inputSchema: z.object({
+        postId: z.string().describe("The draft post id"),
+      }),
+      needsApproval: true,
+      execute: async ({ postId }) => publishNowForWorkspace(ctx, postId),
     }),
   };
 }
