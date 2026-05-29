@@ -1,6 +1,7 @@
 import {
   ToolLoopAgent,
   stepCountIs,
+  smoothStream,
   createAgentUIStreamResponse,
   type UIMessage,
   type LanguageModel,
@@ -59,5 +60,10 @@ export function streamCopilotResponse(
   config: CopilotRunConfig & { messages: UIMessage[] },
 ): Promise<Response> {
   const agent = buildSocialCopilotAgent(config);
-  return createAgentUIStreamResponse({ agent, uiMessages: config.messages });
+  return createAgentUIStreamResponse({
+    agent,
+    uiMessages: config.messages,
+    // Anthropic streams in bursts; pace them word-by-word for smooth rendering.
+    experimental_transform: smoothStream({ chunking: "word" }),
+  });
 }
