@@ -6,12 +6,14 @@ const {
   mockListSocialPosts,
   mockGetSocialPost,
   mockUpdateSocialPost,
+  mockDeleteSocialPost,
 } = vi.hoisted(() => ({
   mockListSocialAccounts: vi.fn(),
   mockCreateSocialPost: vi.fn(),
   mockListSocialPosts: vi.fn(),
   mockGetSocialPost: vi.fn(),
   mockUpdateSocialPost: vi.fn(),
+  mockDeleteSocialPost: vi.fn(),
 }));
 
 vi.mock("@/lib/social/repository", () => ({
@@ -20,6 +22,7 @@ vi.mock("@/lib/social/repository", () => ({
   listSocialPosts: mockListSocialPosts,
   getSocialPost: mockGetSocialPost,
   updateSocialPost: mockUpdateSocialPost,
+  deleteSocialPost: mockDeleteSocialPost,
 }));
 
 import {
@@ -27,7 +30,12 @@ import {
   listDraftsForWorkspace,
   getDraftForWorkspace,
   updateDraftForWorkspace,
+  listScheduledPostsForWorkspace,
+  duplicateDraftForWorkspace,
+  deleteDraftForWorkspace,
 } from "../drafts";
+
+const ctx = { workspaceId: "ws_1", userId: "u_1" };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -106,6 +114,95 @@ describe("getDraftForWorkspace", () => {
 
     expect(mockGetSocialPost).toHaveBeenCalledWith("ws_1", "spost_1");
     expect(draft.id).toBe("spost_1");
+  });
+});
+
+describe("listScheduledPostsForWorkspace", () => {
+  it("returns non-draft posts in the date range as calendar entries", async () => {
+    mockListSocialPosts.mockResolvedValue([
+      {
+        id: "spost_q",
+        socialAccountId: "ch_x",
+        status: "queued",
+        content: "scheduled one",
+        scheduledAt: new Date("2026-06-01T10:00:00.000Z"),
+      },
+      {
+        id: "spost_d",
+        socialAccountId: "ch_x",
+        status: "draft",
+        content: "just a draft",
+        scheduledAt: null,
+      },
+    ]);
+
+    const entries = await listScheduledPostsForWorkspace(ctx, {
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-07T00:00:00.000Z",
+    });
+
+    expect(mockListSocialPosts).toHaveBeenCalledWith(
+      "ws_1",
+      expect.objectContaining({
+        startDate: expect.any(Date),
+        endDate: expect.any(Date),
+      }),
+    );
+    expect(entries.map((e) => e.postId)).toEqual(["spost_q"]);
+    expect(entries[0]).toMatchObject({
+      channelId: "ch_x",
+      status: "queued",
+      scheduledAt: "2026-06-01T10:00:00.000Z",
+    });
+  });
+});
+
+describe("duplicateDraftForWorkspace", () => {
+  it("clones content/media/settings into a new draft, retargeting the channel when given", async () => {
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_1",
+      socialAccountId: "ch_x",
+      status: "draft",
+      content: "hello",
+      mediaUrls: [{ type: "image", url: "key.png" }],
+      platformSettings: { subreddit: "r/test" },
+      scheduledAt: null,
+    });
+    mockCreateSocialPost.mockImplementation(async (input: Record<string, unknown>) => ({
+      id: "spost_2",
+      socialAccountId: input.socialAccountId,
+      status: "draft",
+      content: input.content ?? null,
+      scheduledAt: null,
+    }));
+
+    const draft = await duplicateDraftForWorkspace(ctx, "spost_1", {
+      channelId: "ch_li",
+    });
+
+    expect(mockGetSocialPost).toHaveBeenCalledWith("ws_1", "spost_1");
+    expect(mockCreateSocialPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws_1",
+        createdByUserId: "u_1",
+        socialAccountId: "ch_li",
+        content: "hello",
+        mediaUrls: [{ type: "image", url: "key.png" }],
+        platformSettings: { subreddit: "r/test" },
+      }),
+    );
+    expect(draft.id).toBe("spost_2");
+  });
+});
+
+describe("deleteDraftForWorkspace", () => {
+  it("deletes a draft scoped to the workspace", async () => {
+    mockDeleteSocialPost.mockResolvedValue(undefined);
+
+    const result = await deleteDraftForWorkspace(ctx, "spost_1");
+
+    expect(mockDeleteSocialPost).toHaveBeenCalledWith("ws_1", "spost_1");
+    expect(result).toEqual({ postId: "spost_1", deleted: true });
   });
 });
 
