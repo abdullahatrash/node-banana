@@ -3,6 +3,7 @@ import {
   getSocialPost,
   listSocialAccounts,
   listSocialPosts,
+  updateSocialPost,
 } from "@/lib/social/repository";
 import type { CopilotContext } from "./context";
 
@@ -78,5 +79,33 @@ export async function getDraftForWorkspace(
   postId: string,
 ): Promise<CopilotDraft> {
   const row = await getSocialPost(ctx.workspaceId, postId);
+  return toCopilotDraft(row as SocialPostRow);
+}
+
+/**
+ * Update a draft's content, per-channel Publishing Settings, and/or schedule.
+ * Workspace-scoped (the repo verifies ownership). Backs the `updateDraft` tool.
+ */
+export async function updateDraftForWorkspace(
+  ctx: CopilotContext,
+  postId: string,
+  input: {
+    content?: string;
+    platformSettings?: Record<string, unknown>;
+    scheduledAt?: string | null;
+  },
+): Promise<CopilotDraft> {
+  const data: {
+    content?: string;
+    platformSettings?: Record<string, unknown>;
+    scheduledAt?: Date | null;
+  } = {};
+  if (input.content !== undefined) data.content = input.content;
+  if (input.platformSettings !== undefined) data.platformSettings = input.platformSettings;
+  if (input.scheduledAt !== undefined) {
+    data.scheduledAt = input.scheduledAt === null ? null : new Date(input.scheduledAt);
+  }
+
+  const row = await updateSocialPost(ctx.workspaceId, postId, data);
   return toCopilotDraft(row as SocialPostRow);
 }

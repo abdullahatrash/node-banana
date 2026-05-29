@@ -5,11 +5,13 @@ const {
   mockCreateSocialPost,
   mockListSocialPosts,
   mockGetSocialPost,
+  mockUpdateSocialPost,
 } = vi.hoisted(() => ({
   mockListSocialAccounts: vi.fn(),
   mockCreateSocialPost: vi.fn(),
   mockListSocialPosts: vi.fn(),
   mockGetSocialPost: vi.fn(),
+  mockUpdateSocialPost: vi.fn(),
 }));
 
 vi.mock("@/lib/social/repository", () => ({
@@ -17,9 +19,15 @@ vi.mock("@/lib/social/repository", () => ({
   createSocialPost: mockCreateSocialPost,
   listSocialPosts: mockListSocialPosts,
   getSocialPost: mockGetSocialPost,
+  updateSocialPost: mockUpdateSocialPost,
 }));
 
-import { createDrafts, listDraftsForWorkspace, getDraftForWorkspace } from "../drafts";
+import {
+  createDrafts,
+  listDraftsForWorkspace,
+  getDraftForWorkspace,
+  updateDraftForWorkspace,
+} from "../drafts";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -98,5 +106,32 @@ describe("getDraftForWorkspace", () => {
 
     expect(mockGetSocialPost).toHaveBeenCalledWith("ws_1", "spost_1");
     expect(draft.id).toBe("spost_1");
+  });
+});
+
+describe("updateDraftForWorkspace", () => {
+  it("updates content/settings/schedule scoped to the workspace, converting schedule to a Date", async () => {
+    mockUpdateSocialPost.mockResolvedValue({
+      id: "spost_1",
+      socialAccountId: "ch_x",
+      status: "draft",
+      content: "new text",
+      scheduledAt: new Date("2026-06-01T10:00:00.000Z"),
+    });
+
+    const draft = await updateDraftForWorkspace(
+      { workspaceId: "ws_1", userId: "u_1" },
+      "spost_1",
+      { content: "new text", scheduledAt: "2026-06-01T10:00:00.000Z" },
+    );
+
+    expect(mockUpdateSocialPost).toHaveBeenCalledWith(
+      "ws_1",
+      "spost_1",
+      expect.objectContaining({ content: "new text" }),
+    );
+    expect(mockUpdateSocialPost.mock.calls[0][2].scheduledAt).toBeInstanceOf(Date);
+    expect(draft.content).toBe("new text");
+    expect(draft.scheduledAt).toBe("2026-06-01T10:00:00.000Z");
   });
 });

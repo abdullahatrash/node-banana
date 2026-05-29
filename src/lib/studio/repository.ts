@@ -867,6 +867,26 @@ export async function listProjectAssets(workspaceId: string, projectId: string) 
     .orderBy(desc(assets.createdAt));
 }
 
+export async function listWorkspaceAssets(
+  workspaceId: string,
+  opts?: { type?: (typeof assetTypeEnum.enumValues)[number]; limit?: number },
+) {
+  const db = getDb();
+  const conditions = [
+    eq(assets.workspaceId, workspaceId),
+    isNull(assets.deletedAt),
+  ];
+  if (opts?.type) {
+    conditions.push(eq(assets.type, opts.type));
+  }
+  const base = db
+    .select()
+    .from(assets)
+    .where(and(...conditions))
+    .orderBy(desc(assets.createdAt));
+  return opts?.limit ? base.limit(opts.limit) : base;
+}
+
 export async function getAsset(workspaceId: string, assetId: string) {
   const db = getDb();
   const [asset] = await db
