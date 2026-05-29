@@ -7,6 +7,9 @@ import {
   listDraftsForWorkspace,
   getDraftForWorkspace,
   updateDraftForWorkspace,
+  listScheduledPostsForWorkspace,
+  duplicateDraftForWorkspace,
+  deleteDraftForWorkspace,
 } from "../drafts";
 import { getPublishingSettingsSchema } from "../settings";
 import { listMediaPoolAssets, attachMedia } from "../media";
@@ -19,6 +22,7 @@ export const DRAFT_CONTEXT_TOOL_NAMES = [
   "getDraft",
   "listDrafts",
   "updateDraft",
+  "duplicateDraft",
 ];
 
 /** Irreversible commit tools, gated behind needsApproval + staged until a draft exists. */
@@ -60,6 +64,41 @@ export function createCopilotTools(ctx: CopilotContext) {
       description: "List the workspace's existing draft posts.",
       inputSchema: z.object({}),
       execute: async () => ({ drafts: await listDraftsForWorkspace(ctx) }),
+    }),
+
+    listScheduledPosts: tool({
+      description:
+        "List already-scheduled/published posts in a date range so you can suggest non-colliding times and a sensible cadence. Dates are ISO 8601.",
+      inputSchema: z.object({
+        start: z.string().describe("Range start, ISO 8601"),
+        end: z.string().describe("Range end, ISO 8601"),
+      }),
+      execute: async ({ start, end }) => ({
+        scheduled: await listScheduledPostsForWorkspace(ctx, { start, end }),
+      }),
+    }),
+
+    duplicateDraft: tool({
+      description:
+        "Duplicate a draft into a new draft, optionally retargeting a different channel. Use to fan a post out across multiple Reddit subreddits (one post per subreddit) or to adapt a post for another channel.",
+      inputSchema: z.object({
+        postId: z.string().describe("The draft post id to clone"),
+        channelId: z
+          .string()
+          .optional()
+          .describe("Retarget the copy to this channel id (defaults to the same channel)"),
+      }),
+      execute: async ({ postId, channelId }) => ({
+        draft: await duplicateDraftForWorkspace(ctx, postId, { channelId }),
+      }),
+    }),
+
+    deleteDraft: tool({
+      description: "Delete a draft post by id.",
+      inputSchema: z.object({
+        postId: z.string().describe("The draft post id to delete"),
+      }),
+      execute: async ({ postId }) => deleteDraftForWorkspace(ctx, postId),
     }),
 
     getDraft: tool({
