@@ -138,6 +138,33 @@ export async function connectSocialAccount(
   return { authUrl: data.authUrl as string };
 }
 
+export async function connectBluesky(
+  handle: string,
+  appPassword: string,
+): Promise<{
+  success: boolean;
+  account?: { id: string; platform: string; displayName: string; username: string | null };
+  error?: string;
+}> {
+  const response = await fetch("/api/social/accounts/connect-bluesky", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ handle, appPassword }),
+  });
+  return response.json();
+}
+
+export async function connectMastodon(
+  instanceUrl: string,
+): Promise<{ success: boolean; authUrl?: string; error?: string }> {
+  const response = await fetch("/api/social/accounts/connect-mastodon", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instanceUrl }),
+  });
+  return response.json();
+}
+
 export async function handleOAuthCallback(
   platform: string,
   code: string,

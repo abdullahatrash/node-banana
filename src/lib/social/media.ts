@@ -87,6 +87,22 @@ export const PLATFORM_MEDIA_CONSTRAINTS: Record<SocialPlatform, MediaConstraints
     maxVideos: 1,
     requirePublicUrl: false,
   },
+  bluesky: {
+    maxImageWidth: 2000,
+    imageFormat: "jpeg",
+    imageQuality: 85,
+    maxImages: 4,
+    maxVideos: 0,
+    requirePublicUrl: false,
+  },
+  mastodon: {
+    maxImageWidth: 2000,
+    imageFormat: "jpeg",
+    imageQuality: 85,
+    maxImages: 4,
+    maxVideos: 0,
+    requirePublicUrl: false,
+  },
 };
 
 export interface MediaValidationResult {

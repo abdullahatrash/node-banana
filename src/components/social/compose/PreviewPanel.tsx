@@ -11,6 +11,8 @@ import { InstagramPreview } from "./previews/InstagramPreview"
 import { FacebookPreview } from "./previews/FacebookPreview"
 import { TikTokPreview } from "./previews/TikTokPreview"
 import { YouTubePreview } from "./previews/YouTubePreview"
+import { BlueskyPreview } from "./previews/BlueskyPreview"
+import { MastodonPreview } from "./previews/MastodonPreview"
 import type { SocialPlatform } from "@/lib/db/schema"
 
 const PREVIEW_COMPONENTS: Record<
@@ -28,6 +30,8 @@ const PREVIEW_COMPONENTS: Record<
   facebook: FacebookPreview,
   tiktok: TikTokPreview,
   youtube: YouTubePreview,
+  bluesky: BlueskyPreview,
+  mastodon: MastodonPreview,
 }
 
 export function PreviewPanel() {

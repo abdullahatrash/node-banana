@@ -260,7 +260,41 @@ function PlatformSettingsFields({
   if (platform === "reddit") {
     return <RedditSettings settings={settings} update={update} />
   }
+  if (platform === "mastodon") {
+    return <MastodonSettings settings={settings} update={update} />
+  }
   return null
+}
+
+function MastodonSettings({
+  settings,
+  update,
+}: {
+  settings: SettingsValue
+  update: (patch: SettingsValue) => void
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <SelectField
+        label="Visibility"
+        value={asString(settings.visibility) || "public"}
+        onChange={(visibility) => update({ visibility })}
+      >
+        <option value="public">Public</option>
+        <option value="unlisted">Unlisted</option>
+        <option value="private">Followers only</option>
+        <option value="direct">Mentioned only</option>
+      </SelectField>
+      <div className="space-y-1.5">
+        <FieldLabel>Content Warning</FieldLabel>
+        <Input
+          value={asString(settings.contentWarning)}
+          onChange={(event) => update({ contentWarning: event.target.value })}
+          placeholder="Optional warning text"
+        />
+      </div>
+    </div>
+  )
 }
 
 export function PublishingSettingsPanels() {

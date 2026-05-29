@@ -36,6 +36,26 @@ _Avoid_: Form status, validation status
 Stored **Publishing Settings** that use stable canonical field names and primitive values rather than UI widget shapes.
 _Avoid_: Raw form values
 
+**Instance Registration**:
+A stored OAuth app credential set for a federated **Platform** instance (e.g., a specific Mastodon server). One registration is shared by all **Channels** on that instance within the system.
+_Avoid_: App registration, server config
+
+**Facet**:
+A byte-range annotation on post text that marks a link, @mention, or #hashtag for platforms that require explicit rich-text markup (e.g., Bluesky via AT Protocol).
+_Avoid_: Entity, annotation, rich text node
+
+**App Password Auth**:
+An authentication method where the user provides a platform-generated credential directly, instead of an OAuth redirect flow. Used by Bluesky.
+_Avoid_: API key auth, basic auth, direct login
+
+**Content Warning**:
+An optional spoiler or sensitivity label on a Mastodon post that collapses the main content behind a "Show more" button. A **Publishing Setting** specific to Mastodon **Channels**.
+_Avoid_: CW, spoiler text, sensitive flag
+
+**Post Visibility**:
+A **Publishing Setting** that controls the audience reach of a post on federated platforms. Mastodon supports public, unlisted, private, and direct.
+_Avoid_: Privacy setting, audience
+
 ## Relationships
 
 - A **Workspace** has zero or more **Channels**.
@@ -52,6 +72,11 @@ _Avoid_: Raw form values
 - A **Post** sent through a Reddit **Channel** targets one subreddit destination at a time.
 - During a compose session, deselecting a **Channel** preserves its unsaved **Publishing Settings** in case the creator reselects it; saving a **Post** only persists settings for selected **Channels**.
 - When editing an older draft **Post** that has missing **Publishing Settings**, the composer hydrates **Safe Defaults** for display without changing the saved **Post** until the creator saves, schedules, or publishes.
+- A federated **Platform** (e.g., Mastodon) may have many instances, each with its own **Instance Registration**.
+- Multiple **Channels** on the same federated instance share one **Instance Registration**.
+- A Bluesky **Channel** uses **App Password Auth** instead of an OAuth redirect flow.
+- A Mastodon **Channel** has **Post Visibility** and optional **Content Warning** as **Publishing Settings**.
+- **Facets** are computed at publish time by the Bluesky **Provider Adapter**, not stored on the **Post**.
 
 ## Example Dialogue
 

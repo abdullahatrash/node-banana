@@ -1,0 +1,70 @@
+"use client"
+
+import type { ComposerMediaItem } from "@/store/socialComposerStore"
+
+interface MastodonPreviewProps {
+  displayName: string
+  username?: string | null
+  content: string
+  media: ComposerMediaItem[]
+}
+
+export function MastodonPreview({
+  displayName,
+  username,
+  content,
+  media,
+}: MastodonPreviewProps) {
+  const images = media.filter((m) => m.type === "image").slice(0, 4)
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card p-3">
+      <div className="flex gap-2.5">
+        <div className="size-9 flex-shrink-0 rounded-full bg-muted" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-col">
+            <span className="text-xs font-semibold">{displayName}</span>
+            <span className="text-[10px] text-muted-foreground">
+              {username ? `@${username}` : ""}
+            </span>
+          </div>
+          <p className="mt-2 whitespace-pre-line text-xs leading-relaxed">
+            {content}
+          </p>
+          {images.length > 0 && (
+            <div
+              className={`mt-2 overflow-hidden rounded-xl ${
+                images.length === 1
+                  ? ""
+                  : "grid grid-cols-2 gap-px"
+              }`}
+            >
+              {images.map((img, i) => (
+                <div
+                  key={i}
+                  className={`bg-muted ${
+                    images.length === 1 ? "aspect-video" : "aspect-square"
+                  }`}
+                >
+                  {img.url && (
+                    <img
+                      src={img.url}
+                      alt={img.alt || ""}
+                      className="size-full object-cover"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-2 flex gap-6 text-[10px] text-muted-foreground">
+            <span>Reply</span>
+            <span>Boost</span>
+            <span>Favourite</span>
+            <span>Bookmark</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
