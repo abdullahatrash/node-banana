@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isDatabaseConfigured } from "@/lib/db";
-import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { getProject, softDeleteProject, upsertProject } from "@/lib/studio/repository";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 interface ProjectResponse {
   success: boolean;
@@ -16,31 +15,16 @@ interface ProjectPatchRequest {
   sourceDirectoryPath?: string | null;
 }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> },
-): Promise<NextResponse<ProjectResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use project persistence APIs.",
-      },
-      { status: 503 },
-    );
-  }
+type ProjectIdContext = { params: Promise<{ projectId: string }> };
 
-  try {
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/projects/[projectId]",
-      action: "read",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
-    }
-
-    const { projectId } = await params;
+export const GET = withStudioAuth<ProjectIdContext>(
+  { route: "/api/studio/projects/[projectId]", action: "read" },
+  async (
+    _request: NextRequest,
+    authz,
+    context,
+  ): Promise<NextResponse<ProjectResponse>> => {
+    const { projectId } = await context.params;
     const project = await getProject(authz.workspaceId, projectId);
     if (!project) {
       return NextResponse.json(
@@ -52,42 +36,17 @@ export async function GET(
       success: true,
       project,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to load project",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> },
-): Promise<NextResponse<ProjectResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use project persistence APIs.",
-      },
-      { status: 503 },
-    );
-  }
-
-  try {
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/projects/[projectId]",
-      action: "write",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
-    }
-
-    const { projectId } = await params;
+export const PATCH = withStudioAuth<ProjectIdContext>(
+  { route: "/api/studio/projects/[projectId]", action: "write" },
+  async (
+    request: NextRequest,
+    authz,
+    context,
+  ): Promise<NextResponse<ProjectResponse>> => {
+    const { projectId } = await context.params;
     const existing = await getProject(authz.workspaceId, projectId);
     if (!existing) {
       return NextResponse.json(
@@ -120,42 +79,17 @@ export async function PATCH(
       success: true,
       project,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to update project",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> },
-): Promise<NextResponse<ProjectResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use project persistence APIs.",
-      },
-      { status: 503 },
-    );
-  }
-
-  try {
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/projects/[projectId]",
-      action: "delete",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
-    }
-
-    const { projectId } = await params;
+export const DELETE = withStudioAuth<ProjectIdContext>(
+  { route: "/api/studio/projects/[projectId]", action: "delete" },
+  async (
+    _request: NextRequest,
+    authz,
+    context,
+  ): Promise<NextResponse<ProjectResponse>> => {
+    const { projectId } = await context.params;
     const deleted = await softDeleteProject(authz.workspaceId, projectId);
     if (!deleted) {
       return NextResponse.json(
@@ -167,13 +101,5 @@ export async function DELETE(
       success: true,
       project: deleted,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to delete project",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);
