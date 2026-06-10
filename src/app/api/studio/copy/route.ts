@@ -2,6 +2,9 @@ import { streamText, UIMessage, convertToModelMessages } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { NextRequest } from "next/server";
+import { isDatabaseConfigured } from "@/lib/db";
+import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 
 export const maxDuration = 60;
 
@@ -54,8 +57,23 @@ interface CopyRequest {
   system?: string;
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  if (!isDatabaseConfigured()) {
+    return Response.json(
+      { success: false, error: "DATABASE_URL is not configured." },
+      { status: 503 },
+    );
+  }
+
   try {
+    const authz = await authorizeStudioRequest(request, {
+      route: "/api/studio/copy",
+      action: "read",
+    });
+    if (!authz.authorized) {
+      return authzErrorResponse(authz);
+    }
+
     const { messages, model: modelKey, system } = (await request.json()) as CopyRequest;
 
     const resolvedModel = modelKey || "gemini-2.5-flash";
