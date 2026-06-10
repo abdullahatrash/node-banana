@@ -68,6 +68,26 @@ async function requireWorkspace(userId: string, userName: string | null, userEma
   return workspaceId;
 }
 
+async function requireWorkspaceMembership(userId: string, workspaceId: string): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({ workspaceId: workspaceMembers.workspaceId })
+    .from(workspaceMembers)
+    .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+    .where(
+      and(
+        eq(workspaceMembers.userId, userId),
+        eq(workspaceMembers.workspaceId, workspaceId),
+        isNull(workspaces.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  if (rows.length === 0) {
+    throw new Error("You do not have access to this workspace.");
+  }
+}
+
 function toISOStringOrNull(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   if (value instanceof Date) return value.toISOString();
@@ -134,7 +154,7 @@ export async function fetchProjects(workspaceId: string): Promise<SAProjectSumma
   if (!isDatabaseConfigured()) return [];
 
   const user = await requireUser();
-  await requireWorkspace(user.id, user.name, user.email);
+  await requireWorkspaceMembership(user.id, workspaceId);
 
   const rows = await listProjects(workspaceId);
 
@@ -157,7 +177,7 @@ export async function fetchProjectDetail(
   if (!isDatabaseConfigured()) return { project: null, assets: [] };
 
   const user = await requireUser();
-  await requireWorkspace(user.id, user.name, user.email);
+  await requireWorkspaceMembership(user.id, workspaceId);
 
   const [projectRow, assetRows] = await Promise.all([
     getProject(workspaceId, projectId),
@@ -198,7 +218,7 @@ export async function deleteProject(workspaceId: string, projectId: string): Pro
   if (!isDatabaseConfigured()) throw new Error("Database not configured.");
 
   const user = await requireUser();
-  await requireWorkspace(user.id, user.name, user.email);
+  await requireWorkspaceMembership(user.id, workspaceId);
 
   const deleted = await softDeleteProject(workspaceId, projectId);
   if (!deleted) throw new Error("Project not found.");
