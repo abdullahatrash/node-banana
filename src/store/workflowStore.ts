@@ -409,7 +409,17 @@ async function waitForPendingImageSyncs(timeout: number = 60000): Promise<void> 
 
   try {
     await Promise.race([
-      Promise.all(pendingImageSyncs.values()),
+      Promise.allSettled(pendingImageSyncs.values()).then((results) => {
+        const failed = results.filter(
+          (r): r is PromiseRejectedResult => r.status === "rejected",
+        );
+        if (failed.length > 0) {
+          console.warn(
+            `${failed.length} pending image sync(s) failed, continuing with save`,
+            failed.map((r) => r.reason),
+          );
+        }
+      }),
       timeoutPromise,
     ]);
   } finally {
@@ -421,6 +431,9 @@ async function waitForPendingImageSyncs(timeout: number = 60000): Promise<void> 
 // Re-export for backward compatibility
 export { generateWorkflowId, saveGenerateImageDefaults, saveNanoBananaDefaults } from "./utils/localStorage";
 export { GROUP_COLORS } from "./utils/nodeDefaults";
+
+// Test-only seam for waitForPendingImageSyncs
+export const __testing = { waitForPendingImageSyncs, pendingImageSyncs };
 
 /** Node types whose output carries image data */
 const IMAGE_SOURCE_NODE_TYPES = new Set<string>([
