@@ -8,6 +8,8 @@
 
 export type { NodeExecutionContext, NodeExecutor } from "./types";
 
+export { throwIfResponseError } from "./httpResponseError";
+
 export {
   executeAnnotation,
   executeArray,
