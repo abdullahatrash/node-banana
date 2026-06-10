@@ -201,7 +201,7 @@ export async function executeNanoBanana(
         const savePromise = syncStudioAssetFromSource({
           assetType: "image",
           source: result.image,
-          projectId: (get() as { workflowId?: string | null }).workflowId || null,
+          projectId: getWorkflowId(),
           getStoreState: () => get(),
         })
           .then((assetId) => {

@@ -154,7 +154,7 @@ export async function executeGenerateVideo(
         const savePromise = syncStudioAssetFromSource({
           assetType: "video",
           source,
-          projectId: (get() as { workflowId?: string | null }).workflowId || null,
+          projectId: getWorkflowId(),
           getStoreState: () => get(),
         })
           .then((assetId) => {
