@@ -24,7 +24,7 @@ export function withStudioAuth<C extends RouteContext | undefined = undefined>(
     context: C,
   ) => Promise<NextResponse>,
 ) {
-  return async (request: NextRequest, context: C): Promise<NextResponse> => {
+  return async (request: NextRequest, context?: C): Promise<NextResponse> => {
     if (!isDatabaseConfigured()) {
       return NextResponse.json(
         { success: false, error: "DATABASE_URL is not configured." },
@@ -37,7 +37,7 @@ export function withStudioAuth<C extends RouteContext | undefined = undefined>(
       if (!authz.authorized) {
         return authzErrorResponse(authz);
       }
-      return await handler(request, authz, context);
+      return await handler(request, authz, context as C);
     } catch (error) {
       logger.error(
         "system",
