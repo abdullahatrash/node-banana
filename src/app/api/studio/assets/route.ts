@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isDatabaseConfigured } from "@/lib/db";
 import { assetTypeEnum, storageProviderEnum } from "@/lib/db/schema";
-import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { getProject, listProjectAssets, recordAsset } from "@/lib/studio/repository";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 interface AssetsGetResponse {
   success: boolean;
@@ -31,38 +30,18 @@ interface AssetsPostResponse {
   error?: string;
 }
 
-export async function GET(
-  request: NextRequest,
-): Promise<NextResponse<AssetsGetResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use asset metadata APIs.",
-      },
-      { status: 503 },
-    );
-  }
-
-  const projectId = request.nextUrl.searchParams.get("projectId");
-  if (!projectId) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: "projectId query parameter is required.",
-      },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/assets",
-      action: "read",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
+export const GET = withStudioAuth<undefined>(
+  { route: "/api/studio/assets", action: "read" },
+  async (request: NextRequest, authz): Promise<NextResponse<AssetsGetResponse>> => {
+    const projectId = request.nextUrl.searchParams.get("projectId");
+    if (!projectId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "projectId query parameter is required.",
+        },
+        { status: 400 },
+      );
     }
 
     const assets = await listProjectAssets(authz.workspaceId, projectId);
@@ -70,32 +49,12 @@ export async function GET(
       success: true,
       assets,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to list assets",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);
 
-export async function POST(
-  request: NextRequest,
-): Promise<NextResponse<AssetsPostResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use asset metadata APIs.",
-      },
-      { status: 503 },
-    );
-  }
-
-  try {
+export const POST = withStudioAuth<undefined>(
+  { route: "/api/studio/assets", action: "write" },
+  async (request: NextRequest, authz): Promise<NextResponse<AssetsPostResponse>> => {
     const body = (await request.json()) as AssetsPostRequest;
     if (!body.storageKey?.trim()) {
       return NextResponse.json(
@@ -117,14 +76,6 @@ export async function POST(
         },
         { status: 400 },
       );
-    }
-
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/assets",
-      action: "write",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
     }
 
     if (body.projectId) {
@@ -161,13 +112,5 @@ export async function POST(
       success: true,
       asset,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to record asset",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);

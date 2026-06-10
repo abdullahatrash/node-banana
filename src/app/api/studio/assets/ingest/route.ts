@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isDatabaseConfigured } from "@/lib/db";
 import { assetTypeEnum } from "@/lib/db/schema";
 import {
   buildAssetObjectKey,
@@ -9,13 +8,13 @@ import {
   putObjectToS3,
   streamUploadToS3,
 } from "@/lib/storage";
-import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import {
   finalizeAssetUpload,
   getProject,
   recordPendingS3AssetWithQuota,
   StudioAssetQuotaExceededError,
 } from "@/lib/studio/repository";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 interface IngestRequest {
   projectId?: string | null;
@@ -160,104 +159,132 @@ async function fetchRemoteStream(sourceUrl: string): Promise<{
   // to enforce the overall fetch timeout for the stream consumption.
 }
 
-export async function POST(
-  request: NextRequest,
-): Promise<NextResponse<IngestResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use asset metadata APIs.",
-      },
-      { status: 503 },
-    );
-  }
-
-  if (!canUseS3Storage()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "S3 storage is not configured. Set STORAGE_BACKEND=s3 and required S3_* environment variables.",
-      },
-      { status: 400 },
-    );
-  }
-
-  let createdAssetId: string | null = null;
-  let workspaceId: string | null = null;
-  let uploadMimeType: string | null = null;
-
-  try {
-    const body = (await request.json()) as IngestRequest;
-
-    if (!assetTypeEnum.enumValues.includes(body.assetType)) {
+export const POST = withStudioAuth<undefined>(
+  { route: "/api/studio/assets/ingest", action: "write" },
+  async (request: NextRequest, authz): Promise<NextResponse<IngestResponse>> => {
+    if (!canUseS3Storage()) {
       return NextResponse.json(
         {
           success: false,
-          error: `Unsupported asset type: ${body.assetType}`,
+          error:
+            "S3 storage is not configured. Set STORAGE_BACKEND=s3 and required S3_* environment variables.",
         },
         { status: 400 },
       );
     }
 
-    const hasDataUrl = typeof body.sourceDataUrl === "string" && body.sourceDataUrl.trim().length > 0;
-    const hasSourceUrl = typeof body.sourceUrl === "string" && body.sourceUrl.trim().length > 0;
+    let createdAssetId: string | null = null;
+    let uploadMimeType: string | null = null;
 
-    if (hasDataUrl === hasSourceUrl) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Exactly one of sourceDataUrl or sourceUrl is required.",
-        },
-        { status: 400 },
-      );
-    }
+    try {
+      const body = (await request.json()) as IngestRequest;
 
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/assets/ingest",
-      action: "write",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
-    }
-
-    workspaceId = authz.workspaceId;
-
-    const projectId = body.projectId?.trim() || null;
-    if (projectId) {
-      const project = await getProject(authz.workspaceId, projectId);
-      if (!project) {
+      if (!assetTypeEnum.enumValues.includes(body.assetType)) {
         return NextResponse.json(
           {
             success: false,
-            error: "No access to this project.",
+            error: `Unsupported asset type: ${body.assetType}`,
           },
-          { status: 403 },
-        );
-      }
-    }
-
-    if (hasDataUrl) {
-      // Data URL path: already in memory, use direct putObject
-      const parsed = parseDataUrl(body.sourceDataUrl!);
-      const bytes = parsed.bytes;
-      const sourceMimeType = parsed.mimeType;
-
-      if (bytes.length === 0) {
-        return NextResponse.json(
-          { success: false, error: "Source content is empty." },
           { status: 400 },
         );
       }
 
-      if (bytes.length > MAX_INGEST_BYTES) {
+      const hasDataUrl = typeof body.sourceDataUrl === "string" && body.sourceDataUrl.trim().length > 0;
+      const hasSourceUrl = typeof body.sourceUrl === "string" && body.sourceUrl.trim().length > 0;
+
+      if (hasDataUrl === hasSourceUrl) {
         return NextResponse.json(
-          { success: false, error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.` },
-          { status: 413 },
+          {
+            success: false,
+            error: "Exactly one of sourceDataUrl or sourceUrl is required.",
+          },
+          { status: 400 },
         );
       }
+
+      const projectId = body.projectId?.trim() || null;
+      if (projectId) {
+        const project = await getProject(authz.workspaceId, projectId);
+        if (!project) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: "No access to this project.",
+            },
+            { status: 403 },
+          );
+        }
+      }
+
+      if (hasDataUrl) {
+        // Data URL path: already in memory, use direct putObject
+        const parsed = parseDataUrl(body.sourceDataUrl!);
+        const bytes = parsed.bytes;
+        const sourceMimeType = parsed.mimeType;
+
+        if (bytes.length === 0) {
+          return NextResponse.json(
+            { success: false, error: "Source content is empty." },
+            { status: 400 },
+          );
+        }
+
+        if (bytes.length > MAX_INGEST_BYTES) {
+          return NextResponse.json(
+            { success: false, error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.` },
+            { status: 413 },
+          );
+        }
+
+        uploadMimeType = (body.contentType?.trim().toLowerCase() || sourceMimeType || pickDefaultMimeType(body.assetType));
+        const sanitizedName = sanitizeFileName(body.fileName);
+        const extension =
+          getExtensionFromFileName(sanitizedName || undefined) ||
+          getExtensionForMimeType(uploadMimeType, "bin");
+
+        const key = buildAssetObjectKey({
+          workspaceId: authz.workspaceId,
+          projectId,
+          assetType: body.assetType,
+          fileExtension: extension,
+        });
+
+        const pending = await recordPendingS3AssetWithQuota({
+          workspaceId: authz.workspaceId,
+          userId: authz.userId,
+          projectId,
+          type: body.assetType,
+          storageBucket: process.env.S3_BUCKET_NAME || null,
+          storageKey: key,
+          mimeType: uploadMimeType,
+          originalFileName: sanitizedName,
+          expectedSizeBytes: bytes.length,
+        });
+        createdAssetId = pending.id;
+
+        await putObjectToS3({ key, body: bytes, contentType: uploadMimeType });
+
+        await finalizeAssetUpload({
+          workspaceId: authz.workspaceId,
+          assetId: pending.id,
+          uploadState: "ready",
+          sizeBytes: bytes.length,
+          mimeType: uploadMimeType,
+        });
+
+        const signed = await createPresignedDownload({ key });
+        return NextResponse.json({
+          success: true,
+          assetId: pending.id,
+          key,
+          downloadUrl: signed.downloadUrl,
+          expiresInSeconds: signed.expiresInSeconds,
+        });
+      }
+
+      // Remote URL path: stream directly to S3 without buffering
+      const fetched = await fetchRemoteStream(body.sourceUrl!.trim());
+      const sourceMimeType = fetched.mimeType;
 
       uploadMimeType = (body.contentType?.trim().toLowerCase() || sourceMimeType || pickDefaultMimeType(body.assetType));
       const sanitizedName = sanitizeFileName(body.fileName);
@@ -272,6 +299,9 @@ export async function POST(
         fileExtension: extension,
       });
 
+      // Use content-length for quota if available, otherwise reserve max
+      const expectedSizeBytes = fetched.contentLength ?? MAX_INGEST_BYTES;
+
       const pending = await recordPendingS3AssetWithQuota({
         workspaceId: authz.workspaceId,
         userId: authz.userId,
@@ -281,17 +311,50 @@ export async function POST(
         storageKey: key,
         mimeType: uploadMimeType,
         originalFileName: sanitizedName,
-        expectedSizeBytes: bytes.length,
+        expectedSizeBytes,
       });
       createdAssetId = pending.id;
 
-      await putObjectToS3({ key, body: bytes, contentType: uploadMimeType });
+      const { sizeBytes } = await streamUploadToS3({
+        key,
+        body: fetched.body,
+        contentType: uploadMimeType,
+        contentLength: fetched.contentLength ?? undefined,
+      });
+
+      if (sizeBytes === 0) {
+        await deleteObjectFromS3({ key }).catch(() => {});
+        await finalizeAssetUpload({
+          workspaceId: authz.workspaceId,
+          assetId: pending.id,
+          uploadState: "failed",
+          error: "Source content is empty.",
+        });
+        return NextResponse.json(
+          { success: false, error: "Source content is empty." },
+          { status: 400 },
+        );
+      }
+
+      if (sizeBytes > MAX_INGEST_BYTES) {
+        await deleteObjectFromS3({ key }).catch(() => {});
+        await finalizeAssetUpload({
+          workspaceId: authz.workspaceId,
+          assetId: pending.id,
+          uploadState: "failed",
+          error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.`,
+        });
+        return NextResponse.json(
+          { success: false, error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.` },
+          { status: 413 },
+        );
+      }
 
       await finalizeAssetUpload({
         workspaceId: authz.workspaceId,
         assetId: pending.id,
         uploadState: "ready",
-        sizeBytes: bytes.length,
+        sizeBytes,
         mimeType: uploadMimeType,
       });
 
@@ -303,123 +366,33 @@ export async function POST(
         downloadUrl: signed.downloadUrl,
         expiresInSeconds: signed.expiresInSeconds,
       });
-    }
-
-    // Remote URL path: stream directly to S3 without buffering
-    const fetched = await fetchRemoteStream(body.sourceUrl!.trim());
-    const sourceMimeType = fetched.mimeType;
-
-    uploadMimeType = (body.contentType?.trim().toLowerCase() || sourceMimeType || pickDefaultMimeType(body.assetType));
-    const sanitizedName = sanitizeFileName(body.fileName);
-    const extension =
-      getExtensionFromFileName(sanitizedName || undefined) ||
-      getExtensionForMimeType(uploadMimeType, "bin");
-
-    const key = buildAssetObjectKey({
-      workspaceId: authz.workspaceId,
-      projectId,
-      assetType: body.assetType,
-      fileExtension: extension,
-    });
-
-    // Use content-length for quota if available, otherwise reserve max
-    const expectedSizeBytes = fetched.contentLength ?? MAX_INGEST_BYTES;
-
-    const pending = await recordPendingS3AssetWithQuota({
-      workspaceId: authz.workspaceId,
-      userId: authz.userId,
-      projectId,
-      type: body.assetType,
-      storageBucket: process.env.S3_BUCKET_NAME || null,
-      storageKey: key,
-      mimeType: uploadMimeType,
-      originalFileName: sanitizedName,
-      expectedSizeBytes,
-    });
-    createdAssetId = pending.id;
-
-    const { sizeBytes } = await streamUploadToS3({
-      key,
-      body: fetched.body,
-      contentType: uploadMimeType,
-      contentLength: fetched.contentLength ?? undefined,
-    });
-
-    if (sizeBytes === 0) {
-      await deleteObjectFromS3({ key }).catch(() => {});
-      await finalizeAssetUpload({
-        workspaceId: authz.workspaceId,
-        assetId: pending.id,
-        uploadState: "failed",
-        error: "Source content is empty.",
-      });
-      return NextResponse.json(
-        { success: false, error: "Source content is empty." },
-        { status: 400 },
-      );
-    }
-
-    if (sizeBytes > MAX_INGEST_BYTES) {
-      await deleteObjectFromS3({ key }).catch(() => {});
-      await finalizeAssetUpload({
-        workspaceId: authz.workspaceId,
-        assetId: pending.id,
-        uploadState: "failed",
-        error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.`,
-      });
-      return NextResponse.json(
-        { success: false, error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.` },
-        { status: 413 },
-      );
-    }
-
-    await finalizeAssetUpload({
-      workspaceId: authz.workspaceId,
-      assetId: pending.id,
-      uploadState: "ready",
-      sizeBytes,
-      mimeType: uploadMimeType,
-    });
-
-    const signed = await createPresignedDownload({ key });
-    return NextResponse.json({
-      success: true,
-      assetId: pending.id,
-      key,
-      downloadUrl: signed.downloadUrl,
-      expiresInSeconds: signed.expiresInSeconds,
-    });
-  } catch (error) {
-    if (error instanceof StudioAssetQuotaExceededError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Workspace storage quota exceeded.",
-        },
-        { status: 403 },
-      );
-    }
-
-    if (workspaceId && createdAssetId) {
-      try {
-        await finalizeAssetUpload({
-          workspaceId,
-          assetId: createdAssetId,
-          uploadState: "failed",
-          mimeType: uploadMimeType || undefined,
-          error: error instanceof Error ? error.message : "Asset ingest failed",
-        });
-      } catch {
-        // best-effort failure finalization
+    } catch (error) {
+      if (error instanceof StudioAssetQuotaExceededError) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Workspace storage quota exceeded.",
+          },
+          { status: 403 },
+        );
       }
-    }
 
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to ingest asset",
-      },
-      { status: 500 },
-    );
-  }
-}
+      if (createdAssetId) {
+        try {
+          await finalizeAssetUpload({
+            workspaceId: authz.workspaceId,
+            assetId: createdAssetId,
+            uploadState: "failed",
+            mimeType: uploadMimeType || undefined,
+            error: error instanceof Error ? error.message : "Asset ingest failed",
+          });
+        } catch {
+          // best-effort failure finalization
+        }
+      }
+
+      // Re-throw to let the outer withStudioAuth catch handle as 500
+      throw error;
+    }
+  },
+);

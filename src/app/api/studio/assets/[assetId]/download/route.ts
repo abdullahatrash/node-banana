@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isDatabaseConfigured } from "@/lib/db";
 import { buildCdnDownloadUrl, canUseS3Storage, createPresignedDownload } from "@/lib/storage";
-import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { getAsset } from "@/lib/studio/repository";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 interface AssetDownloadResponse {
   success: boolean;
@@ -24,42 +23,27 @@ function isAssetReady(metadata: unknown): boolean {
   return true;
 }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ assetId: string }> },
-): Promise<NextResponse<AssetDownloadResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use asset metadata APIs.",
-      },
-      { status: 503 },
-    );
-  }
+type AssetIdContext = { params: Promise<{ assetId: string }> };
 
-  if (!canUseS3Storage()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "S3 storage is not configured. Set STORAGE_BACKEND=s3 and required S3_* environment variables.",
-      },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/assets/[assetId]/download",
-      action: "read",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
+export const GET = withStudioAuth<AssetIdContext>(
+  { route: "/api/studio/assets/[assetId]/download", action: "read" },
+  async (
+    _request: NextRequest,
+    authz,
+    context,
+  ): Promise<NextResponse<AssetDownloadResponse>> => {
+    if (!canUseS3Storage()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "S3 storage is not configured. Set STORAGE_BACKEND=s3 and required S3_* environment variables.",
+        },
+        { status: 400 },
+      );
     }
 
-    const { assetId } = await params;
+    const { assetId } = await context.params;
     const asset = await getAsset(authz.workspaceId, assetId);
     if (!asset) {
       return NextResponse.json(
@@ -122,14 +106,5 @@ export async function GET(
       downloadUrl: signed.downloadUrl,
       expiresInSeconds: signed.expiresInSeconds,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Failed to create asset download URL",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);
