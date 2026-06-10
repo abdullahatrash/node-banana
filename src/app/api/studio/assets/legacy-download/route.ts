@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isDatabaseConfigured } from "@/lib/db";
 import { canUseS3Storage, createPresignedDownload, objectExistsInS3 } from "@/lib/storage";
-import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { getProject } from "@/lib/studio/repository";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 interface LegacyDownloadRequest {
   projectId?: string;
@@ -17,32 +16,20 @@ interface LegacyDownloadResponse {
   error?: string;
 }
 
-export async function POST(
-  request: NextRequest,
-): Promise<NextResponse<LegacyDownloadResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use asset metadata APIs.",
-      },
-      { status: 503 },
-    );
-  }
+export const POST = withStudioAuth<undefined>(
+  { route: "/api/studio/assets/legacy-download", action: "read" },
+  async (request: NextRequest, authz): Promise<NextResponse<LegacyDownloadResponse>> => {
+    if (!canUseS3Storage()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "S3 storage is not configured. Set STORAGE_BACKEND=s3 and required S3_* environment variables.",
+        },
+        { status: 400 },
+      );
+    }
 
-  if (!canUseS3Storage()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "S3 storage is not configured. Set STORAGE_BACKEND=s3 and required S3_* environment variables.",
-      },
-      { status: 400 },
-    );
-  }
-
-  try {
     const body = (await request.json()) as LegacyDownloadRequest;
     const projectId = body.projectId?.trim();
     const legacyKey = body.legacyKey?.trim();
@@ -55,14 +42,6 @@ export async function POST(
         },
         { status: 400 },
       );
-    }
-
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/assets/legacy-download",
-      action: "read",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
     }
 
     const project = await getProject(authz.workspaceId, projectId);
@@ -116,14 +95,5 @@ export async function POST(
       downloadUrl: signed.downloadUrl,
       expiresInSeconds: signed.expiresInSeconds,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Failed to create legacy download URL",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);
