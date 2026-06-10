@@ -190,6 +190,7 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
     saveDirectoryPath,
     trackSaveGeneration,
     get,
+    getWorkflowId,
   } = ctx;
   const { images, videos, audio } = getConnectedInputs(node.id);
 
@@ -213,7 +214,7 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
             assetType: "audio",
             source: audioContent,
             fileName: outputNodeData.outputFilename || undefined,
-            projectId: (get() as { workflowId?: string | null }).workflowId || null,
+            projectId: getWorkflowId(),
             getStoreState: () => get(),
           }).then(() => undefined)
           .catch((syncError) => {
@@ -264,7 +265,7 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
             assetType: "video",
             source: videoContent,
             fileName: outputNodeData.outputFilename || undefined,
-            projectId: (get() as { workflowId?: string | null }).workflowId || null,
+            projectId: getWorkflowId(),
             getStoreState: () => get(),
           }).then(() => undefined)
           .catch((syncError) => {
@@ -326,7 +327,7 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
             assetType: isVideoContent ? "video" : "image",
             source: content,
             fileName: outputNodeData.outputFilename || undefined,
-            projectId: (get() as { workflowId?: string | null }).workflowId || null,
+            projectId: getWorkflowId(),
             getStoreState: () => get(),
           }).then(() => undefined)
           .catch((syncError) => {
