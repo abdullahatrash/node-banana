@@ -70,6 +70,7 @@ describe("SplitGridNode", () => {
       resolution: "1K",
       model: "nano-banana",
       useGoogleSearch: false,
+      useImageSearch: false,
     },
     childNodeIds: [],
     gridRows: 2,
@@ -85,6 +86,14 @@ describe("SplitGridNode", () => {
     type: "splitGrid" as const,
     data: createDefaultNodeData(data),
     selected: false,
+    dragging: false,
+    draggable: true,
+    selectable: true,
+    deletable: true,
+    zIndex: 0,
+    isConnectable: true,
+    positionAbsoluteX: 0,
+    positionAbsoluteY: 0,
   });
 
   describe("Basic Rendering", () => {

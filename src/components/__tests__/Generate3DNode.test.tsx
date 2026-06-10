@@ -110,6 +110,8 @@ describe("Generate3DNode", () => {
     inputImages: [],
     inputPrompt: null,
     output3dUrl: null,
+    savedFilename: null,
+    savedFilePath: null,
     status: "idle",
     error: null,
     ...overrides,
@@ -120,6 +122,14 @@ describe("Generate3DNode", () => {
     type: "generate3d" as const,
     data: createNodeData(data),
     selected: false,
+    dragging: false,
+    draggable: true,
+    selectable: true,
+    deletable: true,
+    zIndex: 0,
+    isConnectable: true,
+    positionAbsoluteX: 0,
+    positionAbsoluteY: 0,
   });
 
   describe("Basic Rendering", () => {

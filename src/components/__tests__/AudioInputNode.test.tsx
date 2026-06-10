@@ -116,6 +116,14 @@ const createNodeProps = (data: Partial<AudioInputNodeData> = {}) => ({
   type: "audioInput" as const,
   data: createNodeData(data),
   selected: false,
+  dragging: false,
+  draggable: true,
+  selectable: true,
+  deletable: true,
+  zIndex: 0,
+  isConnectable: true,
+  positionAbsoluteX: 0,
+  positionAbsoluteY: 0,
 });
 
 describe("AudioInputNode", () => {

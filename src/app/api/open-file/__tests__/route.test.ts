@@ -12,17 +12,19 @@ const { mockExecFileAsync, mockStat, mockPlatform, mockHomedir } = vi.hoisted(()
 
 vi.mock(import("child_process"), async (importOriginal) => {
   const actual = await importOriginal();
+  // execFile mock: cast as unknown to satisfy __promisify__ type requirement in vitest
   return {
     ...actual,
-    execFile: vi.fn(),
+    execFile: vi.fn() as unknown as typeof actual.execFile,
   };
 });
 
 vi.mock(import("util"), async (importOriginal) => {
   const actual = await importOriginal();
+  // promisify mock: cast as unknown to satisfy custom symbol type requirement in vitest
   return {
     ...actual,
-    promisify: () => mockExecFileAsync,
+    promisify: (() => mockExecFileAsync) as unknown as typeof actual.promisify,
   };
 });
 
