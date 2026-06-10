@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isDatabaseConfigured } from "@/lib/db";
-import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import { countProjects, getProject, listProjects, upsertProject } from "@/lib/studio/repository";
 import { MAX_PROJECTS_PER_WORKSPACE } from "@/lib/studio/constants";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 interface ProjectsGetResponse {
   success: boolean;
@@ -26,29 +25,9 @@ interface ProjectsPostResponse {
   error?: string;
 }
 
-export async function GET(
-  request: NextRequest,
-): Promise<NextResponse<ProjectsGetResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use project persistence APIs.",
-      },
-      { status: 503 },
-    );
-  }
-
-  try {
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/projects",
-      action: "read",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
-    }
-
+export const GET = withStudioAuth<undefined>(
+  { route: "/api/studio/projects", action: "read" },
+  async (_request: NextRequest, authz): Promise<NextResponse<ProjectsGetResponse>> => {
     const [projectsList, projectCount] = await Promise.all([
       listProjects(authz.workspaceId),
       countProjects(authz.workspaceId),
@@ -59,46 +38,18 @@ export async function GET(
       projectCount,
       maxProjects: MAX_PROJECTS_PER_WORKSPACE,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to list projects",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);
 
-export async function POST(
-  request: NextRequest,
-): Promise<NextResponse<ProjectsPostResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use project persistence APIs.",
-      },
-      { status: 503 },
-    );
-  }
-
-  try {
+export const POST = withStudioAuth<undefined>(
+  { route: "/api/studio/projects", action: "write" },
+  async (request: NextRequest, authz): Promise<NextResponse<ProjectsPostResponse>> => {
     const body = (await request.json()) as ProjectsPostRequest;
     if (!body.name || !body.name.trim()) {
       return NextResponse.json(
         { success: false, error: "Project name is required." },
         { status: 400 },
       );
-    }
-
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/projects",
-      action: "write",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
     }
 
     // Enforce project limit: skip only for updates to projects that already exist in the DB
@@ -133,13 +84,5 @@ export async function POST(
       success: true,
       project,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to save project",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);

@@ -1,6 +1,5 @@
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { isDatabaseConfigured } from "@/lib/db";
 import { assetTypeEnum } from "@/lib/db/schema";
 import {
   abortMultipartUpload,
@@ -10,13 +9,13 @@ import {
   createMultipartUpload,
   presignUploadPart,
 } from "@/lib/storage";
-import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 import {
   finalizeAssetUpload,
   getProject,
   recordPendingS3AssetWithQuota,
   StudioAssetQuotaExceededError,
 } from "@/lib/studio/repository";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 type MultipartAction = "create" | "complete" | "abort";
 
@@ -62,64 +61,45 @@ function isValidAction(action: unknown): action is MultipartAction {
   return action === "create" || action === "complete" || action === "abort";
 }
 
-export async function POST(
-  request: NextRequest,
-): Promise<NextResponse<MultipartResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      { success: false, error: "DATABASE_URL is not configured." },
-      { status: 503 },
-    );
-  }
-
-  if (!canUseS3Storage()) {
-    return NextResponse.json(
-      { success: false, error: "S3 storage is not configured." },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const body = (await request.json()) as MultipartRequest;
-
-    if (!isValidAction(body.action)) {
+export const POST = withStudioAuth<undefined>(
+  { route: "/api/studio/assets/presign-multipart", action: "write" },
+  async (request: NextRequest, authz): Promise<NextResponse<MultipartResponse>> => {
+    if (!canUseS3Storage()) {
       return NextResponse.json(
-        { success: false, error: "action must be one of: create, complete, abort." },
+        { success: false, error: "S3 storage is not configured." },
         { status: 400 },
       );
     }
 
-    const authz = await authorizeStudioRequest(request, {
-      route: "/api/studio/assets/presign-multipart",
-      action: "write",
-    });
-    if (!authz.authorized) {
-      return authzErrorResponse(authz);
-    }
+    try {
+      const body = (await request.json()) as MultipartRequest;
 
-    if (body.action === "create") {
-      return await handleCreate(body, authz);
+      if (!isValidAction(body.action)) {
+        return NextResponse.json(
+          { success: false, error: "action must be one of: create, complete, abort." },
+          { status: 400 },
+        );
+      }
+
+      if (body.action === "create") {
+        return await handleCreate(body, authz);
+      }
+      if (body.action === "complete") {
+        return await handleComplete(body, authz);
+      }
+      return await handleAbort(body, authz);
+    } catch (error) {
+      if (error instanceof StudioAssetQuotaExceededError) {
+        return NextResponse.json(
+          { success: false, error: "Workspace storage quota exceeded." },
+          { status: 403 },
+        );
+      }
+      // Re-throw to let the outer withStudioAuth catch handle as 500
+      throw error;
     }
-    if (body.action === "complete") {
-      return await handleComplete(body, authz);
-    }
-    return await handleAbort(body, authz);
-  } catch (error) {
-    if (error instanceof StudioAssetQuotaExceededError) {
-      return NextResponse.json(
-        { success: false, error: "Workspace storage quota exceeded." },
-        { status: 403 },
-      );
-    }
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Multipart upload failed",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);
 
 async function handleCreate(
   body: CreateRequest,

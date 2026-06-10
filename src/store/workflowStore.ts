@@ -1004,6 +1004,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       }));
     },
     get: get as () => unknown,
+    getWorkflowId: () => get().workflowId ?? null,
   }),
 
   executeWorkflow: async (startFromNodeId?: string) => {

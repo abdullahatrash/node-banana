@@ -10,6 +10,7 @@ import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
 import { isCloudMode } from "@/lib/storage";
 import { syncStudioAssetFromSaveResult, syncStudioAssetFromSource } from "./studioAssetSync";
 import { uploadImagesToR2 } from "./uploadInputAssets";
+import { throwIfResponseError } from "./httpResponseError";
 import type { NodeExecutionContext } from "./types";
 
 export interface GenerateVideoOptions {
@@ -33,6 +34,7 @@ export async function executeGenerateVideo(
     getNodes,
     trackSaveGeneration,
     get,
+    getWorkflowId,
   } = ctx;
 
   const { useStoredFallback = false } = options;
@@ -92,7 +94,7 @@ export async function executeGenerateVideo(
   const headers = buildGenerateHeaders(provider, providerSettings);
 
   // Upload images to R2 in cloud mode to avoid Vercel payload limits
-  const projectId = (get() as { workflowId?: string | null } | undefined)?.workflowId ?? null;
+  const projectId = getWorkflowId();
   const { images: resolvedImages, dynamicInputs: resolvedDynamicInputs } =
     await uploadImagesToR2({ images, dynamicInputs, projectId });
 
@@ -113,22 +115,7 @@ export async function executeGenerateVideo(
       ...(signal ? { signal } : {}),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = `HTTP ${response.status}`;
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.error || errorMessage;
-      } catch {
-        if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
-      }
-
-      updateNodeData(node.id, {
-        status: "error",
-        error: errorMessage,
-      });
-      throw new Error(errorMessage);
-    }
+    await throwIfResponseError(response, node.id, updateNodeData);
 
     const result = await response.json();
 
@@ -167,7 +154,7 @@ export async function executeGenerateVideo(
         const savePromise = syncStudioAssetFromSource({
           assetType: "video",
           source,
-          projectId: (get() as { workflowId?: string | null }).workflowId || null,
+          projectId: getWorkflowId(),
           getStoreState: () => get(),
         })
           .then((assetId) => {
