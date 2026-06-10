@@ -9,6 +9,7 @@ import type { GenerateAudioNodeData } from "@/types";
 import { buildGenerateHeaders } from "@/store/utils/buildApiHeaders";
 import { isCloudMode } from "@/lib/storage";
 import { syncStudioAssetFromSaveResult, syncStudioAssetFromSource } from "./studioAssetSync";
+import { throwIfResponseError } from "./httpResponseError";
 import type { NodeExecutionContext } from "./types";
 
 export interface GenerateAudioOptions {
@@ -32,6 +33,7 @@ export async function executeGenerateAudio(
     getNodes,
     trackSaveGeneration,
     get,
+    getWorkflowId,
   } = ctx;
 
   const { useStoredFallback = false } = options;
@@ -103,23 +105,8 @@ export async function executeGenerateAudio(
       ...(signal ? { signal } : {}),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = `HTTP ${response.status}`;
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.error || errorMessage;
-      } catch {
-        if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
-      }
-
-      updateNodeData(node.id, {
-        status: "error",
-        error: errorMessage,
-      });
-      errorHandled = true;
-      throw new Error(errorMessage);
-    }
+    if (!response.ok) errorHandled = true;
+    await throwIfResponseError(response, node.id, updateNodeData);
 
     const result = await response.json();
 
@@ -157,7 +144,7 @@ export async function executeGenerateAudio(
         const savePromise = syncStudioAssetFromSource({
           assetType: "audio",
           source,
-          projectId: (get() as { workflowId?: string | null }).workflowId || null,
+          projectId: getWorkflowId(),
           getStoreState: () => get(),
         })
           .then((assetId) => {

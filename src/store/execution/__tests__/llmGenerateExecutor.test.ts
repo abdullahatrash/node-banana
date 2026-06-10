@@ -72,6 +72,7 @@ function makeCtx(
     trackSaveGeneration: vi.fn(),
     appendOutputGalleryImage: vi.fn(),
     get: vi.fn(),
+    getWorkflowId: () => null,
     ...overrides,
   };
 }

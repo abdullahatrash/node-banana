@@ -48,6 +48,8 @@ export interface NodeExecutionContext {
   trackSaveGeneration: (key: string, promise: Promise<void>) => void;
   appendOutputGalleryImage: (targetId: string, image: string) => void;
   get: () => unknown;
+  /** Current workflow/project id, or null when unsaved. */
+  getWorkflowId: () => string | null;
 }
 
 /**
