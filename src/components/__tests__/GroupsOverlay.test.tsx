@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { GroupBackgroundsPortal, GroupControlsOverlay, GroupsOverlay } from "@/components/GroupsOverlay";
-import { Group } from "@/types";
+import { NodeGroup as Group } from "@/types";
 
 // Mock ReactFlow hooks and components
 vi.mock("@xyflow/react", () => ({
@@ -40,11 +40,11 @@ vi.mock("@/store/workflowStore", () => ({
 
 // Helper to create mock group
 const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
+  id: "test-group-1",
   name: "Test Group",
   color: "blue",
   position: { x: 100, y: 100 },
   size: { width: 400, height: 300 },
-  nodeIds: ["node-1", "node-2"],
   locked: false,
   ...overrides,
 });

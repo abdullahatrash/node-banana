@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Type check
+        run: pnpm typecheck
+
       - name: Run Gate A deterministic tests
         run: pnpm test:gate-a
 

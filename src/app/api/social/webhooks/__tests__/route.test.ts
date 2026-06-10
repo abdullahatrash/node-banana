@@ -57,7 +57,7 @@ function unauthorized(status: 401 | 403) {
 }
 
 function req(url: string, init?: RequestInit): NextRequest {
-  return new NextRequest(url, init);
+  return new NextRequest(url, init as ConstructorParameters<typeof NextRequest>[1]);
 }
 
 describe("/api/social/webhooks", () => {

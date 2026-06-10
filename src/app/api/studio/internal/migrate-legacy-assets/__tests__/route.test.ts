@@ -9,7 +9,7 @@ const mockBuildAssetObjectKey = vi.fn();
 const mockRecordAsset = vi.fn();
 
 vi.mock("@/lib/db", () => ({
-  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...args),
+  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...(args as [])),
 }));
 
 vi.mock("@/lib/storage", () => ({

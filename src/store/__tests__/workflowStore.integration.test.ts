@@ -2297,10 +2297,12 @@ describe("workflowStore integration tests", () => {
 
         const store = useWorkflowStore.getState();
         await store.loadWorkflow({
+          version: 1,
           id: "test-workflow",
           name: "Test",
           nodes: [],
           edges: [],
+          edgeStyle: "curved",
         });
 
         expect(useWorkflowStore.getState().viewedCommentNodeIds.size).toBe(0);

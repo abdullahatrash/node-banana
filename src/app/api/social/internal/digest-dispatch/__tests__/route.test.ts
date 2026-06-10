@@ -14,7 +14,7 @@ class MockSocialNotificationPreferencesNotFoundError extends Error {
 }
 
 vi.mock("@/lib/db", () => ({
-  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...args),
+  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...(args as [])),
   getDb: () => ({
     select: mockSelect,
   }),
