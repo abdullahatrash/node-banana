@@ -24,7 +24,17 @@ export function withStudioAuth<C extends RouteContext | undefined = undefined>(
     context: C,
   ) => Promise<NextResponse>,
 ) {
-  return async (request: NextRequest, context?: C): Promise<NextResponse> => {
+  // The returned function's `context` parameter is typed as the widest shape
+  // Next.js passes: Next provides `{ params: Promise<...> }` even for
+  // non-dynamic routes, so typing it from the generic `C` (which defaults to
+  // `undefined`) fails Next's build-time RouteHandlerConfig validation. It
+  // stays optional so unit tests can invoke non-dynamic handlers with a
+  // single argument. The generic `C` narrows the context only for the inner
+  // handler (via the contained cast below).
+  return async (
+    request: NextRequest,
+    context?: RouteContext,
+  ): Promise<NextResponse> => {
     if (!isDatabaseConfigured()) {
       return NextResponse.json(
         { success: false, error: "DATABASE_URL is not configured." },
