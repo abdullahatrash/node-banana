@@ -44,7 +44,7 @@ function authorized() {
 }
 
 function request(url: string, init?: RequestInit): NextRequest {
-  return new NextRequest(url, init);
+  return new NextRequest(url, init as ConstructorParameters<typeof NextRequest>[1]);
 }
 
 describe("/api/social/automation/rules/[ruleId]", () => {

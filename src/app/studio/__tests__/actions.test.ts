@@ -10,8 +10,8 @@ vi.mock("next/headers", () => ({
 }));
 
 vi.mock("@/lib/db", () => ({
-  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...args),
-  getDb: (...args: unknown[]) => mockGetDb(...args),
+  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...(args as [])),
+  getDb: (...args: unknown[]) => mockGetDb(...(args as [])),
 }));
 
 const mockGetAuthenticatedUserFromHeaders = vi.fn();

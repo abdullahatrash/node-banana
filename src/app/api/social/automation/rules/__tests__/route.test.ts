@@ -25,7 +25,7 @@ vi.mock("@/lib/social/repository", () => ({
 }));
 
 function createRequest(url: string, init?: RequestInit): NextRequest {
-  return new NextRequest(url, init);
+  return new NextRequest(url, init as ConstructorParameters<typeof NextRequest>[1]);
 }
 
 const mockSession = {

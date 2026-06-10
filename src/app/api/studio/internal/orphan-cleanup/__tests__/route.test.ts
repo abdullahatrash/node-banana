@@ -7,7 +7,7 @@ const mockFinalizeAssetUpload = vi.fn();
 const mockDeleteObjectFromS3 = vi.fn();
 
 vi.mock("@/lib/db", () => ({
-  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...args),
+  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...(args as [])),
 }));
 
 vi.mock("@/lib/studio/repository", () => ({

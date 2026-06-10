@@ -101,7 +101,7 @@ function createRequest(
   url = "http://localhost:3000/api/social/accounts",
   init?: RequestInit,
 ): NextRequest {
-  return new NextRequest(url, init);
+  return new NextRequest(url, init as ConstructorParameters<typeof NextRequest>[1]);
 }
 
 describe("/api/social/accounts GET", () => {

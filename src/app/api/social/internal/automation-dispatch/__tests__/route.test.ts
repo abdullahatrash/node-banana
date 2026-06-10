@@ -12,7 +12,7 @@ const mockIncrementAutomationRuleRunCount = vi.fn();
 const mockCreateAutomationTask = vi.fn();
 
 vi.mock("@/lib/db", () => ({
-  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...args),
+  isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...(args as [])),
 }));
 
 vi.mock("@/lib/social/repository", () => ({
