@@ -8,6 +8,7 @@
 import type { LLMGenerateNodeData } from "@/types";
 import { buildLlmHeaders } from "@/store/utils/buildApiHeaders";
 import { uploadImagesToR2 } from "./uploadInputAssets";
+import { throwIfResponseError } from "./httpResponseError";
 import type { NodeExecutionContext } from "./types";
 
 export interface LlmGenerateOptions {
@@ -26,6 +27,7 @@ export async function executeLlmGenerate(
     signal,
     providerSettings,
     get,
+    getWorkflowId,
   } = ctx;
 
   const { useStoredFallback = false } = options;
@@ -63,7 +65,7 @@ export async function executeLlmGenerate(
   const headers = buildLlmHeaders(nodeData.provider, providerSettings);
 
   // Upload images to R2 in cloud mode to avoid Vercel payload limits
-  const projectId = (get() as { workflowId?: string | null } | undefined)?.workflowId ?? null;
+  const projectId = getWorkflowId();
   const { images: resolvedImages } = await uploadImagesToR2({ images, projectId });
 
   try {
@@ -81,21 +83,7 @@ export async function executeLlmGenerate(
       ...(signal ? { signal } : {}),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = `HTTP ${response.status}`;
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.error || errorMessage;
-      } catch {
-        if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
-      }
-      updateNodeData(node.id, {
-        status: "error",
-        error: errorMessage,
-      });
-      throw new Error(errorMessage);
-    }
+    await throwIfResponseError(response, node.id, updateNodeData);
 
     const result = await response.json();
 
