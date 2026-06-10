@@ -80,6 +80,7 @@ function makeCtx(
       addIncurredCost: vi.fn(),
       generationsPath: null,
     }),
+    getWorkflowId: () => null,
     ...overrides,
   };
 }
