@@ -92,6 +92,13 @@ describe("/api/studio/assets/ingest", () => {
   });
 
   it("returns 400 when sourceDataUrl/sourceUrl contract is invalid", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+
     const response = await POST(
       createRequest({
         projectId: "proj_1",
