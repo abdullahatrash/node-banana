@@ -17,6 +17,7 @@ import {
   PuzzleIcon,
   BellIcon,
   SparklesIcon,
+  KeyRoundIcon,
 } from "lucide-react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformIcon } from "./shared/PlatformIcon"
@@ -52,6 +53,7 @@ const NAV_ITEMS = [
   { href: "/social/integrations", label: "Integrations", icon: PuzzleIcon },
   { href: "/social/plugs", label: "Plugs", icon: PlugIcon },
   { href: "/social/agents", label: "Agents", icon: BotIcon },
+  { href: "/social/settings", label: "Settings", icon: KeyRoundIcon },
 ]
 
 
