@@ -2,10 +2,15 @@ import type { z } from "zod";
 
 import { ApiError } from "../errors/errors";
 import {
+  assetDownloadUrlResultSchema,
+  assetUploadResultSchema,
   assetsResponseSchema,
   socialAccountsResponseSchema,
   workspacesResponseSchema,
   type Asset,
+  type AssetDownloadUrlResult,
+  type AssetType,
+  type AssetUploadResult,
   type SocialAccount,
   type Workspace,
 } from "./schemas";
@@ -23,6 +28,17 @@ export interface ApiClientOptions {
   fetchImpl?: typeof fetch;
 }
 
+export interface UploadAssetInput {
+  assetType: AssetType;
+  projectId?: string;
+  fileName?: string;
+  mimeType?: string;
+  /** Raw file bytes, base64-encoded. Exactly one of this or sourceUrl. */
+  base64Content?: string;
+  /** A URL the server fetches and stores. Exactly one of this or base64Content. */
+  sourceUrl?: string;
+}
+
 export interface ApiClient {
   listWorkspaces(): Promise<Workspace[]>;
   listSocialAccounts(): Promise<SocialAccount[]>;
@@ -30,6 +46,11 @@ export interface ApiClient {
     type?: string;
     limit?: number;
   }): Promise<Asset[]>;
+  uploadAsset(input: UploadAssetInput): Promise<AssetUploadResult>;
+  getAssetDownloadUrl(
+    assetId: string,
+    options?: { expiresInSeconds?: number },
+  ): Promise<AssetDownloadUrlResult>;
   /** Confirm the token is accepted; used by `nb auth login`. */
   verifyToken(): Promise<void>;
 }
@@ -73,25 +94,32 @@ function toApiError(body: ErrorEnvelope, status: number): ApiError {
 }
 
 /**
- * Create a thin client over the public API. Every method issues one GET,
- * unwraps the `{ success, ... }` envelope, validates the payload against a
- * local schema, and surfaces failures as {@link ApiError} (exit code 1).
+ * Create a thin client over the public API. Every method issues one HTTP
+ * request (GET by default, POST when a body is given), unwraps the
+ * `{ success, ... }` envelope, validates the payload against a local schema,
+ * and surfaces failures as {@link ApiError} (exit code 1).
  */
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = options.url.replace(/\/+$/, "");
 
-  async function requestJson(path: string): Promise<Record<string, unknown>> {
+  async function requestJson(
+    path: string,
+    requestInit?: { method?: string; body?: unknown },
+  ): Promise<Record<string, unknown>> {
     const url = `${baseUrl}${path}`;
+    const hasBody = requestInit?.body !== undefined;
 
     let response: Response;
     try {
       response = await fetchImpl(url, {
-        method: "GET",
+        method: requestInit?.method ?? "GET",
         headers: {
           authorization: `Bearer ${options.token}`,
           accept: "application/json",
+          ...(hasBody ? { "content-type": "application/json" } : {}),
         },
+        ...(hasBody ? { body: JSON.stringify(requestInit!.body) } : {}),
       });
     } catch (cause) {
       throw new ApiError({
@@ -127,8 +155,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   async function requestParsed<Schema extends z.ZodTypeAny>(
     path: string,
     schema: Schema,
+    requestInit?: { method?: string; body?: unknown },
   ): Promise<z.infer<Schema>> {
-    const body = await requestJson(path);
+    const body = await requestJson(path, requestInit);
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
       throw new ApiError({
@@ -167,6 +196,25 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       const path = query ? `/api/v1/assets?${query}` : "/api/v1/assets";
       const { assets } = await requestParsed(path, assetsResponseSchema);
       return assets;
+    },
+
+    async uploadAsset(input) {
+      return requestParsed("/api/v1/assets", assetUploadResultSchema, {
+        method: "POST",
+        body: input,
+      });
+    },
+
+    async getAssetDownloadUrl(assetId, downloadOptions) {
+      const params = new URLSearchParams();
+      if (downloadOptions?.expiresInSeconds !== undefined) {
+        params.set("expiresInSeconds", String(downloadOptions.expiresInSeconds));
+      }
+      const query = params.toString();
+      const path = `/api/v1/assets/${encodeURIComponent(assetId)}/download-url${
+        query ? `?${query}` : ""
+      }`;
+      return requestParsed(path, assetDownloadUrlResultSchema);
     },
 
     async verifyToken() {
