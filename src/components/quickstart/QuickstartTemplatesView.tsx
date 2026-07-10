@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { WorkflowFile } from "@/store/workflowStore";
+import { WorkflowFile, useProviderApiKeys } from "@/store/workflowStore";
 import { getAllPresets } from "@/lib/quickstart/templates";
 import { QuickstartBackButton } from "./QuickstartBackButton";
 import { CommunityWorkflowMeta } from "@/types/quickstart";
+import { buildGeminiOnlyHeaders } from "@/store/utils/buildApiHeaders";
 
 interface QuickstartTemplatesViewProps {
   onBack: () => void;
@@ -19,6 +20,7 @@ export function QuickstartTemplatesView({
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [loadingWorkflowId, setLoadingWorkflowId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { geminiApiKey } = useProviderApiKeys();
 
   const presets = getAllPresets();
 
@@ -52,7 +54,7 @@ export function QuickstartTemplatesView({
       try {
         const response = await fetch("/api/quickstart", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: buildGeminiOnlyHeaders(geminiApiKey),
           body: JSON.stringify({
             templateId,
             contentLevel: "full",
@@ -75,7 +77,7 @@ export function QuickstartTemplatesView({
         setLoadingWorkflowId(null);
       }
     },
-    [onWorkflowSelected]
+    [onWorkflowSelected, geminiApiKey]
   );
 
   const handleCommunitySelect = useCallback(

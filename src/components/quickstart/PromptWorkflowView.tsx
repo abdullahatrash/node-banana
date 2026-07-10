@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { WorkflowFile } from "@/store/workflowStore";
+import { WorkflowFile, useProviderApiKeys } from "@/store/workflowStore";
 import { QuickstartBackButton } from "./QuickstartBackButton";
+import { buildGeminiOnlyHeaders } from "@/store/utils/buildApiHeaders";
 
 interface PromptWorkflowViewProps {
   onBack: () => void;
@@ -16,6 +17,7 @@ export function PromptWorkflowView({
   const [description, setDescription] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { geminiApiKey } = useProviderApiKeys();
 
   const handleGenerate = useCallback(async () => {
     if (!description || description.trim().length < 3) {
@@ -29,7 +31,7 @@ export function PromptWorkflowView({
     try {
       const response = await fetch("/api/quickstart", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: buildGeminiOnlyHeaders(geminiApiKey),
         body: JSON.stringify({
           description: description.trim(),
           contentLevel: "full",
@@ -53,7 +55,7 @@ export function PromptWorkflowView({
     } finally {
       setIsGenerating(false);
     }
-  }, [description, onWorkflowGenerated]);
+  }, [description, onWorkflowGenerated, geminiApiKey]);
 
   const canGenerate = description.trim().length >= 3 && !isGenerating;
 

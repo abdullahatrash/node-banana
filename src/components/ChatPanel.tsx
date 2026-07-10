@@ -5,6 +5,8 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import ReactMarkdown from "react-markdown";
 import { EditOperation } from "@/lib/chat/editOperations";
+import { useProviderApiKeys } from "@/store/workflowStore";
+import { buildGeminiOnlyHeaders } from "@/store/utils/buildApiHeaders";
 
 interface ChatPanelProps {
   isOpen: boolean;
@@ -32,10 +34,23 @@ export function ChatPanel({ isOpen, onClose, onBuildWorkflow, isBuildingWorkflow
   const selectedNodeIdsRef = useRef(selectedNodeIds);
   selectedNodeIdsRef.current = selectedNodeIds;
 
+  // BYOK: forward the user's configured Gemini key (if any) as a header
+  // override, same as node execution. Kept in a ref so the fetch closure
+  // always reads the latest value without needing to re-create the transport.
+  const { geminiApiKey } = useProviderApiKeys();
+  const geminiApiKeyRef = useRef(geminiApiKey);
+  geminiApiKeyRef.current = geminiApiKey;
+
   // Stable fetch function that reads workflowState and selectedNodeIds from ref
   const customFetch = useCallback(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const byokHeaders = buildGeminiOnlyHeaders(geminiApiKeyRef.current);
+    const headers = new Headers(init?.headers);
+    Object.entries(byokHeaders).forEach(([key, value]) => {
+      if (!headers.has(key)) headers.set(key, value);
+    });
+
     if (!init?.body) {
-      return fetch(input, init);
+      return fetch(input, { ...init, headers });
     }
 
     const body = JSON.parse(init.body as string);
@@ -47,6 +62,7 @@ export function ChatPanel({ isOpen, onClose, onBuildWorkflow, isBuildingWorkflow
 
     return fetch(input, {
       ...init,
+      headers,
       body: JSON.stringify(bodyWithWorkflow),
     });
   }, []);
