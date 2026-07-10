@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { createApiClient } from "./api/client";
 import type { AppDeps } from "./commands/context";
 import { clearConfig, loadConfig, saveConfig } from "./config/config";
@@ -15,6 +17,7 @@ export function buildDefaultDeps(): AppDeps {
     clearConfig,
     createClient: (options) => createApiClient(options),
     promptSecret,
+    readFile: (path) => readFileSync(path),
     io: {
       out: (line) => process.stdout.write(`${line}\n`),
       err: (line) => process.stderr.write(`${line}\n`),
