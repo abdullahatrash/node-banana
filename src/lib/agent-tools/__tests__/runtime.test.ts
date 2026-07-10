@@ -67,7 +67,7 @@ describe("runTool", () => {
   });
 
   it("denies access with a forbidden error when the role lacks the permission", async () => {
-    const restrictedTool: ToolDefinition = {
+    const restrictedTool: typeof echoTool = {
       ...echoTool,
       // members do not have assets:delete
       requiredPermission: "assets:delete",
@@ -89,7 +89,7 @@ describe("runTool", () => {
   });
 
   it("wraps an unexpected handler throw in a structured internal error", async () => {
-    const boomTool: ToolDefinition = {
+    const boomTool: typeof echoTool = {
       ...echoTool,
       handler: async () => {
         throw new Error("database exploded");
@@ -107,7 +107,7 @@ describe("runTool", () => {
   });
 
   it("passes a handler-thrown ToolError through unchanged", async () => {
-    const notFoundTool: ToolDefinition = {
+    const notFoundTool: typeof echoTool = {
       ...echoTool,
       handler: async () => {
         throw new ToolError({
@@ -129,7 +129,7 @@ describe("runTool", () => {
   });
 
   it("raises invalid_output when the handler returns schema-invalid data", async () => {
-    const badOutputTool: ToolDefinition = {
+    const badOutputTool: typeof echoTool = {
       ...echoTool,
       handler: async () => ({ echoed: "ok" }) as unknown as {
         echoed: string;
