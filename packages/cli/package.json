@@ -1,0 +1,28 @@
+{
+  "name": "@node-banana/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Command-line interface for the Node Banana public API (nb).",
+  "license": "MIT",
+  "bin": {
+    "nb": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "5.9.3",
+    "vitest": "^4.0.16"
+  }
+}
