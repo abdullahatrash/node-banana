@@ -38,7 +38,11 @@ export class ApiError extends CliError {
   readonly code: string | undefined;
   readonly fix: string | undefined;
 
-  constructor(fields: { code?: string; message: string; fix?: string }) {
+  constructor(fields: {
+    code?: string | undefined;
+    message: string;
+    fix?: string | undefined;
+  }) {
     super(fields.message);
     this.name = "ApiError";
     this.code = fields.code;
