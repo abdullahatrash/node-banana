@@ -1,255 +1,358 @@
 # Node Banana
 
-> **Important note:** This is in early development, it probably has some issues. Use Chrome. For support or raising any issues join the [discord](https://discord.com/invite/89Nr6EKkTf). See the [docs](https://node-banana-docs.vercel.app/) for help, installation guides, and user guides.
+**Node Banana is the BYOK content pipeline your agents plug into** — a
+node-based visual content workflow editor and social publishing hub for
+agencies and studios running programmatic, multi-brand content operations.
 
-Node Banana is node-based workflow application for generating images with Nano Banana Pro. Build image generation pipelines by connecting nodes on a visual canvas. Recent Fal and Replicate integration allows for complex image and video pipelines from any provider, but be aware this is still in testing. 
+One engine, three faces:
 
-Built mainly with Opus 4.5.
+- **Visual canvas** — a complete standalone product. Drag nodes onto a React
+  Flow canvas, wire typed handles together, and run pipelines that generate
+  images, text, and more.
+- **CLI + MCP** — the agent and scale layer. A single tool registry powers a
+  hosted [MCP](https://modelcontextprotocol.io) server and an `nb` CLI, so any
+  agent harness (Claude Code, Cursor, n8n, your own scripts) or CI job can drive
+  the exact same surface a human uses.
+- **Durable social publishing** — a Postiz-class social hub with a durable
+  dispatch/recovery/token-refresh pipeline. **X (Twitter) is live end-to-end;**
+  adapters for ten more platforms are code-complete (most contract-tested),
+  waiting only on their platform credentials.
+
+**BYOK-only.** Each workspace brings its own AI provider keys. The product never
+provides or resells inference — a workspace with no key configured gets a clear,
+actionable error, never a bill on someone else's key. This is the point: an
+agency runs each client brand on that brand's own inference budget.
 
 ![Node Banana Screenshot](public/node-banana.png)
 
-## Features
+---
 
-- **Prompt to Workflow** - Generate complete workflows from natural language descriptions or choose from preset templates (Gemini only for now)
-- **Visual Node Editor** - Drag-and-drop nodes onto an infinite canvas with pan and zoom
-- **Image Annotation** - Full-screen editor with drawing tools (rectangles, circles, arrows, freehand, text)
-- **AI Image Generation** - Generate images using Google Gemini models
-- **Text Generation** - Generate text using Google Gemini or OpenAI models
-- **Workflow Chaining** - Connect multiple nodes to create complex pipelines
-- **Save/Load Workflows** - Export and import workflows as JSON files
-- **Group Locking** - Lock node groups to skip them during execution
+## Table of contents
 
-## Multi-Provider Support (Beta)
+- [Tech stack](#tech-stack)
+- [Quickstart (the agency persona)](#quickstart-the-agency-persona)
+- [Agent surface quickstart (API token → MCP → CLI)](#agent-surface-quickstart-api-token--mcp--cli)
+- [The BYOK model](#the-byok-model)
+- [Social hub](#social-hub)
+- [Architecture overview](#architecture-overview)
+- [Development](#development)
+- [Honest limitations](#honest-limitations)
+- [License](#license)
 
-In addition to Google Gemini, Node Banana now supports:
-- **Replicate** - Access thousands of open-source models
-- **fal.ai** - Fast inference for image and video generation
+---
 
-Configure API keys in Project Settings to enable these providers.
+## Tech stack
 
-## Tech Stack
+| Layer | Choice |
+|-------|--------|
+| Framework | Next.js 16 (App Router) with a custom `server.js` for extended request timeouts |
+| Language | TypeScript |
+| Node editor | [`@xyflow/react`](https://reactflow.dev) (React Flow) |
+| Canvas drawing | Konva.js / react-konva |
+| State | Zustand (single-store pattern) |
+| Persistence | Drizzle ORM + PostgreSQL 16 |
+| Auth | Better Auth (magic link, OAuth, 2FA, organizations) |
+| Object storage | Cloudflare R2 / any S3-compatible API (presigned uploads) |
+| Agent surface | `@modelcontextprotocol/sdk` (MCP), `commander` (CLI), `zod` schemas |
 
-- **Framework**: Next.js 16 (App Router)
-- **Language**: TypeScript
-- **Node Editor**: @xyflow/react (React Flow)
-- **Canvas**: Konva.js / react-konva
-- **State Management**: Zustand
-- **Styling**: Tailwind CSS
-- **AI**: Google Gemini API, OpenAI API, Replicate (Beta), fal.ai (Beta)
+---
 
-## Getting Started
+## Quickstart (the agency persona)
 
-### Prerequisites
+From zero to a first scheduled post. Assumes Node.js 20+, `pnpm`, and Docker.
 
-- Node.js 18+
-- pnpm (recommended via Corepack)
-
-### Environment Variables
-
-Create a `.env.local` file in the root directory:
-
-```env
-GEMINI_API_KEY=your_gemini_api_key
-OPENAI_API_KEY=your_openai_api_key      # Optional, for OpenAI LLM provider
-REPLICATE_API_KEY=your_replicate_api_key  # Optional, beta
-FAL_API_KEY=your_fal_api_key              # Optional, beta
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/node_banana
-BETTER_AUTH_SECRET=change_this_to_a_long_random_secret
-BETTER_AUTH_URL=http://localhost:3000
-NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
-# Optional staged auth features (all false by default)
-BETTER_AUTH_ENABLE_GOOGLE_OAUTH=false
-BETTER_AUTH_ENABLE_GITHUB_OAUTH=false
-BETTER_AUTH_ENABLE_MAGIC_LINK=false
-BETTER_AUTH_ENABLE_TWO_FACTOR=false
-# Google/GitHub OAuth credentials (required only when corresponding feature is enabled)
-BETTER_AUTH_GOOGLE_CLIENT_ID=
-BETTER_AUTH_GOOGLE_CLIENT_SECRET=
-BETTER_AUTH_GITHUB_CLIENT_ID=
-BETTER_AUTH_GITHUB_CLIENT_SECRET=
-# Optional client-side feature toggles for auth UI/client plugin wiring
-NEXT_PUBLIC_BETTER_AUTH_ENABLE_MAGIC_LINK=false
-NEXT_PUBLIC_BETTER_AUTH_ENABLE_TWO_FACTOR=false
-# Optional extra trusted origins (comma-separated), useful for local 127.0.0.1/IP URLs
-BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:3000
-# Optional local-only auth bypass for AI Studio routes.
-# Keep false in production.
-DEV_AUTH_BYPASS=false
-DEV_USER_ID=local-user
-DEV_WORKSPACE_ID=local-workspace
-# Optional S3-compatible asset storage ("s3" means S3 API compatible, not AWS-only)
-STORAGE_BACKEND=local                      # or "s3"
-
-# Recommended Cloudflare R2 defaults when STORAGE_BACKEND=s3
-S3_BUCKET_NAME=your_bucket_name
-S3_REGION=auto
-S3_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-S3_ACCESS_KEY_ID=
-S3_SECRET_ACCESS_KEY=
-S3_FORCE_PATH_STYLE=false                  # R2 default
-```
-
-For non-development environments, `BETTER_AUTH_SECRET` is required and you must provide either `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` so auth origin validation works correctly.
-For production/staging-like deployments, `DATABASE_URL` is required for Better Auth (memory adapter fallback is local-only).
-
-Better Auth client defaults to same-origin when `NEXT_PUBLIC_BETTER_AUTH_URL`/`NEXT_PUBLIC_APP_URL` are not set. In development, `localhost` and `127.0.0.1` are trusted automatically; use `BETTER_AUTH_TRUSTED_ORIGINS` for any additional local origins.
-
-AI Studio bypass is local-only (`DEV_AUTH_BYPASS=true`) and is ignored in production.
-
-For browser presigned uploads (S3/R2 mode), configure bucket CORS to allow your app origin(s), methods `PUT/GET/HEAD`, and `Content-Type` headers.
-
-### Local Postgres (Docker)
-
-Start local Postgres:
-
-```bash
-pnpm db:up
-```
-
-Generate and apply migrations:
-
-```bash
-pnpm db:generate
-pnpm db:migrate
-pnpm db:backfill:org
-```
-
-Stop local Postgres:
-
-```bash
-pnpm db:down
-```
-
-### Installation
+### 1. Install and start Postgres
 
 ```bash
 pnpm install
+pnpm db:up        # docker compose: postgres:16-alpine on localhost:5432
 ```
 
-### Development
+### 2. Configure the environment
 
 ```bash
-pnpm dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+At minimum, set for local dev:
 
-### Auth + Route Behavior
+- `DATABASE_URL` — already defaults to the Docker Postgres above.
+- `BETTER_AUTH_SECRET` — `openssl rand -hex 32`.
+- `BYOK_KEY_ENCRYPTION_KEY` — `openssl rand -hex 32` (encrypts workspace provider keys at rest).
+- `SOCIAL_TOKEN_ENCRYPTION_KEY` — `openssl rand -hex 32` (encrypts social OAuth tokens at rest).
 
-- `/` is a public home/auth landing page (sign in/up actions).
-- `/studio` is protected and redirects unauthenticated users to `/sign-in`.
-- Auth sessions are handled through Better Auth (`/api/auth/*`) with Postgres-backed persistence when `DATABASE_URL` is configured.
-- Workspace/organization hybrid mapping is stored in `workspace_settings` with Better Auth organization plugin tables (`organization`, `member`, `invitation`).
+Notice there is **no `GEMINI_API_KEY` requirement**. AI provider keys are not
+read from the environment on any product path — you add them per workspace once
+the app is running (see [The BYOK model](#the-byok-model)).
 
-### Infra Smoke (Gate A)
-
-Prerequisites:
-
-1. Start Postgres: `pnpm db:up`
-2. Run migrations: `pnpm db:migrate`
-3. Seed local users/workspaces: `pnpm db:seed`
-
-Run smoke validation (local metadata mode):
+### 3. Migrate and run
 
 ```bash
-pnpm smoke:infra
+pnpm db:generate      # generate Drizzle migrations
+pnpm db:migrate       # apply them
+pnpm db:backfill:org  # backfill workspace↔organization mapping
+pnpm dev              # http://localhost:3000
 ```
 
-Run smoke validation (S3-compatible presign/upload/finalize mode):
+### 4. Create a workspace and add a BYOK key
+
+1. Sign up at [http://localhost:3000](http://localhost:3000) and open `/studio`.
+2. Create a **workspace** — one workspace per client brand.
+3. Go to **Settings → Provider Keys (BYOK)** and add a key for a provider you
+   own — e.g. Google Gemini. The key is validated and stored encrypted.
+
+### 5. Connect X
+
+In **Settings → Channels**, connect an X account. This requires an X developer
+app: set `X_API_KEY` and `X_API_SECRET` in `.env.local` first (see
+[Social hub](#social-hub)). Platforms without configured credentials are hidden
+rather than shown broken.
+
+### 6. Build your first pipeline
+
+On the canvas, add a **Prompt** node and a **Generate** (`nanoBanana`) node,
+connect prompt → image, and press **Run** (or `Cmd/Ctrl+Enter`). Generation
+resolves your workspace's Gemini key automatically.
+
+### 7. Schedule your first post
+
+Compose a post in the social hub, attach the generated image, and schedule it
+for a few minutes out. When [cron is wired](#cron-requirements), the dispatch
+pipeline publishes it with no further clicks. Locally, you can trigger a
+dispatch manually — see [`docs/social-cron-scheduler.md`](docs/social-cron-scheduler.md).
+
+---
+
+## Agent surface quickstart (API token → MCP → CLI)
+
+The visual canvas is complete on its own. The agent surface is the upgrade for
+driving many brands programmatically. Everything below talks only to the public
+API — never to the database — so agents exercise exactly the surface you do.
+
+### 1. Create a workspace-scoped API token
+
+In **Workspace Settings → API Tokens**, create a token. It is shown **once** at
+creation, carries a recognizable `nb_` prefix, and is stored only as a SHA-256
+hash — a database leak never leaks credentials. A token acts with owner
+permissions **within its single workspace**; tenant isolation is guaranteed by
+the fixed workspace binding. Revoke it any time to kill a leaked credential
+without touching other brands.
+
+### 2. Connect an MCP client
+
+The hosted MCP server is streamable HTTP at `/api/mcp`, authenticated with the
+same Bearer token:
 
 ```bash
-SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
+claude mcp add --transport http node-banana https://your-app.example.com/api/mcp \
+  --header "Authorization: Bearer nb_your_token_here"
 ```
 
-S3 mode requires `STORAGE_BACKEND=s3` plus valid `S3_BUCKET_NAME`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`.
+Your agent can now discover typed tools: list workspaces and social accounts,
+list/upload assets, run a workflow and poll its status, and create/list/track
+social posts.
 
-Workspace quota enforcement (Phase 6b):
+### 3. Use the `nb` CLI
 
-- Default quota is `10 GB` per workspace (DB-managed, not env-managed).
-- Presign requests reserve quota using `expectedSizeBytes`; uploads are blocked with `403` when projected usage exceeds quota.
-- Override quota for one workspace via script:
+The CLI ships as a pnpm workspace package (`@node-banana/cli`, binary `nb`) that
+mirrors the MCP tools:
 
 ```bash
-pnpm db:set-workspace-quota -- <workspace_id> 20gb
+pnpm --filter @node-banana/cli build     # compile to packages/cli/dist
+node packages/cli/dist/index.js --help    # or `npm link` inside packages/cli for a global `nb`
+
+# Authenticate once — the token is verified, then stored at
+# ~/.config/node-banana/config.json with 0600 permissions.
+nb auth login --token nb_your_token_here --url https://your-app.example.com
+nb auth status
+
+# Discover and act
+nb workspaces list
+nb accounts list
+nb assets upload ./render.png --type image
+nb run <projectId> --wait                  # start a run, poll to terminal state
+nb post create --account <accountId> \
+  --text "Ship day." --media <assetId> \
+  --schedule 2026-07-11T15:00:00Z          # or "now" / "draft"
+nb post list --status queued
 ```
 
-Expected pass output includes:
-
-- `auth health check`
-- `sign-in with seeded user`
-- `workspace list`
-- `project create/list/open/delete (soft)`
-- `asset create/list/delete (soft)` in local mode
-- `asset presign/upload/finalize/list/delete (soft)` in s3 mode
-
-Phase 6 verification commands:
+Every command accepts `--json` for machine-readable output, so CI pipelines can
+parse results:
 
 ```bash
-pnpm test:gate-a
-pnpm smoke:infra
-SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
+nb run <projectId> --wait --json | jq '.status'
 ```
 
-### Build
+Errors from the API, CLI, and MCP are structured (what failed, why, and how to
+fix it) so an agent can self-correct instead of guessing.
+
+---
+
+## The BYOK model
+
+BYOK ("bring your own key") is a product decision, not just a config toggle. The
+business never provides or resells inference, and an agency can run each client
+brand on that brand's own provider account and budget.
+
+**Resolution order** (implemented in `src/lib/byok/resolveInferenceKey.ts`):
+
+1. **Request header** — e.g. `X-Gemini-API-Key`, for ad-hoc and agent calls.
+2. **Workspace vault** — the workspace's stored, encrypted key.
+3. **A typed error** — `byok_key_missing`, naming the provider and pointing to
+   **Settings → Provider Keys**. Never a 500, never a leaked env var name.
+
+There is deliberately **no `process.env.<PROVIDER>_KEY` tier** on any product
+path (generate, LLM, chat, quickstart). Keys are stored per workspace, encrypted
+at rest with AES-256-GCM under `BYOK_KEY_ENCRYPTION_KEY` (separate from the
+social-token key, so rotating one never invalidates the other).
+
+Supported providers: **Google Gemini, OpenAI, Anthropic, Kie.ai, fal.ai,
+Replicate, WaveSpeed**.
+
+---
+
+## Social hub
+
+A durable social publishing backend with composition, scheduling, and a
+recovery-oriented dispatch pipeline.
+
+**X (Twitter) is verified live end-to-end** — connect, compose, schedule,
+dispatch, publish, reconcile. Adapters for ten more platforms are implemented —
+**LinkedIn, Instagram, Facebook, Threads, TikTok, YouTube, Reddit, Pinterest,
+Bluesky, and Mastodon** — so enabling one is a credentials-and-config task, not a
+code change. Most are **contract-tested against mocked platform HTTP** (see the
+[MSW harness](src/test/msw/README.md)); Bluesky and Mastodon ship without a
+contract suite yet. Platforms without configured credentials are cleanly
+hidden/disabled rather than shown broken.
+
+Configure only the platforms you use in `.env.local` (each needs its own
+developer app — see the "Social Hub — Platform Credentials" block in
+`.env.example`). Bluesky (app passwords) and Mastodon (dynamic per-instance
+OAuth) need no developer app.
+
+### Cron requirements
+
+The dispatch pipeline is a set of internal routes under
+`src/app/api/social/internal/*`. **Nothing publishes until a scheduler invokes
+them.** [`vercel.json`](vercel.json) wires the crons:
+
+- **1-minute cadence** — `dispatch` and `recover-missing-dispatch`. These
+  require a **Vercel Pro (or Enterprise) plan**; Vercel Hobby is limited to
+  once-per-day crons. Coarser jobs (webhook delivery, reconcile, sweep, token
+  refresh, cleanup, digest) run on 2–1440-minute intervals.
+- **`CRON_SECRET`** — Vercel sends `Authorization: Bearer $CRON_SECRET` on every
+  cron request. Set `CRON_SECRET` to the **exact same value** as
+  `SOCIAL_INTERNAL_API_SECRET`; the internal routes already accept that header
+  shape, so no code change is needed.
+- **Self-hosting?** Upstash QStash is the documented fallback for sub-daily
+  cadence off Vercel.
+
+Full cadence table, auth model, and post-deploy verification steps are in
+[`docs/social-cron-scheduler.md`](docs/social-cron-scheduler.md).
+
+---
+
+## Architecture overview
+
+### Canvas & store
+
+All canvas state lives in a single Zustand store, `src/store/workflowStore.ts`.
+`executeWorkflow()` topologically sorts the node graph and executes nodes in
+dependency order; `getConnectedInputs()` feeds each node its upstream
+images/text/audio. The interactive canvas is the richest execution environment.
+
+### Tool registry — the single seam
+
+`src/lib/agent-tools/registry.ts` is the **one source of truth for the agent
+surface**: ten Zod-typed tool definitions (list workspaces, list social
+accounts, list/upload assets, get asset download URL, run workflow, get run
+status, create/list social posts, get post status). Three thin adapters derive
+their behaviour from it and none re-declares a tool:
+
+- **MCP server** — `src/app/api/mcp/route.ts` builds a fresh, stateless server
+  per request from the registry.
+- **CLI** — `packages/cli`, a command tree over the public API.
+- **Public API v1** — `src/app/api/v1/*`, versioned REST re-exposing existing
+  Studio/social/generation capabilities.
+
+All three authenticate through one path (`authorizePublicApiRequest`): a Bearer
+`nb_` token resolves to a workspace-scoped session with the same authorization
+rules as the app, so programmatic access can never cross tenant boundaries.
+
+### Dispatch pipeline
+
+`src/app/api/social/internal/*` implement durable dispatch, missed-dispatch
+recovery, stuck-post sweep, token refresh, webhook delivery/replay, reconcile,
+automation, digest, and cleanup — each idempotent and cron-invoked with a shared
+secret.
+
+### Server-side workflow runner
+
+`src/lib/workflow-runner/*` is the headless runner behind the `run-workflow`
+tool. It executes an honest subset of node types as pure server round-trips
+(see [Honest limitations](#honest-limitations)) and resolves inference keys
+through the same BYOK seam as the interactive canvas.
+
+---
+
+## Development
+
+This is a pnpm workspace: the root Next.js app plus `packages/cli`.
 
 ```bash
-pnpm build
-pnpm start
+pnpm dev            # dev server (custom server.js) at http://localhost:3000
+pnpm build          # production build
+pnpm lint           # ESLint (Next.js flat config)
+pnpm typecheck      # tsc --noEmit
+pnpm test           # Vitest, watch mode
+pnpm test:run       # Vitest, single run (CI)
+pnpm test:gate-a    # deterministic API/auth regression subset
 ```
 
-## Example Workflows
+CLI package tests: `pnpm --filter @node-banana/cli test:run`.
 
-The `/examples` directory contains some example workflow files from my personal projects. To try them:
+### Testing approach
 
-1. Start the dev server with `pnpm dev`
-2. Drag any `.json` file from the `/examples` folder into the browser window
-3. Make sure you review each of the prompts before starting, these are fairly targetted to the examples. 
+Tests assert **external behaviour** — given a request or tool call, the response,
+persisted state, and outbound HTTP — never internal call structure. Two seams:
 
-## Usage
+- **Route-handler tests** (the established pattern) cover the public API, token
+  auth, and BYOK key resolution.
+- **MSW provider contract tests** run each social provider's *real* SDK/`fetch`
+  code against mocked platform HTTP, exercising request signing, URL building,
+  and real error-classification for successful post, token-refresh, rate-limit
+  retry, and permanent-failure paths. The harness is opt-in per file — see
+  [`src/test/msw/README.md`](src/test/msw/README.md).
 
-1. **Add nodes** - Click the floating action bar to add nodes to the canvas
-2. **Connect nodes** - Drag from output handles to input handles (matching types only)
-3. **Configure nodes** - Adjust settings like model, aspect ratio, or drawing tools
-4. **Run workflow** - Click the Run button to execute the pipeline
-5. **Save/Load** - Use the header menu to save or load workflows
+---
 
-## CLI
+## Honest limitations
 
-`@node-banana/cli` (binary `nb`) is a workspace package that drives the public
-API from a terminal or CI job — authenticate once with a workspace-scoped token,
-then list workspaces, social accounts, and assets, with a global `--json` flag
-for machine-readable output. It talks only to the hosted API, never the database.
+This section is deliberate. Everything above is shipped; here is what is *not*
+yet true, so you can plan around it.
 
-```bash
-pnpm --filter @node-banana/cli build
-node packages/cli/dist/index.js auth login --token nb_xxx --url https://app.example.com
-node packages/cli/dist/index.js workspaces list
-```
+- **Server runner executes a subset of node types.** The headless runner behind
+  the API/MCP/CLI supports `prompt`, `imageInput`, `llmGenerate`, `nanoBanana`,
+  and `output` only. A workflow containing any other node type (annotation,
+  splitGrid, video, audio, GLB viewer, router/switch, etc.) returns a structured
+  `unsupported_node` error from the API. Those nodes still run on the interactive
+  canvas — the canvas remains the full-capability surface.
+- **Serverless timeouts.** On Vercel, `generate` is capped at 300s and the MCP /
+  social-internal routes at 60s. Very long, multi-step runs can exceed
+  serverless limits; the canvas uses the custom `server.js` for longer local
+  runs.
+- **Agent-surface asset upload needs S3/R2.** `nb assets upload` and the
+  `upload-asset` tool require `STORAGE_BACKEND=s3` with valid `S3_*` credentials.
+  The `local` storage backend is a dev convenience for the canvas only.
+- **Only X is live-verified.** The other ten platform adapters are code-complete
+  (most contract-tested) but not yet verified against their live APIs; each needs
+  its platform credentials before it can publish.
+- **No billing or plan enforcement yet.** Access is scoped by token → workspace;
+  metering and paywalls are a separate future effort.
 
-See [`packages/cli/README.md`](packages/cli/README.md) for install, auth,
-examples, and CI usage.
-
-## Connection Rules
-
-- **Image** handles connect to **Image** handles only
-- **Text** handles connect to **Text** handles only
-- Image inputs on generation nodes accept multiple connections
-- Text inputs accept single connections
-
-## Testing
-
-Run the test suite with:
-
-```bash
-pnpm test              # Watch mode
-pnpm test:run          # Single run
-pnpm test:gate-a       # Gate A deterministic API/auth regression suite
-pnpm test:coverage     # With coverage report
-```
-
-## Contributions
-PRs are welcome, please pull the latest changes from develop before creating a PR and make it to the develop branch, not master. Not that I'm primarily making this for my own workflows, if the PR conflicts with my own plans I'll politely reject it. If you want to collaborate, consider joining the Discord and we can hash something out. 
+---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
