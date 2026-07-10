@@ -7,6 +7,9 @@ import {
   assetsResponseSchema,
   runStartedSchema,
   runStatusSchema,
+  createPostResultSchema,
+  postStatusSchema,
+  postsResponseSchema,
   socialAccountsResponseSchema,
   workspacesResponseSchema,
   type Asset,
@@ -15,6 +18,9 @@ import {
   type AssetUploadResult,
   type RunStarted,
   type RunStatus,
+  type CreatePostResult,
+  type PostStatus,
+  type PostSummary,
   type SocialAccount,
   type Workspace,
 } from "./schemas";
@@ -57,6 +63,24 @@ export interface UploadAssetInput {
   sourceUrl?: string;
 }
 
+export interface CreatePostInput {
+  socialAccountId: string;
+  content?: string;
+  mediaAssetIds?: string[];
+  draft?: boolean;
+  /** ISO timestamp; omit (with draft omitted) to publish now. */
+  scheduledAt?: string;
+}
+
+export interface ListPostsOptions {
+  status?: string;
+  platform?: string;
+  socialAccountId?: string;
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+}
+
 export interface ApiClient {
   listWorkspaces(): Promise<Workspace[]>;
   listSocialAccounts(): Promise<SocialAccount[]>;
@@ -73,6 +97,9 @@ export interface ApiClient {
   runWorkflow(input: RunWorkflowInput): Promise<RunStarted>;
   /** Read a run's current status, progress, and output asset refs. */
   getRunStatus(runId: string): Promise<RunStatus>;
+  createPost(input: CreatePostInput): Promise<CreatePostResult>;
+  listPosts(options?: ListPostsOptions): Promise<PostSummary[]>;
+  getPostStatus(postId: string): Promise<PostStatus>;
   /** Confirm the token is accepted; used by `nb auth login`. */
   verifyToken(): Promise<void>;
 }
@@ -253,6 +280,40 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       return requestParsed(
         `/api/v1/runs/${encodeURIComponent(runId)}`,
         runStatusSchema,
+      );
+    },
+
+    async createPost(input) {
+      return requestParsed("/api/v1/social-posts", createPostResultSchema, {
+        method: "POST",
+        body: input,
+      });
+    },
+
+    async listPosts(listOptions) {
+      const params = new URLSearchParams();
+      if (listOptions?.status) params.set("status", listOptions.status);
+      if (listOptions?.platform) params.set("platform", listOptions.platform);
+      if (listOptions?.socialAccountId) {
+        params.set("socialAccountId", listOptions.socialAccountId);
+      }
+      if (listOptions?.startDate) params.set("startDate", listOptions.startDate);
+      if (listOptions?.endDate) params.set("endDate", listOptions.endDate);
+      if (listOptions?.limit !== undefined) {
+        params.set("limit", String(listOptions.limit));
+      }
+      const query = params.toString();
+      const path = query
+        ? `/api/v1/social-posts?${query}`
+        : "/api/v1/social-posts";
+      const { posts } = await requestParsed(path, postsResponseSchema);
+      return posts;
+    },
+
+    async getPostStatus(postId) {
+      return requestParsed(
+        `/api/v1/social-posts/${encodeURIComponent(postId)}`,
+        postStatusSchema,
       );
     },
 

@@ -5,6 +5,7 @@ import { assetsDownloadUrl, assetsList, assetsUpload } from "./commands/assets";
 import { authLogin, authStatus } from "./commands/auth";
 import type { AppDeps } from "./commands/context";
 import { run, runsStatus } from "./commands/runs";
+import { postCreate, postList, postStatus } from "./commands/post";
 import { UsageError } from "./errors/errors";
 import { workspacesList } from "./commands/workspaces";
 
@@ -174,6 +175,80 @@ export function buildProgram(deps: AppDeps): Command {
       .argument("<runId>", "run id returned by `nb run`"),
   ).action(async (runId: string, _opts, command: Command) => {
     await runsStatus(deps, { runId, json: wantsJson(command) });
+  });
+
+  const post = program
+    .command("post")
+    .description("Create and track social posts.");
+
+  withJson(
+    post
+      .command("create")
+      .description("Create a social post as a draft, scheduled, or now.")
+      .requiredOption("--account <id>", "target social account id")
+      .option("--text <text>", "post text/content")
+      .option("--media <assetId...>", "workspace asset id(s) to attach")
+      .option(
+        "--schedule <when>",
+        'when to publish: "now", "draft", or an ISO timestamp (default: draft)',
+      ),
+  ).action(async (_opts, command: Command) => {
+    const options = command.opts<{
+      account: string;
+      text?: string;
+      media?: string[];
+      schedule?: string;
+    }>();
+    await postCreate(deps, {
+      json: wantsJson(command),
+      account: options.account,
+      ...(options.text !== undefined ? { text: options.text } : {}),
+      ...(options.media !== undefined ? { media: options.media } : {}),
+      ...(options.schedule !== undefined ? { schedule: options.schedule } : {}),
+    });
+  });
+
+  withJson(
+    post
+      .command("list")
+      .description("List social posts with dispatch status.")
+      .option(
+        "--status <status>",
+        "filter by status: draft | queued | publishing | published | failed",
+      )
+      .option("--platform <platform>", "filter by platform, e.g. x")
+      .option("--account <id>", "filter by social account id")
+      .option("--limit <n>", "maximum number of posts (1-200)"),
+  ).action(async (_opts, command: Command) => {
+    const options = command.opts<{
+      status?: string;
+      platform?: string;
+      account?: string;
+      limit?: string;
+    }>();
+    let limit: number | undefined;
+    if (options.limit !== undefined) {
+      limit = Number(options.limit);
+      if (!Number.isInteger(limit) || limit < 1) {
+        throw new UsageError("--limit must be a positive integer.");
+      }
+    }
+    await postList(deps, {
+      json: wantsJson(command),
+      ...(options.status !== undefined ? { status: options.status } : {}),
+      ...(options.platform !== undefined ? { platform: options.platform } : {}),
+      ...(options.account !== undefined ? { account: options.account } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
+  });
+
+  withJson(
+    post
+      .command("status")
+      .description("Show a single post's full dispatch state.")
+      .argument("<postId>", "post id"),
+  ).action(async (postId: string, _opts, command: Command) => {
+    await postStatus(deps, { json: wantsJson(command), postId });
   });
 
   return program;

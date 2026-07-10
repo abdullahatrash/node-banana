@@ -28,6 +28,28 @@ function makeDeps(): { deps: AppDeps; out: string[]; client: ApiClient } {
       outputs: [],
       error: null,
     })),
+    createPost: vi.fn(async () => ({
+      postId: "spost_new",
+      status: "queued",
+      scheduledAt: "2026-07-10T15:00:00.000Z",
+    })),
+    listPosts: vi.fn(async () => []),
+    getPostStatus: vi.fn(async () => ({
+      postId: "spost_1",
+      socialAccountId: "acc_1",
+      status: "published",
+      dispatchStatus: "dispatched",
+      dispatchAttempts: 1,
+      retryCount: 0,
+      scheduledAt: null,
+      publishedAt: "2026-07-10T15:00:05.000Z",
+      nextDispatchAt: null,
+      lastError: null,
+      platformPostId: "tweet_1",
+      releaseUrl: "https://x.com/acme/status/1",
+      createdAt: "2026-07-10T14:00:00.000Z",
+      updatedAt: "2026-07-10T15:00:05.000Z",
+    })),
     verifyToken: vi.fn(async () => undefined),
   };
   const deps: AppDeps = {
@@ -59,6 +81,7 @@ describe("buildProgram", () => {
       "accounts",
       "assets",
       "auth",
+      "post",
       "run",
       "runs",
       "workspaces",
@@ -118,5 +141,46 @@ describe("buildProgram", () => {
     const { deps, out } = makeDeps();
     await run(deps, ["assets", "download-url", "asset_1"]);
     expect(out.join("\n")).toContain("https://signed.example/asset_1.png");
+  });
+
+  it("runs `post create` with --account and --text, defaulting to a draft", async () => {
+    const { deps, client } = makeDeps();
+    await run(deps, ["post", "create", "--account", "acc_1", "--text", "Hello"]);
+    expect(client.createPost).toHaveBeenCalledWith({
+      socialAccountId: "acc_1",
+      content: "Hello",
+      draft: true,
+    });
+  });
+
+  it("runs `post create` with variadic --media and an ISO --schedule", async () => {
+    const { deps, client } = makeDeps();
+    await run(deps, [
+      "post",
+      "create",
+      "--account",
+      "acc_1",
+      "--text",
+      "Hi",
+      "--media",
+      "asset_1",
+      "asset_2",
+      "--schedule",
+      "2026-07-10T15:00:00.000Z",
+    ]);
+    expect(client.createPost).toHaveBeenCalledWith({
+      socialAccountId: "acc_1",
+      content: "Hi",
+      mediaAssetIds: ["asset_1", "asset_2"],
+      scheduledAt: "2026-07-10T15:00:00.000Z",
+    });
+  });
+
+  it("runs `post status <id> --json`", async () => {
+    const { deps, out } = makeDeps();
+    await run(deps, ["post", "status", "spost_1", "--json"]);
+    expect(JSON.parse(out.join("\n")).releaseUrl).toBe(
+      "https://x.com/acme/status/1",
+    );
   });
 });

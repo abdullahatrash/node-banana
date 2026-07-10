@@ -5,6 +5,9 @@ import type {
   Asset,
   AssetDownloadUrlResult,
   AssetUploadResult,
+  CreatePostResult,
+  PostStatus,
+  PostSummary,
   SocialAccount,
   Workspace,
 } from "../../api/schemas";
@@ -13,6 +16,7 @@ import { authLogin, authStatus } from "../auth";
 import { accountsList } from "../accounts";
 import { assetsDownloadUrl, assetsList, assetsUpload } from "../assets";
 import { resolveClient, type AppDeps } from "../context";
+import { postCreate, postList, postStatus } from "../post";
 import { workspacesList } from "../workspaces";
 
 const WORKSPACE: Workspace = { id: "ws_1", name: "Acme", slug: "acme" };
@@ -49,6 +53,40 @@ const DOWNLOAD_URL_RESULT: AssetDownloadUrlResult = {
   downloadUrl: "https://signed.example/asset_1.png",
   expiresInSeconds: 900,
 };
+const CREATE_POST_RESULT: CreatePostResult = {
+  postId: "spost_new",
+  status: "queued",
+  scheduledAt: "2026-07-10T15:00:00.000Z",
+};
+const POST_SUMMARY: PostSummary = {
+  postId: "spost_1",
+  socialAccountId: "acc_1",
+  platform: "x",
+  status: "queued",
+  dispatchStatus: "pending",
+  content: "Hello",
+  scheduledAt: "2026-07-10T15:00:00.000Z",
+  publishedAt: null,
+  failureReason: null,
+  releaseUrl: null,
+  createdAt: "2026-07-10T14:00:00.000Z",
+};
+const POST_STATUS: PostStatus = {
+  postId: "spost_1",
+  socialAccountId: "acc_1",
+  status: "published",
+  dispatchStatus: "dispatched",
+  dispatchAttempts: 1,
+  retryCount: 0,
+  scheduledAt: "2026-07-10T15:00:00.000Z",
+  publishedAt: "2026-07-10T15:00:05.000Z",
+  nextDispatchAt: null,
+  lastError: null,
+  platformPostId: "tweet_1",
+  releaseUrl: "https://x.com/acme/status/1",
+  createdAt: "2026-07-10T14:00:00.000Z",
+  updatedAt: "2026-07-10T15:00:05.000Z",
+};
 
 function makeDeps(overrides: Partial<AppDeps> = {}): {
   deps: AppDeps;
@@ -75,6 +113,9 @@ function makeDeps(overrides: Partial<AppDeps> = {}): {
       outputs: [],
       error: null,
     })),
+    createPost: vi.fn(async () => CREATE_POST_RESULT),
+    listPosts: vi.fn(async () => [POST_SUMMARY]),
+    getPostStatus: vi.fn(async () => POST_STATUS),
     verifyToken: vi.fn(async () => undefined),
   };
 
@@ -321,6 +362,139 @@ describe("auth login", () => {
       authenticated: true,
       url: "https://app.example.com",
     });
+  });
+});
+
+describe("post create", () => {
+  it("creates a draft by default (no --schedule)", async () => {
+    const { deps, client } = makeDeps();
+    await postCreate(deps, { json: false, account: "acc_1", text: "Hi" });
+    expect(client.createPost).toHaveBeenCalledWith({
+      socialAccountId: "acc_1",
+      content: "Hi",
+      draft: true,
+    });
+  });
+
+  it("publishes now with --schedule now", async () => {
+    const { deps, client } = makeDeps();
+    await postCreate(deps, {
+      json: false,
+      account: "acc_1",
+      text: "Hi",
+      schedule: "now",
+    });
+    expect(client.createPost).toHaveBeenCalledWith({
+      socialAccountId: "acc_1",
+      content: "Hi",
+    });
+  });
+
+  it("schedules for an ISO timestamp and forwards media asset ids", async () => {
+    const { deps, client } = makeDeps();
+    await postCreate(deps, {
+      json: false,
+      account: "acc_1",
+      text: "Hi",
+      media: ["asset_1", "asset_2"],
+      schedule: "2026-07-10T15:00:00.000Z",
+    });
+    expect(client.createPost).toHaveBeenCalledWith({
+      socialAccountId: "acc_1",
+      content: "Hi",
+      mediaAssetIds: ["asset_1", "asset_2"],
+      scheduledAt: "2026-07-10T15:00:00.000Z",
+    });
+  });
+
+  it("rejects a create with neither text nor media", async () => {
+    const { deps, client } = makeDeps();
+    await expect(
+      postCreate(deps, { json: false, account: "acc_1" }),
+    ).rejects.toThrow(UsageError);
+    expect(client.createPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid --schedule value", async () => {
+    const { deps, client } = makeDeps();
+    await expect(
+      postCreate(deps, {
+        json: false,
+        account: "acc_1",
+        text: "Hi",
+        schedule: "tomorrow",
+      }),
+    ).rejects.toThrow(UsageError);
+    expect(client.createPost).not.toHaveBeenCalled();
+  });
+
+  it("prints exact JSON data with --json", async () => {
+    const { deps, out } = makeDeps();
+    await postCreate(deps, { json: true, account: "acc_1", text: "Hi" });
+    expect(JSON.parse(out.join("\n"))).toEqual(CREATE_POST_RESULT);
+  });
+});
+
+describe("post list", () => {
+  it("forwards status, platform, account and limit filters", async () => {
+    const { deps, client } = makeDeps();
+    await postList(deps, {
+      json: false,
+      status: "queued",
+      platform: "x",
+      account: "acc_1",
+      limit: 10,
+    });
+    expect(client.listPosts).toHaveBeenCalledWith({
+      status: "queued",
+      platform: "x",
+      socialAccountId: "acc_1",
+      limit: 10,
+    });
+  });
+
+  it("prints a human table with dispatch status", async () => {
+    const { deps, out } = makeDeps();
+    await postList(deps, { json: false });
+    const text = out.join("\n");
+    expect(text).toContain("spost_1");
+    expect(text).toContain("queued");
+    expect(text).toContain("pending");
+  });
+
+  it("prints exact JSON data with --json", async () => {
+    const { deps, out } = makeDeps();
+    await postList(deps, { json: true });
+    expect(JSON.parse(out.join("\n"))).toEqual([POST_SUMMARY]);
+  });
+
+  it("shows an empty-state message when there are no posts", async () => {
+    const { deps, out, client } = makeDeps();
+    (client.listPosts as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    await postList(deps, { json: false });
+    expect(out.join("\n").toLowerCase()).toContain("no posts");
+  });
+});
+
+describe("post status", () => {
+  it("requests the given post id", async () => {
+    const { deps, client } = makeDeps();
+    await postStatus(deps, { json: false, postId: "spost_1" });
+    expect(client.getPostStatus).toHaveBeenCalledWith("spost_1");
+  });
+
+  it("prints the release url and dispatch state", async () => {
+    const { deps, out } = makeDeps();
+    await postStatus(deps, { json: false, postId: "spost_1" });
+    const text = out.join("\n");
+    expect(text).toContain("published");
+    expect(text).toContain("https://x.com/acme/status/1");
+  });
+
+  it("prints exact JSON data with --json", async () => {
+    const { deps, out } = makeDeps();
+    await postStatus(deps, { json: true, postId: "spost_1" });
+    expect(JSON.parse(out.join("\n"))).toEqual(POST_STATUS);
   });
 });
 
