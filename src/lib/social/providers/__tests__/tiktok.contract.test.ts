@@ -40,7 +40,12 @@ import type { PublishRequest } from "@/lib/social/provider-interface";
 // TikTok Content Posting API endpoints exercised by tikTokProvider.post()
 // ---------------------------------------------------------------------------
 
-const VIDEO_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/";
+// The provider defaults to the UPLOAD (inbox) posting method when no
+// contentPostingMethod is supplied (see normalizeTikTokSettings), so the video
+// init call targets the inbox endpoint. This test's videoPost carries no
+// settings, so it exercises that default path.
+const VIDEO_INIT_URL =
+  "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/";
 const USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/";
 const STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/";
 
