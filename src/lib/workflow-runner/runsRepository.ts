@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db";
 import { workflowRuns } from "@/lib/db/schema";
+import { ensureWorkspaceUser } from "@/lib/studio/repository";
 
 import type { RunOutput, RunProgress } from "./types";
 
@@ -23,6 +24,9 @@ export async function createWorkflowRun(
 ): Promise<WorkflowRunRow> {
   const db = getDb();
   const now = new Date();
+  // Auto-provision the (possibly pseudo `apitoken:ws`) user so the
+  // created_by_user_id FK is satisfied — same pattern recordAsset uses.
+  await ensureWorkspaceUser(input.workspaceId, input.userId);
   const [row] = await db
     .insert(workflowRuns)
     .values({
