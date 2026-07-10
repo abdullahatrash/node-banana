@@ -21,6 +21,13 @@ vi.mock("@/lib/workflow-runner/runsRepository", () => ({
   createWorkflowRun: (...args: unknown[]) => mockCreateWorkflowRun(...args),
 }));
 
+// BYOK swap: the runner now resolves keys via the workspace vault when they
+// are not supplied inline. Stub the vault to "no stored key" so header-less
+// runs still surface the typed byok_key_missing error without a DB call.
+vi.mock("@/lib/byok/repository", () => ({
+  resolveProviderKey: vi.fn(async () => null),
+}));
+
 vi.mock("@/lib/workflow-runner/service", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/workflow-runner/service")

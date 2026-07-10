@@ -1,6 +1,7 @@
 import { resolveAssetRefsInPayload } from "@/app/api/generate/assetResolver";
 import { generateWithGemini } from "@/app/api/generate/providers/gemini";
 import { generateLlmText } from "@/app/api/llm/core";
+import { resolveInferenceKeyOptional } from "@/lib/byok/resolveInferenceKey";
 import {
   buildAssetObjectKey,
   buildCdnDownloadUrl,
@@ -24,9 +25,46 @@ export interface ProviderKeys {
 }
 
 /**
- * Build the single key-resolution seam from per-request keys. This is the
- * documented injection point: a later merge swaps this for `resolveInferenceKey`
- * (header → workspace vault → typed error) without touching the runner.
+ * Enrich per-request (header/tool-input) keys with the BYOK stack's resolution
+ * order — header override → workspace vault — via `resolveInferenceKeyOptional`.
+ *
+ * This is the integration swap the #132 PR body flagged as a follow-up: now that
+ * the BYOK vault (`resolveProviderKey`) exists, the runner's key seam consults
+ * it instead of relying on header pass-through alone. It stays async and runs at
+ * the call site (which has async context + `workspaceId`) so the synchronous
+ * `ProviderKeyResolver` contract the runner consumes is unchanged: callers
+ * pre-resolve here, then hand the enriched keys to `makeRequestKeyResolver`.
+ * A provider that resolves to `null` here surfaces later as the typed
+ * `byok_key_missing` error from `assertProviderKeys` — never a server-env key.
+ */
+export async function resolveRequestKeys(
+  headerKeys: ProviderKeys,
+  workspaceId: string | null,
+): Promise<ProviderKeys> {
+  const [gemini, openai, anthropic] = await Promise.all([
+    resolveInferenceKeyOptional({
+      headerKey: headerKeys.gemini ?? headerKeys.google ?? null,
+      workspaceId,
+      provider: "gemini",
+    }),
+    resolveInferenceKeyOptional({
+      headerKey: headerKeys.openai ?? null,
+      workspaceId,
+      provider: "openai",
+    }),
+    resolveInferenceKeyOptional({
+      headerKey: headerKeys.anthropic ?? null,
+      workspaceId,
+      provider: "anthropic",
+    }),
+  ]);
+  return { gemini, google: gemini, openai, anthropic };
+}
+
+/**
+ * Build the single key-resolution seam from per-request keys. Keys are expected
+ * to have already been through `resolveRequestKeys` (header → workspace vault),
+ * so this stays a pure synchronous lookup the runner can call per node.
  */
 export function makeRequestKeyResolver(keys: ProviderKeys): ProviderKeyResolver {
   return (provider: string) => {

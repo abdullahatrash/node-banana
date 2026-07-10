@@ -6,6 +6,7 @@ import {
   makeRequestKeyResolver,
   parseWorkflowGraph,
   planExecution,
+  resolveRequestKeys,
 } from "@/lib/workflow-runner";
 import { createWorkflowRun } from "@/lib/workflow-runner/runsRepository";
 import {
@@ -74,7 +75,10 @@ export const runWorkflowTool: ToolDefinition<
     const graph = parseWorkflowGraph(project.workflowJson);
     planExecution(graph);
 
-    const keys = input.providerKeys ?? {};
+    // BYOK swap: resolve each provider key via header override → workspace
+    // vault before validating and executing, so a run uses the workspace's
+    // stored keys when the caller didn't pass them inline.
+    const keys = await resolveRequestKeys(input.providerKeys ?? {}, workspaceId);
     assertProviderKeys(graph, makeRequestKeyResolver(keys));
 
     const run = await createWorkflowRun({

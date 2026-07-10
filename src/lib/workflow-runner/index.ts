@@ -3,6 +3,7 @@ export { assertProviderKeys, executeWorkflow } from "./runner";
 export {
   defaultRunnerDeps,
   makeRequestKeyResolver,
+  resolveRequestKeys,
   type ProviderKeys,
 } from "./defaultDeps";
 export {
