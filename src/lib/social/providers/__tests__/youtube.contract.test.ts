@@ -7,32 +7,25 @@
  * `vi.mock` — these tests exercise the *real* `googleapis`/`gaxios` SDK
  * against a mocked Google API boundary via MSW.
  *
- * Doing so surfaced two CONFIRMED, REAL defects in `youtube.ts`. Per the
- * task scope, provider code is left UNMODIFIED and both are reported here
- * instead of silently patched.
+ * Doing so surfaced two CONFIRMED, REAL defects in `youtube.ts`, both now
+ * FIXED. This file documents the fixes and guards against regression.
  *
  * ---------------------------------------------------------------------------
- * DEFECT 1 — video/thumbnail upload is structurally broken (blocks scenario 1)
+ * DEFECT 1 (FIXED) — video/thumbnail upload was structurally broken
  * ---------------------------------------------------------------------------
- * `urlToReadableStream()` does:
+ * `urlToReadableStream()` previously did:
  *   const response = await fetch(url);
  *   return response.body as unknown as NodeJS.ReadableStream;
  * Node's native `fetch()` (undici) returns `response.body` as a WHATWG
  * `ReadableStream` — it has NO `.pipe()` method. `googleapis-common`'s
  * multipart uploader (`apirequest.js`, `multipartUpload()`) unconditionally
- * calls `part.body.pipe(...)` on the media body. The result, reproduced
- * below with the real SDK and a real (msw-mocked) fetch response, is:
- *   TypeError: part.body.pipe is not a function
- * This is NOT an artifact of MSW or this test file — a bare
- * `await fetch(realUrl)` in plain Node confirms `response.body.pipe` is
- * `undefined` outside of any test harness. `urlToReadableStream()` needed
- * `Readable.fromWeb(response.body)` (Node 17+) to bridge Web Streams to a
- * Node Readable; it never does this. Every real `post()` call with video
- * media — which `post()` always requires — throws before any HTTP request
- * to the YouTube Data API is even made. **YouTube publishing does not work
- * in this codebase today.** `youtube.test.ts`'s `vi.mock("googleapis")`
- * replaces the whole SDK, so it never exercises the real multipart pipeline
- * and could not have caught this.
+ * calls `part.body.pipe(...)` on the media body, so every real `post()` with
+ * video media threw `TypeError: part.body.pipe is not a function` before any
+ * HTTP request to the YouTube Data API was even made — YouTube publishing did
+ * not work at all. `youtube.test.ts`'s `vi.mock("googleapis")` replaces the
+ * whole SDK, so it never exercised the real multipart pipeline and could not
+ * have caught this. Fixed by bridging with `Readable.fromWeb(response.body)`
+ * (node:stream, Node 17+); scenario 1 below now drives the real pipeline.
  *
  * ---------------------------------------------------------------------------
  * DEFECT 2 — classifyError() pattern-matches on fields that never reach `.message`
@@ -67,7 +60,8 @@ import type { PublishRequest } from "@/lib/social/provider-interface";
 
 const CHANNELS_URL = "https://youtube.googleapis.com/youtube/v3/channels";
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const VIDEO_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos";
+const VIDEO_UPLOAD_URL =
+  "https://youtube.googleapis.com/upload/youtube/v3/videos";
 
 const videoPost: PublishRequest = {
   postId: "our-post-1",
@@ -100,16 +94,24 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("youTubeProvider contract — successful post publish", () => {
-  it("[CONFIRMED DEFECT] real video upload throws before any network call — see file header (DEFECT 1)", async () => {
+  it("uploads the real video body via the multipart pipeline and returns the published result", async () => {
     server.use(
       http.post(VIDEO_UPLOAD_URL, () =>
         HttpResponse.json({ id: "video-1", snippet: {}, status: {} }),
       ),
     );
 
-    await expect(
-      youTubeProvider.post("channel-1", "access-token", [videoPost]),
-    ).rejects.toThrow(/pipe is not a function/);
+    const results = await youTubeProvider.post("channel-1", "access-token", [
+      videoPost,
+    ]);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toEqual({
+      postId: "our-post-1",
+      platformPostId: "video-1",
+      platformPostUrl: "https://www.youtube.com/watch?v=video-1",
+      status: "published",
+    });
   });
 });
 

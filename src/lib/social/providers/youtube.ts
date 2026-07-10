@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { Readable } from "node:stream";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { google } from "googleapis";
 import type {
   AuthenticateParams,
@@ -33,8 +35,16 @@ function buildOAuth2Client(redirectUri?: string) {
 }
 
 /**
- * Convert a public URL to a Node.js-compatible ReadableStream by fetching
- * it and returning the response body. Used for streaming video uploads.
+ * Convert a public URL to a Node.js Readable by fetching it and bridging the
+ * response body. Used for streaming video/thumbnail uploads.
+ *
+ * Node's native `fetch()` (undici) exposes `response.body` as a WHATWG
+ * `ReadableStream`, which has no `.pipe()` method. `googleapis-common`'s
+ * multipart uploader unconditionally calls `part.body.pipe(...)` on the media
+ * body, so handing it the raw Web stream throws
+ * `TypeError: part.body.pipe is not a function` before any upload request is
+ * made. `Readable.fromWeb()` (Node 17+) bridges the Web stream to a Node
+ * Readable with the `.pipe()` API the uploader requires.
  */
 async function urlToReadableStream(
   url: string,
@@ -45,11 +55,10 @@ async function urlToReadableStream(
       `YouTube: failed to fetch video from URL: ${response.status} ${url}`,
     );
   }
-  // response.body is a ReadableStream (Web Streams API). The googleapis
-  // upload accepts a Node.js Readable, but in practice passing the Web
-  // ReadableStream works fine in Node 18+ since they share the stream
-  // protocol for piping.
-  return response.body as unknown as NodeJS.ReadableStream;
+  if (!response.body) {
+    throw new Error(`YouTube: empty response body for URL: ${url}`);
+  }
+  return Readable.fromWeb(response.body as unknown as WebReadableStream<Uint8Array>);
 }
 
 export const youTubeProvider: SocialProviderAdapter = {

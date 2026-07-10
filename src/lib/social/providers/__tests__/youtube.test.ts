@@ -448,7 +448,11 @@ describe("YouTube provider", () => {
     });
 
     it("uploads a thumbnail when thumbnailUrl is provided in platformSettings", async () => {
-      mockFetch.mockResolvedValue(videoFetchResponse());
+      // A fresh response (and therefore a fresh single-use body stream) per
+      // fetch, exactly as the real `fetch` behaves — the video upload and the
+      // thumbnail upload each consume their own stream now that
+      // urlToReadableStream bridges the body via Readable.fromWeb.
+      mockFetch.mockImplementation(async () => videoFetchResponse());
       mocks.videosInsert.mockResolvedValue({ data: { id: "vid-with-thumb" } });
       mocks.thumbnailsSet.mockResolvedValue({});
 
