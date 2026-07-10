@@ -74,3 +74,47 @@ export type AssetUploadResult = z.infer<typeof assetUploadResultSchema>;
 
 export const assetDownloadUrlResultSchema = assetUploadResultSchema;
 export type AssetDownloadUrlResult = z.infer<typeof assetDownloadUrlResultSchema>;
+
+export const postSummarySchema = z.object({
+  postId: z.string(),
+  socialAccountId: z.string(),
+  platform: z.string().nullable(),
+  status: z.string(),
+  dispatchStatus: z.string().nullable(),
+  content: z.string().nullable(),
+  scheduledAt: z.string().nullable(),
+  publishedAt: z.string().nullable(),
+  failureReason: z.string().nullable(),
+  releaseUrl: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type PostSummary = z.infer<typeof postSummarySchema>;
+
+export const postsResponseSchema = z.object({
+  posts: z.array(postSummarySchema),
+});
+
+export const postStatusSchema = z.object({
+  postId: z.string(),
+  socialAccountId: z.string(),
+  status: z.string(),
+  dispatchStatus: z.string().nullable(),
+  dispatchAttempts: z.number(),
+  retryCount: z.number(),
+  scheduledAt: z.string().nullable(),
+  publishedAt: z.string().nullable(),
+  nextDispatchAt: z.string().nullable(),
+  lastError: z.string().nullable(),
+  platformPostId: z.string().nullable(),
+  releaseUrl: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type PostStatus = z.infer<typeof postStatusSchema>;
+
+export const createPostResultSchema = z.object({
+  postId: z.string(),
+  status: z.string(),
+  scheduledAt: z.string().nullable(),
+});
+export type CreatePostResult = z.infer<typeof createPostResultSchema>;

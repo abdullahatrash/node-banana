@@ -49,6 +49,9 @@ token against the API before saving, so a stored credential always works.
 | `nb assets list [--type <t>] [--limit <n>]` | List media assets; `--type` = image \| video \| audio \| model3d \| workflow. |
 | `nb assets upload <file> [--type <t>] [--project-id <id>] [--mime-type <m>]` | Upload a local file as a workspace asset; type/mime are inferred from the extension if omitted. Enforces the workspace's storage quota and type rules. |
 | `nb assets download-url <assetId> [--expires-in <seconds>]` | Get a CDN or presigned download URL for an existing asset. |
+| `nb post create --account <id> [--text <t>] [--media <assetId...>] [--schedule <when>]` | Create a social post through the app's pipeline; `--schedule` = `now` \| `draft` \| an ISO timestamp (default `draft`). Media are workspace asset ids resolved to URLs server-side. |
+| `nb post list [--status <s>] [--platform <p>] [--account <id>] [--limit <n>]` | List posts with dispatch status and failure reason; `--status` = draft \| queued \| publishing \| published \| failed. |
+| `nb post status <postId>` | Show a single post's full dispatch state (status, attempts, last error, release URL). |
 
 ### Examples
 

@@ -251,6 +251,92 @@ describe("createApiClient", () => {
     expect(error.code).toBe("forbidden");
   });
 
+  it("posts a create-post body and returns the result", async () => {
+    const { fetch, calls } = fakeFetch(
+      {
+        success: true,
+        postId: "spost_new",
+        status: "queued",
+        scheduledAt: "2026-07-10T15:00:00.000Z",
+      },
+      { status: 201 },
+    );
+    const client = createApiClient({
+      token: "nb_secret",
+      url: "https://api.example.com",
+      fetchImpl: fetch,
+    });
+
+    const result = await client.createPost({
+      socialAccountId: "acc_1",
+      content: "Hi",
+      mediaAssetIds: ["asset_1"],
+      scheduledAt: "2026-07-10T15:00:00.000Z",
+    });
+
+    expect(result).toEqual({
+      postId: "spost_new",
+      status: "queued",
+      scheduledAt: "2026-07-10T15:00:00.000Z",
+    });
+    expect(calls[0]?.url).toBe("https://api.example.com/api/v1/social-posts");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.body).toEqual({
+      socialAccountId: "acc_1",
+      content: "Hi",
+      mediaAssetIds: ["asset_1"],
+      scheduledAt: "2026-07-10T15:00:00.000Z",
+    });
+  });
+
+  it("lists posts, forwarding status and platform query params", async () => {
+    const { fetch, calls } = fakeFetch({ success: true, posts: [] });
+    const client = createApiClient({
+      token: "nb_secret",
+      url: "https://api.example.com",
+      fetchImpl: fetch,
+    });
+
+    await client.listPosts({ status: "queued", platform: "x", limit: 5 });
+
+    expect(calls[0]?.url).toBe(
+      "https://api.example.com/api/v1/social-posts?status=queued&platform=x&limit=5",
+    );
+  });
+
+  it("gets a single post's dispatch status by id", async () => {
+    const { fetch, calls } = fakeFetch({
+      success: true,
+      postId: "spost_1",
+      socialAccountId: "acc_1",
+      status: "failed",
+      dispatchStatus: "failed",
+      dispatchAttempts: 3,
+      retryCount: 2,
+      scheduledAt: null,
+      publishedAt: null,
+      nextDispatchAt: null,
+      lastError: "Rate limited.",
+      platformPostId: null,
+      releaseUrl: null,
+      createdAt: "2026-07-10T14:00:00.000Z",
+      updatedAt: "2026-07-10T14:05:00.000Z",
+    });
+    const client = createApiClient({
+      token: "nb_secret",
+      url: "https://api.example.com",
+      fetchImpl: fetch,
+    });
+
+    const status = await client.getPostStatus("spost_1");
+
+    expect(status.lastError).toBe("Rate limited.");
+    expect(status.dispatchAttempts).toBe(3);
+    expect(calls[0]?.url).toBe(
+      "https://api.example.com/api/v1/social-posts/spost_1",
+    );
+  });
+
   it("gets a download url for an asset id, forwarding expiresInSeconds", async () => {
     const { fetch, calls } = fakeFetch({
       success: true,
