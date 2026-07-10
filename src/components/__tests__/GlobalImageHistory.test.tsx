@@ -163,7 +163,7 @@ describe("GlobalImageHistory", () => {
 
       // Open
       fireEvent.click(triggerButton);
-      let allButtons = screen.getAllByRole("button");
+      const allButtons = screen.getAllByRole("button");
       expect(allButtons.length).toBeGreaterThan(1);
 
       // Close (click trigger again - first button)
