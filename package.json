@@ -118,6 +118,7 @@
     "eslint": "^9.39.4",
     "eslint-config-next": "16.1.6",
     "jsdom": "^27.4.0",
+    "msw": "^2.12.14",
     "typescript": "5.9.3",
     "vite-tsconfig-paths": "^6.0.4",
     "vitest": "^4.0.16"
