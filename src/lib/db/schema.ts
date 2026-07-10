@@ -315,6 +315,43 @@ export const workspaceMembers = pgTable(
   }),
 );
 
+/**
+ * Workspace-scoped API tokens for programmatic (Bearer) access.
+ * Only a SHA-256 hash of the raw token is persisted; the raw value (carrying
+ * the `nb_` prefix) is shown to the user exactly once at creation.
+ */
+export const apiTokens = pgTable(
+  "api_tokens",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    tokenPrefix: text("token_prefix").notNull(),
+    revoked: boolean("revoked").default(false).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    tokenHashUnique: uniqueIndex("api_tokens_token_hash_unique").on(
+      table.tokenHash,
+    ),
+    workspaceIdx: index("api_tokens_workspace_idx").on(table.workspaceId),
+    createdAtIdx: index("api_tokens_created_at_idx").on(table.createdAt),
+  }),
+);
+
 export const projects = pgTable(
   "projects",
   {
@@ -1209,6 +1246,8 @@ export const savedPrompts = pgTable(
   }),
 );
 
+export type ApiToken = typeof apiTokens.$inferSelect;
+export type NewApiToken = typeof apiTokens.$inferInsert;
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
