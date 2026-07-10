@@ -4,6 +4,7 @@ import { isDatabaseConfigured } from "@/lib/db";
 import { withApiPermission } from "@/lib/studio/authz";
 import "@/lib/social/runtime-bootstrap";
 import { getProvider, isProviderRegistered } from "@/lib/social/provider-registry";
+import { isPlatformConfigured } from "@/lib/social/platform-config";
 import { getSocialPlanLimits, quotaExceededPayload } from "@/lib/social/limits";
 import {
   countActiveSocialAccounts,
@@ -61,6 +62,17 @@ export async function POST(
     if (!isProviderRegistered(body.platform)) {
       return NextResponse.json(
         { success: false, error: `Platform "${body.platform}" is not available.` },
+        { status: 400 },
+      );
+    }
+
+    if (!isPlatformConfigured(body.platform as SocialPlatform)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Platform "${body.platform}" is not configured on this server. Contact your administrator to enable it.`,
+          code: "platform_not_configured",
+        },
         { status: 400 },
       );
     }
