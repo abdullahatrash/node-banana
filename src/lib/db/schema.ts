@@ -352,6 +352,58 @@ export const apiTokens = pgTable(
   }),
 );
 
+/**
+ * The AI inference providers a workspace may store a BYOK key for. Kept in
+ * sync with `BYOK_PROVIDERS` in `src/lib/byok/providers.ts`.
+ */
+export const byokProviderEnum = pgEnum("byok_provider", [
+  "gemini",
+  "openai",
+  "anthropic",
+  "kie",
+  "fal",
+  "replicate",
+  "wavespeed",
+]);
+
+/**
+ * Per-workspace, per-provider BYOK vault entry. One row per
+ * (workspaceId, provider) pair. `keyEncrypted` is AES-256-GCM ciphertext
+ * (see `src/lib/byok/crypto.ts`) and is never selected by any read path
+ * outside `resolveProviderKey` — list/read APIs project `keyHint` only.
+ */
+export const workspaceProviderKeys = pgTable(
+  "workspace_provider_keys",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: byokProviderEnum("provider").notNull(),
+    keyEncrypted: text("key_encrypted").notNull(),
+    /** Non-secret display hint, e.g. "sk-…abc4". Never the raw key. */
+    keyHint: text("key_hint").notNull(),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceProviderUnique: uniqueIndex(
+      "workspace_provider_keys_workspace_provider_unique",
+    ).on(table.workspaceId, table.provider),
+    workspaceIdx: index("workspace_provider_keys_workspace_idx").on(
+      table.workspaceId,
+    ),
+  }),
+);
+
 export const projects = pgTable(
   "projects",
   {
@@ -1248,6 +1300,9 @@ export const savedPrompts = pgTable(
 
 export type ApiToken = typeof apiTokens.$inferSelect;
 export type NewApiToken = typeof apiTokens.$inferInsert;
+export type WorkspaceProviderKey = typeof workspaceProviderKeys.$inferSelect;
+export type NewWorkspaceProviderKey = typeof workspaceProviderKeys.$inferInsert;
+export type ByokProviderColumn = typeof byokProviderEnum.enumValues[number];
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
