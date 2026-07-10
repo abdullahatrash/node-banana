@@ -72,9 +72,11 @@ describe("createStdioProxyServer", () => {
 
     expect(tools.map((t) => t.name).sort()).toEqual([
       "get_asset_download_url",
+      "get_run_status",
       "list_assets",
       "list_social_accounts",
       "list_workspaces",
+      "run_workflow",
       "upload_asset",
     ]);
 

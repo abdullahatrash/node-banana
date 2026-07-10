@@ -21,6 +21,8 @@ export interface AppDeps {
   promptSecret: (question: string) => Promise<string>;
   /** Read a local file's raw bytes, for `assets upload <file>`. */
   readFile: (path: string) => Buffer;
+  /** Wait `ms` milliseconds — injected so `--wait` polling is instant in tests. */
+  sleep: (ms: number) => Promise<void>;
   io: Io;
 }
 

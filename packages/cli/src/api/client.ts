@@ -5,15 +5,33 @@ import {
   assetDownloadUrlResultSchema,
   assetUploadResultSchema,
   assetsResponseSchema,
+  runStartedSchema,
+  runStatusSchema,
   socialAccountsResponseSchema,
   workspacesResponseSchema,
   type Asset,
   type AssetDownloadUrlResult,
   type AssetType,
   type AssetUploadResult,
+  type RunStarted,
+  type RunStatus,
   type SocialAccount,
   type Workspace,
 } from "./schemas";
+
+/** Provider keys passed to a run (BYOK); each maps to a provider's API key. */
+export interface RunProviderKeys {
+  gemini?: string;
+  google?: string;
+  openai?: string;
+  anthropic?: string;
+}
+
+export interface RunWorkflowInput {
+  projectId: string;
+  inputOverrides?: Record<string, unknown>;
+  providerKeys?: RunProviderKeys;
+}
 
 export interface ApiClientOptions {
   /** Workspace-scoped API token (the `nb_...` value). */
@@ -51,6 +69,10 @@ export interface ApiClient {
     assetId: string,
     options?: { expiresInSeconds?: number },
   ): Promise<AssetDownloadUrlResult>;
+  /** Start a workflow run; returns the run id to poll. */
+  runWorkflow(input: RunWorkflowInput): Promise<RunStarted>;
+  /** Read a run's current status, progress, and output asset refs. */
+  getRunStatus(runId: string): Promise<RunStatus>;
   /** Confirm the token is accepted; used by `nb auth login`. */
   verifyToken(): Promise<void>;
 }
@@ -215,6 +237,23 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         query ? `?${query}` : ""
       }`;
       return requestParsed(path, assetDownloadUrlResultSchema);
+    },
+
+    async runWorkflow(input) {
+      const body: Record<string, unknown> = { projectId: input.projectId };
+      if (input.inputOverrides) body.inputOverrides = input.inputOverrides;
+      if (input.providerKeys) body.providerKeys = input.providerKeys;
+      return requestParsed("/api/v1/runs", runStartedSchema, {
+        method: "POST",
+        body,
+      });
+    },
+
+    async getRunStatus(runId) {
+      return requestParsed(
+        `/api/v1/runs/${encodeURIComponent(runId)}`,
+        runStatusSchema,
+      );
     },
 
     async verifyToken() {

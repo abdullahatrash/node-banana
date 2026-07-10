@@ -523,6 +523,54 @@ export const generationJobs = pgTable(
 );
 
 /**
+ * Workflow runs — server-side execution of a saved project's workflow graph.
+ *
+ * Distinct from `generation_jobs` (which models one single-provider inference →
+ * one result asset): a workflow run executes a *graph* of many nodes, so it
+ * needs per-node progress and a *set* of output asset references. Reusing
+ * `generation_jobs` would misuse its single provider/model/resultAssetId
+ * columns and lose the progress structure, so this is a dedicated table.
+ */
+export const workflowRuns = pgTable(
+  "workflow_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    status: generationStatusEnum("status").default("queued").notNull(),
+    /** Per-node progress: `{ nodes: [{ nodeId, type, status, error? }] }`. */
+    progress: jsonb("progress").$type<Record<string, unknown>>(),
+    /** Output asset refs: `[{ nodeId, assetId, url }]`. */
+    outputs: jsonb("outputs").$type<Record<string, unknown>[]>(),
+    /** Per-request input overrides supplied at run creation. */
+    inputOverrides: jsonb("input_overrides").$type<Record<string, unknown>>(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("workflow_runs_workspace_idx").on(table.workspaceId),
+    projectIdx: index("workflow_runs_project_idx").on(table.projectId),
+    statusIdx: index("workflow_runs_status_idx").on(table.status),
+    createdAtIdx: index("workflow_runs_created_at_idx").on(table.createdAt),
+  }),
+);
+
+/**
  * Social Hub domain tables (workspace-scoped).
  */
 export const socialPlatformEnum = pgEnum("social_platform", [

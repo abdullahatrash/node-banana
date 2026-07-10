@@ -8,6 +8,10 @@ const STATUS_BY_CODE: Record<ToolErrorCode, number> = {
   forbidden: 403,
   not_found: 404,
   invalid_output: 500,
+  // A workflow references a node type the server runner does not support yet.
+  unsupported_node: 422,
+  // No provider key was supplied (header pass-through) for a node that needs one.
+  byok_key_missing: 400,
   internal: 500,
 };
 

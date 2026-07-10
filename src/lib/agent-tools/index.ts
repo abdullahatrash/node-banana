@@ -3,6 +3,8 @@ export type { StructuredToolError, ToolErrorCode } from "./errors";
 export { runTool } from "./runtime";
 export { getTool, listToolNames, toolRegistry } from "./registry";
 export type { AnyToolDefinition, ToolContext, ToolDefinition } from "./types";
+export { getRunStatusTool } from "./tools/get-run-status";
 export { listAssetsTool } from "./tools/list-assets";
 export { listSocialAccountsTool } from "./tools/list-social-accounts";
 export { listWorkspacesTool } from "./tools/list-workspaces";
+export { runWorkflowTool } from "./tools/run-workflow";

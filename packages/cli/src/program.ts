@@ -4,6 +4,7 @@ import { accountsList } from "./commands/accounts";
 import { assetsDownloadUrl, assetsList, assetsUpload } from "./commands/assets";
 import { authLogin, authStatus } from "./commands/auth";
 import type { AppDeps } from "./commands/context";
+import { run, runsStatus } from "./commands/runs";
 import { UsageError } from "./errors/errors";
 import { workspacesList } from "./commands/workspaces";
 
@@ -143,6 +144,36 @@ export function buildProgram(deps: AppDeps): Command {
       assetId,
       ...(expiresInSeconds !== undefined ? { expiresInSeconds } : {}),
     });
+  });
+
+  withJson(
+    program
+      .command("run")
+      .description("Start a workflow run for a project.")
+      .argument("<projectId>", "project id whose workflow to run")
+      .option("--wait", "poll until the run reaches a terminal state")
+      .option(
+        "--key <provider=value...>",
+        "BYOK provider key(s), e.g. --key gemini=sk-... (repeatable)",
+      ),
+  ).action(async (projectId: string, _opts, command: Command) => {
+    const options = command.opts<{ wait?: boolean; key?: string[] }>();
+    await run(deps, {
+      projectId,
+      json: wantsJson(command),
+      wait: Boolean(options.wait),
+      keys: options.key ?? [],
+    });
+  });
+
+  const runs = program.command("runs").description("Workflow runs.");
+  withJson(
+    runs
+      .command("status")
+      .description("Show a run's status, progress, and output asset refs.")
+      .argument("<runId>", "run id returned by `nb run`"),
+  ).action(async (runId: string, _opts, command: Command) => {
+    await runsStatus(deps, { runId, json: wantsJson(command) });
   });
 
   return program;

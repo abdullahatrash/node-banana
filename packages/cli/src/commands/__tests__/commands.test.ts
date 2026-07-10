@@ -67,6 +67,14 @@ function makeDeps(overrides: Partial<AppDeps> = {}): {
     listAssets: vi.fn(async () => [ASSET]),
     uploadAsset: vi.fn(async () => UPLOAD_RESULT),
     getAssetDownloadUrl: vi.fn(async () => DOWNLOAD_URL_RESULT),
+    runWorkflow: vi.fn(async () => ({ runId: "run_1", status: "queued" })),
+    getRunStatus: vi.fn(async () => ({
+      runId: "run_1",
+      status: "succeeded",
+      progress: { nodes: [] },
+      outputs: [],
+      error: null,
+    })),
     verifyToken: vi.fn(async () => undefined),
   };
 
@@ -80,6 +88,7 @@ function makeDeps(overrides: Partial<AppDeps> = {}): {
     }),
     promptSecret: vi.fn(async () => "nb_prompted"),
     readFile: vi.fn(() => Buffer.from("file-bytes")),
+    sleep: vi.fn(async () => undefined),
     io: { out: (line) => out.push(line), err: (line) => err.push(line) },
     ...overrides,
   };

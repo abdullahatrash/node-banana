@@ -18,6 +18,7 @@ export function buildDefaultDeps(): AppDeps {
     createClient: (options) => createApiClient(options),
     promptSecret,
     readFile: (path) => readFileSync(path),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     io: {
       out: (line) => process.stdout.write(`${line}\n`),
       err: (line) => process.stderr.write(`${line}\n`),

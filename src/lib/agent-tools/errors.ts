@@ -12,6 +12,8 @@ export type ToolErrorCode =
   | "forbidden"
   | "not_found"
   | "invalid_output"
+  | "unsupported_node"
+  | "byok_key_missing"
   | "internal";
 
 export interface StructuredToolError {

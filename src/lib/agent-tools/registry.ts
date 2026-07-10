@@ -1,7 +1,9 @@
 import { getAssetDownloadUrlTool } from "./tools/get-asset-download-url";
+import { getRunStatusTool } from "./tools/get-run-status";
 import { listAssetsTool } from "./tools/list-assets";
 import { listSocialAccountsTool } from "./tools/list-social-accounts";
 import { listWorkspacesTool } from "./tools/list-workspaces";
+import { runWorkflowTool } from "./tools/run-workflow";
 import { uploadAssetTool } from "./tools/upload-asset";
 import type { AnyToolDefinition } from "./types";
 
@@ -19,6 +21,8 @@ export const toolRegistry: readonly AnyToolDefinition[] = [
   listAssetsTool,
   uploadAssetTool,
   getAssetDownloadUrlTool,
+  runWorkflowTool,
+  getRunStatusTool,
 ] as const;
 
 const toolsByName = new Map<string, AnyToolDefinition>(

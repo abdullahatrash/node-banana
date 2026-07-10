@@ -59,9 +59,11 @@ describe("buildMcpServer (registry-derived MCP tools)", () => {
 
     expect(names).toEqual([
       "get_asset_download_url",
+      "get_run_status",
       "list_assets",
       "list_social_accounts",
       "list_workspaces",
+      "run_workflow",
       "upload_asset",
     ]);
     for (const tool of tools) {
