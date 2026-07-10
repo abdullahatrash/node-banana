@@ -105,7 +105,9 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
     }
   }, [open, providers.length, showToast])
 
-  async function handleConnect(platform: string) {
+  async function handleConnect(platform: string, configured: boolean) {
+    if (!configured) return
+
     if (platform === "bluesky") {
       setBlueskyModalOpen(true)
       return
@@ -152,15 +154,22 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
     }
   }
 
-  const platforms: Array<{ identifier: SocialPlatform; name: string }> =
+  const platforms: Array<{
+    identifier: SocialPlatform
+    name: string
+    configured: boolean
+  }> =
     providers.length > 0
       ? providers.map((p) => ({
           identifier: p.identifier,
           name: p.displayName,
+          // Non-standard-OAuth platforms (bluesky, mastodon) and any
+          // provider that doesn't report a status default to connectable.
+          configured: p.configured !== false,
         }))
       : (
           ["linkedin", "instagram", "x", "tiktok", "facebook", "youtube"] as const
-        ).map((id) => ({ identifier: id, name: PLATFORM_LABELS[id] }))
+        ).map((id) => ({ identifier: id, name: PLATFORM_LABELS[id], configured: true }))
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -177,8 +186,13 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
             return (
               <button
                 key={platform.identifier}
-                onClick={() => handleConnect(platform.identifier)}
-                disabled={!!connectingPlatform}
+                onClick={() => handleConnect(platform.identifier, platform.configured)}
+                disabled={!platform.configured || !!connectingPlatform}
+                title={
+                  platform.configured
+                    ? undefined
+                    : `${platform.name} is not configured on this server. Contact your administrator to enable it.`
+                }
                 className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <div className="flex size-9 items-center justify-center rounded-lg bg-muted">
@@ -187,6 +201,11 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
                 <span className="text-xs font-medium">
                   {isConnecting ? "Connecting..." : platform.name}
                 </span>
+                {!platform.configured && (
+                  <span className="text-[10px] leading-none text-muted-foreground">
+                    Not configured
+                  </span>
+                )}
               </button>
             )
           })}
