@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { PillarSwitcher } from "../social/PillarSwitcher";
 
@@ -8,8 +8,7 @@ describe("PillarSwitcher", () => {
 
     expect(screen.getByText("Social Hub")).toBeInTheDocument();
 
-    const button = screen.getByRole("button");
-    button.click();
+    fireEvent.click(screen.getByRole("button"));
 
     expect(screen.getByText("AI Studio")).toBeInTheDocument();
     expect(screen.queryByText("Analytics")).not.toBeInTheDocument();
