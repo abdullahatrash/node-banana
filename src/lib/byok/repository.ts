@@ -9,6 +9,20 @@ import { maskProviderKey } from "./mask";
 import type { ByokProvider } from "./providers";
 
 /**
+ * TODO(#102 tool registry, PRD #100): once the agent-tool registry lands
+ * (`src/lib/agent-tools/` — owned by #102, intentionally not created here),
+ * add a `manage-keys` tool definition that wraps this module's
+ * `listProviderKeys` / `upsertProviderKey` / `deleteProviderKey` so the MCP
+ * server and CLI (`nb keys set/list/delete`) can manage BYOK keys the same
+ * way the app's settings UI does. The tool's "set" handler must call
+ * `validateProviderKey` from `./validation` before `upsertProviderKey`,
+ * exactly like `POST /api/keys` — never persist an unvalidated key. Its
+ * "list" handler must return `ProviderKeySummary` (masked hint only) and
+ * MUST NOT expose `resolveProviderKey`'s plaintext output over any tool,
+ * CLI, or MCP surface.
+ */
+
+/**
  * Everything a read path may ever expose about a stored provider key. The
  * raw key itself is deliberately absent from this shape — see
  * `resolveProviderKey` for the one seam that returns plaintext, and note
