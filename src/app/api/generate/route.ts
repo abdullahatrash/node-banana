@@ -15,6 +15,12 @@ import { GenerateRequest, GenerateResponse, ModelType, SelectedModel, ProviderTy
 import { GenerationInput, ModelCapability } from "@/lib/providers/types";
 import { resolveAssetRefsInPayload } from "./assetResolver";
 import { isS3Configured } from "@/lib/storage/s3";
+import {
+  resolveInferenceKey,
+  resolveInferenceKeyOptional,
+  isInferenceKeyError,
+  type InferenceKeyError,
+} from "@/lib/byok/resolveInferenceKey";
 import { generateWithGemini, generateWithGeminiVideo } from "./providers/gemini";
 import { generateWithReplicate } from "./providers/replicate";
 import { clearFalInputMappingCache as _clearFalInputMappingCache, generateWithFalQueue } from "./providers/fal";
@@ -73,6 +79,19 @@ function buildMediaResponse(output: { type: string; data: string; url?: string }
     image: output.data,
     contentType: "image",
   });
+}
+
+/**
+ * Translate a typed BYOK key-missing error into a 4xx JSON body. Names the
+ * provider and points to Settings → Provider Keys; never a 500, never a leaked
+ * env var name. `error` mirrors `message` so the existing client error-display
+ * path (which reads the `error` field) surfaces it on the node.
+ */
+function byokErrorResponse(err: InferenceKeyError): NextResponse {
+  return NextResponse.json(
+    { success: false, error: err.message, ...err.toJSON() },
+    { status: 401 }
+  );
 }
 
 function capabilitiesForMediaType(mediaType?: string): ModelCapability[] {
@@ -155,16 +174,17 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // User-provided key takes precedence over env variable
-      const replicateApiKey = request.headers.get("X-Replicate-API-Key") || process.env.REPLICATE_API_KEY;
-      if (!replicateApiKey) {
-        return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: "Replicate API key not configured. Add REPLICATE_API_KEY to .env.local or configure in Settings.",
-          },
-          { status: 401 }
-        );
+      // BYOK: request header override → workspace vault → typed error. No env.
+      let replicateApiKey: string;
+      try {
+        replicateApiKey = await resolveInferenceKey({
+          headerKey: request.headers.get("X-Replicate-API-Key"),
+          workspaceId,
+          provider: "replicate",
+        });
+      } catch (err) {
+        if (isInferenceKeyError(err)) return byokErrorResponse(err);
+        throw err;
       }
 
       // Keep Data URIs as-is since localhost URLs won't work (provider can't reach them)
@@ -235,8 +255,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // User-provided key takes precedence over env variable
-      const falApiKey = request.headers.get("X-Fal-API-Key") || process.env.FAL_API_KEY || null;
+      // BYOK: request header override → workspace vault → null. fal.ai supports
+      // anonymous (rate-limited) use, so a missing key is a valid state, not an
+      // error — but the server env is never consulted.
+      const falApiKey = await resolveInferenceKeyOptional({
+        headerKey: request.headers.get("X-Fal-API-Key"),
+        workspaceId,
+        provider: "fal",
+      });
 
       if (!falApiKey) {
         console.warn(`[API:${requestId}] No FAL API key configured. Proceeding without auth (rate-limited).`);
@@ -310,16 +336,17 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // User-provided key takes precedence over env variable
-      const kieApiKey = request.headers.get("X-Kie-Key") || process.env.KIE_API_KEY;
-      if (!kieApiKey) {
-        return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: "Kie.ai API key not configured. Add KIE_API_KEY to .env.local or configure in Settings.",
-          },
-          { status: 401 }
-        );
+      // BYOK: request header override → workspace vault → typed error. No env.
+      let kieApiKey: string;
+      try {
+        kieApiKey = await resolveInferenceKey({
+          headerKey: request.headers.get("X-Kie-Key"),
+          workspaceId,
+          provider: "kie",
+        });
+      } catch (err) {
+        if (isInferenceKeyError(err)) return byokErrorResponse(err);
+        throw err;
       }
 
       // Process images - Kie requires URLs, we'll upload base64 images in generateWithKie
@@ -389,16 +416,17 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // User-provided key takes precedence over env variable
-      const wavespeedApiKey = request.headers.get("X-WaveSpeed-Key") || process.env.WAVESPEED_API_KEY;
-      if (!wavespeedApiKey) {
-        return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: "WaveSpeed API key not configured. Add WAVESPEED_API_KEY to .env.local or configure in Settings.",
-          },
-          { status: 401 }
-        );
+      // BYOK: request header override → workspace vault → typed error. No env.
+      let wavespeedApiKey: string;
+      try {
+        wavespeedApiKey = await resolveInferenceKey({
+          headerKey: request.headers.get("X-WaveSpeed-Key"),
+          workspaceId,
+          provider: "wavespeed",
+        });
+      } catch (err) {
+        if (isInferenceKeyError(err)) return byokErrorResponse(err);
+        throw err;
       }
 
       // Keep Data URIs as-is since localhost URLs won't work
@@ -461,17 +489,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Default: Use Gemini
-    // User-provided key (from settings) takes precedence over env variable
-    const geminiApiKey = request.headers.get("X-Gemini-API-Key") || process.env.GEMINI_API_KEY;
-
-    if (!geminiApiKey) {
-      return NextResponse.json<GenerateResponse>(
-        {
-          success: false,
-          error: "API key not configured. Add GEMINI_API_KEY to .env.local or configure in Settings.",
-        },
-        { status: 500 }
-      );
+    // BYOK: request header override → workspace vault → typed error. No env.
+    let geminiApiKey: string;
+    try {
+      geminiApiKey = await resolveInferenceKey({
+        headerKey: request.headers.get("X-Gemini-API-Key"),
+        workspaceId,
+        provider: "gemini",
+      });
+    } catch (err) {
+      if (isInferenceKeyError(err)) return byokErrorResponse(err);
+      throw err;
     }
 
     // Use selectedModel.modelId if available (new format), fallback to legacy model field

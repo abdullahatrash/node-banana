@@ -120,11 +120,12 @@ describe("resolveInferenceKey", () => {
     mockedResolve.mockResolvedValue(null);
 
     for (const provider of ["gemini", "openai", "anthropic", "wavespeed"] as const) {
-      const error = await resolveInferenceKey({
-        headerKey: null,
-        workspaceId: "ws-1",
-        provider,
-      }).catch((e) => e as InferenceKeyError);
+      let error!: InferenceKeyError;
+      try {
+        await resolveInferenceKey({ headerKey: null, workspaceId: "ws-1", provider });
+      } catch (e) {
+        error = e as InferenceKeyError;
+      }
 
       expect(error.message).not.toMatch(/API_KEY|process\.env|_KEY|env/i);
       expect(error.remedy).not.toMatch(/API_KEY|process\.env|_KEY/i);
