@@ -44,7 +44,28 @@ vi.mock("@/utils/logger", () => ({
   },
 }));
 
+// BYOK vault shim: the route resolves keys via resolveInferenceKey, whose vault
+// tier delegates to resolveProviderKey. Mock the repository so tests never touch
+// the database; by default the vault mirrors process.env so the existing
+// generation-behavior tests keep providing a key by setting env (which the route
+// no longer reads directly). Requests carry a default `x-workspace-id`.
+const PROVIDER_ENV_MAP: Record<string, string> = {
+  gemini: "GEMINI_API_KEY",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+};
+
+vi.mock("@/lib/byok/repository", () => ({
+  resolveProviderKey: vi.fn(
+    async (_workspaceId: string, provider: string) =>
+      process.env[PROVIDER_ENV_MAP[provider]] ?? null,
+  ),
+}));
+
+import { resolveProviderKey } from "@/lib/byok/repository";
 import { POST } from "../route";
+
+const mockedResolveProviderKey = vi.mocked(resolveProviderKey);
 
 // Store original env and fetch
 const originalEnv = { ...process.env };
@@ -53,14 +74,15 @@ const originalFetch = global.fetch;
 // Mock fetch for OpenAI API
 const mockFetch = vi.fn();
 
-// Helper to create mock NextRequest for POST
+// Helper to create mock NextRequest for POST. Injects a default workspace
+// header so the BYOK vault tier is active; override via `headers`.
 function createMockPostRequest(
   body: unknown,
   headers?: Record<string, string>
 ): NextRequest {
   return {
     json: vi.fn().mockResolvedValue(body),
-    headers: new Headers(headers),
+    headers: new Headers({ "x-workspace-id": "ws-test", ...headers }),
   } as unknown as NextRequest;
 }
 
@@ -70,6 +92,11 @@ describe("/api/llm route", () => {
     MockGoogleGenAI.reset();
     // Reset env to original
     process.env = { ...originalEnv };
+    // Re-establish the default env-mirroring vault shim after clearAllMocks.
+    mockedResolveProviderKey.mockImplementation(
+      async (_workspaceId: string, provider: string) =>
+        process.env[PROVIDER_ENV_MAP[provider]] ?? null,
+    );
   });
 
   afterEach(() => {
@@ -167,8 +194,9 @@ describe("/api/llm route", () => {
       expect(data.error).toBe("Prompt is required");
     });
 
-    it("should reject missing API key (no env var, no header)", async () => {
+    it("returns a typed byok_key_missing error when no key is resolvable", async () => {
       delete process.env.GEMINI_API_KEY;
+      mockedResolveProviderKey.mockResolvedValue(null);
 
       const request = createMockPostRequest({
         prompt: "Test prompt",
@@ -179,13 +207,57 @@ describe("/api/llm route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
       expect(data.success).toBe(false);
-      expect(data.error).toContain("GEMINI_API_KEY not configured");
+      expect(data.code).toBe("byok_key_missing");
+      expect(data.provider).toBe("gemini");
+      expect(data.error).toContain("Google Gemini");
+      expect(data.error).toContain("Provider Keys");
+      expect(data.error).not.toMatch(/GEMINI_API_KEY|process\.env/);
     });
 
-    it("should use X-Gemini-API-Key header over env var", async () => {
+    it("resolves the Gemini key from the workspace vault when no header is set", async () => {
+      delete process.env.GEMINI_API_KEY;
+      mockedResolveProviderKey.mockResolvedValue("vault-gemini-key");
+
+      mockGenerateContent.mockResolvedValueOnce({ text: "vault response" });
+
+      const request = createMockPostRequest({
+        prompt: "Test prompt",
+        provider: "google",
+        model: "gemini-2.5-flash",
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(MockGoogleGenAI.lastCalledWith).toEqual({ apiKey: "vault-gemini-key" });
+    });
+
+    it("never falls back to the server env key for Gemini", async () => {
       process.env.GEMINI_API_KEY = "env-gemini-key";
+      mockedResolveProviderKey.mockResolvedValue(null);
+
+      const request = createMockPostRequest({
+        prompt: "Test prompt",
+        provider: "google",
+        model: "gemini-2.5-flash",
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
+      expect(data.code).toBe("byok_key_missing");
+      expect(MockGoogleGenAI.callCount).toBe(0);
+    });
+
+    it("should use X-Gemini-API-Key header over the vault", async () => {
+      mockedResolveProviderKey.mockResolvedValue("vault-gemini-key");
 
       mockGenerateContent.mockResolvedValueOnce({
         text: "Response with header key",
@@ -428,8 +500,9 @@ describe("/api/llm route", () => {
       expect(data.error).toBe("Unknown provider: unknown-provider");
     });
 
-    it("should reject missing OpenAI API key", async () => {
+    it("should reject missing OpenAI API key with typed byok error", async () => {
       delete process.env.OPENAI_API_KEY;
+      mockedResolveProviderKey.mockResolvedValue(null);
 
       const request = createMockPostRequest({
         prompt: "Test prompt",
@@ -440,12 +513,17 @@ describe("/api/llm route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
       expect(data.success).toBe(false);
-      expect(data.error).toContain("OPENAI_API_KEY not configured");
+      expect(data.code).toBe("byok_key_missing");
+      expect(data.provider).toBe("openai");
+      expect(data.error).toContain("OpenAI");
+      expect(data.error).toContain("Provider Keys");
+      expect(data.error).not.toMatch(/OPENAI_API_KEY|process\.env/);
     });
 
-    it("should use X-OpenAI-API-Key header over env var", async () => {
+    it("should use X-OpenAI-API-Key header over the vault", async () => {
       process.env.OPENAI_API_KEY = "env-openai-key";
 
       mockFetch.mockResolvedValueOnce({
@@ -687,8 +765,9 @@ describe("/api/llm route", () => {
       );
     });
 
-    it("should reject missing Anthropic API key", async () => {
+    it("should reject missing Anthropic API key with typed byok error", async () => {
       delete process.env.ANTHROPIC_API_KEY;
+      mockedResolveProviderKey.mockResolvedValue(null);
 
       const request = createMockPostRequest({
         prompt: "Test prompt",
@@ -699,12 +778,17 @@ describe("/api/llm route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
       expect(data.success).toBe(false);
-      expect(data.error).toContain("ANTHROPIC_API_KEY not configured");
+      expect(data.code).toBe("byok_key_missing");
+      expect(data.provider).toBe("anthropic");
+      expect(data.error).toContain("Anthropic");
+      expect(data.error).toContain("Provider Keys");
+      expect(data.error).not.toMatch(/ANTHROPIC_API_KEY|process\.env/);
     });
 
-    it("should use X-Anthropic-API-Key header over env var", async () => {
+    it("should use X-Anthropic-API-Key header over the vault", async () => {
       process.env.ANTHROPIC_API_KEY = "env-anthropic-key";
 
       mockFetch.mockResolvedValueOnce({
