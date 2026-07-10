@@ -8,7 +8,13 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    include: [
+      "src/**/*.{test,spec}.{ts,tsx}",
+      // CLI workspace package tests run in the same root `pnpm test:run`
+      // invocation. They rely only on Node built-ins + a stubbed global fetch,
+      // so the shared jsdom environment is harmless for them.
+      "packages/*/src/**/*.{test,spec}.{ts,tsx}",
+    ],
     setupFiles: ["./src/test/setup.ts"],
     coverage: {
       provider: "v8",
