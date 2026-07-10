@@ -36,18 +36,9 @@ describe("WelcomeModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Setup default fetch mock for community workflows
-    mockFetch.mockImplementation((url: string) => {
-      if (url === "/api/community-workflows") {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ success: true, workflows: [] }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ success: true }),
-      });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
     });
   });
 

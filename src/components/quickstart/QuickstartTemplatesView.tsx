@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { WorkflowFile } from "@/store/workflowStore";
 import { getAllPresets } from "@/lib/quickstart/templates";
 import { QuickstartBackButton } from "./QuickstartBackButton";
-import { CommunityWorkflowMeta } from "@/types/quickstart";
 
 interface QuickstartTemplatesViewProps {
   onBack: () => void;
@@ -15,34 +14,10 @@ export function QuickstartTemplatesView({
   onBack,
   onWorkflowSelected,
 }: QuickstartTemplatesViewProps) {
-  const [communityWorkflows, setCommunityWorkflows] = useState<CommunityWorkflowMeta[]>([]);
-  const [isLoadingList, setIsLoadingList] = useState(true);
   const [loadingWorkflowId, setLoadingWorkflowId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const presets = getAllPresets();
-
-  // Fetch community workflows on mount
-  useEffect(() => {
-    async function fetchCommunityWorkflows() {
-      try {
-        const response = await fetch("/api/community-workflows");
-        const result = await response.json();
-
-        if (result.success) {
-          setCommunityWorkflows(result.workflows);
-        } else {
-          console.error("Failed to fetch community workflows:", result.error);
-        }
-      } catch (err) {
-        console.error("Error fetching community workflows:", err);
-      } finally {
-        setIsLoadingList(false);
-      }
-    }
-
-    fetchCommunityWorkflows();
-  }, []);
 
   const handlePresetSelect = useCallback(
     async (templateId: string) => {
@@ -71,38 +46,6 @@ export function QuickstartTemplatesView({
       } catch (err) {
         console.error("Error loading preset:", err);
         setError(err instanceof Error ? err.message : "Failed to load template");
-      } finally {
-        setLoadingWorkflowId(null);
-      }
-    },
-    [onWorkflowSelected]
-  );
-
-  const handleCommunitySelect = useCallback(
-    async (workflowId: string) => {
-      setLoadingWorkflowId(workflowId);
-      setError(null);
-
-      try {
-        // Step 1: Get presigned download URL from API
-        const response = await fetch(`/api/community-workflows/${workflowId}`);
-        const result = await response.json();
-
-        if (!result.success || !result.downloadUrl) {
-          throw new Error(result.error || "Failed to get download URL");
-        }
-
-        // Step 2: Download workflow directly from R2
-        const workflowResponse = await fetch(result.downloadUrl);
-        if (!workflowResponse.ok) {
-          throw new Error("Failed to download workflow");
-        }
-
-        const workflow = await workflowResponse.json();
-        onWorkflowSelected(workflow);
-      } catch (err) {
-        console.error("Error loading community workflow:", err);
-        setError(err instanceof Error ? err.message : "Failed to load workflow");
       } finally {
         setLoadingWorkflowId(null);
       }
@@ -208,133 +151,6 @@ export function QuickstartTemplatesView({
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Divider */}
-        <div className="border-t border-neutral-700" />
-
-        {/* Community Workflows */}
-        <div className="space-y-3">
-          <h3 className="text-xs font-medium text-neutral-400 uppercase tracking-wider">
-            Community Workflows
-          </h3>
-
-          {isLoadingList ? (
-            <div className="flex items-center justify-center py-8">
-              <svg
-                className="w-5 h-5 text-neutral-500 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-            </div>
-          ) : communityWorkflows.length === 0 ? (
-            <p className="text-sm text-neutral-500 py-4">
-              No community workflows available
-            </p>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {communityWorkflows.map((workflow) => (
-                <button
-                  key={workflow.id}
-                  onClick={() => handleCommunitySelect(workflow.id)}
-                  disabled={isLoading}
-                  className={`
-                    group flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-all text-start
-                    ${
-                      loadingWorkflowId === workflow.id
-                        ? "bg-purple-600/20 border-purple-500/50"
-                        : "bg-neutral-800/50 border-neutral-700 hover:border-neutral-600 hover:bg-neutral-800"
-                    }
-                    ${isLoading && loadingWorkflowId !== workflow.id ? "opacity-50" : ""}
-                    ${isLoading ? "cursor-not-allowed" : "cursor-pointer"}
-                  `}
-                >
-                  <div
-                    className={`
-                      w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0
-                      ${
-                        loadingWorkflowId === workflow.id
-                          ? "bg-purple-500/30"
-                          : "bg-neutral-700/50 group-hover:bg-neutral-700"
-                      }
-                    `}
-                  >
-                    {loadingWorkflowId === workflow.id ? (
-                      <svg
-                        className="w-4 h-4 text-purple-400 animate-spin"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                      >
-                        <circle
-                          className="opacity-25"
-                          cx="12"
-                          cy="12"
-                          r="10"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                        />
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                        />
-                      </svg>
-                    ) : (
-                      <svg
-                        className="w-4 h-4 text-neutral-400 group-hover:text-neutral-300"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth={1.5}
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-neutral-200 truncate">
-                      {workflow.name}
-                    </div>
-                    <div className="text-[10px] text-purple-400/80">
-                      @{workflow.author}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Discord CTA */}
-          <p className="text-xs text-neutral-500 mt-3">
-            Want to share your workflow?{" "}
-            <a
-              href="https://discord.com/invite/89Nr6EKkTf"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-purple-400 hover:text-purple-300 underline"
-            >
-              Join our Discord
-            </a>{" "}
-            to submit it to the community templates.
-          </p>
         </div>
 
         {/* Error */}

@@ -22,13 +22,11 @@ interface TemplateCardProps {
 const CATEGORY_LABELS: Record<TemplateCategory, string> = {
   simple: "Simple",
   advanced: "Advanced",
-  community: "Community",
 };
 
 const CATEGORY_COLORS: Record<TemplateCategory, string> = {
   simple: "bg-blue-500/20 text-blue-300",
   advanced: "bg-purple-500/20 text-purple-300",
-  community: "bg-amber-500/20 text-amber-300",
 };
 
 export function TemplateCard({
