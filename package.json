@@ -14,7 +14,7 @@
     "proxy": "microfrontends proxy --local-apps node-banana",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
     "test:gate-a": "vitest run src/app/api/studio/workspaces/__tests__/route.test.ts src/app/api/studio/projects/__tests__/route.test.ts src/app/api/studio/projects/[projectId]/__tests__/route.test.ts src/app/api/studio/assets/__tests__/route.test.ts src/app/api/studio/assets/[assetId]/__tests__/route.test.ts src/app/api/studio/assets/presign/__tests__/route.test.ts src/app/api/social/accounts/__tests__/route.test.ts src/app/api/social/posts/__tests__/route.test.ts src/components/__tests__/Header.test.tsx",
