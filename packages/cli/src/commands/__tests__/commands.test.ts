@@ -49,6 +49,14 @@ function makeDeps(overrides: Partial<AppDeps> = {}): {
     listWorkspaces: vi.fn(async () => [WORKSPACE]),
     listSocialAccounts: vi.fn(async () => [ACCOUNT]),
     listAssets: vi.fn(async () => [ASSET]),
+    runWorkflow: vi.fn(async () => ({ runId: "run_1", status: "queued" })),
+    getRunStatus: vi.fn(async () => ({
+      runId: "run_1",
+      status: "succeeded",
+      progress: { nodes: [] },
+      outputs: [],
+      error: null,
+    })),
     verifyToken: vi.fn(async () => undefined),
   };
 
@@ -61,6 +69,7 @@ function makeDeps(overrides: Partial<AppDeps> = {}): {
       return client;
     }),
     promptSecret: vi.fn(async () => "nb_prompted"),
+    sleep: vi.fn(async () => undefined),
     io: { out: (line) => out.push(line), err: (line) => err.push(line) },
     ...overrides,
   };

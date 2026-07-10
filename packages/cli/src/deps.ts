@@ -15,6 +15,7 @@ export function buildDefaultDeps(): AppDeps {
     clearConfig,
     createClient: (options) => createApiClient(options),
     promptSecret,
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     io: {
       out: (line) => process.stdout.write(`${line}\n`),
       err: (line) => process.stderr.write(`${line}\n`),

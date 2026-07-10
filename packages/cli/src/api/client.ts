@@ -3,12 +3,30 @@ import type { z } from "zod";
 import { ApiError } from "../errors/errors";
 import {
   assetsResponseSchema,
+  runStartedSchema,
+  runStatusSchema,
   socialAccountsResponseSchema,
   workspacesResponseSchema,
   type Asset,
+  type RunStarted,
+  type RunStatus,
   type SocialAccount,
   type Workspace,
 } from "./schemas";
+
+/** Provider keys passed to a run (BYOK); each maps to a provider's API key. */
+export interface RunProviderKeys {
+  gemini?: string;
+  google?: string;
+  openai?: string;
+  anthropic?: string;
+}
+
+export interface RunWorkflowInput {
+  projectId: string;
+  inputOverrides?: Record<string, unknown>;
+  providerKeys?: RunProviderKeys;
+}
 
 export interface ApiClientOptions {
   /** Workspace-scoped API token (the `nb_...` value). */
@@ -30,6 +48,10 @@ export interface ApiClient {
     type?: string;
     limit?: number;
   }): Promise<Asset[]>;
+  /** Start a workflow run; returns the run id to poll. */
+  runWorkflow(input: RunWorkflowInput): Promise<RunStarted>;
+  /** Read a run's current status, progress, and output asset refs. */
+  getRunStatus(runId: string): Promise<RunStatus>;
   /** Confirm the token is accepted; used by `nb auth login`. */
   verifyToken(): Promise<void>;
 }
@@ -81,17 +103,26 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = options.url.replace(/\/+$/, "");
 
-  async function requestJson(path: string): Promise<Record<string, unknown>> {
+  async function requestJson(
+    path: string,
+    init?: { method?: string; body?: unknown },
+  ): Promise<Record<string, unknown>> {
     const url = `${baseUrl}${path}`;
 
     let response: Response;
     try {
       response = await fetchImpl(url, {
-        method: "GET",
+        method: init?.method ?? "GET",
         headers: {
           authorization: `Bearer ${options.token}`,
           accept: "application/json",
+          ...(init?.body !== undefined
+            ? { "content-type": "application/json" }
+            : {}),
         },
+        ...(init?.body !== undefined
+          ? { body: JSON.stringify(init.body) }
+          : {}),
       });
     } catch (cause) {
       throw new ApiError({
@@ -127,8 +158,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   async function requestParsed<Schema extends z.ZodTypeAny>(
     path: string,
     schema: Schema,
+    init?: { method?: string; body?: unknown },
   ): Promise<z.infer<Schema>> {
-    const body = await requestJson(path);
+    const body = await requestJson(path, init);
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
       throw new ApiError({
@@ -167,6 +199,23 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       const path = query ? `/api/v1/assets?${query}` : "/api/v1/assets";
       const { assets } = await requestParsed(path, assetsResponseSchema);
       return assets;
+    },
+
+    async runWorkflow(input) {
+      const body: Record<string, unknown> = { projectId: input.projectId };
+      if (input.inputOverrides) body.inputOverrides = input.inputOverrides;
+      if (input.providerKeys) body.providerKeys = input.providerKeys;
+      return requestParsed("/api/v1/runs", runStartedSchema, {
+        method: "POST",
+        body,
+      });
+    },
+
+    async getRunStatus(runId) {
+      return requestParsed(
+        `/api/v1/runs/${encodeURIComponent(runId)}`,
+        runStatusSchema,
+      );
     },
 
     async verifyToken() {

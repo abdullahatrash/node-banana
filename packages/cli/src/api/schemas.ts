@@ -53,6 +53,39 @@ export const assetSchema = z.object({
 });
 export type Asset = z.infer<typeof assetSchema>;
 
+export const runStartedSchema = z.object({
+  runId: z.string(),
+  status: z.string(),
+});
+export type RunStarted = z.infer<typeof runStartedSchema>;
+
+export const runNodeProgressSchema = z.object({
+  nodeId: z.string(),
+  type: z.string(),
+  status: z.string(),
+  error: z.string().optional(),
+});
+
+export const runOutputSchema = z.object({
+  nodeId: z.string(),
+  assetId: z.string(),
+  url: z.string().nullable(),
+});
+
+export const runStatusSchema = z.object({
+  runId: z.string(),
+  status: z.string(),
+  progress: z.object({ nodes: z.array(runNodeProgressSchema) }),
+  outputs: z.array(runOutputSchema),
+  error: z
+    .object({
+      code: z.string().nullable(),
+      message: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type RunStatus = z.infer<typeof runStatusSchema>;
+
 export const workspacesResponseSchema = z.object({
   workspaces: z.array(workspaceSchema),
 });

@@ -19,6 +19,8 @@ export interface AppDeps {
   createClient: (options: ApiClientOptions) => ApiClient;
   /** Read a secret (the API token) from the terminal without echoing it. */
   promptSecret: (question: string) => Promise<string>;
+  /** Wait `ms` milliseconds — injected so `--wait` polling is instant in tests. */
+  sleep: (ms: number) => Promise<void>;
   io: Io;
 }
 

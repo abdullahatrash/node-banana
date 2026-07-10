@@ -10,6 +10,14 @@ function makeDeps(): { deps: AppDeps; out: string[] } {
     listWorkspaces: vi.fn(async () => [{ id: "ws_1", name: "Acme", slug: "acme" }]),
     listSocialAccounts: vi.fn(async () => []),
     listAssets: vi.fn(async () => []),
+    runWorkflow: vi.fn(async () => ({ runId: "run_1", status: "queued" })),
+    getRunStatus: vi.fn(async () => ({
+      runId: "run_1",
+      status: "succeeded",
+      progress: { nodes: [] },
+      outputs: [],
+      error: null,
+    })),
     verifyToken: vi.fn(async () => undefined),
   };
   const deps: AppDeps = {
@@ -18,6 +26,7 @@ function makeDeps(): { deps: AppDeps; out: string[] } {
     clearConfig: vi.fn(),
     createClient: vi.fn(() => client),
     promptSecret: vi.fn(async () => "nb_prompted"),
+    sleep: vi.fn(async () => undefined),
     io: { out: (line) => out.push(line), err: () => {} },
   };
   return { deps, out };
@@ -35,7 +44,14 @@ describe("buildProgram", () => {
     const program = buildProgram(deps);
     expect(program.name()).toBe("nb");
     const names = program.commands.map((c) => c.name()).sort();
-    expect(names).toEqual(["accounts", "assets", "auth", "workspaces"]);
+    expect(names).toEqual([
+      "accounts",
+      "assets",
+      "auth",
+      "run",
+      "runs",
+      "workspaces",
+    ]);
   });
 
   it("runs `workspaces list` and prints a table", async () => {
