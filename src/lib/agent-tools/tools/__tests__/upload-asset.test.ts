@@ -25,7 +25,7 @@ const {
   mockDeleteObjectFromS3: vi.fn(),
   mockCreatePresignedDownload: vi.fn(),
   mockBuildCdnDownloadUrl: vi.fn(),
-  mockCanUseS3Storage: vi.fn(() => true),
+  mockCanUseS3Storage: vi.fn(),
   mockFetch: vi.fn(),
 }));
 

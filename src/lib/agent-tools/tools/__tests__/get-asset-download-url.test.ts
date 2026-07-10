@@ -8,7 +8,7 @@ const { mockGetAsset, mockBuildCdnDownloadUrl, mockCreatePresignedDownload, mock
     mockGetAsset: vi.fn(),
     mockBuildCdnDownloadUrl: vi.fn(),
     mockCreatePresignedDownload: vi.fn(),
-    mockCanUseS3Storage: vi.fn(() => true),
+    mockCanUseS3Storage: vi.fn(),
   }));
 
 vi.mock("@/lib/storage", () => ({

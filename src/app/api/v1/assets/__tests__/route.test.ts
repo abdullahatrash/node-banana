@@ -22,14 +22,10 @@ const {
   mockGetProject: vi.fn(),
   mockRecordPending: vi.fn(),
   mockFinalizeAssetUpload: vi.fn(),
-  mockCanUseS3Storage: vi.fn(() => true),
-  mockBuildAssetObjectKey: vi.fn(() => "workspace/ws_1/unscoped/image/file.png"),
-  mockBuildCdnDownloadUrl: vi.fn(() => null),
-  mockCreatePresignedDownload: vi.fn(async () => ({
-    key: "workspace/ws_1/unscoped/image/file.png",
-    downloadUrl: "https://signed.example/file.png",
-    expiresInSeconds: 900,
-  })),
+  mockCanUseS3Storage: vi.fn(),
+  mockBuildAssetObjectKey: vi.fn(),
+  mockBuildCdnDownloadUrl: vi.fn(),
+  mockCreatePresignedDownload: vi.fn(),
   mockPutObjectToS3: vi.fn(),
 }));
 

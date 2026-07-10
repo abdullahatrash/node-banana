@@ -14,13 +14,9 @@ const {
   mockAuthorize: vi.fn(),
   mockIsDatabaseConfigured: vi.fn(() => true),
   mockGetAsset: vi.fn(),
-  mockCanUseS3Storage: vi.fn(() => true),
-  mockBuildCdnDownloadUrl: vi.fn(() => null),
-  mockCreatePresignedDownload: vi.fn(async () => ({
-    key: "workspace/ws_1/unscoped/image/file.png",
-    downloadUrl: "https://signed.example/file.png",
-    expiresInSeconds: 900,
-  })),
+  mockCanUseS3Storage: vi.fn(),
+  mockBuildCdnDownloadUrl: vi.fn(),
+  mockCreatePresignedDownload: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/server", () => ({
