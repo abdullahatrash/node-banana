@@ -10,6 +10,10 @@ import {
 } from "@/lib/quickstart/validation";
 import { ImageInputNodeData } from "@/types";
 import { headers } from "next/headers";
+import {
+  resolveInferenceKey,
+  isInferenceKeyError,
+} from "@/lib/byok/resolveInferenceKey";
 
 export const maxDuration = 60; // 1 minute timeout
 
@@ -141,18 +145,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check API key
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.error(`[Quickstart:${requestId}] No GEMINI_API_KEY configured`);
-      return NextResponse.json<QuickstartResponse>(
-        {
-          success: false,
-          error: "API key not configured. Add GEMINI_API_KEY to .env.local",
-        },
-        { status: 500 }
-      );
-    }
+    // BYOK: request header override → workspace vault → typed error. No env.
+    const geminiApiKey = request.headers.get("X-Gemini-API-Key");
+    const workspaceId = request.headers.get("x-workspace-id");
+    const apiKey = await resolveInferenceKey({
+      headerKey: geminiApiKey,
+      workspaceId,
+      provider: "gemini",
+    });
 
     // Build the prompt
     const prompt = buildQuickstartPrompt(description.trim(), contentLevel);
@@ -240,6 +240,16 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error(`[Quickstart:${requestId}] Unexpected error:`, error);
+
+    // No resolvable BYOK key: return a typed 4xx naming the provider and
+    // pointing to Settings → Provider Keys — never a 500, never a leaked env
+    // name. `error` mirrors `message` so the quickstart UI's error display shows it.
+    if (isInferenceKeyError(error)) {
+      return NextResponse.json(
+        { success: false, error: error.message, ...error.toJSON() },
+        { status: 401 }
+      );
+    }
 
     // Handle rate limiting
     if (error instanceof Error && error.message.includes("429")) {
