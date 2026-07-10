@@ -243,11 +243,6 @@ describe("Header", () => {
       expect(screen.getByText("Not saved")).toBeInTheDocument();
     });
 
-    it("should render Open Project Folder button when saveDirectoryPath is set", () => {
-      render(<Header />);
-      const folderButton = screen.getByTitle("Open Project Folder");
-      expect(folderButton).toBeInTheDocument();
-    });
   });
 
   describe("Save State Display", () => {
@@ -439,60 +434,6 @@ describe("Header", () => {
       render(<Header />);
       const settingsButton = screen.getByTitle("Project settings");
       expect(settingsButton).toBeInTheDocument();
-    });
-  });
-
-  describe("Open Project Folder Button", () => {
-    it("should not be visible when saveDirectoryPath is not set", () => {
-      mockUseWorkflowStore.mockImplementation((selector) => {
-        return selector(createDefaultState({
-          workflowName: "My Project",
-          workflowId: "project-123",
-          saveDirectoryPath: "",
-        }));
-      });
-
-      render(<Header />);
-      expect(screen.queryByTitle("Open Project Folder")).not.toBeInTheDocument();
-    });
-
-    it("should be visible when saveDirectoryPath is set", () => {
-      mockUseWorkflowStore.mockImplementation((selector) => {
-        return selector(createDefaultState({
-          workflowName: "My Project",
-          workflowId: "project-123",
-          saveDirectoryPath: "/path/to/project",
-        }));
-      });
-
-      render(<Header />);
-      expect(screen.getByTitle("Open Project Folder")).toBeInTheDocument();
-    });
-
-    it("should call fetch to open-directory API when clicked", async () => {
-      mockUseWorkflowStore.mockImplementation((selector) => {
-        return selector(createDefaultState({
-          workflowName: "My Project",
-          workflowId: "project-123",
-          saveDirectoryPath: "/path/to/project",
-        }));
-      });
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ success: true }),
-      });
-      global.fetch = mockFetch;
-
-      render(<Header />);
-      const folderButton = screen.getByTitle("Open Project Folder");
-      fireEvent.click(folderButton);
-
-      expect(mockFetch).toHaveBeenCalledWith("/api/open-directory", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: "/path/to/project" }),
-      });
     });
   });
 

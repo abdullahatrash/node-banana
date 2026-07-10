@@ -121,37 +121,6 @@ async function recordLocalStudioAsset(params: {
   return;
 }
 
-async function readSavedFileBlob(filePath: string, mimeType: string): Promise<Blob> {
-  const response = await fetch("/api/load-file", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ filePath }),
-  });
-
-  if (!response.ok) {
-    let message = `Failed to load file content (${response.status})`;
-    try {
-      const payload = (await response.json()) as { error?: unknown };
-      if (typeof payload.error === "string" && payload.error.trim()) {
-        message = payload.error;
-      }
-    } catch {
-      // Ignore JSON parse failure and keep fallback status-based message.
-    }
-    throw new Error(message);
-  }
-
-  const blob = await response.blob();
-  if (blob.type === mimeType) {
-    return blob;
-  }
-
-  const bytes = await blob.arrayBuffer();
-  return new Blob([bytes], { type: mimeType });
-}
-
 export async function syncStudioAssetFromSaveResult(params: {
   saveResult: SaveGenerationResult;
   assetType: StudioAssetType;
@@ -180,10 +149,28 @@ export async function syncStudioAssetFromSaveResult(params: {
   const fileName = filePath
     ? getFileNameFromPath(filePath)
     : `asset-${Date.now()}`;
+
+  // Local-disk-only saves (no in-memory blob) only ever happen when running in
+  // local/self-hosted mode (no cloud storage configured) — presigning would always
+  // fail with "S3 storage is not configured" there, so skip straight to registering
+  // the asset by its local path instead of round-tripping the file through the
+  // server (the old /api/load-file bridge, removed with the local-filesystem cut).
+  if (!params.contentBlob) {
+    await recordLocalStudioAsset({
+      workspaceId,
+      projectId,
+      assetType: params.assetType,
+      filePath: filePath!,
+      mimeType,
+      prompt: params.prompt,
+    });
+    return;
+  }
+
   let presignedAssetId: string | null = null;
 
   try {
-    const blob = params.contentBlob || await readSavedFileBlob(filePath!, mimeType);
+    const blob = params.contentBlob;
 
     const presign = await createStudioAssetPresign({
       projectId,
