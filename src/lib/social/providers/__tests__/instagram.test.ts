@@ -7,6 +7,23 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SocialProviderAdapter } from "@/lib/social/provider-interface";
+import { MetaApiError } from "@/lib/social/providers/meta-common";
+
+/**
+ * Build a production-realistic `MetaApiError` exactly as the Instagram provider
+ * throws one: the human-readable Graph message on `.message`, the numeric code
+ * on `.code`, and the full platform error body on `.rawBody`. The numeric code
+ * is NEVER folded into `.message` — that is the whole point of the shape.
+ */
+function metaError(message: string, code: number): MetaApiError {
+  return new MetaApiError(
+    message,
+    code,
+    JSON.stringify({
+      error: { message, type: "OAuthException", code, fbtrace_id: "AbCdEfGhIjK" },
+    }),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Environment stubs
@@ -508,7 +525,7 @@ describe("instagramProvider.classifyError", () => {
   it("classifies 2207081 as bad-body", async () => {
     const provider = await loadProvider();
     const result = provider.classifyError(
-      new Error('{"error":{"code":2207081,"message":"Trial Reels not supported"}}'),
+      metaError("Trial Reels not supported", 2207081),
     );
     expect(result.type).toBe("bad-body");
     expect(result.message).toContain("Trial Reels");
@@ -517,7 +534,7 @@ describe("instagramProvider.classifyError", () => {
   it("classifies 2207009 (aspect ratio) as bad-body", async () => {
     const provider = await loadProvider();
     const result = provider.classifyError(
-      new Error('{"error":{"code":2207009,"message":"Aspect ratio error"}}'),
+      metaError("Aspect ratio error", 2207009),
     );
     expect(result.type).toBe("bad-body");
     expect(result.message).toContain("Aspect ratio");

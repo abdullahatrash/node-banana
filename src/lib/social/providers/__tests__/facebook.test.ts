@@ -7,6 +7,23 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SocialProviderAdapter } from "@/lib/social/provider-interface";
+import { MetaApiError } from "@/lib/social/providers/meta-common";
+
+/**
+ * Build a production-realistic `MetaApiError` exactly as the Facebook provider
+ * throws one: the human-readable Graph message on `.message`, the numeric code
+ * on `.code`, and the full platform error body on `.rawBody`. The numeric code
+ * is NEVER folded into `.message` — that is the whole point of the shape.
+ */
+function metaError(message: string, code: number): MetaApiError {
+  return new MetaApiError(
+    message,
+    code,
+    JSON.stringify({
+      error: { message, type: "OAuthException", code, fbtrace_id: "AbCdEfGhIjK" },
+    }),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Environment stubs
@@ -472,7 +489,7 @@ describe("facebookProvider.classifyError", () => {
   it("classifies 490 error as refresh-token", async () => {
     const provider = await loadProvider();
     const result = provider.classifyError(
-      new Error('{"error":{"code":490,"message":"Token expired"}}'),
+      metaError("Token expired", 490),
     );
     expect(result.type).toBe("refresh-token");
   });
@@ -486,7 +503,7 @@ describe("facebookProvider.classifyError", () => {
   it("classifies 1366046 (photo too large) as bad-body", async () => {
     const provider = await loadProvider();
     const result = provider.classifyError(
-      new Error('{"error":{"code":1366046,"message":"Photo too large"}}'),
+      metaError("Photo too large", 1366046),
     );
     expect(result.type).toBe("bad-body");
     expect(result.message).toContain("4 MB");
@@ -495,7 +512,7 @@ describe("facebookProvider.classifyError", () => {
   it("classifies 1390008 (posting too fast) as bad-body", async () => {
     const provider = await loadProvider();
     const result = provider.classifyError(
-      new Error('{"error":{"code":1390008,"message":"Posting too fast"}}'),
+      metaError("Posting too fast", 1390008),
     );
     expect(result.type).toBe("bad-body");
     expect(result.message).toContain("too fast");
@@ -504,7 +521,7 @@ describe("facebookProvider.classifyError", () => {
   it("classifies 1346003 (abusive content) as bad-body", async () => {
     const provider = await loadProvider();
     const result = provider.classifyError(
-      new Error('{"error":{"code":1346003,"message":"Abusive content"}}'),
+      metaError("Abusive content", 1346003),
     );
     expect(result.type).toBe("bad-body");
     expect(result.message).toContain("abusive");
@@ -513,7 +530,7 @@ describe("facebookProvider.classifyError", () => {
   it("classifies 1609008 (cannot post FB links) as bad-body", async () => {
     const provider = await loadProvider();
     const result = provider.classifyError(
-      new Error('{"error":{"code":1609008,"message":"Cannot post Facebook.com links"}}'),
+      metaError("Cannot post Facebook.com links", 1609008),
     );
     expect(result.type).toBe("bad-body");
   });
@@ -521,7 +538,7 @@ describe("facebookProvider.classifyError", () => {
   it("classifies temporary unavailability (1363047) as retry", async () => {
     const provider = await loadProvider();
     const result = provider.classifyError(
-      new Error('{"error":{"code":1363047,"message":"Service temporarily unavailable"}}'),
+      metaError("Service temporarily unavailable", 1363047),
     );
     expect(result.type).toBe("retry");
   });
@@ -529,7 +546,7 @@ describe("facebookProvider.classifyError", () => {
   it("classifies 1404078 (page authorization) as refresh-token", async () => {
     const provider = await loadProvider();
     const result = provider.classifyError(
-      new Error('{"error":{"code":1404078,"message":"Page publishing authorization required"}}'),
+      metaError("Page publishing authorization required", 1404078),
     );
     expect(result.type).toBe("refresh-token");
   });

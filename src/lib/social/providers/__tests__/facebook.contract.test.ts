@@ -190,15 +190,14 @@ describe("facebookProvider contract — permanent-failure", () => {
   });
 
   /**
-   * CANARY — documents the confirmed defect described in the file header.
-   * Facebook's numeric photo-size error code (1366046) should, per the
-   * existing `facebook.test.ts` unit tests (which assert this via a
-   * synthetic error whose `.message` IS the raw JSON blob), classify as
-   * "bad-body". Fed the real MetaApiError shape produced by `facebook.ts`'s
-   * own `uploadUnpublishedPhoto()`/feed-post error handling, it does not.
-   * This asserts the CURRENT (buggy) behavior as a regression canary.
+   * REGRESSION (formerly a CONFIRMED DEFECT canary) — Facebook's numeric
+   * photo-size error code (1366046) must classify as "bad-body" and fail
+   * fast, NOT silently downgrade to a forever-retry. The numeric code lives
+   * on the real `MetaApiError`'s structured `.code`/`.rawBody` fields (never
+   * folded into `.message`), so `classifyError()` must inspect the structured
+   * error, not just `.message` text.
    */
-  it("[CONFIRMED DEFECT] silently downgrades a real numeric-code Graph error to retry instead of bad-body", async () => {
+  it("classifies a real numeric-code Graph error (1366046) as bad-body", async () => {
     server.use(
       http.post(FEED_URL, () =>
         HttpResponse.json(
@@ -221,8 +220,9 @@ describe("facebookProvider contract — permanent-failure", () => {
     );
 
     const classified = facebookProvider.classifyError(error);
-    // INTENDED (per meta-common.ts code 1366046 branch): "bad-body".
-    // ACTUAL (confirmed real behavior — the defect):
-    expect(classified.type).toBe("retry");
+    expect(classified.type).toBe("bad-body");
+    expect(classified.message).toBe(
+      "Photos must be smaller than 4 MB and saved as JPG or PNG.",
+    );
   });
 });
