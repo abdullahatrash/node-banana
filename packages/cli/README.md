@@ -47,6 +47,8 @@ token against the API before saving, so a stored credential always works.
 | `nb workspaces list` | List the workspace (brand) the token can reach. |
 | `nb accounts list` | List connected social accounts (channels). |
 | `nb assets list [--type <t>] [--limit <n>]` | List media assets; `--type` = image \| video \| audio \| model3d \| workflow. |
+| `nb assets upload <file> [--type <t>] [--project-id <id>] [--mime-type <m>]` | Upload a local file as a workspace asset; type/mime are inferred from the extension if omitted. Enforces the workspace's storage quota and type rules. |
+| `nb assets download-url <assetId> [--expires-in <seconds>]` | Get a CDN or presigned download URL for an existing asset. |
 
 ### Examples
 
