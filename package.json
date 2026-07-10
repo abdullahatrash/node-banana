@@ -20,6 +20,7 @@
     "test:gate-a": "vitest run src/app/api/studio/workspaces/__tests__/route.test.ts src/app/api/studio/projects/__tests__/route.test.ts src/app/api/studio/projects/[projectId]/__tests__/route.test.ts src/app/api/studio/assets/__tests__/route.test.ts src/app/api/studio/assets/[assetId]/__tests__/route.test.ts src/app/api/studio/assets/presign/__tests__/route.test.ts src/app/api/social/accounts/__tests__/route.test.ts src/app/api/social/posts/__tests__/route.test.ts src/components/__tests__/Header.test.tsx",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
+    "mcp:stdio": "tsx scripts/mcp-stdio.ts",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:generate": "drizzle-kit generate",
@@ -117,6 +118,7 @@
     "baseline-browser-mapping": "^2.10.12",
     "drizzle-kit": "^0.31.10",
     "jsdom": "^27.4.0",
+    "tsx": "^4.20.0",
     "typescript": "5.9.3",
     "vite-tsconfig-paths": "^6.0.4",
     "vitest": "^4.0.16"
