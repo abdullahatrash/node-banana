@@ -8,19 +8,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pnpm dev      # Start Next.js dev server at http://localhost:3000
 pnpm build    # Build for production
 pnpm start    # Start production server
-pnpm lint     # Run Next.js linting
+pnpm lint     # Run ESLint (Next.js flat config)
+pnpm typecheck # Type-check with tsc --noEmit
 pnpm test     # Run all tests with Vitest (watch mode)
 pnpm test:run # Run all tests once (CI mode)
 ```
 
+This is a pnpm workspace (root app + `packages/cli`). The `nb` CLI package has
+its own scripts: `pnpm --filter @node-banana/cli build|test:run|typecheck`.
+
 ## Environment Setup
 
-Create `.env.local` in the root directory:
-```
-GEMINI_API_KEY=your_gemini_api_key
-OPENAI_API_KEY=your_openai_api_key  # Optional, for OpenAI LLM provider
-KIE_API_KEY=your_kie_api_key        # Optional, for Kie.ai models (Sora, Veo, Kling, etc.)
-```
+Copy `.env.example` to `.env.local` and fill in infrastructure values
+(`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BYOK_KEY_ENCRYPTION_KEY`,
+`SOCIAL_TOKEN_ENCRYPTION_KEY`).
+
+AI provider keys are **BYOK, not env vars**: the product resolves them per
+request as request header → workspace vault (Settings → Provider Keys) → typed
+error. No `GEMINI_API_KEY`/`OPENAI_API_KEY`/etc. is read on any product
+inference path. The `*_API_KEY` entries in `.env.example` exist only for local
+scripts and tests that call providers directly, outside the request pipeline.
 
 ## Architecture Overview
 
@@ -206,11 +213,19 @@ All routes in `src/app/api/`:
 
 | Route | Timeout | Purpose |
 |-------|---------|---------|
-| `/api/generate` | 5 min | Image generation via Gemini |
-| `/api/llm` | 1 min | Text generation (Google/OpenAI) |
+| `/api/generate` | 5 min | Image generation (BYOK key resolution) |
+| `/api/llm` | 1 min | Text generation (Google/OpenAI/Anthropic, BYOK) |
 | `/api/workflow` | default | Save/load workflow files |
 | `/api/save-generation` | default | Auto-save generated images |
 | `/api/logs` | default | Session logging |
+| `/api/v1/*` | default | Public REST API (Bearer `nb_` token, workspace-scoped) |
+| `/api/mcp` | 1 min | Hosted MCP server (streamable HTTP, Bearer token) |
+| `/api/tokens`, `/api/keys` | default | API-token management; BYOK provider-key vault |
+| `/api/social/internal/*` | 1 min | Cron-invoked dispatch/recovery/refresh pipeline |
+
+The public agent surface (`/api/v1/*`, `/api/mcp`, and the `nb` CLI) all derive
+from one tool registry: `src/lib/agent-tools/registry.ts`. Add a tool there and
+it appears on every surface at once.
 
 ## localStorage Keys
 
