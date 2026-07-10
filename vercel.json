@@ -11,6 +11,71 @@
     },
     "src/app/api/workflow-images/route.ts": {
       "maxDuration": 300
+    },
+    "src/app/api/social/internal/dispatch/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/social/internal/recover-missing-dispatch/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/social/internal/sweep-stuck/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/social/internal/token-refresh-dispatch/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/social/internal/reconcile-processing/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/social/internal/webhook-delivery/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/social/internal/automation-dispatch/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/social/internal/digest-dispatch/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/social/internal/cleanup/route.ts": {
+      "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/social/internal/dispatch",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/social/internal/recover-missing-dispatch",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/social/internal/webhook-delivery",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/social/internal/reconcile-processing",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/social/internal/automation-dispatch",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/social/internal/sweep-stuck",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/social/internal/token-refresh-dispatch",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/social/internal/cleanup",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/social/internal/digest-dispatch",
+      "schedule": "0 13 * * *"
+    }
+  ]
 }
