@@ -71,9 +71,11 @@ describe("createStdioProxyServer", () => {
     const { tools } = await downstream.listTools();
 
     expect(tools.map((t) => t.name).sort()).toEqual([
+      "get_asset_download_url",
       "list_assets",
       "list_social_accounts",
       "list_workspaces",
+      "upload_asset",
     ]);
 
     await downstream.close();

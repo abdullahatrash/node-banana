@@ -6,6 +6,8 @@ import { createApiClient } from "../client";
 interface Captured {
   url: string;
   headers: Record<string, string>;
+  method: string;
+  body: unknown;
 }
 
 function fakeFetch(
@@ -19,7 +21,13 @@ function fakeFetch(
     headers.forEach((value, key) => {
       record[key] = value;
     });
-    calls.push({ url: String(input), headers: record });
+    calls.push({
+      url: String(input),
+      headers: record,
+      method: options?.method ?? "GET",
+      body:
+        typeof options?.body === "string" ? JSON.parse(options.body) : undefined,
+    });
     return new Response(JSON.stringify(body), {
       status: init.status ?? 200,
       headers: { "content-type": "application/json" },
@@ -179,5 +187,94 @@ describe("createApiClient", () => {
     });
 
     await expect(client.verifyToken()).resolves.toBeUndefined();
+  });
+
+  it("posts an asset upload with a JSON body and bearer token", async () => {
+    const { fetch, calls } = fakeFetch({
+      success: true,
+      assetId: "asset_1",
+      downloadUrl: "https://cdn.example/asset_1.png",
+      expiresInSeconds: null,
+    });
+    const client = createApiClient({
+      token: "nb_secret",
+      url: "https://api.example.com",
+      fetchImpl: fetch,
+    });
+
+    const result = await client.uploadAsset({
+      assetType: "image",
+      fileName: "photo.png",
+      mimeType: "image/png",
+      base64Content: "aGVsbG8=",
+    });
+
+    expect(result).toEqual({
+      assetId: "asset_1",
+      downloadUrl: "https://cdn.example/asset_1.png",
+      expiresInSeconds: null,
+    });
+    expect(calls[0]?.url).toBe("https://api.example.com/api/v1/assets");
+    expect(calls[0]?.headers.authorization).toBe("Bearer nb_secret");
+    expect(calls[0]?.headers["content-type"]).toBe("application/json");
+    expect(calls[0]?.body).toEqual({
+      assetType: "image",
+      fileName: "photo.png",
+      mimeType: "image/png",
+      base64Content: "aGVsbG8=",
+    });
+  });
+
+  it("surfaces a quota-exceeded upload failure as a structured ApiError", async () => {
+    const { fetch } = fakeFetch(
+      {
+        success: false,
+        error: {
+          code: "forbidden",
+          message: "Workspace storage quota exceeded.",
+          fix: "Delete unused assets or raise the workspace's storage quota before uploading more.",
+        },
+      },
+      { status: 403 },
+    );
+    const client = createApiClient({
+      token: "nb_secret",
+      url: "https://api.example.com",
+      fetchImpl: fetch,
+    });
+
+    const error = await client
+      .uploadAsset({ assetType: "image", base64Content: "aGVsbG8=" })
+      .catch((e) => e);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.code).toBe("forbidden");
+  });
+
+  it("gets a download url for an asset id, forwarding expiresInSeconds", async () => {
+    const { fetch, calls } = fakeFetch({
+      success: true,
+      assetId: "asset_1",
+      downloadUrl: "https://signed.example/asset_1.png",
+      expiresInSeconds: 60,
+    });
+    const client = createApiClient({
+      token: "nb_secret",
+      url: "https://api.example.com",
+      fetchImpl: fetch,
+    });
+
+    const result = await client.getAssetDownloadUrl("asset_1", {
+      expiresInSeconds: 60,
+    });
+
+    expect(result).toEqual({
+      assetId: "asset_1",
+      downloadUrl: "https://signed.example/asset_1.png",
+      expiresInSeconds: 60,
+    });
+    expect(calls[0]?.url).toBe(
+      "https://api.example.com/api/v1/assets/asset_1/download-url?expiresInSeconds=60",
+    );
   });
 });

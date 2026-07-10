@@ -4,12 +4,22 @@ import type { ApiClient } from "../api/client";
 import type { AppDeps } from "../commands/context";
 import { buildProgram } from "../program";
 
-function makeDeps(): { deps: AppDeps; out: string[] } {
+function makeDeps(): { deps: AppDeps; out: string[]; client: ApiClient } {
   const out: string[] = [];
   const client: ApiClient = {
     listWorkspaces: vi.fn(async () => [{ id: "ws_1", name: "Acme", slug: "acme" }]),
     listSocialAccounts: vi.fn(async () => []),
     listAssets: vi.fn(async () => []),
+    uploadAsset: vi.fn(async () => ({
+      assetId: "asset_new",
+      downloadUrl: "https://cdn.example/asset_new.png",
+      expiresInSeconds: null,
+    })),
+    getAssetDownloadUrl: vi.fn(async () => ({
+      assetId: "asset_1",
+      downloadUrl: "https://signed.example/asset_1.png",
+      expiresInSeconds: 900,
+    })),
     verifyToken: vi.fn(async () => undefined),
   };
   const deps: AppDeps = {
@@ -18,9 +28,10 @@ function makeDeps(): { deps: AppDeps; out: string[] } {
     clearConfig: vi.fn(),
     createClient: vi.fn(() => client),
     promptSecret: vi.fn(async () => "nb_prompted"),
+    readFile: vi.fn(() => Buffer.from("file-bytes")),
     io: { out: (line) => out.push(line), err: () => {} },
   };
-  return { deps, out };
+  return { deps, out, client };
 }
 
 async function run(deps: AppDeps, argv: string[]): Promise<void> {
@@ -64,5 +75,32 @@ describe("buildProgram", () => {
     const { deps, out } = makeDeps();
     await run(deps, ["auth", "status"]);
     expect(out.join("\n").toLowerCase()).toContain("https://api.example.com");
+  });
+
+  it("runs `assets upload` and prints the asset id and download url", async () => {
+    const { deps, out } = makeDeps();
+    await run(deps, ["assets", "upload", "/tmp/photo.png"]);
+    const text = out.join("\n");
+    expect(text).toContain("asset_new");
+    expect(text).toContain("https://cdn.example/asset_new.png");
+  });
+
+  it("runs `assets upload --json` with an explicit --type", async () => {
+    const { deps, out, client } = makeDeps();
+    await run(deps, ["assets", "upload", "/tmp/blob.bin", "--type", "video", "--json"]);
+    expect(client.uploadAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ assetType: "video" }),
+    );
+    expect(JSON.parse(out.join("\n"))).toEqual({
+      assetId: "asset_new",
+      downloadUrl: "https://cdn.example/asset_new.png",
+      expiresInSeconds: null,
+    });
+  });
+
+  it("runs `assets download-url` and prints the url", async () => {
+    const { deps, out } = makeDeps();
+    await run(deps, ["assets", "download-url", "asset_1"]);
+    expect(out.join("\n")).toContain("https://signed.example/asset_1.png");
   });
 });

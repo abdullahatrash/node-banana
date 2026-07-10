@@ -64,3 +64,13 @@ export const socialAccountsResponseSchema = z.object({
 export const assetsResponseSchema = z.object({
   assets: z.array(assetSchema),
 });
+
+export const assetUploadResultSchema = z.object({
+  assetId: z.string(),
+  downloadUrl: z.string(),
+  expiresInSeconds: z.number().nullable().optional(),
+});
+export type AssetUploadResult = z.infer<typeof assetUploadResultSchema>;
+
+export const assetDownloadUrlResultSchema = assetUploadResultSchema;
+export type AssetDownloadUrlResult = z.infer<typeof assetDownloadUrlResultSchema>;

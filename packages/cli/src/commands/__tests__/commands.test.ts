@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ApiClient } from "../../api/client";
-import type { Asset, SocialAccount, Workspace } from "../../api/schemas";
+import type {
+  Asset,
+  AssetDownloadUrlResult,
+  AssetUploadResult,
+  SocialAccount,
+  Workspace,
+} from "../../api/schemas";
 import { UsageError } from "../../errors/errors";
 import { authLogin, authStatus } from "../auth";
 import { accountsList } from "../accounts";
-import { assetsList } from "../assets";
+import { assetsDownloadUrl, assetsList, assetsUpload } from "../assets";
 import { resolveClient, type AppDeps } from "../context";
 import { workspacesList } from "../workspaces";
 
@@ -33,6 +39,16 @@ const ASSET: Asset = {
   durationSeconds: null,
   createdAt: "2026-01-02T00:00:00.000Z",
 };
+const UPLOAD_RESULT: AssetUploadResult = {
+  assetId: "asset_new",
+  downloadUrl: "https://cdn.example/asset_new.png",
+  expiresInSeconds: null,
+};
+const DOWNLOAD_URL_RESULT: AssetDownloadUrlResult = {
+  assetId: "asset_1",
+  downloadUrl: "https://signed.example/asset_1.png",
+  expiresInSeconds: 900,
+};
 
 function makeDeps(overrides: Partial<AppDeps> = {}): {
   deps: AppDeps;
@@ -49,6 +65,8 @@ function makeDeps(overrides: Partial<AppDeps> = {}): {
     listWorkspaces: vi.fn(async () => [WORKSPACE]),
     listSocialAccounts: vi.fn(async () => [ACCOUNT]),
     listAssets: vi.fn(async () => [ASSET]),
+    uploadAsset: vi.fn(async () => UPLOAD_RESULT),
+    getAssetDownloadUrl: vi.fn(async () => DOWNLOAD_URL_RESULT),
     verifyToken: vi.fn(async () => undefined),
   };
 
@@ -61,6 +79,7 @@ function makeDeps(overrides: Partial<AppDeps> = {}): {
       return client;
     }),
     promptSecret: vi.fn(async () => "nb_prompted"),
+    readFile: vi.fn(() => Buffer.from("file-bytes")),
     io: { out: (line) => out.push(line), err: (line) => err.push(line) },
     ...overrides,
   };
@@ -134,6 +153,109 @@ describe("assets list", () => {
     const { deps, out } = makeDeps();
     await assetsList(deps, { json: true });
     expect(JSON.parse(out.join("\n"))).toEqual([ASSET]);
+  });
+});
+
+describe("assets upload", () => {
+  it("reads the file, base64-encodes it, and infers type/mime from the extension", async () => {
+    const { deps, client } = makeDeps();
+    (deps.readFile as ReturnType<typeof vi.fn>).mockReturnValue(
+      Buffer.from("hello world"),
+    );
+
+    await assetsUpload(deps, { json: false, file: "/tmp/photo.png" });
+
+    expect(deps.readFile).toHaveBeenCalledWith("/tmp/photo.png");
+    expect(client.uploadAsset).toHaveBeenCalledWith({
+      assetType: "image",
+      fileName: "photo.png",
+      mimeType: "image/png",
+      base64Content: Buffer.from("hello world").toString("base64"),
+    });
+  });
+
+  it("lets --type and --mime-type override the inferred values", async () => {
+    const { deps, client } = makeDeps();
+
+    await assetsUpload(deps, {
+      json: false,
+      file: "/tmp/blob.bin",
+      type: "video",
+      mimeType: "video/mp4",
+    });
+
+    expect(client.uploadAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ assetType: "video", mimeType: "video/mp4" }),
+    );
+  });
+
+  it("forwards --project-id when given", async () => {
+    const { deps, client } = makeDeps();
+
+    await assetsUpload(deps, {
+      json: false,
+      file: "/tmp/photo.png",
+      projectId: "proj_1",
+    });
+
+    expect(client.uploadAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "proj_1" }),
+    );
+  });
+
+  it("throws a UsageError when the type cannot be inferred and --type is omitted", async () => {
+    const { deps, client } = makeDeps();
+
+    await expect(
+      assetsUpload(deps, { json: false, file: "/tmp/mystery.xyz" }),
+    ).rejects.toThrow(UsageError);
+    expect(client.uploadAsset).not.toHaveBeenCalled();
+  });
+
+  it("prints the asset id and download url by default", async () => {
+    const { deps, out } = makeDeps();
+    await assetsUpload(deps, { json: false, file: "/tmp/photo.png" });
+    const text = out.join("\n");
+    expect(text).toContain("asset_new");
+    expect(text).toContain("https://cdn.example/asset_new.png");
+  });
+
+  it("prints exact JSON data with --json", async () => {
+    const { deps, out } = makeDeps();
+    await assetsUpload(deps, { json: true, file: "/tmp/photo.png" });
+    expect(JSON.parse(out.join("\n"))).toEqual(UPLOAD_RESULT);
+  });
+});
+
+describe("assets download-url", () => {
+  it("requests a download url for the given asset id", async () => {
+    const { deps, client } = makeDeps();
+    await assetsDownloadUrl(deps, { json: false, assetId: "asset_1" });
+    expect(client.getAssetDownloadUrl).toHaveBeenCalledWith("asset_1", undefined);
+  });
+
+  it("forwards --expires-in when given", async () => {
+    const { deps, client } = makeDeps();
+    await assetsDownloadUrl(deps, {
+      json: false,
+      assetId: "asset_1",
+      expiresInSeconds: 60,
+    });
+    expect(client.getAssetDownloadUrl).toHaveBeenCalledWith("asset_1", {
+      expiresInSeconds: 60,
+    });
+  });
+
+  it("prints the download url by default", async () => {
+    const { deps, out } = makeDeps();
+    await assetsDownloadUrl(deps, { json: false, assetId: "asset_1" });
+    expect(out.join("\n")).toContain("https://signed.example/asset_1.png");
+  });
+
+  it("prints exact JSON data with --json", async () => {
+    const { deps, out } = makeDeps();
+    await assetsDownloadUrl(deps, { json: true, assetId: "asset_1" });
+    expect(JSON.parse(out.join("\n"))).toEqual(DOWNLOAD_URL_RESULT);
   });
 });
 

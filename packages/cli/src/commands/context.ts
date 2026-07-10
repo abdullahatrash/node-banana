@@ -19,6 +19,8 @@ export interface AppDeps {
   createClient: (options: ApiClientOptions) => ApiClient;
   /** Read a secret (the API token) from the terminal without echoing it. */
   promptSecret: (question: string) => Promise<string>;
+  /** Read a local file's raw bytes, for `assets upload <file>`. */
+  readFile: (path: string) => Buffer;
   io: Io;
 }
 

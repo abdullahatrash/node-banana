@@ -58,9 +58,11 @@ describe("buildMcpServer (registry-derived MCP tools)", () => {
     const names = tools.map((t) => t.name).sort();
 
     expect(names).toEqual([
+      "get_asset_download_url",
       "list_assets",
       "list_social_accounts",
       "list_workspaces",
+      "upload_asset",
     ]);
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();

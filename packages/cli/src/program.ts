@@ -1,7 +1,7 @@
 import { Command } from "commander";
 
 import { accountsList } from "./commands/accounts";
-import { assetsList } from "./commands/assets";
+import { assetsDownloadUrl, assetsList, assetsUpload } from "./commands/assets";
 import { authLogin, authStatus } from "./commands/auth";
 import type { AppDeps } from "./commands/context";
 import { UsageError } from "./errors/errors";
@@ -98,6 +98,50 @@ export function buildProgram(deps: AppDeps): Command {
       json: wantsJson(command),
       ...(options.type !== undefined ? { type: options.type } : {}),
       ...(limit !== undefined ? { limit } : {}),
+    });
+  });
+
+  withJson(
+    assets
+      .command("upload")
+      .description("Upload a local file as a workspace asset.")
+      .argument("<file>", "path to the local file to upload")
+      .option(
+        "--type <type>",
+        "asset type: image | video | audio | model3d | workflow (inferred from the file extension if omitted)",
+      )
+      .option("--project-id <id>", "project to attach the asset to")
+      .option("--mime-type <mime>", "override the detected content type"),
+  ).action(async (file: string, _opts, command: Command) => {
+    const options = command.opts<{ type?: string; projectId?: string; mimeType?: string }>();
+    await assetsUpload(deps, {
+      json: wantsJson(command),
+      file,
+      ...(options.type !== undefined ? { type: options.type } : {}),
+      ...(options.projectId !== undefined ? { projectId: options.projectId } : {}),
+      ...(options.mimeType !== undefined ? { mimeType: options.mimeType } : {}),
+    });
+  });
+
+  withJson(
+    assets
+      .command("download-url")
+      .description("Get a download URL for an asset already in the workspace.")
+      .argument("<assetId>", "asset id")
+      .option("--expires-in <seconds>", "presigned URL lifetime in seconds"),
+  ).action(async (assetId: string, _opts, command: Command) => {
+    const options = command.opts<{ expiresIn?: string }>();
+    let expiresInSeconds: number | undefined;
+    if (options.expiresIn !== undefined) {
+      expiresInSeconds = Number(options.expiresIn);
+      if (!Number.isInteger(expiresInSeconds) || expiresInSeconds < 1) {
+        throw new UsageError("--expires-in must be a positive integer.");
+      }
+    }
+    await assetsDownloadUrl(deps, {
+      json: wantsJson(command),
+      assetId,
+      ...(expiresInSeconds !== undefined ? { expiresInSeconds } : {}),
     });
   });
 
