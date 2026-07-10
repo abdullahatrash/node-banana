@@ -41,19 +41,47 @@ vi.mock("@/lib/images", () => ({
   deleteImages: vi.fn(),
 }));
 
+// BYOK vault shim: the route now resolves keys via resolveInferenceKey, whose
+// vault tier delegates to resolveProviderKey. Mock the repository so tests
+// never touch the database; by default the vault mirrors process.env so the
+// large body of generation-behavior tests keep providing a key by setting env
+// (which the route no longer reads directly — it flows through the vault here).
+// Requests carry a default `x-workspace-id`, so the vault tier is active.
+const PROVIDER_ENV_MAP: Record<string, string> = {
+  gemini: "GEMINI_API_KEY",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  replicate: "REPLICATE_API_KEY",
+  fal: "FAL_API_KEY",
+  kie: "KIE_API_KEY",
+  wavespeed: "WAVESPEED_API_KEY",
+};
+
+vi.mock("@/lib/byok/repository", () => ({
+  resolveProviderKey: vi.fn(
+    async (_workspaceId: string, provider: string) =>
+      process.env[PROVIDER_ENV_MAP[provider]] ?? null,
+  ),
+}));
+
+import { resolveProviderKey } from "@/lib/byok/repository";
 import { POST, clearFalInputMappingCache } from "../route";
+
+const mockedResolveProviderKey = vi.mocked(resolveProviderKey);
 
 // Store original env
 const originalEnv = { ...process.env };
 
-// Helper to create mock NextRequest for POST
+// Helper to create mock NextRequest for POST. Injects a default workspace
+// header so the BYOK vault tier is active; pass `x-workspace-id` in `headers`
+// to override, or an explicit empty value to exercise the header-only tier.
 function createMockPostRequest(
   body: unknown,
   headers?: Record<string, string>
 ): NextRequest {
   return {
     json: vi.fn().mockResolvedValue(body),
-    headers: new Headers(headers),
+    headers: new Headers({ "x-workspace-id": "ws-test", ...headers }),
   } as unknown as NextRequest;
 }
 
@@ -100,6 +128,12 @@ describe("/api/generate route", () => {
     MockGoogleGenAI.reset();
     // Reset env to original
     process.env = { ...originalEnv };
+    // Re-establish the default env-mirroring vault shim (clearAllMocks keeps
+    // implementations, but per-test overrides must not leak between tests).
+    mockedResolveProviderKey.mockImplementation(
+      async (_workspaceId: string, provider: string) =>
+        process.env[PROVIDER_ENV_MAP[provider]] ?? null,
+    );
   });
 
   afterEach(() => {
@@ -414,8 +448,9 @@ describe("/api/generate route", () => {
       );
     });
 
-    it("should use X-Gemini-API-Key header over env var", async () => {
-      process.env.GEMINI_API_KEY = "env-gemini-key";
+    it("should use X-Gemini-API-Key header over the vault", async () => {
+      // Vault also has a key, but the request header must win.
+      mockedResolveProviderKey.mockResolvedValue("vault-gemini-key");
 
       mockGenerateContent.mockResolvedValueOnce(createGeminiImageResponse());
 
@@ -438,8 +473,12 @@ describe("/api/generate route", () => {
       });
     });
 
-    it("should return 500 when API key missing", async () => {
+    it("resolves the Gemini key from the workspace vault when no header is set", async () => {
+      // No env, no header — only the vault has a key.
       delete process.env.GEMINI_API_KEY;
+      mockedResolveProviderKey.mockResolvedValue("vault-gemini-key");
+
+      mockGenerateContent.mockResolvedValueOnce(createGeminiImageResponse());
 
       const request = createMockPostRequest({
         prompt: "Test prompt",
@@ -449,9 +488,55 @@ describe("/api/generate route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(MockGoogleGenAI.lastCalledWith).toEqual({
+        apiKey: "vault-gemini-key",
+      });
+    });
+
+    it("returns a typed byok_key_missing error (4xx) when no key is resolvable", async () => {
+      delete process.env.GEMINI_API_KEY;
+      mockedResolveProviderKey.mockResolvedValue(null);
+
+      const request = createMockPostRequest({
+        prompt: "Test prompt",
+        model: "nano-banana-pro",
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
       expect(data.success).toBe(false);
-      expect(data.error).toContain("API key not configured");
+      expect(data.code).toBe("byok_key_missing");
+      expect(data.provider).toBe("gemini");
+      // Names the provider and where to add the key, never the env var.
+      expect(data.error).toContain("Google Gemini");
+      expect(data.error).toContain("Provider Keys");
+      expect(data.error).not.toMatch(/GEMINI_API_KEY|process\.env/);
+    });
+
+    it("never falls back to the server env key for Gemini", async () => {
+      // Env is set, but the vault returns nothing and there is no header:
+      // the route must NOT read process.env, so this must still fail.
+      process.env.GEMINI_API_KEY = "env-gemini-key";
+      mockedResolveProviderKey.mockResolvedValue(null);
+
+      const request = createMockPostRequest({
+        prompt: "Test prompt",
+        model: "nano-banana-pro",
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
+      expect(data.success).toBe(false);
+      expect(data.code).toBe("byok_key_missing");
+      expect(MockGoogleGenAI.callCount).toBe(0);
     });
 
     it("should return 429 on rate limit errors", async () => {
@@ -887,8 +972,9 @@ describe("/api/generate route", () => {
       expect(mockGenerateContent).toHaveBeenCalled();
     });
 
-    it("should return 401 for Replicate provider without API key", async () => {
+    it("should return typed byok_key_missing for Replicate without any key", async () => {
       delete process.env.REPLICATE_API_KEY;
+      mockedResolveProviderKey.mockResolvedValue(null);
 
       const request = createMockPostRequest({
         prompt: "Test prompt",
@@ -904,7 +990,11 @@ describe("/api/generate route", () => {
 
       expect(response.status).toBe(401);
       expect(data.success).toBe(false);
-      expect(data.error).toContain("Replicate API key not configured");
+      expect(data.code).toBe("byok_key_missing");
+      expect(data.provider).toBe("replicate");
+      expect(data.error).toContain("Replicate");
+      expect(data.error).toContain("Provider Keys");
+      expect(data.error).not.toMatch(/REPLICATE_API_KEY|process\.env/);
     });
   });
 
@@ -1102,8 +1192,9 @@ describe("/api/generate route", () => {
       expect(data.contentType).toBe("video");
     });
 
-    it("should return 401 when Replicate API key missing", async () => {
+    it("should return 401 when Replicate key missing (typed byok error)", async () => {
       delete process.env.REPLICATE_API_KEY;
+      mockedResolveProviderKey.mockResolvedValue(null);
 
       const request = createMockPostRequest({
         prompt: "Test prompt",
@@ -1119,7 +1210,9 @@ describe("/api/generate route", () => {
 
       expect(response.status).toBe(401);
       expect(data.success).toBe(false);
-      expect(data.error).toContain("Replicate API key not configured");
+      expect(data.code).toBe("byok_key_missing");
+      expect(data.error).toContain("Replicate");
+      expect(data.error).toContain("Provider Keys");
     });
 
     it("should handle rate limit (429) from Replicate", async () => {

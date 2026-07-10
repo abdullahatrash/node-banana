@@ -3,6 +3,7 @@ import type {
   ProviderCapabilities,
   SocialProviderAdapter,
 } from "@/lib/social/provider-interface";
+import { isPlatformConfigured } from "@/lib/social/platform-config";
 
 const registry = new Map<string, SocialProviderAdapter>();
 
@@ -40,9 +41,15 @@ export function listProviders(): SocialProviderAdapter[] {
 
 /**
  * List capabilities of all registered providers (for API responses).
+ * Each entry is annotated with `configured`, reflecting whether the
+ * platform's required server OAuth credentials are present in the
+ * environment. Never exposes credential values — only a boolean.
  */
 export function listProviderCapabilities(): ProviderCapabilities[] {
-  return listProviders().map((provider) => provider.getCapabilities());
+  return listProviders().map((provider) => ({
+    ...provider.getCapabilities(),
+    configured: isPlatformConfigured(provider.identifier),
+  }));
 }
 
 /**

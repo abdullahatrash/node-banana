@@ -70,6 +70,17 @@ describe("/api/social/automation/rules/[ruleId]", () => {
 
   it("updates rule", async () => {
     authorized();
+    mockGetAutomationRule.mockResolvedValue({
+      id: "arule_1",
+      name: "Rule 1",
+      enabled: true,
+      triggerSource: "schedule",
+      repeatIntervalSeconds: null,
+      maxRuns: null,
+      triggerFilters: null,
+      actionType: "create_social_post",
+      actionConfig: { content: "Hello" },
+    });
     mockUpdateAutomationRule.mockResolvedValue({
       id: "arule_1",
       name: "Rule 1",

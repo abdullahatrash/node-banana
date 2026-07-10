@@ -360,10 +360,9 @@ export interface VideoFrameGrabNodeData extends BaseNodeData {
 
 /**
  * Router node - pure passthrough routing node with dynamic multi-type handles
+ * No internal state - all routing is derived from edge connections
  */
-export interface RouterNodeData extends BaseNodeData {
-  // No internal state - all routing is derived from edge connections
-}
+export type RouterNodeData = BaseNodeData;
 
 /**
  * Switch node - toggle-controlled routing with named outputs

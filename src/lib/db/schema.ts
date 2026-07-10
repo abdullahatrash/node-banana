@@ -315,6 +315,95 @@ export const workspaceMembers = pgTable(
   }),
 );
 
+/**
+ * Workspace-scoped API tokens for programmatic (Bearer) access.
+ * Only a SHA-256 hash of the raw token is persisted; the raw value (carrying
+ * the `nb_` prefix) is shown to the user exactly once at creation.
+ */
+export const apiTokens = pgTable(
+  "api_tokens",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    tokenPrefix: text("token_prefix").notNull(),
+    revoked: boolean("revoked").default(false).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    tokenHashUnique: uniqueIndex("api_tokens_token_hash_unique").on(
+      table.tokenHash,
+    ),
+    workspaceIdx: index("api_tokens_workspace_idx").on(table.workspaceId),
+    createdAtIdx: index("api_tokens_created_at_idx").on(table.createdAt),
+  }),
+);
+
+/**
+ * The AI inference providers a workspace may store a BYOK key for. Kept in
+ * sync with `BYOK_PROVIDERS` in `src/lib/byok/providers.ts`.
+ */
+export const byokProviderEnum = pgEnum("byok_provider", [
+  "gemini",
+  "openai",
+  "anthropic",
+  "kie",
+  "fal",
+  "replicate",
+  "wavespeed",
+]);
+
+/**
+ * Per-workspace, per-provider BYOK vault entry. One row per
+ * (workspaceId, provider) pair. `keyEncrypted` is AES-256-GCM ciphertext
+ * (see `src/lib/byok/crypto.ts`) and is never selected by any read path
+ * outside `resolveProviderKey` — list/read APIs project `keyHint` only.
+ */
+export const workspaceProviderKeys = pgTable(
+  "workspace_provider_keys",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: byokProviderEnum("provider").notNull(),
+    keyEncrypted: text("key_encrypted").notNull(),
+    /** Non-secret display hint, e.g. "sk-…abc4". Never the raw key. */
+    keyHint: text("key_hint").notNull(),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceProviderUnique: uniqueIndex(
+      "workspace_provider_keys_workspace_provider_unique",
+    ).on(table.workspaceId, table.provider),
+    workspaceIdx: index("workspace_provider_keys_workspace_idx").on(
+      table.workspaceId,
+    ),
+  }),
+);
+
 export const projects = pgTable(
   "projects",
   {
@@ -430,6 +519,54 @@ export const generationJobs = pgTable(
     projectIdx: index("generation_jobs_project_idx").on(table.projectId),
     statusIdx: index("generation_jobs_status_idx").on(table.status),
     createdAtIdx: index("generation_jobs_created_at_idx").on(table.createdAt),
+  }),
+);
+
+/**
+ * Workflow runs — server-side execution of a saved project's workflow graph.
+ *
+ * Distinct from `generation_jobs` (which models one single-provider inference →
+ * one result asset): a workflow run executes a *graph* of many nodes, so it
+ * needs per-node progress and a *set* of output asset references. Reusing
+ * `generation_jobs` would misuse its single provider/model/resultAssetId
+ * columns and lose the progress structure, so this is a dedicated table.
+ */
+export const workflowRuns = pgTable(
+  "workflow_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    status: generationStatusEnum("status").default("queued").notNull(),
+    /** Per-node progress: `{ nodes: [{ nodeId, type, status, error? }] }`. */
+    progress: jsonb("progress").$type<Record<string, unknown>>(),
+    /** Output asset refs: `[{ nodeId, assetId, url }]`. */
+    outputs: jsonb("outputs").$type<Record<string, unknown>[]>(),
+    /** Per-request input overrides supplied at run creation. */
+    inputOverrides: jsonb("input_overrides").$type<Record<string, unknown>>(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("workflow_runs_workspace_idx").on(table.workspaceId),
+    projectIdx: index("workflow_runs_project_idx").on(table.projectId),
+    statusIdx: index("workflow_runs_status_idx").on(table.status),
+    createdAtIdx: index("workflow_runs_created_at_idx").on(table.createdAt),
   }),
 );
 
@@ -1209,6 +1346,11 @@ export const savedPrompts = pgTable(
   }),
 );
 
+export type ApiToken = typeof apiTokens.$inferSelect;
+export type NewApiToken = typeof apiTokens.$inferInsert;
+export type WorkspaceProviderKey = typeof workspaceProviderKeys.$inferSelect;
+export type NewWorkspaceProviderKey = typeof workspaceProviderKeys.$inferInsert;
+export type ByokProviderColumn = typeof byokProviderEnum.enumValues[number];
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];

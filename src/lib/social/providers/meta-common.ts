@@ -144,12 +144,62 @@ export async function verifyGrantedScopes(
 // ---------------------------------------------------------------------------
 
 /**
+ * Build the match string that {@link classifyMetaError} pattern-matches
+ * against, from a thrown error.
+ *
+ * A real {@link MetaApiError} carries the numeric Graph API error code on its
+ * structured `.code` field and the full platform error body (including
+ * `error_subcode`, `type` and `message`) on `.rawBody` — the numeric code is
+ * NEVER folded into the human-readable `.message`. The previous behaviour
+ * (`JSON.stringify({ message: error.message })`) therefore left every
+ * numeric-code branch below unreachable, so permanent content-policy failures
+ * mis-classified as transient "retry" and would retry forever. We fold every
+ * structured field into the match string instead.
+ *
+ * The numeric `code` is emitted with a trailing comma so the exact-match
+ * patterns `"190,"` / `"490,"` in {@link classifyMetaError} match regardless
+ * of how the platform ordered its JSON fields.
+ */
+export function metaErrorToClassifierBody(error: unknown): string {
+  if (isMetaApiError(error)) {
+    const parts: string[] = [];
+    if (error.code !== undefined && error.code !== null) {
+      parts.push(`${error.code},`);
+    }
+    if (error.message) parts.push(error.message);
+    if (error.rawBody) parts.push(error.rawBody);
+    return parts.join(" ");
+  }
+  if (error instanceof Error) {
+    return JSON.stringify({ message: error.message });
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return JSON.stringify(error);
+}
+
+/**
+ * Duck-typed MetaApiError check. Uses `.name` rather than `instanceof` so it
+ * stays correct when the class is loaded from a different module instance
+ * (e.g. after `vi.resetModules()` in tests, or across bundle boundaries).
+ */
+function isMetaApiError(error: unknown): error is MetaApiError {
+  return (
+    error instanceof Error &&
+    error.name === "MetaApiError" &&
+    ("code" in error || "rawBody" in error)
+  );
+}
+
+/**
  * Classify a Meta Graph API error body string into a SocialProviderError.
  *
  * This runs through the same error codes that Postiz's Instagram/Facebook
  * providers handle, adapted to our SocialProviderError type.
  *
- * @param body - The raw JSON-serialised error body (or any string containing it).
+ * @param body - The match string produced by {@link metaErrorToClassifierBody}
+ *   (or any string containing the platform error tokens).
  * @returns A classified SocialProviderError, or undefined if unknown.
  */
 export function classifyMetaError(body: string): SocialProviderError | undefined {

@@ -114,7 +114,6 @@ export async function pollTikTokPublishStatus(
   accessToken: string,
   pollIntervalMs = 10_000,
 ): Promise<{ platformPostId: string; platformPostUrl: string }> {
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const status = await fetchTikTokPublishStatusOnce(
       username,

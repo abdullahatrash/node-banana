@@ -34,7 +34,7 @@ function numberFromEnv(key: string): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
-export async function POST(
+async function handleSweep(
   request: NextRequest,
 ): Promise<NextResponse<SweepResponse>> {
   if (!isDatabaseConfigured()) {
@@ -166,4 +166,16 @@ export async function POST(
       { status: 500 },
     );
   }
+}
+
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse<SweepResponse>> {
+  return handleSweep(request);
+}
+
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<SweepResponse>> {
+  return handleSweep(request);
 }

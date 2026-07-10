@@ -76,7 +76,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
       if (!sourceNode) return;
 
       let videoData: string | null = null;
-      let duration: number | null = null;
+      const duration: number | null = null;
 
       if (sourceNode.type === "generateVideo" || sourceNode.type === "easeCurve" || sourceNode.type === "videoStitch" || sourceNode.type === "videoTrim") {
         videoData = (sourceNode.data as any).outputVideo || null;
@@ -221,7 +221,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
 
     extractThumbnails();
     return () => { cancelled = true; };
-  }, [clipKey]); // eslint-disable-line react-hooks/exhaustive-deps — orderedClips accessed via closure, clipKey is the stable dep
+  }, [clipKey]); // eslint-disable-line react-hooks/exhaustive-deps -- orderedClips accessed via closure, clipKey is the stable dep
 
   // Pointer-based drag reorder (HTML5 drag doesn't work inside React Flow nodes)
   const [draggedClipId, setDraggedClipId] = useState<string | null>(null);
@@ -382,7 +382,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
           </svg>
           <span className="text-xs text-neutral-400">
-            Your browser doesn't support video encoding.
+            Your browser doesn&apos;t support video encoding.
           </span>
           <a
             href="https://discord.com/invite/89Nr6EKkTf"
@@ -390,7 +390,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
             rel="noopener noreferrer"
             className="text-[10px] text-blue-400 hover:text-blue-300 underline"
           >
-            Doesn't seem right? Message Willie on Discord.
+            Doesn&apos;t seem right? Message Willie on Discord.
           </a>
         </div>
       </BaseNode>

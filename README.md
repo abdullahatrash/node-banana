@@ -213,6 +213,22 @@ The `/examples` directory contains some example workflow files from my personal 
 4. **Run workflow** - Click the Run button to execute the pipeline
 5. **Save/Load** - Use the header menu to save or load workflows
 
+## CLI
+
+`@node-banana/cli` (binary `nb`) is a workspace package that drives the public
+API from a terminal or CI job — authenticate once with a workspace-scoped token,
+then list workspaces, social accounts, and assets, with a global `--json` flag
+for machine-readable output. It talks only to the hosted API, never the database.
+
+```bash
+pnpm --filter @node-banana/cli build
+node packages/cli/dist/index.js auth login --token nb_xxx --url https://app.example.com
+node packages/cli/dist/index.js workspaces list
+```
+
+See [`packages/cli/README.md`](packages/cli/README.md) for install, auth,
+examples, and CI usage.
+
 ## Connection Rules
 
 - **Image** handles connect to **Image** handles only

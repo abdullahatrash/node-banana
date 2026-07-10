@@ -218,4 +218,17 @@ describe("/api/social/internal/webhook-delivery POST", () => {
       responseBody: "dead letter",
     });
   });
+
+  it("supports GET as a cron-triggered webhook delivery", async () => {
+    mockListDueWebhookDeliveries.mockResolvedValue([]);
+
+    const { GET } = await import("../route");
+    const response = await GET(
+      createRequest({ "x-social-internal-secret": "secret_123" }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+  });
 });

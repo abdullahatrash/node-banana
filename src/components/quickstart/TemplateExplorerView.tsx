@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { WorkflowFile } from "@/store/workflowStore";
+import { WorkflowFile, useProviderApiKeys } from "@/store/workflowStore";
 import { getAllPresets, PRESET_TEMPLATES } from "@/lib/quickstart/templates";
 import { QuickstartBackButton } from "./QuickstartBackButton";
 import { TemplateCard } from "./TemplateCard";
-import { CommunityWorkflowMeta, TemplateCategory, TemplateMetadata } from "@/types/quickstart";
+import { TemplateCategory, TemplateMetadata } from "@/types/quickstart";
+import { buildGeminiOnlyHeaders } from "@/store/utils/buildApiHeaders";
 
 interface TemplateExplorerViewProps {
   onBack: () => void;
@@ -18,17 +19,15 @@ const CATEGORY_OPTIONS: { id: CategoryFilter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "simple", label: "Simple" },
   { id: "advanced", label: "Advanced" },
-  { id: "community", label: "Community" },
 ];
 
 export function TemplateExplorerView({
   onBack,
   onWorkflowSelected,
 }: TemplateExplorerViewProps) {
-  const [communityWorkflows, setCommunityWorkflows] = useState<CommunityWorkflowMeta[]>([]);
-  const [isLoadingList, setIsLoadingList] = useState(true);
   const [loadingWorkflowId, setLoadingWorkflowId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { geminiApiKey } = useProviderApiKeys();
 
   // Filter state
   const [searchQuery, setSearchQuery] = useState("");
@@ -101,13 +100,8 @@ export function TemplateExplorerView({
       }
 
       // Category filter
-      if (categoryFilter !== "all" && categoryFilter !== "community") {
+      if (categoryFilter !== "all") {
         if (preset.category !== categoryFilter) return false;
-      }
-
-      // If "community" is selected, hide preset templates (they're not community)
-      if (categoryFilter === "community") {
-        return false;
       }
 
       // Tags filter (OR logic - match ANY selected tag)
@@ -120,45 +114,14 @@ export function TemplateExplorerView({
     });
   }, [presets, debouncedSearch, categoryFilter, selectedTags]);
 
-  // Filter community workflows
-  const filteredCommunity = useMemo(() => {
-    // Only show community workflows if "all" or "community" category selected
-    if (categoryFilter !== "all" && categoryFilter !== "community") {
-      return [];
-    }
-
-    return communityWorkflows.filter((workflow) => {
-      // Search filter
-      if (debouncedSearch) {
-        const searchLower = debouncedSearch.toLowerCase();
-        const matchesSearch =
-          workflow.name.toLowerCase().includes(searchLower) ||
-          workflow.author.toLowerCase().includes(searchLower) ||
-          workflow.description.toLowerCase().includes(searchLower);
-        if (!matchesSearch) return false;
-      }
-
-      // Tags filter (OR logic - match ANY selected tag)
-      if (selectedTags.size > 0) {
-        const hasMatchingTag = workflow.tags.some((tag) => selectedTags.has(tag));
-        if (!hasMatchingTag) return false;
-      }
-
-      return true;
-    });
-  }, [communityWorkflows, debouncedSearch, categoryFilter, selectedTags]);
-
-  // Collect all unique tags from presets and community workflows
+  // Collect all unique tags from presets
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
     presets.forEach((preset) => {
       preset.tags.forEach((tag) => tags.add(tag));
     });
-    communityWorkflows.forEach((workflow) => {
-      workflow.tags.forEach((tag) => tags.add(tag));
-    });
     return Array.from(tags).sort();
-  }, [presets, communityWorkflows]);
+  }, [presets]);
 
   // Toggle tag selection
   const toggleTag = useCallback((tag: string) => {
@@ -185,32 +148,7 @@ export function TemplateExplorerView({
   const hasActiveFilters = searchQuery || categoryFilter !== "all" || selectedTags.size > 0;
 
   // Check if results are empty
-  const hasNoResults =
-    filteredPresets.length === 0 &&
-    (categoryFilter === "community" ? filteredCommunity.length === 0 : true) &&
-    !isLoadingList;
-
-  // Fetch community workflows on mount
-  useEffect(() => {
-    async function fetchCommunityWorkflows() {
-      try {
-        const response = await fetch("/api/community-workflows");
-        const result = await response.json();
-
-        if (result.success) {
-          setCommunityWorkflows(result.workflows);
-        } else {
-          console.error("Failed to fetch community workflows:", result.error);
-        }
-      } catch (err) {
-        console.error("Error fetching community workflows:", err);
-      } finally {
-        setIsLoadingList(false);
-      }
-    }
-
-    fetchCommunityWorkflows();
-  }, []);
+  const hasNoResults = filteredPresets.length === 0;
 
   const handlePresetSelect = useCallback(
     async (templateId: string) => {
@@ -220,7 +158,7 @@ export function TemplateExplorerView({
       try {
         const response = await fetch("/api/quickstart", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: buildGeminiOnlyHeaders(geminiApiKey),
           body: JSON.stringify({
             templateId,
             contentLevel: "full",
@@ -243,39 +181,7 @@ export function TemplateExplorerView({
         setLoadingWorkflowId(null);
       }
     },
-    [onWorkflowSelected]
-  );
-
-  const handleCommunitySelect = useCallback(
-    async (workflowId: string) => {
-      setLoadingWorkflowId(workflowId);
-      setError(null);
-
-      try {
-        // Step 1: Get presigned download URL from API
-        const response = await fetch(`/api/community-workflows/${workflowId}`);
-        const result = await response.json();
-
-        if (!result.success || !result.downloadUrl) {
-          throw new Error(result.error || "Failed to get download URL");
-        }
-
-        // Step 2: Download workflow directly from R2
-        const workflowResponse = await fetch(result.downloadUrl);
-        if (!workflowResponse.ok) {
-          throw new Error("Failed to download workflow");
-        }
-
-        const workflow = await workflowResponse.json();
-        onWorkflowSelected(workflow);
-      } catch (err) {
-        console.error("Error loading community workflow:", err);
-        setError(err instanceof Error ? err.message : "Failed to load workflow");
-      } finally {
-        setLoadingWorkflowId(null);
-      }
-    },
-    [onWorkflowSelected]
+    [onWorkflowSelected, geminiApiKey]
   );
 
   const isLoading = loadingWorkflowId !== null;
@@ -432,80 +338,6 @@ export function TemplateExplorerView({
                   />
                 ))}
               </div>
-            </div>
-          )}
-
-          {/* Divider */}
-          {filteredPresets.length > 0 && (filteredCommunity.length > 0 || (isLoadingList && categoryFilter !== "community")) && (
-            <div className="border-t border-neutral-700" />
-          )}
-
-          {/* Community Workflows */}
-          {(filteredCommunity.length > 0 || (isLoadingList && (categoryFilter === "all" || categoryFilter === "community"))) && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-medium text-neutral-400 uppercase tracking-wider">
-                Community Workflows
-              </h3>
-
-              {isLoadingList ? (
-                <div className="flex items-center justify-center py-8">
-                  <svg
-                    className="w-5 h-5 text-neutral-500 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  {filteredCommunity.map((workflow) => (
-                    <TemplateCard
-                      key={workflow.id}
-                      template={{
-                        id: workflow.id,
-                        name: workflow.name,
-                        description: workflow.description,
-                        icon: "M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z",
-                        category: "community",
-                        tags: workflow.tags,
-                      }}
-                      nodeCount={workflow.nodeCount}
-                      previewImage={workflow.previewImage}
-                      hoverImage={workflow.hoverImage}
-                      isLoading={loadingWorkflowId === workflow.id}
-                      onUseWorkflow={() => handleCommunitySelect(workflow.id)}
-                      disabled={isLoading && loadingWorkflowId !== workflow.id}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* Discord CTA */}
-              <p className="text-xs text-neutral-500 mt-3">
-                Want to share your workflow?{" "}
-                <a
-                  href="https://discord.com/invite/89Nr6EKkTf"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-purple-400 hover:text-purple-300 underline"
-                >
-                  Join our Discord
-                </a>{" "}
-                to submit it to the community templates.
-              </p>
             </div>
           )}
 

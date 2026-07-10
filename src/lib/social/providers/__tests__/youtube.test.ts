@@ -73,6 +73,41 @@ function videoFetchResponse() {
   };
 }
 
+/**
+ * Build a production-realistic googleapis error. A real `GaxiosError`'s
+ * `.message` is ONLY the Google API error's `.message` field; the
+ * machine-readable `reason` enum and AIP `status` enum live in
+ * `.response.data.error` (with the HTTP status on `.status`), never folded
+ * into `.message`. This mirrors that shape so classifyError() is exercised
+ * against the real fields rather than a synthetic message blob.
+ */
+function gaxiosError(opts: {
+  message: string;
+  status: number;
+  reason?: string;
+  aipStatus?: string;
+}): Error {
+  const err = new Error(opts.message) as Error & {
+    status: number;
+    response: unknown;
+  };
+  err.status = opts.status;
+  err.response = {
+    status: opts.status,
+    data: {
+      error: {
+        code: opts.status,
+        message: opts.message,
+        ...(opts.aipStatus ? { status: opts.aipStatus } : {}),
+        ...(opts.reason
+          ? { errors: [{ message: opts.message, reason: opts.reason }] }
+          : {}),
+      },
+    },
+  };
+  return err;
+}
+
 const FAKE_ACCESS_TOKEN = "google-access-token";
 const FAKE_REFRESH_TOKEN = "google-refresh-token";
 
@@ -486,7 +521,11 @@ describe("YouTube provider", () => {
     });
 
     it("uploads a thumbnail when thumbnailUrl is provided in platformSettings", async () => {
-      mockFetch.mockResolvedValue(videoFetchResponse());
+      // A fresh response (and therefore a fresh single-use body stream) per
+      // fetch, exactly as the real `fetch` behaves — the video upload and the
+      // thumbnail upload each consume their own stream now that
+      // urlToReadableStream bridges the body via Readable.fromWeb.
+      mockFetch.mockImplementation(async () => videoFetchResponse());
       mocks.videosInsert.mockResolvedValue({ data: { id: "vid-with-thumb" } });
       mocks.thumbnailsSet.mockResolvedValue({});
 
@@ -542,50 +581,86 @@ describe("YouTube provider", () => {
   // -------------------------------------------------------------------------
 
   describe("classifyError", () => {
-    it("classifies Unauthorized as refresh-token", () => {
-      const err = new Error("Unauthorized access");
+    it("classifies a real 401 auth error as refresh-token", () => {
+      const err = gaxiosError({
+        message: "Request had invalid authentication credentials.",
+        status: 401,
+        reason: "authError",
+        aipStatus: "UNAUTHENTICATED",
+      });
       expect(youTubeProvider.classifyError(err).type).toBe("refresh-token");
     });
 
-    it("classifies UNAUTHENTICATED as refresh-token", () => {
-      const err = new Error("UNAUTHENTICATED: token expired");
+    it("classifies a UNAUTHENTICATED AIP status as refresh-token", () => {
+      const err = gaxiosError({
+        message: "The request does not have valid authentication credentials.",
+        status: 401,
+        reason: "unauthorized",
+        aipStatus: "UNAUTHENTICATED",
+      });
       expect(youTubeProvider.classifyError(err).type).toBe("refresh-token");
     });
 
-    it("classifies invalid_grant as refresh-token", () => {
-      const err = new Error("invalid_grant: token has been expired");
+    it("classifies invalid_grant (OAuth token endpoint) as refresh-token", () => {
+      // The OAuth token endpoint sets the error message to the raw grant error.
+      const err = new Error("invalid_grant");
       expect(youTubeProvider.classifyError(err).type).toBe("refresh-token");
     });
 
     it("classifies invalidTitle as bad-body", () => {
-      const err = new Error("YouTube videos.insert failed: 400 invalidTitle");
+      const err = gaxiosError({
+        message: "The video title is invalid.",
+        status: 400,
+        reason: "invalidTitle",
+      });
       expect(youTubeProvider.classifyError(err).type).toBe("bad-body");
     });
 
-    it("classifies youtubeSignupRequired as bad-body", () => {
-      const err = new Error("youtubeSignupRequired: link your account");
+    it("classifies youtubeSignupRequired (a 401) as bad-body", () => {
+      // A 401 by HTTP status, but the reason means the account has no channel —
+      // retrying/refreshing can never help, so it must fail fast.
+      const err = gaxiosError({
+        message: "Unauthorized",
+        status: 401,
+        reason: "youtubeSignupRequired",
+      });
       expect(youTubeProvider.classifyError(err).type).toBe("bad-body");
     });
 
     it("classifies uploadLimitExceeded as bad-body", () => {
-      const err = new Error("uploadLimitExceeded daily quota");
+      const err = gaxiosError({
+        message: "The user has exceeded the number of videos they may upload.",
+        status: 400,
+        reason: "uploadLimitExceeded",
+      });
       expect(youTubeProvider.classifyError(err).type).toBe("bad-body");
     });
 
     it("classifies failedPrecondition (thumbnail) as bad-body", () => {
-      const err = new Error(
-        "youtube.thumbnail failedPrecondition: file too large",
-      );
+      const err = gaxiosError({
+        message: "The thumbnail file is too large.",
+        status: 400,
+        reason: "failedPrecondition",
+      });
       expect(youTubeProvider.classifyError(err).type).toBe("bad-body");
     });
 
     it("classifies quotaExceeded as retry", () => {
-      const err = new Error("quotaExceeded: API quota limit reached");
+      const err = gaxiosError({
+        message:
+          "The request cannot be completed because you have exceeded your quota.",
+        status: 403,
+        reason: "quotaExceeded",
+      });
       expect(youTubeProvider.classifyError(err).type).toBe("retry");
     });
 
     it("classifies rateLimitExceeded as retry", () => {
-      const err = new Error("rateLimitExceeded");
+      const err = gaxiosError({
+        message: "Rate limit exceeded.",
+        status: 429,
+        reason: "rateLimitExceeded",
+      });
       expect(youTubeProvider.classifyError(err).type).toBe("retry");
     });
 

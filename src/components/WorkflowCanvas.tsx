@@ -18,7 +18,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { useWorkflowStore, WorkflowFile } from "@/store/workflowStore";
+import { useWorkflowStore, WorkflowFile, useProviderApiKeys } from "@/store/workflowStore";
+import { buildGeminiOnlyHeaders } from "@/store/utils/buildApiHeaders";
 import { useShallow } from "zustand/shallow";
 import { useToast } from "@/components/Toast";
 import dynamic from "next/dynamic";
@@ -307,6 +308,7 @@ export function WorkflowCanvas() {
   const clearWorkflow = useWorkflowStore((state) => state.clearWorkflow);
   const setHoveredNodeId = useWorkflowStore((state) => state.setHoveredNodeId);
   const openAnnotationModal = useAnnotationStore((state) => state.openModal);
+  const { geminiApiKey } = useProviderApiKeys();
   const { screenToFlowPosition, getViewport, zoomIn, zoomOut, setViewport, setCenter } = useReactFlow();
   const { show: showToast } = useToast();
   const router = useRouter();
@@ -1018,7 +1020,7 @@ export function WorkflowCanvas() {
     try {
       const response = await fetch("/api/quickstart", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: buildGeminiOnlyHeaders(geminiApiKey),
         body: JSON.stringify({
           description,
           contentLevel: "full",
@@ -1041,7 +1043,7 @@ export function WorkflowCanvas() {
     } finally {
       setIsBuildingWorkflow(false);
     }
-  }, [loadWorkflow, showToast, captureSnapshot]);
+  }, [loadWorkflow, showToast, captureSnapshot, geminiApiKey]);
 
   // Create lightweight workflow state for chat (strip base64 images)
   const chatWorkflowState = useMemo(() => {

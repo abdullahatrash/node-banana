@@ -16,7 +16,7 @@ interface CleanupResponse {
   error?: string;
 }
 
-export async function POST(
+async function handleCleanup(
   request: NextRequest,
 ): Promise<NextResponse<CleanupResponse>> {
   if (!isDatabaseConfigured()) {
@@ -65,4 +65,16 @@ export async function POST(
       { status: 500 },
     );
   }
+}
+
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse<CleanupResponse>> {
+  return handleCleanup(request);
+}
+
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<CleanupResponse>> {
+  return handleCleanup(request);
 }

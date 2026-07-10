@@ -153,7 +153,6 @@ export function ProjectSetupModal({
   const [directoryPath, setDirectoryPath] = useState("");
   const [externalStorage, setExternalStorage] = useState(true);
   const [isValidating, setIsValidating] = useState(false);
-  const [isBrowsing, setIsBrowsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Provider tab state
@@ -241,35 +240,6 @@ export function ProjectSetupModal({
         });
     }
   }, [isOpen, mode, workflowName, saveDirectoryPath, useExternalImageStorage, providerSettings, canvasNavigationSettings]);
-
-  const handleBrowse = async () => {
-    setIsBrowsing(true);
-    setError(null);
-
-    try {
-      const response = await fetch("/api/browse-directory");
-      const result = await response.json();
-
-      if (!result.success) {
-        setError(result.error || "Failed to open directory picker");
-        return;
-      }
-
-      if (result.cancelled) {
-        return;
-      }
-
-      if (result.path) {
-        setDirectoryPath(result.path);
-      }
-    } catch (err) {
-      setError(
-        `Failed to open directory picker: ${err instanceof Error ? err.message : "Unknown error"}`
-      );
-    } finally {
-      setIsBrowsing(false);
-    }
-  };
 
   const handleSaveProject = async () => {
     if (!name.trim()) {
@@ -370,7 +340,7 @@ export function ProjectSetupModal({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !isValidating && !isBrowsing) {
+    if (e.key === "Enter" && !isValidating) {
       handleSave();
     }
     if (e.key === "Escape") {
@@ -469,23 +439,13 @@ export function ProjectSetupModal({
                 <label className="block text-sm text-neutral-400 mb-1">
                   Project Directory
                 </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={directoryPath}
-                    onChange={(e) => setDirectoryPath(e.target.value)}
-                    placeholder="/Users/username/projects/my-project"
-                    className="flex-1 px-3 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-neutral-100 text-sm focus:outline-none focus:border-neutral-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleBrowse}
-                    disabled={isBrowsing}
-                    className="px-3 py-2 bg-neutral-700 hover:bg-neutral-600 disabled:bg-neutral-700 disabled:opacity-50 text-neutral-200 text-sm rounded-lg transition-colors"
-                  >
-                    {isBrowsing ? "..." : "Browse"}
-                  </button>
-                </div>
+                <input
+                  type="text"
+                  value={directoryPath}
+                  onChange={(e) => setDirectoryPath(e.target.value)}
+                  placeholder="/Users/username/projects/my-project"
+                  className="w-full px-3 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-neutral-100 text-sm focus:outline-none focus:border-neutral-500"
+                />
                 <p className="text-xs text-neutral-400 mt-1">
                   Workflow files and images will be saved here. Subfolders for inputs and generations will be auto-created.
                 </p>
@@ -1251,7 +1211,7 @@ export function ProjectSetupModal({
           </button>
           <button
             onClick={handleSave}
-            disabled={activeTab === "project" && (isValidating || (!cloudMode && isBrowsing))}
+            disabled={activeTab === "project" && isValidating}
             className="px-4 py-2 text-sm bg-white text-neutral-900 rounded-lg hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {activeTab === "project"

@@ -27,6 +27,15 @@ vi.mock("@/store/workflowStore", () => ({
     }
     return mockUseWorkflowStore((s: unknown) => s);
   },
+  useProviderApiKeys: () => ({
+    geminiApiKey: null,
+    replicateApiKey: null,
+    falApiKey: null,
+    kieApiKey: null,
+    wavespeedApiKey: null,
+    replicateEnabled: false,
+    kieEnabled: false,
+  }),
 }));
 
 // Mock useReactFlow

@@ -22,7 +22,7 @@ const PROVIDER_HEADER_MAP: Record<ProviderType, string> = {
   anthropic: "X-Anthropic-API-Key",
 };
 
-function addWorkspaceHeader(headers: Record<string, string>): void {
+export function addWorkspaceHeader(headers: Record<string, string>): void {
   if (isCloudMode()) {
     const workspaceId = getActiveWorkspaceId();
     if (workspaceId) {
@@ -83,6 +83,27 @@ export function buildLlmHeaders(
     if (anthropicConfig?.apiKey) {
       headers["X-Anthropic-API-Key"] = anthropicConfig.apiKey;
     }
+  }
+
+  addWorkspaceHeader(headers);
+  return headers;
+}
+
+/**
+ * Build headers for the Gemini-only chat/quickstart API calls.
+ * Adds the X-Gemini-API-Key override (if the user configured one) plus the
+ * workspace header (cloud mode only) — the same BYOK resolution surface as
+ * buildLlmHeaders, scoped to routes that always call Gemini.
+ */
+export function buildGeminiOnlyHeaders(
+  geminiApiKey?: string | null
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (geminiApiKey) {
+    headers["X-Gemini-API-Key"] = geminiApiKey;
   }
 
   addWorkspaceHeader(headers);
