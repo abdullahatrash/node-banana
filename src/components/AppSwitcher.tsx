@@ -3,25 +3,20 @@
 import { usePathname } from "next/navigation"
 import {
   PaletteIcon,
-  VideoIcon,
   ActivityIcon,
-  BarChart3Icon,
   WorkflowIcon,
 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
 const PILLAR_ITEMS = [
   { href: "/simple-studio/images", label: "Simple Studio", icon: PaletteIcon },
   { href: "/studio", label: "Advanced Workflow", icon: WorkflowIcon },
-  { href: "/editor/projects", label: "Video Editor", icon: VideoIcon },
   { href: "/social", label: "Social Hub", icon: ActivityIcon },
-  { href: "/analytics", label: "Analytics", icon: BarChart3Icon },
 ]
 
 interface AppSwitcherProps {
@@ -56,13 +51,6 @@ export function AppSwitcher({ children, align = "start" }: AppSwitcherProps) {
             )}
           </DropdownMenuItem>
         ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => (window.location.href = "/dashboard")}
-        >
-          <BarChart3Icon className="size-4" />
-          <span>Command Center</span>
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
