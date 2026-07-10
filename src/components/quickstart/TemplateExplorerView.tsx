@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { WorkflowFile } from "@/store/workflowStore";
+import { WorkflowFile, useProviderApiKeys } from "@/store/workflowStore";
 import { getAllPresets, PRESET_TEMPLATES } from "@/lib/quickstart/templates";
 import { QuickstartBackButton } from "./QuickstartBackButton";
 import { TemplateCard } from "./TemplateCard";
 import { TemplateCategory, TemplateMetadata } from "@/types/quickstart";
+import { buildGeminiOnlyHeaders } from "@/store/utils/buildApiHeaders";
 
 interface TemplateExplorerViewProps {
   onBack: () => void;
@@ -26,6 +27,7 @@ export function TemplateExplorerView({
 }: TemplateExplorerViewProps) {
   const [loadingWorkflowId, setLoadingWorkflowId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { geminiApiKey } = useProviderApiKeys();
 
   // Filter state
   const [searchQuery, setSearchQuery] = useState("");
@@ -156,7 +158,7 @@ export function TemplateExplorerView({
       try {
         const response = await fetch("/api/quickstart", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: buildGeminiOnlyHeaders(geminiApiKey),
           body: JSON.stringify({
             templateId,
             contentLevel: "full",
@@ -179,7 +181,7 @@ export function TemplateExplorerView({
         setLoadingWorkflowId(null);
       }
     },
-    [onWorkflowSelected]
+    [onWorkflowSelected, geminiApiKey]
   );
 
   const isLoading = loadingWorkflowId !== null;

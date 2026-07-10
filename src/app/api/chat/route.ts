@@ -5,6 +5,10 @@ import { buildWorkflowContext } from '@/lib/chat/contextBuilder';
 import { extractSubgraph } from '@/lib/chat/subgraphExtractor';
 import { WorkflowNode } from '@/types';
 import { WorkflowEdge } from '@/types/workflow';
+import {
+  resolveInferenceKey,
+  isInferenceKeyError,
+} from '@/lib/byok/resolveInferenceKey';
 
 export const maxDuration = 60; // 1 minute timeout
 
@@ -16,11 +20,14 @@ export async function POST(request: Request) {
       selectedNodeIds?: string[];
     };
 
-    // Get API key from environment
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return new Response('GEMINI_API_KEY not configured', { status: 500 });
-    }
+    // BYOK: request header override → workspace vault → typed error. No env.
+    const geminiApiKey = request.headers.get('X-Gemini-API-Key');
+    const workspaceId = request.headers.get('x-workspace-id');
+    const apiKey = await resolveInferenceKey({
+      headerKey: geminiApiKey,
+      workspaceId,
+      provider: 'gemini',
+    });
 
     // Extract subgraph if nodes are selected, otherwise use full workflow
     const subgraph = extractSubgraph(
@@ -64,6 +71,14 @@ export async function POST(request: Request) {
     return result.toUIMessageStreamResponse();
   } catch (error) {
     console.error('[Chat API Error]', error);
+
+    // No resolvable BYOK key: return a clear, user-facing 401 naming the
+    // provider and pointing to Settings → Provider Keys — never a 500, never
+    // a leaked env var name. The chat transport surfaces the response body
+    // text directly as the error message shown in the UI.
+    if (isInferenceKeyError(error)) {
+      return new Response(error.message, { status: 401 });
+    }
 
     if (error instanceof Error && error.message.includes('429')) {
       return new Response('Rate limit reached. Please wait and try again.', { status: 429 });
