@@ -60,7 +60,7 @@ function normalizeResponseBody(value: string | null): string | undefined {
   return trimmed.slice(0, 2000);
 }
 
-export async function POST(
+async function handleWebhookDelivery(
   request: NextRequest,
 ): Promise<NextResponse<WebhookDeliveryResponse>> {
   if (!isDatabaseConfigured()) {
@@ -286,4 +286,16 @@ export async function POST(
       { status: 500 },
     );
   }
+}
+
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse<WebhookDeliveryResponse>> {
+  return handleWebhookDelivery(request);
+}
+
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<WebhookDeliveryResponse>> {
+  return handleWebhookDelivery(request);
 }

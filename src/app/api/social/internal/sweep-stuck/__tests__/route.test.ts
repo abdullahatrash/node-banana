@@ -106,4 +106,15 @@ describe("/api/social/internal/sweep-stuck POST", () => {
       lockedAt: null,
     });
   });
+
+  it("supports GET as a cron-triggered sweep", async () => {
+    mockListStalePublishingPosts.mockResolvedValue([]);
+
+    const { GET } = await import("../route");
+    const response = await GET(createRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+  });
 });

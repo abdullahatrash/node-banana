@@ -79,4 +79,18 @@ describe("/api/social/internal/cleanup POST", () => {
     );
     expect(response.status).toBe(503);
   });
+
+  it("supports GET as a cron-triggered cleanup", async () => {
+    mockCleanupStates.mockResolvedValue(0);
+    mockCleanupSelectionSessions.mockResolvedValue(0);
+
+    const { GET } = await import("../route");
+    const response = await GET(
+      createRequest({ "x-social-internal-secret": "secret_123" }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+  });
 });
