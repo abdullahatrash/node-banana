@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearRegistry,
   getProvider,
@@ -59,6 +59,7 @@ function createMockProvider(
 describe("provider-registry", () => {
   afterEach(() => {
     clearRegistry();
+    vi.unstubAllEnvs();
   });
 
   describe("registerProvider", () => {
@@ -117,7 +118,9 @@ describe("provider-registry", () => {
   });
 
   describe("listProviderCapabilities", () => {
-    it("returns capabilities for all providers", () => {
+    it("returns capabilities for all providers, annotated with configured status", () => {
+      vi.stubEnv("LINKEDIN_CLIENT_ID", "id");
+      vi.stubEnv("LINKEDIN_CLIENT_SECRET", "secret");
       registerProvider(createMockProvider());
       const capabilities = listProviderCapabilities();
       expect(capabilities).toHaveLength(1);
@@ -129,7 +132,33 @@ describe("provider-registry", () => {
         supportsVideo: true,
         supportsCarousel: true,
         requiresPageSelection: true,
+        configured: true,
       });
+    });
+
+    it("marks a platform as not configured when its env vars are unset", () => {
+      registerProvider(createMockProvider());
+      const capabilities = listProviderCapabilities();
+      expect(capabilities[0].configured).toBe(false);
+    });
+
+    it("always reports bluesky and mastodon as configured (no server credentials needed)", () => {
+      registerProvider(
+        createMockProvider({
+          identifier: "bluesky",
+          getCapabilities: () => ({
+            identifier: "bluesky" as const,
+            displayName: "Bluesky",
+            maxContentLength: 300,
+            supportsImages: true,
+            supportsVideo: false,
+            supportsCarousel: false,
+            requiresPageSelection: false,
+          }),
+        }),
+      );
+      const capabilities = listProviderCapabilities();
+      expect(capabilities[0].configured).toBe(true);
     });
   });
 
