@@ -1,6 +1,8 @@
+import { getAssetDownloadUrlTool } from "./tools/get-asset-download-url";
 import { listAssetsTool } from "./tools/list-assets";
 import { listSocialAccountsTool } from "./tools/list-social-accounts";
 import { listWorkspacesTool } from "./tools/list-workspaces";
+import { uploadAssetTool } from "./tools/upload-asset";
 import type { AnyToolDefinition } from "./types";
 
 /**
@@ -15,6 +17,8 @@ export const toolRegistry: readonly AnyToolDefinition[] = [
   listWorkspacesTool,
   listSocialAccountsTool,
   listAssetsTool,
+  uploadAssetTool,
+  getAssetDownloadUrlTool,
 ] as const;
 
 const toolsByName = new Map<string, AnyToolDefinition>(
