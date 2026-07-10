@@ -182,7 +182,7 @@ async function externalizeNodeImages(
       const d = data as import("@/types").NanoBananaNodeData;
       let outputImageRef = d.outputImageRef;
       let outputImage = d.outputImage;
-      let inputImageRefs = d.inputImageRefs ? [...d.inputImageRefs] : [];
+      const inputImageRefs = d.inputImageRefs ? [...d.inputImageRefs] : [];
       const inputImages: string[] = [];
 
       // Handle output image - AI generated, save to generations
@@ -232,7 +232,7 @@ async function externalizeNodeImages(
 
     case "llmGenerate": {
       const d = data as import("@/types").LLMGenerateNodeData;
-      let inputImageRefs = d.inputImageRefs ? [...d.inputImageRefs] : [];
+      const inputImageRefs = d.inputImageRefs ? [...d.inputImageRefs] : [];
       const inputImages: string[] = [];
 
       // Handle input images array (save to inputs)
@@ -261,7 +261,7 @@ async function externalizeNodeImages(
 
     case "generateVideo": {
       const d = data as import("@/types").GenerateVideoNodeData;
-      let inputImageRefs = d.inputImageRefs ? [...d.inputImageRefs] : [];
+      const inputImageRefs = d.inputImageRefs ? [...d.inputImageRefs] : [];
       const inputImages: string[] = [];
 
       // Handle input images array (save to inputs)

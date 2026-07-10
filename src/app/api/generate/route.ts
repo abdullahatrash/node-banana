@@ -90,11 +90,8 @@ export async function POST(request: NextRequest) {
 
   try {
     const body: MultiProviderGenerateRequest = await request.json();
-    let {
-      images,
-      prompt,
-      dynamicInputs,
-    } = body;
+    const { prompt } = body;
+    let { images, dynamicInputs } = body;
     const {
       model = "nano-banana-pro",
       aspectRatio,
