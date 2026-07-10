@@ -14,7 +14,6 @@ import { getModelPageUrl, getProviderDisplayName } from "@/utils/providerUrls";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
 import { InlineParameterPanel } from "./InlineParameterPanel";
 import { browseRegistry } from "@/utils/browseRegistry";
-import { isCloudMode } from "@/lib/storage";
 
 // 3D generation capabilities
 const THREE_D_CAPABILITIES: ModelCapability[] = ["text-to-3d", "image-to-3d"];
@@ -362,37 +361,16 @@ export function Generate3DNode({ id, data, selected }: NodeProps<Generate3DNodeT
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-2.25-1.313M21 7.5v2.25m0-2.25l-2.25 1.313M3 7.5l2.25-1.313M3 7.5l2.25 1.313M3 7.5v2.25m9 3l2.25-1.313M12 12.75l-2.25-1.313M12 12.75V15m0 6.75l2.25-1.313M12 21.75V19.5m0 2.25l-2.25-1.313m0-16.875L12 2.25l2.25 1.313M21 14.25v2.25l-2.25 1.313m-13.5 0L3 16.5v-2.25" />
             </svg>
             <span className="text-[11px] text-orange-400 font-medium">3D Model Generated</span>
-            {nodeData.savedFilename && !isCloudMode() ? (
-              <button
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  if (!nodeData.savedFilePath) {
-                    useToast.getState().show("No file path available", "error");
-                    return;
-                  }
-                  try {
-                    const res = await fetch("/api/open-file", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ filePath: nodeData.savedFilePath }),
-                    });
-                    if (!res.ok) {
-                      const detail = await res.text().catch(() => `Status ${res.status}`);
-                      useToast.getState().show("Failed to open file", "error", true, detail);
-                    }
-                  } catch (err) {
-                    console.error("Failed to open file location:", err);
-                    useToast.getState().show("Failed to open file location", "error");
-                  }
-                }}
-                className="nodrag nopan text-[10px] text-neutral-400 hover:text-orange-300 truncate max-w-full cursor-pointer transition-colors flex items-center gap-1"
-                title={`Open in explorer: ${nodeData.savedFilePath}`}
+            {nodeData.savedFilename ? (
+              <span
+                className="text-[10px] text-neutral-400 truncate max-w-full flex items-center gap-1"
+                title={nodeData.savedFilename}
               >
                 <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                 </svg>
                 {nodeData.savedFilename}
-              </button>
+              </span>
             ) : (
               <span className="text-[10px] text-neutral-500 truncate max-w-full">Connect to 3D Viewer</span>
             )}
