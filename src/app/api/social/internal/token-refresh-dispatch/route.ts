@@ -56,7 +56,7 @@ function getProviderKey(platform: string | null | undefined): string | null {
   }
 }
 
-export async function POST(
+async function handleTokenRefreshDispatch(
   request: NextRequest,
 ): Promise<NextResponse<TokenRefreshDispatchResponse>> {
   if (!isDatabaseConfigured()) {
@@ -158,4 +158,16 @@ export async function POST(
       { status: 500 },
     );
   }
+}
+
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse<TokenRefreshDispatchResponse>> {
+  return handleTokenRefreshDispatch(request);
+}
+
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<TokenRefreshDispatchResponse>> {
+  return handleTokenRefreshDispatch(request);
 }
