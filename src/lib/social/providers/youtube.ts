@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { Readable } from "node:stream";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { google } from "googleapis";
 import type {
   AuthenticateParams,
@@ -33,8 +35,16 @@ function buildOAuth2Client(redirectUri?: string) {
 }
 
 /**
- * Convert a public URL to a Node.js-compatible ReadableStream by fetching
- * it and returning the response body. Used for streaming video uploads.
+ * Convert a public URL to a Node.js Readable by fetching it and bridging the
+ * response body. Used for streaming video/thumbnail uploads.
+ *
+ * Node's native `fetch()` (undici) exposes `response.body` as a WHATWG
+ * `ReadableStream`, which has no `.pipe()` method. `googleapis-common`'s
+ * multipart uploader unconditionally calls `part.body.pipe(...)` on the media
+ * body, so handing it the raw Web stream throws
+ * `TypeError: part.body.pipe is not a function` before any upload request is
+ * made. `Readable.fromWeb()` (Node 17+) bridges the Web stream to a Node
+ * Readable with the `.pipe()` API the uploader requires.
  */
 async function urlToReadableStream(
   url: string,
@@ -45,11 +55,55 @@ async function urlToReadableStream(
       `YouTube: failed to fetch video from URL: ${response.status} ${url}`,
     );
   }
-  // response.body is a ReadableStream (Web Streams API). The googleapis
-  // upload accepts a Node.js Readable, but in practice passing the Web
-  // ReadableStream works fine in Node 18+ since they share the stream
-  // protocol for piping.
-  return response.body as unknown as NodeJS.ReadableStream;
+  if (!response.body) {
+    throw new Error(`YouTube: empty response body for URL: ${url}`);
+  }
+  return Readable.fromWeb(response.body as unknown as WebReadableStream<Uint8Array>);
+}
+
+/**
+ * Extract a searchable signal string + HTTP status from a thrown error.
+ *
+ * A real googleapis call throws a `GaxiosError` whose `.message` is ONLY the
+ * Google API error's `.message` field — the machine-readable `reason` enum
+ * (e.g. "quotaExceeded", "forbidden", "authError") and the AIP `status` enum
+ * (e.g. "UNAUTHENTICATED") live in `.response.data.error`, never folded into
+ * `.message`. Matching on `.message` alone left every reason-based branch of
+ * classifyError() dead, so real 401/403s fell through to generic "retry".
+ * We therefore fold the structured response body into the signal string and
+ * expose the numeric HTTP status.
+ */
+function extractGoogleErrorSignals(error: unknown): {
+  message: string;
+  signals: string;
+  httpStatus?: number;
+} {
+  const message = error instanceof Error ? error.message : String(error);
+  const parts: string[] = [message];
+  let httpStatus: number | undefined;
+
+  if (error && typeof error === "object") {
+    const e = error as {
+      status?: unknown;
+      code?: unknown;
+      response?: { status?: unknown; data?: unknown };
+    };
+
+    const rawStatus = e.status ?? e.response?.status ?? e.code;
+    if (typeof rawStatus === "number") {
+      httpStatus = rawStatus;
+    }
+
+    const errorBody = (e.response?.data as { error?: unknown } | undefined)
+      ?.error;
+    if (errorBody !== undefined) {
+      parts.push(
+        typeof errorBody === "string" ? errorBody : JSON.stringify(errorBody),
+      );
+    }
+  }
+
+  return { message, signals: parts.join(" "), httpStatus };
 }
 
 export const youTubeProvider: SocialProviderAdapter = {
@@ -195,14 +249,42 @@ export const youTubeProvider: SocialProviderAdapter = {
   },
 
   classifyError(error: unknown): SocialProviderError {
-    const message = error instanceof Error ? error.message : String(error);
+    const { message, signals, httpStatus } = extractGoogleErrorSignals(error);
 
+    // Content / permanent failures. Checked FIRST because some map to HTTP
+    // statuses that would otherwise be swept up by the broad status buckets
+    // below (e.g. "youtubeSignupRequired" is a 401 that must fail fast, not
+    // trigger a token refresh).
     if (
-      message.includes("Unauthorized") ||
-      message.includes("UNAUTHENTICATED") ||
-      message.includes("invalid_grant") ||
-      message.includes("Token has been expired") ||
-      message.includes("token expired")
+      signals.includes("invalidTitle") ||
+      signals.includes("invalidDescription") ||
+      signals.includes("invalidTags") ||
+      signals.includes("youtubeSignupRequired") ||
+      signals.includes("uploadLimitExceeded") ||
+      signals.includes("videoDurationTooLong") ||
+      signals.includes("videoFileSizeTooLarge") ||
+      signals.includes("failedPrecondition") ||
+      signals.includes("forbidden") ||
+      signals.includes("privacySettingNotSupportedForPartner")
+    ) {
+      return {
+        type: "bad-body",
+        message: `YouTube content validation failed: ${message}`,
+        original: error,
+      };
+    }
+
+    // Auth / re-auth. A real GaxiosError from an expired token against the
+    // Data API surfaces as HTTP 401 with reason "authError" / AIP status
+    // "UNAUTHENTICATED" — none of which reach `.message`.
+    if (
+      httpStatus === 401 ||
+      signals.includes("Unauthorized") ||
+      signals.includes("UNAUTHENTICATED") ||
+      signals.includes("authError") ||
+      signals.includes("invalid_grant") ||
+      signals.includes("Token has been expired") ||
+      signals.includes("token expired")
     ) {
       return {
         type: "refresh-token",
@@ -212,32 +294,17 @@ export const youTubeProvider: SocialProviderAdapter = {
       };
     }
 
+    // Transient / retry.
     if (
-      message.includes("invalidTitle") ||
-      message.includes("invalidDescription") ||
-      message.includes("invalidTags") ||
-      message.includes("youtubeSignupRequired") ||
-      message.includes("uploadLimitExceeded") ||
-      message.includes("videoDurationTooLong") ||
-      message.includes("videoFileSizeTooLarge") ||
-      message.includes("failedPrecondition") ||
-      message.includes("forbidden") ||
-      message.includes("privacySettingNotSupportedForPartner")
-    ) {
-      return {
-        type: "bad-body",
-        message: `YouTube content validation failed: ${message}`,
-        original: error,
-      };
-    }
-
-    if (
-      message.includes("quotaExceeded") ||
-      message.includes("rateLimitExceeded") ||
-      message.includes("backendError") ||
-      message.includes("internalError") ||
-      message.includes("serviceUnavailable") ||
-      message.includes("transientError")
+      signals.includes("quotaExceeded") ||
+      signals.includes("rateLimitExceeded") ||
+      signals.includes("backendError") ||
+      signals.includes("internalError") ||
+      signals.includes("serviceUnavailable") ||
+      signals.includes("transientError") ||
+      httpStatus === 429 ||
+      httpStatus === 500 ||
+      httpStatus === 503
     ) {
       return {
         type: "retry",

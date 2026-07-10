@@ -254,19 +254,15 @@ describe("instagramProvider contract — permanent-failure", () => {
   });
 
   /**
-   * CANARY — documents the confirmed defect described in the file header.
-   * A real container-creation failure carrying Instagram's numeric media
-   * error code (2207081, "Trial Reels not supported") should, per the
-   * existing `instagram.test.ts` unit tests (which assert this via a
-   * synthetic error), classify as "bad-body". Fed the *real* MetaApiError
-   * shape instead, it does not — classifyError() only inspects `.message`
-   * text, and the human message ("This account doesn't support Trial
-   * Reels.") never contains the digits "2207081", so the code-based branch
-   * in classifyMetaError() never matches. This asserts the CURRENT (buggy)
-   * behavior; if this test ever starts failing because the type flips to
-   * "bad-body", the defect has been fixed and this test should be deleted.
+   * REGRESSION (formerly a CONFIRMED DEFECT canary) — a real
+   * container-creation failure carrying Instagram's numeric media error code
+   * (2207081, "Trial Reels not supported") must classify as "bad-body" and
+   * fail fast, NOT silently downgrade to a forever-retry. The numeric code is
+   * carried on the real `MetaApiError`'s structured `.code`/`.rawBody` fields
+   * (never folded into `.message`), so `classifyError()` must inspect the
+   * structured error, not just `.message` text.
    */
-  it("[CONFIRMED DEFECT] silently downgrades a real numeric-code Graph error to retry instead of bad-body", async () => {
+  it("classifies a real numeric-code Graph error (2207081) as bad-body", async () => {
     server.use(
       http.post(MEDIA_URL, () =>
         HttpResponse.json(
@@ -289,8 +285,7 @@ describe("instagramProvider contract — permanent-failure", () => {
     );
 
     const classified = instagramProvider.classifyError(error);
-    // INTENDED (per meta-common.ts code 2207081 branch): "bad-body".
-    // ACTUAL (confirmed real behavior — the defect):
-    expect(classified.type).toBe("retry");
+    expect(classified.type).toBe("bad-body");
+    expect(classified.message).toBe("This account doesn't support Trial Reels.");
   });
 });

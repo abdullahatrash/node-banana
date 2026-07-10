@@ -7,55 +7,47 @@
  * `vi.mock` — these tests exercise the *real* `googleapis`/`gaxios` SDK
  * against a mocked Google API boundary via MSW.
  *
- * Doing so surfaced two CONFIRMED, REAL defects in `youtube.ts`. Per the
- * task scope, provider code is left UNMODIFIED and both are reported here
- * instead of silently patched.
+ * Doing so surfaced two CONFIRMED, REAL defects in `youtube.ts`, both now
+ * FIXED. This file documents the fixes and guards against regression.
  *
  * ---------------------------------------------------------------------------
- * DEFECT 1 — video/thumbnail upload is structurally broken (blocks scenario 1)
+ * DEFECT 1 (FIXED) — video/thumbnail upload was structurally broken
  * ---------------------------------------------------------------------------
- * `urlToReadableStream()` does:
+ * `urlToReadableStream()` previously did:
  *   const response = await fetch(url);
  *   return response.body as unknown as NodeJS.ReadableStream;
  * Node's native `fetch()` (undici) returns `response.body` as a WHATWG
  * `ReadableStream` — it has NO `.pipe()` method. `googleapis-common`'s
  * multipart uploader (`apirequest.js`, `multipartUpload()`) unconditionally
- * calls `part.body.pipe(...)` on the media body. The result, reproduced
- * below with the real SDK and a real (msw-mocked) fetch response, is:
- *   TypeError: part.body.pipe is not a function
- * This is NOT an artifact of MSW or this test file — a bare
- * `await fetch(realUrl)` in plain Node confirms `response.body.pipe` is
- * `undefined` outside of any test harness. `urlToReadableStream()` needed
- * `Readable.fromWeb(response.body)` (Node 17+) to bridge Web Streams to a
- * Node Readable; it never does this. Every real `post()` call with video
- * media — which `post()` always requires — throws before any HTTP request
- * to the YouTube Data API is even made. **YouTube publishing does not work
- * in this codebase today.** `youtube.test.ts`'s `vi.mock("googleapis")`
- * replaces the whole SDK, so it never exercises the real multipart pipeline
- * and could not have caught this.
+ * calls `part.body.pipe(...)` on the media body, so every real `post()` with
+ * video media threw `TypeError: part.body.pipe is not a function` before any
+ * HTTP request to the YouTube Data API was even made — YouTube publishing did
+ * not work at all. `youtube.test.ts`'s `vi.mock("googleapis")` replaces the
+ * whole SDK, so it never exercised the real multipart pipeline and could not
+ * have caught this. Fixed by bridging with `Readable.fromWeb(response.body)`
+ * (node:stream, Node 17+); scenario 1 below now drives the real pipeline.
  *
  * ---------------------------------------------------------------------------
- * DEFECT 2 — classifyError() pattern-matches on fields that never reach `.message`
+ * DEFECT 2 (FIXED) — classifyError() matched fields that never reach `.message`
  * ---------------------------------------------------------------------------
- * `youTubeProvider.classifyError()` checks for literal reason-code strings
- * ("invalidTitle", "quotaExceeded", "forbidden", "UNAUTHENTICATED", ...).
- * Real `googleapis`/`gaxios` errors (`GaxiosError`) build `.message` purely
- * from the Google API JSON error's `.message` field (see
+ * `youTubeProvider.classifyError()` checked for literal reason-code strings
+ * ("invalidTitle", "quotaExceeded", "forbidden", "UNAUTHENTICATED", ...) in
+ * `.message` only. Real `googleapis`/`gaxios` errors (`GaxiosError`) build
+ * `.message` purely from the Google API JSON error's `.message` field (see
  * `GaxiosError.extractAPIErrorFromResponse` in `gaxios/build/.../common.js`)
- * — the per-error `reason` enum (where these strings actually live, e.g.
- * `errors[0].reason === "quotaExceeded"`) is never folded into `.message`.
- * Confirmed empirically below with real 401 and 403/quotaExceeded Google API
- * error bodies: BOTH classify as the generic "retry" fallback, including the
- * 401 — meaning an expired/invalid access token used against the real API
- * (as opposed to a refresh-token-endpoint failure, see scenario 2) is
- * silently retried instead of triggering re-authentication.
+ * — the per-error `reason` enum (where these strings live, e.g.
+ * `errors[0].reason === "quotaExceeded"`) and the AIP `status` enum
+ * ("UNAUTHENTICATED") live in `.response.data.error`, never folded into
+ * `.message`. So real 401/403s fell through to the generic "retry" fallback:
+ * an expired token was silently retried instead of triggering re-auth, and a
+ * permanent policy violation was retried instead of failing fast. Fixed by
+ * classifying from the GaxiosError structured response (HTTP status +
+ * `.response.data.error` reasons/status), preserving the intended mappings.
  *
- * Given DEFECT 1 blocks `post()`'s error paths entirely (the TypeError fires
- * before any network call), scenarios 2-4 below exercise `refreshToken()`
- * and `fetchPageInformation()` instead — both make real, unblocked
- * `googleapis` HTTP calls and are legitimate real-SDK error sources for
- * `classifyError()`, which is a general-purpose function not tied to a
- * single call site.
+ * Scenarios 2-4 exercise `refreshToken()` and `fetchPageInformation()` —
+ * both make real, unblocked `googleapis` HTTP calls and are legitimate
+ * real-SDK error sources for `classifyError()`, a general-purpose function
+ * not tied to a single call site.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -67,7 +59,8 @@ import type { PublishRequest } from "@/lib/social/provider-interface";
 
 const CHANNELS_URL = "https://youtube.googleapis.com/youtube/v3/channels";
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const VIDEO_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos";
+const VIDEO_UPLOAD_URL =
+  "https://youtube.googleapis.com/upload/youtube/v3/videos";
 
 const videoPost: PublishRequest = {
   postId: "our-post-1",
@@ -100,16 +93,24 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("youTubeProvider contract — successful post publish", () => {
-  it("[CONFIRMED DEFECT] real video upload throws before any network call — see file header (DEFECT 1)", async () => {
+  it("uploads the real video body via the multipart pipeline and returns the published result", async () => {
     server.use(
       http.post(VIDEO_UPLOAD_URL, () =>
         HttpResponse.json({ id: "video-1", snippet: {}, status: {} }),
       ),
     );
 
-    await expect(
-      youTubeProvider.post("channel-1", "access-token", [videoPost]),
-    ).rejects.toThrow(/pipe is not a function/);
+    const results = await youTubeProvider.post("channel-1", "access-token", [
+      videoPost,
+    ]);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toEqual({
+      postId: "our-post-1",
+      platformPostId: "video-1",
+      platformPostUrl: "https://www.youtube.com/watch?v=video-1",
+      status: "published",
+    });
   });
 });
 
@@ -146,13 +147,14 @@ describe("youTubeProvider contract — token-refresh trigger", () => {
   });
 
   /**
-   * CANARY — documents DEFECT 2 for the auth case specifically. A stale
-   * access token used against the real Data API (NOT the OAuth token
-   * endpoint) throws a differently-shaped GaxiosError whose `.message` is
-   * "Request had invalid authentication credentials." — no match for any
-   * refresh-token branch — so it is misclassified as "retry".
+   * REGRESSION (formerly a DEFECT 2 canary) — a stale access token used
+   * against the real Data API (NOT the OAuth token endpoint) throws a
+   * GaxiosError whose `.message` is only "Request had invalid authentication
+   * credentials."; the auth signal (HTTP 401, reason "authError", AIP status
+   * "UNAUTHENTICATED") lives in `.status`/`.response.data.error`. classifyError
+   * must inspect that structured response and classify as refresh-token.
    */
-  it("[CONFIRMED DEFECT] a real 401 from the Data API itself does not classify as refresh-token", async () => {
+  it("classifies a real 401 from the Data API as refresh-token", async () => {
     server.use(
       http.get(CHANNELS_URL, () =>
         HttpResponse.json(
@@ -189,8 +191,7 @@ describe("youTubeProvider contract — token-refresh trigger", () => {
     );
 
     const classified = youTubeProvider.classifyError(caught);
-    // INTENDED: "refresh-token". ACTUAL (confirmed real behavior — the defect):
-    expect(classified.type).toBe("retry");
+    expect(classified.type).toBe("refresh-token");
   });
 });
 
@@ -234,10 +235,9 @@ describe("youTubeProvider contract — rate-limit retry", () => {
       "The request cannot be completed because you have exceeded your quota.",
     );
 
-    // classifyError()'s explicit "quotaExceeded" text check never matches
-    // (see DEFECT 2) — but the generic bottom-of-function fallback also
-    // returns "retry", so the *outcome* here happens to be correct even
-    // though the intended branch is dead code.
+    // classifyError() now reads the structured response, so the reason
+    // "quotaExceeded" (in .response.data.error.errors[].reason) matches the
+    // intended retry branch directly.
     const classified = youTubeProvider.classifyError(caught);
     expect(classified.type).toBe("retry");
   });
@@ -249,14 +249,13 @@ describe("youTubeProvider contract — rate-limit retry", () => {
 
 describe("youTubeProvider contract — permanent-failure", () => {
   /**
-   * CANARY — documents DEFECT 2 for the content-policy case. Unlike the
-   * rate-limit scenario above (where the generic fallback happens to
-   * produce the correct "retry" outcome), a permanent/forbidden failure
-   * being misclassified as "retry" IS a functional bug: the publish
-   * pipeline will retry (up to 3x) something that can never succeed,
-   * instead of failing fast via FatalError.
+   * REGRESSION (formerly a DEFECT 2 canary) — a permanent/forbidden failure
+   * must classify as bad-body and fail fast, NOT be retried (up to 3x)
+   * against something that can never succeed. The "forbidden" reason lives in
+   * `.response.data.error.errors[].reason`, so classifyError must inspect the
+   * structured response.
    */
-  it("[CONFIRMED DEFECT] a real forbidden/policy-violation rejection does not classify as bad-body", async () => {
+  it("classifies a real forbidden/policy-violation rejection as bad-body", async () => {
     server.use(
       http.get(CHANNELS_URL, () =>
         HttpResponse.json(
@@ -290,8 +289,6 @@ describe("youTubeProvider contract — permanent-failure", () => {
     );
 
     const classified = youTubeProvider.classifyError(caught);
-    // INTENDED (per the "forbidden" branch in classifyError): "bad-body".
-    // ACTUAL (confirmed real behavior — the defect):
-    expect(classified.type).toBe("retry");
+    expect(classified.type).toBe("bad-body");
   });
 });
