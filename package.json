@@ -103,6 +103,7 @@
     "baseline-browser-mapping": "^2.10.12",
     "drizzle-kit": "^0.31.10",
     "jsdom": "^27.4.0",
+    "msw": "^2.12.14",
     "typescript": "5.9.3",
     "vite-tsconfig-paths": "^6.0.4",
     "vitest": "^4.0.16"
