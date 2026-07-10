@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Relaunch — agent-first BYOK content pipeline
+
+Node Banana is repositioned from an early image-generation tool into one
+product: **the BYOK content pipeline your agents plug into** — a visual content
+workflow editor, an agent/scale layer (CLI + MCP), and a durable social
+publishing hub, over a single engine. PRs #118–#135.
+
+#### Added — agent surface
+
+- **Workspace-scoped API tokens** — Bearer `nb_` tokens stored only as a SHA-256
+  hash with a non-secret display prefix; shown once; created/revoked in workspace
+  settings. (#123)
+- **Public REST API v1** (`/api/v1/*`) re-exposing workspaces, runs, assets, and
+  social posting through the existing authorization layer, workspace-scoped. (#131, #132, #134)
+- **Tool registry** (`src/lib/agent-tools/registry.ts`) — one Zod-typed set of
+  tool definitions that powers all agent surfaces, plus a **hosted MCP server**
+  over streamable HTTP at `/api/mcp`. (#126)
+- **`nb` CLI** (`packages/cli`, added as a pnpm workspace) mirroring the tools:
+  `auth`, `workspaces`, `accounts`, `assets`, `run`, `post` — each with `--json`
+  for CI. (#129)
+
+#### Added — BYOK-only inference
+
+- **Per-workspace provider-key vault** (Gemini, OpenAI, Anthropic, Kie, Fal,
+  Replicate, WaveSpeed), encrypted at rest with AES-256-GCM. (#125)
+- **Key resolution seam** — request header → workspace vault → typed
+  `byok_key_missing` error; **no server-env inference fallback on any product
+  path.** Chat and quickstart features migrated off the hardcoded server Gemini
+  key. (#128, #130)
+
+#### Added — social publishing, alive
+
+- **Cron wiring** in `vercel.json` invoking the internal dispatch, recovery,
+  sweep, token-refresh, webhook-delivery, reconcile, automation, digest, and
+  cleanup routes on appropriate cadences (1-minute dispatch requires Vercel Pro;
+  QStash documented as the self-host fallback). (#119)
+- **Platform credential gating** — platforms without configured credentials are
+  cleanly hidden/disabled rather than shown broken. (#120)
+- **MSW provider contract tests** exercising each provider's real SDK/`fetch`
+  against mocked platform HTTP (successful post, token-refresh, rate-limit retry,
+  permanent-failure classification); X is verified live end-to-end. (#118, #124)
+
+#### Fixed
+
+- Provider error classification hardened across the social adapters so retry vs.
+  refresh-token vs. permanent-failure is decided from real platform errors. (#127)
+
+#### Removed (cuts)
+
+- Desktop-era local-filesystem routes (`browse-directory`, `open-directory`,
+  `open-file`, `load-file`) — no arbitrary-filesystem attack surface on the
+  hosted product. (#122)
+- The community-workflows proxy and dead-pillar navigation stubs — no runtime
+  coupling to an external site, no vaporware in the UI. (#121)
+
+#### Changed
+
+- Migrated ESLint to the Next.js flat config. (#133)
+- README, `.env.example`, and `CLAUDE.md` rewritten to describe the single
+  product identity. (#117)
+
 ## [1.1.2] - 2026-03-12
 
 ### Added
