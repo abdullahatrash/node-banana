@@ -1,31 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
-const { mockIsDatabaseConfigured, mockWithApiPermission, mockRevokeApiToken } =
+const { mockIsDatabaseConfigured, mockAuthorizeStudioRequest, mockRevokeApiToken } =
   vi.hoisted(() => ({
     mockIsDatabaseConfigured: vi.fn(() => true),
-    mockWithApiPermission: vi.fn(),
+    mockAuthorizeStudioRequest: vi.fn(),
     mockRevokeApiToken: vi.fn(),
   }));
 
-vi.mock("@/lib/auth/server", () => ({
-  auth: { api: { getSession: vi.fn() } },
-}));
-
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: () => mockIsDatabaseConfigured(),
-  getDb: vi.fn(),
 }));
 
-vi.mock("@/lib/studio/authz", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/studio/authz")>(
-    "@/lib/studio/authz",
-  );
-  return {
-    ...actual,
-    withApiPermission: (...args: unknown[]) => mockWithApiPermission(...args),
-  };
-});
+vi.mock("@/lib/studio/authz", () => ({
+  authorizeStudioRequest: (...args: unknown[]) =>
+    mockAuthorizeStudioRequest(...args),
+  authzErrorResponse: (result: { status: number; error: string }) =>
+    NextResponse.json(
+      { success: false, error: result.error },
+      { status: result.status },
+    ),
+}));
 
 vi.mock("@/lib/api-tokens/repository", () => ({
   revokeApiToken: (...args: unknown[]) => mockRevokeApiToken(...args),
@@ -45,15 +40,13 @@ function paramsFor(tokenId: string) {
 }
 
 function authorizedAs(workspaceId: string) {
-  mockWithApiPermission.mockResolvedValue({
+  mockAuthorizeStudioRequest.mockResolvedValue({
     authorized: true,
-    session: {
-      user: { id: "user_1", name: null, email: null },
-      workspace: { id: workspaceId, organizationId: null },
-      role: "owner",
-      planTier: "free",
-      permissions: ["workspaces:read", "workspaces:write"],
-    },
+    userId: "user_1",
+    workspaceId,
+    role: "owner",
+    permissions: ["workspaces:read", "workspaces:write", "workspaces:delete"],
+    contentSession: {},
   });
 }
 
@@ -93,12 +86,11 @@ describe("/api/tokens/[tokenId] DELETE (revoke)", () => {
   });
 
   it("propagates the authz failure for non-writers", async () => {
-    mockWithApiPermission.mockResolvedValue({
+    mockAuthorizeStudioRequest.mockResolvedValue({
       authorized: false,
-      response: NextResponse.json(
-        { success: false, error: "forbidden" },
-        { status: 403 },
-      ),
+      status: 403,
+      error: "forbidden",
+      reason: "forbidden",
     });
 
     const response = await DELETE(createRequest(), paramsFor("apitok_1"));

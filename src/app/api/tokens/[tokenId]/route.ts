@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { revokeApiToken } from "@/lib/api-tokens/repository";
-import { isDatabaseConfigured } from "@/lib/db";
-import { withApiPermission } from "@/lib/studio/authz";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 const ROUTE = "/api/tokens/[tokenId]";
 
@@ -11,35 +10,20 @@ interface RevokeResponse {
   error?: string;
 }
 
+type TokenIdContext = { params: Promise<{ tokenId: string }> };
+
 /** Revoke a token. Scoped to the caller's workspace; takes effect immediately. */
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ tokenId: string }> },
-): Promise<NextResponse<RevokeResponse>> {
-  if (!isDatabaseConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "DATABASE_URL is not configured. Configure Postgres to use API tokens.",
-      },
-      { status: 503 },
-    );
-  }
+export const DELETE = withStudioAuth<TokenIdContext>(
+  { route: ROUTE, action: "delete" },
+  async (
+    _request: NextRequest,
+    authz,
+    context,
+  ): Promise<NextResponse<RevokeResponse>> => {
+    const { tokenId } = await context.params;
 
-  const auth = await withApiPermission(request, {
-    route: ROUTE,
-    permission: "workspaces:write",
-  });
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
-  const { tokenId } = await params;
-
-  try {
     const revoked = await revokeApiToken({
-      workspaceId: auth.session.workspace.id,
+      workspaceId: authz.workspaceId,
       tokenId,
     });
 
@@ -51,14 +35,5 @@ export async function DELETE(
     }
 
     return NextResponse.json({ success: true });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Failed to revoke API token",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+);

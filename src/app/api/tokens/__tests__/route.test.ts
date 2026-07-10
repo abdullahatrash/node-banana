@@ -3,34 +3,29 @@ import { NextRequest, NextResponse } from "next/server";
 
 const {
   mockIsDatabaseConfigured,
-  mockWithApiPermission,
+  mockAuthorizeStudioRequest,
   mockCreateApiToken,
   mockListApiTokens,
 } = vi.hoisted(() => ({
   mockIsDatabaseConfigured: vi.fn(() => true),
-  mockWithApiPermission: vi.fn(),
+  mockAuthorizeStudioRequest: vi.fn(),
   mockCreateApiToken: vi.fn(),
   mockListApiTokens: vi.fn(),
 }));
 
-vi.mock("@/lib/auth/server", () => ({
-  auth: { api: { getSession: vi.fn() } },
-}));
-
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: () => mockIsDatabaseConfigured(),
-  getDb: vi.fn(),
 }));
 
-vi.mock("@/lib/studio/authz", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/studio/authz")>(
-    "@/lib/studio/authz",
-  );
-  return {
-    ...actual,
-    withApiPermission: (...args: unknown[]) => mockWithApiPermission(...args),
-  };
-});
+vi.mock("@/lib/studio/authz", () => ({
+  authorizeStudioRequest: (...args: unknown[]) =>
+    mockAuthorizeStudioRequest(...args),
+  authzErrorResponse: (result: { status: number; error: string }) =>
+    NextResponse.json(
+      { success: false, error: result.error },
+      { status: result.status },
+    ),
+}));
 
 vi.mock("@/lib/api-tokens/repository", () => ({
   createApiToken: (...args: unknown[]) => mockCreateApiToken(...args),
@@ -48,22 +43,22 @@ function createRequest(body?: unknown): NextRequest {
 }
 
 function authorizedAs(workspaceId: string, userId = "user_1") {
-  mockWithApiPermission.mockResolvedValue({
+  mockAuthorizeStudioRequest.mockResolvedValue({
     authorized: true,
-    session: {
-      user: { id: userId, name: null, email: null },
-      workspace: { id: workspaceId, organizationId: null },
-      role: "owner",
-      planTier: "free",
-      permissions: ["workspaces:read", "workspaces:write"],
-    },
+    userId,
+    workspaceId,
+    role: "owner",
+    permissions: ["workspaces:read", "workspaces:write"],
+    contentSession: {},
   });
 }
 
 function unauthorized(status: 401 | 403, error: string) {
-  mockWithApiPermission.mockResolvedValue({
+  mockAuthorizeStudioRequest.mockResolvedValue({
     authorized: false,
-    response: NextResponse.json({ success: false, error }, { status }),
+    status,
+    error,
+    reason: status === 401 ? "unauthenticated" : "forbidden",
   });
 }
 
