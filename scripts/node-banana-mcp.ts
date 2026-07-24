@@ -8,16 +8,27 @@ import {
   CAPABILITY_DISPATCHER,
   listMcpCapabilityTools,
 } from "@/lib/agent-tools";
+import {
+  AGENT_AUTH_SERVICE,
+  createAgentAuthenticatedDispatcher,
+} from "@/lib/agent-auth";
 import { createCapabilityMcpServer } from "@/lib/agent-tools/mcp";
 import type { CapabilityDispatcherPort } from "@/types";
 
 export async function runNodeBananaMcp(
   transport: Transport = new StdioServerTransport(),
-  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
+  dispatcher?: CapabilityDispatcherPort,
 ): Promise<Server> {
-  const server = createCapabilityMcpServer(dispatcher);
+  const authenticatedDispatcher =
+    dispatcher ??
+    createAgentAuthenticatedDispatcher({
+      agentKey: process.env.NODE_BANANA_AGENT_KEY,
+      service: AGENT_AUTH_SERVICE,
+      dispatcher: CAPABILITY_DISPATCHER,
+    });
+  const server = createCapabilityMcpServer(authenticatedDispatcher);
   await server.connect(transport);
-  const tools = await listMcpCapabilityTools(dispatcher);
+  const tools = await listMcpCapabilityTools(authenticatedDispatcher);
   console.error(
     `[node-banana-mcp] ready — ${tools.length} exact capabilities`,
   );

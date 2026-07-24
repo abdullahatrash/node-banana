@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { AgentSecurityContext } from "./agentAuth";
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -122,7 +123,7 @@ export interface CapabilityDispatchContext {
    * context here. Invocation input never carries Principal or Workspace
    * identity.
    */
-  securityContext?: unknown;
+  securityContext?: AgentSecurityContext;
 }
 
 export interface CapabilityRegistryReader {

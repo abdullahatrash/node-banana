@@ -43,6 +43,7 @@ export {
 } from "./dispatcher";
 export { CapabilityFailure } from "./errors";
 export {
+  AGENT_CURRENT_GET_IDENTITY,
   CAPABILITY_GET_IDENTITY,
   CAPABILITY_DEFINITION_SCHEMA,
   CAPABILITY_LIST_IDENTITY,
@@ -52,6 +53,7 @@ export {
   QUERY_EFFECT,
   contractDigestFor,
   createCapabilityRegistry,
+  createAgentIdentityRegistrations,
   createDiscoveryRegistrations,
   defineCapability,
 } from "./registry";

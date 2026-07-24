@@ -265,6 +265,11 @@ export const CAPABILITY_GET_IDENTITY: CapabilityIdentity = {
   version: 1,
 };
 
+export const AGENT_CURRENT_GET_IDENTITY: CapabilityIdentity = {
+  name: "agents.current.get",
+  version: 1,
+};
+
 function identityKey(identity: CapabilityIdentity): string {
   return `${identity.name}@${identity.version}`;
 }
@@ -477,7 +482,83 @@ export function createDiscoveryRegistrations(): CapabilityRegistration[] {
   ];
 }
 
-/** Production registry. Only discovery capabilities are in scope for #150. */
+export function createAgentIdentityRegistrations(): CapabilityRegistration[] {
+  return [
+    defineCapability({
+      identity: AGENT_CURRENT_GET_IDENTITY,
+      summary:
+        "Return the authenticated Agent Principal and Workspace security context.",
+      lifecycle: activeLifecycle(),
+      input: z.object({}).strict(),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["principalId", "workspaceId", "keyId", "access"],
+        properties: {
+          principalId: { type: "string", minLength: 1 },
+          workspaceId: { type: "string", minLength: 1 },
+          keyId: { type: "string", minLength: 1 },
+          access: { type: "array", items: { type: "string" } },
+        },
+      },
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      errors: [
+        ...COMMON_DISCOVERY_ERRORS,
+        {
+          code: "AGENT_AUTHENTICATION_FAILED",
+          category: "authorization",
+          retryable: false,
+          description: "The transport did not resolve an active Agent Principal.",
+        },
+        {
+          code: "AGENT_PRINCIPAL_SUSPENDED",
+          category: "authorization",
+          retryable: false,
+          description: "The resolved Agent Principal is suspended.",
+        },
+        {
+          code: "AGENT_PRINCIPAL_REVOKED",
+          category: "authorization",
+          retryable: false,
+          description: "The resolved Agent Principal is revoked.",
+        },
+        {
+          code: "AGENT_SPONSOR_LOST",
+          category: "authorization",
+          retryable: false,
+          description:
+            "The Agent Principal no longer has an accountable Workspace owner or admin sponsor.",
+        },
+        {
+          code: "AGENT_WORKSPACE_UNAVAILABLE",
+          category: "authorization",
+          retryable: false,
+          description: "The Agent Principal's Workspace is unavailable.",
+        },
+      ],
+      handler: (_input, context) => {
+        const securityContext = context.securityContext;
+        if (!securityContext) {
+          throw new CapabilityFailure({
+            code: "AGENT_AUTHENTICATION_FAILED",
+            category: "authorization",
+            message: "Agent authentication failed.",
+          });
+        }
+        return {
+          principalId: securityContext.principalId,
+          workspaceId: securityContext.workspaceId,
+          keyId: securityContext.keyId,
+          access: securityContext.access,
+        };
+      },
+    }),
+  ];
+}
+
+/** Production registry. */
 export const CAPABILITY_REGISTRY = createCapabilityRegistry(
-  createDiscoveryRegistrations(),
+  [...createDiscoveryRegistrations(), ...createAgentIdentityRegistrations()],
 );

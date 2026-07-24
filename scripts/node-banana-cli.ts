@@ -2,13 +2,27 @@
 import "./_load-env";
 import { pathToFileURL } from "node:url";
 import { runCapabilityCli } from "@/lib/agent-tools/cli";
+import {
+  AGENT_AUTH_SERVICE,
+  createAgentAuthenticatedDispatcher,
+} from "@/lib/agent-auth";
+import { CAPABILITY_DISPATCHER } from "@/lib/agent-tools";
 import type { CapabilityCliOptions } from "@/types";
 
 export function runNodeBananaCli(
   argv: string[] = process.argv.slice(2),
   options: CapabilityCliOptions = {},
 ): Promise<number> {
-  return runCapabilityCli(argv, options);
+  return runCapabilityCli(argv, {
+    ...options,
+    dispatcher:
+      options.dispatcher ??
+      createAgentAuthenticatedDispatcher({
+        agentKey: process.env.NODE_BANANA_AGENT_KEY,
+        service: AGENT_AUTH_SERVICE,
+        dispatcher: CAPABILITY_DISPATCHER,
+      }),
+  });
 }
 
 function isDirectExecution(): boolean {

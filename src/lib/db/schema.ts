@@ -222,6 +222,11 @@ export const planTierEnum = pgEnum("plan_tier", [
   "pro",
   "enterprise",
 ]);
+export const agentPrincipalStatusEnum = pgEnum("agent_principal_status", [
+  "active",
+  "suspended",
+  "revoked",
+]);
 
 export const workspaces = pgTable(
   "workspaces",
@@ -312,6 +317,96 @@ export const workspaceMembers = pgTable(
       columns: [table.workspaceId, table.userId],
     }),
     userIdx: index("workspace_members_user_idx").on(table.userId),
+  }),
+);
+
+/**
+ * Workspace Agent identities are deliberately separate from Better Auth
+ * users. A human remains accountable as sponsor, while the Agent authenticates
+ * with independently rotatable keys.
+ */
+export const agentPairingChallenges = pgTable(
+  "agent_pairing_challenges",
+  {
+    id: text("id").primaryKey(),
+    lookupPrefix: text("lookup_prefix").notNull(),
+    secretHash: text("secret_hash").notNull(),
+    pepperVersion: integer("pepper_version").default(1).notNull(),
+    agentName: text("agent_name").notNull(),
+    keyName: text("key_name").notNull(),
+    requestedAccess: jsonb("requested_access").$type<string[]>().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    approvedWorkspaceId: text("approved_workspace_id").references(
+      () => workspaces.id,
+      { onDelete: "set null" },
+    ),
+    approvedByUserId: text("approved_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    prefixUnique: uniqueIndex("agent_pairing_challenges_prefix_unique").on(
+      table.lookupPrefix,
+    ),
+    expiryIdx: index("agent_pairing_challenges_expiry_idx").on(table.expiresAt),
+  }),
+);
+
+export const agentPrincipals = pgTable(
+  "agent_principals",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sponsorUserId: text("sponsor_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    name: text("name").notNull(),
+    requestedAccess: jsonb("requested_access").$type<string[]>().notNull(),
+    status: agentPrincipalStatusEnum("status").default("active").notNull(),
+    suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("agent_principals_workspace_idx").on(table.workspaceId),
+    sponsorIdx: index("agent_principals_sponsor_idx").on(table.sponsorUserId),
+  }),
+);
+
+export const agentKeys = pgTable(
+  "agent_keys",
+  {
+    id: text("id").primaryKey(),
+    principalId: text("principal_id")
+      .notNull()
+      .references(() => agentPrincipals.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    lookupPrefix: text("lookup_prefix").notNull(),
+    secretHash: text("secret_hash").notNull(),
+    pepperVersion: integer("pepper_version").default(1).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    prefixUnique: uniqueIndex("agent_keys_prefix_unique").on(table.lookupPrefix),
+    principalIdx: index("agent_keys_principal_idx").on(table.principalId),
+    expiryIdx: index("agent_keys_expiry_idx").on(table.expiresAt),
   }),
 );
 

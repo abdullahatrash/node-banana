@@ -41,7 +41,11 @@ describe("production Capability Registry", () => {
       output.items.map((definition) =>
         formatCapabilityIdentity(definition.identity),
       ),
-    ).toEqual(["capabilities.get@1", "capabilities.list@1"]);
+    ).toEqual([
+      "agents.current.get@1",
+      "capabilities.get@1",
+      "capabilities.list@1",
+    ]);
     expect(output.registryDigest).toBe(CAPABILITY_REGISTRY.digest);
 
     for (const definition of output.items) {
@@ -111,6 +115,7 @@ describe("production Capability Registry", () => {
     });
     const mcpTools = await listMcpCapabilityTools();
     expect(mcpTools.map((tool) => tool.name)).toEqual([
+      "agents.current.get.v1",
       "capabilities.get.v1",
       "capabilities.list.v1",
     ]);
