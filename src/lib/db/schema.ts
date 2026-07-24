@@ -357,6 +357,28 @@ export const agentPairingChallenges = pgTable(
   }),
 );
 
+export const agentPairingRateLimits = pgTable(
+  "agent_pairing_rate_limits",
+  {
+    requesterFingerprint: text("requester_fingerprint").notNull(),
+    action: text("action").notNull(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true })
+      .notNull(),
+    requestCount: integer("request_count").default(1).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "agent_pairing_rate_limits_pk",
+      columns: [table.requesterFingerprint, table.action],
+    }),
+    expiryIdx: index("agent_pairing_rate_limits_expiry_idx").on(table.expiresAt),
+  }),
+);
+
 export const agentPrincipals = pgTable(
   "agent_principals",
   {

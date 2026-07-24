@@ -9,4 +9,5 @@ export type {
   PairingApprovalResult,
   PairingChallengeRecord,
   PairingCompletionResult,
+  PairingRateLimitAction,
 } from "@/types/agentAuth";

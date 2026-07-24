@@ -39,8 +39,8 @@ async function pairAgent(
     keyName: "Laptop",
     requestedAccess: ["content.read", "content.publish"],
   });
-  await setup.service.approvePairing({
-    challenge: created.challenge,
+  await setup.service.approvePairingConfirmation({
+    confirmationId: created.confirmationId,
     workspaceId: "workspace-1",
     sponsorUserId: "human-1",
   });
@@ -345,5 +345,86 @@ describe("Workspace Agent pairing and authentication", () => {
     await expect(
       setup.service.redeemPairing({ challenge: created.challenge }),
     ).rejects.toMatchObject({ code: "PAIRING_CHALLENGE_EXPIRED" });
+  });
+
+  it("durably limits challenge creation per fingerprint without storing the raw client key", async () => {
+    const setup = fixture();
+    const clientRateLimitKey = "ip:203.0.113.44";
+    for (let index = 0; index < 6; index += 1) {
+      await setup.service.createPairingChallenge({
+        agentName: `Agent ${index}`,
+        requestedAccess: ["content.read"],
+        clientRateLimitKey,
+      });
+    }
+
+    await expect(
+      setup.service.createPairingChallenge({
+        agentName: "One too many",
+        requestedAccess: ["content.read"],
+        clientRateLimitKey,
+      }),
+    ).rejects.toMatchObject({
+      code: "PAIRING_RATE_LIMITED",
+      retryAfterMs: 10 * 60 * 1000,
+    });
+    expect([...setup.repository.rateLimits.keys()].join(" ")).not.toContain(
+      "203.0.113.44",
+    );
+    await expect(
+      setup.service.createPairingChallenge({
+        agentName: "Different client",
+        requestedAccess: ["content.read"],
+        clientRateLimitKey: "ip:203.0.113.45",
+      }),
+    ).resolves.toMatchObject({ challenge: expect.any(String) });
+  });
+
+  it("limits redemption independently and resets the fixed window", async () => {
+    const setup = fixture();
+    const input = {
+      challenge: "not-a-valid-challenge",
+      clientRateLimitKey: "ip:198.51.100.9",
+    };
+    for (let index = 0; index < 20; index += 1) {
+      await expect(setup.service.redeemPairing(input)).rejects.toMatchObject({
+        code: "PAIRING_CHALLENGE_INVALID",
+      });
+    }
+    await expect(setup.service.redeemPairing(input)).rejects.toMatchObject({
+      code: "PAIRING_RATE_LIMITED",
+    });
+
+    setup.clock.advance(10 * 60 * 1000);
+    await expect(setup.service.redeemPairing(input)).rejects.toMatchObject({
+      code: "PAIRING_CHALLENGE_INVALID",
+    });
+  });
+
+  it("opportunistically removes expired challenges and stale client buckets", async () => {
+    const setup = fixture();
+    await setup.service.createPairingChallenge({
+      agentName: "Old Agent",
+      requestedAccess: ["content.read"],
+      ttlMs: 30_000,
+      clientRateLimitKey: "ip:192.0.2.1",
+    });
+    expect(setup.repository.challenges.size).toBe(1);
+    expect(setup.repository.rateLimits.size).toBe(1);
+
+    setup.clock.advance(25 * 60 * 60 * 1000);
+    await setup.service.createPairingChallenge({
+      agentName: "Cleanup trigger",
+      requestedAccess: ["content.read"],
+      clientRateLimitKey: "ip:192.0.2.2",
+    });
+
+    expect(setup.repository.challenges.size).toBe(1);
+    expect(
+      [...setup.repository.rateLimits.keys()].some((key) =>
+        key.endsWith(":challenge_create"),
+      ),
+    ).toBe(true);
+    expect(setup.repository.rateLimits.size).toBe(1);
   });
 });

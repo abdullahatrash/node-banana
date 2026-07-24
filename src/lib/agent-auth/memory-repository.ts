@@ -8,6 +8,7 @@ import type {
   PairingApprovalResult,
   PairingChallengeRecord,
   PairingCompletionResult,
+  PairingRateLimitAction,
 } from "./types";
 
 /**
@@ -21,6 +22,65 @@ export class InMemoryAgentAuthRepository implements AgentAuthRepository {
   readonly memberships = new Set<string>();
   readonly administrators = new Set<string>();
   readonly inactiveWorkspaces = new Set<string>();
+  readonly rateLimits = new Map<
+    string,
+    {
+      requestCount: number;
+      windowStartedAt: Date;
+      expiresAt: Date;
+    }
+  >();
+
+  async consumePairingRateLimit(input: {
+    requesterFingerprint: string;
+    action: PairingRateLimitAction;
+    now: Date;
+    windowMs: number;
+    limit: number;
+  }): Promise<{ allowed: boolean; retryAfterMs: number }> {
+    const key = `${input.requesterFingerprint}:${input.action}`;
+    let bucket = this.rateLimits.get(key);
+    if (
+      !bucket ||
+      bucket.windowStartedAt.getTime() + input.windowMs <= input.now.getTime()
+    ) {
+      bucket = {
+        requestCount: 1,
+        windowStartedAt: input.now,
+        expiresAt: new Date(input.now.getTime() + input.windowMs * 2),
+      };
+      this.rateLimits.set(key, bucket);
+      return { allowed: true, retryAfterMs: 0 };
+    }
+    bucket.requestCount += 1;
+    bucket.expiresAt = new Date(input.now.getTime() + input.windowMs * 2);
+    const allowed = bucket.requestCount <= input.limit;
+    return {
+      allowed,
+      retryAfterMs: allowed
+        ? 0
+        : Math.max(
+            1,
+            bucket.windowStartedAt.getTime() +
+              input.windowMs -
+              input.now.getTime(),
+          ),
+    };
+  }
+
+  async cleanupPairingSecurityState(now: Date): Promise<void> {
+    const challengeCutoff = now.getTime() - 24 * 60 * 60 * 1000;
+    for (const [id, challenge] of this.challenges) {
+      if (challenge.expiresAt.getTime() <= challengeCutoff) {
+        this.challenges.delete(id);
+      }
+    }
+    for (const [key, bucket] of this.rateLimits) {
+      if (bucket.expiresAt.getTime() <= now.getTime()) {
+        this.rateLimits.delete(key);
+      }
+    }
+  }
 
   addMembership(
     workspaceId: string,

@@ -6,13 +6,16 @@ import {
   inArray,
   isNull,
   lt,
+  lte,
   ne,
   or,
+  sql,
 } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import {
   agentKeys,
   agentPairingChallenges,
+  agentPairingRateLimits,
   agentPrincipals,
   workspaceMembers,
   workspaces,
@@ -27,9 +30,11 @@ import type {
   PairingApprovalResult,
   PairingChallengeRecord,
   PairingCompletionResult,
+  PairingRateLimitAction,
 } from "./types";
 
 type Db = ReturnType<typeof getDb>;
+const EXPIRED_CHALLENGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 function principalFromRow(
   row: typeof agentPrincipals.$inferSelect,
@@ -55,6 +60,85 @@ function challengeFromRow(
 
 export class DrizzleAgentAuthRepository implements AgentAuthRepository {
   constructor(private readonly getDatabase: () => Db) {}
+
+  async consumePairingRateLimit(input: {
+    requesterFingerprint: string;
+    action: PairingRateLimitAction;
+    now: Date;
+    windowMs: number;
+    limit: number;
+  }): Promise<{ allowed: boolean; retryAfterMs: number }> {
+    return this.getDatabase().transaction(async (tx) => {
+      const expiresAt = new Date(input.now.getTime() + input.windowMs * 2);
+      const inserted = await tx
+        .insert(agentPairingRateLimits)
+        .values({
+          requesterFingerprint: input.requesterFingerprint,
+          action: input.action,
+          windowStartedAt: input.now,
+          requestCount: 1,
+          expiresAt,
+          updatedAt: input.now,
+        })
+        .onConflictDoNothing()
+        .returning({
+          requestCount: agentPairingRateLimits.requestCount,
+          windowStartedAt: agentPairingRateLimits.windowStartedAt,
+        });
+      if (inserted[0]) return { allowed: true, retryAfterMs: 0 };
+
+      const windowCutoff = new Date(input.now.getTime() - input.windowMs);
+      const rows = await tx
+        .update(agentPairingRateLimits)
+        .set({
+          requestCount: sql<number>`case when ${agentPairingRateLimits.windowStartedAt} <= ${windowCutoff} then 1 else ${agentPairingRateLimits.requestCount} + 1 end`,
+          windowStartedAt: sql<Date>`case when ${agentPairingRateLimits.windowStartedAt} <= ${windowCutoff} then ${input.now} else ${agentPairingRateLimits.windowStartedAt} end`,
+          expiresAt,
+          updatedAt: input.now,
+        })
+        .where(
+          and(
+            eq(
+              agentPairingRateLimits.requesterFingerprint,
+              input.requesterFingerprint,
+            ),
+            eq(agentPairingRateLimits.action, input.action),
+          ),
+        )
+        .returning({
+          requestCount: agentPairingRateLimits.requestCount,
+          windowStartedAt: agentPairingRateLimits.windowStartedAt,
+        });
+      const row = rows[0];
+      if (!row) return { allowed: false, retryAfterMs: input.windowMs };
+      const allowed = row.requestCount <= input.limit;
+      return {
+        allowed,
+        retryAfterMs: allowed
+          ? 0
+          : Math.max(
+              1,
+              row.windowStartedAt.getTime() +
+                input.windowMs -
+                input.now.getTime(),
+            ),
+      };
+    });
+  }
+
+  async cleanupPairingSecurityState(now: Date): Promise<void> {
+    const challengeCutoff = new Date(
+      now.getTime() - EXPIRED_CHALLENGE_RETENTION_MS,
+    );
+    await this.getDatabase().transaction(async (tx) => {
+      await tx
+        .delete(agentPairingChallenges)
+        .where(lte(agentPairingChallenges.expiresAt, challengeCutoff));
+      await tx
+        .delete(agentPairingRateLimits)
+        .where(lte(agentPairingRateLimits.expiresAt, now));
+    });
+  }
 
   async createPairingChallenge(
     challenge: PairingChallengeRecord,

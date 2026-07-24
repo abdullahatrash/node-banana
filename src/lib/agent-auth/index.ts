@@ -1,6 +1,7 @@
 export {
   AgentAuthError,
   AgentAuthService,
+  AgentValidationError,
   AGENT_AUTH_SERVICE,
 } from "./service";
 export { InMemoryAgentAuthRepository } from "./memory-repository";
@@ -19,4 +20,5 @@ export type {
   AgentPrincipalSummary,
   AgentSecurityContext,
   PairingChallengeRecord,
+  PairingRateLimitAction,
 } from "./types";

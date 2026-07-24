@@ -16,11 +16,19 @@ import type {
   AgentPrincipalSummary,
   AgentSecurityContext,
   PairingChallengeRecord,
+  PairingRateLimitAction,
 } from "./types";
 
 const DEFAULT_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const MAX_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const MAX_KEY_LIFETIME_MS = 366 * 24 * 60 * 60 * 1000;
+const PAIRING_RATE_LIMITS: Record<
+  PairingRateLimitAction,
+  { limit: number; windowMs: number }
+> = {
+  challenge_create: { limit: 6, windowMs: 10 * 60 * 1000 },
+  challenge_redeem: { limit: 20, windowMs: 10 * 60 * 1000 },
+};
 
 export type AgentAuthErrorCode =
   | "AGENT_AUTHENTICATION_FAILED"
@@ -32,6 +40,7 @@ export type AgentAuthErrorCode =
   | "PAIRING_CHALLENGE_EXPIRED"
   | "PAIRING_CHALLENGE_REPLAYED"
   | "PAIRING_CHALLENGE_NOT_APPROVED"
+  | "PAIRING_RATE_LIMITED"
   | "PAIRING_SPONSOR_FORBIDDEN"
   | "AGENT_PRINCIPAL_NOT_FOUND"
   | "AGENT_KEY_NOT_FOUND";
@@ -40,9 +49,17 @@ export class AgentAuthError extends Error {
   constructor(
     readonly code: AgentAuthErrorCode,
     message: string,
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "AgentAuthError";
+  }
+}
+
+export class AgentValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentValidationError";
   }
 }
 
@@ -71,7 +88,9 @@ function authenticationFailed(): AgentAuthError {
 function cleanName(value: string, label: string): string {
   const name = value.trim();
   if (!name || name.length > 120) {
-    throw new TypeError(`${label} must be between 1 and 120 characters.`);
+    throw new AgentValidationError(
+      `${label} must be between 1 and 120 characters.`,
+    );
   }
   return name;
 }
@@ -83,7 +102,9 @@ function cleanAccess(values: string[]): string[] {
     unique.length > 32 ||
     unique.some((value) => value.length > 120)
   ) {
-    throw new TypeError("requestedAccess must contain 1 to 32 access names.");
+    throw new AgentValidationError(
+      "requestedAccess must contain 1 to 32 access names.",
+    );
   }
   return unique;
 }
@@ -98,7 +119,7 @@ function cleanExpiry(
     expiresAt.getTime() <= now.getTime() ||
     expiresAt.getTime() - now.getTime() > MAX_KEY_LIFETIME_MS
   ) {
-    throw new TypeError(
+    throw new AgentValidationError(
       "Key expiry must be in the future and no more than 366 days away.",
     );
   }
@@ -129,8 +150,17 @@ export class AgentAuthService {
     agentName: string;
     keyName?: string;
     requestedAccess: string[];
+    clientRateLimitKey?: string;
     ttlMs?: number;
-  }): Promise<{ challenge: string; expiresAt: string }> {
+  }): Promise<{
+    challenge: string;
+    confirmationId: string;
+    expiresAt: string;
+  }> {
+    await this.enforcePairingRateLimit(
+      "challenge_create",
+      input.clientRateLimitKey ?? "shared-service-client",
+    );
     const now = this.clock.now();
     const ttlMs = input.ttlMs ?? DEFAULT_CHALLENGE_TTL_MS;
     if (
@@ -138,7 +168,9 @@ export class AgentAuthService {
       ttlMs < 30_000 ||
       ttlMs > MAX_CHALLENGE_TTL_MS
     ) {
-      throw new TypeError("Pairing challenge TTL must be 30 seconds to 10 minutes.");
+      throw new AgentValidationError(
+        "Pairing challenge TTL must be 30 seconds to 10 minutes.",
+      );
     }
     const credential = createOpaqueCredential("challenge");
     const challenge: PairingChallengeRecord = {
@@ -157,8 +189,10 @@ export class AgentAuthService {
       createdAt: now,
     };
     await this.repository.createPairingChallenge(challenge);
+    await this.repository.cleanupPairingSecurityState(now);
     return {
       challenge: credential.plaintext,
+      confirmationId: credential.lookupPrefix,
       expiresAt: challenge.expiresAt.toISOString(),
     };
   }
@@ -170,6 +204,22 @@ export class AgentAuthService {
     expiresAt: string;
   }> {
     const challenge = await this.resolveUsableChallenge(plaintext);
+    return {
+      agentName: challenge.agentName,
+      keyName: challenge.keyName,
+      requestedAccess: [...challenge.requestedAccess],
+      expiresAt: challenge.expiresAt.toISOString(),
+    };
+  }
+
+  async inspectPairingConfirmation(confirmationId: string): Promise<{
+    agentName: string;
+    keyName: string;
+    requestedAccess: string[];
+    expiresAt: string;
+  }> {
+    const challenge =
+      await this.resolveUsableConfirmationId(confirmationId);
     return {
       agentName: challenge.agentName,
       keyName: challenge.keyName,
@@ -215,6 +265,45 @@ export class AgentAuthService {
     };
   }
 
+  async approvePairingConfirmation(input: {
+    confirmationId: string;
+    workspaceId: string;
+    sponsorUserId: string;
+  }): Promise<{
+    approved: true;
+    workspaceId: string;
+    agentName: string;
+    requestedAccess: string[];
+  }> {
+    const challenge = await this.resolveUsableConfirmationId(
+      input.confirmationId,
+    );
+    const result = await this.repository.approvePairing({
+      challengeId: challenge.id,
+      workspaceId: input.workspaceId,
+      sponsorUserId: input.sponsorUserId,
+      now: this.clock.now(),
+    });
+    if (result.type === "sponsor_forbidden") {
+      throw new AgentAuthError(
+        "PAIRING_SPONSOR_FORBIDDEN",
+        "Only a Workspace owner or admin can sponsor an Agent.",
+      );
+    }
+    if (result.type === "challenge_unavailable") {
+      const latest = await this.repository.findPairingChallengeByPrefix(
+        challenge.lookupPrefix,
+      );
+      throw this.challengeUnavailableError(latest);
+    }
+    return {
+      approved: true,
+      workspaceId: input.workspaceId,
+      agentName: challenge.agentName,
+      requestedAccess: [...challenge.requestedAccess],
+    };
+  }
+
   /**
    * The local Agent redeems an approved challenge. The repository consumes it
    * and writes Principal + key in one transaction. If the response is lost,
@@ -222,6 +311,7 @@ export class AgentAuthService {
    */
   async redeemPairing(input: {
     challenge: string;
+    clientRateLimitKey?: string;
     keyExpiresAt?: Date | null;
   }): Promise<{
     agentKey: string;
@@ -239,6 +329,10 @@ export class AgentAuthService {
       expiresAt: string | null;
     };
   }> {
+    await this.enforcePairingRateLimit(
+      "challenge_redeem",
+      input.clientRateLimitKey ?? "shared-service-client",
+    );
     const now = this.clock.now();
     const challenge = await this.resolveUsableChallenge(input.challenge);
     if (
@@ -516,6 +610,7 @@ export class AgentAuthService {
     const challenge = await this.repository.findPairingChallengeByPrefix(
       parsed.lookupPrefix,
     );
+    await this.repository.cleanupPairingSecurityState(this.clock.now());
     if (
       !challenge ||
       !verifyCredentialSecret(
@@ -527,6 +622,66 @@ export class AgentAuthService {
       throw new AgentAuthError(
         "PAIRING_CHALLENGE_INVALID",
         "The pairing challenge is invalid.",
+      );
+    }
+    if (challenge.consumedAt) {
+      throw new AgentAuthError(
+        "PAIRING_CHALLENGE_REPLAYED",
+        "This pairing challenge was already used.",
+      );
+    }
+    if (challenge.expiresAt.getTime() <= this.clock.now().getTime()) {
+      throw new AgentAuthError(
+        "PAIRING_CHALLENGE_EXPIRED",
+        "This pairing challenge has expired.",
+      );
+    }
+    return challenge;
+  }
+
+  private async enforcePairingRateLimit(
+    action: PairingRateLimitAction,
+    clientRateLimitKey: string,
+  ): Promise<void> {
+    const normalizedClientKey =
+      clientRateLimitKey.trim().slice(0, 512) || "shared-unattributed-client";
+    const requesterFingerprint = hashCredentialSecret(
+      `pairing-rate-limit:${normalizedClientKey}`,
+      this.currentPepper,
+    );
+    const policy = PAIRING_RATE_LIMITS[action];
+    const result = await this.repository.consumePairingRateLimit({
+      requesterFingerprint,
+      action,
+      now: this.clock.now(),
+      windowMs: policy.windowMs,
+      limit: policy.limit,
+    });
+    if (!result.allowed) {
+      throw new AgentAuthError(
+        "PAIRING_RATE_LIMITED",
+        "Too many pairing attempts. Try again later.",
+        result.retryAfterMs,
+      );
+    }
+  }
+
+  private async resolveUsableConfirmationId(
+    confirmationId: string,
+  ): Promise<PairingChallengeRecord> {
+    const normalized = confirmationId.trim();
+    if (!/^[A-Za-z0-9_-]{12}$/.test(normalized)) {
+      throw new AgentAuthError(
+        "PAIRING_CHALLENGE_INVALID",
+        "The pairing confirmation is invalid.",
+      );
+    }
+    const challenge =
+      await this.repository.findPairingChallengeByPrefix(normalized);
+    if (!challenge) {
+      throw new AgentAuthError(
+        "PAIRING_CHALLENGE_INVALID",
+        "The pairing confirmation is invalid.",
       );
     }
     if (challenge.consumedAt) {

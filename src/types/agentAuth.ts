@@ -1,4 +1,5 @@
 export type AgentPrincipalStatus = "active" | "suspended" | "revoked";
+export type PairingRateLimitAction = "challenge_create" | "challenge_redeem";
 
 export interface AgentSecurityContext {
   principalId: string;
@@ -76,6 +77,14 @@ export type PairingApprovalResult =
   | { type: "sponsor_forbidden" };
 
 export interface AgentAuthRepository {
+  consumePairingRateLimit(input: {
+    requesterFingerprint: string;
+    action: PairingRateLimitAction;
+    now: Date;
+    windowMs: number;
+    limit: number;
+  }): Promise<{ allowed: boolean; retryAfterMs: number }>;
+  cleanupPairingSecurityState(now: Date): Promise<void>;
   createPairingChallenge(challenge: PairingChallengeRecord): Promise<void>;
   findPairingChallengeByPrefix(
     lookupPrefix: string,
