@@ -5,9 +5,9 @@ import {
   isExactCliCapability,
 } from "./adapters";
 import {
-  CAPABILITY_DISPATCHER,
   formatCapabilityIdentity,
 } from "./dispatcher";
+import { CAPABILITY_DISPATCHER } from "@/lib/agent-runtime/server-dispatcher";
 import type {
   CapabilityCliIo,
   CapabilityCliOptions,

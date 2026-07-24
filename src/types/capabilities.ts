@@ -1,5 +1,9 @@
 import type { z } from "zod";
 import type { AgentSecurityContext } from "./agentAuth";
+import type {
+  AgentResourceRef,
+  CapabilityAuthorizer,
+} from "./agentAuthorization";
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -148,11 +152,23 @@ export interface CapabilityRegistration<Input = unknown, Output = unknown> {
   approval: CapabilityApprovalContract;
   idempotency: CapabilityIdempotencyPolicy;
   errors: CapabilityErrorContract[];
+  authorization: {
+    /**
+     * Serializable selectors allow the dispatcher to extract only validated,
+     * server-declared resource IDs from capability input.
+     */
+    resources: Array<{
+      kind: AgentResourceRef["kind"];
+      inputPath: string;
+    }>;
+  };
   handler(
     input: Input,
     context: CapabilityHandlerContext,
   ): Promise<Output> | Output;
 }
+
+export type { CapabilityAuthorizer };
 
 export interface CapabilityCliIo {
   stdout(text: string): void;

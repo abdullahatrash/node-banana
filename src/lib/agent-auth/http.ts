@@ -23,7 +23,8 @@ export function agentAuthErrorResponse(error: unknown): NextResponse {
         ? 404
         : error.code === "PAIRING_SPONSOR_FORBIDDEN"
           ? 403
-          : error.code === "PAIRING_CHALLENGE_REPLAYED"
+          : error.code === "PAIRING_CHALLENGE_REPLAYED" ||
+              error.code === "AGENT_AUTHORITY_CONFLICT"
             ? 409
             : 400;
     const retryAfterSeconds = error.retryAfterMs
@@ -65,6 +66,7 @@ export function serializePrincipal(principal: AgentPrincipalSummary) {
       principalId: key.principalId,
       name: key.name,
       lookupPrefix: key.lookupPrefix,
+      authorizationScopes: key.authorizationScopes,
       expiresAt: key.expiresAt?.toISOString() ?? null,
       revokedAt: key.revokedAt?.toISOString() ?? null,
       lastUsedAt: key.lastUsedAt?.toISOString() ?? null,

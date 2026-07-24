@@ -4,6 +4,7 @@
  */
 export type {
   CapabilityApprovalContract,
+  CapabilityAuthorizer,
   CapabilityCliIo,
   CapabilityCliOptions,
   CapabilityDefinition,

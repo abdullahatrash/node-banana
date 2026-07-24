@@ -120,6 +120,41 @@
       "when": 1784914336078,
       "tag": "0016_careless_stranger",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784916082906,
+      "tag": "0017_overrated_cannonball",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784917310308,
+      "tag": "0018_glorious_warbound",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784917331168,
+      "tag": "0019_sturdy_patriot",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784918679845,
+      "tag": "0020_conscious_edwin_jarvis",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1784919678916,
+      "tag": "0021_parallel_alex_power",
+      "breakpoints": true
     }
   ]
 }

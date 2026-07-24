@@ -5,8 +5,18 @@ import {
   createCapabilityRegistry,
   createDiscoveryRegistrations,
 } from "@/lib/agent-tools";
+import type {
+  CapabilityDispatcherPort,
+  CapabilityInvocation,
+} from "@/types/capabilities";
 
-export function createLifecycleTestDispatcher(): CapabilityDispatcher {
+const TEST_SECURITY_CONTEXT = {
+  principalId: "principal-fixture",
+  workspaceId: "workspace-fixture",
+  keyId: "key-fixture",
+};
+
+export function createLifecycleTestDispatcher(): CapabilityDispatcherPort {
   const base = {
     summary: "Lifecycle parity fixture.",
     input: z.object({}).strict(),
@@ -25,10 +35,11 @@ export function createLifecycleTestDispatcher(): CapabilityDispatcher {
     } as const,
     approval: { mode: "none" } as const,
     idempotency: { mode: "retry-safe" } as const,
+    authorization: { resources: [] },
     errors: COMMON_DISCOVERY_ERRORS,
     handler: () => ({ ok: true }),
   };
-  return new CapabilityDispatcher(
+  const dispatcher = new CapabilityDispatcher(
     createCapabilityRegistry([
       ...createDiscoveryRegistrations(),
       {
@@ -64,5 +75,12 @@ export function createLifecycleTestDispatcher(): CapabilityDispatcher {
         },
       },
     ]),
+    { authorize: async () => ({ allowed: true }) },
   );
+  return {
+    dispatch: (invocation: CapabilityInvocation) =>
+      dispatcher.dispatch(invocation, {
+        securityContext: TEST_SECURITY_CONTEXT,
+      }),
+  };
 }

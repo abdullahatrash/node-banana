@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -407,6 +408,25 @@ export const agentPrincipals = pgTable(
   }),
 );
 
+type StoredAgentResourceConstraints = {
+  channelIds: string[];
+  credentialProfileIds: string[];
+  workflowIds: string[];
+  automationIds: string[];
+};
+
+type StoredAgentCapabilityGrant = {
+  capability: string;
+  authorizationContractDigest: string;
+  resources: StoredAgentResourceConstraints;
+};
+
+type StoredAgentKeyScope = {
+  capability: string;
+  authorizationContractDigest: string;
+  resources: StoredAgentResourceConstraints;
+};
+
 export const agentKeys = pgTable(
   "agent_keys",
   {
@@ -418,6 +438,10 @@ export const agentKeys = pgTable(
     lookupPrefix: text("lookup_prefix").notNull(),
     secretHash: text("secret_hash").notNull(),
     pepperVersion: integer("pepper_version").default(1).notNull(),
+    authorizationScopes: jsonb("authorization_scopes")
+      .$type<StoredAgentKeyScope[]>()
+      .default([])
+      .notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
@@ -429,6 +453,273 @@ export const agentKeys = pgTable(
     prefixUnique: uniqueIndex("agent_keys_prefix_unique").on(table.lookupPrefix),
     principalIdx: index("agent_keys_principal_idx").on(table.principalId),
     expiryIdx: index("agent_keys_expiry_idx").on(table.expiresAt),
+  }),
+);
+
+export const agentGrantSets = pgTable(
+  "agent_grant_sets",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    principalId: text("principal_id")
+      .notNull()
+      .references(() => agentPrincipals.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    activeRevision: integer("active_revision"),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    principalIdx: index("agent_grant_sets_principal_idx").on(
+      table.principalId,
+    ),
+    workspaceIdx: index("agent_grant_sets_workspace_idx").on(
+      table.workspaceId,
+    ),
+    principalUnique: uniqueIndex("agent_grant_sets_principal_unique").on(
+      table.principalId,
+    ),
+  }),
+);
+
+export const agentGrantRevisions = pgTable(
+  "agent_grant_revisions",
+  {
+    id: text("id").primaryKey(),
+    grantSetId: text("grant_set_id")
+      .notNull()
+      .references(() => agentGrantSets.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    grants: jsonb("grants").$type<StoredAgentCapabilityGrant[]>().notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    revisionUnique: uniqueIndex("agent_grant_revisions_set_revision_unique").on(
+      table.grantSetId,
+      table.revision,
+    ),
+    setIdx: index("agent_grant_revisions_set_idx").on(table.grantSetId),
+  }),
+);
+
+export const workspaceAgentPolicyRevisions = pgTable(
+  "workspace_agent_policy_revisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    enabled: boolean("enabled").notNull(),
+    grants: jsonb("grants").$type<StoredAgentCapabilityGrant[]>().notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceRevisionUnique: uniqueIndex(
+      "workspace_agent_policy_revisions_workspace_revision_unique",
+    ).on(table.workspaceId, table.revision),
+    workspaceIdUnique: uniqueIndex(
+      "workspace_agent_policy_revisions_workspace_id_unique",
+    ).on(table.workspaceId, table.id),
+  }),
+);
+
+export const workspaceAgentPolicies = pgTable(
+  "workspace_agent_policies",
+  {
+    workspaceId: text("workspace_id")
+      .primaryKey()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    activeRevisionId: text("active_revision_id").notNull(),
+    revision: integer("revision").notNull(),
+    enabled: boolean("enabled").default(false).notNull(),
+    grants: jsonb("grants").$type<StoredAgentCapabilityGrant[]>().notNull(),
+    updatedByUserId: text("updated_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    activeRevisionWorkspaceFk: foreignKey({
+      columns: [table.workspaceId, table.activeRevisionId],
+      foreignColumns: [
+        workspaceAgentPolicyRevisions.workspaceId,
+        workspaceAgentPolicyRevisions.id,
+      ],
+      name: "workspace_agent_policies_active_revision_workspace_fk",
+    }).onDelete("restrict"),
+  }),
+);
+
+export const credentialProfiles = pgTable(
+  "credential_profiles",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => ({
+    workspaceIdx: index("credential_profiles_workspace_idx").on(
+      table.workspaceId,
+    ),
+  }),
+);
+
+export const agentAuthorizationDecisions = pgTable(
+  "agent_authorization_decisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id")
+      .notNull()
+      .references(() => agentPrincipals.id, { onDelete: "restrict" }),
+    keyId: text("key_id")
+      .notNull()
+      .references(() => agentKeys.id, { onDelete: "restrict" }),
+    capabilityName: text("capability_name").notNull(),
+    capabilityVersion: integer("capability_version").notNull(),
+    authorizationContractDigest: text(
+      "authorization_contract_digest",
+    ).notNull(),
+    outcome: text("outcome").notNull(),
+    reason: text("reason").notNull(),
+    operatorTraceRef: text("operator_trace_ref").notNull(),
+    grantRevisionId: text("grant_revision_id").references(
+      () => agentGrantRevisions.id,
+      { onDelete: "restrict" },
+    ),
+    policyRevisionId: text("policy_revision_id").references(
+      () => workspaceAgentPolicyRevisions.id,
+      { onDelete: "restrict" },
+    ),
+    resources: jsonb("resources")
+      .$type<Array<{ kind: string; id: string }>>()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceCreatedIdx: index(
+      "agent_authorization_decisions_workspace_created_idx",
+    ).on(table.workspaceId, table.createdAt),
+    principalCreatedIdx: index(
+      "agent_authorization_decisions_principal_created_idx",
+    ).on(table.principalId, table.createdAt),
+    traceUnique: uniqueIndex(
+      "agent_authorization_decisions_trace_unique",
+    ).on(table.operatorTraceRef),
+  }),
+);
+
+export const agentSecurityEvents = pgTable(
+  "agent_security_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").references(() => agentPrincipals.id, {
+      onDelete: "restrict",
+    }),
+    keyId: text("key_id").references(() => agentKeys.id, {
+      onDelete: "restrict",
+    }),
+    actorUserId: text("actor_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    eventType: text("event_type").notNull(),
+    capabilityName: text("capability_name").notNull(),
+    capabilityVersion: integer("capability_version").notNull(),
+    reason: text("reason").notNull(),
+    resourceKinds: jsonb("resource_kinds").$type<string[]>().notNull(),
+    changeRef: text("change_ref"),
+    revision: integer("revision"),
+    principalStatus: text("principal_status"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceCreatedIdx: index(
+      "agent_security_events_workspace_created_idx",
+    ).on(table.workspaceId, table.createdAt),
+    principalCreatedIdx: index(
+      "agent_security_events_principal_created_idx",
+    ).on(table.principalId, table.createdAt),
+  }),
+);
+
+export const agentAuthorityProvisioningReceipts = pgTable(
+  "agent_authority_provisioning_receipts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    requestId: text("request_id").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    keyId: text("key_id")
+      .notNull()
+      .references(() => agentKeys.id, { onDelete: "restrict" }),
+    grantSetId: text("grant_set_id")
+      .notNull()
+      .references(() => agentGrantSets.id, { onDelete: "restrict" }),
+    grantRevisionId: text("grant_revision_id")
+      .notNull()
+      .references(() => agentGrantRevisions.id, { onDelete: "restrict" }),
+    grantRevision: integer("grant_revision").notNull(),
+    policyRevisionId: text("policy_revision_id")
+      .notNull()
+      .references(() => workspaceAgentPolicyRevisions.id, {
+        onDelete: "restrict",
+      }),
+    policyRevision: integer("policy_revision").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    requestUnique: uniqueIndex(
+      "agent_authority_provisioning_receipts_request_unique",
+    ).on(table.workspaceId, table.actorUserId, table.requestId),
   }),
 );
 

@@ -1,19 +1,35 @@
 import { z } from "zod";
 import {
-  CAPABILITY_DISPATCHER,
   CAPABILITY_GET_IDENTITY,
   CAPABILITY_LIST_IDENTITY,
   CAPABILITY_REGISTRY,
+  CapabilityDispatcher,
   COMMON_DISCOVERY_ERRORS,
   canonicalDigest,
   contractDigestFor,
   createCapabilityRegistry,
-  dispatchCapability,
   formatCapabilityIdentity,
   listMcpCapabilityTools,
   type CapabilityDefinition,
   type CapabilityRegistration,
 } from "@/lib/agent-tools";
+import type { CapabilityDispatcherPort } from "@/types";
+
+const TEST_DISPATCHER: CapabilityDispatcherPort = (() => {
+  const dispatcher = new CapabilityDispatcher(CAPABILITY_REGISTRY, {
+    authorize: async () => ({ allowed: true }),
+  });
+  return {
+    dispatch: (invocation) =>
+      dispatcher.dispatch(invocation, {
+        securityContext: {
+          principalId: "principal-registry",
+          workspaceId: "workspace-registry",
+          keyId: "key-registry",
+        },
+      }),
+  };
+})();
 
 function contractWithoutPublication(
   definition: CapabilityDefinition,
@@ -25,7 +41,7 @@ function contractWithoutPublication(
 
 describe("production Capability Registry", () => {
   it("publishes the two exact discovery contracts with canonical digests", async () => {
-    const response = await dispatchCapability({
+    const response = await TEST_DISPATCHER.dispatch({
       capability: CAPABILITY_LIST_IDENTITY,
       input: {},
     });
@@ -79,7 +95,7 @@ describe("production Capability Registry", () => {
   });
 
   it("gets an exact definition and returns a stable error for an unknown one", async () => {
-    const found = await CAPABILITY_DISPATCHER.dispatch({
+    const found = await TEST_DISPATCHER.dispatch({
       capability: CAPABILITY_GET_IDENTITY,
       input: CAPABILITY_LIST_IDENTITY,
     });
@@ -90,7 +106,7 @@ describe("production Capability Registry", () => {
       output: { identity: CAPABILITY_LIST_IDENTITY },
     });
 
-    const missing = await CAPABILITY_DISPATCHER.dispatch({
+    const missing = await TEST_DISPATCHER.dispatch({
       capability: CAPABILITY_GET_IDENTITY,
       input: { name: "missing.capability", version: 1 },
     });
@@ -104,7 +120,7 @@ describe("production Capability Registry", () => {
   });
 
   it("rejects aliases and never generates an executable latest tool", async () => {
-    const response = await dispatchCapability({
+    const response = await TEST_DISPATCHER.dispatch({
       capability: "capabilities.list@latest",
       input: {},
     });
@@ -113,7 +129,7 @@ describe("production Capability Registry", () => {
       capability: null,
       code: "CAPABILITY_IDENTITY_INVALID",
     });
-    const mcpTools = await listMcpCapabilityTools();
+    const mcpTools = await listMcpCapabilityTools(TEST_DISPATCHER);
     expect(mcpTools.map((tool) => tool.name)).toEqual([
       "agents.current.get.v1",
       "capabilities.get.v1",
@@ -123,7 +139,7 @@ describe("production Capability Registry", () => {
   });
 
   it("fully specifies every structured field in discovery output schemas", async () => {
-    const response = await CAPABILITY_DISPATCHER.dispatch({
+    const response = await TEST_DISPATCHER.dispatch({
       capability: CAPABILITY_GET_IDENTITY,
       input: CAPABILITY_GET_IDENTITY,
     });
@@ -238,6 +254,7 @@ describe("production Capability Registry", () => {
       },
       approval: { mode: "none" },
       idempotency: { mode: "retry-safe" },
+      authorization: { resources: [] },
       errors: COMMON_DISCOVERY_ERRORS,
       handler: () => ({}),
     };

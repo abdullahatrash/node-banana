@@ -33,3 +33,17 @@ it("exposes only deliberate validation failures", async () => {
     agentAuthErrorResponse(new TypeError("internal programmer detail")),
   ).toThrow("internal programmer detail");
 });
+
+it("maps authority CAS and idempotency contention to HTTP 409", async () => {
+  const response = agentAuthErrorResponse(
+    new AgentAuthError(
+      "AGENT_AUTHORITY_CONFLICT",
+      "Authority revisions changed.",
+    ),
+  );
+
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({
+    code: "AGENT_AUTHORITY_CONFLICT",
+  });
+});

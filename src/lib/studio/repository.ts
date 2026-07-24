@@ -16,6 +16,7 @@ import {
   workspaceStorageLimits,
   workspaces,
 } from "@/lib/db/schema";
+import { statusForProjectResave } from "./project-lifecycle";
 
 type AssetUploadState = "pending" | "ready" | "failed";
 
@@ -459,6 +460,7 @@ export async function upsertProject(input: UpsertProjectInput) {
         name: input.name,
         description: input.description || null,
         workflowJson: input.workflowJson || null,
+        status: statusForProjectResave(input.workflowJson),
         sourceDirectoryPath: input.sourceDirectoryPath || null,
         updatedAt: now,
         lastOpenedAt: now,

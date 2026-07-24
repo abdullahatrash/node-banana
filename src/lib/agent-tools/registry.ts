@@ -319,6 +319,13 @@ export function contractDigestFor(
   return canonicalDigest(definition);
 }
 
+export function authorizationContractDigestFor(
+  identity: CapabilityIdentity,
+  authorization: CapabilityRegistration["authorization"],
+): string {
+  return canonicalDigest({ identity, authorization });
+}
+
 export class CapabilityRegistry implements CapabilityRegistryReader {
   private readonly registrations: Map<string, CapabilityRegistration>;
   private readonly definitions: Map<string, CapabilityDefinition>;
@@ -370,6 +377,11 @@ export class CapabilityRegistry implements CapabilityRegistryReader {
         effect: freezeContractValue({ ...registration.effect }),
         approval: freezeContractValue({ ...registration.approval }),
         idempotency: freezeContractValue({ ...registration.idempotency }),
+        authorization: freezeContractValue({
+          resources: registration.authorization.resources.map((selector) => ({
+            ...selector,
+          })),
+        }),
         errors: freezeContractValue(
           registration.errors.map((error) => ({ ...error })),
         ),
@@ -449,6 +461,7 @@ export function createDiscoveryRegistrations(): CapabilityRegistration[] {
       effect: QUERY_EFFECT,
       approval: { mode: "none" },
       idempotency: { mode: "retry-safe" },
+      authorization: { resources: [] },
       errors: COMMON_DISCOVERY_ERRORS,
       handler: (input, context) => ({
         items: context.registry.listDefinitions(input.lifecycle),
@@ -464,6 +477,7 @@ export function createDiscoveryRegistrations(): CapabilityRegistration[] {
       effect: QUERY_EFFECT,
       approval: { mode: "none" },
       idempotency: { mode: "retry-safe" },
+      authorization: { resources: [] },
       errors: COMMON_DISCOVERY_ERRORS,
       handler: ({ name, version }, context) => {
         const identity = { name, version };
@@ -504,6 +518,7 @@ export function createAgentIdentityRegistrations(): CapabilityRegistration[] {
       effect: QUERY_EFFECT,
       approval: { mode: "none" },
       idempotency: { mode: "retry-safe" },
+      authorization: { resources: [] },
       errors: [
         ...COMMON_DISCOVERY_ERRORS,
         {
@@ -551,7 +566,10 @@ export function createAgentIdentityRegistrations(): CapabilityRegistration[] {
           principalId: securityContext.principalId,
           workspaceId: securityContext.workspaceId,
           keyId: securityContext.keyId,
-          access: securityContext.access,
+          // Retained for the published @1 output contract. Enrollment access
+          // is no longer carried in the authentication proof or used as
+          // runtime authority.
+          access: [],
         };
       },
     }),

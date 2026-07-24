@@ -2,7 +2,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   AGENT_CURRENT_GET_IDENTITY,
-  CAPABILITY_DISPATCHER,
+  CAPABILITY_REGISTRY,
+  CapabilityDispatcher,
+  authorizationContractDigestFor,
   runCapabilityCli,
   type CapabilityResponse,
 } from "@/lib/agent-tools";
@@ -12,6 +14,11 @@ import {
   InMemoryAgentAuthRepository,
   createAgentAuthenticatedDispatcher,
 } from "@/lib/agent-auth";
+import {
+  AgentAuthorizationService,
+  EMPTY_RESOURCE_CONSTRAINTS,
+  InMemoryAgentAuthorizationRepository,
+} from "@/lib/agent-authorization";
 
 describe("Agent Key CLI and stdio MCP parity", () => {
   it("resolves the same server-owned Principal and Workspace without identity input", async () => {
@@ -34,10 +41,65 @@ describe("Agent Key CLI and stdio MCP parity", () => {
     const paired = await service.redeemPairing({
       challenge: challenge.challenge,
     });
+    const authorizationRepository =
+      new InMemoryAgentAuthorizationRepository();
+    const authorizationService = new AgentAuthorizationService(
+      authorizationRepository,
+      { now: () => new Date("2026-07-24T13:00:00.000Z") },
+    );
+    authorizationRepository.addAdministrator(
+      "workspace-parity",
+      "human-parity",
+    );
+    const principal = repository.principals.get(paired.principal.id)!;
+    const key = repository.keys.get(paired.key.id)!;
+    authorizationRepository.principals.set(principal.id, principal);
+    authorizationRepository.keys.set(key.id, key);
+    key.authorizationScopes = [
+      {
+        capability: "agents.current.get@1",
+        authorizationContractDigest: authorizationContractDigestFor(
+          AGENT_CURRENT_GET_IDENTITY,
+          CAPABILITY_REGISTRY.getRegistration(AGENT_CURRENT_GET_IDENTITY)!
+            .authorization,
+        ),
+        resources: EMPTY_RESOURCE_CONSTRAINTS,
+      },
+    ];
+    const definition = CAPABILITY_REGISTRY.getDefinition(
+      AGENT_CURRENT_GET_IDENTITY,
+    )!;
+    const grants = [
+      {
+        capability: "agents.current.get@1",
+        authorizationContractDigest: authorizationContractDigestFor(
+          AGENT_CURRENT_GET_IDENTITY,
+          CAPABILITY_REGISTRY.getRegistration(AGENT_CURRENT_GET_IDENTITY)!
+            .authorization,
+        ),
+        resources: EMPTY_RESOURCE_CONSTRAINTS,
+      },
+    ];
+    await authorizationService.putWorkspacePolicy({
+      workspaceId: "workspace-parity",
+      enabled: true,
+      grants,
+      actorUserId: "human-parity",
+    });
+    await authorizationService.createGrantSet({
+      workspaceId: "workspace-parity",
+      principalId: paired.principal.id,
+      name: "Transport parity",
+      grants,
+      actorUserId: "human-parity",
+    });
     const dispatcher = createAgentAuthenticatedDispatcher({
       agentKey: paired.agentKey,
       service,
-      dispatcher: CAPABILITY_DISPATCHER,
+      dispatcher: new CapabilityDispatcher(
+        CAPABILITY_REGISTRY,
+        authorizationService,
+      ),
     });
 
     let stdout = "";
@@ -86,6 +148,70 @@ describe("Agent Key CLI and stdio MCP parity", () => {
         },
       });
       expect(JSON.stringify(cliResponse)).not.toContain("sponsorUserId");
+
+      authorizationRepository.policies.get("workspace-parity")!.enabled =
+        false;
+      stdout = "";
+      stderr = "";
+      const deniedCliExit = await runCapabilityCli(
+        ["call", "agents.current.get@1", "--input", "{}"],
+        {
+          dispatcher,
+          io: {
+            stdout: (text) => {
+              stdout += text;
+            },
+            stderr: (text) => {
+              stderr += text;
+            },
+          },
+        },
+      );
+      const deniedMcp = await client.callTool({
+        name: "agents.current.get.v1",
+        arguments: {},
+      });
+      const deniedCli = JSON.parse(stdout) as CapabilityResponse;
+      const deniedMcpResponse =
+        deniedMcp.structuredContent as CapabilityResponse;
+      expect(deniedCliExit).toBe(1);
+      expect(deniedMcp.isError).toBe(true);
+      expect(deniedCli).toMatchObject({
+        type: "capability_error",
+        code: "CAPABILITY_NOT_AUTHORIZED",
+        category: "authorization",
+      });
+      const {
+        operatorTraceRef: _cliTrace,
+        ...deniedCliWithoutTrace
+      } = deniedCli as Extract<CapabilityResponse, { type: "capability_error" }>;
+      const {
+        operatorTraceRef: _mcpTrace,
+        ...deniedMcpWithoutTrace
+      } = deniedMcpResponse as Extract<
+        CapabilityResponse,
+        { type: "capability_error" }
+      >;
+      expect(deniedMcpWithoutTrace).toEqual(deniedCliWithoutTrace);
+      expect(authorizationRepository.decisions).toHaveLength(4);
+      expect(
+        authorizationRepository.decisions.slice(-2).map((decision) => ({
+          outcome: decision.outcome,
+          reason: decision.reason,
+          resources: decision.resources,
+        })),
+      ).toEqual([
+        {
+          outcome: "denied",
+          reason: "workspace_policy_denied",
+          resources: [],
+        },
+        {
+          outcome: "denied",
+          reason: "workspace_policy_denied",
+          resources: [],
+        },
+      ]);
     } finally {
       await client.close();
       await server.close();

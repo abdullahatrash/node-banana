@@ -7,7 +7,7 @@ import {
   dispatchMcpCapability,
   listMcpCapabilityTools,
 } from "./adapters";
-import { CAPABILITY_DISPATCHER } from "./dispatcher";
+import { CAPABILITY_DISPATCHER } from "@/lib/agent-runtime/server-dispatcher";
 import type { CapabilityDispatcherPort } from "@/types/capabilities";
 
 export function createCapabilityMcpServer(

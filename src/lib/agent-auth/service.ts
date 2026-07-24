@@ -3,11 +3,15 @@ import { isProductionLikeRuntime } from "@/lib/auth/features";
 import { getDb } from "@/lib/db";
 import {
   createOpaqueCredential,
+  deriveOpaqueCredential,
   hashCredentialSecret,
   parseOpaqueCredential,
   verifyCredentialSecret,
 } from "./crypto";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { DrizzleAgentAuthRepository } from "./repository";
+import { DrizzleAgentAuthorizationRepository } from "@/lib/agent-authorization/repository";
+import type { AgentAuthorizationRepository } from "@/types/agentAuthorization";
 import type {
   AgentAuthRepository,
   AgentKeyRecord,
@@ -18,6 +22,11 @@ import type {
   PairingChallengeRecord,
   PairingRateLimitAction,
 } from "./types";
+import type {
+  AgentCapabilityGrant,
+  AgentKeyAuthorizationScope,
+  AgentResourceConstraints,
+} from "@/types/agentAuthorization";
 
 const DEFAULT_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const MAX_CHALLENGE_TTL_MS = 10 * 60 * 1000;
@@ -43,7 +52,8 @@ export type AgentAuthErrorCode =
   | "PAIRING_RATE_LIMITED"
   | "PAIRING_SPONSOR_FORBIDDEN"
   | "AGENT_PRINCIPAL_NOT_FOUND"
-  | "AGENT_KEY_NOT_FOUND";
+  | "AGENT_KEY_NOT_FOUND"
+  | "AGENT_AUTHORITY_CONFLICT";
 
 export class AgentAuthError extends Error {
   constructor(
@@ -69,13 +79,105 @@ export interface AgentAuthClock {
 
 const systemClock: AgentAuthClock = { now: () => new Date() };
 
-function getAgentKeyPepper(): string {
-  const configured = process.env.AGENT_KEY_PEPPER?.trim();
-  if (configured) return configured;
-  if (isProductionLikeRuntime() || process.env.VERCEL_ENV === "production") {
-    throw new Error("AGENT_KEY_PEPPER must be set in production.");
+export interface AgentKeyPepperConfig {
+  peppers: Readonly<Record<number, string>>;
+  activeVersion: number;
+}
+
+const MAX_POSTGRES_INTEGER = 2_147_483_647;
+
+function parseAgentPepperVersion(
+  value: string,
+  variableName: string,
+): number {
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    throw new Error(`${variableName} must be a positive PostgreSQL integer.`);
   }
-  return "node-banana-local-agent-pepper-change-before-production";
+  const version = Number(value);
+  if (
+    !Number.isSafeInteger(version) ||
+    version < 1 ||
+    version > MAX_POSTGRES_INTEGER
+  ) {
+    throw new Error(`${variableName} must be a positive PostgreSQL integer.`);
+  }
+  return version;
+}
+
+export function loadAgentKeyPepperConfig(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  productionLike =
+    isProductionLikeRuntime() || env.VERCEL_ENV === "production",
+): AgentKeyPepperConfig {
+  const serializedKeyring = env.AGENT_KEY_PEPPERS?.trim();
+  const serializedActiveVersion =
+    env.AGENT_KEY_PEPPER_ACTIVE_VERSION?.trim();
+  const legacyPepper = env.AGENT_KEY_PEPPER?.trim();
+
+  if (serializedKeyring) {
+    if (!serializedActiveVersion) {
+      throw new Error(
+        "AGENT_KEY_PEPPER_ACTIVE_VERSION is required with AGENT_KEY_PEPPERS.",
+      );
+    }
+    const activeVersion = parseAgentPepperVersion(
+      serializedActiveVersion,
+      "AGENT_KEY_PEPPER_ACTIVE_VERSION",
+    );
+    const peppers: Record<number, string> = {};
+    const seen = new Set<number>();
+    for (const rawEntry of serializedKeyring.split(",")) {
+      const entry = rawEntry.trim();
+      const separator = entry.indexOf("=");
+      if (separator <= 0 || separator === entry.length - 1) {
+        throw new Error(
+          "AGENT_KEY_PEPPERS must use version=base64url entries.",
+        );
+      }
+      const versionText = entry.slice(0, separator).trim();
+      const pepper = entry.slice(separator + 1).trim();
+      if (!/^[A-Za-z0-9_-]{32,}$/.test(pepper)) {
+        throw new Error(
+          "AGENT_KEY_PEPPERS contains an invalid version or pepper.",
+        );
+      }
+      const version = parseAgentPepperVersion(
+        versionText,
+        "AGENT_KEY_PEPPERS version",
+      );
+      if (seen.has(version)) {
+        throw new Error("AGENT_KEY_PEPPERS contains a duplicate version.");
+      }
+      seen.add(version);
+      peppers[version] = pepper;
+    }
+    if (!peppers[activeVersion]) {
+      throw new Error(
+        "AGENT_KEY_PEPPER_ACTIVE_VERSION is missing from AGENT_KEY_PEPPERS.",
+      );
+    }
+    return { peppers, activeVersion };
+  }
+
+  if (serializedActiveVersion) {
+    throw new Error(
+      "AGENT_KEY_PEPPERS is required with AGENT_KEY_PEPPER_ACTIVE_VERSION.",
+    );
+  }
+  if (legacyPepper) {
+    return { peppers: { 1: legacyPepper }, activeVersion: 1 };
+  }
+  if (productionLike) {
+    throw new Error(
+      "AGENT_KEY_PEPPER or AGENT_KEY_PEPPERS must be set in production.",
+    );
+  }
+  return {
+    peppers: {
+      1: "node-banana-local-agent-pepper-change-before-production",
+    },
+    activeVersion: 1,
+  };
 }
 
 function authenticationFailed(): AgentAuthError {
@@ -109,6 +211,55 @@ function cleanAccess(values: string[]): string[] {
   return unique;
 }
 
+function cleanResourceConstraints(
+  resources: AgentResourceConstraints,
+): AgentResourceConstraints {
+  const clean = (values: string[]) => {
+    const normalized = [...new Set(values.map((value) => value.trim()))];
+    if (
+      normalized.length > 256 ||
+      normalized.some((value) => !value || value.length > 200)
+    ) {
+      throw new AgentValidationError("Key resource constraints are invalid.");
+    }
+    return normalized.sort();
+  };
+  return {
+    channelIds: clean(resources.channelIds),
+    credentialProfileIds: clean(resources.credentialProfileIds),
+    workflowIds: clean(resources.workflowIds),
+    automationIds: clean(resources.automationIds),
+  };
+}
+
+function cleanKeyScopes(
+  values: AgentKeyAuthorizationScope[],
+): AgentKeyAuthorizationScope[] {
+  const seen = new Set<string>();
+  return values.map((scope) => {
+    const capability = scope.capability.trim();
+    const authorizationContractDigest =
+      scope.authorizationContractDigest.trim();
+    if (
+      seen.has(capability) ||
+      !/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+@[1-9][0-9]*$/.test(
+        capability,
+      ) ||
+      !/^sha256:[a-f0-9]{64}$/.test(authorizationContractDigest)
+    ) {
+      throw new AgentValidationError(
+        "Key scopes must use unique exact capability identities.",
+      );
+    }
+    seen.add(capability);
+    return {
+      capability,
+      authorizationContractDigest,
+      resources: cleanResourceConstraints(scope.resources),
+    };
+  });
+}
+
 function cleanExpiry(
   expiresAt: Date | null | undefined,
   now: Date,
@@ -130,10 +281,14 @@ export class AgentAuthService {
   constructor(
     readonly repository: AgentAuthRepository,
     private readonly clock: AgentAuthClock = systemClock,
-    private readonly peppers: Readonly<Record<number, string>> = {
-      1: getAgentKeyPepper(),
-    },
-    private readonly currentPepperVersion = 1,
+    private readonly peppers: Readonly<Record<number, string>> =
+      loadAgentKeyPepperConfig().peppers,
+    private readonly currentPepperVersion =
+      loadAgentKeyPepperConfig().activeVersion,
+    private readonly authorizationRepository?: Pick<
+      AgentAuthorizationRepository,
+      "issueAttenuatedKey" | "provisionAuthority"
+    >,
   ) {}
 
   private get currentPepper(): string {
@@ -365,6 +520,7 @@ export class AgentAuthService {
       lookupPrefix: keyCredential.lookupPrefix,
       secretHash: hashCredentialSecret(keyCredential.secret, this.currentPepper),
       pepperVersion: this.currentPepperVersion,
+      authorizationScopes: [],
       expiresAt: cleanExpiry(input.keyExpiresAt, now),
       revokedAt: null,
       lastUsedAt: null,
@@ -409,25 +565,8 @@ export class AgentAuthService {
   async authenticateAgentKey(
     plaintext: string | null | undefined,
   ): Promise<AgentSecurityContext> {
-    const parsed = plaintext
-      ? parseOpaqueCredential(plaintext, "key")
-      : null;
-    if (!parsed) throw authenticationFailed();
-
-    const record =
-      await this.repository.findAuthenticationRecordByPrefix(
-        parsed.lookupPrefix,
-      );
-    if (
-      !record ||
-      !verifyCredentialSecret(
-        parsed.secret,
-        record.key.secretHash,
-        this.peppers[record.key.pepperVersion] ?? "",
-      )
-    ) {
-      throw authenticationFailed();
-    }
+    const { context, record } =
+      await this.resolveAgentKeyRecordForAdmission(plaintext);
     const now = this.clock.now();
     if (
       record.key.revokedAt ||
@@ -448,6 +587,49 @@ export class AgentAuthService {
         "The Agent Principal is revoked.",
       );
     }
+    await this.repository.recordKeyUsed(record.key.id, now);
+    return context;
+  }
+
+  async resolveAgentKeyForAdmission(
+    plaintext: string | null | undefined,
+  ): Promise<AgentSecurityContext> {
+    const { context, record } =
+      await this.resolveAgentKeyRecordForAdmission(plaintext);
+    const now = this.clock.now();
+    if (
+      !record.key.revokedAt &&
+      (!record.key.expiresAt || record.key.expiresAt.getTime() > now.getTime()) &&
+      record.principal.status === "active" &&
+      !record.principal.revokedAt
+    ) {
+      await this.repository.recordKeyUsed(record.key.id, now);
+    }
+    return context;
+  }
+
+  private async resolveAgentKeyRecordForAdmission(
+    plaintext: string | null | undefined,
+  ) {
+    const parsed = plaintext
+      ? parseOpaqueCredential(plaintext, "key")
+      : null;
+    if (!parsed) throw authenticationFailed();
+
+    const record =
+      await this.repository.findAuthenticationRecordByPrefix(
+        parsed.lookupPrefix,
+      );
+    if (
+      !record ||
+      !verifyCredentialSecret(
+        parsed.secret,
+        record.key.secretHash,
+        this.peppers[record.key.pepperVersion] ?? "",
+      )
+    ) {
+      throw authenticationFailed();
+    }
     if (
       !record.principal.sponsorUserId ||
       !record.sponsorIsWorkspaceAdmin
@@ -463,13 +645,13 @@ export class AgentAuthService {
         "The Agent Principal's Workspace is unavailable.",
       );
     }
-    await this.repository.recordKeyUsed(record.key.id, now);
     return {
-      principalId: record.principal.id,
-      workspaceId: record.principal.workspaceId,
-      sponsorUserId: record.principal.sponsorUserId,
-      keyId: record.key.id,
-      access: [...record.principal.requestedAccess],
+      context: {
+        principalId: record.principal.id,
+        workspaceId: record.principal.workspaceId,
+        keyId: record.key.id,
+      },
+      record,
     };
   }
 
@@ -478,6 +660,7 @@ export class AgentAuthService {
     workspaceId: string;
     actorUserId: string;
     name: string;
+    authorizationScopes?: AgentKeyAuthorizationScope[];
     expiresAt?: Date | null;
   }): Promise<{ agentKey: string; key: Omit<AgentKeyRecord, "secretHash"> }> {
     const principal = await this.repository.findPrincipalForActor(
@@ -506,14 +689,150 @@ export class AgentAuthService {
       lookupPrefix: credential.lookupPrefix,
       secretHash: hashCredentialSecret(credential.secret, this.currentPepper),
       pepperVersion: this.currentPepperVersion,
+      authorizationScopes: cleanKeyScopes(input.authorizationScopes ?? []),
       expiresAt: cleanExpiry(input.expiresAt, now),
       revokedAt: null,
       lastUsedAt: null,
       createdAt: now,
     };
-    await this.repository.createKey(key);
+    const issued = await this.authorizationRepository?.issueAttenuatedKey({
+      workspaceId: input.workspaceId,
+      principalId: principal.id,
+      actorUserId: input.actorUserId,
+      key,
+      now,
+    });
+    if (!issued) {
+      throw new AgentValidationError(
+        "Requested key authority exceeds the Principal's active Grant Set, Workspace policy, or live resources.",
+      );
+    }
     const { secretHash: _secretHash, ...safeKey } = key;
     return { agentKey: credential.plaintext, key: safeKey };
+  }
+
+  async provisionAuthority(input: {
+    workspaceId: string;
+    principalId: string;
+    actorUserId: string;
+    requestId: string;
+    grantSetId?: string;
+    grantSetName: string;
+    expectedGrantRevision?: number;
+    expectedPolicyRevision: number;
+    grants: AgentCapabilityGrant[];
+    policyGrants: AgentCapabilityGrant[];
+    key: {
+      name: string;
+      authorizationScopes: AgentKeyAuthorizationScope[];
+      expiresAt?: Date | null;
+    };
+  }): Promise<{
+    agentKey: string;
+    key: Omit<AgentKeyRecord, "secretHash">;
+    grantSetId: string;
+    grantRevisionId: string;
+    grantRevision: number;
+    policyRevisionId: string;
+    policyRevision: number;
+  }> {
+    if (!this.authorizationRepository) {
+      throw new AgentValidationError("Agent authority provisioning is unavailable.");
+    }
+    const now = this.clock.now();
+    const expiresAt = cleanExpiry(input.key.expiresAt, now);
+    const authorizationScopes = cleanKeyScopes(input.key.authorizationScopes);
+    const requestFingerprint = canonicalDigest({
+      principalId: input.principalId,
+      grantSetId: input.grantSetId ?? null,
+      grantSetName: input.grantSetName.trim(),
+      expectedGrantRevision: input.expectedGrantRevision ?? null,
+      expectedPolicyRevision: input.expectedPolicyRevision,
+      grants: input.grants,
+      policyGrants: input.policyGrants,
+      key: {
+        name: input.key.name.trim(),
+        authorizationScopes,
+        expiresAt: expiresAt?.toISOString() ?? null,
+      },
+    });
+    const derivationMaterial =
+      `${input.workspaceId}:${input.actorUserId}:${input.requestId}:${requestFingerprint}`;
+    const credential = deriveOpaqueCredential(
+      "key",
+      derivationMaterial,
+      this.currentPepper,
+    );
+    const key: AgentKeyRecord = {
+      id: randomUUID(),
+      principalId: input.principalId,
+      name: cleanName(input.key.name, "Key name"),
+      lookupPrefix: credential.lookupPrefix,
+      secretHash: hashCredentialSecret(credential.secret, this.currentPepper),
+      pepperVersion: this.currentPepperVersion,
+      authorizationScopes,
+      expiresAt,
+      revokedAt: null,
+      lastUsedAt: null,
+      createdAt: now,
+    };
+    const result = await this.authorizationRepository.provisionAuthority({
+      workspaceId: input.workspaceId,
+      principalId: input.principalId,
+      actorUserId: input.actorUserId,
+      requestId: input.requestId,
+      requestFingerprint,
+      grantSetId: input.grantSetId,
+      grantSetName: cleanName(input.grantSetName, "Grant Set name"),
+      expectedGrantRevision: input.expectedGrantRevision,
+      expectedPolicyRevision: input.expectedPolicyRevision,
+      grants: input.grants,
+      policyGrants: input.policyGrants,
+      key,
+      now,
+    });
+    if (result.type !== "created" && result.type !== "replayed") {
+      if (result.type === "conflict") {
+        throw new AgentAuthError(
+          "AGENT_AUTHORITY_CONFLICT",
+          "Authority revisions changed or the request ID was reused with different content; reload and retry.",
+        );
+      }
+      throw new AgentValidationError(
+        result.type === "forbidden"
+            ? "Workspace owner or admin authority is required."
+            : "Requested authority is invalid or exceeds live Workspace resources.",
+      );
+    }
+    const resultPepper = this.peppers[result.key.pepperVersion];
+    if (!resultPepper) {
+      throw new AgentValidationError(
+        "The provisioning result requires an unavailable credential pepper version.",
+      );
+    }
+    const responseCredential = deriveOpaqueCredential(
+      "key",
+      derivationMaterial,
+      resultPepper,
+    );
+    if (
+      !verifyCredentialSecret(
+        responseCredential.secret,
+        result.key.secretHash,
+        resultPepper,
+      )
+    ) {
+      throw new AgentValidationError(
+        "The provisioning result failed credential integrity verification.",
+      );
+    }
+    const { secretHash: _secretHash, ...safeKey } = result.key;
+    const { type: _type, key: _storedKey, ...provisioned } = result;
+    return {
+      agentKey: responseCredential.plaintext,
+      key: safeKey,
+      ...provisioned,
+    };
   }
 
   async revokeKey(input: {
@@ -724,6 +1043,12 @@ export class AgentAuthService {
   }
 }
 
+const productionPepperConfig = loadAgentKeyPepperConfig();
+
 export const AGENT_AUTH_SERVICE = new AgentAuthService(
   new DrizzleAgentAuthRepository(getDb),
+  systemClock,
+  productionPepperConfig.peppers,
+  productionPepperConfig.activeVersion,
+  new DrizzleAgentAuthorizationRepository(getDb),
 );

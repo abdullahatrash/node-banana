@@ -35,9 +35,7 @@ export type {
   McpCapabilityTool,
 } from "./contracts";
 export {
-  CAPABILITY_DISPATCHER,
   CapabilityDispatcher,
-  dispatchCapability,
   formatCapabilityIdentity,
   parseCapabilityIdentity,
 } from "./dispatcher";
@@ -52,6 +50,7 @@ export {
   CapabilityRegistry,
   QUERY_EFFECT,
   contractDigestFor,
+  authorizationContractDigestFor,
   createCapabilityRegistry,
   createAgentIdentityRegistrations,
   createDiscoveryRegistrations,

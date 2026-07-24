@@ -1,6 +1,6 @@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { randomUUID } from "node:crypto";
 import {
-  formatCapabilityIdentity,
   parseCapabilityIdentity,
   type CapabilityDispatcher,
 } from "@/lib/agent-tools/dispatcher";
@@ -12,7 +12,9 @@ import type {
 import { AgentAuthError, type AgentAuthService } from "./service";
 
 export interface AgentSecurityContextResolver {
-  resolve(): Promise<Awaited<ReturnType<AgentAuthService["authenticateAgentKey"]>>>;
+  resolve(): Promise<
+    Awaited<ReturnType<AgentAuthService["resolveAgentKeyForAdmission"]>>
+  >;
 }
 
 export class AgentKeySecurityContextResolver
@@ -24,7 +26,7 @@ export class AgentKeySecurityContextResolver
   ) {}
 
   resolve() {
-    return this.service.authenticateAgentKey(this.agentKey);
+    return this.service.resolveAgentKeyForAdmission(this.agentKey);
   }
 }
 
@@ -56,14 +58,13 @@ export class AgentAuthenticatedCapabilityDispatcher
         type: "capability_error",
         capability: identity,
         requestDigest,
-        code: error.code,
+        code: "CAPABILITY_NOT_AUTHORIZED",
         category: "authorization",
-        message: error.message,
+        message: identity
+          ? `Capability ${identity.name}@${identity.version} is not authorized. Ask a Workspace owner or admin to grant that exact capability and its required resources.`
+          : "The requested capability is not authorized.",
         retryable: false,
-        operatorTraceRef: `trace_${requestDigest.slice(7, 31)}`,
-        details: identity
-          ? { capability: formatCapabilityIdentity(identity) }
-          : undefined,
+        operatorTraceRef: `trace_${randomUUID().replaceAll("-", "")}`,
       };
     }
   }

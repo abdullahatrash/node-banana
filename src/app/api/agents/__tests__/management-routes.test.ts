@@ -87,6 +87,7 @@ describe("Agent management routes", () => {
       actorUserId: "human-1",
       name: "Replacement",
       expiresAt: undefined,
+      authorizationScopes: [],
     });
     expect((await response.json()).agentKey).toBe("nbak_selector_secret");
     expect(response.headers.get("cache-control")).toBe("no-store");

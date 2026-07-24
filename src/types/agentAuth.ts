@@ -4,9 +4,7 @@ export type PairingRateLimitAction = "challenge_create" | "challenge_redeem";
 export interface AgentSecurityContext {
   principalId: string;
   workspaceId: string;
-  sponsorUserId: string;
   keyId: string;
-  access: string[];
 }
 
 export interface PairingChallengeRecord {
@@ -45,6 +43,7 @@ export interface AgentKeyRecord {
   lookupPrefix: string;
   secretHash: string;
   pepperVersion: number;
+  authorizationScopes: import("./agentAuthorization").AgentKeyAuthorizationScope[];
   expiresAt: Date | null;
   revokedAt: Date | null;
   lastUsedAt: Date | null;

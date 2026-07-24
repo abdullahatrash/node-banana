@@ -6,7 +6,7 @@ import {
   AGENT_AUTH_SERVICE,
   createAgentAuthenticatedDispatcher,
 } from "@/lib/agent-auth";
-import { CAPABILITY_DISPATCHER } from "@/lib/agent-tools";
+import { CAPABILITY_DISPATCHER } from "@/lib/agent-runtime/server-dispatcher";
 import type { CapabilityCliOptions } from "@/types";
 
 export function runNodeBananaCli(

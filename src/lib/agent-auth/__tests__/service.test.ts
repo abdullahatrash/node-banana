@@ -1,13 +1,22 @@
 import {
   AGENT_CURRENT_GET_IDENTITY,
-  CAPABILITY_DISPATCHER,
+  CAPABILITY_REGISTRY,
+  CapabilityDispatcher,
+  authorizationContractDigestFor,
 } from "@/lib/agent-tools";
+import {
+  AgentAuthorizationService,
+  EMPTY_RESOURCE_CONSTRAINTS,
+  InMemoryAgentAuthorizationRepository,
+} from "@/lib/agent-authorization";
 import {
   AgentAuthError,
   AgentAuthService,
   InMemoryAgentAuthRepository,
   createAgentAuthenticatedDispatcher,
+  loadAgentKeyPepperConfig,
 } from "@/lib/agent-auth";
+import { parseOpaqueCredential } from "@/lib/agent-auth/crypto";
 
 class TestClock {
   constructor(private value: Date) {}
@@ -20,14 +29,23 @@ class TestClock {
 function fixture() {
   const repository = new InMemoryAgentAuthRepository();
   const clock = new TestClock(new Date("2026-07-24T12:00:00.000Z"));
+  let issuanceCalls = 0;
   const service = new AgentAuthService(
     repository,
     clock,
     { 1: "test-agent-pepper-that-is-not-a-better-auth-secret" },
     1,
+    {
+      issueAttenuatedKey: async ({ key }) => {
+        issuanceCalls += 1;
+        await repository.createKey(key);
+        return true;
+      },
+      provisionAuthority: async () => ({ type: "invalid_authority" }),
+    },
   );
   repository.addMembership("workspace-1", "human-1", "owner");
-  return { repository, clock, service };
+  return { repository, clock, service, issuanceCalls: () => issuanceCalls };
 }
 
 async function pairAgent(
@@ -55,10 +73,73 @@ async function dispatchIdentity(
   setup: ReturnType<typeof fixture>,
   agentKey: string,
 ) {
+  const lookupPrefix = parseOpaqueCredential(agentKey, "key")?.lookupPrefix;
+  const key = [...setup.repository.keys.values()].find(
+    (candidate) => candidate.lookupPrefix === lookupPrefix,
+  );
+  const principal = key
+    ? setup.repository.principals.get(key.principalId)
+    : undefined;
+  const authorizationRepository =
+    new InMemoryAgentAuthorizationRepository();
+  const authorizationService = new AgentAuthorizationService(
+    authorizationRepository,
+    setup.clock,
+  );
+  authorizationRepository.addAdministrator(
+    principal?.workspaceId ?? "workspace-1",
+    "human-1",
+  );
+  if (key && principal) {
+    authorizationRepository.keys.set(key.id, key);
+    authorizationRepository.principals.set(principal.id, principal);
+    key.authorizationScopes = [
+      {
+        capability: "agents.current.get@1",
+        authorizationContractDigest: authorizationContractDigestFor(
+          AGENT_CURRENT_GET_IDENTITY,
+          CAPABILITY_REGISTRY.getRegistration(AGENT_CURRENT_GET_IDENTITY)!
+            .authorization,
+        ),
+        resources: EMPTY_RESOURCE_CONSTRAINTS,
+      },
+    ];
+    const definition = CAPABILITY_REGISTRY.getDefinition(
+      AGENT_CURRENT_GET_IDENTITY,
+    );
+    if (!definition) throw new Error("Agent identity capability is missing.");
+    const grants = [
+      {
+        capability: "agents.current.get@1",
+        authorizationContractDigest: authorizationContractDigestFor(
+          AGENT_CURRENT_GET_IDENTITY,
+          CAPABILITY_REGISTRY.getRegistration(AGENT_CURRENT_GET_IDENTITY)!
+            .authorization,
+        ),
+        resources: EMPTY_RESOURCE_CONSTRAINTS,
+      },
+    ];
+    await authorizationService.putWorkspacePolicy({
+      workspaceId: principal.workspaceId,
+      enabled: true,
+      grants,
+      actorUserId: "human-1",
+    });
+    await authorizationService.createGrantSet({
+      workspaceId: principal.workspaceId,
+      principalId: principal.id,
+      name: "Agent identity test",
+      grants,
+      actorUserId: "human-1",
+    });
+  }
   const dispatcher = createAgentAuthenticatedDispatcher({
     agentKey,
     service: setup.service,
-    dispatcher: CAPABILITY_DISPATCHER,
+    dispatcher: new CapabilityDispatcher(
+      CAPABILITY_REGISTRY,
+      authorizationService,
+    ),
   });
   return dispatcher.dispatch({
     capability: AGENT_CURRENT_GET_IDENTITY,
@@ -70,18 +151,208 @@ describe("Workspace Agent pairing and authentication", () => {
   it("requires a dedicated pepper in production-like environments", () => {
     const previousAppEnv = process.env.APP_ENV;
     const previousPepper = process.env.AGENT_KEY_PEPPER;
+    const previousPeppers = process.env.AGENT_KEY_PEPPERS;
+    const previousActiveVersion =
+      process.env.AGENT_KEY_PEPPER_ACTIVE_VERSION;
     process.env.APP_ENV = "staging";
     delete process.env.AGENT_KEY_PEPPER;
+    delete process.env.AGENT_KEY_PEPPERS;
+    delete process.env.AGENT_KEY_PEPPER_ACTIVE_VERSION;
     try {
       expect(
         () => new AgentAuthService(new InMemoryAgentAuthRepository()),
-      ).toThrow("AGENT_KEY_PEPPER must be set in production.");
+      ).toThrow(
+        "AGENT_KEY_PEPPER or AGENT_KEY_PEPPERS must be set in production.",
+      );
     } finally {
       if (previousAppEnv === undefined) delete process.env.APP_ENV;
       else process.env.APP_ENV = previousAppEnv;
       if (previousPepper === undefined) delete process.env.AGENT_KEY_PEPPER;
       else process.env.AGENT_KEY_PEPPER = previousPepper;
+      if (previousPeppers === undefined) delete process.env.AGENT_KEY_PEPPERS;
+      else process.env.AGENT_KEY_PEPPERS = previousPeppers;
+      if (previousActiveVersion === undefined) {
+        delete process.env.AGENT_KEY_PEPPER_ACTIVE_VERSION;
+      } else {
+        process.env.AGENT_KEY_PEPPER_ACTIVE_VERSION = previousActiveVersion;
+      }
     }
+  });
+
+  it("loads legacy AGENT_KEY_PEPPER as version 1", () => {
+    expect(
+      loadAgentKeyPepperConfig(
+        { AGENT_KEY_PEPPER: "legacy-pepper-value" },
+        true,
+      ),
+    ).toEqual({
+      peppers: { 1: "legacy-pepper-value" },
+      activeVersion: 1,
+    });
+  });
+
+  it("loads a retained v1 plus active v2 production keyring", () => {
+    const v1 = "a".repeat(43);
+    const v2 = "b".repeat(43);
+
+    expect(
+      loadAgentKeyPepperConfig(
+        {
+          AGENT_KEY_PEPPERS: `1=${v1},2=${v2}`,
+          AGENT_KEY_PEPPER_ACTIVE_VERSION: "2",
+        },
+        true,
+      ),
+    ).toEqual({
+      peppers: { 1: v1, 2: v2 },
+      activeVersion: 2,
+    });
+  });
+
+  it("accepts the maximum positive PostgreSQL integer pepper version", () => {
+    const pepper = "m".repeat(43);
+
+    expect(
+      loadAgentKeyPepperConfig(
+        {
+          AGENT_KEY_PEPPERS: `2147483647=${pepper}`,
+          AGENT_KEY_PEPPER_ACTIVE_VERSION: "2147483647",
+        },
+        true,
+      ),
+    ).toEqual({
+      peppers: { 2147483647: pepper },
+      activeVersion: 2147483647,
+    });
+  });
+
+  it.each([
+    [
+      "entry overflow",
+      {
+        AGENT_KEY_PEPPERS: `2147483648=${"a".repeat(43)}`,
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "2147483647",
+      },
+    ],
+    [
+      "active overflow",
+      {
+        AGENT_KEY_PEPPERS: `2147483647=${"a".repeat(43)}`,
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "2147483648",
+      },
+    ],
+    [
+      "unsafe entry integer",
+      {
+        AGENT_KEY_PEPPERS: `9007199254740992=${"a".repeat(43)}`,
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "1",
+      },
+    ],
+    [
+      "zero active version",
+      {
+        AGENT_KEY_PEPPERS: `1=${"a".repeat(43)}`,
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "0",
+      },
+    ],
+    [
+      "negative entry version",
+      {
+        AGENT_KEY_PEPPERS: `-1=${"a".repeat(43)}`,
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "1",
+      },
+    ],
+    [
+      "infinite active version",
+      {
+        AGENT_KEY_PEPPERS: `1=${"a".repeat(43)}`,
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "Infinity",
+      },
+    ],
+  ])("rejects non-PostgreSQL pepper versions: %s", (_label, env) => {
+    expect(() => loadAgentKeyPepperConfig(env, true)).toThrow(
+      "positive PostgreSQL integer",
+    );
+  });
+
+  it("verifies an existing v1 Agent key after production activates v2", async () => {
+    const repository = new InMemoryAgentAuthRepository();
+    const clock = new TestClock(new Date("2026-07-24T12:00:00.000Z"));
+    repository.addMembership("workspace-1", "human-1", "owner");
+    const v1 = "c".repeat(43);
+    const v2 = "d".repeat(43);
+    const legacy = loadAgentKeyPepperConfig(
+      { AGENT_KEY_PEPPER: v1 },
+      true,
+    );
+    const originalService = new AgentAuthService(
+      repository,
+      clock,
+      legacy.peppers,
+      legacy.activeVersion,
+    );
+    const created = await originalService.createPairingChallenge({
+      agentName: "Rotating Agent",
+      requestedAccess: ["content.read"],
+    });
+    await originalService.approvePairingConfirmation({
+      confirmationId: created.confirmationId,
+      workspaceId: "workspace-1",
+      sponsorUserId: "human-1",
+    });
+    const redeemed = await originalService.redeemPairing({
+      challenge: created.challenge,
+    });
+    const rotated = loadAgentKeyPepperConfig(
+      {
+        AGENT_KEY_PEPPERS: `1=${v1},2=${v2}`,
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "2",
+      },
+      true,
+    );
+    const rotatedService = new AgentAuthService(
+      repository,
+      clock,
+      rotated.peppers,
+      rotated.activeVersion,
+    );
+
+    await expect(
+      rotatedService.resolveAgentKeyForAdmission(redeemed.agentKey),
+    ).resolves.toMatchObject({
+      principalId: redeemed.principal.id,
+      keyId: redeemed.key.id,
+    });
+  });
+
+  it.each([
+    [
+      "duplicate version",
+      {
+        AGENT_KEY_PEPPERS: `1=${"a".repeat(43)},1=${"b".repeat(43)}`,
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "1",
+      },
+    ],
+    [
+      "missing active version",
+      { AGENT_KEY_PEPPERS: `1=${"a".repeat(43)}` },
+    ],
+    [
+      "active version absent from keyring",
+      {
+        AGENT_KEY_PEPPERS: `1=${"a".repeat(43)}`,
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "2",
+      },
+    ],
+    [
+      "malformed pepper",
+      {
+        AGENT_KEY_PEPPERS: "1=too-short",
+        AGENT_KEY_PEPPER_ACTIVE_VERSION: "1",
+      },
+    ],
+  ])("rejects malformed production pepper config: %s", (_label, env) => {
+    expect(() => loadAgentKeyPepperConfig(env, true)).toThrow();
   });
 
   it("approves then atomically redeems a single-use challenge without retaining plaintext", async () => {
@@ -114,7 +385,7 @@ describe("Workspace Agent pairing and authentication", () => {
         principalId: redeemed.principal.id,
         workspaceId: "workspace-1",
         keyId: redeemed.key.id,
-        access: ["content.read", "content.publish"],
+        access: [],
       },
     });
     expect(storedKey.lastUsedAt).toEqual(setup.clock.now());
@@ -156,6 +427,7 @@ describe("Workspace Agent pairing and authentication", () => {
       name: "CI replacement",
       expiresAt: new Date("2026-08-01T00:00:00.000Z"),
     });
+    expect(setup.issuanceCalls()).toBe(1);
 
     expect((await dispatchIdentity(setup, redeemed.agentKey)).type).toBe(
       "capability_result",
@@ -171,7 +443,7 @@ describe("Workspace Agent pairing and authentication", () => {
     });
     expect(await dispatchIdentity(setup, redeemed.agentKey)).toMatchObject({
       type: "capability_error",
-      code: "AGENT_AUTHENTICATION_FAILED",
+      code: "CAPABILITY_NOT_AUTHORIZED",
       category: "authorization",
     });
     expect((await dispatchIdentity(setup, rotated.agentKey)).type).toBe(
@@ -219,7 +491,7 @@ describe("Workspace Agent pairing and authentication", () => {
           actorUserId: "human-1",
           status: "suspended",
         }),
-      code: "AGENT_PRINCIPAL_SUSPENDED",
+      code: "CAPABILITY_NOT_AUTHORIZED",
     },
     {
       label: "principal revocation",
@@ -233,14 +505,14 @@ describe("Workspace Agent pairing and authentication", () => {
           actorUserId: "human-1",
           status: "revoked",
         }),
-      code: "AGENT_PRINCIPAL_REVOKED",
+      code: "CAPABILITY_NOT_AUTHORIZED",
     },
     {
       label: "sponsor loss or downgrade",
       mutate: async (setup: ReturnType<typeof fixture>) => {
         setup.repository.addMembership("workspace-1", "human-1", "member");
       },
-      code: "AGENT_SPONSOR_LOST",
+      code: "CAPABILITY_NOT_AUTHORIZED",
     },
   ])("denies capability dispatch after $label", async ({ mutate, code }) => {
     const setup = fixture();
@@ -292,7 +564,7 @@ describe("Workspace Agent pairing and authentication", () => {
       const response = await dispatchIdentity(setup, key ?? "");
       expect(response).toMatchObject({
         type: "capability_error",
-        code: "AGENT_AUTHENTICATION_FAILED",
+        code: "CAPABILITY_NOT_AUTHORIZED",
       });
     }
   });

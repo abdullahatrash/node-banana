@@ -24,6 +24,28 @@ export function createOpaqueCredential(kind: AgentCredentialKind): {
   };
 }
 
+export function deriveOpaqueCredential(
+  kind: AgentCredentialKind,
+  material: string,
+  pepper: string,
+): {
+  plaintext: string;
+  lookupPrefix: string;
+  secret: string;
+} {
+  const derive = (domain: string) =>
+    createHmac("sha256", pepper)
+      .update(`node-banana:${kind}:${domain}:${material}`, "utf8")
+      .digest();
+  const lookupPrefix = derive("lookup").subarray(0, 9).toString("base64url");
+  const secret = derive("secret").toString("base64url");
+  return {
+    plaintext: `${kindPrefix(kind)}_${lookupPrefix}_${secret}`,
+    lookupPrefix,
+    secret,
+  };
+}
+
 export function parseOpaqueCredential(
   plaintext: string,
   kind: AgentCredentialKind,

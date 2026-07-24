@@ -1,6 +1,8 @@
 import { ZodError } from "zod";
+import type { AgentResourceRef } from "@/types/agentAuthorization";
 import { canonicalDigest } from "./canonical";
 import type {
+  CapabilityAuthorizer,
   CapabilityDispatchContext,
   CapabilityError,
   CapabilityIdentity,
@@ -11,6 +13,7 @@ import type {
 import { CapabilityFailure } from "./errors";
 import {
   CAPABILITY_REGISTRY,
+  authorizationContractDigestFor,
   type CapabilityRegistry,
 } from "./registry";
 
@@ -48,6 +51,7 @@ function toError(options: {
   capability: CapabilityIdentity | null;
   requestDigest: string;
   failure: CapabilityFailure;
+  operatorTraceRef?: string;
 }): CapabilityError {
   const response: CapabilityError = {
     type: "capability_error",
@@ -57,7 +61,8 @@ function toError(options: {
     category: options.failure.category,
     message: options.failure.message,
     retryable: options.failure.retryable,
-    operatorTraceRef: traceRef(options.requestDigest),
+    operatorTraceRef:
+      options.operatorTraceRef ?? traceRef(options.requestDigest),
   };
   if (options.failure.details) response.details = options.failure.details;
   if (options.failure.remediation) {
@@ -82,7 +87,10 @@ function deprecatedWarning(
 }
 
 export class CapabilityDispatcher {
-  constructor(readonly registry: CapabilityRegistry) {}
+  constructor(
+    readonly registry: CapabilityRegistry,
+    private readonly authorizer: CapabilityAuthorizer,
+  ) {}
 
   async dispatch(
     invocation: CapabilityInvocation,
@@ -165,6 +173,78 @@ export class CapabilityDispatcher {
       });
     }
 
+    const definition = this.registry.getDefinition(identity);
+    if (!definition) {
+      return toError({
+        capability: identity,
+        requestDigest,
+        failure: new CapabilityFailure({
+          code: "CAPABILITY_NOT_FOUND",
+          category: "not_found",
+          message: `Capability ${formatCapabilityIdentity(identity)} is not published.`,
+        }),
+      });
+    }
+    if (!context.securityContext) {
+      return toError({
+        capability: identity,
+        requestDigest,
+        failure: new CapabilityFailure({
+          code: "AGENT_AUTHENTICATION_FAILED",
+          category: "authorization",
+          message: "Agent authentication failed.",
+        }),
+      });
+    }
+
+    const extractedResources = extractAuthorizationResources(
+      input,
+      registration.authorization.resources,
+    );
+    let admission;
+    try {
+      admission = await this.authorizer.authorize({
+        securityContext: context.securityContext,
+        capability: identity,
+        authorizationContractDigest: authorizationContractDigestFor(
+          identity,
+          registration.authorization,
+        ),
+        resources: extractedResources.resources,
+        resourceExtractionValid: extractedResources.valid,
+      });
+    } catch {
+      return toError({
+        capability: identity,
+        requestDigest,
+        failure: new CapabilityFailure({
+          code: "AUTHORIZATION_ADMISSION_UNAVAILABLE",
+          category: "internal",
+          message:
+            "Authorization admission could not be recorded. No capability effect was started.",
+          retryable: true,
+        }),
+      });
+    }
+    if (!admission.allowed) {
+      const safeAuthorizationDigest = canonicalDigest({
+        capability: identity,
+        input: "<authorization-redacted>",
+      });
+      return toError({
+        capability: identity,
+        requestDigest: safeAuthorizationDigest,
+        operatorTraceRef: admission.operatorTraceRef,
+        failure: new CapabilityFailure({
+          code: admission.code ?? "CAPABILITY_NOT_AUTHORIZED",
+          category: "authorization",
+          message:
+            admission.message ??
+            "This Agent is not authorized to invoke the capability for the requested resources.",
+        }),
+      });
+    }
+
     try {
       const output = await registration.handler(input, {
         ...context,
@@ -192,13 +272,37 @@ export class CapabilityDispatcher {
   }
 }
 
-export const CAPABILITY_DISPATCHER = new CapabilityDispatcher(
-  CAPABILITY_REGISTRY,
-);
-
-export function dispatchCapability(
-  invocation: CapabilityInvocation,
-  context?: CapabilityDispatchContext,
-): Promise<CapabilityResponse> {
-  return CAPABILITY_DISPATCHER.dispatch(invocation, context);
+function extractAuthorizationResources(
+  input: unknown,
+  selectors: Array<{
+    kind: AgentResourceRef["kind"];
+    inputPath: string;
+  }>,
+): { resources: AgentResourceRef[]; valid: boolean } {
+  const resources: AgentResourceRef[] = [];
+  let valid = true;
+  for (const selector of selectors) {
+    let value = input;
+    for (const segment of selector.inputPath.split(".")) {
+      value =
+        value && typeof value === "object"
+          ? (value as Record<string, unknown>)[segment]
+          : undefined;
+    }
+    const ids = Array.isArray(value) ? value : [value];
+    if (
+      ids.length === 0 ||
+      ids.some((id) => typeof id !== "string" || id.trim().length === 0)
+    ) {
+      valid = false;
+      continue;
+    }
+    for (const id of ids) {
+      resources.push({
+        kind: selector.kind,
+        id: (id as string).trim(),
+      });
+    }
+  }
+  return { resources, valid };
 }

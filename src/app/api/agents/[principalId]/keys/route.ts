@@ -17,6 +17,35 @@ const rotateKeySchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     expiresAt: z.string().datetime({ offset: true }).optional(),
+    authorizationScopes: z
+      .array(
+        z
+          .object({
+            capability: z
+              .string()
+              .regex(
+                /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+@[1-9][0-9]*$/,
+              ),
+            authorizationContractDigest: z
+              .string()
+              .regex(/^sha256:[a-f0-9]{64}$/),
+            resources: z
+              .object({
+                channelIds: z.array(z.string().trim().min(1).max(200)).max(256),
+                credentialProfileIds: z
+                  .array(z.string().trim().min(1).max(200))
+                  .max(256),
+                workflowIds: z.array(z.string().trim().min(1).max(200)).max(256),
+                automationIds: z
+                  .array(z.string().trim().min(1).max(200))
+                  .max(256),
+              })
+              .strict(),
+          })
+          .strict(),
+      )
+      .max(64)
+      .default([]),
   })
   .strict();
 
@@ -43,6 +72,7 @@ export const POST = withStudioAuth<PrincipalContext>(
         actorUserId: authz.userId,
         name: body.name,
         expiresAt,
+        authorizationScopes: body.authorizationScopes,
       });
       return noStoreJson({
         success: true,
@@ -52,6 +82,7 @@ export const POST = withStudioAuth<PrincipalContext>(
           principalId: result.key.principalId,
           name: result.key.name,
           lookupPrefix: result.key.lookupPrefix,
+          authorizationScopes: result.key.authorizationScopes,
           expiresAt: result.key.expiresAt?.toISOString() ?? null,
           createdAt: result.key.createdAt.toISOString(),
         },

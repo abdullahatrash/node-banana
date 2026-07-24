@@ -3,6 +3,7 @@ export {
   AgentAuthService,
   AgentValidationError,
   AGENT_AUTH_SERVICE,
+  loadAgentKeyPepperConfig,
 } from "./service";
 export { InMemoryAgentAuthRepository } from "./memory-repository";
 export { DrizzleAgentAuthRepository } from "./repository";

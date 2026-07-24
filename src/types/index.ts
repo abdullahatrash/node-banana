@@ -17,3 +17,4 @@ export * from "./chat";
 export * from "./canvas";
 export * from "./capabilities";
 export * from "./agentAuth";
+export * from "./agentAuthorization";

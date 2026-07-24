@@ -5,7 +5,6 @@ import type {
   McpCapabilityTool,
 } from "./contracts";
 import {
-  CAPABILITY_DISPATCHER,
   formatCapabilityIdentity,
   parseCapabilityIdentity,
 } from "./dispatcher";
@@ -25,7 +24,7 @@ export function mcpToolToCapabilityIdentity(toolName: string): string {
 }
 
 export async function discoverCapabilityDefinitions(
-  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
+  dispatcher: CapabilityDispatcherPort,
 ): Promise<CapabilityDefinition[]> {
   const response = await dispatcher.dispatch({
     capability: CAPABILITY_LIST_IDENTITY,
@@ -46,7 +45,7 @@ export async function discoverCapabilityDefinitions(
 }
 
 export async function listMcpCapabilityTools(
-  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
+  dispatcher: CapabilityDispatcherPort,
 ): Promise<McpCapabilityTool[]> {
   const definitions = await discoverCapabilityDefinitions(dispatcher);
   return definitions.map((definition) => ({
@@ -71,8 +70,8 @@ export async function listMcpCapabilityTools(
  */
 export function dispatchCliCapability(
   exactCapability: string,
-  input: unknown = {},
-  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
+  input: unknown,
+  dispatcher: CapabilityDispatcherPort,
 ): Promise<CapabilityResponse> {
   return dispatcher.dispatch({ capability: exactCapability, input });
 }
@@ -83,8 +82,8 @@ export function dispatchCliCapability(
  */
 export function dispatchMcpCapability(
   mcpToolName: string,
-  input: unknown = {},
-  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
+  input: unknown,
+  dispatcher: CapabilityDispatcherPort,
 ): Promise<CapabilityResponse> {
   return dispatcher.dispatch({
     capability: mcpToolToCapabilityIdentity(mcpToolName),

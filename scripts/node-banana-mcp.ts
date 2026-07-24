@@ -4,10 +4,8 @@ import { pathToFileURL } from "node:url";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CAPABILITY_DISPATCHER,
-  listMcpCapabilityTools,
-} from "@/lib/agent-tools";
+import { listMcpCapabilityTools } from "@/lib/agent-tools";
+import { CAPABILITY_DISPATCHER } from "@/lib/agent-runtime/server-dispatcher";
 import {
   AGENT_AUTH_SERVICE,
   createAgentAuthenticatedDispatcher,

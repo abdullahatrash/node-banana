@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import {
+  agentSecurityEvents,
   agentKeys,
   agentPairingChallenges,
   agentPairingRateLimits,
@@ -20,6 +21,7 @@ import {
   workspaceMembers,
   workspaces,
 } from "@/lib/db/schema";
+import { randomUUID } from "node:crypto";
 import type {
   AgentAuthRepository,
   AgentAuthenticationRecord,
@@ -389,7 +391,8 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
     actorUserId: string;
     revokedAt: Date;
   }): Promise<boolean> {
-    const allowed = await this.getDatabase()
+    return this.getDatabase().transaction(async (tx) => {
+    const allowed = await tx
       .select({ id: agentKeys.id })
       .from(agentKeys)
       .innerJoin(
@@ -414,11 +417,31 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
       )
       .limit(1);
     if (!allowed[0]) return false;
-    await this.getDatabase()
+    const updated = await tx
       .update(agentKeys)
       .set({ revokedAt: input.revokedAt })
-      .where(and(eq(agentKeys.id, input.keyId), isNull(agentKeys.revokedAt)));
+      .where(and(eq(agentKeys.id, input.keyId), isNull(agentKeys.revokedAt)))
+      .returning({ principalId: agentKeys.principalId });
+    if (updated[0]) {
+      await tx.insert(agentSecurityEvents).values({
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        principalId: updated[0].principalId,
+        keyId: input.keyId,
+        actorUserId: input.actorUserId,
+        eventType: "key.revoked",
+        capabilityName: "agents.keys.revoke",
+        capabilityVersion: 1,
+        reason: "allowed",
+        resourceKinds: [],
+        changeRef: input.keyId,
+        revision: null,
+        principalStatus: null,
+        createdAt: input.revokedAt,
+      });
+    }
     return true;
+    });
   }
 
   async updatePrincipalStatus(input: {
@@ -445,18 +468,42 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
             eq(agentPrincipals.workspaceId, input.workspaceId),
             ne(agentPrincipals.status, "revoked"),
           );
-    const rows = await this.getDatabase()
-      .update(agentPrincipals)
-      .set({
-        status: input.status,
-        suspendedAt:
-          input.status === "suspended" ? input.updatedAt : principal.suspendedAt,
-        revokedAt:
-          input.status === "revoked" ? input.updatedAt : principal.revokedAt,
-        updatedAt: input.updatedAt,
-      })
-      .where(principalPredicate)
-      .returning();
+    const rows = await this.getDatabase().transaction(async (tx) => {
+      const updated = await tx
+        .update(agentPrincipals)
+        .set({
+          status: input.status,
+          suspendedAt:
+            input.status === "suspended"
+              ? input.updatedAt
+              : principal.suspendedAt,
+          revokedAt:
+            input.status === "revoked"
+              ? input.updatedAt
+              : principal.revokedAt,
+          updatedAt: input.updatedAt,
+        })
+        .where(principalPredicate)
+        .returning();
+      if (!updated[0]) return updated;
+      await tx.insert(agentSecurityEvents).values({
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        principalId: input.principalId,
+        keyId: null,
+        actorUserId: input.actorUserId,
+        eventType: "principal.status_changed",
+        capabilityName: "agents.principals.status",
+        capabilityVersion: 1,
+        reason: "allowed",
+        resourceKinds: [],
+        changeRef: input.principalId,
+        revision: null,
+        principalStatus: input.status,
+        createdAt: input.updatedAt,
+      });
+      return updated;
+    });
     return rows[0] ? principalFromRow(rows[0]) : null;
   }
 }
