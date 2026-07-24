@@ -2,27 +2,33 @@ import { z } from "zod";
 import {
   CAPABILITY_GET_IDENTITY,
   CAPABILITY_LIST_IDENTITY,
-  CAPABILITY_REGISTRY,
   CapabilityDispatcher,
   COMMON_DISCOVERY_ERRORS,
   canonicalDigest,
   contractDigestFor,
   createCapabilityRegistry,
+  dispatchMcpCapability,
   formatCapabilityIdentity,
   listMcpCapabilityTools,
   type CapabilityDefinition,
   type CapabilityRegistration,
 } from "@/lib/agent-tools";
+import { PRODUCTION_CAPABILITY_REGISTRY as CAPABILITY_REGISTRY } from "@/lib/agent-runtime/server-dispatcher";
 import type { CapabilityDispatcherPort } from "@/types";
 
 const TEST_DISPATCHER: CapabilityDispatcherPort = (() => {
   const dispatcher = new CapabilityDispatcher(CAPABILITY_REGISTRY, {
-    authorize: async () => ({ allowed: true }),
+    authorize: async (request) => ({
+      allowed:
+        request.audience === "agent" &&
+        request.securityContext.kind === "agent",
+    }),
   });
   return {
     dispatch: (invocation) =>
       dispatcher.dispatch(invocation, {
         securityContext: {
+          kind: "agent",
           principalId: "principal-registry",
           workspaceId: "workspace-registry",
           keyId: "key-registry",
@@ -61,6 +67,19 @@ describe("production Capability Registry", () => {
       "agents.current.get@1",
       "capabilities.get@1",
       "capabilities.list@1",
+      "credentials.audit.export@1",
+      "credentials.audit.list@1",
+      "credentials.profile.get@1",
+      "credentials.profile.list@1",
+      "credentials.profiles.create@1",
+      "credentials.profiles.list@1",
+      "credentials.profiles.reprovision@1",
+      "credentials.profiles.rotate@1",
+      "credentials.profiles.status.set@1",
+      "credentials.spend_grants.create@1",
+      "credentials.spend_grants.list@1",
+      "credentials.spend_grants.revoke@1",
+      "credentials.versions.revoke@1",
     ]);
     expect(output.registryDigest).toBe(CAPABILITY_REGISTRY.digest);
 
@@ -75,21 +94,27 @@ describe("production Capability Registry", () => {
       });
       expect(definition.schemas.input).toMatchObject({ type: "object" });
       expect(definition.schemas.output).toMatchObject({ type: "object" });
-      expect(definition.effect).toEqual({
-        mutation: "none",
-        visibility: "private",
-        timing: "immediate",
-        reversibility: "reversible",
-        maySpendProviderBudget: false,
-      });
-      expect(definition.approval).toEqual({ mode: "none" });
-      expect(definition.idempotency).toEqual({ mode: "retry-safe" });
+      if (definition.audience === "agent") {
+        expect(definition.effect).toEqual({
+          mutation: "none",
+          visibility: "private",
+          timing: "immediate",
+          reversibility: "reversible",
+          maySpendProviderBudget: false,
+        });
+        expect(definition.approval).toEqual({ mode: "none" });
+        expect(definition.idempotency).toEqual({ mode: "retry-safe" });
+      }
       expect(definition.errors.map((error) => error.code)).toEqual(
-        expect.arrayContaining([
-          "CAPABILITY_NOT_FOUND",
-          "CAPABILITY_VERSION_RETIRED",
-          "VALIDATION_FAILED",
-        ]),
+        expect.arrayContaining(
+          definition.audience === "human"
+            ? ["HUMAN_CAPABILITY_NOT_AUTHORIZED", "VALIDATION_FAILED"]
+            : [
+                "CAPABILITY_NOT_FOUND",
+                "CAPABILITY_VERSION_RETIRED",
+                "VALIDATION_FAILED",
+              ],
+        ),
       );
     }
   });
@@ -134,8 +159,39 @@ describe("production Capability Registry", () => {
       "agents.current.get.v1",
       "capabilities.get.v1",
       "capabilities.list.v1",
+      "credentials.audit.export.v1",
+      "credentials.audit.list.v1",
+      "credentials.profile.get.v1",
+      "credentials.profile.list.v1",
+      "credentials.profiles.create.v1",
+      "credentials.profiles.list.v1",
+      "credentials.profiles.reprovision.v1",
+      "credentials.profiles.rotate.v1",
+      "credentials.profiles.status.set.v1",
+      "credentials.spend_grants.create.v1",
+      "credentials.spend_grants.list.v1",
+      "credentials.spend_grants.revoke.v1",
+      "credentials.versions.revoke.v1",
     ]);
     expect(mcpTools.some((tool) => tool.name.includes("latest"))).toBe(false);
+    expect(
+      mcpTools.find(
+        (tool) => tool.name === "credentials.profiles.list.v1",
+      )?.description,
+    ).toContain("Human-only");
+    expect(
+      mcpTools.some((tool) => tool.name === "credentials.effect.execute.v1"),
+    ).toBe(false);
+    await expect(
+      dispatchMcpCapability(
+        "credentials.profiles.list.v1",
+        {},
+        TEST_DISPATCHER,
+      ),
+    ).resolves.toMatchObject({
+      type: "capability_error",
+      code: "CAPABILITY_NOT_AUTHORIZED",
+    });
   });
 
   it("fully specifies every structured field in discovery output schemas", async () => {

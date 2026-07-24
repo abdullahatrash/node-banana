@@ -155,6 +155,69 @@
       "when": 1784919678916,
       "tag": "0021_parallel_alex_power",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1784921293752,
+      "tag": "0022_wonderful_blackheart",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1784921337170,
+      "tag": "0023_thankful_impossible_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1784921514816,
+      "tag": "0024_far_shooting_star",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1784922765391,
+      "tag": "0025_spooky_ezekiel_stane",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1784923125109,
+      "tag": "0026_peaceful_bulldozer",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1784923271128,
+      "tag": "0027_conscious_slyde",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1784924956432,
+      "tag": "0028_warm_hobgoblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1784926722975,
+      "tag": "0029_stale_gargoyle",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1784929143140,
+      "tag": "0030_cheerful_overlord",
+      "breakpoints": true
     }
   ]
 }

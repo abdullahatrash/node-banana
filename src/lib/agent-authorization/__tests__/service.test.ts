@@ -214,7 +214,11 @@ function fixture() {
     capability: string,
     input: Record<string, unknown>,
     context = securityContext,
-  ) => dispatcher.dispatch({ capability, input }, { securityContext: context });
+  ) =>
+    dispatcher.dispatch(
+      { capability, input },
+      { securityContext: { kind: "agent", ...context } },
+    );
 
   return {
     repository,
@@ -327,7 +331,8 @@ describe("deny-by-default Agent authorization", () => {
     );
     await expect(
       setup.service.authorize({
-        securityContext,
+        securityContext: { kind: "agent", ...securityContext },
+        audience: "agent",
         capability: { name: "content.publish", version: 1 },
         authorizationContractDigest: changedAuthorizationDigest,
         resources: [{ kind: "channel", id: "channel-a" }],

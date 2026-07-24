@@ -25,6 +25,8 @@ import {
   CanvasNavigationSettings,
   MatchMode,
   MODEL_DISPLAY_NAMES,
+  WorkflowCredentialBinding,
+  parseWorkflowCredentialSlots,
 } from "@/types";
 import { useToast } from "@/components/Toast";
 import { logger } from "@/utils/logger";
@@ -199,6 +201,7 @@ export interface WorkflowFile {
   edges: WorkflowEdge[];
   edgeStyle: EdgeStyle;
   groups?: Record<string, NodeGroup>;  // Optional for backward compatibility
+  credentialSlots?: WorkflowCredentialBinding[];
 }
 
 // Clipboard data structure for copy/paste
@@ -213,6 +216,8 @@ interface WorkflowStore {
   edgeStyle: EdgeStyle;
   clipboard: ClipboardData | null;
   groups: Record<string, NodeGroup>;
+  credentialSlots: WorkflowCredentialBinding[];
+  setCredentialSlots: (slots: WorkflowCredentialBinding[]) => void;
 
   // Settings
   setEdgeStyle: (style: EdgeStyle) => void;
@@ -472,6 +477,17 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   edgeStyle: "curved" as EdgeStyle,
   clipboard: null,
   groups: {},
+  credentialSlots: [],
+  setCredentialSlots: (credentialSlots) => {
+    const parsed = parseWorkflowCredentialSlots(credentialSlots, get().nodes);
+    if (parsed.length !== credentialSlots.length) {
+      throw new Error("Workflow Credential Slot bindings are invalid.");
+    }
+    set({
+      credentialSlots: parsed,
+      hasUnsavedChanges: true,
+    });
+  },
   openModalCount: 0,
   isModalOpen: false,
   showQuickstart: true,
@@ -1008,10 +1024,24 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   }),
 
   executeWorkflow: async (startFromNodeId?: string) => {
-    const { nodes, edges, groups, isRunning, maxConcurrentCalls } = get();
+    const {
+      nodes,
+      edges,
+      groups,
+      credentialSlots,
+      isRunning,
+      maxConcurrentCalls,
+    } = get();
 
     if (isRunning) {
       logger.warn('workflow.start', 'Workflow already running, ignoring execution request');
+      return;
+    }
+    if (credentialSlots.length > 0) {
+      useToast.getState().show(
+        "Credential Slot-bound workflows execute only through the authenticated Agent Runtime effect boundary.",
+        "error",
+      );
       return;
     }
 
@@ -1273,10 +1303,21 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   },
 
   regenerateNode: async (nodeId: string) => {
-    const { nodes, updateNodeData, isRunning } = get();
+    const { nodes, credentialSlots, updateNodeData, isRunning } = get();
 
     if (isRunning) {
       logger.warn('node.execution', 'Cannot regenerate node, workflow already running', { nodeId });
+      return;
+    }
+    if (
+      credentialSlots.some(
+        (binding) => binding.nodeId === nodeId,
+      )
+    ) {
+      useToast.getState().show(
+        "This node uses a Credential Slot and must run through the authenticated Agent Runtime.",
+        "error",
+      );
       return;
     }
 
@@ -1385,10 +1426,22 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   },
 
   executeSelectedNodes: async (nodeIds: string[]) => {
-    const { nodes, edges, isRunning, maxConcurrentCalls } = get();
+    const { nodes, edges, credentialSlots, isRunning, maxConcurrentCalls } =
+      get();
 
     if (isRunning) {
       logger.warn('node.execution', 'Cannot execute nodes, workflow already running');
+      return;
+    }
+    if (
+      credentialSlots.some(
+        (binding) => nodeIds.includes(binding.nodeId),
+      )
+    ) {
+      useToast.getState().show(
+        "Credential Slot-bound nodes execute only through the authenticated Agent Runtime.",
+        "error",
+      );
       return;
     }
 
@@ -1614,7 +1667,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   },
 
   saveWorkflow: (name?: string) => {
-    const { nodes, edges, edgeStyle, groups } = get();
+    const { nodes, edges, edgeStyle, groups, credentialSlots } = get();
 
     const workflow: WorkflowFile = {
       version: 1,
@@ -1624,6 +1677,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       edges,
       edgeStyle,
       groups: groups && Object.keys(groups).length > 0 ? groups : undefined,
+      credentialSlots: credentialSlots.length > 0 ? credentialSlots : undefined,
     };
 
     const json = JSON.stringify(workflow, null, 2);
@@ -1640,6 +1694,15 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   },
 
   loadWorkflow: async (workflow: WorkflowFile, workflowPath?: string, options?: { preserveSnapshot?: boolean }) => {
+    const rawCredentialSlots = workflow.credentialSlots ?? [];
+    const validatedCredentialSlots = parseWorkflowCredentialSlots(
+      rawCredentialSlots,
+      workflow.nodes,
+    );
+    if (validatedCredentialSlots.length !== rawCredentialSlots.length) {
+      throw new Error("Workflow Credential Slot bindings are invalid.");
+    }
+
     // Update nodeIdCounter to avoid ID collisions
     const maxNodeId = workflow.nodes.reduce((max, node) => {
       const match = node.id.match(/-(\d+)$/);
@@ -1749,6 +1812,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       edges: hydratedWorkflow.edges,
       edgeStyle: hydratedWorkflow.edgeStyle || "angular",
       groups: hydratedWorkflow.groups || {},
+      credentialSlots: validatedCredentialSlots,
       isRunning: false,
       currentNodeIds: [],
       // Restore workflow ID and paths from localStorage if available
@@ -1784,6 +1848,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       nodes: [],
       edges: [],
       groups: {},
+      credentialSlots: [],
       isRunning: false,
       currentNodeIds: [],
       // Reset auto-save state when clearing workflow
@@ -1929,6 +1994,10 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         edges,
         edgeStyle,
         groups: groups && Object.keys(groups).length > 0 ? groups : undefined,
+        credentialSlots:
+          get().credentialSlots.length > 0
+            ? get().credentialSlots
+            : undefined,
       };
 
       // If external image storage is enabled, externalize images before saving

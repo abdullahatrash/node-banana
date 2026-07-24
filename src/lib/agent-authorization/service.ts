@@ -186,6 +186,15 @@ export class AgentAuthorizationService implements CapabilityAuthorizer {
   async authorize(
     request: CapabilityAuthorizationRequest,
   ): Promise<CapabilityAuthorizationAdmission> {
+    if (
+      request.audience !== "agent" ||
+      request.securityContext.kind !== "agent"
+    ) {
+      return deniedAdmission(
+        `trace_${randomUUID().replaceAll("-", "")}`,
+        exactCapability(request.capability.name, request.capability.version),
+      );
+    }
     let resources: AgentResourceRef[];
     let forceResourceUnavailable = request.resourceExtractionValid === false;
     try {
@@ -206,7 +215,11 @@ export class AgentAuthorizationService implements CapabilityAuthorizer {
       forceResourceUnavailable,
     });
     return result.allowed
-      ? { allowed: true }
+      ? {
+          allowed: true,
+          operatorTraceRef,
+          effectiveResources: result.effectiveResources,
+        }
       : deniedAdmission(
           operatorTraceRef,
           exactCapability(

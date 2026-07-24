@@ -1,0 +1,3 @@
+CREATE UNIQUE INDEX "credential_profiles_workspace_id_unique" ON "credential_profiles" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "credential_spend_events_workspace_effect_ref_unique" ON "credential_spend_events" USING btree ("workspace_id","effect_ref");--> statement-breakpoint
+CREATE UNIQUE INDEX "credential_spend_grants_active_principal_profile_unique" ON "credential_spend_grants" USING btree ("principal_id","profile_id") WHERE "credential_spend_grants"."status" = 'active';

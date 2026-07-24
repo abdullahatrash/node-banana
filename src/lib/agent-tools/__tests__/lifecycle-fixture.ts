@@ -11,6 +11,7 @@ import type {
 } from "@/types/capabilities";
 
 const TEST_SECURITY_CONTEXT = {
+  kind: "agent" as const,
   principalId: "principal-fixture",
   workspaceId: "workspace-fixture",
   keyId: "key-fixture",

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
-import { authorizationContractDigestFor, CAPABILITY_REGISTRY } from "@/lib/agent-tools";
+import { authorizationContractDigestFor } from "@/lib/agent-tools";
+import { PRODUCTION_CAPABILITY_REGISTRY as CAPABILITY_REGISTRY } from "@/lib/agent-runtime/server-dispatcher";
 
 const mockAuthorizeStudioRequest = vi.fn();
 const mockProvisionAuthority = vi.fn();

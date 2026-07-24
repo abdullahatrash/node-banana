@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProject, softDeleteProject, upsertProject } from "@/lib/studio/repository";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import {
+  InvalidWorkflowCredentialSlotsError,
+  sanitizeWorkflowCredentialSlots,
+} from "@/lib/studio/workflow-schema";
 
 interface ProjectResponse {
   success: boolean;
@@ -58,6 +62,20 @@ export const PATCH = withStudioAuth<ProjectIdContext>(
     const body = (await request.json()) as ProjectPatchRequest;
     const resolvedName = body.name?.trim() || existing.name;
 
+    let workflowJson: Record<string, unknown> | null;
+    try {
+      workflowJson = sanitizeWorkflowCredentialSlots(
+        body.workflowJson === undefined
+          ? ((existing.workflowJson as Record<string, unknown> | null) ?? null)
+          : body.workflowJson,
+      );
+    } catch (error) {
+      if (!(error instanceof InvalidWorkflowCredentialSlotsError)) throw error;
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 400 },
+      );
+    }
     const project = await upsertProject({
       workspaceId: authz.workspaceId,
       userId: authz.userId,
@@ -65,10 +83,7 @@ export const PATCH = withStudioAuth<ProjectIdContext>(
       name: resolvedName,
       description:
         body.description === undefined ? existing.description : body.description,
-      workflowJson:
-        body.workflowJson === undefined
-          ? ((existing.workflowJson as Record<string, unknown> | null) ?? null)
-          : body.workflowJson,
+      workflowJson,
       sourceDirectoryPath:
         body.sourceDirectoryPath === undefined
           ? existing.sourceDirectoryPath

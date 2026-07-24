@@ -43,7 +43,9 @@ export class AgentAuthenticatedCapabilityDispatcher
   ): Promise<CapabilityResponse> {
     try {
       const securityContext = await this.resolver.resolve();
-      return this.dispatcher.dispatch(invocation, { securityContext });
+      return this.dispatcher.dispatch(invocation, {
+        securityContext: { kind: "agent", ...securityContext },
+      });
     } catch (error) {
       if (!(error instanceof AgentAuthError)) throw error;
       const identity =

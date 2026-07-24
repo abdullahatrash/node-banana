@@ -1,0 +1,8 @@
+ALTER TABLE "credential_profile_versions" ADD CONSTRAINT "credential_profile_versions_status_check" CHECK ("credential_profile_versions"."status" in ('active', 'superseded', 'revoked'));--> statement-breakpoint
+ALTER TABLE "credential_profile_versions" ADD CONSTRAINT "credential_profile_versions_version_check" CHECK ("credential_profile_versions"."version" > 0);--> statement-breakpoint
+ALTER TABLE "credential_profiles" ADD CONSTRAINT "credential_profiles_status_check" CHECK ("credential_profiles"."status" in ('active', 'disabled'));--> statement-breakpoint
+ALTER TABLE "credential_profiles" ADD CONSTRAINT "credential_profiles_active_version_check" CHECK ("credential_profiles"."active_version" > 0);--> statement-breakpoint
+ALTER TABLE "credential_spend_events" ADD CONSTRAINT "credential_spend_events_amount_check" CHECK ("credential_spend_events"."amount_cents" >= 0);--> statement-breakpoint
+ALTER TABLE "credential_spend_grants" ADD CONSTRAINT "credential_spend_grants_mode_check" CHECK (("credential_spend_grants"."mode" = 'bounded' and "credential_spend_grants"."limit_cents" > 0) or ("credential_spend_grants"."mode" = 'audited_unbounded' and "credential_spend_grants"."limit_cents" is null));--> statement-breakpoint
+ALTER TABLE "credential_spend_grants" ADD CONSTRAINT "credential_spend_grants_status_check" CHECK ("credential_spend_grants"."status" in ('active', 'revoked'));--> statement-breakpoint
+ALTER TABLE "credential_spend_grants" ADD CONSTRAINT "credential_spend_grants_spent_check" CHECK ("credential_spend_grants"."spent_cents" >= 0);

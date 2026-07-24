@@ -1,4 +1,6 @@
 import type { WorkflowFile } from "@/store/workflowStore";
+import { parseWorkflowCredentialSlots } from "@/types";
+import type { CredentialHumanCapabilityIdentity } from "@/lib/credential-vault/application-capabilities";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -127,6 +129,32 @@ async function fetchApi(
   }
 
   return record;
+}
+
+export async function invokeCredentialApplicationCapability(
+  capability: CredentialHumanCapabilityIdentity,
+  input: Record<string, unknown> = {},
+  options: { idempotencyKey?: string } = {},
+): Promise<JsonRecord> {
+  const response = await fetchApi("/api/studio/credentials/capabilities", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for credential capability ${capability}.`,
+    );
+  }
+  return result;
 }
 
 export interface StudioWorkspace {
@@ -495,11 +523,18 @@ export async function getLegacyStudioAssetDownloadUrl(
 
 export function isWorkflowFile(value: unknown): value is WorkflowFile {
   const record = asRecord(value);
+  const credentialSlots = record?.credentialSlots;
+  const hasValidCredentialSlots =
+    credentialSlots === undefined ||
+    (Array.isArray(credentialSlots) &&
+      parseWorkflowCredentialSlots(credentialSlots, record?.nodes).length ===
+        credentialSlots.length);
   return Boolean(
     record &&
       record.version === 1 &&
       typeof record.name === "string" &&
       Array.isArray(record.nodes) &&
-      Array.isArray(record.edges),
+      Array.isArray(record.edges) &&
+      hasValidCredentialSlots,
   );
 }

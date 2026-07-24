@@ -57,6 +57,23 @@ function covers(
   );
 }
 
+function intersectConstraints(
+  constraints: import("@/types").AgentResourceConstraints[],
+): import("@/types").AgentResourceConstraints {
+  const intersect = (key: keyof import("@/types").AgentResourceConstraints) => {
+    const [first = [], ...rest] = constraints.map((entry) => entry[key]);
+    return [...new Set(first)].filter((id) =>
+      rest.every((values) => values.includes(id)),
+    ).sort();
+  };
+  return {
+    channelIds: intersect("channelIds"),
+    credentialProfileIds: intersect("credentialProfileIds"),
+    workflowIds: intersect("workflowIds"),
+    automationIds: intersect("automationIds"),
+  };
+}
+
 function principalFromRow(
   row: typeof agentPrincipals.$inferSelect,
 ): import("@/types").AgentPrincipalRecord {
@@ -117,6 +134,9 @@ export class DrizzleAgentAuthorizationRepository
   async admit(input: Parameters<AgentAuthorizationRepository["admit"]>[0]) {
     return this.getDatabase().transaction(async (tx) => {
       const { request, resources, now } = input;
+      if (request.securityContext.kind !== "agent") {
+        throw new TypeError("Agent authorization repository requires an Agent context.");
+      }
       const capability = `${request.capability.name}@${request.capability.version}`;
       const principalRows = await tx
         .select()
@@ -199,10 +219,10 @@ export class DrizzleAgentAuthorizationRepository
         grantRows.length === 1
           ? revisionFromRow(grantRows[0].revision)
           : null;
-      const matching = (
+      const matchingGrant = (
         grants: import("@/types").AgentCapabilityGrant[],
       ) =>
-        grants.some(
+        grants.find(
           (grant) =>
             grant.capability === capability &&
             grant.authorizationContractDigest ===
@@ -240,12 +260,12 @@ export class DrizzleAgentAuthorizationRepository
         reason = "capability_not_granted";
       } else if (
         reason === "allowed" &&
-        (!policy || !policy.enabled || !matching(policy.grants))
+        (!policy || !policy.enabled || !matchingGrant(policy.grants))
       ) {
         reason = "workspace_policy_denied";
       } else if (
         reason === "allowed" &&
-        (!revision || !matching(revision.grants))
+        (!revision || !matchingGrant(revision.grants))
       ) {
         reason =
           resources.length > 0
@@ -300,11 +320,36 @@ export class DrizzleAgentAuthorizationRepository
         principalStatus: null,
         createdAt: now,
       });
+      const effectiveResources = allowed
+        ? intersectConstraints([
+            key!.authorizationScopes.find(
+              (scope) =>
+                scope.capability === capability &&
+                scope.authorizationContractDigest ===
+                  request.authorizationContractDigest,
+            )!.resources,
+            matchingGrant(policy!.grants)!.resources,
+            matchingGrant(revision!.grants)!.resources,
+          ])
+        : undefined;
+      if (effectiveResources) {
+        const activeCredentialProfiles = await this.findActiveResourcesWith(
+          tx,
+          request.securityContext.workspaceId,
+          effectiveResources.credentialProfileIds.map((id) => ({
+            kind: "credential_profile" as const,
+            id,
+          })),
+        );
+        effectiveResources.credentialProfileIds =
+          activeCredentialProfiles.map((resource) => resource.id);
+      }
       return {
         allowed,
         reason,
         grantRevisionId: decision.grantRevisionId,
         policyRevisionId: decision.policyRevisionId,
+        effectiveResources,
       };
     });
   }
@@ -359,6 +404,7 @@ export class DrizzleAgentAuthorizationRepository
                 eq(credentialProfiles.workspaceId, workspaceId),
                 inArray(credentialProfiles.id, credentialProfileIds),
                 eq(credentialProfiles.enabled, true),
+                eq(credentialProfiles.status, "active"),
                 isNull(credentialProfiles.deletedAt),
               ),
             )

@@ -51,7 +51,7 @@ export async function listMcpCapabilityTools(
   return definitions.map((definition) => ({
     name: capabilityIdentityToMcpTool(definition),
     title: formatCapabilityIdentity(definition.identity),
-    description: `${definition.summary} Exact capability: ${formatCapabilityIdentity(definition.identity)} (${definition.contractDigest}).`,
+    description: `${definition.audience === "human" ? "Human-only; Agent/MCP invocation is denied. " : ""}${definition.summary} Exact capability: ${formatCapabilityIdentity(definition.identity)} (${definition.contractDigest}).`,
     inputSchema: definition.schemas.input,
     annotations: {
       readOnlyHint: definition.effect.mutation === "none",

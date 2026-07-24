@@ -11,10 +11,10 @@ import {
   requireAgentMutationRequest,
 } from "@/lib/agent-auth/http-request";
 import {
-  CAPABILITY_REGISTRY,
   authorizationContractDigestFor,
   parseCapabilityIdentity,
 } from "@/lib/agent-tools";
+import { PRODUCTION_CAPABILITY_REGISTRY } from "@/lib/agent-runtime/server-dispatcher";
 import type {
   AgentCapabilityGrant,
   AgentResourceConstraints,
@@ -85,7 +85,7 @@ export function resolveAuthorityContracts(
   return values.map((value) => {
     const identity = parseCapabilityIdentity(value.capability);
     const registration = identity
-      ? CAPABILITY_REGISTRY.getRegistration(identity)
+      ? PRODUCTION_CAPABILITY_REGISTRY.getRegistration(identity)
       : undefined;
     if (!identity || !registration || registration.lifecycle.status === "retired") {
       throw new AuthorityContractError(

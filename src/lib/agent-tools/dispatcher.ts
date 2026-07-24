@@ -12,7 +12,6 @@ import type {
 } from "./contracts";
 import { CapabilityFailure } from "./errors";
 import {
-  CAPABILITY_REGISTRY,
   authorizationContractDigestFor,
   type CapabilityRegistry,
 } from "./registry";
@@ -190,7 +189,10 @@ export class CapabilityDispatcher {
         capability: identity,
         requestDigest,
         failure: new CapabilityFailure({
-          code: "AGENT_AUTHENTICATION_FAILED",
+            code:
+              (registration.audience ?? "agent") === "human"
+                ? "HUMAN_CAPABILITY_NOT_AUTHORIZED"
+                : "AGENT_AUTHENTICATION_FAILED",
           category: "authorization",
           message: "Agent authentication failed.",
         }),
@@ -205,6 +207,7 @@ export class CapabilityDispatcher {
     try {
       admission = await this.authorizer.authorize({
         securityContext: context.securityContext,
+        audience: registration.audience ?? "agent",
         capability: identity,
         authorizationContractDigest: authorizationContractDigestFor(
           identity,
@@ -249,6 +252,7 @@ export class CapabilityDispatcher {
       const output = await registration.handler(input, {
         ...context,
         registry: this.registry,
+        authorizationAdmission: admission,
       });
       return {
         type: "capability_result",

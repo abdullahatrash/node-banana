@@ -50,6 +50,31 @@ describe("Agent authorization migration contracts", () => {
     expect(source).toContain("isNull(projects.deletedAt)");
   });
 
+  it("filters enumerated effective Credential Profiles through current database state", () => {
+    const source = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/lib/agent-authorization/repository.ts",
+      ),
+      "utf8",
+    );
+    const activeResources = source.slice(
+      source.indexOf("private async findActiveResourcesWith"),
+    );
+    expect(source).toContain(
+      "effectiveResources.credentialProfileIds.map",
+    );
+    expect(activeResources).toContain(
+      'eq(credentialProfiles.status, "active")',
+    );
+    expect(activeResources).toContain(
+      "eq(credentialProfiles.enabled, true)",
+    );
+    expect(activeResources).toContain(
+      "isNull(credentialProfiles.deletedAt)",
+    );
+  });
+
   it("stores replay receipts without plaintext or credential hashes", () => {
     const sql = migration("0021_parallel_alex_power.sql");
 

@@ -18,3 +18,4 @@ export * from "./canvas";
 export * from "./capabilities";
 export * from "./agentAuth";
 export * from "./agentAuthorization";
+export * from "./credentials";

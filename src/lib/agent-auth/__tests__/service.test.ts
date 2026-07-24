@@ -1,9 +1,9 @@
 import {
   AGENT_CURRENT_GET_IDENTITY,
-  CAPABILITY_REGISTRY,
   CapabilityDispatcher,
   authorizationContractDigestFor,
 } from "@/lib/agent-tools";
+import { PRODUCTION_CAPABILITY_REGISTRY as CAPABILITY_REGISTRY } from "@/lib/agent-runtime/server-dispatcher";
 import {
   AgentAuthorizationService,
   EMPTY_RESOURCE_CONSTRAINTS,

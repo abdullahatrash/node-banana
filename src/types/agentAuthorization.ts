@@ -4,6 +4,7 @@ import type {
   AgentSecurityContext,
 } from "./agentAuth";
 import type { CapabilityIdentity } from "./capabilities";
+import type { ResolvedSecurityContext } from "./capabilities";
 
 export type AgentResourceKind =
   | "channel"
@@ -130,6 +131,7 @@ export interface AgentAuthorizationRepository {
     reason: AuthorizationDecisionReason;
     grantRevisionId: string | null;
     policyRevisionId: string | null;
+    effectiveResources?: AgentResourceConstraints;
   }>;
   createGrantSetWithRevision(input: {
     grantSet: AgentGrantSetRecord;
@@ -187,7 +189,8 @@ export interface AgentAuthorizationRepository {
 }
 
 export interface CapabilityAuthorizationRequest {
-  securityContext: AgentSecurityContext;
+  securityContext: ResolvedSecurityContext;
+  audience: "agent" | "human";
   capability: CapabilityIdentity;
   authorizationContractDigest: string;
   resources: AgentResourceRef[];
@@ -199,6 +202,11 @@ export interface CapabilityAuthorizationAdmission {
   code?: "CAPABILITY_NOT_AUTHORIZED";
   message?: string;
   operatorTraceRef?: string;
+  /**
+   * Server-derived intersection of key, Workspace policy, and active grant
+   * constraints. Capability input can never supply or widen this value.
+   */
+  effectiveResources?: AgentResourceConstraints;
 }
 
 export interface CapabilityAuthorizer {

@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  check,
   foreignKey,
   index,
   integer,
@@ -12,6 +13,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -228,6 +230,20 @@ export const agentPrincipalStatusEnum = pgEnum("agent_principal_status", [
   "suspended",
   "revoked",
 ]);
+export const credentialSecurityEventTypeEnum = pgEnum(
+  "credential_security_event_type",
+  [
+    "profile.created",
+    "profile.reprovisioned",
+    "profile.rotated",
+    "version.revoked",
+    "profile.status_changed",
+    "spend_grant.created",
+    "spend_grant.revoked",
+    "effect.reserved",
+    "effect.replayed",
+  ],
+);
 
 export const workspaces = pgTable(
   "workspaces",
@@ -404,6 +420,9 @@ export const agentPrincipals = pgTable(
   },
   (table) => ({
     workspaceIdx: index("agent_principals_workspace_idx").on(table.workspaceId),
+    workspaceIdUnique: uniqueIndex(
+      "agent_principals_workspace_id_unique",
+    ).on(table.workspaceId, table.id),
     sponsorIdx: index("agent_principals_sponsor_idx").on(table.sponsorUserId),
   }),
 );
@@ -581,6 +600,9 @@ export const credentialProfiles = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    provider: text("provider").default("generic").notNull(),
+    status: text("status").default("active").notNull(),
+    activeVersion: integer("active_version").default(1).notNull(),
     enabled: boolean("enabled").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -593,6 +615,561 @@ export const credentialProfiles = pgTable(
   (table) => ({
     workspaceIdx: index("credential_profiles_workspace_idx").on(
       table.workspaceId,
+    ),
+    workspaceNameUnique: uniqueIndex(
+      "credential_profiles_workspace_name_unique",
+    )
+      .on(table.workspaceId, table.name)
+      .where(sql`${table.status} = 'active'`),
+    workspaceIdUnique: uniqueIndex(
+      "credential_profiles_workspace_id_unique",
+    ).on(table.workspaceId, table.id),
+    statusCheck: check(
+      "credential_profiles_status_check",
+      sql`${table.status} in ('active', 'disabled')`,
+    ),
+    activeVersionCheck: check(
+      "credential_profiles_active_version_check",
+      sql`${table.activeVersion} > 0`,
+    ),
+  }),
+);
+
+/**
+ * Completed human credential mutations. The receipt is inserted in the same
+ * transaction as the protected mutation, so a retried request can recover the
+ * exact redacted response after the original HTTP response is lost.
+ */
+export const credentialHumanMutationReceipts = pgTable(
+  "credential_human_mutation_receipts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    capabilityIdentity: text("capability_identity").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    safeResult: jsonb("safe_result").$type<unknown>().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    invocationUnique: uniqueIndex(
+      "credential_human_mutation_receipts_invocation_unique",
+    ).on(
+      table.workspaceId,
+      table.actorUserId,
+      table.capabilityIdentity,
+      table.idempotencyKey,
+    ),
+    workspaceCompletedIdx: index(
+      "credential_human_mutation_receipts_workspace_completed_idx",
+    ).on(table.workspaceId, table.completedAt),
+    capabilityIdentityCheck: check(
+      "credential_human_mutation_receipts_capability_identity_check",
+      sql`${table.capabilityIdentity} ~ '^credentials\\.[a-z][a-z0-9_.]*@[1-9][0-9]*$'`,
+    ),
+    idempotencyKeyCheck: check(
+      "credential_human_mutation_receipts_idempotency_key_check",
+      sql`length(${table.idempotencyKey}) between 8 and 200`,
+    ),
+    fingerprintCheck: check(
+      "credential_human_mutation_receipts_request_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    safeResultSizeCheck: check(
+      "credential_human_mutation_receipts_safe_result_size_check",
+      sql`octet_length(${table.safeResult}::text) <= 65536`,
+    ),
+    safeResultRedactionCheck: check(
+      "credential_human_mutation_receipts_safe_result_redaction_check",
+      sql`${table.safeResult}::text !~* '"(secret|token|password|ciphertext)"\\s*:'`,
+    ),
+  }),
+);
+
+export const credentialProfileVersions = pgTable(
+  "credential_profile_versions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    profileId: text("profile_id").notNull(),
+    version: integer("version").notNull(),
+    secretCiphertext: text("secret_ciphertext").notNull(),
+    secretHint: text("secret_hint").notNull(),
+    status: text("status").default("active").notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    usableUntil: timestamp("usable_until", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => ({
+    workspaceProfileFk: foreignKey({
+      columns: [table.workspaceId, table.profileId],
+      foreignColumns: [credentialProfiles.workspaceId, credentialProfiles.id],
+      name: "credential_profile_versions_workspace_profile_fk",
+    }).onDelete("restrict"),
+    profileVersionUnique: uniqueIndex(
+      "credential_profile_versions_profile_version_unique",
+    ).on(table.profileId, table.version),
+    workspaceIdUnique: uniqueIndex(
+      "credential_profile_versions_workspace_id_unique",
+    ).on(table.workspaceId, table.id),
+    workspaceProfileIdUnique: uniqueIndex(
+      "credential_profile_versions_workspace_profile_id_unique",
+    ).on(table.workspaceId, table.profileId, table.id),
+    workspaceProfileVersionUnique: uniqueIndex(
+      "credential_profile_versions_workspace_profile_version_unique",
+    ).on(table.workspaceId, table.profileId, table.version),
+    oneActiveVersionUnique: uniqueIndex(
+      "credential_profile_versions_one_active_unique",
+    )
+      .on(table.workspaceId, table.profileId)
+      .where(sql`${table.status} = 'active'`),
+    profileStatusIdx: index(
+      "credential_profile_versions_profile_status_idx",
+    ).on(table.profileId, table.status),
+    statusCheck: check(
+      "credential_profile_versions_status_check",
+      sql`${table.status} in ('active', 'superseded', 'revoked')`,
+    ),
+    versionCheck: check(
+      "credential_profile_versions_version_check",
+      sql`${table.version} > 0`,
+    ),
+  }),
+);
+
+export const credentialSlots = pgTable(
+  "credential_slots",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    profileId: text("profile_id").notNull(),
+    name: text("name").notNull(),
+    provider: text("provider").notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceProfileFk: foreignKey({
+      columns: [table.workspaceId, table.profileId],
+      foreignColumns: [credentialProfiles.workspaceId, credentialProfiles.id],
+      name: "credential_slots_workspace_profile_fk",
+    }).onDelete("restrict"),
+    workspaceNameUnique: uniqueIndex(
+      "credential_slots_workspace_name_unique",
+    ).on(table.workspaceId, table.name),
+    workspaceProfileIdUnique: uniqueIndex(
+      "credential_slots_workspace_profile_id_unique",
+    ).on(table.workspaceId, table.profileId, table.id),
+    profileIdx: index("credential_slots_profile_idx").on(table.profileId),
+  }),
+);
+
+export const credentialSpendGrants = pgTable(
+  "credential_spend_grants",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    profileId: text("profile_id").notNull(),
+    mode: text("mode").notNull(),
+    limitCents: integer("limit_cents"),
+    status: text("status").default("active").notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => ({
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "credential_spend_grants_workspace_principal_fk",
+    }).onDelete("restrict"),
+    workspaceProfileFk: foreignKey({
+      columns: [table.workspaceId, table.profileId],
+      foreignColumns: [credentialProfiles.workspaceId, credentialProfiles.id],
+      name: "credential_spend_grants_workspace_profile_fk",
+    }).onDelete("restrict"),
+    workspacePrincipalProfileIdUnique: uniqueIndex(
+      "credential_spend_grants_workspace_principal_profile_id_unique",
+    ).on(table.workspaceId, table.principalId, table.profileId, table.id),
+    principalProfileStatusIdx: index(
+      "credential_spend_grants_principal_profile_status_idx",
+    ).on(table.principalId, table.profileId, table.status),
+    activePrincipalProfileUnique: uniqueIndex(
+      "credential_spend_grants_active_principal_profile_unique",
+    )
+      .on(table.principalId, table.profileId)
+      .where(sql`${table.status} = 'active'`),
+    workspaceIdx: index("credential_spend_grants_workspace_idx").on(
+      table.workspaceId,
+    ),
+    modeCheck: check(
+      "credential_spend_grants_mode_check",
+      sql`(${table.mode} = 'bounded' and ${table.limitCents} > 0) or (${table.mode} = 'audited_unbounded' and ${table.limitCents} is null)`,
+    ),
+    statusCheck: check(
+      "credential_spend_grants_status_check",
+      sql`${table.status} in ('active', 'revoked')`,
+    ),
+  }),
+);
+
+export const credentialSpendEvents = pgTable(
+  "credential_spend_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    slotId: text("slot_id").notNull(),
+    profileId: text("profile_id").notNull(),
+    versionId: text("version_id").notNull(),
+    spendGrantId: text("spend_grant_id").notNull(),
+    priceCeilingCents: integer("price_ceiling_cents").notNull(),
+    mode: text("mode").notNull(),
+    effectRef: text("effect_ref").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    resolvedVersion: integer("resolved_version").notNull(),
+    resolvedProvider: text("resolved_provider").notNull(),
+    status: text("status").default("pending").notNull(),
+    safeResult: jsonb("safe_result").$type<unknown>(),
+    failureCode: text("failure_code"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failedAt: timestamp("failed_at", { withTimezone: true }),
+    unknownAt: timestamp("unknown_at", { withTimezone: true }),
+    reconciliationReference: text("reconciliation_reference"),
+    reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "credential_spend_events_workspace_principal_fk",
+    }).onDelete("restrict"),
+    workspaceSlotProfileFk: foreignKey({
+      columns: [table.workspaceId, table.profileId, table.slotId],
+      foreignColumns: [
+        credentialSlots.workspaceId,
+        credentialSlots.profileId,
+        credentialSlots.id,
+      ],
+      name: "credential_spend_events_workspace_slot_profile_fk",
+    }).onDelete("restrict"),
+    workspaceProfileFk: foreignKey({
+      columns: [table.workspaceId, table.profileId],
+      foreignColumns: [credentialProfiles.workspaceId, credentialProfiles.id],
+      name: "credential_spend_events_workspace_profile_fk",
+    }).onDelete("restrict"),
+    workspaceProfileVersionFk: foreignKey({
+      columns: [table.workspaceId, table.profileId, table.versionId],
+      foreignColumns: [
+        credentialProfileVersions.workspaceId,
+        credentialProfileVersions.profileId,
+        credentialProfileVersions.id,
+      ],
+      name: "credential_spend_events_workspace_profile_version_fk",
+    }).onDelete("restrict"),
+    workspacePrincipalProfileGrantFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.profileId,
+        table.spendGrantId,
+      ],
+      foreignColumns: [
+        credentialSpendGrants.workspaceId,
+        credentialSpendGrants.principalId,
+        credentialSpendGrants.profileId,
+        credentialSpendGrants.id,
+      ],
+      name: "credential_spend_events_workspace_principal_profile_grant_fk",
+    }).onDelete("restrict"),
+    workspaceCreatedIdx: index(
+      "credential_spend_events_workspace_created_idx",
+    ).on(table.workspaceId, table.createdAt),
+    grantCreatedIdx: index(
+      "credential_spend_events_grant_created_idx",
+    ).on(table.spendGrantId, table.createdAt),
+    grantStatusCreatedIdx: index(
+      "credential_spend_events_grant_status_created_idx",
+    ).on(table.spendGrantId, table.status, table.createdAt),
+    reconciliationIdx: index(
+      "credential_spend_events_reconciliation_idx",
+    )
+      .on(table.workspaceId, table.status, table.unknownAt)
+      .where(sql`${table.status} in ('pending', 'unknown')`),
+    workspaceEffectRefUnique: uniqueIndex(
+      "credential_spend_events_workspace_effect_ref_unique",
+    ).on(table.workspaceId, table.effectRef),
+    workspaceRequestFingerprintIdx: index(
+      "credential_spend_events_workspace_request_fingerprint_idx",
+    ).on(table.workspaceId, table.requestFingerprint),
+    amountCheck: check(
+      "credential_spend_events_amount_check",
+      sql`${table.priceCeilingCents} >= 0`,
+    ),
+    modeCheck: check(
+      "credential_spend_events_mode_check",
+      sql`${table.mode} in ('bounded', 'audited_unbounded')`,
+    ),
+    fingerprintCheck: check(
+      "credential_spend_events_request_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    resolvedVersionCheck: check(
+      "credential_spend_events_resolved_version_check",
+      sql`${table.resolvedVersion} > 0`,
+    ),
+    statusCheck: check(
+      "credential_spend_events_status_check",
+      sql`${table.status} in ('pending', 'completed', 'failed', 'unknown')`,
+    ),
+    stateCheck: check(
+      "credential_spend_events_state_check",
+      sql`(
+        (${table.status} = 'pending'
+          and ${table.safeResult} is null
+          and ${table.failureCode} is null
+          and ${table.completedAt} is null
+          and ${table.failedAt} is null
+          and ${table.unknownAt} is null)
+        or
+        (${table.status} = 'completed'
+          and ${table.safeResult} is not null
+          and ${table.failureCode} is null
+          and ${table.completedAt} is not null
+          and ${table.failedAt} is null)
+        or
+        (${table.status} = 'failed'
+          and ${table.safeResult} is null
+          and ${table.failureCode} is not null
+          and ${table.completedAt} is null
+          and ${table.failedAt} is not null
+          and ${table.unknownAt} is null)
+        or
+        (${table.status} = 'unknown'
+          and ${table.safeResult} is null
+          and ${table.failureCode} is not null
+          and ${table.completedAt} is null
+          and ${table.failedAt} is null
+          and ${table.unknownAt} is not null)
+      )`,
+    ),
+    failureCodeCheck: check(
+      "credential_spend_events_failure_code_check",
+      sql`${table.failureCode} is null or ${table.failureCode} ~ '^[A-Z][A-Z0-9_]{0,79}$'`,
+    ),
+    safeResultSizeCheck: check(
+      "credential_spend_events_safe_result_size_check",
+      sql`${table.safeResult} is null or octet_length(${table.safeResult}::text) <= 65536`,
+    ),
+    safeResultRedactionCheck: check(
+      "credential_spend_events_safe_result_redaction_check",
+      sql`${table.safeResult} is null or ${table.safeResult}::text !~* '"[^"]*(secret|token|password|ciphertext)[^"]*"\\s*:'`,
+    ),
+    reconciliationCheck: check(
+      "credential_spend_events_reconciliation_check",
+      sql`(${table.reconciliationReference} is null and ${table.reconciledAt} is null)
+        or (${table.reconciliationReference} is not null and ${table.reconciledAt} is not null)`,
+    ),
+  }),
+);
+
+export const credentialSecurityEvents = pgTable(
+  "credential_security_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    eventType: credentialSecurityEventTypeEnum("event_type").notNull(),
+    actorUserId: text("actor_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    principalId: text("principal_id"),
+    profileId: text("profile_id"),
+    versionId: text("version_id"),
+    spendGrantId: text("spend_grant_id"),
+    effectRef: text("effect_ref"),
+    details: jsonb("details")
+      .$type<Record<string, string | number | boolean | null>>()
+      .default({})
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "credential_security_events_workspace_principal_fk",
+    }).onDelete("restrict"),
+    workspaceProfileFk: foreignKey({
+      columns: [table.workspaceId, table.profileId],
+      foreignColumns: [credentialProfiles.workspaceId, credentialProfiles.id],
+      name: "credential_security_events_workspace_profile_fk",
+    }).onDelete("restrict"),
+    workspaceProfileVersionFk: foreignKey({
+      columns: [table.workspaceId, table.profileId, table.versionId],
+      foreignColumns: [
+        credentialProfileVersions.workspaceId,
+        credentialProfileVersions.profileId,
+        credentialProfileVersions.id,
+      ],
+      name: "credential_security_events_workspace_profile_version_fk",
+    }).onDelete("restrict"),
+    workspacePrincipalProfileGrantFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.profileId,
+        table.spendGrantId,
+      ],
+      foreignColumns: [
+        credentialSpendGrants.workspaceId,
+        credentialSpendGrants.principalId,
+        credentialSpendGrants.profileId,
+        credentialSpendGrants.id,
+      ],
+      name: "credential_security_events_workspace_principal_profile_grant_fk",
+    }).onDelete("restrict"),
+    workspaceCreatedIdx: index(
+      "credential_security_events_workspace_created_idx",
+    ).on(table.workspaceId, table.createdAt),
+    workspaceEffectIdx: index(
+      "credential_security_events_workspace_effect_idx",
+    ).on(table.workspaceId, table.effectRef),
+    actorCheck: check(
+      "credential_security_events_actor_check",
+      sql`${table.actorUserId} is not null or ${table.principalId} is not null`,
+    ),
+    effectRefCheck: check(
+      "credential_security_events_effect_ref_check",
+      sql`(${table.eventType} in ('effect.reserved', 'effect.replayed')) = (${table.effectRef} is not null)`,
+    ),
+    detailsSizeCheck: check(
+      "credential_security_events_details_size_check",
+      sql`octet_length(${table.details}::text) <= 4096`,
+    ),
+    detailsRedactionCheck: check(
+      "credential_security_events_details_redaction_check",
+      sql`${table.details}::text !~* '"[^"]*(secret|token|password|ciphertext)[^"]*"\\s*:'`,
+    ),
+  }),
+);
+
+/**
+ * Append-only lifecycle ledger for external Credential effects. The mutable
+ * spend-event row is only the current receipt/projection; audit history reads
+ * this ledger so terminal transitions and ordinary replays cannot overwrite
+ * earlier facts.
+ */
+export const credentialEffectAuditEvents = pgTable(
+  "credential_effect_audit_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    profileId: text("profile_id").notNull(),
+    versionId: text("version_id").notNull(),
+    spendGrantId: text("spend_grant_id").notNull(),
+    effectRef: text("effect_ref").notNull(),
+    effectSequence: integer("effect_sequence").notNull(),
+    eventType: text("event_type").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    failureCode: text("failure_code"),
+    reconciliationReference: text("reconciliation_reference"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "credential_effect_audit_events_workspace_principal_fk",
+    }).onDelete("restrict"),
+    workspaceProfileVersionFk: foreignKey({
+      columns: [table.workspaceId, table.profileId, table.versionId],
+      foreignColumns: [
+        credentialProfileVersions.workspaceId,
+        credentialProfileVersions.profileId,
+        credentialProfileVersions.id,
+      ],
+      name: "credential_effect_audit_events_workspace_profile_version_fk",
+    }).onDelete("restrict"),
+    workspacePrincipalProfileGrantFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.profileId,
+        table.spendGrantId,
+      ],
+      foreignColumns: [
+        credentialSpendGrants.workspaceId,
+        credentialSpendGrants.principalId,
+        credentialSpendGrants.profileId,
+        credentialSpendGrants.id,
+      ],
+      name: "credential_effect_audit_events_workspace_grant_fk",
+    }).onDelete("restrict"),
+    effectSequenceUnique: uniqueIndex(
+      "credential_effect_audit_events_effect_sequence_unique",
+    ).on(table.workspaceId, table.effectRef, table.effectSequence),
+    workspaceCreatedIdx: index(
+      "credential_effect_audit_events_workspace_created_idx",
+    ).on(table.workspaceId, table.createdAt, table.id),
+    eventTypeCheck: check(
+      "credential_effect_audit_events_type_check",
+      sql`${table.eventType} in ('effect.reserved', 'effect.completed', 'effect.failed', 'effect.unknown', 'effect.reconciled', 'effect.released', 'effect.replayed')`,
+    ),
+    sequenceCheck: check(
+      "credential_effect_audit_events_sequence_check",
+      sql`${table.effectSequence} > 0`,
+    ),
+    fingerprintCheck: check(
+      "credential_effect_audit_events_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    failureCodeCheck: check(
+      "credential_effect_audit_events_failure_code_check",
+      sql`${table.failureCode} is null or ${table.failureCode} ~ '^[A-Z][A-Z0-9_]{0,79}$'`,
     ),
   }),
 );

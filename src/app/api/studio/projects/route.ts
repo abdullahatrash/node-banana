@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { countProjects, getProject, listProjects, upsertProject } from "@/lib/studio/repository";
 import { MAX_PROJECTS_PER_WORKSPACE } from "@/lib/studio/constants";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import {
+  InvalidWorkflowCredentialSlotsError,
+  sanitizeWorkflowCredentialSlots,
+} from "@/lib/studio/workflow-schema";
 
 interface ProjectsGetResponse {
   success: boolean;
@@ -70,13 +74,23 @@ export const POST = withStudioAuth<undefined>(
       }
     }
 
+    let workflowJson: Record<string, unknown> | null;
+    try {
+      workflowJson = sanitizeWorkflowCredentialSlots(body.workflowJson || null);
+    } catch (error) {
+      if (!(error instanceof InvalidWorkflowCredentialSlotsError)) throw error;
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 400 },
+      );
+    }
     const project = await upsertProject({
       workspaceId: authz.workspaceId,
       userId: authz.userId,
       projectId: body.projectId,
       name: body.name.trim(),
       description: body.description || null,
-      workflowJson: body.workflowJson || null,
+      workflowJson,
       sourceDirectoryPath: body.sourceDirectoryPath || null,
     });
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CredentialMetadataReader } from "@/types/credentials";
 import { canonicalDigest } from "./canonical";
 import type {
   CapabilityDefinition,
@@ -185,6 +186,7 @@ export const CAPABILITY_DEFINITION_SCHEMA: JsonSchema = {
   additionalProperties: false,
   required: [
     "identity",
+    "audience",
     "summary",
     "contractDigest",
     "lifecycle",
@@ -196,6 +198,7 @@ export const CAPABILITY_DEFINITION_SCHEMA: JsonSchema = {
   ],
   properties: {
     identity: identitySchema,
+    audience: { type: "string", enum: ["agent", "human"] },
     summary: { type: "string", minLength: 1 },
     contractDigest: {
       type: "string",
@@ -270,6 +273,16 @@ export const AGENT_CURRENT_GET_IDENTITY: CapabilityIdentity = {
   version: 1,
 };
 
+export const CREDENTIAL_PROFILE_GET_IDENTITY: CapabilityIdentity = {
+  name: "credentials.profile.get",
+  version: 1,
+};
+
+export const CREDENTIAL_PROFILE_LIST_IDENTITY: CapabilityIdentity = {
+  name: "credentials.profile.list",
+  version: 1,
+};
+
 function identityKey(identity: CapabilityIdentity): string {
   return `${identity.name}@${identity.version}`;
 }
@@ -301,6 +314,7 @@ function immutableContract(
 ): Omit<CapabilityDefinition, "contractDigest" | "lifecycle"> {
   return {
     identity: registration.identity,
+    audience: registration.audience ?? "agent",
     summary: registration.summary,
     schemas: {
       input: z.toJSONSchema(registration.input, { target: "draft-7" }),
@@ -555,7 +569,7 @@ export function createAgentIdentityRegistrations(): CapabilityRegistration[] {
       ],
       handler: (_input, context) => {
         const securityContext = context.securityContext;
-        if (!securityContext) {
+        if (!securityContext || securityContext.kind !== "agent") {
           throw new CapabilityFailure({
             code: "AGENT_AUTHENTICATION_FAILED",
             category: "authorization",
@@ -576,7 +590,187 @@ export function createAgentIdentityRegistrations(): CapabilityRegistration[] {
   ];
 }
 
-/** Production registry. */
-export const CAPABILITY_REGISTRY = createCapabilityRegistry(
-  [...createDiscoveryRegistrations(), ...createAgentIdentityRegistrations()],
-);
+export function createCredentialProfileRegistrations(
+  metadataReader: CredentialMetadataReader,
+): CapabilityRegistration[] {
+  function activeProfile(
+    profile: Awaited<ReturnType<CredentialMetadataReader["getSafeProfile"]>>,
+  ): profile is NonNullable<typeof profile> & {
+    slotId: string;
+    slotName: string;
+    activeVersion: number;
+    secretHint: string;
+    rotatedAt: Date;
+    status: "active";
+  } {
+    return Boolean(
+      profile &&
+        !profile.reprovisionable &&
+        profile.status === "active" &&
+        profile.slotId &&
+        profile.slotName &&
+        profile.activeVersion &&
+        profile.secretHint &&
+        profile.rotatedAt,
+    );
+  }
+  const redactedProfileSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "id",
+      "name",
+      "provider",
+      "slotId",
+      "slotName",
+      "status",
+      "activeVersion",
+      "secretHint",
+      "rotatedAt",
+    ],
+    properties: {
+      id: { type: "string" },
+      name: { type: "string" },
+      provider: { type: "string" },
+      slotId: { type: "string" },
+      slotName: { type: "string" },
+      status: { type: "string", enum: ["active"] },
+      activeVersion: { type: "integer", minimum: 1 },
+      secretHint: { type: "string" },
+      rotatedAt: { type: "string", format: "date-time" },
+    },
+  } as const;
+  return [
+    defineCapability({
+      identity: CREDENTIAL_PROFILE_LIST_IDENTITY,
+      summary:
+        "List redacted metadata for every Credential Profile authorized by the effective server-side resource intersection.",
+      lifecycle: activeLifecycle(),
+      input: z.object({}).strict(),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profiles"],
+        properties: {
+          profiles: { type: "array", items: redactedProfileSchema },
+        },
+      },
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: { resources: [] },
+      errors: COMMON_DISCOVERY_ERRORS,
+      handler: async (_input, context) => {
+        const securityContext = context.securityContext;
+        if (!securityContext || securityContext.kind !== "agent") {
+          throw new CapabilityFailure({
+            code: "CREDENTIAL_PROFILE_UNAVAILABLE",
+            category: "authorization",
+            message: "Credential Profile metadata is unavailable.",
+          });
+        }
+        const authorizedProfileIds =
+          context.authorizationAdmission?.effectiveResources
+            ?.credentialProfileIds ?? [];
+        const profiles = await Promise.all(
+          authorizedProfileIds.map((profileId) =>
+            metadataReader.getSafeProfile({
+              workspaceId: securityContext.workspaceId,
+              profileId,
+            }),
+          ),
+        );
+        return {
+          profiles: profiles.filter(activeProfile).map((profile) => ({
+            id: profile.id,
+            name: profile.name,
+            provider: profile.provider,
+            slotId: profile.slotId,
+            slotName: profile.slotName,
+            status: profile.status,
+            activeVersion: profile.activeVersion,
+            secretHint: profile.secretHint,
+            rotatedAt: profile.rotatedAt.toISOString(),
+          })),
+        };
+      },
+    }),
+    defineCapability({
+      identity: CREDENTIAL_PROFILE_GET_IDENTITY,
+      summary:
+        "Read redacted metadata for one authorized Credential Profile.",
+      lifecycle: activeLifecycle(),
+      input: z
+        .object({ credentialProfileId: z.string().min(1).max(200) })
+        .strict(),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "id",
+          "name",
+          "provider",
+          "slotId",
+          "slotName",
+          "status",
+          "activeVersion",
+          "secretHint",
+          "rotatedAt",
+        ],
+        properties: redactedProfileSchema.properties,
+      },
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: {
+        resources: [
+          {
+            kind: "credential_profile",
+            inputPath: "credentialProfileId",
+          },
+        ],
+      },
+      errors: [
+        ...COMMON_DISCOVERY_ERRORS,
+        {
+          code: "CREDENTIAL_PROFILE_UNAVAILABLE",
+          category: "not_found",
+          retryable: false,
+          description: "Credential Profile metadata is unavailable.",
+        },
+      ],
+      handler: async ({ credentialProfileId }, context) => {
+        const securityContext = context.securityContext;
+        if (!securityContext || securityContext.kind !== "agent") {
+          throw new CapabilityFailure({
+            code: "CREDENTIAL_PROFILE_UNAVAILABLE",
+            category: "authorization",
+            message: "Credential Profile metadata is unavailable.",
+          });
+        }
+        const profile = await metadataReader.getSafeProfile({
+          workspaceId: securityContext.workspaceId,
+          profileId: credentialProfileId,
+        });
+        if (!activeProfile(profile)) {
+          throw new CapabilityFailure({
+            code: "CREDENTIAL_PROFILE_UNAVAILABLE",
+            category: "not_found",
+            message: "Credential Profile metadata is unavailable.",
+          });
+        }
+        return {
+          id: profile.id,
+          name: profile.name,
+          provider: profile.provider,
+          slotId: profile.slotId,
+          slotName: profile.slotName,
+          status: profile.status,
+          activeVersion: profile.activeVersion,
+          secretHint: profile.secretHint,
+          rotatedAt: profile.rotatedAt.toISOString(),
+        };
+      },
+    }),
+  ];
+}

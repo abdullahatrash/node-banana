@@ -9,6 +9,23 @@ import type {
 } from "./types";
 import type { AgentKeyRecord, AgentPrincipalRecord } from "@/types/agentAuth";
 
+function intersectConstraints(
+  constraints: import("@/types").AgentResourceConstraints[],
+): import("@/types").AgentResourceConstraints {
+  const intersect = (key: keyof import("@/types").AgentResourceConstraints) => {
+    const [first = [], ...rest] = constraints.map((entry) => entry[key]);
+    return [...new Set(first)].filter((id) =>
+      rest.every((values) => values.includes(id)),
+    ).sort();
+  };
+  return {
+    channelIds: intersect("channelIds"),
+    credentialProfileIds: intersect("credentialProfileIds"),
+    workflowIds: intersect("workflowIds"),
+    automationIds: intersect("automationIds"),
+  };
+}
+
 export class InMemoryAgentAuthorizationRepository
   implements AgentAuthorizationRepository
 {
@@ -36,14 +53,18 @@ export class InMemoryAgentAuthorizationRepository
 
   async admit(input: Parameters<AgentAuthorizationRepository["admit"]>[0]) {
     const { request, resources, now } = input;
+    if (request.securityContext.kind !== "agent") {
+      throw new TypeError("Agent authorization repository requires an Agent context.");
+    }
     const capability = `${request.capability.name}@${request.capability.version}`;
     const principal = this.principals.get(request.securityContext.principalId);
     const key = this.keys.get(request.securityContext.keyId);
     const policy = this.policies.get(request.securityContext.workspaceId);
+    const admittedPrincipalId = request.securityContext.principalId;
     const sets = [...this.grantSets.values()].filter(
       (set) =>
         set.workspaceId === request.securityContext.workspaceId &&
-        set.principalId === request.securityContext.principalId &&
+        set.principalId === admittedPrincipalId &&
         !set.disabledAt,
     );
     const set = sets.length === 1 ? sets[0] : undefined;
@@ -68,8 +89,8 @@ export class InMemoryAgentAuthorizationRepository
                 : "automationIds";
         return constraints[key].includes(resource.id);
       });
-    const matching = (grants: import("@/types").AgentCapabilityGrant[]) =>
-      grants.some(
+    const matchingGrant = (grants: import("@/types").AgentCapabilityGrant[]) =>
+      grants.find(
         (grant) =>
           grant.capability === capability &&
           grant.authorizationContractDigest ===
@@ -107,12 +128,12 @@ export class InMemoryAgentAuthorizationRepository
       reason = "capability_not_granted";
     } else if (
       reason === "allowed" &&
-      (!policy || !policy.enabled || !matching(policy.grants))
+      (!policy || !policy.enabled || !matchingGrant(policy.grants))
     ) {
       reason = "workspace_policy_denied";
     } else if (
       reason === "allowed" &&
-      (!revision || !matching(revision.grants))
+      (!revision || !matchingGrant(revision.grants))
     ) {
       reason =
         resources.length > 0
@@ -168,11 +189,32 @@ export class InMemoryAgentAuthorizationRepository
     };
     this.decisions.push(decision);
     this.securityEvents.push(event);
+    const effectiveResources = allowed
+      ? intersectConstraints([
+          key!.authorizationScopes.find(
+            (scope) =>
+              scope.capability === capability &&
+              scope.authorizationContractDigest ===
+                request.authorizationContractDigest,
+          )!.resources,
+          matchingGrant(policy!.grants)!.resources,
+          matchingGrant(revision!.grants)!.resources,
+        ])
+      : undefined;
+    if (effectiveResources) {
+      effectiveResources.credentialProfileIds =
+        effectiveResources.credentialProfileIds.filter((id) =>
+          this.activeResources.has(
+            `${request.securityContext.workspaceId}:credential_profile:${id}`,
+          ),
+        );
+    }
     return {
       allowed,
       reason,
       grantRevisionId: decision.grantRevisionId,
       policyRevisionId: decision.policyRevisionId,
+      effectiveResources,
     };
   }
 

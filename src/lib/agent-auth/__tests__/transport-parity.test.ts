@@ -2,12 +2,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   AGENT_CURRENT_GET_IDENTITY,
-  CAPABILITY_REGISTRY,
   CapabilityDispatcher,
   authorizationContractDigestFor,
   runCapabilityCli,
   type CapabilityResponse,
 } from "@/lib/agent-tools";
+import { PRODUCTION_CAPABILITY_REGISTRY as CAPABILITY_REGISTRY } from "@/lib/agent-runtime/server-dispatcher";
 import { createCapabilityMcpServer } from "@/lib/agent-tools/mcp";
 import {
   AgentAuthService,

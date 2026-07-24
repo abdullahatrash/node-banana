@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { AgentSecurityContext } from "./agentAuth";
 import type {
+  CapabilityAuthorizationAdmission,
   AgentResourceRef,
   CapabilityAuthorizer,
 } from "./agentAuthorization";
@@ -62,6 +63,7 @@ export interface CapabilityErrorContract {
 
 export interface CapabilityDefinition {
   identity: CapabilityIdentity;
+  audience: "agent" | "human";
   summary: string;
   contractDigest: string;
   lifecycle: CapabilityLifecycle;
@@ -121,13 +123,26 @@ export interface CapabilityDispatcherPort {
   dispatch(invocation: CapabilityInvocation): Promise<CapabilityResponse>;
 }
 
+export type ResolvedSecurityContext =
+  | ({ kind: "agent" } & AgentSecurityContext)
+  | {
+      kind: "human";
+      workspaceId: string;
+      userId: string;
+      role: "owner" | "admin" | "member";
+      /**
+       * Server-validated transport key for durable human mutations.
+       */
+      idempotencyKey?: string;
+    };
+
 export interface CapabilityDispatchContext {
   /**
    * Authentication adapters may attach a resolved, server-owned security
    * context here. Invocation input never carries Principal or Workspace
    * identity.
    */
-  securityContext?: AgentSecurityContext;
+  securityContext?: ResolvedSecurityContext;
 }
 
 export interface CapabilityRegistryReader {
@@ -140,10 +155,12 @@ export interface CapabilityRegistryReader {
 
 export interface CapabilityHandlerContext extends CapabilityDispatchContext {
   registry: CapabilityRegistryReader;
+  authorizationAdmission?: CapabilityAuthorizationAdmission;
 }
 
 export interface CapabilityRegistration<Input = unknown, Output = unknown> {
   identity: CapabilityIdentity;
+  audience?: "agent" | "human";
   summary: string;
   lifecycle: CapabilityLifecycle;
   input: z.ZodType<Input>;

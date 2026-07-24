@@ -42,10 +42,11 @@ export {
 export { CapabilityFailure } from "./errors";
 export {
   AGENT_CURRENT_GET_IDENTITY,
+  CREDENTIAL_PROFILE_GET_IDENTITY,
+  CREDENTIAL_PROFILE_LIST_IDENTITY,
   CAPABILITY_GET_IDENTITY,
   CAPABILITY_DEFINITION_SCHEMA,
   CAPABILITY_LIST_IDENTITY,
-  CAPABILITY_REGISTRY,
   COMMON_DISCOVERY_ERRORS,
   CapabilityRegistry,
   QUERY_EFFECT,
@@ -53,6 +54,7 @@ export {
   authorizationContractDigestFor,
   createCapabilityRegistry,
   createAgentIdentityRegistrations,
+  createCredentialProfileRegistrations,
   createDiscoveryRegistrations,
   defineCapability,
 } from "./registry";
