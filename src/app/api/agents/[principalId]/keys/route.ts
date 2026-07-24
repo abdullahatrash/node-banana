@@ -39,6 +39,10 @@ const rotateKeySchema = z
                 automationIds: z
                   .array(z.string().trim().min(1).max(200))
                   .max(256),
+                artifactIds: z
+                  .array(z.string().trim().min(1).max(200))
+                  .max(256)
+                  .default([]),
               })
               .strict(),
           })

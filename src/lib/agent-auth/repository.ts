@@ -48,7 +48,16 @@ function principalFromRow(
 }
 
 function keyFromRow(row: typeof agentKeys.$inferSelect): AgentKeyRecord {
-  return row;
+  return {
+    ...row,
+    authorizationScopes: (row.authorizationScopes ?? []).map((scope) => ({
+      ...scope,
+      resources: {
+        ...scope.resources,
+        artifactIds: scope.resources.artifactIds ?? [],
+      },
+    })),
+  };
 }
 
 function challengeFromRow(

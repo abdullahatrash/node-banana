@@ -8,23 +8,11 @@ import type {
   WorkspaceAgentPolicyRecord,
 } from "./types";
 import type { AgentKeyRecord, AgentPrincipalRecord } from "@/types/agentAuth";
-
-function intersectConstraints(
-  constraints: import("@/types").AgentResourceConstraints[],
-): import("@/types").AgentResourceConstraints {
-  const intersect = (key: keyof import("@/types").AgentResourceConstraints) => {
-    const [first = [], ...rest] = constraints.map((entry) => entry[key]);
-    return [...new Set(first)].filter((id) =>
-      rest.every((values) => values.includes(id)),
-    ).sort();
-  };
-  return {
-    channelIds: intersect("channelIds"),
-    credentialProfileIds: intersect("credentialProfileIds"),
-    workflowIds: intersect("workflowIds"),
-    automationIds: intersect("automationIds"),
-  };
-}
+import {
+  intersectResourceConstraints,
+  resourceConstraintKey,
+  resourceConstraintRefs,
+} from "./resource-constraints";
 
 export class InMemoryAgentAuthorizationRepository
   implements AgentAuthorizationRepository
@@ -79,15 +67,8 @@ export class InMemoryAgentAuthorizationRepository
       constraints: import("@/types").AgentResourceConstraints,
     ) =>
       resources.every((resource) => {
-        const key =
-          resource.kind === "channel"
-            ? "channelIds"
-            : resource.kind === "credential_profile"
-              ? "credentialProfileIds"
-              : resource.kind === "workflow"
-                ? "workflowIds"
-                : "automationIds";
-        return constraints[key].includes(resource.id);
+        const key = resourceConstraintKey(resource.kind);
+        return (constraints[key] ?? []).includes(resource.id);
       });
     const matchingGrant = (grants: import("@/types").AgentCapabilityGrant[]) =>
       grants.find(
@@ -190,7 +171,7 @@ export class InMemoryAgentAuthorizationRepository
     this.decisions.push(decision);
     this.securityEvents.push(event);
     const effectiveResources = allowed
-      ? intersectConstraints([
+      ? intersectResourceConstraints([
           key!.authorizationScopes.find(
             (scope) =>
               scope.capability === capability &&
@@ -208,6 +189,13 @@ export class InMemoryAgentAuthorizationRepository
             `${request.securityContext.workspaceId}:credential_profile:${id}`,
           ),
         );
+      effectiveResources.artifactIds = (
+        effectiveResources.artifactIds ?? []
+      ).filter((id) =>
+        this.activeResources.has(
+          `${request.securityContext.workspaceId}:artifact:${id}`,
+        ),
+      );
     }
     return {
       allowed,
@@ -264,20 +252,6 @@ export class InMemoryAgentAuthorizationRepository
     ) {
       return false;
     }
-    const ids = (
-      resources: import("@/types").AgentResourceConstraints,
-    ): AgentResourceRef[] => [
-      ...resources.channelIds.map((id) => ({ kind: "channel" as const, id })),
-      ...resources.credentialProfileIds.map((id) => ({
-        kind: "credential_profile" as const,
-        id,
-      })),
-      ...resources.workflowIds.map((id) => ({ kind: "workflow" as const, id })),
-      ...resources.automationIds.map((id) => ({
-        kind: "automation" as const,
-        id,
-      })),
-    ];
     const authorized = input.key.authorizationScopes.every((scope) => {
       const matches = (grants: import("@/types").AgentCapabilityGrant[]) =>
         grants.some(
@@ -285,8 +259,8 @@ export class InMemoryAgentAuthorizationRepository
             grant.capability === scope.capability &&
             grant.authorizationContractDigest ===
               scope.authorizationContractDigest &&
-            ids(scope.resources).every((resource) =>
-              ids(grant.resources).some(
+            resourceConstraintRefs(scope.resources).every((resource) =>
+              resourceConstraintRefs(grant.resources).some(
                 (candidate) =>
                   candidate.kind === resource.kind &&
                   candidate.id === resource.id,
@@ -296,7 +270,7 @@ export class InMemoryAgentAuthorizationRepository
       return (
         matches(policy!.grants) &&
         matches(revision!.grants) &&
-        ids(scope.resources).every((resource) =>
+        resourceConstraintRefs(scope.resources).every((resource) =>
           this.activeResources.has(
             `${input.workspaceId}:${resource.kind}:${resource.id}`,
           ),
@@ -384,28 +358,15 @@ export class InMemoryAgentAuthorizationRepository
     if ((currentPolicy?.revision ?? 0) !== input.expectedPolicyRevision) {
       return { type: "conflict" };
     }
-    const refsFor = (
-      constraints: import("@/types").AgentResourceConstraints,
-    ): AgentResourceRef[] => [
-      ...constraints.channelIds.map((id) => ({ kind: "channel" as const, id })),
-      ...constraints.credentialProfileIds.map((id) => ({
-        kind: "credential_profile" as const,
-        id,
-      })),
-      ...constraints.workflowIds.map((id) => ({
-        kind: "workflow" as const,
-        id,
-      })),
-      ...constraints.automationIds.map((id) => ({
-        kind: "automation" as const,
-        id,
-      })),
-    ];
     const allResources = [
-      ...input.grants.flatMap((grant) => refsFor(grant.resources)),
-      ...input.policyGrants.flatMap((grant) => refsFor(grant.resources)),
+      ...input.grants.flatMap((grant) =>
+        resourceConstraintRefs(grant.resources),
+      ),
+      ...input.policyGrants.flatMap((grant) =>
+        resourceConstraintRefs(grant.resources),
+      ),
       ...input.key.authorizationScopes.flatMap((scope) =>
-        refsFor(scope.resources),
+        resourceConstraintRefs(scope.resources),
       ),
     ];
     if (
@@ -427,8 +388,8 @@ export class InMemoryAgentAuthorizationRepository
           grant.capability === scope.capability &&
           grant.authorizationContractDigest ===
             scope.authorizationContractDigest &&
-          refsFor(scope.resources).every((resource) =>
-            refsFor(grant.resources).some(
+          resourceConstraintRefs(scope.resources).every((resource) =>
+            resourceConstraintRefs(grant.resources).some(
               (candidate) =>
                 candidate.kind === resource.kind &&
                 candidate.id === resource.id,

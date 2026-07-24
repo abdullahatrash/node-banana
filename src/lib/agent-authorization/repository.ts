@@ -15,6 +15,7 @@ import {
   agentKeys,
   agentPrincipals,
   agentSecurityEvents,
+  artifacts,
   credentialProfiles,
   projects,
   socialAccounts,
@@ -34,44 +35,24 @@ import type {
   AgentSecurityEventRecord,
   WorkspaceAgentPolicyRecord,
 } from "./types";
+import {
+  intersectResourceConstraints,
+  resourceConstraintKey,
+  resourceConstraintRefs,
+} from "./resource-constraints";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
-
-function constraintKey(kind: AgentResourceKind) {
-  return kind === "channel"
-    ? "channelIds"
-    : kind === "credential_profile"
-      ? "credentialProfileIds"
-      : kind === "workflow"
-        ? "workflowIds"
-        : "automationIds";
-}
 
 function covers(
   constraints: import("@/types").AgentResourceConstraints,
   resources: AgentResourceRef[],
 ) {
   return resources.every((resource) =>
-    constraints[constraintKey(resource.kind)].includes(resource.id),
+    (constraints[resourceConstraintKey(resource.kind)] ?? []).includes(
+      resource.id,
+    ),
   );
-}
-
-function intersectConstraints(
-  constraints: import("@/types").AgentResourceConstraints[],
-): import("@/types").AgentResourceConstraints {
-  const intersect = (key: keyof import("@/types").AgentResourceConstraints) => {
-    const [first = [], ...rest] = constraints.map((entry) => entry[key]);
-    return [...new Set(first)].filter((id) =>
-      rest.every((values) => values.includes(id)),
-    ).sort();
-  };
-  return {
-    channelIds: intersect("channelIds"),
-    credentialProfileIds: intersect("credentialProfileIds"),
-    workflowIds: intersect("workflowIds"),
-    automationIds: intersect("automationIds"),
-  };
 }
 
 function principalFromRow(
@@ -80,44 +61,56 @@ function principalFromRow(
   return { ...row, requestedAccess: row.requestedAccess ?? [] };
 }
 
+function normalizeStoredGrants(
+  grants: import("@/types").AgentCapabilityGrant[] | null,
+): import("@/types").AgentCapabilityGrant[] {
+  return (grants ?? []).map((grant) => ({
+    ...grant,
+    resources: {
+      ...grant.resources,
+      artifactIds: grant.resources.artifactIds ?? [],
+    },
+  }));
+}
+
 function keyFromRow(
   row: typeof agentKeys.$inferSelect,
 ): import("@/types").AgentKeyRecord {
-  return { ...row, authorizationScopes: row.authorizationScopes ?? [] };
+  return {
+    ...row,
+    authorizationScopes: (row.authorizationScopes ?? []).map((scope) => ({
+      ...scope,
+      resources: {
+        ...scope.resources,
+        artifactIds: scope.resources.artifactIds ?? [],
+      },
+    })),
+  };
 }
 
 function revisionFromRow(
   row: typeof agentGrantRevisions.$inferSelect,
 ): AgentGrantRevisionRecord {
-  return { ...row, grants: row.grants ?? [] };
+  return {
+    ...row,
+    grants: normalizeStoredGrants(row.grants),
+  };
 }
 
 function policyFromRow(
   row: typeof workspaceAgentPolicies.$inferSelect,
 ): WorkspaceAgentPolicyRecord {
-  return { ...row, grants: row.grants ?? [] };
-}
-
-function refs(kind: AgentResourceKind, ids: string[]): AgentResourceRef[] {
-  return ids.map((id) => ({ kind, id }));
-}
-
-function constraintRefs(
-  resources: import("@/types").AgentResourceConstraints,
-): AgentResourceRef[] {
-  return [
-    ...refs("channel", resources.channelIds),
-    ...refs("credential_profile", resources.credentialProfileIds),
-    ...refs("workflow", resources.workflowIds),
-    ...refs("automation", resources.automationIds),
-  ];
+  return {
+    ...row,
+    grants: normalizeStoredGrants(row.grants),
+  };
 }
 
 function grantsCoverScope(
   grants: import("@/types").AgentCapabilityGrant[],
   scope: import("@/types").AgentKeyAuthorizationScope,
 ): boolean {
-  const requested = constraintRefs(scope.resources);
+  const requested = resourceConstraintRefs(scope.resources);
   return grants.some(
     (grant) =>
       grant.capability === scope.capability &&
@@ -212,7 +205,7 @@ export class DrizzleAgentAuthorizationRepository
         ? {
             ...policyFromRow(policyRows[0].policy),
             enabled: policyRows[0].revision.enabled,
-            grants: policyRows[0].revision.grants ?? [],
+            grants: normalizeStoredGrants(policyRows[0].revision.grants),
           }
         : null;
       const revision =
@@ -321,7 +314,7 @@ export class DrizzleAgentAuthorizationRepository
         createdAt: now,
       });
       const effectiveResources = allowed
-        ? intersectConstraints([
+        ? intersectResourceConstraints([
             key!.authorizationScopes.find(
               (scope) =>
                 scope.capability === capability &&
@@ -343,6 +336,17 @@ export class DrizzleAgentAuthorizationRepository
         );
         effectiveResources.credentialProfileIds =
           activeCredentialProfiles.map((resource) => resource.id);
+        const activeArtifacts = await this.findActiveResourcesWith(
+          tx,
+          request.securityContext.workspaceId,
+          (effectiveResources.artifactIds ?? []).map((id) => ({
+            kind: "artifact" as const,
+            id,
+          })),
+        );
+        effectiveResources.artifactIds = activeArtifacts.map(
+          (resource) => resource.id,
+        );
       }
       return {
         allowed,
@@ -379,6 +383,7 @@ export class DrizzleAgentAuthorizationRepository
     const credentialProfileIds = idsFor("credential_profile");
     const workflowIds = idsFor("workflow");
     const automationIds = idsFor("automation");
+    const artifactIds = idsFor("artifact");
 
     const channels = channelIds.length === 0
       ? []
@@ -437,12 +442,26 @@ export class DrizzleAgentAuthorizationRepository
               ),
             )
             .for("share");
-    return [
-      ...refs("channel", channels.map((row) => row.id)),
-      ...refs("credential_profile", credentials.map((row) => row.id)),
-      ...refs("workflow", selectedWorkflows.map((row) => row.id)),
-      ...refs("automation", automations.map((row) => row.id)),
-    ];
+    const selectedArtifacts = artifactIds.length === 0
+      ? []
+      : await database
+            .select({ id: artifacts.id })
+            .from(artifacts)
+            .where(
+              and(
+                eq(artifacts.workspaceId, workspaceId),
+                inArray(artifacts.id, artifactIds),
+                isNull(artifacts.deletedAt),
+              ),
+            )
+            .for("share");
+    return resourceConstraintRefs({
+      channelIds: channels.map((row) => row.id),
+      credentialProfileIds: credentials.map((row) => row.id),
+      workflowIds: selectedWorkflows.map((row) => row.id),
+      automationIds: automations.map((row) => row.id),
+      artifactIds: selectedArtifacts.map((row) => row.id),
+    });
   }
 
   async issueAttenuatedKey(
@@ -531,23 +550,6 @@ export class DrizzleAgentAuthorizationRepository
       ) {
         return false;
       }
-      const resourceRefs = (
-        resources: import("@/types").AgentResourceConstraints,
-      ): AgentResourceRef[] => [
-        ...resources.channelIds.map((id) => ({ kind: "channel" as const, id })),
-        ...resources.credentialProfileIds.map((id) => ({
-          kind: "credential_profile" as const,
-          id,
-        })),
-        ...resources.workflowIds.map((id) => ({
-          kind: "workflow" as const,
-          id,
-        })),
-        ...resources.automationIds.map((id) => ({
-          kind: "automation" as const,
-          id,
-        })),
-      ];
       const revision = revisions[0]
         ? revisionFromRow(revisions[0].revision)
         : null;
@@ -555,11 +557,11 @@ export class DrizzleAgentAuthorizationRepository
         ? {
             ...policyFromRow(policies[0].policy),
             enabled: policies[0].revision.enabled,
-            grants: policies[0].revision.grants ?? [],
+            grants: normalizeStoredGrants(policies[0].revision.grants),
           }
         : null;
       for (const scope of input.key.authorizationScopes) {
-        const refs = resourceRefs(scope.resources);
+        const refs = resourceConstraintRefs(scope.resources);
         const matches = (
           grants: import("@/types").AgentCapabilityGrant[],
         ) =>
@@ -569,7 +571,7 @@ export class DrizzleAgentAuthorizationRepository
               grant.authorizationContractDigest ===
                 scope.authorizationContractDigest &&
               refs.every((resource) =>
-                resourceRefs(grant.resources).some(
+                resourceConstraintRefs(grant.resources).some(
                   (candidate) =>
                     candidate.kind === resource.kind &&
                     candidate.id === resource.id,
@@ -740,12 +742,14 @@ export class DrizzleAgentAuthorizationRepository
         return { type: "invalid_authority" as const };
       }
       const allResources = [
-        ...input.grants.flatMap((grant) => constraintRefs(grant.resources)),
+        ...input.grants.flatMap((grant) =>
+          resourceConstraintRefs(grant.resources),
+        ),
         ...input.policyGrants.flatMap((grant) =>
-          constraintRefs(grant.resources),
+          resourceConstraintRefs(grant.resources),
         ),
         ...input.key.authorizationScopes.flatMap((scope) =>
-          constraintRefs(scope.resources),
+          resourceConstraintRefs(scope.resources),
         ),
       ];
       if (

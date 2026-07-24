@@ -15,6 +15,7 @@ import {
   parseCapabilityIdentity,
 } from "@/lib/agent-tools";
 import { PRODUCTION_CAPABILITY_REGISTRY } from "@/lib/agent-runtime/server-dispatcher";
+import { AGENT_RESOURCE_DESCRIPTORS } from "@/lib/agent-authorization/resource-constraints";
 import type {
   AgentCapabilityGrant,
   AgentResourceConstraints,
@@ -28,6 +29,10 @@ const resources = z
     credentialProfileIds: z.array(z.string().trim().min(1).max(200)).max(256),
     workflowIds: z.array(z.string().trim().min(1).max(200)).max(256),
     automationIds: z.array(z.string().trim().min(1).max(200)).max(256),
+    artifactIds: z
+      .array(z.string().trim().min(1).max(200))
+      .max(256)
+      .default([]),
   })
   .strict();
 const exactCapability =
@@ -70,13 +75,6 @@ const schema = z
     "grantSetId and expectedGrantRevision must be supplied together.",
   );
 
-const constraintKind = {
-  channelIds: "channel",
-  credentialProfileIds: "credential_profile",
-  workflowIds: "workflow",
-  automationIds: "automation",
-} as const;
-
 class AuthorityContractError extends Error {}
 
 export function resolveAuthorityContracts(
@@ -95,10 +93,11 @@ export function resolveAuthorityContracts(
     const supportedKinds = new Set(
       registration.authorization.resources.map((selector) => selector.kind),
     );
-    for (const [key, kind] of Object.entries(constraintKind) as Array<
-      [keyof AgentResourceConstraints, (typeof constraintKind)[keyof typeof constraintKind]]
-    >) {
-      if (value.resources[key].length > 0 && !supportedKinds.has(kind)) {
+    for (const { constraintKey, kind } of AGENT_RESOURCE_DESCRIPTORS) {
+      if (
+        (value.resources[constraintKey] ?? []).length > 0 &&
+        !supportedKinds.has(kind)
+      ) {
         throw new AuthorityContractError(
           `Capability ${value.capability} does not authorize ${kind} resources.`,
         );

@@ -10,7 +10,8 @@ export type AgentResourceKind =
   | "channel"
   | "credential_profile"
   | "workflow"
-  | "automation";
+  | "automation"
+  | "artifact";
 
 export interface AgentResourceRef {
   kind: AgentResourceKind;
@@ -22,6 +23,11 @@ export interface AgentResourceConstraints {
   credentialProfileIds: string[];
   workflowIds: string[];
   automationIds: string[];
+  /**
+   * Optional while deserializing authority JSON written before Artifact
+   * resources existed. All server normalizers materialize this as an array.
+   */
+  artifactIds?: string[];
 }
 
 export interface AgentCapabilityGrant {

@@ -53,7 +53,11 @@ function authorize(role: "owner" | "admin" | "member" = "admin") {
   });
 }
 
-function request(capability = "capabilities.list@1") {
+function request(
+  capability = "capabilities.list@1",
+  resources: typeof emptyResources & { artifactIds?: string[] } =
+    emptyResources,
+) {
   return new NextRequest(
     "http://localhost:3000/api/agents/principal-1/authority",
     {
@@ -66,11 +70,11 @@ function request(capability = "capabilities.list@1") {
       body: JSON.stringify({
         expectedPolicyRevision: 0,
         grantSetName: "Primary",
-        grants: [{ capability, resources: emptyResources }],
-        policyGrants: [{ capability, resources: emptyResources }],
+        grants: [{ capability, resources }],
+        policyGrants: [{ capability, resources }],
         key: {
           name: "Provisioned",
-          authorizationScopes: [{ capability, resources: emptyResources }],
+          authorizationScopes: [{ capability, resources }],
         },
       }),
     },
@@ -132,6 +136,61 @@ describe("Agent authority provisioning route", () => {
   it("rejects unpublished identities before the atomic repository call", async () => {
     authorize();
     const response = await POST(request("missing.capability@1"), context);
+
+    expect(response.status).toBe(400);
+    expect(mockProvisionAuthority).not.toHaveBeenCalled();
+  });
+
+  it("accepts exact Artifact selectors and defaults legacy resources without artifactIds", async () => {
+    authorize();
+    mockProvisionAuthority.mockResolvedValue({
+      agentKey: "nbak_once_only",
+      key: {
+        id: "key-1",
+        principalId: "principal-1",
+        name: "Provisioned",
+        lookupPrefix: "prefix",
+        authorizationScopes: [],
+        expiresAt: null,
+        createdAt: new Date("2026-07-25T00:00:00.000Z"),
+      },
+      grantSetId: "set-1",
+      grantRevisionId: "grant-revision-1",
+      grantRevision: 1,
+      policyRevisionId: "policy-revision-1",
+      policyRevision: 1,
+    });
+    const response = await POST(
+      request("artifacts.get@1", {
+        ...emptyResources,
+        artifactIds: ["artifact-1"],
+      }),
+      context,
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockProvisionAuthority).toHaveBeenCalledWith(
+      expect.objectContaining({
+        grants: [
+          expect.objectContaining({
+            resources: expect.objectContaining({
+              artifactIds: ["artifact-1"],
+            }),
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("rejects Artifact selectors on the Workspace-wide list grant", async () => {
+    authorize();
+    const response = await POST(
+      request("artifacts.list@1", {
+        ...emptyResources,
+        artifactIds: ["artifact-1"],
+      }),
+      context,
+    );
 
     expect(response.status).toBe(400);
     expect(mockProvisionAuthority).not.toHaveBeenCalled();

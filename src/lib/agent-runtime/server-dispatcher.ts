@@ -29,6 +29,10 @@ import {
   CompositeCapabilityAuthorizer,
   HumanCapabilityAuthorizer,
 } from "./composite-authorizer";
+import {
+  PRODUCTION_ARTIFACT_SERVICE,
+  createArtifactRegistrations,
+} from "./artifacts";
 
 export const PRODUCTION_AGENT_AUTHORIZER = new AgentAuthorizationService(
   new DrizzleAgentAuthorizationRepository(getDb),
@@ -70,6 +74,7 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
   ...createAgentIdentityRegistrations(),
   ...createCredentialProfileRegistrations(CREDENTIAL_VAULT_SERVICE),
   ...createCredentialHumanRegistrations(CREDENTIAL_VAULT_SERVICE),
+  ...createArtifactRegistrations(PRODUCTION_ARTIFACT_SERVICE),
 ]);
 
 export const CAPABILITY_DISPATCHER = new CapabilityDispatcher(

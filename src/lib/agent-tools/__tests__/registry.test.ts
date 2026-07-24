@@ -65,6 +65,12 @@ describe("production Capability Registry", () => {
       ),
     ).toEqual([
       "agents.current.get@1",
+      "artifact_downloads.create@1",
+      "artifact_uploads.begin@1",
+      "artifact_uploads.complete@1",
+      "artifacts.get@1",
+      "artifacts.import@1",
+      "artifacts.list@1",
       "capabilities.get@1",
       "capabilities.list@1",
       "credentials.audit.export@1",
@@ -94,7 +100,10 @@ describe("production Capability Registry", () => {
       });
       expect(definition.schemas.input).toMatchObject({ type: "object" });
       expect(definition.schemas.output).toMatchObject({ type: "object" });
-      if (definition.audience === "agent") {
+      if (
+        definition.audience === "agent" &&
+        !definition.identity.name.startsWith("artifact")
+      ) {
         expect(definition.effect).toEqual({
           mutation: "none",
           visibility: "private",
@@ -157,6 +166,12 @@ describe("production Capability Registry", () => {
     const mcpTools = await listMcpCapabilityTools(TEST_DISPATCHER);
     expect(mcpTools.map((tool) => tool.name)).toEqual([
       "agents.current.get.v1",
+      "artifact_downloads.create.v1",
+      "artifact_uploads.begin.v1",
+      "artifact_uploads.complete.v1",
+      "artifacts.get.v1",
+      "artifacts.import.v1",
+      "artifacts.list.v1",
       "capabilities.get.v1",
       "capabilities.list.v1",
       "credentials.audit.export.v1",

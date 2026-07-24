@@ -7,6 +7,7 @@ import {
   AgentAuthorizationService,
   EMPTY_RESOURCE_CONSTRAINTS,
   InMemoryAgentAuthorizationRepository,
+  normalizeCapabilityGrants,
 } from "@/lib/agent-authorization";
 import {
   COMMON_DISCOVERY_ERRORS,
@@ -264,6 +265,23 @@ async function installAuthority(
 }
 
 describe("deny-by-default Agent authorization", () => {
+  it("normalizes legacy grants that predate artifactIds without rewriting history", () => {
+    const [grant] = normalizeCapabilityGrants([
+      {
+        capability: "content.publish@1",
+        authorizationContractDigest: `sha256:${"a".repeat(64)}`,
+        resources: {
+          channelIds: [],
+          credentialProfileIds: [],
+          workflowIds: [],
+          automationIds: [],
+        },
+      },
+    ]);
+
+    expect(grant.resources.artifactIds).toEqual([]);
+  });
+
   it.each([
     ["missing selector path", "content.broken_selector@1", { channelId: "a" }],
     ["empty selector array", "content.batch_publish@1", { channelIds: [] }],

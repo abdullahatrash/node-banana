@@ -75,6 +75,22 @@ describe("Agent authorization migration contracts", () => {
     );
   });
 
+  it("filters enumerated effective Artifacts through current Workspace state", () => {
+    const source = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/lib/agent-authorization/repository.ts",
+      ),
+      "utf8",
+    );
+    const activeResources = source.slice(
+      source.indexOf("private async findActiveResourcesWith"),
+    );
+    expect(source).toContain("effectiveResources.artifactIds");
+    expect(activeResources).toContain("inArray(artifacts.id, artifactIds)");
+    expect(activeResources).toContain("isNull(artifacts.deletedAt)");
+  });
+
   it("stores replay receipts without plaintext or credential hashes", () => {
     const sql = migration("0021_parallel_alex_power.sql");
 

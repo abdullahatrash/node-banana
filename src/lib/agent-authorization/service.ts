@@ -6,7 +6,6 @@ import type {
   AgentGrantRevisionRecord,
   AgentGrantSetRecord,
   AgentResourceConstraints,
-  AgentResourceKind,
   AgentResourceRef,
   AgentSecurityEventRecord,
   AuthorizationDecisionReason,
@@ -15,22 +14,17 @@ import type {
   CapabilityAuthorizer,
   WorkspaceAgentPolicyRecord,
 } from "./types";
+import {
+  AGENT_RESOURCE_KINDS,
+  AGENT_RESOURCE_DESCRIPTORS,
+  emptyResourceConstraints,
+  resourceConstraintKey,
+} from "./resource-constraints";
 
 const EXACT_CAPABILITY =
   /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+@[1-9][0-9]*$/;
-const RESOURCE_KINDS: AgentResourceKind[] = [
-  "channel",
-  "credential_profile",
-  "workflow",
-  "automation",
-];
-
-export const EMPTY_RESOURCE_CONSTRAINTS: AgentResourceConstraints = {
-  channelIds: [],
-  credentialProfileIds: [],
-  workflowIds: [],
-  automationIds: [],
-};
+export const EMPTY_RESOURCE_CONSTRAINTS: AgentResourceConstraints =
+  emptyResourceConstraints();
 
 interface AuthorizationClock {
   now(): Date;
@@ -40,21 +34,6 @@ const systemClock: AuthorizationClock = { now: () => new Date() };
 
 function exactCapability(name: string, version: number): string {
   return `${name}@${version}`;
-}
-
-function constraintKey(
-  kind: AgentResourceKind,
-): keyof AgentResourceConstraints {
-  switch (kind) {
-    case "channel":
-      return "channelIds";
-    case "credential_profile":
-      return "credentialProfileIds";
-    case "workflow":
-      return "workflowIds";
-    case "automation":
-      return "automationIds";
-  }
 }
 
 function uniqueStrings(values: string[], label: string): string[] {
@@ -115,15 +94,12 @@ export function normalizeCapabilityGrants(
 export function normalizeResourceConstraints(
   resources: AgentResourceConstraints,
 ): AgentResourceConstraints {
-  return {
-    channelIds: uniqueStrings(resources.channelIds, "Channel IDs"),
-    credentialProfileIds: uniqueStrings(
-      resources.credentialProfileIds,
-      "Credential Profile IDs",
-    ),
-    workflowIds: uniqueStrings(resources.workflowIds, "Workflow IDs"),
-    automationIds: uniqueStrings(resources.automationIds, "Automation IDs"),
-  };
+  return Object.fromEntries(
+    AGENT_RESOURCE_DESCRIPTORS.map(({ constraintKey, label }) => [
+      constraintKey,
+      uniqueStrings(resources[constraintKey] ?? [], label),
+    ]),
+  ) as unknown as AgentResourceConstraints;
 }
 
 function normalizeResourceRefs(resources: AgentResourceRef[]): AgentResourceRef[] {
@@ -131,7 +107,7 @@ function normalizeResourceRefs(resources: AgentResourceRef[]): AgentResourceRef[
   for (const resource of resources) {
     const id = resource.id.trim();
     if (
-      !RESOURCE_KINDS.includes(resource.kind) ||
+      !AGENT_RESOURCE_KINDS.includes(resource.kind) ||
       !id ||
       id.length > 200
     ) {
@@ -150,7 +126,9 @@ function constraintsCover(
   resources: AgentResourceRef[],
 ): boolean {
   return resources.every((resource) =>
-    constraints[constraintKey(resource.kind)].includes(resource.id),
+    (constraints[resourceConstraintKey(resource.kind)] ?? []).includes(
+      resource.id,
+    ),
   );
 }
 

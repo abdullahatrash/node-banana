@@ -432,6 +432,7 @@ type StoredAgentResourceConstraints = {
   credentialProfileIds: string[];
   workflowIds: string[];
   automationIds: string[];
+  artifactIds?: string[];
 };
 
 type StoredAgentCapabilityGrant = {
@@ -1170,6 +1171,328 @@ export const credentialEffectAuditEvents = pgTable(
     failureCodeCheck: check(
       "credential_effect_audit_events_failure_code_check",
       sql`${table.failureCode} is null or ${table.failureCode} ~ '^[A-Z][A-Z0-9_]{0,79}$'`,
+    ),
+  }),
+);
+
+/**
+ * Canonical Agent Artifact content and provenance. These tables intentionally
+ * do not reuse mutable Studio Asset rows or CDN fields.
+ */
+export const artifactContents = pgTable(
+  "artifact_contents",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    digest: text("digest").notNull(),
+    kind: text("kind").notNull(),
+    mediaType: text("media_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    inlineText: text("inline_text"),
+    storageKey: text("storage_key"),
+    width: integer("width"),
+    height: integer("height"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.digest],
+      name: "artifact_contents_pk",
+    }),
+    identityUnique: uniqueIndex("artifact_contents_identity_unique").on(
+      table.workspaceId,
+      table.digest,
+      table.kind,
+      table.mediaType,
+      table.sizeBytes,
+    ),
+    storageKeyUnique: uniqueIndex("artifact_contents_storage_key_unique")
+      .on(table.storageKey)
+      .where(sql`${table.storageKey} is not null`),
+    digestCheck: check(
+      "artifact_contents_digest_check",
+      sql`${table.digest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    kindCheck: check(
+      "artifact_contents_kind_check",
+      sql`${table.kind} in ('text', 'image')`,
+    ),
+    sizeCheck: check(
+      "artifact_contents_size_check",
+      sql`${table.sizeBytes} >= 0 and ${table.sizeBytes} <= 52428800`,
+    ),
+    locationCheck: check(
+      "artifact_contents_location_check",
+      sql`(
+        ${table.kind} = 'text'
+        and ${table.inlineText} is not null
+        and ${table.storageKey} is null
+        and ${table.width} is null
+        and ${table.height} is null
+      ) or (
+        ${table.kind} = 'image'
+        and ${table.inlineText} is null
+        and ${table.storageKey} is not null
+        and ${table.width} > 0
+        and ${table.height} > 0
+      )`,
+    ),
+    storageKeyCheck: check(
+      "artifact_contents_storage_key_check",
+      sql`${table.storageKey} is null or (
+        length(${table.storageKey}) between 1 and 1024
+        and ${table.storageKey} !~* '^https?://'
+      )`,
+    ),
+  }),
+);
+
+export const artifacts = pgTable(
+  "artifacts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    contentDigest: text("content_digest").notNull(),
+    kind: text("kind").notNull(),
+    mediaType: text("media_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    creatorPrincipalId: text("creator_principal_id").notNull(),
+    origin: text("origin").notNull(),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull(),
+    retentionMode: text("retention_mode").notNull(),
+    retentionSnapshotAt: timestamp("retention_snapshot_at", {
+      withTimezone: true,
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("artifacts_workspace_id_unique").on(
+      table.workspaceId,
+      table.id,
+    ),
+    workspaceContentFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.contentDigest,
+        table.kind,
+        table.mediaType,
+        table.sizeBytes,
+      ],
+      foreignColumns: [
+        artifactContents.workspaceId,
+        artifactContents.digest,
+        artifactContents.kind,
+        artifactContents.mediaType,
+        artifactContents.sizeBytes,
+      ],
+      name: "artifacts_workspace_content_fk",
+    }).onDelete("restrict"),
+    workspaceCreatorFk: foreignKey({
+      columns: [table.workspaceId, table.creatorPrincipalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "artifacts_workspace_creator_fk",
+    }).onDelete("restrict"),
+    workspaceCreatedIdx: index("artifacts_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt,
+      table.id,
+    ),
+    workspaceDigestIdx: index("artifacts_workspace_digest_idx").on(
+      table.workspaceId,
+      table.contentDigest,
+    ),
+    typeCheck: check(
+      "artifacts_type_check",
+      sql`${table.kind} in ('text', 'image')`,
+    ),
+    originCheck: check(
+      "artifacts_origin_check",
+      sql`${table.origin} = 'imported'`,
+    ),
+    retentionCheck: check(
+      "artifacts_retention_check",
+      sql`${table.retentionMode} = 'workspace_default'`,
+    ),
+  }),
+);
+
+export const artifactUploads = pgTable(
+  "artifact_uploads",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    stagingKey: text("staging_key").notNull(),
+    declaredMediaType: text("declared_media_type").notNull(),
+    expectedDigest: text("expected_digest"),
+    expectedSizeBytes: integer("expected_size_bytes"),
+    status: text("status").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    artifactId: text("artifact_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("artifact_uploads_workspace_id_unique").on(
+      table.workspaceId,
+      table.id,
+    ),
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "artifact_uploads_workspace_principal_fk",
+    }).onDelete("restrict"),
+    workspaceArtifactFk: foreignKey({
+      columns: [table.workspaceId, table.artifactId],
+      foreignColumns: [artifacts.workspaceId, artifacts.id],
+      name: "artifact_uploads_workspace_artifact_fk",
+    }).onDelete("restrict"),
+    workspaceStatusExpiryIdx: index(
+      "artifact_uploads_workspace_status_expiry_idx",
+    ).on(table.workspaceId, table.status, table.expiresAt),
+    stagingKeyUnique: uniqueIndex("artifact_uploads_staging_key_unique").on(
+      table.stagingKey,
+    ),
+    statusCheck: check(
+      "artifact_uploads_status_check",
+      sql`${table.status} in ('pending', 'completed', 'failed')`,
+    ),
+    expectedDigestCheck: check(
+      "artifact_uploads_expected_digest_check",
+      sql`${table.expectedDigest} is null or ${table.expectedDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    expectedSizeCheck: check(
+      "artifact_uploads_expected_size_check",
+      sql`${table.expectedSizeBytes} is null or (
+        ${table.expectedSizeBytes} >= 0
+        and ${table.expectedSizeBytes} <= 52428800
+      )`,
+    ),
+    stagingKeyCheck: check(
+      "artifact_uploads_staging_key_check",
+      sql`length(${table.stagingKey}) between 1 and 1024 and ${table.stagingKey} !~* '^https?://'`,
+    ),
+    stateCheck: check(
+      "artifact_uploads_state_check",
+      sql`(
+        ${table.status} = 'pending'
+        and ${table.artifactId} is null
+        and ${table.completedAt} is null
+      ) or (
+        ${table.status} = 'completed'
+        and ${table.artifactId} is not null
+        and ${table.completedAt} is not null
+      ) or ${table.status} = 'failed'`,
+    ),
+  }),
+);
+
+export const artifactMutationReceipts = pgTable(
+  "artifact_mutation_receipts",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    resourceId: text("resource_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.capability,
+        table.idempotencyKey,
+      ],
+      name: "artifact_mutation_receipts_pk",
+    }),
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "artifact_mutation_receipts_workspace_principal_fk",
+    }).onDelete("restrict"),
+    fingerprintCheck: check(
+      "artifact_mutation_receipts_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    capabilityCheck: check(
+      "artifact_mutation_receipts_capability_check",
+      sql`${table.capability} in (
+        'artifacts.import@1',
+        'artifact_uploads.begin@1',
+        'artifact_uploads.complete@1'
+      )`,
+    ),
+  }),
+);
+
+export const artifactAuditEvents = pgTable(
+  "artifact_audit_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    artifactId: text("artifact_id"),
+    uploadId: text("upload_id"),
+    eventType: text("event_type").notNull(),
+    requestFingerprint: text("request_fingerprint"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "artifact_audit_events_workspace_principal_fk",
+    }).onDelete("restrict"),
+    workspaceArtifactFk: foreignKey({
+      columns: [table.workspaceId, table.artifactId],
+      foreignColumns: [artifacts.workspaceId, artifacts.id],
+      name: "artifact_audit_events_workspace_artifact_fk",
+    }).onDelete("restrict"),
+    workspaceUploadFk: foreignKey({
+      columns: [table.workspaceId, table.uploadId],
+      foreignColumns: [artifactUploads.workspaceId, artifactUploads.id],
+      name: "artifact_audit_events_workspace_upload_fk",
+    }).onDelete("restrict"),
+    workspaceCreatedIdx: index("artifact_audit_events_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt,
+      table.id,
+    ),
+    eventTypeCheck: check(
+      "artifact_audit_events_type_check",
+      sql`${table.eventType} in (
+        'artifact.imported',
+        'artifact.upload_begun',
+        'artifact.upload_completed',
+        'artifact.download_handoff_created'
+      )`,
+    ),
+    fingerprintCheck: check(
+      "artifact_audit_events_fingerprint_check",
+      sql`${table.requestFingerprint} is null or ${table.requestFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
     ),
   }),
 );
