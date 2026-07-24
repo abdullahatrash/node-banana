@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isProductionLikeRuntime } from "@/lib/auth/features";
 import { getDb } from "@/lib/db";
 import {
   createOpaqueCredential,
@@ -54,10 +55,7 @@ const systemClock: AgentAuthClock = { now: () => new Date() };
 function getAgentKeyPepper(): string {
   const configured = process.env.AGENT_KEY_PEPPER?.trim();
   if (configured) return configured;
-  if (
-    process.env.NODE_ENV === "production" ||
-    process.env.VERCEL_ENV === "production"
-  ) {
+  if (isProductionLikeRuntime() || process.env.VERCEL_ENV === "production") {
     throw new Error("AGENT_KEY_PEPPER must be set in production.");
   }
   return "node-banana-local-agent-pepper-change-before-production";
@@ -350,7 +348,7 @@ export class AgentAuthService {
         "The Agent Principal is suspended.",
       );
     }
-    if (record.principal.status === "revoked") {
+    if (record.principal.status === "revoked" || record.principal.revokedAt) {
       throw new AgentAuthError(
         "AGENT_PRINCIPAL_REVOKED",
         "The Agent Principal is revoked.",
@@ -383,12 +381,14 @@ export class AgentAuthService {
 
   async rotateKey(input: {
     principalId: string;
+    workspaceId: string;
     actorUserId: string;
     name: string;
     expiresAt?: Date | null;
   }): Promise<{ agentKey: string; key: Omit<AgentKeyRecord, "secretHash"> }> {
     const principal = await this.repository.findPrincipalForActor(
       input.principalId,
+      input.workspaceId,
       input.actorUserId,
     );
     if (!principal) {
@@ -424,6 +424,7 @@ export class AgentAuthService {
 
   async revokeKey(input: {
     keyId: string;
+    workspaceId: string;
     actorUserId: string;
   }): Promise<void> {
     const revoked = await this.repository.revokeKey({
@@ -440,11 +441,13 @@ export class AgentAuthService {
 
   async setPrincipalStatus(input: {
     principalId: string;
+    workspaceId: string;
     actorUserId: string;
     status: AgentPrincipalStatus;
   }): Promise<AgentPrincipalRecord> {
     const current = await this.repository.findPrincipalForActor(
       input.principalId,
+      input.workspaceId,
       input.actorUserId,
     );
     if (!current) {
@@ -464,6 +467,17 @@ export class AgentAuthService {
       updatedAt: this.clock.now(),
     });
     if (!principal) {
+      const latest = await this.repository.findPrincipalForActor(
+        input.principalId,
+        input.workspaceId,
+        input.actorUserId,
+      );
+      if (latest?.status === "revoked") {
+        throw new AgentAuthError(
+          "AGENT_PRINCIPAL_REVOKED",
+          "A revoked Agent Principal cannot be reactivated.",
+        );
+      }
       throw new AgentAuthError(
         "AGENT_PRINCIPAL_NOT_FOUND",
         "Agent Principal was not found in an accessible Workspace.",
@@ -533,10 +547,19 @@ export class AgentAuthService {
   private challengeUnavailableError(
     challenge: PairingChallengeRecord | null,
   ): AgentAuthError {
-    if (challenge?.consumedAt || challenge?.approvedAt) {
+    if (challenge?.consumedAt) {
       return new AgentAuthError(
         "PAIRING_CHALLENGE_REPLAYED",
         "This pairing challenge was already used.",
+      );
+    }
+    if (
+      challenge &&
+      challenge.expiresAt.getTime() > this.clock.now().getTime()
+    ) {
+      return new AgentAuthError(
+        "PAIRING_CHALLENGE_REPLAYED",
+        "This pairing challenge was already approved.",
       );
     }
     return new AgentAuthError(

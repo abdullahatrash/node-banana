@@ -6,6 +6,7 @@ import {
   inArray,
   isNull,
   lt,
+  ne,
   or,
 } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
@@ -232,11 +233,13 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
     const membership = await this.getDatabase()
       .select({ workspaceId: workspaceMembers.workspaceId })
       .from(workspaceMembers)
+      .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
       .where(
         and(
           eq(workspaceMembers.workspaceId, workspaceId),
           eq(workspaceMembers.userId, actorUserId),
           inArray(workspaceMembers.role, ["owner", "admin"]),
+          isNull(workspaces.deletedAt),
         ),
       )
       .limit(1);
@@ -266,6 +269,7 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
 
   async findPrincipalForActor(
     principalId: string,
+    workspaceId: string,
     actorUserId: string,
   ): Promise<AgentPrincipalRecord | null> {
     const rows = await this.getDatabase()
@@ -278,10 +282,13 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
           eq(workspaceMembers.userId, actorUserId),
         ),
       )
+      .innerJoin(workspaces, eq(agentPrincipals.workspaceId, workspaces.id))
       .where(
         and(
           eq(agentPrincipals.id, principalId),
+          eq(agentPrincipals.workspaceId, workspaceId),
           inArray(workspaceMembers.role, ["owner", "admin"]),
+          isNull(workspaces.deletedAt),
         ),
       )
       .limit(1);
@@ -294,6 +301,7 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
 
   async revokeKey(input: {
     keyId: string;
+    workspaceId: string;
     actorUserId: string;
     revokedAt: Date;
   }): Promise<boolean> {
@@ -311,10 +319,13 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
           eq(workspaceMembers.userId, input.actorUserId),
         ),
       )
+      .innerJoin(workspaces, eq(agentPrincipals.workspaceId, workspaces.id))
       .where(
         and(
           eq(agentKeys.id, input.keyId),
+          eq(agentPrincipals.workspaceId, input.workspaceId),
           inArray(workspaceMembers.role, ["owner", "admin"]),
+          isNull(workspaces.deletedAt),
         ),
       )
       .limit(1);
@@ -328,15 +339,28 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
 
   async updatePrincipalStatus(input: {
     principalId: string;
+    workspaceId: string;
     actorUserId: string;
     status: AgentPrincipalStatus;
     updatedAt: Date;
   }): Promise<AgentPrincipalRecord | null> {
     const principal = await this.findPrincipalForActor(
       input.principalId,
+      input.workspaceId,
       input.actorUserId,
     );
     if (!principal) return null;
+    const principalPredicate =
+      input.status === "revoked"
+        ? and(
+            eq(agentPrincipals.id, input.principalId),
+            eq(agentPrincipals.workspaceId, input.workspaceId),
+          )
+        : and(
+            eq(agentPrincipals.id, input.principalId),
+            eq(agentPrincipals.workspaceId, input.workspaceId),
+            ne(agentPrincipals.status, "revoked"),
+          );
     const rows = await this.getDatabase()
       .update(agentPrincipals)
       .set({
@@ -347,7 +371,7 @@ export class DrizzleAgentAuthRepository implements AgentAuthRepository {
           input.status === "revoked" ? input.updatedAt : principal.revokedAt,
         updatedAt: input.updatedAt,
       })
-      .where(eq(agentPrincipals.id, input.principalId))
+      .where(principalPredicate)
       .returning();
     return rows[0] ? principalFromRow(rows[0]) : null;
   }

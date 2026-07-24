@@ -67,6 +67,23 @@ async function dispatchIdentity(
 }
 
 describe("Workspace Agent pairing and authentication", () => {
+  it("requires a dedicated pepper in production-like environments", () => {
+    const previousAppEnv = process.env.APP_ENV;
+    const previousPepper = process.env.AGENT_KEY_PEPPER;
+    process.env.APP_ENV = "staging";
+    delete process.env.AGENT_KEY_PEPPER;
+    try {
+      expect(
+        () => new AgentAuthService(new InMemoryAgentAuthRepository()),
+      ).toThrow("AGENT_KEY_PEPPER must be set in production.");
+    } finally {
+      if (previousAppEnv === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = previousAppEnv;
+      if (previousPepper === undefined) delete process.env.AGENT_KEY_PEPPER;
+      else process.env.AGENT_KEY_PEPPER = previousPepper;
+    }
+  });
+
   it("approves then atomically redeems a single-use challenge without retaining plaintext", async () => {
     const setup = fixture();
     const { created, redeemed } = await pairAgent(setup);
@@ -134,6 +151,7 @@ describe("Workspace Agent pairing and authentication", () => {
     const { redeemed } = await pairAgent(setup);
     const rotated = await setup.service.rotateKey({
       principalId: redeemed.principal.id,
+      workspaceId: "workspace-1",
       actorUserId: "human-1",
       name: "CI replacement",
       expiresAt: new Date("2026-08-01T00:00:00.000Z"),
@@ -148,6 +166,7 @@ describe("Workspace Agent pairing and authentication", () => {
 
     await setup.service.revokeKey({
       keyId: redeemed.key.id,
+      workspaceId: "workspace-1",
       actorUserId: "human-1",
     });
     expect(await dispatchIdentity(setup, redeemed.agentKey)).toMatchObject({
@@ -160,6 +179,33 @@ describe("Workspace Agent pairing and authentication", () => {
     );
   });
 
+  it("binds management actions to the selected active Workspace", async () => {
+    const setup = fixture();
+    const { redeemed } = await pairAgent(setup);
+    setup.repository.addMembership("workspace-2", "human-1", "owner");
+
+    await expect(
+      setup.service.rotateKey({
+        principalId: redeemed.principal.id,
+        workspaceId: "workspace-2",
+        actorUserId: "human-1",
+        name: "Wrong Workspace",
+      }),
+    ).rejects.toMatchObject({ code: "AGENT_PRINCIPAL_NOT_FOUND" });
+
+    setup.repository.inactiveWorkspaces.add("workspace-1");
+    await expect(
+      setup.service.listPrincipals("workspace-1", "human-1"),
+    ).rejects.toMatchObject({ code: "PAIRING_SPONSOR_FORBIDDEN" });
+    await expect(
+      setup.service.revokeKey({
+        keyId: redeemed.key.id,
+        workspaceId: "workspace-1",
+        actorUserId: "human-1",
+      }),
+    ).rejects.toMatchObject({ code: "AGENT_KEY_NOT_FOUND" });
+  });
+
   it.each([
     {
       label: "principal suspension",
@@ -169,6 +215,7 @@ describe("Workspace Agent pairing and authentication", () => {
       ) =>
         setup.service.setPrincipalStatus({
           principalId,
+          workspaceId: "workspace-1",
           actorUserId: "human-1",
           status: "suspended",
         }),
@@ -182,6 +229,7 @@ describe("Workspace Agent pairing and authentication", () => {
       ) =>
         setup.service.setPrincipalStatus({
           principalId,
+          workspaceId: "workspace-1",
           actorUserId: "human-1",
           status: "revoked",
         }),
@@ -203,6 +251,33 @@ describe("Workspace Agent pairing and authentication", () => {
       code,
       category: "authorization",
     });
+  });
+
+  it("does not let a stale status update undo concurrent revocation", async () => {
+    const setup = fixture();
+    const { redeemed } = await pairAgent(setup);
+    const updateStatus =
+      setup.repository.updatePrincipalStatus.bind(setup.repository);
+    setup.repository.updatePrincipalStatus = async (input) => {
+      const principal = setup.repository.principals.get(input.principalId);
+      if (principal) {
+        principal.status = "revoked";
+        principal.revokedAt = setup.clock.now();
+      }
+      return updateStatus(input);
+    };
+
+    await expect(
+      setup.service.setPrincipalStatus({
+        principalId: redeemed.principal.id,
+        workspaceId: "workspace-1",
+        actorUserId: "human-1",
+        status: "active",
+      }),
+    ).rejects.toMatchObject({ code: "AGENT_PRINCIPAL_REVOKED" });
+    expect(
+      setup.repository.principals.get(redeemed.principal.id)?.status,
+    ).toBe("revoked");
   });
 
   it("uses a uniform capability auth failure for missing, malformed, expired, and revoked keys", async () => {
@@ -246,5 +321,29 @@ describe("Workspace Agent pairing and authentication", () => {
         sponsorUserId: "human-2",
       }),
     ).rejects.toMatchObject({ code: "PAIRING_SPONSOR_FORBIDDEN" });
+  });
+
+  it("reports expiry when an approved challenge expires during redemption", async () => {
+    const setup = fixture();
+    const created = await setup.service.createPairingChallenge({
+      agentName: "Expiry Race",
+      requestedAccess: ["content.read"],
+      ttlMs: 30_000,
+    });
+    await setup.service.approvePairing({
+      challenge: created.challenge,
+      workspaceId: "workspace-1",
+      sponsorUserId: "human-1",
+    });
+    const completePairing =
+      setup.repository.completePairing.bind(setup.repository);
+    setup.repository.completePairing = async (input) => {
+      setup.clock.advance(31_000);
+      return completePairing({ ...input, now: setup.clock.now() });
+    };
+
+    await expect(
+      setup.service.redeemPairing({ challenge: created.challenge }),
+    ).rejects.toMatchObject({ code: "PAIRING_CHALLENGE_EXPIRED" });
   });
 });

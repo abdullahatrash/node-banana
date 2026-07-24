@@ -102,16 +102,19 @@ export interface AgentAuthRepository {
   ): Promise<AgentPrincipalSummary[] | null>;
   findPrincipalForActor(
     principalId: string,
+    workspaceId: string,
     actorUserId: string,
   ): Promise<AgentPrincipalRecord | null>;
   createKey(key: AgentKeyRecord): Promise<void>;
   revokeKey(input: {
     keyId: string;
+    workspaceId: string;
     actorUserId: string;
     revokedAt: Date;
   }): Promise<boolean>;
   updatePrincipalStatus(input: {
     principalId: string;
+    workspaceId: string;
     actorUserId: string;
     status: AgentPrincipalStatus;
     updatedAt: Date;

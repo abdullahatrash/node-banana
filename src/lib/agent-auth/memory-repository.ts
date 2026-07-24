@@ -157,7 +157,12 @@ export class InMemoryAgentAuthRepository implements AgentAuthRepository {
     workspaceId: string,
     actorUserId: string,
   ): Promise<AgentPrincipalSummary[] | null> {
-    if (!this.administrators.has(`${workspaceId}:${actorUserId}`)) return null;
+    if (
+      !this.administrators.has(`${workspaceId}:${actorUserId}`) ||
+      this.inactiveWorkspaces.has(workspaceId)
+    ) {
+      return null;
+    }
     return [...this.principals.values()]
       .filter((principal) => principal.workspaceId === workspaceId)
       .map((principal) => ({
@@ -170,12 +175,15 @@ export class InMemoryAgentAuthRepository implements AgentAuthRepository {
 
   async findPrincipalForActor(
     principalId: string,
+    workspaceId: string,
     actorUserId: string,
   ): Promise<AgentPrincipalRecord | null> {
     const principal = this.principals.get(principalId);
     if (
       !principal ||
-      !this.administrators.has(`${principal.workspaceId}:${actorUserId}`)
+      principal.workspaceId !== workspaceId ||
+      this.inactiveWorkspaces.has(workspaceId) ||
+      !this.administrators.has(`${workspaceId}:${actorUserId}`)
     ) {
       return null;
     }
@@ -188,6 +196,7 @@ export class InMemoryAgentAuthRepository implements AgentAuthRepository {
 
   async revokeKey(input: {
     keyId: string;
+    workspaceId: string;
     actorUserId: string;
     revokedAt: Date;
   }): Promise<boolean> {
@@ -196,8 +205,10 @@ export class InMemoryAgentAuthRepository implements AgentAuthRepository {
     if (
       !key ||
       !principal ||
+      principal.workspaceId !== input.workspaceId ||
+      this.inactiveWorkspaces.has(input.workspaceId) ||
       !this.administrators.has(
-        `${principal.workspaceId}:${input.actorUserId}`,
+        `${input.workspaceId}:${input.actorUserId}`,
       )
     ) {
       return false;
@@ -208,15 +219,20 @@ export class InMemoryAgentAuthRepository implements AgentAuthRepository {
 
   async updatePrincipalStatus(input: {
     principalId: string;
+    workspaceId: string;
     actorUserId: string;
     status: AgentPrincipalStatus;
     updatedAt: Date;
   }): Promise<AgentPrincipalRecord | null> {
     const principal = await this.findPrincipalForActor(
       input.principalId,
+      input.workspaceId,
       input.actorUserId,
     );
     if (!principal) return null;
+    if (principal.status === "revoked" && input.status !== "revoked") {
+      return null;
+    }
     principal.status = input.status;
     principal.updatedAt = input.updatedAt;
     if (input.status === "suspended") principal.suspendedAt = input.updatedAt;
