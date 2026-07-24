@@ -3,7 +3,6 @@ import {
   desc,
   eq,
   inArray,
-  isNotNull,
   isNull,
 } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
@@ -16,8 +15,8 @@ import {
   agentPrincipals,
   agentSecurityEvents,
   artifacts,
+  contentWorkflows,
   credentialProfiles,
-  projects,
   socialAccounts,
   socialAutomationRules,
   workspaceAgentPolicies,
@@ -417,15 +416,12 @@ export class DrizzleAgentAuthorizationRepository
     const selectedWorkflows = workflowIds.length === 0
       ? []
       : await database
-            .select({ id: projects.id })
-            .from(projects)
+            .select({ id: contentWorkflows.id })
+            .from(contentWorkflows)
             .where(
               and(
-                eq(projects.workspaceId, workspaceId),
-                inArray(projects.id, workflowIds),
-                eq(projects.status, "active"),
-                isNotNull(projects.workflowJson),
-                isNull(projects.deletedAt),
+                eq(contentWorkflows.workspaceId, workspaceId),
+                inArray(contentWorkflows.id, workflowIds),
               ),
             )
             .for("share");

@@ -1,0 +1,93 @@
+{
+  "schema": "content-workflow-draft/v1",
+  "workflowId": "fixture-workflow",
+  "name": "LinkedIn launch copy and hero image",
+  "description": "Frozen golden Content Workflow fixture. Publishing remains separate.",
+  "inputs": {
+    "brief": {
+      "kind": "text",
+      "required": true,
+      "description": "Product launch brief supplied at Run start."
+    },
+    "reference_image": {
+      "kind": "image",
+      "required": true,
+      "description": "Imported reference-image Artifact supplied at Run start."
+    }
+  },
+  "credentialSlots": {
+    "generation_provider": {
+      "slotId": "slot_gemini_golden",
+      "provider": "gemini"
+    }
+  },
+  "steps": [
+    {
+      "id": "draft_copy",
+      "operation": "gemini.generate_text@1",
+      "inputs": {
+        "prompt": {
+          "from": "workflow_input",
+          "input": "brief"
+        }
+      },
+      "credentials": {
+        "provider": "generation_provider"
+      },
+      "config": {
+        "model": "gemini-2.5-flash",
+        "instruction": "Write concise LinkedIn launch copy."
+      },
+      "retry": {
+        "maxAttempts": 2,
+        "backoff": {
+          "initialMs": 1000,
+          "maxMs": 8000,
+          "multiplier": 2
+        }
+      }
+    },
+    {
+      "id": "generate_hero",
+      "operation": "gemini.generate_image@1",
+      "inputs": {
+        "prompt": {
+          "from": "step_output",
+          "step": "draft_copy",
+          "output": "text"
+        },
+        "referenceImage": {
+          "from": "workflow_input",
+          "input": "reference_image"
+        }
+      },
+      "credentials": {
+        "provider": "generation_provider"
+      },
+      "config": {
+        "model": "gemini-2.5-flash-image",
+        "aspectRatio": "1:1"
+      },
+      "retry": {
+        "maxAttempts": 2,
+        "backoff": {
+          "initialMs": 1000,
+          "maxMs": 8000,
+          "multiplier": 2
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "hero_image": {
+      "from": "step_output",
+      "step": "generate_hero",
+      "output": "image"
+    },
+    "post_copy": {
+      "from": "step_output",
+      "step": "draft_copy",
+      "output": "text"
+    }
+  }
+}

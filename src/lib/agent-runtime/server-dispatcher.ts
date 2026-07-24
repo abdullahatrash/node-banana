@@ -33,6 +33,11 @@ import {
   PRODUCTION_ARTIFACT_SERVICE,
   createArtifactRegistrations,
 } from "./artifacts";
+import {
+  GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+  PRODUCTION_WORKFLOW_REVISION_SERVICE,
+  createWorkflowRegistrations,
+} from "./workflows";
 
 export const PRODUCTION_AGENT_AUTHORIZER = new AgentAuthorizationService(
   new DrizzleAgentAuthorizationRepository(getDb),
@@ -75,6 +80,10 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
   ...createCredentialProfileRegistrations(CREDENTIAL_VAULT_SERVICE),
   ...createCredentialHumanRegistrations(CREDENTIAL_VAULT_SERVICE),
   ...createArtifactRegistrations(PRODUCTION_ARTIFACT_SERVICE),
+  ...createWorkflowRegistrations(
+    PRODUCTION_WORKFLOW_REVISION_SERVICE,
+    GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+  ),
 ]);
 
 export const CAPABILITY_DISPATCHER = new CapabilityDispatcher(

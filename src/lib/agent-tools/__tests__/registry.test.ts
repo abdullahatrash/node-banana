@@ -86,6 +86,12 @@ describe("production Capability Registry", () => {
       "credentials.spend_grants.list@1",
       "credentials.spend_grants.revoke@1",
       "credentials.versions.revoke@1",
+      "workflow_operations.get@1",
+      "workflow_operations.list@1",
+      "workflow_versions.create@1",
+      "workflow_versions.get@1",
+      "workflow_versions.validate@1",
+      "workflows.create@1",
     ]);
     expect(output.registryDigest).toBe(CAPABILITY_REGISTRY.digest);
 
@@ -102,7 +108,7 @@ describe("production Capability Registry", () => {
       expect(definition.schemas.output).toMatchObject({ type: "object" });
       if (
         definition.audience === "agent" &&
-        !definition.identity.name.startsWith("artifact")
+        definition.effect.mutation === "none"
       ) {
         expect(definition.effect).toEqual({
           mutation: "none",
@@ -187,6 +193,12 @@ describe("production Capability Registry", () => {
       "credentials.spend_grants.list.v1",
       "credentials.spend_grants.revoke.v1",
       "credentials.versions.revoke.v1",
+      "workflow_operations.get.v1",
+      "workflow_operations.list.v1",
+      "workflow_versions.create.v1",
+      "workflow_versions.get.v1",
+      "workflow_versions.validate.v1",
+      "workflows.create.v1",
     ]);
     expect(mcpTools.some((tool) => tool.name.includes("latest"))).toBe(false);
     expect(

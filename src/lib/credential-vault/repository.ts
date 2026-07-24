@@ -32,6 +32,7 @@ import type {
   CredentialEffectIntent,
   CredentialSpendGrant,
   SafeCredentialProfile,
+  WorkflowCredentialMetadataReader,
 } from "@/types/credentials";
 import type {
   CredentialSafeEffectResult,
@@ -237,7 +238,7 @@ function grantFromReceipt(value: unknown): CredentialSpendGrant {
 }
 
 export class DrizzleCredentialVaultRepository
-  implements CredentialVaultRepository
+  implements CredentialVaultRepository, WorkflowCredentialMetadataReader
 {
   constructor(private readonly getDatabase: () => Db) {}
 
@@ -1289,6 +1290,57 @@ export class DrizzleCredentialVaultRepository
           spendGrantId: row.grant.id,
         }
       : null;
+  }
+
+  async getSafeWorkflowSlot(
+    input: Parameters<
+      WorkflowCredentialMetadataReader["getSafeWorkflowSlot"]
+    >[0],
+  ) {
+    const rows = await this.getDatabase()
+      .select({
+        slotId: credentialSlots.id,
+        profileId: credentialProfiles.id,
+        provider: credentialProfiles.provider,
+      })
+      .from(credentialSlots)
+      .innerJoin(
+        credentialProfiles,
+        and(
+          eq(credentialProfiles.workspaceId, credentialSlots.workspaceId),
+          eq(credentialProfiles.id, credentialSlots.profileId),
+          eq(credentialProfiles.provider, credentialSlots.provider),
+        ),
+      )
+      .innerJoin(
+        credentialProfileVersions,
+        and(
+          eq(
+            credentialProfileVersions.workspaceId,
+            credentialProfiles.workspaceId,
+          ),
+          eq(credentialProfileVersions.profileId, credentialProfiles.id),
+          eq(
+            credentialProfileVersions.version,
+            credentialProfiles.activeVersion,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(credentialSlots.workspaceId, input.workspaceId),
+          eq(credentialSlots.id, input.slotId),
+          eq(credentialSlots.provider, input.provider),
+          eq(credentialProfiles.provider, input.provider),
+          eq(credentialProfiles.status, "active"),
+          eq(credentialProfiles.enabled, true),
+          isNull(credentialProfiles.deletedAt),
+          eq(credentialProfileVersions.status, "active"),
+          isNull(credentialProfileVersions.revokedAt),
+        ),
+      )
+      .limit(1);
+    return rows[0] ?? null;
   }
 
   async resolveWorkflowStepBinding(

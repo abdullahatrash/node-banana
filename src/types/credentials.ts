@@ -236,3 +236,19 @@ export interface CredentialMetadataReader {
     profileId: string;
   }): Promise<SafeCredentialProfile | null>;
 }
+
+/**
+ * Narrow, secret-free lookup used only while validating immutable Workflow
+ * Credential Slot bindings. It intentionally exposes no Credential Version.
+ */
+export interface WorkflowCredentialMetadataReader {
+  getSafeWorkflowSlot(input: {
+    workspaceId: string;
+    slotId: string;
+    provider: string;
+  }): Promise<{
+    slotId: string;
+    profileId: string;
+    provider: string;
+  } | null>;
+}

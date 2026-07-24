@@ -164,6 +164,11 @@ export interface CapabilityRegistration<Input = unknown, Output = unknown> {
   summary: string;
   lifecycle: CapabilityLifecycle;
   input: z.ZodType<Input>;
+  /**
+   * Optional discovery-only schema when runtime parsing must remain broader
+   * so the handler can return stable domain validation diagnostics.
+   */
+  inputSchema?: JsonSchema;
   outputSchema: JsonSchema;
   effect: CapabilityEffect;
   approval: CapabilityApprovalContract;

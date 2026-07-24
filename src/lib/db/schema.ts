@@ -14,6 +14,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { ResolvedWorkflowDefinition } from "@/lib/agent-runtime/workflows/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -471,6 +472,10 @@ export const agentKeys = pgTable(
   },
   (table) => ({
     prefixUnique: uniqueIndex("agent_keys_prefix_unique").on(table.lookupPrefix),
+    principalIdUnique: uniqueIndex("agent_keys_principal_id_unique").on(
+      table.principalId,
+      table.id,
+    ),
     principalIdx: index("agent_keys_principal_idx").on(table.principalId),
     expiryIdx: index("agent_keys_expiry_idx").on(table.expiresAt),
   }),
@@ -1493,6 +1498,189 @@ export const artifactAuditEvents = pgTable(
     fingerprintCheck: check(
       "artifact_audit_events_fingerprint_check",
       sql`${table.requestFingerprint} is null or ${table.requestFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+  }),
+);
+
+/**
+ * Canonical Agent-authored content Workflows. These identities and immutable
+ * revisions are intentionally distinct from mutable Studio Project rows.
+ */
+export const contentWorkflows = pgTable(
+  "content_workflows",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    currentRevision: integer("current_revision").default(0).notNull(),
+    createdByPrincipalId: text("created_by_principal_id").notNull(),
+    createdByKeyId: text("created_by_key_id").notNull(),
+    authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "content_workflows_pk",
+    }),
+    workspaceCreatorFk: foreignKey({
+      columns: [table.workspaceId, table.createdByPrincipalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "content_workflows_workspace_creator_fk",
+    }).onDelete("restrict"),
+    creatorKeyFk: foreignKey({
+      columns: [table.createdByPrincipalId, table.createdByKeyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "content_workflows_creator_key_fk",
+    }).onDelete("restrict"),
+    workspaceUpdatedIdx: index("content_workflows_workspace_updated_idx").on(
+      table.workspaceId,
+      table.updatedAt,
+      table.id,
+    ),
+    currentRevisionCheck: check(
+      "content_workflows_current_revision_check",
+      sql`${table.currentRevision} >= 0`,
+    ),
+    idCheck: check(
+      "content_workflows_id_check",
+      sql`length(${table.id}) between 1 and 200 and ${table.id} ~ '^[a-zA-Z0-9_-]+$'`,
+    ),
+    evidenceCheck: check(
+      "content_workflows_evidence_check",
+      sql`length(${table.authorizationEvidenceRef}) between 1 and 200`,
+    ),
+  }),
+);
+
+export const contentWorkflowRevisions = pgTable(
+  "content_workflow_revisions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    workflowId: text("workflow_id").notNull(),
+    revision: integer("revision").notNull(),
+    definitionDigest: text("definition_digest").notNull(),
+    definition: jsonb("definition")
+      .$type<ResolvedWorkflowDefinition>()
+      .notNull(),
+    operationRegistryDigest: text("operation_registry_digest").notNull(),
+    authorPrincipalId: text("author_principal_id").notNull(),
+    authorKeyId: text("author_key_id").notNull(),
+    authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "content_workflow_revisions_pk",
+    }),
+    workflowRevisionUnique: uniqueIndex(
+      "content_workflow_revisions_workspace_workflow_revision_unique",
+    ).on(table.workspaceId, table.workflowId, table.revision),
+    workspaceWorkflowFk: foreignKey({
+      columns: [table.workspaceId, table.workflowId],
+      foreignColumns: [contentWorkflows.workspaceId, contentWorkflows.id],
+      name: "content_workflow_revisions_workspace_workflow_fk",
+    }).onDelete("restrict"),
+    workspaceAuthorFk: foreignKey({
+      columns: [table.workspaceId, table.authorPrincipalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "content_workflow_revisions_workspace_author_fk",
+    }).onDelete("restrict"),
+    authorKeyFk: foreignKey({
+      columns: [table.authorPrincipalId, table.authorKeyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "content_workflow_revisions_author_key_fk",
+    }).onDelete("restrict"),
+    workspaceWorkflowCreatedIdx: index(
+      "content_workflow_revisions_workspace_workflow_created_idx",
+    ).on(table.workspaceId, table.workflowId, table.createdAt, table.id),
+    revisionCheck: check(
+      "content_workflow_revisions_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+    definitionDigestCheck: check(
+      "content_workflow_revisions_definition_digest_check",
+      sql`${table.definitionDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    operationRegistryDigestCheck: check(
+      "content_workflow_revisions_registry_digest_check",
+      sql`${table.operationRegistryDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    definitionIdentityCheck: check(
+      "content_workflow_revisions_definition_identity_check",
+      sql`jsonb_typeof(${table.definition}) = 'object'
+        and ${table.definition}->>'schema' = 'content-workflow-revision-definition/v1'
+        and ${table.definition}->>'workflowId' = ${table.workflowId}`,
+    ),
+    idCheck: check(
+      "content_workflow_revisions_id_check",
+      sql`length(${table.id}) between 1 and 200 and ${table.id} ~ '^[a-zA-Z0-9_-]+$'`,
+    ),
+    evidenceCheck: check(
+      "content_workflow_revisions_evidence_check",
+      sql`length(${table.authorizationEvidenceRef}) between 1 and 200`,
+    ),
+  }),
+);
+
+export const workflowRevisionMutationReceipts = pgTable(
+  "workflow_revision_mutation_receipts",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    resourceId: text("resource_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.capability,
+        table.idempotencyKey,
+      ],
+      name: "workflow_revision_mutation_receipts_pk",
+    }),
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "workflow_revision_mutation_receipts_workspace_principal_fk",
+    }).onDelete("restrict"),
+    workspaceCreatedIdx: index(
+      "workflow_revision_mutation_receipts_workspace_created_idx",
+    ).on(table.workspaceId, table.createdAt),
+    capabilityCheck: check(
+      "workflow_revision_mutation_receipts_capability_check",
+      sql`${table.capability} in ('workflows.create@1', 'workflow_versions.create@1')`,
+    ),
+    idempotencyKeyCheck: check(
+      "workflow_revision_mutation_receipts_idempotency_key_check",
+      sql`length(${table.idempotencyKey}) between 8 and 200 and ${table.idempotencyKey} ~ '^[!-~]+$'`,
+    ),
+    fingerprintCheck: check(
+      "workflow_revision_mutation_receipts_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    resourceIdCheck: check(
+      "workflow_revision_mutation_receipts_resource_id_check",
+      sql`length(${table.resourceId}) between 1 and 200 and ${table.resourceId} ~ '^[a-zA-Z0-9_-]+$'`,
     ),
   }),
 );

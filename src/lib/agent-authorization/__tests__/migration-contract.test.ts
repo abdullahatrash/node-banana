@@ -36,7 +36,7 @@ describe("Agent authorization migration contracts", () => {
     expect(sql).toContain('"change_ref" text');
   });
 
-  it("authorizes only live projects with stored workflow data", () => {
+  it("authorizes only canonical workspace-scoped content Workflows", () => {
     const source = readFileSync(
       resolve(
         process.cwd(),
@@ -44,10 +44,22 @@ describe("Agent authorization migration contracts", () => {
       ),
       "utf8",
     );
+    const activeResources = source.slice(
+      source.indexOf("private async findActiveResourcesWith"),
+      source.indexOf("async issueAttenuatedKey"),
+    );
 
-    expect(source).toContain('eq(projects.status, "active")');
-    expect(source).toContain("isNotNull(projects.workflowJson)");
-    expect(source).toContain("isNull(projects.deletedAt)");
+    expect(activeResources).toContain(".from(contentWorkflows)");
+    expect(activeResources).toContain(
+      "eq(contentWorkflows.workspaceId, workspaceId)",
+    );
+    expect(activeResources).toContain(
+      "inArray(contentWorkflows.id, workflowIds)",
+    );
+    // Legacy Studio Project workflows intentionally cease resolving as Agent
+    // Workflow resources, even when their text IDs overlap.
+    expect(activeResources).not.toContain(".from(projects)");
+    expect(activeResources).not.toContain("workflowJson");
   });
 
   it("filters enumerated effective Credential Profiles through current database state", () => {

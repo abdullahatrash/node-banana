@@ -317,7 +317,9 @@ function immutableContract(
     audience: registration.audience ?? "agent",
     summary: registration.summary,
     schemas: {
-      input: z.toJSONSchema(registration.input, { target: "draft-7" }),
+      input:
+        registration.inputSchema ??
+        z.toJSONSchema(registration.input, { target: "draft-7" }),
       output: registration.outputSchema,
     },
     effect: registration.effect,
@@ -387,6 +389,9 @@ export class CapabilityRegistry implements CapabilityRegistryReader {
         ...registration,
         identity: freezeContractValue({ ...registration.identity }),
         lifecycle: freezeContractValue({ ...registration.lifecycle }),
+        inputSchema: registration.inputSchema
+          ? freezeContractValue({ ...registration.inputSchema })
+          : undefined,
         outputSchema: freezeContractValue({ ...registration.outputSchema }),
         effect: freezeContractValue({ ...registration.effect }),
         approval: freezeContractValue({ ...registration.approval }),
