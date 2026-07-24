@@ -109,13 +109,101 @@ describe("production Capability Registry", () => {
       capability: null,
       code: "CAPABILITY_IDENTITY_INVALID",
     });
-    expect(listMcpCapabilityTools().map((tool) => tool.name)).toEqual([
+    const mcpTools = await listMcpCapabilityTools();
+    expect(mcpTools.map((tool) => tool.name)).toEqual([
       "capabilities.get.v1",
       "capabilities.list.v1",
     ]);
-    expect(
-      listMcpCapabilityTools().some((tool) => tool.name.includes("latest")),
-    ).toBe(false);
+    expect(mcpTools.some((tool) => tool.name.includes("latest"))).toBe(false);
+  });
+
+  it("fully specifies every structured field in discovery output schemas", async () => {
+    const response = await CAPABILITY_DISPATCHER.dispatch({
+      capability: CAPABILITY_GET_IDENTITY,
+      input: CAPABILITY_GET_IDENTITY,
+    });
+    expect(response.type).toBe("capability_result");
+    if (response.type !== "capability_result") return;
+
+    const definition = response.output as CapabilityDefinition;
+    const outputSchema = definition.schemas.output as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    const properties = outputSchema.properties;
+
+    expect(properties.lifecycle).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "introducedAt", "recommended"],
+      properties: {
+        status: {
+          enum: ["experimental", "active", "deprecated", "retired"],
+        },
+        replacement: {
+          required: ["name", "version"],
+        },
+      },
+    });
+    expect(properties.schemas).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["input", "output"],
+      properties: {
+        input: { $ref: "http://json-schema.org/draft-07/schema#" },
+        output: { $ref: "http://json-schema.org/draft-07/schema#" },
+      },
+    });
+    expect(properties.effect).toMatchObject({
+      additionalProperties: false,
+      required: [
+        "mutation",
+        "visibility",
+        "timing",
+        "reversibility",
+        "maySpendProviderBudget",
+      ],
+      properties: {
+        mutation: { enum: ["none", "runtime-state", "external-system"] },
+      },
+    });
+    expect(properties.approval).toMatchObject({
+      additionalProperties: false,
+      required: ["mode"],
+      properties: {
+        mode: {
+          enum: ["none", "manages-approval", "required-before-effect"],
+        },
+      },
+    });
+    expect(properties.idempotency).toMatchObject({
+      additionalProperties: false,
+      required: ["mode"],
+      properties: {
+        mode: { enum: ["retry-safe", "intrinsic", "key-required"] },
+      },
+    });
+    expect(properties.errors).toMatchObject({
+      type: "array",
+      minItems: 1,
+      items: {
+        additionalProperties: false,
+        required: ["code", "category", "retryable", "description"],
+        properties: {
+          code: { pattern: "^[A-Z][A-Z0-9_]*$" },
+          category: {
+            enum: [
+              "validation",
+              "not_found",
+              "lifecycle",
+              "authorization",
+              "approval",
+              "conflict",
+              "internal",
+            ],
+          },
+        },
+      },
+    });
   });
 
   it("canonicalizes object key order for contract and request digests", () => {

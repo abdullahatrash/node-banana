@@ -1,17 +1,19 @@
 export {
   capabilityIdentityToMcpTool,
+  discoverCapabilityDefinitions,
   dispatchCliCapability,
   dispatchMcpCapability,
   isExactCliCapability,
   listMcpCapabilityTools,
   mcpToolToCapabilityIdentity,
 } from "./adapters";
-export type { McpCapabilityTool } from "./adapters";
+export { runCapabilityCli } from "./cli";
 export { canonicalDigest, canonicalJson } from "./canonical";
 export type {
   CapabilityApprovalContract,
   CapabilityDefinition,
   CapabilityDispatchContext,
+  CapabilityDispatcherPort,
   CapabilityEffect,
   CapabilityError,
   CapabilityErrorCategory,
@@ -23,10 +25,14 @@ export type {
   CapabilityLifecycle,
   CapabilityLifecycleStatus,
   CapabilityRegistration,
+  CapabilityRegistryReader,
   CapabilityResponse,
   CapabilityResult,
   CapabilityWarning,
+  CapabilityCliIo,
+  CapabilityCliOptions,
   JsonSchema,
+  McpCapabilityTool,
 } from "./contracts";
 export {
   CAPABILITY_DISPATCHER,
@@ -38,6 +44,7 @@ export {
 export { CapabilityFailure } from "./errors";
 export {
   CAPABILITY_GET_IDENTITY,
+  CAPABILITY_DEFINITION_SCHEMA,
   CAPABILITY_LIST_IDENTITY,
   CAPABILITY_REGISTRY,
   COMMON_DISCOVERY_ERRORS,
@@ -46,5 +53,5 @@ export {
   contractDigestFor,
   createCapabilityRegistry,
   createDiscoveryRegistrations,
+  defineCapability,
 } from "./registry";
-export { resolveDiscoveryContext } from "./context";

@@ -1,53 +1,37 @@
 #!/usr/bin/env -S npx tsx
-/**
- * Thin stdio MCP adapter over the production Capability Registry.
- *
- * MCP-safe tool names project exact identities reversibly:
- * `capabilities.list@1` -> `capabilities.list.v1`.
- */
 import "./_load-env";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { pathToFileURL } from "node:url";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import {
-  CAPABILITY_REGISTRY,
-  dispatchMcpCapability,
+  CAPABILITY_DISPATCHER,
   listMcpCapabilityTools,
 } from "@/lib/agent-tools";
+import { createCapabilityMcpServer } from "@/lib/agent-tools/mcp";
+import type { CapabilityDispatcherPort } from "@/types";
 
-async function main(): Promise<void> {
-  const server = new Server(
-    { name: "node-banana", version: "1.0.0" },
-    { capabilities: { tools: {} } },
-  );
-
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: listMcpCapabilityTools(),
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const response = await dispatchMcpCapability(
-      request.params.name,
-      request.params.arguments ?? {},
-    );
-    return {
-      isError: response.type === "capability_error",
-      content: [{ type: "text", text: JSON.stringify(response) }],
-      structuredContent: response,
-    };
-  });
-
-  await server.connect(new StdioServerTransport());
-  // stdout belongs exclusively to MCP framing.
+export async function runNodeBananaMcp(
+  transport: Transport = new StdioServerTransport(),
+  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
+): Promise<Server> {
+  const server = createCapabilityMcpServer(dispatcher);
+  await server.connect(transport);
+  const tools = await listMcpCapabilityTools(dispatcher);
   console.error(
-    `[node-banana-mcp] ready — ${CAPABILITY_REGISTRY.listDefinitions().length} exact capabilities, registry ${CAPABILITY_REGISTRY.digest}`,
+    `[node-banana-mcp] ready — ${tools.length} exact capabilities`,
   );
+  return server;
 }
 
-main().catch((error) => {
-  console.error("[node-banana-mcp] fatal:", error);
-  process.exit(1);
-});
+function isDirectExecution(): boolean {
+  const entry = process.argv[1];
+  return Boolean(entry && import.meta.url === pathToFileURL(entry).href);
+}
+
+if (isDirectExecution()) {
+  runNodeBananaMcp().catch((error) => {
+    console.error("[node-banana-mcp] fatal:", error);
+    process.exitCode = 1;
+  });
+}

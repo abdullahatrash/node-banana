@@ -1,27 +1,15 @@
 import type {
   CapabilityDefinition,
+  CapabilityDispatcherPort,
   CapabilityResponse,
-  JsonSchema,
+  McpCapabilityTool,
 } from "./contracts";
 import {
   CAPABILITY_DISPATCHER,
-  type CapabilityDispatcher,
   formatCapabilityIdentity,
   parseCapabilityIdentity,
 } from "./dispatcher";
-
-export interface McpCapabilityTool {
-  name: string;
-  title: string;
-  description: string;
-  inputSchema: JsonSchema;
-  annotations: {
-    readOnlyHint: boolean;
-    destructiveHint: boolean;
-    idempotentHint: boolean;
-    openWorldHint: boolean;
-  };
-}
+import { CAPABILITY_LIST_IDENTITY } from "./registry";
 
 /** Exact Capability Identity -> MCP-safe, reversible transport spelling. */
 export function capabilityIdentityToMcpTool(
@@ -36,10 +24,32 @@ export function mcpToolToCapabilityIdentity(toolName: string): string {
   return match ? `${match[1]}@${match[2]}` : toolName;
 }
 
-export function listMcpCapabilityTools(
-  dispatcher: CapabilityDispatcher = CAPABILITY_DISPATCHER,
-): McpCapabilityTool[] {
-  return dispatcher.registry.listDefinitions().map((definition) => ({
+export async function discoverCapabilityDefinitions(
+  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
+): Promise<CapabilityDefinition[]> {
+  const response = await dispatcher.dispatch({
+    capability: CAPABILITY_LIST_IDENTITY,
+    input: {},
+  });
+  if (response.type === "capability_error") {
+    throw new Error(
+      `Capability discovery failed: ${response.code} (${response.operatorTraceRef})`,
+    );
+  }
+  const output = response.output as {
+    items?: unknown;
+  };
+  if (!Array.isArray(output.items)) {
+    throw new Error("Capability discovery returned an invalid capability page.");
+  }
+  return output.items as CapabilityDefinition[];
+}
+
+export async function listMcpCapabilityTools(
+  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
+): Promise<McpCapabilityTool[]> {
+  const definitions = await discoverCapabilityDefinitions(dispatcher);
+  return definitions.map((definition) => ({
     name: capabilityIdentityToMcpTool(definition),
     title: formatCapabilityIdentity(definition.identity),
     description: `${definition.summary} Exact capability: ${formatCapabilityIdentity(definition.identity)} (${definition.contractDigest}).`,
@@ -62,7 +72,7 @@ export function listMcpCapabilityTools(
 export function dispatchCliCapability(
   exactCapability: string,
   input: unknown = {},
-  dispatcher: CapabilityDispatcher = CAPABILITY_DISPATCHER,
+  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
 ): Promise<CapabilityResponse> {
   return dispatcher.dispatch({ capability: exactCapability, input });
 }
@@ -74,7 +84,7 @@ export function dispatchCliCapability(
 export function dispatchMcpCapability(
   mcpToolName: string,
   input: unknown = {},
-  dispatcher: CapabilityDispatcher = CAPABILITY_DISPATCHER,
+  dispatcher: CapabilityDispatcherPort = CAPABILITY_DISPATCHER,
 ): Promise<CapabilityResponse> {
   return dispatcher.dispatch({
     capability: mcpToolToCapabilityIdentity(mcpToolName),

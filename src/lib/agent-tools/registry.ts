@@ -56,7 +56,131 @@ export const COMMON_DISCOVERY_ERRORS: CapabilityErrorContract[] = [
   },
 ];
 
-const definitionSchema: JsonSchema = {
+const identitySchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "version"],
+  properties: {
+    name: { type: "string", pattern: IDENTITY_NAME.source },
+    version: { type: "integer", minimum: 1 },
+  },
+};
+
+const lifecycleSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["status", "introducedAt", "recommended"],
+  properties: {
+    status: {
+      type: "string",
+      enum: ["experimental", "active", "deprecated", "retired"],
+    },
+    introducedAt: { type: "string", format: "date-time" },
+    recommended: { type: "boolean" },
+    deprecatedAt: { type: "string", format: "date-time" },
+    retiredAt: { type: "string", format: "date-time" },
+    sunsetAt: { type: "string", format: "date-time" },
+    replacement: identitySchema,
+  },
+  allOf: [
+    {
+      if: { properties: { status: { const: "deprecated" } } },
+      then: { required: ["deprecatedAt"] },
+    },
+    {
+      if: { properties: { status: { const: "retired" } } },
+      then: { required: ["retiredAt"] },
+    },
+    {
+      if: { properties: { recommended: { const: true } } },
+      then: { properties: { status: { const: "active" } } },
+    },
+  ],
+};
+
+const effectSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "mutation",
+    "visibility",
+    "timing",
+    "reversibility",
+    "maySpendProviderBudget",
+  ],
+  properties: {
+    mutation: {
+      type: "string",
+      enum: ["none", "runtime-state", "external-system"],
+    },
+    visibility: {
+      type: "string",
+      enum: ["private", "publicly-visible"],
+    },
+    timing: {
+      type: "string",
+      enum: ["immediate", "durable-async", "future-trigger"],
+    },
+    reversibility: {
+      type: "string",
+      enum: ["reversible", "conditional", "irreversible"],
+    },
+    maySpendProviderBudget: { type: "boolean" },
+  },
+};
+
+const approvalSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["mode"],
+  properties: {
+    mode: {
+      type: "string",
+      enum: ["none", "manages-approval", "required-before-effect"],
+    },
+  },
+};
+
+const idempotencySchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["mode"],
+  properties: {
+    mode: {
+      type: "string",
+      enum: ["retry-safe", "intrinsic", "key-required"],
+    },
+  },
+};
+
+const errorContractSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["code", "category", "retryable", "description"],
+  properties: {
+    code: { type: "string", pattern: "^[A-Z][A-Z0-9_]*$" },
+    category: {
+      type: "string",
+      enum: [
+        "validation",
+        "not_found",
+        "lifecycle",
+        "authorization",
+        "approval",
+        "conflict",
+        "internal",
+      ],
+    },
+    retryable: { type: "boolean" },
+    description: { type: "string", minLength: 1 },
+  },
+};
+
+const jsonSchemaDocument: JsonSchema = {
+  $ref: "http://json-schema.org/draft-07/schema#",
+};
+
+export const CAPABILITY_DEFINITION_SCHEMA: JsonSchema = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -71,33 +195,30 @@ const definitionSchema: JsonSchema = {
     "errors",
   ],
   properties: {
-    identity: {
-      type: "object",
-      additionalProperties: false,
-      required: ["name", "version"],
-      properties: {
-        name: { type: "string", pattern: IDENTITY_NAME.source },
-        version: { type: "integer", minimum: 1 },
-      },
-    },
+    identity: identitySchema,
     summary: { type: "string", minLength: 1 },
     contractDigest: {
       type: "string",
       pattern: "^sha256:[a-f0-9]{64}$",
     },
-    lifecycle: { type: "object" },
+    lifecycle: lifecycleSchema,
     schemas: {
       type: "object",
+      additionalProperties: false,
       required: ["input", "output"],
       properties: {
-        input: { type: "object" },
-        output: { type: "object" },
+        input: jsonSchemaDocument,
+        output: jsonSchemaDocument,
       },
     },
-    effect: { type: "object" },
-    approval: { type: "object" },
-    idempotency: { type: "object" },
-    errors: { type: "array" },
+    effect: effectSchema,
+    approval: approvalSchema,
+    idempotency: idempotencySchema,
+    errors: {
+      type: "array",
+      minItems: 1,
+      items: errorContractSchema,
+    },
   },
 };
 
@@ -126,7 +247,7 @@ const capabilityPageSchema: JsonSchema = {
   additionalProperties: false,
   required: ["items", "registryDigest"],
   properties: {
-    items: { type: "array", items: definitionSchema },
+    items: { type: "array", items: CAPABILITY_DEFINITION_SCHEMA },
     registryDigest: {
       type: "string",
       pattern: "^sha256:[a-f0-9]{64}$",
@@ -297,6 +418,12 @@ export function createCapabilityRegistry(
   return new CapabilityRegistry(registrations);
 }
 
+export function defineCapability<Input, Output>(
+  registration: CapabilityRegistration<Input, Output>,
+): CapabilityRegistration<Input, Output> {
+  return registration;
+}
+
 function activeLifecycle() {
   return {
     status: "active",
@@ -307,7 +434,7 @@ function activeLifecycle() {
 
 export function createDiscoveryRegistrations(): CapabilityRegistration[] {
   return [
-    {
+    defineCapability({
       identity: CAPABILITY_LIST_IDENTITY,
       summary:
         "Discover exact published capability versions and immutable contracts.",
@@ -322,13 +449,13 @@ export function createDiscoveryRegistrations(): CapabilityRegistration[] {
         items: context.registry.listDefinitions(input.lifecycle),
         registryDigest: context.registry.digest,
       }),
-    },
-    {
+    }),
+    defineCapability({
       identity: CAPABILITY_GET_IDENTITY,
       summary: "Inspect one exact published capability contract.",
       lifecycle: activeLifecycle(),
       input: capabilityGetInput,
-      outputSchema: definitionSchema,
+      outputSchema: CAPABILITY_DEFINITION_SCHEMA,
       effect: QUERY_EFFECT,
       approval: { mode: "none" },
       idempotency: { mode: "retry-safe" },
@@ -346,7 +473,7 @@ export function createDiscoveryRegistrations(): CapabilityRegistration[] {
         }
         return definition;
       },
-    },
+    }),
   ];
 }
 
