@@ -42,6 +42,8 @@ function invalidStart(): Parameters<WorkflowRunRepository["start"]>[0] {
       },
       nextEventSequence: 2,
       output: null,
+      finalSnapshot: null,
+      finalSnapshotDigest: null,
       failureCode: null,
       acceptedAt,
       startedAt: null,

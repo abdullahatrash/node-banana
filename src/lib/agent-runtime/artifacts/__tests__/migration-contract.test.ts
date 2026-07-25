@@ -139,4 +139,30 @@ describe("Artifact persistence and storage contracts", () => {
     expect(service).toContain("markUploadStagingCleaned");
     expect(capabilities).not.toContain("cleanupExpiredUploads");
   });
+
+  it("persists immutable generated provenance and exact ordered lineage", () => {
+    const sql = source("drizzle/0034_dry_katie_power.sql");
+    expect(sql).toContain('CREATE TABLE "artifact_generated_origins"');
+    expect(sql).toContain('CREATE TABLE "artifact_lineage_inputs"');
+    expect(sql).toContain(
+      '"artifact_generated_origins_workspace_effect_output_unique"',
+    );
+    expect(sql).toContain(
+      '"artifact_generated_origins_workspace_attempt_fk"',
+    );
+    expect(sql).toContain(
+      'FOREIGN KEY ("workspace_id","run_id","step_attempt_id")',
+    );
+    expect(sql).toContain('"artifact_generated_origins_insert_only"');
+    expect(sql).toContain('"artifact_lineage_inputs_insert_only"');
+    expect(sql).toContain(
+      '"provider_operation_ref" text NOT NULL',
+    );
+    expect(sql).toContain(
+      'length("artifact_generated_origins"."provider_operation_ref") between 1 and 500',
+    );
+    expect(sql).toContain(
+      '"artifact_generated_origins"."provider_operation_ref" !~',
+    );
+  });
 });

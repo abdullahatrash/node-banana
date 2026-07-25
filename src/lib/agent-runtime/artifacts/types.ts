@@ -23,12 +23,54 @@ export interface ArtifactRecord {
   mediaType: string;
   sizeBytes: number;
   creatorPrincipalId: string;
-  origin: "imported";
-  importedAt: Date;
+  origin: "imported" | "generated";
+  importedAt: Date | null;
   retentionMode: ArtifactRetentionMode;
   retentionSnapshotAt: Date;
   createdAt: Date;
   deletedAt: Date | null;
+}
+
+export type ArtifactLineageSource =
+  | { kind: "workflow_input"; inputName: string }
+  | {
+      kind: "step_output";
+      stepAttemptId: string;
+      outputName: string;
+    };
+
+export interface ArtifactLineageInputRecord {
+  workspaceId: string;
+  artifactId: string;
+  position: number;
+  port: string;
+  kind: ArtifactKind;
+  source: ArtifactLineageSource;
+  contentDigest: string;
+  sourceArtifactId: string | null;
+}
+
+export interface ArtifactGeneratedOriginRecord {
+  workspaceId: string;
+  artifactId: string;
+  workflowId: string;
+  workflowRevisionId: string;
+  workflowRevision: number;
+  definitionDigest: string;
+  runId: string;
+  runStartSnapshotDigest: string;
+  stepAttemptId: string;
+  stepId: string;
+  attempt: number;
+  provider: string;
+  operationIdentity: string;
+  providerOperation: string;
+  providerOperationRef: string;
+  model: string;
+  intentDigest: string;
+  effectKey: string;
+  outputName: string;
+  generatedAt: Date;
 }
 
 export interface ArtifactMetadata {
@@ -41,16 +83,53 @@ export interface ArtifactMetadata {
   width: number | null;
   height: number | null;
   creatorPrincipalId: string;
-  origin: {
-    kind: "imported";
-    importedAt: string;
-  };
+  origin:
+    | {
+        kind: "imported";
+        importedAt: string;
+      }
+    | {
+        kind: "generated";
+        generatedAt: string;
+        workflowRevision: {
+          workflowId: string;
+          revisionId: string;
+          revision: number;
+          definitionDigest: string;
+        };
+        run: {
+          runId: string;
+          startSnapshotDigest: string;
+        };
+        stepAttempt: {
+          stepAttemptId: string;
+          stepId: string;
+          attempt: number;
+        };
+        providerOperation: {
+          provider: string;
+          operationIdentity: string;
+          operation: string;
+          ref: string;
+          model: string;
+          intentDigest: string;
+        };
+        effectKey: string;
+        outputName: string;
+      };
   retention: {
     mode: ArtifactRetentionMode;
     snapshotAt: string;
   };
   lineage: {
-    sourceArtifactIds: [];
+    inputs: Array<{
+      port: string;
+      kind: ArtifactKind;
+      source: ArtifactLineageSource;
+      contentDigest: string;
+      artifactId: string | null;
+    }>;
+    sourceArtifactIds: string[];
   };
   createdAt: string;
 }
@@ -126,6 +205,18 @@ export type ArtifactCommitResult =
   | { kind: "conflict" }
   | { kind: "unavailable" };
 
+export type GeneratedArtifactCommitResult =
+  | { kind: "created" | "replayed" }
+  | { kind: "conflict" }
+  | { kind: "unavailable" };
+
+export interface ArtifactRepositoryResult {
+  artifact: ArtifactRecord;
+  content: ArtifactContentRecord;
+  generatedOrigin: ArtifactGeneratedOriginRecord | null;
+  lineageInputs: ArtifactLineageInputRecord[];
+}
+
 export interface ArtifactRepository {
   readMutationReceipt(input: {
     workspaceId: string;
@@ -164,13 +255,17 @@ export interface ArtifactRepository {
     now: Date;
   }): Promise<ArtifactCommitResult>;
 
+  commitGenerated(input: {
+    artifact: ArtifactRecord;
+    content: ArtifactContentRecord;
+    origin: ArtifactGeneratedOriginRecord;
+    lineageInputs: ArtifactLineageInputRecord[];
+  }): Promise<GeneratedArtifactCommitResult>;
+
   getArtifact(input: {
     workspaceId: string;
     artifactId: string;
-  }): Promise<{
-    artifact: ArtifactRecord;
-    content: ArtifactContentRecord;
-  } | null>;
+  }): Promise<ArtifactRepositoryResult | null>;
 
   listArtifacts(input: {
     workspaceId: string;
@@ -178,10 +273,7 @@ export interface ArtifactRepository {
     before?: ArtifactListPosition;
     limit: number;
   }): Promise<
-    Array<{
-      artifact: ArtifactRecord;
-      content: ArtifactContentRecord;
-    }>
+    ArtifactRepositoryResult[]
   >;
 
   recordDownloadHandoff(event: ArtifactAuditEventRecord): Promise<boolean>;
@@ -243,6 +335,13 @@ export interface ArtifactContentStore {
     digest: string;
     mediaType: string;
     sourceIdentity: ArtifactStagedSourceIdentity;
+  }): Promise<{ storageKey: string }>;
+
+  writeGenerated(input: {
+    workspaceId: string;
+    digest: string;
+    mediaType: string;
+    bytes: Uint8Array;
   }): Promise<{ storageKey: string }>;
 
   createDownloadHandoff(input: {

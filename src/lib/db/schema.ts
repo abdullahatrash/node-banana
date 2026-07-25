@@ -15,7 +15,12 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { ResolvedWorkflowDefinition } from "@/lib/agent-runtime/workflows/types";
-import type { WorkflowRunStartSnapshot } from "@/lib/agent-runtime/runs/types";
+import type {
+  WorkflowRunArtifactReference,
+  WorkflowRunFinalSnapshot,
+  WorkflowRunStartSnapshot,
+  WorkflowStepAttemptInput,
+} from "@/lib/agent-runtime/runs/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -1269,7 +1274,7 @@ export const artifacts = pgTable(
     sizeBytes: integer("size_bytes").notNull(),
     creatorPrincipalId: text("creator_principal_id").notNull(),
     origin: text("origin").notNull(),
-    importedAt: timestamp("imported_at", { withTimezone: true }).notNull(),
+    importedAt: timestamp("imported_at", { withTimezone: true }),
     retentionMode: text("retention_mode").notNull(),
     retentionSnapshotAt: timestamp("retention_snapshot_at", {
       withTimezone: true,
@@ -1283,6 +1288,17 @@ export const artifacts = pgTable(
     workspaceIdUnique: uniqueIndex("artifacts_workspace_id_unique").on(
       table.workspaceId,
       table.id,
+    ),
+    workspaceIdOriginUnique: uniqueIndex(
+      "artifacts_workspace_id_origin_unique",
+    ).on(table.workspaceId, table.id, table.origin),
+    workspaceIdKindDigestUnique: uniqueIndex(
+      "artifacts_workspace_id_kind_digest_unique",
+    ).on(
+      table.workspaceId,
+      table.id,
+      table.kind,
+      table.contentDigest,
     ),
     workspaceContentFk: foreignKey({
       columns: [
@@ -1321,7 +1337,17 @@ export const artifacts = pgTable(
     ),
     originCheck: check(
       "artifacts_origin_check",
-      sql`${table.origin} = 'imported'`,
+      sql`${table.origin} in ('imported', 'generated')`,
+    ),
+    originLifecycleCheck: check(
+      "artifacts_origin_lifecycle_check",
+      sql`(
+        ${table.origin} = 'imported'
+        and ${table.importedAt} is not null
+      ) or (
+        ${table.origin} = 'generated'
+        and ${table.importedAt} is null
+      )`,
     ),
     retentionCheck: check(
       "artifacts_retention_check",
@@ -1765,6 +1791,8 @@ export const workflowRuns = pgTable(
       .notNull(),
     nextEventSequence: integer("next_event_sequence").notNull(),
     output: jsonb("output").$type<Record<string, unknown>>(),
+    finalSnapshot: jsonb("final_snapshot").$type<WorkflowRunFinalSnapshot>(),
+    finalSnapshotDigest: text("final_snapshot_digest"),
     failureCode: text("failure_code"),
     principalId: text("principal_id").notNull(),
     keyId: text("key_id").notNull(),
@@ -1848,6 +1876,10 @@ export const workflowRuns = pgTable(
       "workflow_runs_snapshot_digest_check",
       sql`${table.startSnapshotDigest} ~ '^sha256:[0-9a-f]{64}$'`,
     ),
+    finalSnapshotDigestCheck: check(
+      "workflow_runs_final_snapshot_digest_check",
+      sql`${table.finalSnapshotDigest} is null or ${table.finalSnapshotDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
     snapshotCheck: check(
       "workflow_runs_snapshot_check",
       sql`jsonb_typeof(${table.startSnapshot}) = 'object'
@@ -1867,6 +1899,25 @@ export const workflowRuns = pgTable(
       "workflow_runs_evidence_check",
       sql`length(${table.authorizationEvidenceRef}) between 1 and 200`,
     ),
+    finalSnapshotCheck: check(
+      "workflow_runs_final_snapshot_check",
+      sql`(
+        ${table.finalSnapshot} is null
+          and ${table.finalSnapshotDigest} is null
+      ) or (
+        ${table.finalSnapshot} is not null
+          and ${table.finalSnapshotDigest} is not null
+          and jsonb_typeof(${table.finalSnapshot}) = 'object'
+          and ${table.finalSnapshot}->>'schema' = 'workflow-run-final-snapshot/v1'
+          and ${table.finalSnapshot} ? 'runId'
+          and ${table.finalSnapshot}->>'runId' = ${table.id}
+          and ${table.finalSnapshot} ? 'startSnapshotDigest'
+          and ${table.finalSnapshot}->>'startSnapshotDigest' = ${table.startSnapshotDigest}
+          and jsonb_typeof(${table.finalSnapshot}->'stepAttempts') = 'array'
+          and jsonb_typeof(${table.finalSnapshot}->'outputs') = 'object'
+          and octet_length(${table.finalSnapshot}::text) <= 1048576
+      )`,
+    ),
     lifecycleCheck: check(
       "workflow_runs_lifecycle_check",
       sql`(
@@ -1874,12 +1925,16 @@ export const workflowRuns = pgTable(
           and ${table.startedAt} is null
           and ${table.completedAt} is null
           and ${table.output} is null
+          and ${table.finalSnapshot} is null
+          and ${table.finalSnapshotDigest} is null
           and ${table.failureCode} is null
       ) or (
         ${table.state} = 'running'
           and ${table.startedAt} is not null
           and ${table.completedAt} is null
           and ${table.output} is null
+          and ${table.finalSnapshot} is null
+          and ${table.finalSnapshotDigest} is null
           and ${table.failureCode} is null
       ) or (
         ${table.state} = 'completed'
@@ -1892,12 +1947,369 @@ export const workflowRuns = pgTable(
           and ${table.startedAt} is not null
           and ${table.completedAt} is not null
           and ${table.output} is null
+          and ${table.finalSnapshot} is null
+          and ${table.finalSnapshotDigest} is null
           and ${table.failureCode} is not null
       )`,
     ),
     failureCodeCheck: check(
       "workflow_runs_failure_code_check",
       sql`${table.failureCode} is null or ${table.failureCode} ~ '^[A-Z][A-Z0-9_]{0,79}$'`,
+    ),
+  }),
+);
+
+/**
+ * Durable semantic provider attempts. A Workflow SDK redelivery resumes the
+ * same row and Effect Key; only a distinct semantic retry receives the next
+ * attempt number.
+ */
+export const workflowStepAttempts = pgTable(
+  "workflow_step_attempts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    stepId: text("step_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    state: text("state").notNull(),
+    operationIdentity: text("operation_identity").notNull(),
+    operationContractDigest: text("operation_contract_digest").notNull(),
+    provider: text("provider").notNull(),
+    providerOperation: text("provider_operation").notNull(),
+    model: text("model").notNull(),
+    intentDigest: text("intent_digest").notNull(),
+    effectKey: text("effect_key").notNull(),
+    inputs: jsonb("inputs").$type<WorkflowStepAttemptInput[]>().notNull(),
+    outputs: jsonb("outputs")
+      .$type<Record<string, WorkflowRunArtifactReference>>(),
+    failureCode: text("failure_code"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex(
+      "workflow_step_attempts_workspace_id_unique",
+    ).on(table.workspaceId, table.id),
+    workspaceRunIdUnique: uniqueIndex(
+      "workflow_step_attempts_workspace_run_id_unique",
+    ).on(table.workspaceId, table.runId, table.id),
+    workspaceRunFk: foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [workflowRuns.workspaceId, workflowRuns.id],
+      name: "workflow_step_attempts_workspace_run_fk",
+    }).onDelete("restrict"),
+    workspaceRunStepAttemptUnique: uniqueIndex(
+      "workflow_step_attempts_workspace_run_step_attempt_unique",
+    ).on(table.workspaceId, table.runId, table.stepId, table.attempt),
+    workspaceEffectKeyUnique: uniqueIndex(
+      "workflow_step_attempts_workspace_effect_key_unique",
+    ).on(table.workspaceId, table.effectKey),
+    workspaceRunStartedIdx: index(
+      "workflow_step_attempts_workspace_run_started_idx",
+    ).on(
+      table.workspaceId,
+      table.runId,
+      table.startedAt,
+      table.stepId,
+      table.attempt,
+    ),
+    attemptCheck: check(
+      "workflow_step_attempts_attempt_check",
+      sql`${table.attempt} > 0`,
+    ),
+    stateCheck: check(
+      "workflow_step_attempts_state_check",
+      sql`${table.state} in ('running', 'completed', 'failed')`,
+    ),
+    operationIdentityCheck: check(
+      "workflow_step_attempts_operation_identity_check",
+      sql`${table.operationIdentity} ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+@[1-9][0-9]{0,8}$'`,
+    ),
+    digestCheck: check(
+      "workflow_step_attempts_digest_check",
+      sql`${table.operationContractDigest} ~ '^sha256:[0-9a-f]{64}$'
+        and ${table.intentDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    identityFieldsCheck: check(
+      "workflow_step_attempts_identity_fields_check",
+      sql`length(${table.id}) between 1 and 200
+        and length(${table.stepId}) between 1 and 200
+        and length(${table.provider}) between 1 and 200
+        and length(${table.providerOperation}) between 1 and 200
+        and length(${table.model}) between 1 and 200
+        and length(${table.effectKey}) between 1 and 500`,
+    ),
+    payloadCheck: check(
+      "workflow_step_attempts_payload_check",
+      sql`jsonb_typeof(${table.inputs}) = 'array'
+        and octet_length(${table.inputs}::text) <= 262144
+        and (
+          ${table.outputs} is null
+          or (
+            jsonb_typeof(${table.outputs}) = 'object'
+            and octet_length(${table.outputs}::text) <= 262144
+          )
+        )`,
+    ),
+    lifecycleCheck: check(
+      "workflow_step_attempts_lifecycle_check",
+      sql`(
+        ${table.state} = 'running'
+          and ${table.outputs} is null
+          and ${table.failureCode} is null
+          and ${table.completedAt} is null
+      ) or (
+        ${table.state} = 'completed'
+          and ${table.outputs} is not null
+          and ${table.failureCode} is null
+          and ${table.completedAt} is not null
+          and ${table.completedAt} >= ${table.startedAt}
+      ) or (
+        ${table.state} = 'failed'
+          and ${table.outputs} is null
+          and ${table.failureCode} is not null
+          and ${table.completedAt} is not null
+          and ${table.completedAt} >= ${table.startedAt}
+      )`,
+    ),
+    failureCodeCheck: check(
+      "workflow_step_attempts_failure_code_check",
+      sql`${table.failureCode} is null or ${table.failureCode} ~ '^[A-Z][A-Z0-9_]{0,79}$'`,
+    ),
+  }),
+);
+
+/**
+ * Generated Artifact provenance is normalized away from the Artifact resource
+ * row so imported and generated lifecycles remain structurally distinct.
+ * Provider payloads and credentials are never persisted here.
+ */
+export const artifactGeneratedOrigins = pgTable(
+  "artifact_generated_origins",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    artifactOrigin: text("artifact_origin")
+      .default("generated")
+      .notNull(),
+    workflowId: text("workflow_id").notNull(),
+    workflowRevisionId: text("workflow_revision_id").notNull(),
+    workflowRevision: integer("workflow_revision").notNull(),
+    definitionDigest: text("definition_digest").notNull(),
+    runId: text("run_id").notNull(),
+    runStartSnapshotDigest: text(
+      "run_start_snapshot_digest",
+    ).notNull(),
+    stepAttemptId: text("step_attempt_id").notNull(),
+    stepId: text("step_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    provider: text("provider").notNull(),
+    operationIdentity: text("operation_identity").notNull(),
+    providerOperation: text("provider_operation").notNull(),
+    providerOperationRef: text("provider_operation_ref").notNull(),
+    model: text("model").notNull(),
+    intentDigest: text("intent_digest").notNull(),
+    effectKey: text("effect_key").notNull(),
+    outputName: text("output_name").notNull(),
+    generatedAt: timestamp("generated_at", {
+      withTimezone: true,
+    }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.artifactId],
+      name: "artifact_generated_origins_pk",
+    }),
+    workspaceArtifactFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.artifactId,
+        table.artifactOrigin,
+      ],
+      foreignColumns: [
+        artifacts.workspaceId,
+        artifacts.id,
+        artifacts.origin,
+      ],
+      name: "artifact_generated_origins_workspace_artifact_fk",
+    }).onDelete("restrict"),
+    workspaceWorkflowRevisionFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.workflowId,
+        table.workflowRevisionId,
+      ],
+      foreignColumns: [
+        contentWorkflowRevisions.workspaceId,
+        contentWorkflowRevisions.workflowId,
+        contentWorkflowRevisions.id,
+      ],
+      name: "artifact_generated_origins_workspace_revision_fk",
+    }).onDelete("restrict"),
+    workspaceWorkflowRunFk: foreignKey({
+      columns: [table.workspaceId, table.workflowId, table.runId],
+      foreignColumns: [
+        workflowRuns.workspaceId,
+        workflowRuns.workflowId,
+        workflowRuns.id,
+      ],
+      name: "artifact_generated_origins_workspace_run_fk",
+    }).onDelete("restrict"),
+    workspaceStepAttemptFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.runId,
+        table.stepAttemptId,
+      ],
+      foreignColumns: [
+        workflowStepAttempts.workspaceId,
+        workflowStepAttempts.runId,
+        workflowStepAttempts.id,
+      ],
+      name: "artifact_generated_origins_workspace_attempt_fk",
+    }).onDelete("restrict"),
+    workspaceEffectOutputUnique: uniqueIndex(
+      "artifact_generated_origins_workspace_effect_output_unique",
+    ).on(table.workspaceId, table.effectKey, table.outputName),
+    workspaceRunIdx: index(
+      "artifact_generated_origins_workspace_run_idx",
+    ).on(
+      table.workspaceId,
+      table.runId,
+      table.stepAttemptId,
+      table.outputName,
+    ),
+    revisionAttemptCheck: check(
+      "artifact_generated_origins_revision_attempt_check",
+      sql`${table.workflowRevision} > 0 and ${table.attempt} > 0`,
+    ),
+    artifactOriginCheck: check(
+      "artifact_generated_origins_artifact_origin_check",
+      sql`${table.artifactOrigin} = 'generated'`,
+    ),
+    digestCheck: check(
+      "artifact_generated_origins_digest_check",
+      sql`${table.definitionDigest} ~ '^sha256:[0-9a-f]{64}$'
+        and ${table.runStartSnapshotDigest} ~ '^sha256:[0-9a-f]{64}$'
+        and ${table.intentDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    identityCheck: check(
+      "artifact_generated_origins_identity_check",
+      sql`length(${table.stepId}) between 1 and 200
+        and length(${table.provider}) between 1 and 200
+        and length(${table.operationIdentity}) between 1 and 300
+        and length(${table.providerOperation}) between 1 and 300
+        and length(${table.providerOperationRef}) between 1 and 500
+        and length(${table.model}) between 1 and 300
+        and length(${table.effectKey}) between 1 and 500
+        and length(${table.outputName}) between 1 and 200
+        and btrim(${table.effectKey}) = ${table.effectKey}
+        and btrim(${table.outputName}) = ${table.outputName}
+        and btrim(${table.providerOperationRef}) = ${table.providerOperationRef}
+        and ${table.effectKey} !~ '[[:cntrl:]]'
+        and ${table.providerOperationRef} !~ '[[:cntrl:]]'
+        and ${table.outputName} !~ '[[:cntrl:]]'`,
+    ),
+  }),
+);
+
+export const artifactLineageInputs = pgTable(
+  "artifact_lineage_inputs",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    position: integer("position").notNull(),
+    port: text("port").notNull(),
+    kind: text("kind").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceInputName: text("source_input_name"),
+    sourceRunId: text("source_run_id"),
+    sourceStepAttemptId: text("source_step_attempt_id"),
+    sourceOutputName: text("source_output_name"),
+    contentDigest: text("content_digest").notNull(),
+    sourceArtifactId: text("source_artifact_id"),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.artifactId, table.position],
+      name: "artifact_lineage_inputs_pk",
+    }),
+    workspaceGeneratedArtifactFk: foreignKey({
+      columns: [table.workspaceId, table.artifactId],
+      foreignColumns: [
+        artifactGeneratedOrigins.workspaceId,
+        artifactGeneratedOrigins.artifactId,
+      ],
+      name: "artifact_lineage_inputs_workspace_generated_fk",
+    }).onDelete("restrict"),
+    workspaceSourceArtifactFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.sourceArtifactId,
+        table.kind,
+        table.contentDigest,
+      ],
+      foreignColumns: [
+        artifacts.workspaceId,
+        artifacts.id,
+        artifacts.kind,
+        artifacts.contentDigest,
+      ],
+      name: "artifact_lineage_inputs_workspace_source_artifact_fk",
+    }).onDelete("restrict"),
+    workspaceSourceAttemptFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.sourceRunId,
+        table.sourceStepAttemptId,
+      ],
+      foreignColumns: [
+        workflowStepAttempts.workspaceId,
+        workflowStepAttempts.runId,
+        workflowStepAttempts.id,
+      ],
+      name: "artifact_lineage_inputs_workspace_source_attempt_fk",
+    }).onDelete("restrict"),
+    workspaceSourceIdx: index(
+      "artifact_lineage_inputs_workspace_source_idx",
+    ).on(table.workspaceId, table.sourceArtifactId),
+    positionCheck: check(
+      "artifact_lineage_inputs_position_check",
+      sql`${table.position} >= 0`,
+    ),
+    kindCheck: check(
+      "artifact_lineage_inputs_kind_check",
+      sql`${table.kind} in ('text', 'image')`,
+    ),
+    digestCheck: check(
+      "artifact_lineage_inputs_digest_check",
+      sql`${table.contentDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    portCheck: check(
+      "artifact_lineage_inputs_port_check",
+      sql`length(${table.port}) between 1 and 200
+        and btrim(${table.port}) = ${table.port}
+        and ${table.port} !~ '[[:cntrl:]]'`,
+    ),
+    sourceCheck: check(
+      "artifact_lineage_inputs_source_check",
+      sql`(
+        ${table.sourceKind} = 'workflow_input'
+        and ${table.sourceInputName} is not null
+        and length(${table.sourceInputName}) between 1 and 200
+        and ${table.sourceRunId} is null
+        and ${table.sourceStepAttemptId} is null
+        and ${table.sourceOutputName} is null
+      ) or (
+        ${table.sourceKind} = 'step_output'
+        and ${table.sourceInputName} is null
+        and ${table.sourceRunId} is not null
+        and ${table.sourceStepAttemptId} is not null
+        and ${table.sourceOutputName} is not null
+        and length(${table.sourceOutputName}) between 1 and 200
+        and ${table.sourceArtifactId} is not null
+      )`,
     ),
   }),
 );
@@ -1933,7 +2345,16 @@ export const workflowRunEvents = pgTable(
     ),
     typeCheck: check(
       "workflow_run_events_type_check",
-      sql`${table.type} in ('run.accepted', 'step.completed', 'run.completed', 'run.failed')`,
+      sql`${table.type} in (
+        'run.accepted',
+        'step.attempt.started',
+        'artifact.generated',
+        'step.attempt.completed',
+        'step.attempt.failed',
+        'step.completed',
+        'run.completed',
+        'run.failed'
+      )`,
     ),
     dataSizeCheck: check(
       "workflow_run_events_data_size_check",
@@ -1979,7 +2400,7 @@ export const workflowRunMutationReceipts = pgTable(
     ).on(table.workspaceId, table.createdAt),
     capabilityCheck: check(
       "workflow_run_mutation_receipts_capability_check",
-      sql`${table.capability} = 'workflow_runs.start@1'`,
+      sql`${table.capability} in ('workflow_runs.start@1', 'workflow_runs.start@2')`,
     ),
     idempotencyKeyCheck: check(
       "workflow_run_mutation_receipts_idempotency_key_check",

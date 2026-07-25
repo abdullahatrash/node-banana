@@ -9,6 +9,9 @@ import type {
   ArtifactContentRecord,
   ArtifactContentStore,
   ArtifactCursorCodec,
+  ArtifactGeneratedOriginRecord,
+  ArtifactLineageInputRecord,
+  ArtifactLineageSource,
   ArtifactListFilters,
   ArtifactMediaInspector,
   ArtifactMetadata,
@@ -47,9 +50,60 @@ function digestBytes(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
+function generatedArtifactId(input: {
+  workspaceId: string;
+  effectKey: string;
+  outputName: string;
+}): string {
+  const digest = createHash("sha256")
+    .update(
+      canonicalDigest({
+        schema: "generated-artifact-identity/v1",
+        workspaceId: input.workspaceId,
+        effectKey: input.effectKey,
+        outputName: input.outputName,
+      }),
+      "utf8",
+    )
+    .digest("hex");
+  return `artifact_${digest}`;
+}
+
 function assertId(value: string, label: string): string {
+  if (typeof value !== "string") {
+    throw new ArtifactServiceError(
+      "ARTIFACT_INVALID_INPUT",
+      `${label} is invalid.`,
+    );
+  }
   const normalized = value.trim();
   if (!isValidArtifactId(normalized)) {
+    throw new ArtifactServiceError(
+      "ARTIFACT_INVALID_INPUT",
+      `${label} is invalid.`,
+    );
+  }
+  return normalized;
+}
+
+function assertBoundedString(
+  value: string,
+  label: string,
+  maxLength = 500,
+): string {
+  if (typeof value !== "string") {
+    throw new ArtifactServiceError(
+      "ARTIFACT_INVALID_INPUT",
+      `${label} is invalid.`,
+    );
+  }
+  const normalized = value.trim();
+  if (
+    normalized !== value ||
+    normalized.length === 0 ||
+    normalized.length > maxLength ||
+    /[\u0000-\u001f\u007f]/.test(normalized)
+  ) {
     throw new ArtifactServiceError(
       "ARTIFACT_INVALID_INPUT",
       `${label} is invalid.`,
@@ -167,7 +221,61 @@ function artifactRecord(input: {
 export function artifactMetadata(
   artifact: ArtifactRecord,
   content: ArtifactContentRecord,
+  generatedOrigin: ArtifactGeneratedOriginRecord | null = null,
+  lineageInputs: ArtifactLineageInputRecord[] = [],
 ): ArtifactMetadata {
+  const origin: ArtifactMetadata["origin"] =
+    artifact.origin === "imported"
+      ? {
+          kind: "imported",
+          importedAt: requireImportedAt(artifact).toISOString(),
+        }
+      : generatedOrigin && generatedOrigin.artifactId === artifact.id
+        ? {
+            kind: "generated",
+            generatedAt: generatedOrigin.generatedAt.toISOString(),
+            workflowRevision: {
+              workflowId: generatedOrigin.workflowId,
+              revisionId: generatedOrigin.workflowRevisionId,
+              revision: generatedOrigin.workflowRevision,
+              definitionDigest: generatedOrigin.definitionDigest,
+            },
+            run: {
+              runId: generatedOrigin.runId,
+              startSnapshotDigest:
+                generatedOrigin.runStartSnapshotDigest,
+            },
+            stepAttempt: {
+              stepAttemptId: generatedOrigin.stepAttemptId,
+              stepId: generatedOrigin.stepId,
+              attempt: generatedOrigin.attempt,
+            },
+            providerOperation: {
+              provider: generatedOrigin.provider,
+              operationIdentity:
+                generatedOrigin.operationIdentity,
+              operation: generatedOrigin.providerOperation,
+              ref: generatedOrigin.providerOperationRef,
+              model: generatedOrigin.model,
+              intentDigest: generatedOrigin.intentDigest,
+            },
+            effectKey: generatedOrigin.effectKey,
+            outputName: generatedOrigin.outputName,
+          }
+        : unavailableGeneratedOrigin();
+  const orderedLineage =
+    artifact.origin === "generated"
+      ? [...lineageInputs].sort(
+          (left, right) => left.position - right.position,
+        )
+      : [];
+  const sourceArtifactIds = [
+    ...new Set(
+      orderedLineage.flatMap((lineage) =>
+        lineage.sourceArtifactId ? [lineage.sourceArtifactId] : [],
+      ),
+    ),
+  ];
   return {
     id: artifact.id,
     workspaceId: artifact.workspaceId,
@@ -178,18 +286,83 @@ export function artifactMetadata(
     width: content.width,
     height: content.height,
     creatorPrincipalId: artifact.creatorPrincipalId,
-    origin: {
-      kind: "imported",
-      importedAt: artifact.importedAt.toISOString(),
-    },
+    origin,
     retention: {
       mode: artifact.retentionMode,
       snapshotAt: artifact.retentionSnapshotAt.toISOString(),
     },
-    // Imported Artifacts have no invented upstream Artifact lineage.
-    lineage: { sourceArtifactIds: [] },
+    lineage: {
+      inputs: orderedLineage.map((lineage) => ({
+        port: lineage.port,
+        kind: lineage.kind,
+        source: structuredClone(lineage.source),
+        contentDigest: lineage.contentDigest,
+        artifactId: lineage.sourceArtifactId,
+      })),
+      sourceArtifactIds,
+    },
     createdAt: artifact.createdAt.toISOString(),
   };
+}
+
+function requireImportedAt(artifact: ArtifactRecord): Date {
+  if (artifact.importedAt === null) {
+    throw new ArtifactServiceError(
+      "ARTIFACT_UNAVAILABLE",
+      "Artifact metadata is unavailable.",
+    );
+  }
+  return artifact.importedAt;
+}
+
+function unavailableGeneratedOrigin(): never {
+  throw new ArtifactServiceError(
+    "ARTIFACT_UNAVAILABLE",
+    "Artifact metadata is unavailable.",
+  );
+}
+
+export type GeneratedArtifactContent =
+  | {
+      kind: "text";
+      text: string;
+      mediaType: string;
+      digest: string;
+      sizeBytes: number;
+    }
+  | {
+      kind: "image";
+      bytes: Uint8Array;
+      mediaType: string;
+      digest: string;
+      sizeBytes: number;
+      width: number;
+      height: number;
+    };
+
+export interface GeneratedArtifactLineageInput {
+  port: string;
+  kind: ArtifactRecord["kind"];
+  source: ArtifactLineageSource;
+  contentDigest: string;
+  sourceArtifactId: string | null;
+}
+
+export interface CommitGeneratedArtifactInput {
+  workspaceId: string;
+  creatorPrincipalId: string;
+  effectKey: string;
+  outputName: string;
+  content: GeneratedArtifactContent;
+  origin: Omit<
+    ArtifactGeneratedOriginRecord,
+    | "workspaceId"
+    | "artifactId"
+    | "effectKey"
+    | "outputName"
+    | "generatedAt"
+  >;
+  lineageInputs: GeneratedArtifactLineageInput[];
 }
 
 export class ArtifactService {
@@ -676,6 +849,198 @@ export class ArtifactService {
     return artifactMetadata(artifact, content);
   }
 
+  /**
+   * Runtime-only generated Artifact settlement. This is deliberately not
+   * registered as an Application Capability: provider execution owns the
+   * Effect Key and calls this boundary after a normalized provider outcome.
+   */
+  async commitGenerated(
+    input: CommitGeneratedArtifactInput,
+  ): Promise<ArtifactMetadata> {
+    if (
+      !input ||
+      !input.origin ||
+      !Array.isArray(input.lineageInputs)
+    ) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_INVALID_INPUT",
+        "Generated Artifact input is invalid.",
+      );
+    }
+    const workspaceId = assertId(input.workspaceId, "Workspace ID");
+    const creatorPrincipalId = assertId(
+      input.creatorPrincipalId,
+      "Creator Principal ID",
+    );
+    const effectKey = assertBoundedString(
+      input.effectKey,
+      "Effect Key",
+      500,
+    );
+    const outputName = assertBoundedString(
+      input.outputName,
+      "Output name",
+      200,
+    );
+    const originInput = input.origin;
+    const workflowId = assertId(originInput.workflowId, "Workflow ID");
+    const workflowRevisionId = assertId(
+      originInput.workflowRevisionId,
+      "Workflow Revision ID",
+    );
+    const runId = assertId(originInput.runId, "Run ID");
+    const stepAttemptId = assertId(
+      originInput.stepAttemptId,
+      "Step Attempt ID",
+    );
+    const stepId = assertId(originInput.stepId, "Step ID");
+    if (
+      !Number.isSafeInteger(originInput.workflowRevision) ||
+      originInput.workflowRevision < 1 ||
+      !Number.isSafeInteger(originInput.attempt) ||
+      originInput.attempt < 1
+    ) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_INVALID_INPUT",
+        "Generated Artifact revision or attempt is invalid.",
+      );
+    }
+    for (const [value, label] of [
+      [originInput.definitionDigest, "Workflow definition digest"],
+      [originInput.runStartSnapshotDigest, "Run snapshot digest"],
+      [originInput.intentDigest, "Provider intent digest"],
+    ] as const) {
+      if (!isValidArtifactDigest(value)) {
+        throw new ArtifactServiceError(
+          "ARTIFACT_INVALID_INPUT",
+          `${label} is invalid.`,
+        );
+      }
+    }
+    const provider = assertBoundedString(
+      originInput.provider,
+      "Provider",
+      200,
+    );
+    const operationIdentity = assertBoundedString(
+      originInput.operationIdentity,
+      "Operation identity",
+      300,
+    );
+    const providerOperation = assertBoundedString(
+      originInput.providerOperation,
+      "Provider operation",
+      300,
+    );
+    const providerOperationRef = assertBoundedString(
+      originInput.providerOperationRef,
+      "Provider operation reference",
+      500,
+    );
+    const model = assertBoundedString(originInput.model, "Model", 300);
+    const prepared = await this.prepareGeneratedContent(input.content);
+    const artifactId = generatedArtifactId({
+      workspaceId,
+      effectKey,
+      outputName,
+    });
+    const lineageInputs = await this.prepareGeneratedLineage({
+      workspaceId,
+      artifactId,
+      inputs: input.lineageInputs,
+    });
+    const now = this.clock.now();
+    let storageKey: string | null = null;
+    if (prepared.kind === "image") {
+      try {
+        storageKey = (
+          await this.store.writeGenerated({
+            workspaceId,
+            digest: prepared.digest,
+            mediaType: prepared.mediaType,
+            bytes: prepared.bytes,
+          })
+        ).storageKey;
+      } catch {
+        throw new ArtifactServiceError(
+          "ARTIFACT_CONTENT_STORE_UNAVAILABLE",
+          "Generated Artifact content could not be stored.",
+        );
+      }
+    }
+    const artifact: ArtifactRecord = {
+      id: artifactId,
+      workspaceId,
+      contentDigest: prepared.digest,
+      kind: prepared.kind,
+      mediaType: prepared.mediaType,
+      sizeBytes: prepared.sizeBytes,
+      creatorPrincipalId,
+      origin: "generated",
+      importedAt: null,
+      retentionMode: "workspace_default",
+      retentionSnapshotAt: now,
+      createdAt: now,
+      deletedAt: null,
+    };
+    const content: ArtifactContentRecord = {
+      workspaceId,
+      digest: prepared.digest,
+      kind: prepared.kind,
+      mediaType: prepared.mediaType,
+      sizeBytes: prepared.sizeBytes,
+      inlineText:
+        prepared.kind === "text" ? prepared.text : null,
+      storageKey,
+      width: prepared.kind === "image" ? prepared.width : null,
+      height: prepared.kind === "image" ? prepared.height : null,
+      createdAt: now,
+    };
+    const origin: ArtifactGeneratedOriginRecord = {
+      workspaceId,
+      artifactId,
+      workflowId,
+      workflowRevisionId,
+      workflowRevision: originInput.workflowRevision,
+      definitionDigest: originInput.definitionDigest,
+      runId,
+      runStartSnapshotDigest: originInput.runStartSnapshotDigest,
+      stepAttemptId,
+      stepId,
+      attempt: originInput.attempt,
+      provider,
+      operationIdentity,
+      providerOperation,
+      providerOperationRef,
+      model,
+      intentDigest: originInput.intentDigest,
+      effectKey,
+      outputName,
+      generatedAt: now,
+    };
+    const committed = await this.repository.commitGenerated({
+      artifact,
+      content,
+      origin,
+      lineageInputs,
+    });
+    if (committed.kind === "conflict") {
+      throw new ArtifactServiceError(
+        "ARTIFACT_IDEMPOTENCY_CONFLICT",
+        "The Effect Key and output port are bound to another generated Artifact.",
+      );
+    }
+    if (committed.kind === "unavailable") {
+      // Content addressing makes this write safe to retain and converge on a
+      // later settlement attempt.
+      throw new ArtifactServiceError(
+        "ARTIFACT_CONTENT_STORE_UNAVAILABLE",
+        "Generated Artifact metadata could not be committed.",
+      );
+    }
+    return this.requireMetadata(workspaceId, artifactId);
+  }
+
   async getArtifact(input: {
     workspaceId: string;
     artifactId: string;
@@ -696,7 +1061,12 @@ export class ArtifactService {
       );
     }
     return {
-      artifact: artifactMetadata(found.artifact, found.content),
+      artifact: artifactMetadata(
+        found.artifact,
+        found.content,
+        found.generatedOrigin,
+        found.lineageInputs,
+      ),
       textContent:
         found.artifact.kind === "text" ? found.content.inlineText : null,
     };
@@ -748,8 +1118,14 @@ export class ArtifactService {
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     return {
-      artifacts: page.map(({ artifact, content }) =>
-        artifactMetadata(artifact, content),
+      artifacts: page.map(
+        ({ artifact, content, generatedOrigin, lineageInputs }) =>
+          artifactMetadata(
+            artifact,
+            content,
+            generatedOrigin,
+            lineageInputs,
+          ),
       ),
       nextCursor:
         rows.length > limit && last
@@ -887,7 +1263,243 @@ export class ArtifactService {
         "Artifact is unavailable.",
       );
     }
-    return artifactMetadata(found.artifact, found.content);
+    return artifactMetadata(
+      found.artifact,
+      found.content,
+      found.generatedOrigin,
+      found.lineageInputs,
+    );
+  }
+
+  private async prepareGeneratedContent(
+    content: GeneratedArtifactContent,
+  ): Promise<
+    | {
+        kind: "text";
+        text: string;
+        mediaType: string;
+        digest: string;
+        sizeBytes: number;
+      }
+    | {
+        kind: "image";
+        bytes: Uint8Array;
+        mediaType: string;
+        digest: string;
+        sizeBytes: number;
+        width: number;
+        height: number;
+      }
+  > {
+    if (
+      !content ||
+      (content.kind !== "text" && content.kind !== "image") ||
+      typeof content.mediaType !== "string" ||
+      (content.kind === "text" &&
+        typeof content.text !== "string") ||
+      (content.kind === "image" &&
+        !ArrayBuffer.isView(content.bytes))
+    ) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_INVALID_INPUT",
+        "Generated Artifact content is invalid.",
+      );
+    }
+    const mediaType = normalizeArtifactMediaType(content.mediaType);
+    const bytes =
+      content.kind === "text"
+        ? Buffer.from(content.text, "utf8")
+        : Buffer.from(content.bytes);
+    const maxBytes =
+      content.kind === "text"
+        ? ARTIFACT_MAX_TEXT_BYTES
+        : ARTIFACT_MAX_IMAGE_BYTES;
+    if (
+      bytes.byteLength === 0 ||
+      bytes.byteLength > maxBytes ||
+      !isValidArtifactDigest(content.digest) ||
+      !Number.isSafeInteger(content.sizeBytes) ||
+      content.sizeBytes !== bytes.byteLength ||
+      content.digest !== digestBytes(bytes)
+    ) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_CONTENT_MISMATCH",
+        "Generated Artifact bytes do not match their declared digest or size.",
+      );
+    }
+    if (content.kind === "text") {
+      if (mediaType !== ARTIFACT_TEXT_MEDIA_TYPE) {
+        throw new ArtifactServiceError(
+          "ARTIFACT_CONTENT_MISMATCH",
+          "Generated text must use UTF-8 text/plain media.",
+        );
+      }
+      return {
+        kind: "text",
+        text: content.text,
+        mediaType,
+        digest: content.digest,
+        sizeBytes: content.sizeBytes,
+      };
+    }
+    if (
+      !isValidArtifactMediaType(mediaType) ||
+      !mediaType.startsWith("image/") ||
+      !Number.isSafeInteger(content.width) ||
+      content.width < 1 ||
+      !Number.isSafeInteger(content.height) ||
+      content.height < 1
+    ) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_CONTENT_MISMATCH",
+        "Generated image metadata is invalid.",
+      );
+    }
+    let inspected: Awaited<
+      ReturnType<ArtifactMediaInspector["inspectImage"]>
+    >;
+    try {
+      inspected = await this.mediaInspector.inspectImage(bytes);
+    } catch {
+      throw new ArtifactServiceError(
+        "ARTIFACT_CONTENT_MISMATCH",
+        "Generated bytes are not a supported image.",
+      );
+    }
+    if (
+      normalizeArtifactMediaType(inspected.mediaType) !== mediaType ||
+      inspected.width !== content.width ||
+      inspected.height !== content.height
+    ) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_CONTENT_MISMATCH",
+        "Generated image bytes do not match their declared media metadata.",
+      );
+    }
+    return {
+      kind: "image",
+      bytes: Uint8Array.from(bytes),
+      mediaType,
+      digest: content.digest,
+      sizeBytes: content.sizeBytes,
+      width: content.width,
+      height: content.height,
+    };
+  }
+
+  private async prepareGeneratedLineage(input: {
+    workspaceId: string;
+    artifactId: string;
+    inputs: GeneratedArtifactLineageInput[];
+  }): Promise<ArtifactLineageInputRecord[]> {
+    if (input.inputs.length > 100) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_INVALID_INPUT",
+        "Generated Artifact lineage has too many inputs.",
+      );
+    }
+    const lineage: ArtifactLineageInputRecord[] = [];
+    for (const [position, sourceInput] of input.inputs.entries()) {
+      const port = assertBoundedString(
+        sourceInput.port,
+        "Lineage input port",
+        200,
+      );
+      if (
+        sourceInput.kind !== "text" &&
+        sourceInput.kind !== "image"
+      ) {
+        throw new ArtifactServiceError(
+          "ARTIFACT_INVALID_INPUT",
+          "Generated Artifact lineage kind is invalid.",
+        );
+      }
+      if (!isValidArtifactDigest(sourceInput.contentDigest)) {
+        throw new ArtifactServiceError(
+          "ARTIFACT_INVALID_INPUT",
+          "Generated Artifact lineage digest is invalid.",
+        );
+      }
+      const source = this.normalizeLineageSource(sourceInput.source);
+      const sourceArtifactId =
+        sourceInput.sourceArtifactId === null
+          ? null
+          : assertId(
+              sourceInput.sourceArtifactId,
+              "Lineage source Artifact ID",
+            );
+      if (source.kind === "step_output" && sourceArtifactId === null) {
+        throw new ArtifactServiceError(
+          "ARTIFACT_UNAVAILABLE",
+          "Generated Artifact lineage source is unavailable.",
+        );
+      }
+      if (sourceArtifactId !== null) {
+        const found = await this.repository.getArtifact({
+          workspaceId: input.workspaceId,
+          artifactId: sourceArtifactId,
+        });
+        if (
+          !found ||
+          found.artifact.kind !== sourceInput.kind ||
+          found.artifact.contentDigest !== sourceInput.contentDigest ||
+          (source.kind === "step_output" &&
+            (!found.generatedOrigin ||
+              found.generatedOrigin.stepAttemptId !==
+                source.stepAttemptId ||
+              found.generatedOrigin.outputName !== source.outputName))
+        ) {
+          throw new ArtifactServiceError(
+            "ARTIFACT_UNAVAILABLE",
+            "Generated Artifact lineage source is unavailable.",
+          );
+        }
+      }
+      lineage.push({
+        workspaceId: input.workspaceId,
+        artifactId: input.artifactId,
+        position,
+        port,
+        kind: sourceInput.kind,
+        source,
+        contentDigest: sourceInput.contentDigest,
+        sourceArtifactId,
+      });
+    }
+    return lineage;
+  }
+
+  private normalizeLineageSource(
+    source: ArtifactLineageSource,
+  ): ArtifactLineageSource {
+    if (source.kind === "workflow_input") {
+      return {
+        kind: "workflow_input",
+        inputName: assertBoundedString(
+          source.inputName,
+          "Workflow input name",
+          200,
+        ),
+      };
+    }
+    if (source.kind === "step_output") {
+      return {
+        kind: "step_output",
+        stepAttemptId: assertId(
+          source.stepAttemptId,
+          "Source Step Attempt ID",
+        ),
+        outputName: assertBoundedString(
+          source.outputName,
+          "Source output name",
+          200,
+        ),
+      };
+    }
+    throw new ArtifactServiceError(
+      "ARTIFACT_INVALID_INPUT",
+      "Generated Artifact lineage source is invalid.",
+    );
   }
 
   private async signUpload(

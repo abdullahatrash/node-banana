@@ -6,6 +6,7 @@ import {
   createPresignedUpload,
   deleteObjectFromS3,
   getObjectStreamFromS3,
+  putObjectToS3,
 } from "@/lib/storage";
 import type {
   ArtifactContentStore,
@@ -95,6 +96,30 @@ export class S3ArtifactContentStore implements ArtifactContentStore {
       destinationKey: storageKey,
       sourceVersionId: input.sourceIdentity.versionId,
       sourceETag: input.sourceIdentity.etag,
+    });
+    return { storageKey };
+  }
+
+  async writeGenerated(
+    input: Parameters<ArtifactContentStore["writeGenerated"]>[0],
+  ) {
+    const observedDigest = `sha256:${createHash("sha256")
+      .update(input.bytes)
+      .digest("hex")}`;
+    if (observedDigest !== input.digest) {
+      throw new Error("Generated Artifact digest mismatch.");
+    }
+    const storageKey = artifactContentObjectKey(
+      input.workspaceId,
+      input.digest,
+    );
+    // The service verifies the bytes before this boundary. A digest-addressed
+    // PUT makes retries and concurrent identical settlements converge on the
+    // same immutable object key.
+    await putObjectToS3({
+      key: storageKey,
+      body: input.bytes,
+      contentType: input.mediaType,
     });
     return { storageKey };
   }

@@ -1,27 +1,38 @@
 import {
   and,
+  asc,
   desc,
   eq,
+  inArray,
   isNull,
   lt,
   lte,
   or,
   sql,
 } from "drizzle-orm";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { getDb } from "@/lib/db";
 import {
   artifactAuditEvents,
   artifactContents,
+  artifactGeneratedOrigins,
+  artifactLineageInputs,
   artifactMutationReceipts,
   artifacts,
   artifactUploads,
+  contentWorkflowRevisions,
+  workflowRuns,
+  workflowStepAttempts,
 } from "@/lib/db/schema";
 import type {
   ArtifactAuditEventRecord,
   ArtifactCommitResult,
   ArtifactContentRecord,
+  ArtifactGeneratedOriginRecord,
+  ArtifactLineageInputRecord,
   ArtifactMutationReceiptRecord,
   ArtifactRecord,
+  ArtifactRepositoryResult,
   ArtifactRepository,
   ArtifactUploadRecord,
 } from "./types";
@@ -52,6 +63,143 @@ function mapUpload(
     ...row,
     status: row.status as ArtifactUploadRecord["status"],
   };
+}
+
+function mapGeneratedOrigin(
+  row: typeof artifactGeneratedOrigins.$inferSelect,
+): ArtifactGeneratedOriginRecord {
+  return { ...row };
+}
+
+function mapLineageInput(
+  row: typeof artifactLineageInputs.$inferSelect,
+): ArtifactLineageInputRecord {
+  const source =
+    row.sourceKind === "workflow_input" && row.sourceInputName
+      ? {
+          kind: "workflow_input" as const,
+          inputName: row.sourceInputName,
+        }
+      : row.sourceKind === "step_output" &&
+          row.sourceStepAttemptId &&
+          row.sourceOutputName
+        ? {
+            kind: "step_output" as const,
+            stepAttemptId: row.sourceStepAttemptId,
+            outputName: row.sourceOutputName,
+          }
+        : null;
+  if (!source) {
+    throw new Error("Invalid Artifact lineage source.");
+  }
+  return {
+    workspaceId: row.workspaceId,
+    artifactId: row.artifactId,
+    position: row.position,
+    port: row.port,
+    kind: row.kind as ArtifactLineageInputRecord["kind"],
+    source,
+    contentDigest: row.contentDigest,
+    sourceArtifactId: row.sourceArtifactId,
+  };
+}
+
+function lineageInsertValue(
+  input: ArtifactLineageInputRecord,
+  runId: string,
+) {
+  return {
+    workspaceId: input.workspaceId,
+    artifactId: input.artifactId,
+    position: input.position,
+    port: input.port,
+    kind: input.kind,
+    sourceKind: input.source.kind,
+    sourceInputName:
+      input.source.kind === "workflow_input"
+        ? input.source.inputName
+        : null,
+    sourceRunId:
+      input.source.kind === "step_output" ? runId : null,
+    sourceStepAttemptId:
+      input.source.kind === "step_output"
+        ? input.source.stepAttemptId
+        : null,
+    sourceOutputName:
+      input.source.kind === "step_output"
+        ? input.source.outputName
+        : null,
+    contentDigest: input.contentDigest,
+    sourceArtifactId: input.sourceArtifactId,
+  };
+}
+
+function generatedBindingDigest(input: {
+  artifact: ArtifactRecord;
+  content: ArtifactContentRecord;
+  origin: ArtifactGeneratedOriginRecord;
+  lineageInputs: ArtifactLineageInputRecord[];
+}): string {
+  return canonicalDigest({
+    schema: "generated-artifact-binding/v1",
+    artifact: {
+      id: input.artifact.id,
+      workspaceId: input.artifact.workspaceId,
+      contentDigest: input.artifact.contentDigest,
+      kind: input.artifact.kind,
+      mediaType: input.artifact.mediaType,
+      sizeBytes: input.artifact.sizeBytes,
+      creatorPrincipalId: input.artifact.creatorPrincipalId,
+      origin: input.artifact.origin,
+      importedAt: input.artifact.importedAt,
+      retentionMode: input.artifact.retentionMode,
+      deletedAt: input.artifact.deletedAt,
+    },
+    content: {
+      workspaceId: input.content.workspaceId,
+      digest: input.content.digest,
+      kind: input.content.kind,
+      mediaType: input.content.mediaType,
+      sizeBytes: input.content.sizeBytes,
+      inlineText: input.content.inlineText,
+      width: input.content.width,
+      height: input.content.height,
+    },
+    origin: {
+      workspaceId: input.origin.workspaceId,
+      artifactId: input.origin.artifactId,
+      workflowId: input.origin.workflowId,
+      workflowRevisionId: input.origin.workflowRevisionId,
+      workflowRevision: input.origin.workflowRevision,
+      definitionDigest: input.origin.definitionDigest,
+      runId: input.origin.runId,
+      runStartSnapshotDigest:
+        input.origin.runStartSnapshotDigest,
+      stepAttemptId: input.origin.stepAttemptId,
+      stepId: input.origin.stepId,
+      attempt: input.origin.attempt,
+      provider: input.origin.provider,
+      operationIdentity: input.origin.operationIdentity,
+      providerOperation: input.origin.providerOperation,
+      providerOperationRef: input.origin.providerOperationRef,
+      model: input.origin.model,
+      intentDigest: input.origin.intentDigest,
+      effectKey: input.origin.effectKey,
+      outputName: input.origin.outputName,
+    },
+    lineageInputs: [...input.lineageInputs]
+      .sort((left, right) => left.position - right.position)
+      .map((lineage) => ({
+        workspaceId: lineage.workspaceId,
+        artifactId: lineage.artifactId,
+        position: lineage.position,
+        port: lineage.port,
+        kind: lineage.kind,
+        source: lineage.source,
+        contentDigest: lineage.contentDigest,
+        sourceArtifactId: lineage.sourceArtifactId,
+      })),
+  });
 }
 
 function mutationLock(receipt: ArtifactMutationReceiptRecord): string {
@@ -249,10 +397,285 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
     });
   }
 
+  async commitGenerated(
+    input: Parameters<ArtifactRepository["commitGenerated"]>[0],
+  ) {
+    return this.getDatabase().transaction(async (tx) => {
+      const outputLock = JSON.stringify([
+        input.origin.workspaceId,
+        input.origin.effectKey,
+        input.origin.outputName,
+      ]);
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${outputLock}, 0))`,
+      );
+      const existingOrigins = await tx
+        .select()
+        .from(artifactGeneratedOrigins)
+        .where(
+          and(
+            eq(
+              artifactGeneratedOrigins.workspaceId,
+              input.origin.workspaceId,
+            ),
+            eq(
+              artifactGeneratedOrigins.effectKey,
+              input.origin.effectKey,
+            ),
+            eq(
+              artifactGeneratedOrigins.outputName,
+              input.origin.outputName,
+            ),
+          ),
+        )
+        .limit(1);
+      const existingOrigin = existingOrigins[0];
+      if (existingOrigin) {
+        const existingRows = await tx
+          .select({ artifact: artifacts, content: artifactContents })
+          .from(artifacts)
+          .innerJoin(
+            artifactContents,
+            and(
+              eq(
+                artifactContents.workspaceId,
+                artifacts.workspaceId,
+              ),
+              eq(
+                artifactContents.digest,
+                artifacts.contentDigest,
+              ),
+            ),
+          )
+          .where(
+            and(
+              eq(artifacts.workspaceId, existingOrigin.workspaceId),
+              eq(artifacts.id, existingOrigin.artifactId),
+            ),
+          )
+          .limit(1);
+        const existing = existingRows[0];
+        if (!existing || existing.artifact.deletedAt) {
+          return { kind: "unavailable" as const };
+        }
+        const lineageRows = await tx
+          .select()
+          .from(artifactLineageInputs)
+          .where(
+            and(
+              eq(
+                artifactLineageInputs.workspaceId,
+                existingOrigin.workspaceId,
+              ),
+              eq(
+                artifactLineageInputs.artifactId,
+                existingOrigin.artifactId,
+              ),
+            ),
+          )
+          .orderBy(asc(artifactLineageInputs.position));
+        let mappedLineage: ArtifactLineageInputRecord[];
+        try {
+          mappedLineage = lineageRows.map(mapLineageInput);
+        } catch {
+          return { kind: "unavailable" as const };
+        }
+        const existingDigest = generatedBindingDigest({
+          artifact: mapArtifact(existing.artifact),
+          content: mapContent(existing.content),
+          origin: mapGeneratedOrigin(existingOrigin),
+          lineageInputs: mappedLineage,
+        });
+        return existingDigest === generatedBindingDigest(input)
+          ? { kind: "replayed" as const }
+          : { kind: "conflict" as const };
+      }
+
+      if (
+        input.artifact.workspaceId !== input.content.workspaceId ||
+        input.artifact.workspaceId !== input.origin.workspaceId ||
+        input.artifact.id !== input.origin.artifactId ||
+        input.artifact.origin !== "generated" ||
+        input.artifact.importedAt !== null ||
+        input.lineageInputs.some(
+          (lineage, position) =>
+            lineage.workspaceId !== input.artifact.workspaceId ||
+            lineage.artifactId !== input.artifact.id ||
+            lineage.position !== position,
+        )
+      ) {
+        return { kind: "conflict" as const };
+      }
+
+      const revisionRows = await tx
+        .select({
+          revision: contentWorkflowRevisions.revision,
+          definitionDigest:
+            contentWorkflowRevisions.definitionDigest,
+        })
+        .from(contentWorkflowRevisions)
+        .where(
+          and(
+            eq(
+              contentWorkflowRevisions.workspaceId,
+              input.origin.workspaceId,
+            ),
+            eq(
+              contentWorkflowRevisions.workflowId,
+              input.origin.workflowId,
+            ),
+            eq(
+              contentWorkflowRevisions.id,
+              input.origin.workflowRevisionId,
+            ),
+          ),
+        )
+        .limit(1)
+        .for("share");
+      const revision = revisionRows[0];
+      if (
+        !revision ||
+        revision.revision !== input.origin.workflowRevision ||
+        revision.definitionDigest !== input.origin.definitionDigest
+      ) {
+        return { kind: "unavailable" as const };
+      }
+
+      const runRows = await tx
+        .select({
+          workflowRevisionId: workflowRuns.workflowRevisionId,
+          startSnapshotDigest: workflowRuns.startSnapshotDigest,
+        })
+        .from(workflowRuns)
+        .where(
+          and(
+            eq(workflowRuns.workspaceId, input.origin.workspaceId),
+            eq(workflowRuns.workflowId, input.origin.workflowId),
+            eq(workflowRuns.id, input.origin.runId),
+          ),
+        )
+        .limit(1)
+        .for("share");
+      const run = runRows[0];
+      if (
+        !run ||
+        run.workflowRevisionId !== input.origin.workflowRevisionId ||
+        run.startSnapshotDigest !==
+          input.origin.runStartSnapshotDigest
+      ) {
+        return { kind: "unavailable" as const };
+      }
+
+      const attemptRows = await tx
+        .select()
+        .from(workflowStepAttempts)
+        .where(
+          and(
+            eq(
+              workflowStepAttempts.workspaceId,
+              input.origin.workspaceId,
+            ),
+            eq(workflowStepAttempts.runId, input.origin.runId),
+            eq(
+              workflowStepAttempts.id,
+              input.origin.stepAttemptId,
+            ),
+          ),
+        )
+        .limit(1)
+        .for("share");
+      const attempt = attemptRows[0];
+      if (
+        !attempt ||
+        attempt.stepId !== input.origin.stepId ||
+        attempt.attempt !== input.origin.attempt ||
+        attempt.provider !== input.origin.provider ||
+        attempt.operationIdentity !==
+          input.origin.operationIdentity ||
+        attempt.providerOperation !==
+          input.origin.providerOperation ||
+        attempt.model !== input.origin.model ||
+        attempt.intentDigest !== input.origin.intentDigest ||
+        attempt.effectKey !== input.origin.effectKey
+      ) {
+        return { kind: "unavailable" as const };
+      }
+
+      for (const lineage of input.lineageInputs) {
+        if (lineage.sourceArtifactId === null) {
+          if (lineage.source.kind === "step_output") {
+            return { kind: "unavailable" as const };
+          }
+          continue;
+        }
+        const sourceRows = await tx
+          .select({
+            artifact: artifacts,
+            generatedOrigin: artifactGeneratedOrigins,
+          })
+          .from(artifacts)
+          .leftJoin(
+            artifactGeneratedOrigins,
+            and(
+              eq(
+                artifactGeneratedOrigins.workspaceId,
+                artifacts.workspaceId,
+              ),
+              eq(
+                artifactGeneratedOrigins.artifactId,
+                artifacts.id,
+              ),
+            ),
+          )
+          .where(
+            and(
+              eq(artifacts.workspaceId, input.origin.workspaceId),
+              eq(artifacts.id, lineage.sourceArtifactId),
+              isNull(artifacts.deletedAt),
+            ),
+          )
+          .limit(1)
+          .for("share", { of: artifacts });
+        const source = sourceRows[0];
+        if (
+          !source ||
+          source.artifact.kind !== lineage.kind ||
+          source.artifact.contentDigest !== lineage.contentDigest ||
+          (lineage.source.kind === "step_output" &&
+            (!source.generatedOrigin ||
+              source.generatedOrigin.runId !== input.origin.runId ||
+              source.generatedOrigin.stepAttemptId !==
+                lineage.source.stepAttemptId ||
+              source.generatedOrigin.outputName !==
+                lineage.source.outputName))
+        ) {
+          return { kind: "unavailable" as const };
+        }
+      }
+
+      if (!(await insertOrVerifyContent(tx, input.content))) {
+        return { kind: "unavailable" as const };
+      }
+      await tx.insert(artifacts).values(input.artifact);
+      await tx.insert(artifactGeneratedOrigins).values(input.origin);
+      if (input.lineageInputs.length > 0) {
+        await tx
+          .insert(artifactLineageInputs)
+          .values(
+            input.lineageInputs.map((lineage) =>
+              lineageInsertValue(lineage, input.origin.runId),
+            ),
+          );
+      }
+      return { kind: "created" as const };
+    });
+  }
+
   async getArtifact(
     input: Parameters<ArtifactRepository["getArtifact"]>[0],
-  ) {
-    const rows = await this.getDatabase()
+  ): Promise<ArtifactRepositoryResult | null> {
+    const db = this.getDatabase();
+    const rows = await db
       .select({ artifact: artifacts, content: artifactContents })
       .from(artifacts)
       .innerJoin(
@@ -270,12 +693,42 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
         ),
       )
       .limit(1);
-    return rows[0]
-      ? {
-          artifact: mapArtifact(rows[0].artifact),
-          content: mapContent(rows[0].content),
-        }
-      : null;
+    const row = rows[0];
+    if (!row) return null;
+    const originRows = await db
+      .select()
+      .from(artifactGeneratedOrigins)
+      .where(
+        and(
+          eq(
+            artifactGeneratedOrigins.workspaceId,
+            input.workspaceId,
+          ),
+          eq(
+            artifactGeneratedOrigins.artifactId,
+            input.artifactId,
+          ),
+        ),
+      )
+      .limit(1);
+    const lineageRows = await db
+      .select()
+      .from(artifactLineageInputs)
+      .where(
+        and(
+          eq(artifactLineageInputs.workspaceId, input.workspaceId),
+          eq(artifactLineageInputs.artifactId, input.artifactId),
+        ),
+      )
+      .orderBy(asc(artifactLineageInputs.position));
+    return {
+      artifact: mapArtifact(row.artifact),
+      content: mapContent(row.content),
+      generatedOrigin: originRows[0]
+        ? mapGeneratedOrigin(originRows[0])
+        : null,
+      lineageInputs: lineageRows.map(mapLineageInput),
+    };
   }
 
   async listArtifacts(
@@ -306,7 +759,8 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
           )
         : undefined,
     ];
-    const rows = await this.getDatabase()
+    const db = this.getDatabase();
+    const rows = await db
       .select({ artifact: artifacts, content: artifactContents })
       .from(artifacts)
       .innerJoin(
@@ -319,9 +773,62 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
       .where(and(...conditions))
       .orderBy(desc(artifacts.createdAt), desc(artifacts.id))
       .limit(input.limit);
+    const artifactIds = rows.map((row) => row.artifact.id);
+    if (artifactIds.length === 0) return [];
+    const originRows = await db
+      .select()
+      .from(artifactGeneratedOrigins)
+      .where(
+        and(
+          eq(
+            artifactGeneratedOrigins.workspaceId,
+            input.workspaceId,
+          ),
+          inArray(
+            artifactGeneratedOrigins.artifactId,
+            artifactIds,
+          ),
+        ),
+      );
+    const lineageRows = await db
+      .select()
+      .from(artifactLineageInputs)
+      .where(
+        and(
+          eq(artifactLineageInputs.workspaceId, input.workspaceId),
+          inArray(artifactLineageInputs.artifactId, artifactIds),
+        ),
+      )
+      .orderBy(
+        asc(artifactLineageInputs.artifactId),
+        asc(artifactLineageInputs.position),
+      );
+    const originsByArtifact = new Map(
+      originRows.map((origin) => [
+        origin.artifactId,
+        mapGeneratedOrigin(origin),
+      ]),
+    );
+    const lineageByArtifact = new Map<
+      string,
+      ArtifactLineageInputRecord[]
+    >();
+    for (const lineageRow of lineageRows) {
+      const lineage = mapLineageInput(lineageRow);
+      const existing = lineageByArtifact.get(lineage.artifactId);
+      if (existing) {
+        existing.push(lineage);
+      } else {
+        lineageByArtifact.set(lineage.artifactId, [lineage]);
+      }
+    }
     return rows.map((row) => ({
       artifact: mapArtifact(row.artifact),
       content: mapContent(row.content),
+      generatedOrigin:
+        originsByArtifact.get(row.artifact.id) ?? null,
+      lineageInputs:
+        lineageByArtifact.get(row.artifact.id) ?? [],
     }));
   }
 

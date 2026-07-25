@@ -190,12 +190,19 @@ describe("Workflow Run capability parity", () => {
     const runDefinitions = registry
       .listDefinitions()
       .filter((entry) =>
-        entry.identity.name.startsWith("workflow_run"),
+        entry.identity.name.startsWith("workflow_"),
       );
-    expect(runDefinitions.map(({ identity }) => identity.name).sort()).toEqual([
-      "workflow_run_events.list",
-      "workflow_runs.get",
-      "workflow_runs.start",
+    expect(
+      runDefinitions
+        .map(({ identity }) => `${identity.name}@${identity.version}`)
+        .sort(),
+    ).toEqual([
+      "workflow_run_artifacts.get@1",
+      "workflow_run_events.list@1",
+      "workflow_runs.get@1",
+      "workflow_runs.start@1",
+      "workflow_runs.start@2",
+      "workflow_step_attempts.list@1",
     ]);
     const started = await dispatchCliCapability(
       "workflow_runs.start@1",

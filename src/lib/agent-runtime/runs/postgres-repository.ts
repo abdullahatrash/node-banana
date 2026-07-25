@@ -17,17 +17,22 @@ import {
   workflowRunMutationReceipts,
   workflowRunOutboxIntents,
   workflowRuns,
+  workflowStepAttempts,
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type {
   CompleteWorkflowRunStepResult,
+  PrepareWorkflowStepAttemptResult,
+  SettleWorkflowStepAttemptResult,
   WorkflowRunEventRecord,
   WorkflowRunExecutionLeaseRecord,
+  WorkflowRunFinalSnapshot,
   WorkflowRunMutationReceiptRecord,
   WorkflowRunOutboxIntentRecord,
   WorkflowRunRecord,
   WorkflowRunRepository,
   WorkflowRunStartSnapshot,
+  WorkflowStepAttemptRecord,
 } from "./types";
 
 type Db = ReturnType<typeof getDb>;
@@ -35,12 +40,159 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 const FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
 
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function postgresDate(value: unknown): Date {
   const date = value instanceof Date ? value : new Date(String(value));
   if (Number.isNaN(date.getTime())) {
     throw new TypeError("PostgreSQL returned an invalid timestamp.");
   }
   return date;
+}
+
+function sameCanonicalValue(left: unknown, right: unknown): boolean {
+  try {
+    return canonicalDigest(left) === canonicalDigest(right);
+  } catch {
+    return false;
+  }
+}
+
+function validPreparedAttempt(
+  attempt: WorkflowStepAttemptRecord,
+  run: WorkflowRunRecord,
+): boolean {
+  const step = run.startSnapshot.definition.steps.find(
+    (candidate) => candidate.id === attempt.stepId,
+  );
+  return (
+    attempt.workspaceId === run.workspaceId &&
+    attempt.runId === run.id &&
+    Number.isInteger(attempt.attempt) &&
+    attempt.attempt > 0 &&
+    attempt.state === "running" &&
+    attempt.outputs === null &&
+    attempt.failureCode === null &&
+    attempt.completedAt === null &&
+    Boolean(step) &&
+    step!.operation.identity === attempt.operationIdentity &&
+    step!.operation.contractDigest === attempt.operationContractDigest
+  );
+}
+
+function sameAttemptIntent(
+  existing: WorkflowStepAttemptRecord,
+  candidate: WorkflowStepAttemptRecord,
+): boolean {
+  return (
+    existing.id === candidate.id &&
+    existing.workspaceId === candidate.workspaceId &&
+    existing.runId === candidate.runId &&
+    existing.stepId === candidate.stepId &&
+    existing.attempt === candidate.attempt &&
+    existing.operationIdentity === candidate.operationIdentity &&
+    existing.operationContractDigest ===
+      candidate.operationContractDigest &&
+    existing.provider === candidate.provider &&
+    existing.providerOperation === candidate.providerOperation &&
+    existing.model === candidate.model &&
+    existing.intentDigest === candidate.intentDigest &&
+    existing.effectKey === candidate.effectKey &&
+    sameCanonicalValue(existing.inputs, candidate.inputs)
+  );
+}
+
+function validFinalSnapshot(
+  snapshot: WorkflowRunFinalSnapshot | null,
+  digest: string | null,
+  run: WorkflowRunRecord,
+  attempt: WorkflowStepAttemptRecord,
+  outputs: WorkflowStepAttemptRecord["outputs"],
+  persistedAttempts: WorkflowStepAttemptRecord[],
+): boolean {
+  if (Boolean(snapshot) !== Boolean(digest)) return false;
+  if (!snapshot) return true;
+  if (
+    snapshot.runId !== run.id ||
+    snapshot.startSnapshotDigest !== run.startSnapshotDigest ||
+    canonicalDigest(snapshot) !== digest
+  ) {
+    return false;
+  }
+  if (
+    snapshot.stepAttempts.length !==
+    run.startSnapshot.definition.steps.length
+  ) {
+    return false;
+  }
+  const effectiveAttempts = persistedAttempts.map((candidate) =>
+    candidate.id === attempt.id
+      ? {
+          ...candidate,
+          state: "completed" as const,
+          outputs,
+        }
+      : candidate,
+  );
+  for (
+    let index = 0;
+    index < run.startSnapshot.definition.steps.length;
+    index += 1
+  ) {
+    const workflowStep = run.startSnapshot.definition.steps[index]!;
+    const snapshottedAttempt = snapshot.stepAttempts[index];
+    if (
+      !snapshottedAttempt ||
+      snapshottedAttempt.stepId !== workflowStep.id ||
+      snapshottedAttempt.state !== "completed"
+    ) {
+      return false;
+    }
+    const persisted = effectiveAttempts.find(
+      (candidate) =>
+        candidate.id === snapshottedAttempt.stepAttemptId &&
+        candidate.stepId === workflowStep.id,
+    );
+    if (
+      !persisted ||
+      persisted.state !== "completed" ||
+      persisted.attempt !== snapshottedAttempt.attempt ||
+      persisted.effectKey !== snapshottedAttempt.effectKey ||
+      !sameCanonicalValue(
+        persisted.outputs,
+        snapshottedAttempt.outputs,
+      )
+    ) {
+      return false;
+    }
+  }
+  const declaredOutputNames = Object.keys(
+    run.startSnapshot.definition.outputs,
+  ).sort(compareCodeUnits);
+  const snapshotOutputNames = Object.keys(snapshot.outputs).sort(
+    compareCodeUnits,
+  );
+  if (
+    !sameCanonicalValue(declaredOutputNames, snapshotOutputNames)
+  ) {
+    return false;
+  }
+  return declaredOutputNames.every((outputName) => {
+    const binding =
+      run.startSnapshot.definition.outputs[outputName]!.binding;
+    const sourceAttempt = snapshot.stepAttempts.find(
+      (candidate) => candidate.stepId === binding.step,
+    );
+    return (
+      Boolean(sourceAttempt) &&
+      sameCanonicalValue(
+        sourceAttempt!.outputs[binding.output],
+        snapshot.outputs[outputName],
+      )
+    );
+  });
 }
 
 function receiptLock(input: {
@@ -68,6 +220,9 @@ function mapRun(row: typeof workflowRuns.$inferSelect): WorkflowRunRecord {
     startSnapshot: row.startSnapshot as WorkflowRunStartSnapshot,
     nextEventSequence: row.nextEventSequence,
     output: row.output as Record<string, unknown> | null,
+    finalSnapshot:
+      row.finalSnapshot as WorkflowRunFinalSnapshot | null,
+    finalSnapshotDigest: row.finalSnapshotDigest,
     failureCode: row.failureCode,
     acceptedAt: row.acceptedAt,
     startedAt: row.startedAt,
@@ -91,7 +246,8 @@ function mapReceipt(
 ): WorkflowRunMutationReceiptRecord {
   return {
     ...row,
-    capability: "workflow_runs.start@1",
+    capability:
+      row.capability as WorkflowRunMutationReceiptRecord["capability"],
   };
 }
 
@@ -110,6 +266,24 @@ function mapLease(
   return row;
 }
 
+function mapStepAttempt(
+  row: typeof workflowStepAttempts.$inferSelect,
+): WorkflowStepAttemptRecord {
+  return {
+    ...row,
+    state: row.state as WorkflowStepAttemptRecord["state"],
+    inputs: row.inputs as WorkflowStepAttemptRecord["inputs"],
+    outputs:
+      row.outputs as WorkflowStepAttemptRecord["outputs"],
+  };
+}
+
+function capabilityVersion(
+  capability: WorkflowRunMutationReceiptRecord["capability"],
+): 1 | 2 {
+  return capability === "workflow_runs.start@2" ? 2 : 1;
+}
+
 function validStartInput(
   input: Parameters<WorkflowRunRepository["start"]>[0],
 ): boolean {
@@ -118,6 +292,8 @@ function validStartInput(
     run.state === "accepted" &&
     run.nextEventSequence === 2 &&
     run.output === null &&
+    run.finalSnapshot === null &&
+    run.finalSnapshotDigest === null &&
     run.failureCode === null &&
     run.startedAt === null &&
     run.completedAt === null &&
@@ -127,7 +303,8 @@ function validStartInput(
     firstEvent.type === "run.accepted" &&
     run.workspaceId === receipt.workspaceId &&
     run.id === receipt.runId &&
-    receipt.capability === "workflow_runs.start@1" &&
+    (receipt.capability === "workflow_runs.start@1" ||
+      receipt.capability === "workflow_runs.start@2") &&
     run.startSnapshot.workflowId === run.workflowId &&
     run.startSnapshot.workflowRevisionId === run.workflowRevisionId &&
     run.startSnapshot.authorization.principalId === receipt.principalId &&
@@ -294,7 +471,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
                 agentAuthorizationDecisions.capabilityName,
                 "workflow_runs.start",
               ),
-              eq(agentAuthorizationDecisions.capabilityVersion, 1),
+              eq(
+                agentAuthorizationDecisions.capabilityVersion,
+                capabilityVersion(input.receipt.capability),
+              ),
               eq(agentAuthorizationDecisions.outcome, "allowed"),
             ),
           )
@@ -754,6 +934,686 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           .returning({ runId: workflowRunExecutionLeases.runId });
         if (!released[0]) throw new Error("Workflow Run lease release was lost.");
         return { kind: "completed" as const, run: mapRun(updated[0]) };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
+  async listStepAttempts(
+    input: Parameters<WorkflowRunRepository["listStepAttempts"]>[0],
+  ): Promise<WorkflowStepAttemptRecord[] | null> {
+    const database = this.getDatabase();
+    const run = await findRun(database, input);
+    if (!run) return null;
+    const rows = await database
+      .select()
+      .from(workflowStepAttempts)
+      .where(
+        and(
+          eq(workflowStepAttempts.workspaceId, input.workspaceId),
+          eq(workflowStepAttempts.runId, input.runId),
+        ),
+      )
+      .orderBy(
+        asc(workflowStepAttempts.startedAt),
+        asc(workflowStepAttempts.stepId),
+        asc(workflowStepAttempts.attempt),
+      );
+    return rows.map(mapStepAttempt);
+  }
+
+  async prepareStepAttempt(
+    input: Parameters<WorkflowRunRepository["prepareStepAttempt"]>[0],
+  ): Promise<PrepareWorkflowStepAttemptResult> {
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        const selectedRuns = await tx
+          .select({
+            run: workflowRuns,
+            databaseNow: sql<unknown>`clock_timestamp()`,
+          })
+          .from(workflowRuns)
+          .where(
+            and(
+              eq(
+                workflowRuns.workspaceId,
+                input.attempt.workspaceId,
+              ),
+              eq(workflowRuns.id, input.attempt.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selected = selectedRuns[0];
+        if (!selected) return { kind: "unavailable" as const };
+        const run = mapRun(selected.run);
+        if (
+          run.state !== "running" ||
+          !validPreparedAttempt(input.attempt, run)
+        ) {
+          return { kind: "unavailable" as const };
+        }
+        const databaseNow = postgresDate(selected.databaseNow);
+        const leaseRows = await tx
+          .select()
+          .from(workflowRunExecutionLeases)
+          .where(
+            and(
+              eq(
+                workflowRunExecutionLeases.workspaceId,
+                input.attempt.workspaceId,
+              ),
+              eq(
+                workflowRunExecutionLeases.runId,
+                input.attempt.runId,
+              ),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const lease = leaseRows[0];
+        if (
+          !lease ||
+          lease.releasedAt !== null ||
+          lease.workerId !== input.workerId ||
+          lease.token !== input.token ||
+          lease.fence !== input.fence ||
+          lease.expiresAt <= databaseNow
+        ) {
+          return { kind: "stale_fence" as const };
+        }
+
+        const existingRows = await tx
+          .select()
+          .from(workflowStepAttempts)
+          .where(
+            and(
+              eq(
+                workflowStepAttempts.workspaceId,
+                input.attempt.workspaceId,
+              ),
+              or(
+                and(
+                  eq(
+                    workflowStepAttempts.runId,
+                    input.attempt.runId,
+                  ),
+                  eq(
+                    workflowStepAttempts.stepId,
+                    input.attempt.stepId,
+                  ),
+                  eq(
+                    workflowStepAttempts.attempt,
+                    input.attempt.attempt,
+                  ),
+                ),
+                eq(
+                  workflowStepAttempts.effectKey,
+                  input.attempt.effectKey,
+                ),
+              ),
+            ),
+          )
+          .limit(2)
+          .for("update");
+        if (existingRows.length > 0) {
+          const existing = existingRows.map(mapStepAttempt).find(
+            (attempt) => sameAttemptIntent(attempt, input.attempt),
+          );
+          if (!existing || existingRows.length > 1) {
+            return { kind: "conflict" as const };
+          }
+          return {
+            kind: "replayed" as const,
+            run,
+            attempt: existing,
+          };
+        }
+
+        const attempt: WorkflowStepAttemptRecord = {
+          ...input.attempt,
+          inputs: structuredClone(input.attempt.inputs),
+          startedAt: databaseNow,
+        };
+        await tx.insert(workflowStepAttempts).values(attempt);
+        const event: WorkflowRunEventRecord = {
+          id: input.eventId,
+          workspaceId: run.workspaceId,
+          runId: run.id,
+          sequence: run.nextEventSequence,
+          type: "step.attempt.started",
+          data: {
+            stepAttemptId: attempt.id,
+            stepId: attempt.stepId,
+            attempt: attempt.attempt,
+            effectKey: attempt.effectKey,
+            operationIdentity: attempt.operationIdentity,
+            intentDigest: attempt.intentDigest,
+          },
+          occurredAt: databaseNow,
+        };
+        await tx.insert(workflowRunEvents).values(event);
+        const updatedRuns = await tx
+          .update(workflowRuns)
+          .set({
+            nextEventSequence: run.nextEventSequence + 1,
+            updatedAt: databaseNow,
+          })
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, run.workspaceId),
+              eq(workflowRuns.id, run.id),
+              eq(workflowRuns.state, "running"),
+              eq(
+                workflowRuns.nextEventSequence,
+                run.nextEventSequence,
+              ),
+            ),
+          )
+          .returning();
+        if (!updatedRuns[0]) {
+          throw new Error("Workflow Step Attempt preparation was lost.");
+        }
+        return {
+          kind: "created" as const,
+          run: mapRun(updatedRuns[0]),
+          attempt,
+        };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
+  async settleStepAttempt(
+    input: Parameters<WorkflowRunRepository["settleStepAttempt"]>[0],
+  ): Promise<SettleWorkflowStepAttemptResult> {
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        const selectedRuns = await tx
+          .select({
+            run: workflowRuns,
+            databaseNow: sql<unknown>`clock_timestamp()`,
+          })
+          .from(workflowRuns)
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.id, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selected = selectedRuns[0];
+        if (!selected) return { kind: "unavailable" as const };
+        const run = mapRun(selected.run);
+
+        const attemptRows = await tx
+          .select()
+          .from(workflowStepAttempts)
+          .where(
+            and(
+              eq(
+                workflowStepAttempts.workspaceId,
+                input.workspaceId,
+              ),
+              eq(workflowStepAttempts.runId, input.runId),
+              eq(workflowStepAttempts.id, input.stepAttemptId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selectedAttempt = attemptRows[0];
+        if (!selectedAttempt) {
+          return { kind: "unavailable" as const };
+        }
+        const attempt = mapStepAttempt(selectedAttempt);
+
+        if (attempt.state === "completed") {
+          if (
+            !sameCanonicalValue(attempt.outputs, input.outputs) ||
+            (input.finalSnapshotDigest !== null &&
+              run.finalSnapshotDigest !== input.finalSnapshotDigest)
+          ) {
+            return { kind: "unavailable" as const };
+          }
+          return {
+            kind: "settled" as const,
+            run,
+            attempt,
+          };
+        }
+        const persistedAttempts = input.finalSnapshot
+          ? (
+              await tx
+                .select()
+                .from(workflowStepAttempts)
+                .where(
+                  and(
+                    eq(
+                      workflowStepAttempts.workspaceId,
+                      input.workspaceId,
+                    ),
+                    eq(
+                      workflowStepAttempts.runId,
+                      input.runId,
+                    ),
+                  ),
+                )
+                .for("update")
+            ).map(mapStepAttempt)
+          : [attempt];
+        if (
+          run.state !== "running" ||
+          attempt.state !== "running" ||
+          !validFinalSnapshot(
+            input.finalSnapshot,
+            input.finalSnapshotDigest,
+            run,
+            attempt,
+            input.outputs,
+            persistedAttempts,
+          )
+        ) {
+          return { kind: "unavailable" as const };
+        }
+
+        const outputEntries = Object.entries(input.outputs).sort(
+          ([left], [right]) => compareCodeUnits(left, right),
+        );
+        if (
+          input.eventIds.generated.length !== outputEntries.length ||
+          Boolean(input.eventIds.runCompleted) !==
+            Boolean(input.finalSnapshot)
+        ) {
+          return { kind: "unavailable" as const };
+        }
+
+        const databaseNow = postgresDate(selected.databaseNow);
+        const leaseRows = await tx
+          .select()
+          .from(workflowRunExecutionLeases)
+          .where(
+            and(
+              eq(
+                workflowRunExecutionLeases.workspaceId,
+                input.workspaceId,
+              ),
+              eq(workflowRunExecutionLeases.runId, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const lease = leaseRows[0];
+        if (
+          !lease ||
+          lease.releasedAt !== null ||
+          lease.workerId !== input.workerId ||
+          lease.token !== input.token ||
+          lease.fence !== input.fence ||
+          lease.expiresAt <= databaseNow
+        ) {
+          return { kind: "stale_fence" as const };
+        }
+
+        const updatedAttempts = await tx
+          .update(workflowStepAttempts)
+          .set({
+            state: "completed",
+            outputs: structuredClone(input.outputs),
+            failureCode: null,
+            completedAt: databaseNow,
+          })
+          .where(
+            and(
+              eq(
+                workflowStepAttempts.workspaceId,
+                input.workspaceId,
+              ),
+              eq(workflowStepAttempts.runId, input.runId),
+              eq(workflowStepAttempts.id, input.stepAttemptId),
+              eq(workflowStepAttempts.state, "running"),
+            ),
+          )
+          .returning();
+        if (!updatedAttempts[0]) {
+          throw new Error("Workflow Step Attempt settlement was lost.");
+        }
+
+        let sequence = run.nextEventSequence;
+        const generatedEvents: WorkflowRunEventRecord[] =
+          outputEntries.map(([outputName, output], index) => ({
+            id: input.eventIds.generated[index]!,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: sequence++,
+            type: "artifact.generated",
+            data: {
+              stepAttemptId: attempt.id,
+              stepId: attempt.stepId,
+              outputName,
+              artifactId: output.artifactId,
+              digest: output.digest,
+            },
+            occurredAt: databaseNow,
+          }));
+        const events: WorkflowRunEventRecord[] = [
+          ...generatedEvents,
+          {
+            id: input.eventIds.attemptCompleted,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: sequence++,
+            type: "step.attempt.completed",
+            data: {
+              stepAttemptId: attempt.id,
+              stepId: attempt.stepId,
+              attempt: attempt.attempt,
+              effectKey: attempt.effectKey,
+              outputArtifactIds: outputEntries.map(
+                ([, output]) => output.artifactId,
+              ),
+            },
+            occurredAt: databaseNow,
+          },
+        ];
+        if (input.finalSnapshot) {
+          events.push({
+            id: input.eventIds.runCompleted!,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: sequence++,
+            type: "run.completed",
+            data: {
+              finalSnapshotDigest: input.finalSnapshotDigest,
+              outputArtifactIds: Object.entries(
+                input.finalSnapshot.outputs,
+              )
+                .sort(([left], [right]) =>
+                  compareCodeUnits(left, right),
+                )
+                .map(([, output]) => output.artifactId),
+            },
+            occurredAt: databaseNow,
+          });
+        }
+        await tx.insert(workflowRunEvents).values(events);
+
+        const updatedRuns = await tx
+          .update(workflowRuns)
+          .set({
+            state: input.finalSnapshot ? "completed" : "running",
+            output: input.finalSnapshot
+              ? structuredClone(input.finalSnapshot.outputs)
+              : null,
+            finalSnapshot: input.finalSnapshot
+              ? structuredClone(input.finalSnapshot)
+              : null,
+            finalSnapshotDigest: input.finalSnapshotDigest,
+            failureCode: null,
+            nextEventSequence: sequence,
+            completedAt: input.finalSnapshot ? databaseNow : null,
+            updatedAt: databaseNow,
+          })
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.id, input.runId),
+              eq(workflowRuns.state, "running"),
+              eq(
+                workflowRuns.nextEventSequence,
+                run.nextEventSequence,
+              ),
+            ),
+          )
+          .returning();
+        if (!updatedRuns[0]) {
+          throw new Error("Workflow Run settlement was lost.");
+        }
+
+        const released = await tx
+          .update(workflowRunExecutionLeases)
+          .set({ releasedAt: databaseNow })
+          .where(
+            and(
+              eq(
+                workflowRunExecutionLeases.workspaceId,
+                input.workspaceId,
+              ),
+              eq(workflowRunExecutionLeases.runId, input.runId),
+              eq(
+                workflowRunExecutionLeases.workerId,
+                input.workerId,
+              ),
+              eq(
+                workflowRunExecutionLeases.token,
+                input.token,
+              ),
+              eq(workflowRunExecutionLeases.fence, input.fence),
+              isNull(workflowRunExecutionLeases.releasedAt),
+            ),
+          )
+          .returning({ runId: workflowRunExecutionLeases.runId });
+        if (!released[0]) {
+          throw new Error("Workflow Run lease release was lost.");
+        }
+        return {
+          kind: "settled" as const,
+          run: mapRun(updatedRuns[0]),
+          attempt: mapStepAttempt(updatedAttempts[0]),
+        };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
+  async failStepAttempt(
+    input: Parameters<WorkflowRunRepository["failStepAttempt"]>[0],
+  ): Promise<SettleWorkflowStepAttemptResult> {
+    if (!FAILURE_CODE.test(input.failureCode)) {
+      return { kind: "unavailable" as const };
+    }
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        const selectedRuns = await tx
+          .select({
+            run: workflowRuns,
+            databaseNow: sql<unknown>`clock_timestamp()`,
+          })
+          .from(workflowRuns)
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.id, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selected = selectedRuns[0];
+        if (!selected) return { kind: "unavailable" as const };
+        const run = mapRun(selected.run);
+
+        const attemptRows = await tx
+          .select()
+          .from(workflowStepAttempts)
+          .where(
+            and(
+              eq(
+                workflowStepAttempts.workspaceId,
+                input.workspaceId,
+              ),
+              eq(workflowStepAttempts.runId, input.runId),
+              eq(workflowStepAttempts.id, input.stepAttemptId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selectedAttempt = attemptRows[0];
+        if (!selectedAttempt) {
+          return { kind: "unavailable" as const };
+        }
+        const attempt = mapStepAttempt(selectedAttempt);
+        if (
+          attempt.state === "failed" &&
+          run.state === "failed" &&
+          attempt.failureCode === input.failureCode &&
+          run.failureCode === input.failureCode
+        ) {
+          return {
+            kind: "settled" as const,
+            run,
+            attempt,
+          };
+        }
+        if (
+          run.state !== "running" ||
+          attempt.state !== "running"
+        ) {
+          return { kind: "unavailable" as const };
+        }
+
+        const databaseNow = postgresDate(selected.databaseNow);
+        const leaseRows = await tx
+          .select()
+          .from(workflowRunExecutionLeases)
+          .where(
+            and(
+              eq(
+                workflowRunExecutionLeases.workspaceId,
+                input.workspaceId,
+              ),
+              eq(workflowRunExecutionLeases.runId, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const lease = leaseRows[0];
+        if (
+          !lease ||
+          lease.releasedAt !== null ||
+          lease.workerId !== input.workerId ||
+          lease.token !== input.token ||
+          lease.fence !== input.fence ||
+          lease.expiresAt <= databaseNow
+        ) {
+          return { kind: "stale_fence" as const };
+        }
+
+        const updatedAttempts = await tx
+          .update(workflowStepAttempts)
+          .set({
+            state: "failed",
+            outputs: null,
+            failureCode: input.failureCode,
+            completedAt: databaseNow,
+          })
+          .where(
+            and(
+              eq(
+                workflowStepAttempts.workspaceId,
+                input.workspaceId,
+              ),
+              eq(workflowStepAttempts.runId, input.runId),
+              eq(workflowStepAttempts.id, input.stepAttemptId),
+              eq(workflowStepAttempts.state, "running"),
+            ),
+          )
+          .returning();
+        if (!updatedAttempts[0]) {
+          throw new Error("Workflow Step Attempt failure was lost.");
+        }
+
+        const events: WorkflowRunEventRecord[] = [
+          {
+            id: input.eventIds.attemptFailed,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: run.nextEventSequence,
+            type: "step.attempt.failed",
+            data: {
+              stepAttemptId: attempt.id,
+              stepId: attempt.stepId,
+              attempt: attempt.attempt,
+              effectKey: attempt.effectKey,
+              reasonCode: input.failureCode,
+            },
+            occurredAt: databaseNow,
+          },
+          {
+            id: input.eventIds.runFailed,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: run.nextEventSequence + 1,
+            type: "run.failed",
+            data: {
+              stepAttemptId: attempt.id,
+              reasonCode: input.failureCode,
+            },
+            occurredAt: databaseNow,
+          },
+        ];
+        await tx.insert(workflowRunEvents).values(events);
+        const updatedRuns = await tx
+          .update(workflowRuns)
+          .set({
+            state: "failed",
+            output: null,
+            finalSnapshot: null,
+            finalSnapshotDigest: null,
+            failureCode: input.failureCode,
+            nextEventSequence: run.nextEventSequence + events.length,
+            completedAt: databaseNow,
+            updatedAt: databaseNow,
+          })
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.id, input.runId),
+              eq(workflowRuns.state, "running"),
+              eq(
+                workflowRuns.nextEventSequence,
+                run.nextEventSequence,
+              ),
+            ),
+          )
+          .returning();
+        if (!updatedRuns[0]) {
+          throw new Error("Workflow Run failure settlement was lost.");
+        }
+
+        const released = await tx
+          .update(workflowRunExecutionLeases)
+          .set({ releasedAt: databaseNow })
+          .where(
+            and(
+              eq(
+                workflowRunExecutionLeases.workspaceId,
+                input.workspaceId,
+              ),
+              eq(workflowRunExecutionLeases.runId, input.runId),
+              eq(
+                workflowRunExecutionLeases.workerId,
+                input.workerId,
+              ),
+              eq(
+                workflowRunExecutionLeases.token,
+                input.token,
+              ),
+              eq(workflowRunExecutionLeases.fence, input.fence),
+              isNull(workflowRunExecutionLeases.releasedAt),
+            ),
+          )
+          .returning({ runId: workflowRunExecutionLeases.runId });
+        if (!released[0]) {
+          throw new Error("Workflow Run lease release was lost.");
+        }
+        return {
+          kind: "settled" as const,
+          run: mapRun(updatedRuns[0]),
+          attempt: mapStepAttempt(updatedAttempts[0]),
+        };
       });
     } catch {
       return { kind: "unavailable" as const };

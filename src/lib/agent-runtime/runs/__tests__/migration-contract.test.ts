@@ -6,6 +6,10 @@ const migration = readFileSync(
   resolve(process.cwd(), "drizzle/0033_nostalgic_vengeance.sql"),
   "utf8",
 );
+const goldenMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0034_dry_katie_power.sql"),
+  "utf8",
+);
 
 describe("Workflow Run PostgreSQL migration", () => {
   it("creates Run authority, retained events, scoped receipts, outbox, and leases", () => {
@@ -76,5 +80,36 @@ describe("Workflow Run PostgreSQL migration", () => {
     expect(revisionUnique).toBeGreaterThanOrEqual(0);
     expect(authorizationUnique).toBeLessThan(authorizationForeignKey);
     expect(revisionUnique).toBeLessThan(revisionForeignKey);
+  });
+
+  it("adds durable Step Attempts, final snapshots, and canonical multi-step guards", () => {
+    expect(goldenMigration).toContain(
+      'CREATE TABLE "workflow_step_attempts"',
+    );
+    expect(goldenMigration).toContain(
+      '"workflow_step_attempts_workspace_effect_key_unique"',
+    );
+    expect(goldenMigration).toContain('"final_snapshot" jsonb');
+    expect(goldenMigration).toContain(
+      '"workflow_runs_final_snapshot_check"',
+    );
+    expect(goldenMigration).toContain(
+      'CREATE OR REPLACE FUNCTION "workflow_run_event_insert_guard"',
+    );
+    expect(goldenMigration).toContain(
+      "Running Workflow Run transition has invalid attempt events",
+    );
+    expect(goldenMigration).toContain(
+      "Workflow Run failure events are missing or out of order",
+    );
+    expect(goldenMigration).toContain(
+      "previous_type = 'step.attempt.failed'",
+    );
+    expect(goldenMigration).toContain(
+      '"workflow_step_attempts_identity_immutable"',
+    );
+    expect(goldenMigration).toContain(
+      "'workflow_runs.start@1', 'workflow_runs.start@2'",
+    );
   });
 });

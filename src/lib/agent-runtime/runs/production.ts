@@ -1,4 +1,6 @@
 import { getDb } from "@/lib/db";
+import { PRODUCTION_ARTIFACT_SERVICE } from
+  "@/lib/agent-runtime/artifacts";
 import {
   GOLDEN_WORKFLOW_OPERATION_REGISTRY,
 } from "@/lib/agent-runtime/workflows";
@@ -23,6 +25,8 @@ export const PRODUCTION_WORKFLOW_RUN_SERVICE = new WorkflowRunService(
   new AesGcmWorkflowRunEventCursorCodec(
     workflowRunCursorKeysFromEnvironment,
   ),
+  undefined,
+  PRODUCTION_ARTIFACT_SERVICE,
 );
 
 export async function executeProductionWorkflowRun(input: {

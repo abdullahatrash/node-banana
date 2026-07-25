@@ -8,11 +8,18 @@ export async function executeRuntimeWorkflowRun(
 ): Promise<{ runId: string; state: string }> {
   "use workflow";
 
-  return executeRuntimeWorkflowRunStep(input);
+  let result: { runId: string; state: string } | undefined;
+  for (let iteration = 1; iteration <= 64; iteration += 1) {
+    result = await executeRuntimeWorkflowRunStep({ ...input, iteration });
+    if (result.state === "completed" || result.state === "failed") {
+      return result;
+    }
+  }
+  throw new Error("Workflow Run exceeded the 64-step execution bound.");
 }
 
 async function executeRuntimeWorkflowRunStep(
-  input: RuntimeWorkflowRunInput,
+  input: RuntimeWorkflowRunInput & { iteration: number },
 ): Promise<{ runId: string; state: string }> {
   "use step";
 

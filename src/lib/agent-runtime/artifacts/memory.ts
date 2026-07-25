@@ -5,6 +5,8 @@ import type {
   ArtifactContentRecord,
   ArtifactContentStore,
   ArtifactDownloadHandoff,
+  ArtifactGeneratedOriginRecord,
+  ArtifactLineageInputRecord,
   ArtifactListFilters,
   ArtifactMediaInspector,
   ArtifactMutationReceiptRecord,
@@ -32,9 +34,57 @@ function contentKey(workspaceId: string, digest: string): string {
   return `${workspaceId}:${digest}`;
 }
 
+function generatedOutputKey(input: {
+  workspaceId: string;
+  effectKey: string;
+  outputName: string;
+}): string {
+  return JSON.stringify([
+    input.workspaceId,
+    input.effectKey,
+    input.outputName,
+  ]);
+}
+
+function generatedBinding(input: {
+  artifact: ArtifactRecord;
+  content: ArtifactContentRecord;
+  origin: ArtifactGeneratedOriginRecord;
+  lineageInputs: ArtifactLineageInputRecord[];
+}) {
+  const {
+    createdAt: _artifactCreatedAt,
+    retentionSnapshotAt: _retentionAt,
+    ...artifact
+  } = input.artifact;
+  const {
+    createdAt: _contentCreatedAt,
+    storageKey: _storageKey,
+    ...content
+  } = input.content;
+  const { generatedAt: _generatedAt, ...origin } = input.origin;
+  return {
+    artifact,
+    content,
+    origin,
+    lineageInputs: [...input.lineageInputs]
+      .sort((left, right) => left.position - right.position)
+      .map((lineage) => structuredClone(lineage)),
+  };
+}
+
 export class InMemoryArtifactRepository implements ArtifactRepository {
   readonly contents = new Map<string, ArtifactContentRecord>();
   readonly artifacts = new Map<string, ArtifactRecord>();
+  readonly generatedOrigins = new Map<
+    string,
+    ArtifactGeneratedOriginRecord
+  >();
+  readonly lineageInputs = new Map<
+    string,
+    ArtifactLineageInputRecord[]
+  >();
+  readonly generatedOutputs = new Map<string, string>();
   readonly uploads = new Map<string, ArtifactUploadRecord>();
   readonly receipts = new Map<string, ArtifactMutationReceiptRecord>();
   readonly auditEvents: ArtifactAuditEventRecord[] = [];
@@ -146,6 +196,89 @@ export class InMemoryArtifactRepository implements ArtifactRepository {
     return { kind: "created" };
   }
 
+  async commitGenerated(
+    input: Parameters<ArtifactRepository["commitGenerated"]>[0],
+  ) {
+    const outputKey = generatedOutputKey(input.origin);
+    const existingArtifactId = this.generatedOutputs.get(outputKey);
+    if (existingArtifactId) {
+      const artifact = this.artifacts.get(existingArtifactId);
+      const content =
+        artifact &&
+        this.contents.get(
+          contentKey(artifact.workspaceId, artifact.contentDigest),
+        );
+      const origin = this.generatedOrigins.get(existingArtifactId);
+      const lineageInputs = this.lineageInputs.get(existingArtifactId);
+      if (!artifact || !content || !origin || !lineageInputs) {
+        return { kind: "unavailable" as const };
+      }
+      return JSON.stringify(
+        generatedBinding({
+          artifact,
+          content,
+          origin,
+          lineageInputs,
+        }),
+      ) === JSON.stringify(generatedBinding(input))
+        ? { kind: "replayed" as const }
+        : { kind: "conflict" as const };
+    }
+    if (
+      this.artifacts.has(input.artifact.id) ||
+      input.artifact.workspaceId !== input.content.workspaceId ||
+      input.artifact.workspaceId !== input.origin.workspaceId ||
+      input.artifact.id !== input.origin.artifactId ||
+      input.artifact.origin !== "generated" ||
+      input.artifact.importedAt !== null ||
+      input.lineageInputs.some(
+        (lineage, position) =>
+          lineage.workspaceId !== input.artifact.workspaceId ||
+          lineage.artifactId !== input.artifact.id ||
+          lineage.position !== position,
+      )
+    ) {
+      return { kind: "conflict" as const };
+    }
+    const existingContent = this.contents.get(
+      contentKey(input.content.workspaceId, input.content.digest),
+    );
+    if (
+      existingContent &&
+      (existingContent.kind !== input.content.kind ||
+        existingContent.mediaType !== input.content.mediaType ||
+        existingContent.sizeBytes !== input.content.sizeBytes ||
+        existingContent.inlineText !== input.content.inlineText ||
+        existingContent.width !== input.content.width ||
+        existingContent.height !== input.content.height)
+    ) {
+      return { kind: "conflict" as const };
+    }
+    if (this.failCommit()) return { kind: "unavailable" as const };
+    this.contents.set(
+      contentKey(input.content.workspaceId, input.content.digest),
+      structuredClone(
+        this.contents.get(
+          contentKey(input.content.workspaceId, input.content.digest),
+        ) ?? input.content,
+      ),
+    );
+    this.artifacts.set(
+      input.artifact.id,
+      structuredClone(input.artifact),
+    );
+    this.generatedOrigins.set(
+      input.artifact.id,
+      structuredClone(input.origin),
+    );
+    this.lineageInputs.set(
+      input.artifact.id,
+      structuredClone(input.lineageInputs),
+    );
+    this.generatedOutputs.set(outputKey, input.artifact.id);
+    return { kind: "created" as const };
+  }
+
   async getArtifact(
     input: Parameters<ArtifactRepository["getArtifact"]>[0],
   ) {
@@ -164,6 +297,12 @@ export class InMemoryArtifactRepository implements ArtifactRepository {
       ? {
           artifact: structuredClone(artifact),
           content: structuredClone(content),
+          generatedOrigin: structuredClone(
+            this.generatedOrigins.get(artifact.id) ?? null,
+          ),
+          lineageInputs: structuredClone(
+            this.lineageInputs.get(artifact.id) ?? [],
+          ),
         }
       : null;
   }
@@ -205,6 +344,12 @@ export class InMemoryArtifactRepository implements ArtifactRepository {
               {
                 artifact: structuredClone(artifact),
                 content: structuredClone(content),
+                generatedOrigin: structuredClone(
+                  this.generatedOrigins.get(artifact.id) ?? null,
+                ),
+                lineageInputs: structuredClone(
+                  this.lineageInputs.get(artifact.id) ?? [],
+                ),
               },
             ]
           : [];
@@ -305,8 +450,10 @@ export class InMemoryArtifactContentStore implements ArtifactContentStore {
     expiresInSeconds: number;
   }> = [];
   readonly downloadHandoffs: string[] = [];
+  readonly generatedWrites: string[] = [];
   failNextRead = false;
   failNextPromote = false;
+  failNextGeneratedWrite = false;
   failNextUploadSign = false;
   failNextDownloadSign = false;
   failNextDelete = false;
@@ -404,6 +551,41 @@ export class InMemoryArtifactContentStore implements ArtifactContentStore {
         mediaType: input.mediaType,
       });
     }
+    return { storageKey };
+  }
+
+  async writeGenerated(input: {
+    workspaceId: string;
+    digest: string;
+    mediaType: string;
+    bytes: Uint8Array;
+  }) {
+    if (this.failNextGeneratedWrite) {
+      this.failNextGeneratedWrite = false;
+      throw new Error("content store unavailable");
+    }
+    if (
+      `sha256:${createHash("sha256").update(input.bytes).digest("hex")}` !==
+      input.digest
+    ) {
+      throw new Error("generated content digest mismatch");
+    }
+    const storageKey = `artifacts/${input.workspaceId}/${input.digest}`;
+    const existing = this.content.get(storageKey);
+    if (
+      existing &&
+      (existing.mediaType !== input.mediaType ||
+        !Buffer.from(existing.bytes).equals(Buffer.from(input.bytes)))
+    ) {
+      throw new Error("generated content-address collision");
+    }
+    if (!existing) {
+      this.content.set(storageKey, {
+        bytes: Uint8Array.from(input.bytes),
+        mediaType: input.mediaType,
+      });
+    }
+    this.generatedWrites.push(storageKey);
     return { storageKey };
   }
 

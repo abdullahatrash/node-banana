@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -12,9 +12,11 @@ import {
   contentWorkflows,
   user,
   workflowRunEvents,
+  workflowRunExecutionLeases,
   workflowRunMutationReceipts,
   workflowRunOutboxIntents,
   workflowRuns,
+  workflowStepAttempts,
   workspaces,
 } from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
@@ -24,6 +26,14 @@ import type {
   WorkflowRunStartSnapshot,
 } from "../types";
 import { DrizzleWorkflowRunRepository } from "../postgres-repository";
+import { DrizzleArtifactRepository } from
+  "../../artifacts/postgres-repository";
+import {
+  InMemoryArtifactContentStore,
+  InMemoryArtifactMediaInspector,
+} from "../../artifacts/memory";
+import { AesGcmArtifactCursorCodec } from "../../artifacts/cursor";
+import { ArtifactService } from "../../artifacts/service";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -31,6 +41,8 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 const databaseUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePostgres = databaseUrl ? describe : describe.skip;
 const digest = (character: string) => `sha256:${character.repeat(64)}`;
+const bytesDigest = (value: string) =>
+  `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 
 function startInput(
   fixture: {
@@ -111,6 +123,8 @@ function startInput(
       startSnapshot: snapshot,
       nextEventSequence: 2,
       output: null,
+      finalSnapshot: null,
+      finalSnapshotDigest: null,
       failureCode: null,
       acceptedAt: fixture.acceptedAt,
       startedAt: null,
@@ -734,6 +748,368 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
         receipts: storedReceipts.length,
         outbox: storedOutbox.length,
       }).toEqual({ runs: 1, events: 1, receipts: 1, outbox: 1 });
+    } finally {
+      await pool.end();
+    }
+  }, 30_000);
+
+  it("durably settles a generated Artifact, Step Attempt, final snapshot, and ordered events", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+    const database = drizzle(pool, { schema });
+    try {
+      const fixture = await database.transaction((tx) => seed(tx));
+      const repository = new DrizzleWorkflowRunRepository(
+        () => database as Db,
+      );
+      const acceptedInput = startInput(
+        fixture,
+        `run_attempt_${fixture.suffix}`,
+        `attempt_${fixture.suffix}`,
+      );
+      const accepted = await repository.start(acceptedInput);
+      expect(accepted.kind).toBe("created");
+      if (accepted.kind !== "created") return;
+
+      const leaseNow = new Date();
+      const acquired = await repository.acquireLease({
+        workspaceId: fixture.workspaceId,
+        runId: accepted.run.id,
+        workerId: `worker_${fixture.suffix}`,
+        now: leaseNow,
+        expiresAt: new Date(leaseNow.getTime() + 30_000),
+      });
+      expect(acquired.kind).toBe("acquired");
+      if (acquired.kind !== "acquired") return;
+
+      const step = accepted.run.startSnapshot.definition.steps[0]!;
+      const effectKey =
+        `workflow-effect:v1:${fixture.workspaceId}:${accepted.run.id}:${step.id}:1`;
+      const intentDigest = digest("7");
+      const attemptId = `attempt_${fixture.suffix}`;
+      const inputDigest = bytesDigest("hello");
+      const prepared = await repository.prepareStepAttempt({
+        attempt: {
+          id: attemptId,
+          workspaceId: fixture.workspaceId,
+          runId: accepted.run.id,
+          stepId: step.id,
+          attempt: 1,
+          state: "running",
+          operationIdentity: step.operation.identity,
+          operationContractDigest: step.operation.contractDigest,
+          provider: "runtime",
+          providerOperation: "digest_text",
+          model: "sha256",
+          intentDigest,
+          effectKey,
+          inputs: [{
+            port: "text",
+            kind: "text",
+            source: { kind: "workflow_input", inputName: "text" },
+            contentDigest: inputDigest,
+            artifactId: null,
+          }],
+          outputs: null,
+          failureCode: null,
+          startedAt: leaseNow,
+          completedAt: null,
+        },
+        workerId: acquired.lease.workerId,
+        token: acquired.lease.token,
+        fence: acquired.lease.fence,
+        eventId: randomUUID(),
+      });
+      expect(prepared.kind).toBe("created");
+      if (prepared.kind !== "created") return;
+
+      const artifactService = new ArtifactService(
+        new DrizzleArtifactRepository(() => database as Db),
+        new InMemoryArtifactContentStore(),
+        new InMemoryArtifactMediaInspector(),
+        new AesGcmArtifactCursorCodec(() => ({
+          active: { id: "test", key: Buffer.alloc(32, 9) },
+          all: [{ id: "test", key: Buffer.alloc(32, 9) }],
+        })),
+      );
+      const generatedText = "durable generated output";
+      const generated = await artifactService.commitGenerated({
+        workspaceId: fixture.workspaceId,
+        creatorPrincipalId: fixture.principalId,
+        effectKey,
+        outputName: "textDigest",
+        content: {
+          kind: "text",
+          text: generatedText,
+          mediaType: "text/plain; charset=utf-8",
+          digest: bytesDigest(generatedText),
+          sizeBytes: Buffer.byteLength(generatedText, "utf8"),
+        },
+        origin: {
+          workflowId: fixture.workflowId,
+          workflowRevisionId: fixture.revisionId,
+          workflowRevision: 1,
+          definitionDigest:
+            accepted.run.startSnapshot.definitionDigest,
+          runId: accepted.run.id,
+          runStartSnapshotDigest: accepted.run.startSnapshotDigest,
+          stepAttemptId: attemptId,
+          stepId: step.id,
+          attempt: 1,
+          provider: "runtime",
+          operationIdentity: step.operation.identity,
+          providerOperation: "digest_text",
+          providerOperationRef: `runtime:${effectKey}`,
+          model: "sha256",
+          intentDigest,
+        },
+        lineageInputs: [{
+          port: "text",
+          kind: "text",
+          source: { kind: "workflow_input", inputName: "text" },
+          contentDigest: inputDigest,
+          sourceArtifactId: null,
+        }],
+      });
+      const output = {
+        artifactId: generated.id,
+        digest: generated.digest,
+        kind: generated.kind,
+        mediaType: generated.mediaType,
+        sizeBytes: generated.sizeBytes,
+      };
+      const finalSnapshot = {
+        schema: "workflow-run-final-snapshot/v1" as const,
+        runId: accepted.run.id,
+        startSnapshotDigest: accepted.run.startSnapshotDigest,
+        stepAttempts: [{
+          stepAttemptId: attemptId,
+          stepId: step.id,
+          attempt: 1,
+          state: "completed" as const,
+          effectKey,
+          outputs: { textDigest: output },
+        }],
+        outputs: { textDigest: output },
+      };
+      const settled = await repository.settleStepAttempt({
+        workspaceId: fixture.workspaceId,
+        runId: accepted.run.id,
+        stepAttemptId: attemptId,
+        workerId: acquired.lease.workerId,
+        token: acquired.lease.token,
+        fence: acquired.lease.fence,
+        outputs: { textDigest: output },
+        finalSnapshot,
+        finalSnapshotDigest: canonicalDigest(finalSnapshot),
+        completedAt: new Date(),
+        eventIds: {
+          generated: [randomUUID()],
+          attemptCompleted: randomUUID(),
+          runCompleted: randomUUID(),
+        },
+      });
+      expect(settled).toMatchObject({
+        kind: "settled",
+        run: {
+          state: "completed",
+          finalSnapshotDigest: canonicalDigest(finalSnapshot),
+        },
+        attempt: { state: "completed", effectKey },
+      });
+      const events = await repository.listEvents({
+        workspaceId: fixture.workspaceId,
+        workflowId: fixture.workflowId,
+        runId: accepted.run.id,
+        afterSequence: 0,
+        limit: 100,
+      });
+      expect(events?.map(({ sequence, type }) => ({ sequence, type }))).toEqual([
+        { sequence: 1, type: "run.accepted" },
+        { sequence: 2, type: "step.attempt.started" },
+        { sequence: 3, type: "artifact.generated" },
+        { sequence: 4, type: "step.attempt.completed" },
+        { sequence: 5, type: "run.completed" },
+      ]);
+      await expect(
+        artifactService.getArtifact({
+          workspaceId: fixture.workspaceId,
+          artifactId: generated.id,
+        }),
+      ).resolves.toMatchObject({
+        artifact: {
+          origin: {
+            kind: "generated",
+            outputName: "textDigest",
+            effectKey,
+            providerOperation: {
+              ref: `runtime:${effectKey}`,
+            },
+          },
+        },
+        textContent: generatedText,
+      });
+    } finally {
+      await pool.end();
+    }
+  }, 30_000);
+
+  it("atomically fails the active Step Attempt and Run under the fenced lease", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+    const database = drizzle(pool, { schema });
+    try {
+      const fixture = await database.transaction((tx) => seed(tx));
+      const repository = new DrizzleWorkflowRunRepository(
+        () => database as Db,
+      );
+      const acceptedInput = startInput(
+        fixture,
+        `run_failure_${fixture.suffix}`,
+        `failure_${fixture.suffix}`,
+      );
+      const accepted = await repository.start(acceptedInput);
+      expect(accepted.kind).toBe("created");
+      if (accepted.kind !== "created") return;
+
+      const leaseNow = new Date();
+      const acquired = await repository.acquireLease({
+        workspaceId: fixture.workspaceId,
+        runId: accepted.run.id,
+        workerId: `worker_failure_${fixture.suffix}`,
+        now: leaseNow,
+        expiresAt: new Date(leaseNow.getTime() + 30_000),
+      });
+      expect(acquired.kind).toBe("acquired");
+      if (acquired.kind !== "acquired") return;
+
+      const step = accepted.run.startSnapshot.definition.steps[0]!;
+      const effectKey =
+        `workflow-effect:v1:${fixture.workspaceId}:${accepted.run.id}:${step.id}:1`;
+      const attemptId = `attempt_failure_${fixture.suffix}`;
+      const prepared = await repository.prepareStepAttempt({
+        attempt: {
+          id: attemptId,
+          workspaceId: fixture.workspaceId,
+          runId: accepted.run.id,
+          stepId: step.id,
+          attempt: 1,
+          state: "running",
+          operationIdentity: step.operation.identity,
+          operationContractDigest: step.operation.contractDigest,
+          provider: "runtime",
+          providerOperation: "digest_text",
+          model: "sha256",
+          intentDigest: digest("7"),
+          effectKey,
+          inputs: [{
+            port: "text",
+            kind: "text",
+            source: { kind: "workflow_input", inputName: "text" },
+            contentDigest: bytesDigest("hello"),
+            artifactId: null,
+          }],
+          outputs: null,
+          failureCode: null,
+          startedAt: leaseNow,
+          completedAt: null,
+        },
+        workerId: acquired.lease.workerId,
+        token: acquired.lease.token,
+        fence: acquired.lease.fence,
+        eventId: randomUUID(),
+      });
+      expect(prepared.kind).toBe("created");
+      if (prepared.kind !== "created") return;
+
+      const failureInput = {
+        workspaceId: fixture.workspaceId,
+        runId: accepted.run.id,
+        stepAttemptId: attemptId,
+        workerId: acquired.lease.workerId,
+        token: acquired.lease.token,
+        fence: acquired.lease.fence,
+        failureCode: "STEP_EXECUTION_FAILED",
+        failedAt: new Date(),
+        eventIds: {
+          attemptFailed: randomUUID(),
+          runFailed: randomUUID(),
+        },
+      };
+      const failed = await repository.failStepAttempt(failureInput);
+      expect(failed).toMatchObject({
+        kind: "settled",
+        run: {
+          state: "failed",
+          failureCode: "STEP_EXECUTION_FAILED",
+          output: null,
+          finalSnapshot: null,
+        },
+        attempt: {
+          id: attemptId,
+          state: "failed",
+          failureCode: "STEP_EXECUTION_FAILED",
+          outputs: null,
+        },
+      });
+      await expect(
+        repository.failStepAttempt(failureInput),
+      ).resolves.toMatchObject({
+        kind: "settled",
+        run: { state: "failed" },
+        attempt: { state: "failed" },
+      });
+
+      const [events, storedAttempts, leases] = await Promise.all([
+        repository.listEvents({
+          workspaceId: fixture.workspaceId,
+          workflowId: fixture.workflowId,
+          runId: accepted.run.id,
+          afterSequence: 0,
+          limit: 100,
+        }),
+        database
+          .select()
+          .from(workflowStepAttempts)
+          .where(
+            and(
+              eq(
+                workflowStepAttempts.workspaceId,
+                fixture.workspaceId,
+              ),
+              eq(workflowStepAttempts.runId, accepted.run.id),
+            ),
+          ),
+        database
+          .select()
+          .from(workflowRunExecutionLeases)
+          .where(
+            and(
+              eq(
+                workflowRunExecutionLeases.workspaceId,
+                fixture.workspaceId,
+              ),
+              eq(
+                workflowRunExecutionLeases.runId,
+                accepted.run.id,
+              ),
+            ),
+          ),
+      ]);
+      expect(events?.map(({ sequence, type }) => ({
+        sequence,
+        type,
+      }))).toEqual([
+        { sequence: 1, type: "run.accepted" },
+        { sequence: 2, type: "step.attempt.started" },
+        { sequence: 3, type: "step.attempt.failed" },
+        { sequence: 4, type: "run.failed" },
+      ]);
+      expect(storedAttempts).toHaveLength(1);
+      expect(storedAttempts[0]).toMatchObject({
+        state: "failed",
+        failureCode: "STEP_EXECUTION_FAILED",
+      });
+      expect(leases).toHaveLength(1);
+      expect(leases[0]!.releasedAt).not.toBeNull();
     } finally {
       await pool.end();
     }

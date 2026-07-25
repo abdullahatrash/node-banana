@@ -1,4 +1,8 @@
 import type { ResolvedWorkflowDefinition } from "../workflows/types";
+import type {
+  ArtifactKind,
+  ArtifactMetadata,
+} from "../artifacts/types";
 
 export type WorkflowRunState = "accepted" | "running" | "completed" | "failed";
 
@@ -23,6 +27,12 @@ export interface WorkflowRunStartSnapshot {
   artifactReferences: Array<{
     inputName: string;
     artifactId: string;
+    digest: string;
+    kind: ArtifactKind;
+    mediaType: string;
+    sizeBytes: number;
+    width: number | null;
+    height: number | null;
   }>;
   credentialReferences: Array<{
     stepId: string;
@@ -36,6 +46,29 @@ export interface WorkflowRunStartSnapshot {
   };
 }
 
+export interface WorkflowRunArtifactReference {
+  artifactId: string;
+  digest: string;
+  kind: ArtifactKind;
+  mediaType: string;
+  sizeBytes: number;
+}
+
+export interface WorkflowRunFinalSnapshot {
+  schema: "workflow-run-final-snapshot/v1";
+  runId: string;
+  startSnapshotDigest: string;
+  stepAttempts: Array<{
+    stepAttemptId: string;
+    stepId: string;
+    attempt: number;
+    state: "completed";
+    effectKey: string;
+    outputs: Record<string, WorkflowRunArtifactReference>;
+  }>;
+  outputs: Record<string, WorkflowRunArtifactReference>;
+}
+
 export interface WorkflowRunRecord {
   id: string;
   workspaceId: string;
@@ -46,11 +79,61 @@ export interface WorkflowRunRecord {
   startSnapshot: WorkflowRunStartSnapshot;
   nextEventSequence: number;
   output: Record<string, unknown> | null;
+  finalSnapshot: WorkflowRunFinalSnapshot | null;
+  finalSnapshotDigest: string | null;
   failureCode: string | null;
   acceptedAt: Date;
   startedAt: Date | null;
   completedAt: Date | null;
   updatedAt: Date;
+}
+
+export type WorkflowStepAttemptState = "running" | "completed" | "failed";
+
+export interface WorkflowStepAttemptInput {
+  port: string;
+  kind: ArtifactKind;
+  source:
+    | { kind: "workflow_input"; inputName: string }
+    | {
+        kind: "step_output";
+        stepAttemptId: string;
+        outputName: string;
+      };
+  contentDigest: string;
+  artifactId: string | null;
+}
+
+export interface WorkflowStepAttemptRecord {
+  id: string;
+  workspaceId: string;
+  runId: string;
+  stepId: string;
+  attempt: number;
+  state: WorkflowStepAttemptState;
+  operationIdentity: string;
+  operationContractDigest: string;
+  provider: string;
+  providerOperation: string;
+  model: string;
+  intentDigest: string;
+  effectKey: string;
+  inputs: WorkflowStepAttemptInput[];
+  outputs: Record<string, WorkflowRunArtifactReference> | null;
+  failureCode: string | null;
+  startedAt: Date;
+  completedAt: Date | null;
+}
+
+export interface WorkflowStepAttemptDto
+  extends Omit<
+    WorkflowStepAttemptRecord,
+    "startedAt" | "completedAt" | "inputs" | "outputs"
+  > {
+  inputs: WorkflowStepAttemptInput[];
+  outputs: Record<string, WorkflowRunArtifactReference> | null;
+  startedAt: string;
+  completedAt: string | null;
 }
 
 export interface WorkflowRunEventRecord {
@@ -60,6 +143,10 @@ export interface WorkflowRunEventRecord {
   sequence: number;
   type:
     | "run.accepted"
+    | "step.attempt.started"
+    | "artifact.generated"
+    | "step.attempt.completed"
+    | "step.attempt.failed"
     | "step.completed"
     | "run.completed"
     | "run.failed";
@@ -70,7 +157,7 @@ export interface WorkflowRunEventRecord {
 export interface WorkflowRunMutationReceiptRecord {
   workspaceId: string;
   principalId: string;
-  capability: "workflow_runs.start@1";
+  capability: "workflow_runs.start@1" | "workflow_runs.start@2";
   idempotencyKey: string;
   requestFingerprint: string;
   runId: string;
@@ -112,6 +199,8 @@ export interface WorkflowRunDto {
   startSnapshotDigest: string;
   startSnapshot: WorkflowRunStartSnapshot;
   output: Record<string, unknown> | null;
+  finalSnapshot: WorkflowRunFinalSnapshot | null;
+  finalSnapshotDigest: string | null;
   failureCode: string | null;
   acceptedAt: string;
   startedAt: string | null;
@@ -172,6 +261,25 @@ export type AcquireWorkflowRunLeaseResult =
 
 export type CompleteWorkflowRunStepResult =
   | { kind: "completed"; run: WorkflowRunRecord }
+  | { kind: "stale_fence" }
+  | { kind: "unavailable" };
+
+export type PrepareWorkflowStepAttemptResult =
+  | {
+      kind: "created" | "replayed";
+      run: WorkflowRunRecord;
+      attempt: WorkflowStepAttemptRecord;
+    }
+  | { kind: "conflict" }
+  | { kind: "stale_fence" }
+  | { kind: "unavailable" };
+
+export type SettleWorkflowStepAttemptResult =
+  | {
+      kind: "settled";
+      run: WorkflowRunRecord;
+      attempt: WorkflowStepAttemptRecord;
+    }
   | { kind: "stale_fence" }
   | { kind: "unavailable" };
 
@@ -237,6 +345,48 @@ export interface WorkflowRunRepository {
     failedAt: Date;
     runEventId: string;
   }): Promise<CompleteWorkflowRunStepResult>;
+  listStepAttempts(input: {
+    workspaceId: string;
+    runId: string;
+  }): Promise<WorkflowStepAttemptRecord[] | null>;
+  prepareStepAttempt(input: {
+    attempt: WorkflowStepAttemptRecord;
+    workerId: string;
+    token: string;
+    fence: bigint;
+    eventId: string;
+  }): Promise<PrepareWorkflowStepAttemptResult>;
+  settleStepAttempt(input: {
+    workspaceId: string;
+    runId: string;
+    stepAttemptId: string;
+    workerId: string;
+    token: string;
+    fence: bigint;
+    outputs: Record<string, WorkflowRunArtifactReference>;
+    finalSnapshot: WorkflowRunFinalSnapshot | null;
+    finalSnapshotDigest: string | null;
+    completedAt: Date;
+    eventIds: {
+      generated: string[];
+      attemptCompleted: string;
+      runCompleted: string | null;
+    };
+  }): Promise<SettleWorkflowStepAttemptResult>;
+  failStepAttempt(input: {
+    workspaceId: string;
+    runId: string;
+    stepAttemptId: string;
+    workerId: string;
+    token: string;
+    fence: bigint;
+    failureCode: string;
+    failedAt: Date;
+    eventIds: {
+      attemptFailed: string;
+      runFailed: string;
+    };
+  }): Promise<SettleWorkflowStepAttemptResult>;
 }
 
 export interface WorkflowRunRevisionReader {
@@ -280,11 +430,53 @@ export interface WorkflowRunEventCursorCodec {
 }
 
 export interface WorkflowStepExecutor {
+  readonly provider: string;
+  readonly providerOperation: string;
+  readonly model: string;
   execute(input: {
     runId: string;
+    stepAttemptId: string;
+    effectKey: string;
+    intentDigest: string;
     snapshot: WorkflowRunStartSnapshot;
     step: ResolvedWorkflowDefinition["steps"][number];
-  }): Promise<Record<string, unknown>>;
+    inputs: Record<string, ResolvedWorkflowStepInput>;
+  }): Promise<
+    | {
+        kind: "legacy";
+        output: Record<string, unknown>;
+      }
+    | {
+        kind: "generated";
+        providerOperationRef: string;
+        outputs: Record<
+          string,
+          | {
+              kind: "text";
+              mediaType: string;
+              bytes: Uint8Array;
+            }
+          | {
+              kind: "image";
+              mediaType: string;
+              bytes: Uint8Array;
+              width: number;
+              height: number;
+            }
+        >;
+      }
+  >;
+}
+
+export interface ResolvedWorkflowStepInput {
+  kind: ArtifactKind;
+  contentDigest: string;
+  artifactId: string | null;
+  textContent: string | null;
+  mediaType: string;
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
 }
 
 export interface WorkflowStepExecutorRegistry {
@@ -296,4 +488,51 @@ export interface WorkflowStepExecutorRegistry {
 
 export interface WorkflowRunClock {
   now(): Date;
+}
+
+export interface WorkflowRunArtifactPort {
+  getArtifact(input: {
+    workspaceId: string;
+    artifactId: string;
+  }): Promise<{
+    artifact: ArtifactMetadata;
+    textContent: string | null;
+  }>;
+  commitGenerated(input: {
+    workspaceId: string;
+    creatorPrincipalId: string;
+    effectKey: string;
+    outputName: string;
+    content:
+      | {
+          kind: "text";
+          text: string;
+          mediaType: string;
+          digest: string;
+          sizeBytes: number;
+        }
+      | {
+          kind: "image";
+          bytes: Uint8Array;
+          mediaType: string;
+          digest: string;
+          sizeBytes: number;
+          width: number;
+          height: number;
+        };
+    origin: Omit<
+      import("../artifacts/types").ArtifactGeneratedOriginRecord,
+      | "artifactId"
+      | "workspaceId"
+      | "effectKey"
+      | "outputName"
+      | "generatedAt"
+    >;
+    lineageInputs: Array<
+      Omit<
+        import("../artifacts/types").ArtifactLineageInputRecord,
+        "workspaceId" | "artifactId" | "position"
+      >
+    >;
+  }): Promise<ArtifactMetadata>;
 }
