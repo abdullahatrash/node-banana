@@ -17,12 +17,9 @@ import { resolveAssetRefsInPayload } from "./assetResolver";
 import { isS3Configured } from "@/lib/storage/s3";
 import { generateWithGemini, generateWithGeminiVideo } from "./providers/gemini";
 import { generateWithReplicate } from "./providers/replicate";
-import { clearFalInputMappingCache as _clearFalInputMappingCache, generateWithFalQueue } from "./providers/fal";
+import { generateWithFalQueue } from "./providers/fal";
 import { generateWithKie } from "./providers/kie";
 import { generateWithWaveSpeed } from "./providers/wavespeed";
-
-// Re-export for backward compatibility (test file imports from route)
-export const clearFalInputMappingCache = _clearFalInputMappingCache;
 
 export const maxDuration = 300; // 5 minute timeout (Vercel hobby plan limit)
 export const dynamic = 'force-dynamic'; // Ensure this route is always dynamic

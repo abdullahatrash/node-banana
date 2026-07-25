@@ -27,7 +27,8 @@ vi.mock("@/utils/logger", () => ({
 // Store original fetch
 const originalFetch = global.fetch;
 
-import { POST, getExtensionFromUrl } from "../route";
+import { POST } from "../route";
+import { getExtensionFromUrl } from "../url-extension";
 
 // Helper to create mock NextRequest for POST
 function createMockPostRequest(body: unknown): NextRequest {

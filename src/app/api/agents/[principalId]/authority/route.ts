@@ -77,7 +77,7 @@ const schema = z
 
 class AuthorityContractError extends Error {}
 
-export function resolveAuthorityContracts(
+function resolveAuthorityContracts(
   values: Array<{ capability: string; resources: AgentResourceConstraints }>,
 ): AgentCapabilityGrant[] {
   return values.map((value) => {

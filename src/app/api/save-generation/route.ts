@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getExtensionFromUrl } from "./url-extension";
 
 /** Local-only route — check env directly to avoid pulling heavy @/lib/storage deps into the bundle */
 function isCloudMode() {
@@ -55,25 +56,6 @@ function getExtensionFromMime(mimeType: string): string {
 // Helper to detect if a string is an HTTP URL
 function isHttpUrl(str: string): boolean {
   return str.startsWith("http://") || str.startsWith("https://");
-}
-
-// Known file extensions for 3D models and common media
-const KNOWN_3D_EXTENSIONS = new Set(["glb", "gltf", "obj", "fbx", "usdz", "stl", "ply"]);
-const KNOWN_MEDIA_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "webm", "mov"]);
-
-// Helper to extract a recognized file extension from a URL pathname
-export function getExtensionFromUrl(url: string): string | null {
-  try {
-    const urlObj = new URL(url);
-    const pathname = urlObj.pathname;
-    const lastDot = pathname.lastIndexOf(".");
-    if (lastDot === -1 || lastDot === pathname.length - 1) return null;
-    const ext = pathname.substring(lastDot + 1).toLowerCase();
-    if (KNOWN_3D_EXTENSIONS.has(ext) || KNOWN_MEDIA_EXTENSIONS.has(ext)) return ext;
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 // POST: Save a generated image or video to the generations folder (or outputs folder)

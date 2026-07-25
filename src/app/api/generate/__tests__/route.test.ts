@@ -41,7 +41,8 @@ vi.mock("@/lib/images", () => ({
   deleteImages: vi.fn(),
 }));
 
-import { POST, clearFalInputMappingCache } from "../route";
+import { POST } from "../route";
+import { clearFalInputMappingCache } from "../providers/fal";
 
 // Store original env
 const originalEnv = { ...process.env };

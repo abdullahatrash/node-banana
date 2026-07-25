@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeSelectedPath } from "../route";
+import { normalizeSelectedPath } from "../path-utils";
 
 describe("normalizeSelectedPath", () => {
   it("should strip hostname prefix on macOS", () => {
