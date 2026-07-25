@@ -161,6 +161,23 @@ const RETRY_BOUNDS = {
 export const GOLDEN_WORKFLOW_OPERATION_REGISTRY =
   new WorkflowOperationRegistry([
     {
+      identity: "runtime.digest_text@1",
+      lifecycle: "active",
+      inputs: {
+        text: { kind: "text", required: true },
+      },
+      outputs: { textDigest: "text" },
+      config: z.object({}).strict(),
+      credentialRequirements: {},
+      retryBounds: {
+        maxAttempts: 1,
+        maxInitialMs: 0,
+        maxBackoffMs: 0,
+        maxMultiplier: 1,
+        maxTotalDelayMs: 0,
+      },
+    },
+    {
       identity: "gemini.generate_text@1",
       lifecycle: "active",
       inputs: {

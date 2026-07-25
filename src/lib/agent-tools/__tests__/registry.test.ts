@@ -88,6 +88,9 @@ describe("production Capability Registry", () => {
       "credentials.versions.revoke@1",
       "workflow_operations.get@1",
       "workflow_operations.list@1",
+      "workflow_run_events.list@1",
+      "workflow_runs.get@1",
+      "workflow_runs.start@1",
       "workflow_versions.create@1",
       "workflow_versions.get@1",
       "workflow_versions.validate@1",
@@ -195,6 +198,9 @@ describe("production Capability Registry", () => {
       "credentials.versions.revoke.v1",
       "workflow_operations.get.v1",
       "workflow_operations.list.v1",
+      "workflow_run_events.list.v1",
+      "workflow_runs.get.v1",
+      "workflow_runs.start.v1",
       "workflow_versions.create.v1",
       "workflow_versions.get.v1",
       "workflow_versions.validate.v1",
@@ -314,6 +320,53 @@ describe("production Capability Registry", () => {
     expect(canonicalDigest({ b: 2, a: { d: 4, c: 3 } })).toBe(
       canonicalDigest({ a: { c: 3, d: 4 }, b: 2 }),
     );
+  });
+
+  it("derives accepted status for durable asynchronous effects", async () => {
+    const durable: CapabilityRegistration = {
+      identity: { name: "fixtures.durable", version: 1 },
+      summary: "Accept a durable fixture.",
+      lifecycle: {
+        status: "active",
+        introducedAt: "2026-01-01T00:00:00.000Z",
+        recommended: true,
+      },
+      input: z.object({}).strict(),
+      outputSchema: { type: "object" },
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "durable-async",
+        reversibility: "conditional",
+        maySpendProviderBudget: false,
+      },
+      approval: { mode: "none" },
+      idempotency: { mode: "key-required" },
+      authorization: { resources: [] },
+      errors: COMMON_DISCOVERY_ERRORS,
+      handler: () => ({ accepted: true }),
+    };
+    const dispatcher = new CapabilityDispatcher(
+      createCapabilityRegistry([durable]),
+      { authorize: async () => ({ allowed: true }) },
+    );
+
+    await expect(
+      dispatcher.dispatch(
+        { capability: durable.identity, input: {} },
+        {
+          securityContext: {
+            kind: "agent",
+            principalId: "principal-durable",
+            workspaceId: "workspace-durable",
+            keyId: "key-durable",
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      type: "capability_result",
+      status: "accepted",
+    });
   });
 
   it("enforces lifecycle publication invariants", () => {

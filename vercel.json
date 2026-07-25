@@ -12,5 +12,11 @@
     "src/app/api/workflow-images/route.ts": {
       "maxDuration": 300
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/agent-runtime/internal/run-relay",
+      "schedule": "* * * * *"
+    }
+  ]
 }

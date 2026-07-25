@@ -258,7 +258,10 @@ export class CapabilityDispatcher {
         type: "capability_result",
         capability: identity,
         requestDigest,
-        status: "completed",
+        status:
+          registration.effect.timing === "durable-async"
+            ? "accepted"
+            : "completed",
         output,
         warnings: deprecatedWarning(identity, this.registry),
       };

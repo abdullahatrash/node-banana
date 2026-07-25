@@ -15,6 +15,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { ResolvedWorkflowDefinition } from "@/lib/agent-runtime/workflows/types";
+import type { WorkflowRunStartSnapshot } from "@/lib/agent-runtime/runs/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -1586,6 +1587,9 @@ export const contentWorkflowRevisions = pgTable(
     workflowRevisionUnique: uniqueIndex(
       "content_workflow_revisions_workspace_workflow_revision_unique",
     ).on(table.workspaceId, table.workflowId, table.revision),
+    workspaceWorkflowIdUnique: uniqueIndex(
+      "content_workflow_revisions_workspace_workflow_id_unique",
+    ).on(table.workspaceId, table.workflowId, table.id),
     workspaceWorkflowFk: foreignKey({
       columns: [table.workspaceId, table.workflowId],
       foreignColumns: [contentWorkflows.workspaceId, contentWorkflows.id],
@@ -1731,6 +1735,364 @@ export const agentAuthorizationDecisions = pgTable(
     traceUnique: uniqueIndex(
       "agent_authorization_decisions_trace_unique",
     ).on(table.operatorTraceRef),
+    runEvidenceUnique: uniqueIndex(
+      "agent_authorization_decisions_run_evidence_unique",
+    ).on(
+      table.workspaceId,
+      table.principalId,
+      table.keyId,
+      table.operatorTraceRef,
+    ),
+  }),
+);
+
+/**
+ * Canonical durable Workflow Runs. Orchestrator delivery and execution leases
+ * are internal coordination records; the Run and its ordered events remain the
+ * only public execution authority.
+ */
+export const workflowRuns = pgTable(
+  "workflow_runs",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    workflowId: text("workflow_id").notNull(),
+    workflowRevisionId: text("workflow_revision_id").notNull(),
+    state: text("state").notNull(),
+    startSnapshotDigest: text("start_snapshot_digest").notNull(),
+    startSnapshot: jsonb("start_snapshot")
+      .$type<WorkflowRunStartSnapshot>()
+      .notNull(),
+    nextEventSequence: integer("next_event_sequence").notNull(),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    failureCode: text("failure_code"),
+    principalId: text("principal_id").notNull(),
+    keyId: text("key_id").notNull(),
+    authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "workflow_runs_pk",
+    }),
+    workspaceWorkflowRunUnique: uniqueIndex(
+      "workflow_runs_workspace_workflow_id_unique",
+    ).on(table.workspaceId, table.workflowId, table.id),
+    workspaceWorkflowFk: foreignKey({
+      columns: [table.workspaceId, table.workflowId],
+      foreignColumns: [contentWorkflows.workspaceId, contentWorkflows.id],
+      name: "workflow_runs_workspace_workflow_fk",
+    }).onDelete("restrict"),
+    workspaceWorkflowRevisionFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.workflowId,
+        table.workflowRevisionId,
+      ],
+      foreignColumns: [
+        contentWorkflowRevisions.workspaceId,
+        contentWorkflowRevisions.workflowId,
+        contentWorkflowRevisions.id,
+      ],
+      name: "workflow_runs_workspace_workflow_revision_fk",
+    }).onDelete("restrict"),
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "workflow_runs_workspace_principal_fk",
+    }).onDelete("restrict"),
+    principalKeyFk: foreignKey({
+      columns: [table.principalId, table.keyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "workflow_runs_principal_key_fk",
+    }).onDelete("restrict"),
+    authorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.keyId,
+        table.authorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name: "workflow_runs_authorization_evidence_fk",
+    }).onDelete("restrict"),
+    workspaceUpdatedIdx: index("workflow_runs_workspace_updated_idx").on(
+      table.workspaceId,
+      table.updatedAt,
+      table.id,
+    ),
+    workflowUpdatedIdx: index("workflow_runs_workflow_updated_idx").on(
+      table.workspaceId,
+      table.workflowId,
+      table.updatedAt,
+      table.id,
+    ),
+    stateCheck: check(
+      "workflow_runs_state_check",
+      sql`${table.state} in ('accepted', 'running', 'completed', 'failed')`,
+    ),
+    identityCheck: check(
+      "workflow_runs_identity_check",
+      sql`length(${table.id}) between 1 and 200 and ${table.id} ~ '^[a-zA-Z0-9_-]+$'`,
+    ),
+    snapshotDigestCheck: check(
+      "workflow_runs_snapshot_digest_check",
+      sql`${table.startSnapshotDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    snapshotCheck: check(
+      "workflow_runs_snapshot_check",
+      sql`jsonb_typeof(${table.startSnapshot}) = 'object'
+        and ${table.startSnapshot}->>'schema' = 'workflow-run-start-snapshot/v1'
+        and ${table.startSnapshot}->>'workflowId' = ${table.workflowId}
+        and ${table.startSnapshot}->>'workflowRevisionId' = ${table.workflowRevisionId}
+        and ${table.startSnapshot}->'authorization'->>'principalId' = ${table.principalId}
+        and ${table.startSnapshot}->'authorization'->>'keyId' = ${table.keyId}
+        and ${table.startSnapshot}->'authorization'->>'evidenceRef' = ${table.authorizationEvidenceRef}
+        and octet_length(${table.startSnapshot}::text) <= 1048576`,
+    ),
+    nextSequenceCheck: check(
+      "workflow_runs_next_event_sequence_check",
+      sql`${table.nextEventSequence} >= 2`,
+    ),
+    evidenceCheck: check(
+      "workflow_runs_evidence_check",
+      sql`length(${table.authorizationEvidenceRef}) between 1 and 200`,
+    ),
+    lifecycleCheck: check(
+      "workflow_runs_lifecycle_check",
+      sql`(
+        ${table.state} = 'accepted'
+          and ${table.startedAt} is null
+          and ${table.completedAt} is null
+          and ${table.output} is null
+          and ${table.failureCode} is null
+      ) or (
+        ${table.state} = 'running'
+          and ${table.startedAt} is not null
+          and ${table.completedAt} is null
+          and ${table.output} is null
+          and ${table.failureCode} is null
+      ) or (
+        ${table.state} = 'completed'
+          and ${table.startedAt} is not null
+          and ${table.completedAt} is not null
+          and ${table.output} is not null
+          and ${table.failureCode} is null
+      ) or (
+        ${table.state} = 'failed'
+          and ${table.startedAt} is not null
+          and ${table.completedAt} is not null
+          and ${table.output} is null
+          and ${table.failureCode} is not null
+      )`,
+    ),
+    failureCodeCheck: check(
+      "workflow_runs_failure_code_check",
+      sql`${table.failureCode} is null or ${table.failureCode} ~ '^[A-Z][A-Z0-9_]{0,79}$'`,
+    ),
+  }),
+);
+
+export const workflowRunEvents = pgTable(
+  "workflow_run_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    sequence: integer("sequence").notNull(),
+    type: text("type").notNull(),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceRunSequenceUnique: uniqueIndex(
+      "workflow_run_events_workspace_run_sequence_unique",
+    ).on(table.workspaceId, table.runId, table.sequence),
+    workspaceRunFk: foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [workflowRuns.workspaceId, workflowRuns.id],
+      name: "workflow_run_events_workspace_run_fk",
+    }).onDelete("restrict"),
+    workspaceRunIdx: index("workflow_run_events_workspace_run_idx").on(
+      table.workspaceId,
+      table.runId,
+      table.sequence,
+    ),
+    sequenceCheck: check(
+      "workflow_run_events_sequence_check",
+      sql`${table.sequence} > 0`,
+    ),
+    typeCheck: check(
+      "workflow_run_events_type_check",
+      sql`${table.type} in ('run.accepted', 'step.completed', 'run.completed', 'run.failed')`,
+    ),
+    dataSizeCheck: check(
+      "workflow_run_events_data_size_check",
+      sql`jsonb_typeof(${table.data}) = 'object' and octet_length(${table.data}::text) <= 65536`,
+    ),
+  }),
+);
+
+export const workflowRunMutationReceipts = pgTable(
+  "workflow_run_mutation_receipts",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    principalId: text("principal_id").notNull(),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    runId: text("run_id").notNull(),
+    initialEventCursor: text("initial_event_cursor").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.capability,
+        table.idempotencyKey,
+      ],
+      name: "workflow_run_mutation_receipts_pk",
+    }),
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "workflow_run_mutation_receipts_workspace_principal_fk",
+    }).onDelete("restrict"),
+    workspaceRunFk: foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [workflowRuns.workspaceId, workflowRuns.id],
+      name: "workflow_run_mutation_receipts_workspace_run_fk",
+    }).onDelete("restrict"),
+    workspaceCreatedIdx: index(
+      "workflow_run_mutation_receipts_workspace_created_idx",
+    ).on(table.workspaceId, table.createdAt),
+    capabilityCheck: check(
+      "workflow_run_mutation_receipts_capability_check",
+      sql`${table.capability} = 'workflow_runs.start@1'`,
+    ),
+    idempotencyKeyCheck: check(
+      "workflow_run_mutation_receipts_idempotency_key_check",
+      sql`length(${table.idempotencyKey}) between 8 and 200 and ${table.idempotencyKey} ~ '^[!-~]+$'`,
+    ),
+    fingerprintCheck: check(
+      "workflow_run_mutation_receipts_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    cursorCheck: check(
+      "workflow_run_mutation_receipts_cursor_check",
+      sql`length(${table.initialEventCursor}) between 1 and 2048`,
+    ),
+  }),
+);
+
+export const workflowRunOutboxIntents = pgTable(
+  "workflow_run_outbox_intents",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    state: text("state").notNull(),
+    deliveryToken: text("delivery_token"),
+    deliveryAttempts: integer("delivery_attempts").notNull(),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceRunUnique: uniqueIndex(
+      "workflow_run_outbox_intents_workspace_run_unique",
+    ).on(table.workspaceId, table.runId),
+    dedupeKeyUnique: uniqueIndex(
+      "workflow_run_outbox_intents_dedupe_key_unique",
+    ).on(table.dedupeKey),
+    workspaceRunFk: foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [workflowRuns.workspaceId, workflowRuns.id],
+      name: "workflow_run_outbox_intents_workspace_run_fk",
+    }).onDelete("restrict"),
+    deliveryIdx: index("workflow_run_outbox_intents_delivery_idx").on(
+      table.state,
+      table.availableAt,
+      table.createdAt,
+      table.id,
+    ),
+    stateCheck: check(
+      "workflow_run_outbox_intents_state_check",
+      sql`${table.state} in ('pending', 'delivering', 'delivered')`,
+    ),
+    attemptsCheck: check(
+      "workflow_run_outbox_intents_attempts_check",
+      sql`${table.deliveryAttempts} >= 0`,
+    ),
+    lifecycleCheck: check(
+      "workflow_run_outbox_intents_lifecycle_check",
+      sql`(
+        ${table.state} = 'pending'
+          and ${table.deliveryToken} is null
+          and ${table.claimedAt} is null
+          and ${table.deliveredAt} is null
+      ) or (
+        ${table.state} = 'delivering'
+          and ${table.deliveryToken} is not null
+          and ${table.claimedAt} is not null
+          and ${table.deliveredAt} is null
+      ) or (
+        ${table.state} = 'delivered'
+          and ${table.deliveryToken} is null
+          and ${table.claimedAt} is not null
+          and ${table.deliveredAt} is not null
+      )`,
+    ),
+  }),
+);
+
+export const workflowRunExecutionLeases = pgTable(
+  "workflow_run_execution_leases",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    fence: bigint("fence", { mode: "bigint" }).notNull(),
+    workerId: text("worker_id").notNull(),
+    token: text("token").notNull(),
+    acquiredAt: timestamp("acquired_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.runId],
+      name: "workflow_run_execution_leases_pk",
+    }),
+    workspaceRunFk: foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [workflowRuns.workspaceId, workflowRuns.id],
+      name: "workflow_run_execution_leases_workspace_run_fk",
+    }).onDelete("restrict"),
+    expiryIdx: index("workflow_run_execution_leases_expiry_idx").on(
+      table.expiresAt,
+    ),
+    fenceCheck: check(
+      "workflow_run_execution_leases_fence_check",
+      sql`${table.fence} > 0`,
+    ),
+    timeCheck: check(
+      "workflow_run_execution_leases_time_check",
+      sql`${table.expiresAt} > ${table.acquiredAt}
+        and (${table.releasedAt} is null or ${table.releasedAt} >= ${table.acquiredAt})`,
+    ),
   }),
 );
 

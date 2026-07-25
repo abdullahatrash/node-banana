@@ -38,6 +38,12 @@ import {
   PRODUCTION_WORKFLOW_REVISION_SERVICE,
   createWorkflowRegistrations,
 } from "./workflows";
+import {
+  createWorkflowRunRegistrations,
+} from "./runs/capabilities";
+import {
+  PRODUCTION_WORKFLOW_RUN_SERVICE,
+} from "./runs/production";
 
 export const PRODUCTION_AGENT_AUTHORIZER = new AgentAuthorizationService(
   new DrizzleAgentAuthorizationRepository(getDb),
@@ -84,6 +90,7 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
     PRODUCTION_WORKFLOW_REVISION_SERVICE,
     GOLDEN_WORKFLOW_OPERATION_REGISTRY,
   ),
+  ...createWorkflowRunRegistrations(PRODUCTION_WORKFLOW_RUN_SERVICE),
 ]);
 
 export const CAPABILITY_DISPATCHER = new CapabilityDispatcher(
