@@ -503,6 +503,10 @@ describe("CostDialog", () => {
         "href",
         "/studio/budgets",
       );
+      expect(screen.getByRole("link", { name: "Manage Quotas" })).toHaveAttribute(
+        "href",
+        "/studio/quotas",
+      );
     });
   });
 

@@ -14,6 +14,8 @@ import { workflowRunWorkerId } from "../worker-identity";
 import { GOLDEN_WORKFLOW_OPERATION_REGISTRY } from "../../workflows";
 import type { ResolvedWorkflowDefinition } from "../../workflows/types";
 import type { WorkflowRunBudgetPort } from "../types";
+import { InMemoryQuotaRepository } from "../../quotas/memory";
+import { QuotaService } from "../../quotas/service";
 
 function definition(
   operation = GOLDEN_WORKFLOW_OPERATION_REGISTRY.get(
@@ -111,6 +113,423 @@ function setup() {
 }
 
 describe("WorkflowRunService", () => {
+  it("durably waits on concurrency, survives restart, and resumes the same Run", async () => {
+    const at = new Date("2026-07-25T12:00:00.000Z");
+    const quotaRepository = new InMemoryQuotaRepository(() => new Date(at));
+    const quotas = new QuotaService(quotaRepository);
+    await quotas.createPolicyRevision({
+      workspaceId: "workspace_1",
+      principalId: null,
+      kind: "admission",
+      boundary: "run_admission",
+      dimension: "runtime.run_admissions@1",
+      unit: "count",
+      window: "calendar_day",
+      timezone: "UTC",
+      reservationRule: "consume",
+      warningThreshold: "2",
+      hardLimit: "2",
+      exhaustionBehavior: "deny",
+      actorUserId: "user_1",
+      idempotencyKey: "admission_policy_1",
+      recordedAt: at,
+    });
+    await quotas.createPolicyRevision({
+      workspaceId: "workspace_1",
+      principalId: null,
+      kind: "concurrency",
+      boundary: "run_concurrency",
+      dimension: "runtime.concurrent_runs@1",
+      unit: "count",
+      window: "concurrent",
+      timezone: "UTC",
+      reservationRule: "release_on_terminal",
+      warningThreshold: "1",
+      hardLimit: "1",
+      exhaustionBehavior: "wait",
+      actorUserId: "user_1",
+      idempotencyKey: "concurrency_policy_1",
+      recordedAt: at,
+    });
+    const blocker = await quotas.planClaim({
+      workspaceId: "workspace_1",
+      principalId: "principal_blocker",
+      runId: "run_blocker",
+      transitionKey: "blocker_concurrency",
+      boundary: "run_concurrency",
+      subject: { kind: "run", id: "run_blocker" },
+      claims: [{ dimension: "runtime.concurrent_runs@1", unit: "count", amount: "1" }],
+      recordedAt: at,
+    });
+    await expect(quotas.commitClaim(blocker)).resolves.toMatchObject({ kind: "created" });
+
+    const base = setup();
+    const repository = new InMemoryWorkflowRunRepository(undefined, undefined, quotaRepository);
+    const service = new WorkflowRunService(
+      repository,
+      base.revisions,
+      base.queue,
+      createDeterministicWorkflowRunExecutorRegistry(GOLDEN_WORKFLOW_OPERATION_REGISTRY),
+      base.cursor,
+      { now: () => new Date(at) },
+      undefined,
+      undefined,
+      undefined,
+      quotas,
+    );
+    const accepted = await service.start({
+      workspaceId: "workspace_1",
+      workflowId: "workflow_1",
+      revisionId: "revision_1",
+      inputs: { text: "hello" },
+      principalId: "principal_1",
+      keyId: "key_1",
+      authorizationEvidenceRef: "trace_1",
+      idempotencyKey: "quota_start_1",
+    });
+    const waiting = await service.executeOne({
+      workspaceId: "workspace_1",
+      runId: accepted.run.id,
+      workerId: "worker_1",
+    });
+    expect(waiting).toMatchObject({ id: accepted.run.id, state: "waiting", failureCode: "QUOTA_WAIT" });
+    const waitEvent = (repository.events.get(`workspace_1\u0000${accepted.run.id}`) ?? [])
+      .find((event) => event.type === "run.waiting");
+    expect(waitEvent?.data).toMatchObject({
+      boundary: "run_concurrency",
+      reasonCode: "QUOTA_RENEWABLE_CAPACITY_EXHAUSTED",
+      evidence: [{ eligibility: { kind: "capacity_release" } }],
+    });
+
+    const release = await quotas.planTransition({
+      workspaceId: "workspace_1",
+      transitionId: "release_blocker",
+      subject: { kind: "run", id: "run_blocker" },
+      outcome: "release",
+      amount: null,
+      evidenceRef: "blocker_completed",
+      recordedAt: new Date(at.getTime() + 1_000),
+    });
+    await quotas.commitTransition(release);
+    await service.sweepEligibleQuotaWaits({ workspaceId: "workspace_1" });
+    await service.relayNext();
+    await service.relayNext();
+
+    const competitor = await quotas.planClaim({
+      workspaceId: "workspace_1",
+      principalId: "principal_competitor",
+      runId: "run_competitor",
+      transitionKey: "competitor_concurrency",
+      boundary: "run_concurrency",
+      subject: { kind: "run", id: "run_competitor" },
+      claims: [{ dimension: "runtime.concurrent_runs@1", unit: "count", amount: "1" }],
+      recordedAt: new Date(at.getTime() + 1_500),
+    });
+    await quotas.commitClaim(competitor);
+
+    const restarted = new WorkflowRunService(
+      repository,
+      base.revisions,
+      base.queue,
+      createDeterministicWorkflowRunExecutorRegistry(GOLDEN_WORKFLOW_OPERATION_REGISTRY),
+      base.cursor,
+      { now: () => new Date(at.getTime() + 2_000) },
+      undefined,
+      undefined,
+      undefined,
+      quotas,
+    );
+    await expect(restarted.executeOne({
+      workspaceId: "workspace_1",
+      runId: accepted.run.id,
+      workerId: "worker_2",
+    })).resolves.toMatchObject({ id: accepted.run.id, state: "waiting" });
+    const releaseCompetitor = await quotas.planTransition({
+      workspaceId: "workspace_1",
+      transitionId: "release_competitor",
+      subject: { kind: "run", id: "run_competitor" },
+      outcome: "release",
+      amount: null,
+      evidenceRef: "competitor_completed",
+      recordedAt: new Date(at.getTime() + 2_500),
+    });
+    await quotas.commitTransition(releaseCompetitor);
+    await restarted.sweepEligibleQuotaWaits({ workspaceId: "workspace_1" });
+    expect([...repository.outbox.values()].find(
+      (intent) => intent.dedupeKey.startsWith("quota-wait-resume:") &&
+        intent.runId === accepted.run.id,
+    )).toMatchObject({ state: "pending" });
+    await expect(restarted.executeOne({
+      workspaceId: "workspace_1",
+      runId: accepted.run.id,
+      workerId: "worker_2",
+    })).resolves.toMatchObject({ id: accepted.run.id, state: "completed" });
+    expect((await quotas.listWaits({ workspaceId: "workspace_1", runId: accepted.run.id }))[0])
+      .toMatchObject({ state: "resumed", resumedBy: { kind: "system" } });
+
+    const blockerTwo = await quotas.planClaim({
+      workspaceId: "workspace_1",
+      principalId: "principal_blocker",
+      runId: "run_blocker_2",
+      transitionKey: "blocker_concurrency_2",
+      boundary: "run_concurrency",
+      subject: { kind: "run", id: "run_blocker_2" },
+      claims: [{ dimension: "runtime.concurrent_runs@1", unit: "count", amount: "1" }],
+      recordedAt: new Date(at.getTime() + 3_000),
+    });
+    await quotas.commitClaim(blockerTwo);
+    const acceptedTwo = await service.start({
+      workspaceId: "workspace_1",
+      workflowId: "workflow_1",
+      revisionId: "revision_1",
+      inputs: { text: "manual" },
+      principalId: "principal_1",
+      keyId: "key_1",
+      authorizationEvidenceRef: "trace_2",
+      idempotencyKey: "quota_start_2",
+    });
+    await service.executeOne({
+      workspaceId: "workspace_1",
+      runId: acceptedTwo.run.id,
+      workerId: "worker_3",
+    });
+    const manualWait = (await quotas.listWaits({
+      workspaceId: "workspace_1",
+      runId: acceptedTwo.run.id,
+      state: "waiting",
+    }))[0]!;
+    const releaseTwo = await quotas.planTransition({
+      workspaceId: "workspace_1",
+      transitionId: "release_blocker_2",
+      subject: { kind: "run", id: "run_blocker_2" },
+      outcome: "release",
+      amount: null,
+      evidenceRef: "blocker_2_completed",
+      recordedAt: new Date(at.getTime() + 4_000),
+    });
+    await quotas.commitTransition(releaseTwo);
+    const manualInput = {
+      workspaceId: "workspace_1",
+      waitId: manualWait.id,
+      actor: { kind: "human" as const, userId: "user_1" },
+      idempotencyKey: "manual_resume_1",
+    };
+    const originalResumeQuotaWait = repository.resumeQuotaWait.bind(repository);
+    let arrivals = 0;
+    let releaseRace!: () => void;
+    const raceGate = new Promise<void>((resolve) => { releaseRace = resolve; });
+    repository.resumeQuotaWait = async (input) => {
+      arrivals += 1;
+      if (arrivals === 3) releaseRace();
+      await raceGate;
+      return originalResumeQuotaWait(input);
+    };
+    const [winner, actorConflict, keyConflict] = await Promise.allSettled([
+      service.resumeQuotaWait(manualInput),
+      service.resumeQuotaWait({
+        ...manualInput,
+        actor: { kind: "human", userId: "user_2" },
+      }),
+      service.resumeQuotaWait({
+        ...manualInput,
+        idempotencyKey: "manual_resume_2",
+      }),
+    ]);
+    expect(winner.status).toBe("fulfilled");
+    expect(actorConflict).toMatchObject({
+      status: "rejected",
+      reason: { code: "WORKFLOW_RUN_NOT_RESUMABLE" },
+    });
+    expect(keyConflict).toMatchObject({
+      status: "rejected",
+      reason: { code: "WORKFLOW_RUN_NOT_RESUMABLE" },
+    });
+    if (winner.status !== "fulfilled") throw winner.reason;
+    const firstManual = winner.value;
+    const replayManual = await service.resumeQuotaWait(manualInput);
+    expect(replayManual.run).toEqual(firstManual.run);
+    expect(replayManual.inspect).toEqual(firstManual.inspect);
+    await expect(service.resumeQuotaWait({
+      ...manualInput,
+      idempotencyKey: "manual_resume_2",
+    })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(firstManual.run).toMatchObject({ id: acceptedTwo.run.id, state: "accepted" });
+    expect(await quotas.getWait({ workspaceId: "workspace_1", waitId: manualWait.id }))
+      .toMatchObject({
+        state: "resumed",
+        resumedBy: { kind: "human", userId: "user_1" },
+        resumeIdempotencyKey: "manual_resume_1",
+      });
+    const manualResumeEvents = (repository.events.get(`workspace_1\u0000${acceptedTwo.run.id}`) ?? [])
+      .filter((event) => event.type === "run.resumed");
+    expect(manualResumeEvents).toHaveLength(1);
+    expect([...repository.outbox.values()].filter(
+      (intent) => intent.dedupeKey === `quota-wait-manual-resume:${manualWait.id}`,
+    )).toHaveLength(1);
+
+    const source = await repository.getById({
+      workspaceId: "workspace_1",
+      runId: acceptedTwo.run.id,
+    });
+    const admissionBlocker = await quotas.planClaim({
+      workspaceId: "workspace_1",
+      principalId: "principal_blocker",
+      runId: "run_admission_blocker",
+      transitionKey: "admission_blocker",
+      boundary: "run_admission",
+      subject: { kind: "run", id: "run_admission_blocker" },
+      claims: [{ dimension: "runtime.run_admissions@1", unit: "count", amount: "1" }],
+      recordedAt: new Date(at.getTime() + 4_500),
+    });
+    await quotas.commitClaim(admissionBlocker);
+    const derivedId = "run_derived_quota_wait";
+    const derivedAt = new Date(at.getTime() + 5_000);
+    const admissionPlan = await quotas.planClaim({
+      workspaceId: "workspace_1",
+      principalId: "principal_1",
+      runId: derivedId,
+      transitionKey: `quota:run_admission:${derivedId}:v1`,
+      boundary: "run_admission",
+      subject: { kind: "run", id: derivedId },
+      claims: [{ dimension: "runtime.run_admissions@1", unit: "count", amount: "1" }],
+      recordedAt: derivedAt,
+    });
+    const derived = await repository.deriveRun({
+      run: {
+        ...structuredClone(source!),
+        id: derivedId,
+        state: "accepted",
+        nextEventSequence: 3,
+        derivation: {
+          kind: "manual_retry",
+          sourceRunId: source!.id,
+          rootRunId: source!.id,
+          sourceStartSnapshotDigest: source!.startSnapshotDigest,
+          retryFromStepId: "digest",
+          reusedOutputs: [],
+        },
+        resumeAt: null,
+        failureCode: null,
+        acceptedAt: derivedAt,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: derivedAt,
+      },
+      events: [
+        { id: "derived_accepted", workspaceId: "workspace_1", runId: derivedId, sequence: 1, type: "run.accepted", data: {}, occurredAt: derivedAt },
+        { id: "derived_lineage", workspaceId: "workspace_1", runId: derivedId, sequence: 2, type: "run.derived", data: {}, occurredAt: derivedAt },
+      ],
+      receipt: {
+        workspaceId: "workspace_1",
+        principalId: "principal_1",
+        keyId: "key_1",
+        authorizationEvidenceRef: "trace_derived",
+        capability: "workflow_runs.retry@1",
+        idempotencyKey: "derived_quota_wait_1",
+        requestFingerprint: "sha256:derived",
+        runId: derivedId,
+        initialEventCursor: "cursor_derived",
+        result: null,
+        createdAt: derivedAt,
+      },
+      outboxIntent: {
+        id: "derived_outbox",
+        workspaceId: "workspace_1",
+        runId: derivedId,
+        generation: 1,
+        dedupeKey: `workflow-run:workspace_1:${derivedId}:v1`,
+        state: "pending",
+        deliveryToken: null,
+        deliveryAttempts: 0,
+        availableAt: derivedAt,
+        claimedAt: null,
+        deliveredAt: null,
+        createdAt: derivedAt,
+      },
+      quotaAdmissionPlan: admissionPlan,
+      quotaWaitEventId: "derived_quota_wait_event",
+    });
+    expect(derived).toMatchObject({
+      kind: "quota_denied",
+      reasonCodes: ["QUOTA_CAPACITY_EXHAUSTED"],
+    });
+    await expect(repository.getById({
+      workspaceId: "workspace_1",
+      runId: derivedId,
+    })).resolves.toBeNull();
+    expect(repository.events.has(`workspace_1\u0000${derivedId}`)).toBe(false);
+    expect(repository.outbox.has("derived_outbox")).toBe(false);
+    await expect(quotas.listWaits({
+      workspaceId: "workspace_1",
+      runId: derivedId,
+    })).resolves.toEqual([]);
+  });
+
+  it("publishes predictable admission exhaustion as QUOTA_EXCEEDED", async () => {
+    const at = new Date("2026-07-25T12:00:00.000Z");
+    const quotaRepository = new InMemoryQuotaRepository(() => new Date(at));
+    const quotas = new QuotaService(quotaRepository);
+    await quotas.createPolicyRevision({
+      workspaceId: "workspace_1",
+      principalId: null,
+      kind: "admission",
+      boundary: "run_admission",
+      dimension: "runtime.run_admissions@1",
+      unit: "count",
+      window: "calendar_day",
+      timezone: "UTC",
+      reservationRule: "consume",
+      warningThreshold: "1",
+      hardLimit: "1",
+      exhaustionBehavior: "deny",
+      actorUserId: "user_1",
+      idempotencyKey: "admission_limit_1",
+      recordedAt: at,
+    });
+    const base = setup();
+    const repository = new InMemoryWorkflowRunRepository(undefined, undefined, quotaRepository);
+    const service = new WorkflowRunService(
+      repository,
+      base.revisions,
+      base.queue,
+      createDeterministicWorkflowRunExecutorRegistry(GOLDEN_WORKFLOW_OPERATION_REGISTRY),
+      base.cursor,
+      { now: () => new Date(at) },
+      undefined,
+      undefined,
+      undefined,
+      quotas,
+    );
+    const start = (idempotencyKey: string) => service.start({
+      workspaceId: "workspace_1",
+      workflowId: "workflow_1",
+      revisionId: "revision_1",
+      inputs: { text: "hello" },
+      principalId: "principal_1",
+      keyId: "key_1",
+      authorizationEvidenceRef: `trace_${idempotencyKey}`,
+      idempotencyKey,
+    });
+
+    await expect(start("quota_limit_first")).resolves.toMatchObject({
+      run: { state: "accepted" },
+    });
+    await expect(start("quota_limit_second")).rejects.toMatchObject({
+      code: "QUOTA_EXCEEDED",
+      retryable: false,
+      details: {
+        reasonCodes: ["QUOTA_CAPACITY_EXHAUSTED"],
+        evidence: [expect.objectContaining({
+          dimension: "runtime.run_admissions@1",
+          requested: "1",
+          available: "0",
+        })],
+      },
+    });
+    expect(repository.runs.size).toBe(1);
+    expect(repository.outbox.size).toBe(1);
+  });
+
   it("previews without binding, admits atomically, and replays before fresh budget evaluation", async () => {
     const budgetRepository = new InMemoryBudgetRepository();
     const budgets = new BudgetService(budgetRepository);
@@ -297,6 +716,9 @@ describe("WorkflowRunService", () => {
         },
       }),
     ]);
+    expect(
+      Object.isFrozen(stored.startSnapshot.providerResolutions?.[0]?.usageCeilings),
+    ).toBe(true);
     expect(stored.startSnapshot.artifactReferences).toEqual([]);
     expect(stored.startSnapshot.credentialReferences).toEqual([]);
     expect(Object.isFrozen(stored.startSnapshot)).toBe(true);

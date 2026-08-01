@@ -86,11 +86,13 @@ const usageDimensions = Object.freeze([
     dimension: "gemini.tokens.input@1",
     unit: "count" as const,
     applicability: "always" as const,
+    maximumQuantity: null,
   }),
   Object.freeze({
     dimension: "gemini.tokens.output@1",
     unit: "count" as const,
     applicability: "response_dependent" as const,
+    maximumQuantity: null,
   }),
 ]);
 

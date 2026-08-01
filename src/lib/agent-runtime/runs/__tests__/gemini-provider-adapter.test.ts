@@ -12,6 +12,7 @@ import {
   canonicalProviderSchemaDigest,
   executeProviderEffect,
   parseProviderOutcome,
+  projectProviderUsageCeilings,
 } from "../provider-adapter";
 import { DeterministicProviderFaultKit } from "../testing/provider-adapter-fault-kit";
 import { WorkflowRunExecutorRegistry } from "../executors";
@@ -112,6 +113,36 @@ describe("Gemini BYOK Provider Adapters", () => {
     };
     expect(canonicalProviderAdapterContractDigest(altered)).not.toBe(
       canonicalProviderAdapterContractDigest(GEMINI_IMAGE_CONTRACT),
+    );
+  });
+
+  it("pins explicit fail-closed usage ceilings in the reviewed contract digest", () => {
+    const ceilings = projectProviderUsageCeilings(GEMINI_TEXT_CONTRACT);
+    expect(ceilings).toEqual([
+      {
+        dimension: "gemini.tokens.input@1",
+        unit: "count",
+        maximumQuantity: null,
+      },
+      {
+        dimension: "gemini.tokens.output@1",
+        unit: "count",
+        maximumQuantity: null,
+      },
+    ]);
+    expect(Object.isFrozen(ceilings)).toBe(true);
+    expect(ceilings.every(Object.isFrozen)).toBe(true);
+
+    const bounded = {
+      ...GEMINI_TEXT_CONTRACT,
+      usageDimensions: GEMINI_TEXT_CONTRACT.usageDimensions.map((dimension) => ({
+        ...dimension,
+        maximumQuantity:
+          dimension.dimension === "gemini.tokens.output@1" ? "8192" : null,
+      })),
+    };
+    expect(canonicalProviderAdapterContractDigest(bounded)).not.toBe(
+      canonicalProviderAdapterContractDigest(GEMINI_TEXT_CONTRACT),
     );
   });
 

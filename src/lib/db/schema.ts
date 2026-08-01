@@ -41,6 +41,15 @@ import type {
   RunStepExposure,
   WorkspacePricingOverride,
 } from "@/lib/agent-runtime/budgets/types";
+import type {
+  QuotaClaimCommitResult,
+  QuotaPolicy,
+  QuotaPolicyRevision,
+  QuotaReservation,
+  QuotaTransitionCommitResult,
+  QuotaUsageReconciliationCommitResult,
+  QuotaWait,
+} from "@/lib/agent-runtime/quotas/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -2009,6 +2018,13 @@ export const workflowRuns = pgTable(
           and ${table.finalSnapshotDigest} is null
           and ${table.resumeAt} is null
           and ${table.failureCode} is null
+      ) or (
+        ${table.state} = 'waiting'
+          and ${table.failureCode} = 'QUOTA_WAIT'
+          and ${table.completedAt} is null
+          and ${table.output} is null
+          and ${table.finalSnapshot} is null
+          and ${table.finalSnapshotDigest} is null
       ) or (
         ${table.state} = 'waiting'
           and ${table.startedAt} is not null
@@ -4653,6 +4669,129 @@ export const runtimeSpendControlEvents = pgTable(
     workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_spend_control_events_workspace_fk" }).onDelete("restrict"),
     valueCheck: check("runtime_spend_control_events_value_check", sql`${table.revision} > 0 and length(${table.reason}) between 1 and 500`),
   }),
+);
+
+export const runtimeQuotaPolicies = pgTable(
+  "runtime_quota_policies",
+  {
+    id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), principalId: text("principal_id"), scope: text("scope").notNull(), kind: text("kind").notNull(), boundary: text("boundary").notNull(), dimension: text("dimension").notNull(), unit: text("unit").notNull(), window: text("window").notNull(), timezone: text("timezone").notNull(), reservationRule: text("reservation_rule").notNull(), status: text("status").notNull(), currentRevisionId: text("current_revision_id").notNull(), policy: jsonb("policy").$type<QuotaPolicy>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_quota_policies_workspace_id_unique").on(table.workspaceId, table.id),
+    workspaceIdentityUnique: uniqueIndex("runtime_quota_policies_active_workspace_identity_unique").on(table.workspaceId, table.kind, table.boundary, table.dimension, table.unit, table.window, table.timezone, table.reservationRule).where(sql`${table.status} = 'active' and ${table.principalId} is null`),
+    principalIdentityUnique: uniqueIndex("runtime_quota_policies_active_principal_identity_unique").on(table.workspaceId, table.principalId, table.kind, table.boundary, table.dimension, table.unit, table.window, table.timezone, table.reservationRule).where(sql`${table.status} = 'active' and ${table.principalId} is not null`),
+    workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_quota_policies_workspace_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_quota_policies_principal_fk" }).onDelete("restrict"),
+    scopeCheck: check("runtime_quota_policies_scope_check", sql`(${table.scope} = 'workspace' and ${table.principalId} is null) or (${table.scope} = 'principal' and ${table.principalId} is not null)`),
+    jsonShapeCheck: check("runtime_quota_policies_json_shape_check", sql`${table.policy} @> jsonb_build_object('schema', 'quota-policy/v1', 'id', ${table.id}, 'workspaceId', ${table.workspaceId}, 'principalId', ${table.principalId}, 'scope', ${table.scope}, 'kind', ${table.kind}, 'boundary', ${table.boundary}, 'dimension', ${table.dimension}, 'unit', ${table.unit}, 'window', ${table.window}, 'timezone', ${table.timezone}, 'reservationRule', ${table.reservationRule}, 'status', ${table.status}, 'currentRevisionId', ${table.currentRevisionId}) and ${table.policy} ?& array['createdAt','updatedAt'] and jsonb_typeof(${table.policy}->'createdAt') = 'string' and jsonb_typeof(${table.policy}->'updatedAt') = 'string'`),
+    identityCheck: check("runtime_quota_policies_identity_check", sql`${table.kind} in ('admission','concurrency','rate','storage','usage') and ${table.dimension} ~ '^[a-z][a-z0-9_.-]{0,99}@[1-9][0-9]{0,8}$' and ${table.unit} in ('count','byte','millisecond','megapixel') and ${table.window} in ('concurrent','calendar_minute','calendar_hour','calendar_day','calendar_week','calendar_month','lifetime') and ${table.status} in ('active','revoked') and ((${table.kind} = 'admission' and ${table.boundary} = 'run_admission' and ${table.window} <> 'concurrent' and ${table.reservationRule} = 'consume') or (${table.kind} = 'concurrency' and ${table.boundary} = 'run_concurrency' and ${table.window} = 'concurrent' and ${table.reservationRule} = 'release_on_terminal' and ${table.unit} = 'count') or (${table.kind} = 'rate' and ${table.boundary} = 'provider_effect' and ${table.window} not in ('concurrent','lifetime') and ${table.reservationRule} = 'consume') or (${table.kind} = 'storage' and ${table.boundary} = 'artifact_storage' and ${table.window} in ('concurrent','lifetime') and ${table.reservationRule} = 'release_on_transition' and ${table.unit} = 'byte') or (${table.kind} = 'usage' and ${table.boundary} = 'usage_settlement' and ${table.window} <> 'concurrent' and ${table.reservationRule} = 'consume'))`),
+    jsonScalarCheck: check("runtime_quota_policies_json_scalar_check", sql`${table.policy}->>'schema' = 'quota-policy/v1' and ${table.policy}->>'id' = ${table.id} and ${table.policy}->>'workspaceId' = ${table.workspaceId} and (${table.policy}->>'principalId') is not distinct from ${table.principalId} and ${table.policy}->>'scope' = ${table.scope} and ${table.policy}->>'kind' = ${table.kind} and ${table.policy}->>'boundary' = ${table.boundary} and ${table.policy}->>'dimension' = ${table.dimension} and ${table.policy}->>'unit' = ${table.unit} and ${table.policy}->>'window' = ${table.window} and ${table.policy}->>'timezone' = ${table.timezone} and ${table.policy}->>'reservationRule' = ${table.reservationRule} and ${table.policy}->>'status' = ${table.status} and ${table.policy}->>'currentRevisionId' = ${table.currentRevisionId} and (${table.policy}->>'createdAt')::timestamptz = ${table.createdAt} and (${table.policy}->>'updatedAt')::timestamptz = ${table.updatedAt}`),
+  }),
+);
+
+export const runtimeQuotaPolicyRevisions = pgTable(
+  "runtime_quota_policy_revisions",
+  {
+    id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), policyId: text("policy_id").notNull(), principalId: text("principal_id"), revision: integer("revision").notNull(), warningThreshold: text("warning_threshold").notNull(), hardLimit: text("hard_limit").notNull(), exhaustionBehavior: text("exhaustion_behavior").notNull(), createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), revisionRecord: jsonb("revision_record").$type<QuotaPolicyRevision>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_quota_policy_revisions_workspace_id_unique").on(table.workspaceId, table.id),
+    policyIdUnique: uniqueIndex("runtime_quota_policy_revisions_policy_id_unique").on(table.workspaceId, table.policyId, table.id),
+    policyRevisionUnique: uniqueIndex("runtime_quota_policy_revisions_policy_revision_unique").on(table.workspaceId, table.policyId, table.revision),
+    jsonShapeCheck: check("runtime_quota_policy_revisions_json_shape_check", sql`${table.revisionRecord} @> jsonb_build_object('schema', 'quota-policy-revision/v1', 'id', ${table.id}, 'workspaceId', ${table.workspaceId}, 'policyId', ${table.policyId}, 'principalId', ${table.principalId}, 'revision', ${table.revision}, 'warningThreshold', ${table.warningThreshold}, 'hardLimit', ${table.hardLimit}, 'exhaustionBehavior', ${table.exhaustionBehavior}, 'createdByUserId', ${table.createdByUserId}) and ${table.revisionRecord} ? 'createdAt' and jsonb_typeof(${table.revisionRecord}->'createdAt') = 'string'`),
+    policyFk: foreignKey({ columns: [table.workspaceId, table.policyId], foreignColumns: [runtimeQuotaPolicies.workspaceId, runtimeQuotaPolicies.id], name: "runtime_quota_policy_revisions_policy_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_quota_policy_revisions_principal_fk" }).onDelete("restrict"),
+    valueCheck: check("runtime_quota_policy_revisions_value_check", sql`${table.revision} > 0 and ${table.warningThreshold} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.hardLimit} ~ '^[1-9][0-9]*(\\.[0-9]+)?$' and ${table.warningThreshold}::numeric <= ${table.hardLimit}::numeric and ${table.exhaustionBehavior} in ('deny','wait')`),
+    jsonScalarCheck: check("runtime_quota_policy_revisions_json_scalar_check", sql`${table.revisionRecord}->>'schema' = 'quota-policy-revision/v1' and ${table.revisionRecord}->>'id' = ${table.id} and ${table.revisionRecord}->>'workspaceId' = ${table.workspaceId} and ${table.revisionRecord}->>'policyId' = ${table.policyId} and (${table.revisionRecord}->>'principalId') is not distinct from ${table.principalId} and (${table.revisionRecord}->>'revision')::integer = ${table.revision} and ${table.revisionRecord}->>'warningThreshold' = ${table.warningThreshold} and ${table.revisionRecord}->>'hardLimit' = ${table.hardLimit} and ${table.revisionRecord}->>'exhaustionBehavior' = ${table.exhaustionBehavior} and ${table.revisionRecord}->>'createdByUserId' = ${table.createdByUserId} and (${table.revisionRecord}->>'createdAt')::timestamptz = ${table.createdAt}`),
+  }),
+);
+
+export const runtimeQuotaAdminReceipts = pgTable(
+  "runtime_quota_admin_receipts",
+  { workspaceId: text("workspace_id").notNull(), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), resourceId: text("resource_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull() },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.idempotencyKey], name: "runtime_quota_admin_receipts_pk" }),
+    workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_quota_admin_receipts_workspace_fk" }).onDelete("restrict"),
+    digestCheck: check("runtime_quota_admin_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const runtimeQuotaWindows = pgTable(
+  "runtime_quota_windows",
+  { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), policyId: text("policy_id").notNull(), kind: text("kind").notNull(), timezone: text("timezone").notNull(), startsAt: timestamp("starts_at", { withTimezone: true }).notNull(), endsAt: timestamp("ends_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).notNull() },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_quota_windows_workspace_id_unique").on(table.workspaceId, table.id),
+    finiteWindowUnique: uniqueIndex("runtime_quota_windows_finite_window_unique").on(table.workspaceId, table.policyId, table.startsAt, table.endsAt).where(sql`${table.endsAt} is not null`),
+    openWindowUnique: uniqueIndex("runtime_quota_windows_open_window_unique").on(table.workspaceId, table.policyId, table.startsAt).where(sql`${table.endsAt} is null`),
+    policyFk: foreignKey({ columns: [table.workspaceId, table.policyId], foreignColumns: [runtimeQuotaPolicies.workspaceId, runtimeQuotaPolicies.id], name: "runtime_quota_windows_policy_fk" }).onDelete("restrict"),
+    intervalCheck: check("runtime_quota_windows_interval_check", sql`(${table.kind} in ('concurrent','lifetime') and ${table.endsAt} is null) or (${table.kind} in ('calendar_minute','calendar_hour','calendar_day','calendar_week','calendar_month') and ${table.endsAt} > ${table.startsAt})`),
+  }),
+);
+
+export const runtimeQuotaReservations = pgTable(
+  "runtime_quota_reservations",
+  {
+    id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), admittedPrincipalId: text("admitted_principal_id").notNull(), principalId: text("principal_id"), runId: text("run_id"), transitionKey: text("transition_key").notNull(), boundary: text("boundary").notNull(), subjectKind: text("subject_kind").notNull(), subjectId: text("subject_id").notNull(), policyId: text("policy_id").notNull(), policyRevisionId: text("policy_revision_id").notNull(), windowId: text("window_id").notNull(), scope: text("scope").notNull(), kind: text("kind").notNull(), dimension: text("dimension").notNull(), unit: text("unit").notNull(), reservationRule: text("reservation_rule").notNull(), reservedAmount: text("reserved_amount").notNull(), heldAmount: text("held_amount").notNull(), settledAmount: text("settled_amount").notNull(), releasedAmount: text("released_amount").notNull(), overageAmount: text("overage_amount").notNull(), state: text("state").notNull(), reservation: jsonb("reservation").$type<QuotaReservation>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_quota_reservations_workspace_id_unique").on(table.workspaceId, table.id),
+    transitionPolicyUnique: uniqueIndex("runtime_quota_reservations_transition_policy_unique").on(table.workspaceId, table.transitionKey, table.policyRevisionId),
+    windowStateIdx: index("runtime_quota_reservations_window_state_idx").on(table.workspaceId, table.windowId, table.state),
+    subjectIdx: index("runtime_quota_reservations_subject_idx").on(table.workspaceId, table.subjectKind, table.subjectId),
+    runIdx: index("runtime_quota_reservations_run_idx").on(table.workspaceId, table.runId),
+    jsonShapeCheck: check("runtime_quota_reservations_json_shape_check", sql`${table.reservation} @> jsonb_build_object('schema', 'quota-reservation/v1', 'id', ${table.id}, 'workspaceId', ${table.workspaceId}, 'admittedPrincipalId', ${table.admittedPrincipalId}, 'principalId', ${table.principalId}, 'runId', ${table.runId}, 'transitionKey', ${table.transitionKey}, 'boundary', ${table.boundary}, 'subject', jsonb_build_object('kind', ${table.subjectKind}, 'id', ${table.subjectId}), 'policyId', ${table.policyId}, 'policyRevisionId', ${table.policyRevisionId}, 'scope', ${table.scope}, 'kind', ${table.kind}, 'dimension', ${table.dimension}, 'unit', ${table.unit}, 'reservationRule', ${table.reservationRule}, 'reservedAmount', ${table.reservedAmount}, 'heldAmount', ${table.heldAmount}, 'settledAmount', ${table.settledAmount}, 'releasedAmount', ${table.releasedAmount}, 'state', ${table.state}) and ${table.reservation} ?& array['createdAt','updatedAt'] and jsonb_typeof(${table.reservation}->'createdAt') = 'string' and jsonb_typeof(${table.reservation}->'updatedAt') = 'string'`),
+    runFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "runtime_quota_reservations_run_fk" }).onDelete("restrict"),
+    policyFk: foreignKey({ columns: [table.workspaceId, table.policyId], foreignColumns: [runtimeQuotaPolicies.workspaceId, runtimeQuotaPolicies.id], name: "runtime_quota_reservations_policy_fk" }).onDelete("restrict"),
+    revisionFk: foreignKey({ columns: [table.workspaceId, table.policyRevisionId], foreignColumns: [runtimeQuotaPolicyRevisions.workspaceId, runtimeQuotaPolicyRevisions.id], name: "runtime_quota_reservations_revision_fk" }).onDelete("restrict"),
+    windowFk: foreignKey({ columns: [table.workspaceId, table.windowId], foreignColumns: [runtimeQuotaWindows.workspaceId, runtimeQuotaWindows.id], name: "runtime_quota_reservations_window_fk" }).onDelete("restrict"),
+    admittedPrincipalFk: foreignKey({ columns: [table.workspaceId, table.admittedPrincipalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_quota_reservations_admitted_principal_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_quota_reservations_principal_fk" }).onDelete("restrict"),
+    amountCheck: check("runtime_quota_reservations_amount_check", sql`${table.reservedAmount} ~ '^[1-9][0-9]*(\\.[0-9]+)?$' and ${table.heldAmount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.settledAmount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.releasedAmount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.overageAmount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.heldAmount}::numeric + ${table.settledAmount}::numeric <= ${table.reservedAmount}::numeric and ${table.releasedAmount}::numeric <= ${table.reservedAmount}::numeric and (${table.reservationRule} <> 'release_on_transition' or ${table.releasedAmount}::numeric <= ${table.settledAmount}::numeric)`),
+    stateCheck: check("runtime_quota_reservations_state_check", sql`(${table.state} = 'held' and ${table.heldAmount}::numeric > 0) or (${table.state} = 'settled' and ${table.heldAmount}::numeric = 0 and (${table.settledAmount}::numeric + ${table.overageAmount}::numeric) > 0) or (${table.state} = 'released' and ${table.heldAmount}::numeric = 0 and (${table.reservationRule} = 'release_on_terminal' or (${table.reservationRule} = 'consume' and (${table.settledAmount}::numeric + ${table.overageAmount}::numeric) = 0) or (${table.reservationRule} = 'release_on_transition' and ${table.settledAmount}::numeric = ${table.releasedAmount}::numeric)))`),
+    ownershipCheck: check("runtime_quota_reservations_ownership_check", sql`(${table.subjectKind} = 'artifact') or ${table.runId} is not null`),
+    overageJsonCheck: check("runtime_quota_reservations_overage_json_check", sql`${table.reservation} @> jsonb_build_object('overageAmount', ${table.overageAmount})`),
+    usageReconciliationCheck: check("runtime_quota_reservations_usage_reconciliation_check", sql`${table.boundary} <> 'usage_settlement' or ((${table.state} = 'held' or (${table.heldAmount}::numeric = 0 and ${table.settledAmount}::numeric + ${table.releasedAmount}::numeric = ${table.reservedAmount}::numeric)) and (${table.overageAmount}::numeric = 0 or (${table.state} = 'settled' and ${table.heldAmount}::numeric = 0 and ${table.settledAmount}::numeric = ${table.reservedAmount}::numeric and ${table.releasedAmount}::numeric = 0)))`),
+    jsonScalarCheck: check("runtime_quota_reservations_json_scalar_check", sql`${table.reservation}->>'schema' = 'quota-reservation/v1' and ${table.reservation}->>'id' = ${table.id} and ${table.reservation}->>'workspaceId' = ${table.workspaceId} and ${table.reservation}->>'admittedPrincipalId' = ${table.admittedPrincipalId} and (${table.reservation}->>'principalId') is not distinct from ${table.principalId} and ${table.reservation}->>'runId' = ${table.runId} and ${table.reservation}->>'transitionKey' = ${table.transitionKey} and ${table.reservation}->>'boundary' = ${table.boundary} and ${table.reservation}->'subject'->>'kind' = ${table.subjectKind} and ${table.reservation}->'subject'->>'id' = ${table.subjectId} and ${table.reservation}->>'policyId' = ${table.policyId} and ${table.reservation}->>'policyRevisionId' = ${table.policyRevisionId} and ${table.reservation}->>'scope' = ${table.scope} and ${table.reservation}->>'kind' = ${table.kind} and ${table.reservation}->>'dimension' = ${table.dimension} and ${table.reservation}->>'unit' = ${table.unit} and ${table.reservation}->>'reservationRule' = ${table.reservationRule} and ${table.reservation}->>'reservedAmount' = ${table.reservedAmount} and ${table.reservation}->>'heldAmount' = ${table.heldAmount} and ${table.reservation}->>'settledAmount' = ${table.settledAmount} and ${table.reservation}->>'releasedAmount' = ${table.releasedAmount} and ${table.reservation}->>'state' = ${table.state} and (${table.reservation}->>'createdAt')::timestamptz = ${table.createdAt} and (${table.reservation}->>'updatedAt')::timestamptz = ${table.updatedAt}`),
+  }),
+);
+
+export const runtimeQuotaWaits = pgTable(
+  "runtime_quota_waits",
+  { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), admittedPrincipalId: text("admitted_principal_id").notNull(), runId: text("run_id").notNull(), transitionKey: text("transition_key").notNull(), state: text("state").notNull(), eligibleAt: timestamp("eligible_at", { withTimezone: true }), reasonCode: text("reason_code").notNull(), wait: jsonb("wait").$type<QuotaWait>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), resolvedAt: timestamp("resolved_at", { withTimezone: true }) },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_quota_waits_workspace_id_unique").on(table.workspaceId, table.id),
+    transitionUnique: uniqueIndex("runtime_quota_waits_transition_unique").on(table.workspaceId, table.transitionKey),
+    eligibleIdx: index("runtime_quota_waits_eligible_idx").on(table.workspaceId, table.state, table.eligibleAt, table.createdAt),
+    jsonShapeCheck: check("runtime_quota_waits_json_shape_check", sql`${table.wait} @> jsonb_build_object('schema', 'quota-wait/v1', 'id', ${table.id}, 'workspaceId', ${table.workspaceId}, 'admittedPrincipalId', ${table.admittedPrincipalId}, 'runId', ${table.runId}, 'transitionKey', ${table.transitionKey}, 'state', ${table.state}, 'reasonCode', ${table.reasonCode}) and ${table.wait} ?& array['eligibleAt','createdAt','resolvedAt'] and (jsonb_typeof(${table.wait}->'eligibleAt') = 'string' or jsonb_typeof(${table.wait}->'eligibleAt') = 'null') and jsonb_typeof(${table.wait}->'createdAt') = 'string' and (jsonb_typeof(${table.wait}->'resolvedAt') = 'string' or jsonb_typeof(${table.wait}->'resolvedAt') = 'null')`),
+    runFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "runtime_quota_waits_run_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.admittedPrincipalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_quota_waits_principal_fk" }).onDelete("restrict"),
+    stateCheck: check("runtime_quota_waits_state_check", sql`${table.state} in ('waiting','resumed','cancelled') and ${table.reasonCode} = 'QUOTA_RENEWABLE_CAPACITY_EXHAUSTED'`),
+    jsonScalarCheck: check("runtime_quota_waits_json_scalar_check", sql`${table.wait}->>'schema' = 'quota-wait/v1' and ${table.wait}->>'id' = ${table.id} and ${table.wait}->>'workspaceId' = ${table.workspaceId} and ${table.wait}->>'admittedPrincipalId' = ${table.admittedPrincipalId} and ${table.wait}->>'runId' = ${table.runId} and ${table.wait}->>'transitionKey' = ${table.transitionKey} and ${table.wait}->>'state' = ${table.state} and (${table.wait}->>'eligibleAt')::timestamptz is not distinct from ${table.eligibleAt} and ${table.wait}->>'reasonCode' = ${table.reasonCode} and (${table.wait}->>'createdAt')::timestamptz = ${table.createdAt} and (${table.wait}->>'resolvedAt')::timestamptz is not distinct from ${table.resolvedAt}`),
+  }),
+);
+
+export const runtimeQuotaClaimReceipts = pgTable(
+  "runtime_quota_claim_receipts",
+  { workspaceId: text("workspace_id").notNull(), transitionKey: text("transition_key").notNull(), requestDigest: text("request_digest").notNull(), result: jsonb("result").$type<QuotaClaimCommitResult>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull() },
+  (table) => ({ pk: primaryKey({ columns: [table.workspaceId, table.transitionKey], name: "runtime_quota_claim_receipts_pk" }), workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_quota_claim_receipts_workspace_fk" }).onDelete("restrict"), digestCheck: check("runtime_quota_claim_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`) }),
+);
+
+export const runtimeQuotaTransitionReceipts = pgTable(
+  "runtime_quota_transition_receipts",
+  { workspaceId: text("workspace_id").notNull(), transitionId: text("transition_id").notNull(), requestDigest: text("request_digest").notNull(), result: jsonb("result").$type<QuotaTransitionCommitResult>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull() },
+  (table) => ({ pk: primaryKey({ columns: [table.workspaceId, table.transitionId], name: "runtime_quota_transition_receipts_pk" }), workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_quota_transition_receipts_workspace_fk" }).onDelete("restrict"), digestCheck: check("runtime_quota_transition_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`) }),
+);
+
+export const runtimeQuotaUsageReconciliationReceipts = pgTable(
+  "runtime_quota_usage_reconciliation_receipts",
+  { workspaceId: text("workspace_id").notNull(), reconciliationId: text("reconciliation_id").notNull(), requestDigest: text("request_digest").notNull(), result: jsonb("result").$type<QuotaUsageReconciliationCommitResult>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull() },
+  (table) => ({ pk: primaryKey({ columns: [table.workspaceId, table.reconciliationId], name: "runtime_quota_usage_reconciliation_receipts_pk" }), workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_quota_usage_reconciliation_receipts_workspace_fk" }).onDelete("restrict"), digestCheck: check("runtime_quota_usage_reconciliation_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`) }),
+);
+
+export const runtimeQuotaReservationEvents = pgTable(
+  "runtime_quota_reservation_events",
+  { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), reservationId: text("reservation_id").notNull(), transitionId: text("transition_id").notNull(), eventType: text("event_type").notNull(), amount: text("amount").notNull(), evidenceRef: text("evidence_ref").notNull(), event: jsonb("event").$type<Record<string, unknown>>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull() },
+  (table) => ({ reservationFk: foreignKey({ columns: [table.workspaceId, table.reservationId], foreignColumns: [runtimeQuotaReservations.workspaceId, runtimeQuotaReservations.id], name: "runtime_quota_reservation_events_reservation_fk" }).onDelete("restrict"), reservationOccurredIdx: index("runtime_quota_reservation_events_reservation_occurred_idx").on(table.workspaceId, table.reservationId, table.occurredAt), valueCheck: check("runtime_quota_reservation_events_value_check", sql`${table.eventType} in ('held','settled','released') and ${table.amount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$'`) }),
 );
 
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];

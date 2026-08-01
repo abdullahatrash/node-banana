@@ -445,6 +445,11 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
     await this.database().transaction(async (tx) => {
       await lockWorkspaceSpendGate(tx, input.workspaceId);
       const [current] = await tx.select().from(runtimeSpendControls).where(eq(runtimeSpendControls.workspaceId, input.workspaceId)).for("update").limit(1);
+      if (
+        current?.suspended === input.suspended &&
+        current.reason === input.reason &&
+        current.updatedByUserId === input.actorUserId
+      ) return;
       const revision = (current?.revision ?? 0) + 1;
       await tx.insert(runtimeSpendControls).values({ workspaceId: input.workspaceId, suspended: input.suspended, revision, reason: input.reason, updatedByUserId: input.actorUserId, updatedAt: input.recordedAt }).onConflictDoUpdate({ target: runtimeSpendControls.workspaceId, set: { suspended: input.suspended, revision, reason: input.reason, updatedByUserId: input.actorUserId, updatedAt: input.recordedAt } });
       await tx.insert(runtimeSpendControlEvents).values({ id: eventId("spend-control", { workspaceId: input.workspaceId, revision }), workspaceId: input.workspaceId, revision, suspended: input.suspended, reason: input.reason, actorUserId: input.actorUserId, recordedAt: input.recordedAt });

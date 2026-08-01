@@ -73,11 +73,13 @@ export const SCRIPTED_PROVIDER_CONTRACT: ProviderAdapterContract<
       dimension: "provider.tokens.input@1",
       unit: "count" as const,
       applicability: "always" as const,
+      maximumQuantity: "128",
     }),
     Object.freeze({
       dimension: "provider.tokens.output@1",
       unit: "count" as const,
       applicability: "response_dependent" as const,
+      maximumQuantity: "64",
     }),
   ]),
 });

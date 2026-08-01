@@ -12,6 +12,59 @@ import type {
   BudgetSettlementPlan,
   RunAdmissionPreview,
 } from "../budgets/types";
+import type {
+  QuotaClaimInput,
+  EffectiveQuotaCapacity,
+  QuotaExhaustionEvidence,
+  QuotaClaimPlan,
+  QuotaTransitionInput,
+  QuotaTransitionPlan,
+  QuotaUsageReconciliationInput,
+  QuotaUsageReconciliationPlan,
+  QuotaWait,
+  QuotaReservation,
+} from "../quotas/types";
+
+export interface WorkflowRunQuotaPort {
+  getEffectiveCapacity(input: {
+    workspaceId: string;
+    principalId: string;
+    at: Date;
+    boundary?: "run_admission" | "run_concurrency" | "provider_effect" | "artifact_storage" | "usage_settlement";
+    dimension?: string;
+  }): Promise<EffectiveQuotaCapacity[]>;
+  planClaim(input: QuotaClaimInput): Promise<QuotaClaimPlan>;
+  planResumeWait(input: {
+    workspaceId: string;
+    waitId: string;
+    actor:
+      | { kind: "human"; userId: string }
+      | { kind: "principal"; principalId: string }
+      | { kind: "system" };
+    resumeReason: string;
+    idempotencyKey: string;
+    recordedAt: Date;
+  }): Promise<QuotaClaimPlan>;
+  planTransition(input: QuotaTransitionInput): Promise<QuotaTransitionPlan>;
+  planUsageReconciliation(
+    input: QuotaUsageReconciliationInput,
+  ): Promise<QuotaUsageReconciliationPlan>;
+  listWaits(input: {
+    workspaceId: string;
+    runId?: string;
+    state?: QuotaWait["state"];
+  }): Promise<QuotaWait[]>;
+  listEligibleWaits(input: {
+    workspaceId: string;
+    at: Date;
+    limit: number;
+  }): Promise<Array<{ workspaceId: string; runId: string; waitId: string; eligibleAt: Date | null }>>;
+  listReservations(input: {
+    workspaceId: string;
+    runId?: string;
+    subject?: { kind: "run" | "step_attempt" | "artifact" | "usage_settlement"; id: string };
+  }): Promise<QuotaReservation[]>;
+}
 
 export type WorkflowRunState =
   | "accepted"
@@ -86,6 +139,11 @@ export interface WorkflowRunProviderResolution {
   effectKeySupport: "native" | "unsupported";
   observation: "none" | "provider_operation_ref";
   launchSafety: WorkflowProviderLaunchSafety;
+  usageCeilings: Array<{
+    dimension: string;
+    unit: "count" | "byte" | "millisecond" | "megapixel";
+    maximumQuantity: string | null;
+  }>;
 }
 
 export interface WorkflowRunArtifactReference {
@@ -420,6 +478,11 @@ export type StartWorkflowRunResult =
       receipt: WorkflowRunMutationReceiptRecord;
     }
   | { kind: "conflict" }
+  | {
+      kind: "quota_denied";
+      reasonCodes: Array<"QUOTA_POLICY_UNAVAILABLE" | "QUOTA_CAPACITY_EXHAUSTED" | "EMERGENCY_SPEND_SUSPENDED">;
+      evidence: QuotaExhaustionEvidence[];
+    }
   | { kind: "unavailable" };
 
 export type ClaimWorkflowRunOutboxResult =
@@ -432,6 +495,7 @@ export type AcquireWorkflowRunLeaseResult =
       run: WorkflowRunRecord;
       lease: WorkflowRunExecutionLeaseRecord;
     }
+  | { kind: "quota_wait"; run: WorkflowRunRecord; wait: QuotaWait }
   | { kind: "completed"; run: WorkflowRunRecord }
   | { kind: "busy" }
   | { kind: "unavailable" };
@@ -446,6 +510,16 @@ export type PrepareWorkflowStepAttemptResult =
       kind: "created" | "replayed";
       run: WorkflowRunRecord;
       attempt: WorkflowStepAttemptRecord;
+    }
+  | { kind: "quota_wait"; run: WorkflowRunRecord; wait: QuotaWait }
+  | {
+      kind: "effect_blocked";
+      run: WorkflowRunRecord;
+      reasonCode:
+        | "EMERGENCY_SPEND_SUSPENDED"
+        | "QUOTA_CAPACITY_EXHAUSTED"
+        | "QUOTA_POLICY_UNAVAILABLE";
+      blockedBoundary: "provider_effect" | "usage_settlement";
     }
   | { kind: "conflict" }
   | { kind: "stale_fence" }
@@ -470,6 +544,12 @@ export type MutateWorkflowRunResult =
   | { kind: "stale_fence" }
   | { kind: "unavailable" };
 
+export type DeriveWorkflowRunResult = MutateWorkflowRunResult | {
+  kind: "quota_denied";
+  reasonCodes: Array<"QUOTA_POLICY_UNAVAILABLE" | "QUOTA_CAPACITY_EXHAUSTED" | "EMERGENCY_SPEND_SUSPENDED">;
+  evidence: QuotaExhaustionEvidence[];
+};
+
 export interface WorkflowRunRepository {
   getMutationReceipt(input: {
     workspaceId: string;
@@ -486,10 +566,16 @@ export interface WorkflowRunRepository {
     receipt: WorkflowRunMutationReceiptRecord;
     outboxIntent: WorkflowRunOutboxIntentRecord;
     budgetAdmissionPlan?: BudgetAdmissionPlan | null;
+    quotaAdmissionPlan?: QuotaClaimPlan | null;
+    quotaWaitEventId?: string | null;
   }): Promise<StartWorkflowRunResult>;
   get(input: {
     workspaceId: string;
     workflowId: string;
+    runId: string;
+  }): Promise<WorkflowRunRecord | null>;
+  getById(input: {
+    workspaceId: string;
     runId: string;
   }): Promise<WorkflowRunRecord | null>;
   listEvents(input: {
@@ -514,12 +600,20 @@ export interface WorkflowRunRepository {
     deliveryToken: string;
     availableAt: Date;
   }): Promise<void>;
+  enqueueQuotaWaitResumptions(input: {
+    waits: Array<{ workspaceId: string; runId: string; waitId: string; eligibleAt: Date | null }>;
+    enqueuedAt: Date;
+  }): Promise<number>;
   acquireLease(input: {
     workspaceId: string;
     runId: string;
     workerId: string;
     now: Date;
     expiresAt: Date;
+    quotaResumePlan?: QuotaClaimPlan | null;
+    quotaConcurrencyPlan?: QuotaClaimPlan | null;
+    quotaWaitEventId?: string | null;
+    quotaWaitOutboxIntent?: WorkflowRunOutboxIntentRecord | null;
   }): Promise<AcquireWorkflowRunLeaseResult>;
   renewLease(input: {
     workspaceId: string;
@@ -543,6 +637,7 @@ export interface WorkflowRunRepository {
     completedAt: Date;
     stepEventId: string;
     runEventId: string;
+    quotaTransitionPlans?: QuotaTransitionPlan[];
   }): Promise<CompleteWorkflowRunStepResult>;
   failStep(input: {
     workspaceId: string;
@@ -553,6 +648,7 @@ export interface WorkflowRunRepository {
     failureCode: string;
     failedAt: Date;
     runEventId: string;
+    quotaTransitionPlans?: QuotaTransitionPlan[];
   }): Promise<CompleteWorkflowRunStepResult>;
   listStepAttempts(input: {
     workspaceId: string;
@@ -565,6 +661,11 @@ export interface WorkflowRunRepository {
     fence: bigint;
     eventId: string;
     budgetAttemptAllocation?: BudgetAttemptAllocationInput | null;
+    quotaClaimPlans?: QuotaClaimPlan[];
+    quotaWaitEventId?: string | null;
+    quotaWaitOutboxIntent?: WorkflowRunOutboxIntentRecord | null;
+    quotaWaitReleasePlans?: QuotaTransitionPlan[];
+    quotaPolicyUnavailableEventId?: string | null;
   }): Promise<PrepareWorkflowStepAttemptResult>;
   recordStepAttemptProviderSuccess(input: {
     workspaceId: string;
@@ -577,6 +678,8 @@ export interface WorkflowRunRepository {
     providerMetadata?: WorkflowStepProviderMetadata | null;
     usagePlan?: UsageLedgerAppendPlan | null;
     budgetSettlementPlan?: BudgetSettlementPlan | null;
+    quotaTransitionPlans?: QuotaTransitionPlan[];
+    quotaUsageReconciliationPlans?: QuotaUsageReconciliationPlan[];
     recordedAt: Date;
   }): Promise<SettleWorkflowStepAttemptResult>;
   settleStepAttempt(input: {
@@ -592,6 +695,7 @@ export interface WorkflowRunRepository {
     finalSnapshotDigest: string | null;
     usageAttributionPlan?: UsageAttributionAppendPlan | null;
     budgetSettlementPlan?: BudgetSettlementPlan | null;
+    quotaTransitionPlans?: QuotaTransitionPlan[];
     completedAt: Date;
     eventIds: {
       generated: string[];
@@ -612,6 +716,8 @@ export interface WorkflowRunRepository {
     providerMetadata?: WorkflowStepProviderMetadata | null;
     usagePlan: UsageLedgerAppendPlan;
     budgetSettlementPlan?: BudgetSettlementPlan | null;
+    quotaTransitionPlans?: QuotaTransitionPlan[];
+    quotaUsageReconciliationPlans?: QuotaUsageReconciliationPlan[];
     retryAt: Date | null;
     retryOutboxIntent: WorkflowRunOutboxIntentRecord | null;
     failedAt: Date;
@@ -634,6 +740,8 @@ export interface WorkflowRunRepository {
     providerMetadata?: WorkflowStepProviderMetadata | null;
     usagePlan?: UsageLedgerAppendPlan | null;
     budgetSettlementPlan?: BudgetSettlementPlan | null;
+    quotaTransitionPlans?: QuotaTransitionPlan[];
+    quotaUsageReconciliationPlans?: QuotaUsageReconciliationPlan[];
     occurredAt: Date;
     eventIds: {
       attemptOutcomeUnknown: string;
@@ -646,7 +754,9 @@ export interface WorkflowRunRepository {
     receipt: WorkflowRunMutationReceiptRecord;
     outboxIntent: WorkflowRunOutboxIntentRecord;
     budgetAdmissionPlan?: BudgetAdmissionPlan | null;
-  }): Promise<MutateWorkflowRunResult>;
+    quotaAdmissionPlan?: QuotaClaimPlan | null;
+    quotaWaitEventId?: string | null;
+  }): Promise<DeriveWorkflowRunResult>;
   resumeRun(input: {
     workspaceId: string;
     workflowId: string;
@@ -661,7 +771,21 @@ export interface WorkflowRunRepository {
     outboxIntent: WorkflowRunOutboxIntentRecord;
     resumedAt: Date;
     eventId: string;
+    quotaResumePlan?: QuotaClaimPlan | null;
   }): Promise<MutateWorkflowRunResult>;
+  resumeQuotaWait(input: {
+    workspaceId: string;
+    workflowId: string;
+    runId: string;
+    waitEventSequence: number;
+    quotaResumePlan: QuotaClaimPlan;
+    outboxIntent: WorkflowRunOutboxIntentRecord;
+    resumedAt: Date;
+    eventId: string;
+  }): Promise<
+    | { kind: "resumed" | "replayed"; run: WorkflowRunRecord }
+    | { kind: "unavailable" }
+  >;
   reconcileStepAttempt(input: {
     workspaceId: string;
     workflowId: string;
@@ -694,6 +818,8 @@ export interface WorkflowRunRepository {
     usagePlan?: UsageLedgerAppendPlan | null;
     budgetSettlementPlan?: BudgetSettlementPlan | null;
     usageAttributionPlan?: UsageAttributionAppendPlan | null;
+    quotaTransitionPlans?: QuotaTransitionPlan[];
+    quotaUsageReconciliationPlans?: QuotaUsageReconciliationPlan[];
     occurredAt: Date;
     eventIds: {
       generated: string[];

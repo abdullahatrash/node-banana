@@ -92,6 +92,24 @@ function invalidStart(): Parameters<WorkflowRunRepository["start"]>[0] {
 }
 
 describe("DrizzleWorkflowRunRepository", () => {
+  it("keeps Usage Ledger and quota usage reconciliation in each provider outcome transaction", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/agent-runtime/runs/postgres-repository.ts"),
+      "utf8",
+    );
+    for (const method of [
+      "recordStepAttemptProviderSuccess",
+      "failStepAttempt",
+      "markStepAttemptOutcomeUnknown",
+      "reconcileStepAttempt",
+    ]) {
+      const start = source.indexOf(`async ${method}(`);
+      const next = source.indexOf("\n  async ", start + 10);
+      const body = source.slice(start, next < 0 ? undefined : next);
+      expect(body).toContain("appendUsage");
+      expect(body).toContain("commitQuotaUsageReconciliations");
+    }
+  });
   it("rejects inconsistent atomic acceptance before opening a database", async () => {
     const getDatabase = vi.fn(() => {
       throw new Error("must not open");
@@ -135,5 +153,76 @@ describe("DrizzleWorkflowRunRepository", () => {
     expect(source).toContain('type: "run.completed"');
     expect(source).toContain('type: "run.failed"');
     expect(source).not.toMatch(/\bJob\b|jobId|job_id/);
+  });
+
+  it("acquires quota gates before budget gates for accepted and derived Runs", () => {
+    const source = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/lib/agent-runtime/runs/postgres-repository.ts",
+      ),
+      "utf8",
+    );
+    const start = source.slice(
+      source.indexOf("  async start("),
+      source.indexOf("  async getById("),
+    );
+    const derive = source.slice(
+      source.indexOf("  async deriveRun("),
+      source.indexOf("  async resumeRun("),
+    );
+
+    for (const admission of [start, derive]) {
+      expect(admission.indexOf("this.commitQuotaClaim(")).toBeGreaterThan(-1);
+      expect(admission.indexOf("this.budgetWriter.commitAdmission(")).toBeGreaterThan(-1);
+      expect(admission.indexOf("this.commitQuotaClaim(")).toBeLessThan(
+        admission.indexOf("this.budgetWriter.commitAdmission("),
+      );
+    }
+  });
+
+  it("locks the winning Quota Wait before accepting a manual-resume replay", () => {
+    const source = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/lib/agent-runtime/runs/postgres-repository.ts",
+      ),
+      "utf8",
+    );
+    const resume = source.slice(
+      source.indexOf("  async resumeQuotaWait("),
+      source.indexOf("  async reconcileStepAttempt("),
+    );
+
+    expect(resume).toContain(".from(runtimeQuotaWaits)");
+    expect(resume).toContain('.for("update")');
+    expect(resume).toContain("winningWait?.state === \"resumed\"");
+    expect(resume).toContain(
+      "sameQuotaResumeActor(winningWait.resumedBy, input.quotaResumePlan.resumeActor)",
+    );
+    expect(resume).toContain(
+      "winningWait.resumeIdempotencyKey === input.quotaResumePlan.resumeIdempotencyKey",
+    );
+    expect(resume.indexOf(".from(runtimeQuotaWaits)")).toBeLessThan(
+      resume.indexOf('if (run.state !== "waiting"'),
+    );
+  });
+
+  it("rolls back quota-denied acceptance and preserves the typed denial", () => {
+    const source = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/lib/agent-runtime/runs/postgres-repository.ts",
+      ),
+      "utf8",
+    );
+    for (const admission of [
+      source.slice(source.indexOf("  async start("), source.indexOf("  async getById(")),
+      source.slice(source.indexOf("  async deriveRun("), source.indexOf("  async resumeRun(")),
+    ]) {
+      expect(admission).toContain("throw new QuotaAdmissionDenied(");
+      expect(admission).toContain("error instanceof QuotaAdmissionDenied");
+      expect(admission).toContain('kind: "quota_denied" as const');
+    }
   });
 });

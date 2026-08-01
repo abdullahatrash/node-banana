@@ -38,6 +38,7 @@ import {
   InMemoryArtifactRepository,
 } from "../../artifacts/memory";
 import { ArtifactService } from "../../artifacts/service";
+import { ArtifactServiceError } from "../../artifacts/errors";
 import { SharpArtifactMediaInspector } from "../../artifacts/storage";
 import { InMemoryUsageRepository } from "../../usage/memory";
 import { UsageLedgerService } from "../../usage/service";
@@ -61,10 +62,16 @@ import {
 } from "../memory";
 import { WorkflowRunService } from "../service";
 import type {
+  WorkflowRunArtifactPort,
   WorkflowRunClock,
   WorkflowStepExecutor,
   WorkflowStepExecutorRegistry,
+  WorkflowStepProviderMetadata,
 } from "../types";
+import { InMemoryQuotaRepository } from "../../quotas/memory";
+import { QuotaService } from "../../quotas/service";
+import { InMemoryBudgetRepository } from "../../budgets/memory";
+import { BudgetService } from "../../budgets/service";
 
 const NOW = new Date("2026-07-25T12:00:00.000Z");
 const WORKSPACE_ID = "workspace_golden";
@@ -98,6 +105,11 @@ async function setupGoldenRun(options: {
     artifacts: ArtifactService,
   ) => Promise<WorkflowStepExecutorRegistry> | WorkflowStepExecutorRegistry;
   clock?: WorkflowRunClock;
+  quotaRepository?: InMemoryQuotaRepository;
+  quotas?: QuotaService;
+  budgetRepository?: InMemoryBudgetRepository;
+  budgets?: BudgetService;
+  artifactPort?: (artifacts: ArtifactService) => WorkflowRunArtifactPort;
 } = {}) {
   const clock = options.clock ?? { now: () => new Date(NOW) };
   const slots = new InMemoryWorkflowCredentialSlotAdmission();
@@ -167,7 +179,11 @@ async function setupGoldenRun(options: {
   });
 
   const usageRepository = new InMemoryUsageRepository();
-  const repository = new InMemoryWorkflowRunRepository(usageRepository);
+  const repository = new InMemoryWorkflowRunRepository(
+    usageRepository,
+    options.budgetRepository,
+    options.quotaRepository,
+  );
   const revisions = new InMemoryWorkflowRunRevisionReader();
   revisions.put(WORKSPACE_ID, {
     id: REVISION_ID,
@@ -193,8 +209,10 @@ async function setupGoldenRun(options: {
     executors,
     runCursor(),
     clock,
-    artifactService,
+    options.artifactPort?.(artifactService) ?? artifactService,
     usageService,
+    options.budgets,
+    options.quotas,
   );
   const authorizer: CapabilityAuthorizer = {
     authorize: async () => ({
@@ -237,6 +255,163 @@ async function setupGoldenRun(options: {
     service,
     usageRepository,
     usageService,
+  };
+}
+
+async function configureRunAndUsageQuotas(input: {
+  includeOutputPolicy?: boolean;
+  includeAgentPolicies?: boolean;
+  usageHardLimit?: string;
+} = {}) {
+  const quotaRepository = new InMemoryQuotaRepository(() => new Date(NOW));
+  const quotas = new QuotaService(quotaRepository);
+  const create = (policy: Parameters<QuotaService["createPolicyRevision"]>[0]) =>
+    quotas.createPolicyRevision(policy);
+  await create({
+    workspaceId: WORKSPACE_ID, principalId: null, kind: "admission",
+    boundary: "run_admission", dimension: "runtime.run_admissions@1", unit: "count",
+    window: "calendar_day", timezone: "UTC", reservationRule: "consume",
+    warningThreshold: "900", hardLimit: "1000", exhaustionBehavior: "deny",
+    actorUserId: "user_1", idempotencyKey: "typed_admission_policy", recordedAt: NOW,
+  });
+  await create({
+    workspaceId: WORKSPACE_ID, principalId: null, kind: "concurrency",
+    boundary: "run_concurrency", dimension: "runtime.concurrent_runs@1", unit: "count",
+    window: "concurrent", timezone: "UTC", reservationRule: "release_on_terminal",
+    warningThreshold: "90", hardLimit: "100", exhaustionBehavior: "wait",
+    actorUserId: "user_1", idempotencyKey: "typed_concurrency_policy", recordedAt: NOW,
+  });
+  await create({
+    workspaceId: WORKSPACE_ID, principalId: null, kind: "rate",
+    boundary: "provider_effect", dimension: "runtime.provider_calls@1", unit: "count",
+    window: "calendar_minute", timezone: "UTC", reservationRule: "consume",
+    warningThreshold: "90", hardLimit: "100", exhaustionBehavior: "wait",
+    actorUserId: "user_1", idempotencyKey: "typed_provider_policy", recordedAt: NOW,
+  });
+  const dimensions = [
+    ["gemini.tokens.input@1", "typed_input_policy"],
+    ...(input.includeOutputPolicy === false
+      ? []
+      : [["gemini.tokens.output@1", "typed_output_policy"]]),
+  ] as const;
+  for (const [dimension, key] of dimensions) {
+    await create({
+      workspaceId: WORKSPACE_ID, principalId: null, kind: "usage",
+      boundary: "usage_settlement", dimension, unit: "count",
+      window: "calendar_day", timezone: "UTC", reservationRule: "consume",
+      warningThreshold: "0", hardLimit: input.usageHardLimit ?? "1000",
+      exhaustionBehavior: "deny", actorUserId: "user_1",
+      idempotencyKey: key, recordedAt: NOW,
+    });
+    if (input.includeAgentPolicies) {
+      await create({
+        workspaceId: WORKSPACE_ID, principalId: PRINCIPAL_ID, kind: "usage",
+        boundary: "usage_settlement", dimension, unit: "count",
+        window: "calendar_day", timezone: "UTC", reservationRule: "consume",
+        warningThreshold: "0", hardLimit: input.usageHardLimit ?? "1000",
+        exhaustionBehavior: "deny", actorUserId: "user_1",
+        idempotencyKey: `${key}_agent`, recordedAt: NOW,
+      });
+    }
+  }
+  return { quotaRepository, quotas };
+}
+
+function typedUsageExecutors(input: {
+  inputMaximum: string | null;
+  outputMaximum: string | null;
+  quantities?: (operation: string) => { input: string | null; output: string | null };
+  onExecute?: () => void;
+}): WorkflowStepExecutorRegistry {
+  const base = createDeterministicWorkflowRunExecutorRegistry(
+    GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+  );
+  const wrap = (executor: WorkflowStepExecutor | undefined) => {
+    if (!executor) return undefined;
+    const providerResolution = {
+      ...executor.providerResolution!,
+      usageCeilings: [
+        { dimension: "gemini.tokens.input@1", unit: "count" as const, maximumQuantity: input.inputMaximum },
+        { dimension: "gemini.tokens.output@1", unit: "count" as const, maximumQuantity: input.outputMaximum },
+      ],
+    };
+    return {
+      provider: executor.provider,
+      providerOperation: executor.providerOperation,
+      model: executor.model,
+      providerResolution,
+      execute: async (...args: Parameters<WorkflowStepExecutor["execute"]>) => {
+        input.onExecute?.();
+        const result = await executor.execute(...args);
+        const quantities = input.quantities?.(executor.providerOperation) ?? {
+          input: "10",
+          output: "20",
+        };
+        const usage = (dimension: string, quantity: string | null) =>
+          quantity === null
+            ? { dimension, unit: "count" as const, source: "unknown" as const, quantity: null }
+            : { dimension, unit: "count" as const, source: "reported" as const, quantity };
+        return result.kind === "generated"
+          ? {
+              ...result,
+              providerMetadata: {
+                evidence: {
+                  providerRequestId: result.providerOperationRef,
+                  httpStatus: 200,
+                  providerCode: null,
+                  operatorTraceRef: null,
+                  effectDisposition: "accepted" as const,
+                },
+                usage: [
+                  usage("gemini.tokens.input@1", quantities.input),
+                  usage("gemini.tokens.output@1", quantities.output),
+                ],
+                retryAfterMs: null,
+                pollAfterMs: null,
+              },
+            }
+          : result;
+      },
+      reconcile: executor.reconcile?.bind(executor),
+    } satisfies WorkflowStepExecutor;
+  };
+  const registry: WorkflowStepExecutorRegistry = {
+    get: (identity, digest) => wrap(base.get(identity, digest)),
+    getPinned: (identity, digest, resolution) => {
+      const executor = registry.get(identity, digest);
+      return executor?.providerResolution &&
+        canonicalDigest(executor.providerResolution) === canonicalDigest(resolution)
+        ? executor
+        : undefined;
+    },
+  };
+  return registry;
+}
+
+function typedProviderMetadata(input: {
+  disposition: "accepted" | "not_created" | "terminal_failed" | "unknown";
+  inputQuantity: string | null;
+  outputQuantity: string | null;
+}): WorkflowStepProviderMetadata {
+  const usage = (dimension: string, quantity: string | null) =>
+    quantity === null
+      ? { dimension, unit: "count" as const, source: "unknown" as const, quantity: null }
+      : { dimension, unit: "count" as const, source: "reported" as const, quantity };
+  return {
+    evidence: {
+      providerRequestId: "provider:typed:request",
+      httpStatus: input.disposition === "not_created" ? 400 : 200,
+      providerCode: null,
+      operatorTraceRef: null,
+      effectDisposition: input.disposition,
+    },
+    usage: input.disposition === "not_created" ? [] : [
+      usage("gemini.tokens.input@1", input.inputQuantity),
+      usage("gemini.tokens.output@1", input.outputQuantity),
+    ],
+    reportedCost: null,
+    retryAfterMs: null,
+    pollAfterMs: null,
   };
 }
 
@@ -365,6 +540,222 @@ async function createLiveGoldenExecutors(
 }
 
 describe("complete deterministic golden Workflow", () => {
+  it("keeps an accepted Run retryable while spend suspension blocks the next provider effect", async () => {
+    let clockNow = new Date(NOW);
+    const quotaRepository = new InMemoryQuotaRepository(() => new Date(clockNow));
+    const quotas = new QuotaService(quotaRepository);
+    await quotas.createPolicyRevision({
+      workspaceId: WORKSPACE_ID, principalId: null, kind: "admission",
+      boundary: "run_admission", dimension: "runtime.run_admissions@1", unit: "count",
+      window: "calendar_day", timezone: "UTC", reservationRule: "consume",
+      warningThreshold: "8", hardLimit: "10", exhaustionBehavior: "deny",
+      actorUserId: "user_1", idempotencyKey: "golden_admission_policy", recordedAt: NOW,
+    });
+    await quotas.createPolicyRevision({
+      workspaceId: WORKSPACE_ID, principalId: null, kind: "concurrency",
+      boundary: "run_concurrency", dimension: "runtime.concurrent_runs@1", unit: "count",
+      window: "concurrent", timezone: "UTC", reservationRule: "release_on_terminal",
+      warningThreshold: "8", hardLimit: "10", exhaustionBehavior: "wait",
+      actorUserId: "user_1", idempotencyKey: "golden_concurrency_policy", recordedAt: NOW,
+    });
+    await quotas.createPolicyRevision({
+      workspaceId: WORKSPACE_ID, principalId: null, kind: "rate",
+      boundary: "provider_effect", dimension: "runtime.provider_calls@1", unit: "count",
+      window: "calendar_minute", timezone: "UTC", reservationRule: "consume",
+      warningThreshold: "8", hardLimit: "10", exhaustionBehavior: "wait",
+      actorUserId: "user_1", idempotencyKey: "golden_provider_policy", recordedAt: NOW,
+    });
+    await quotaRepository.setSpendSuspended(WORKSPACE_ID, true);
+    let providerCalls = 0;
+    const setup = await setupGoldenRun({
+      quotaRepository,
+      quotas,
+      clock: { now: () => new Date(clockNow) },
+      createExecutors: () => {
+        const base = createDeterministicWorkflowRunExecutorRegistry(
+          GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+        );
+        const wrap = (executor: WorkflowStepExecutor | undefined) => executor ? {
+          ...executor,
+          execute: async (...args: Parameters<WorkflowStepExecutor["execute"]>) => {
+            providerCalls += 1;
+            return executor.execute(...args);
+          },
+        } : undefined;
+        return {
+          get: (identity, digest) => wrap(base.get(identity, digest)),
+          resolve: (identity, digest, config) => wrap(base.resolve?.(identity, digest, config)),
+        };
+      },
+    });
+    const accepted = await acceptGoldenRun(setup.service, "suspended_provider_run");
+    const blocked = await setup.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_suspended",
+    });
+    expect(blocked).toMatchObject({ id: accepted.run.id, state: "running" });
+    expect(providerCalls).toBe(0);
+    expect(await setup.repository.getById({ workspaceId: WORKSPACE_ID, runId: accepted.run.id }))
+      .toMatchObject({ id: accepted.run.id, state: "running" });
+    clockNow = new Date(clockNow.getTime() + 31_000);
+    await setup.service.relayNext();
+    await setup.service.relayNext();
+    await expect(setup.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_still_suspended",
+    })).resolves.toMatchObject({ id: accepted.run.id, state: "running" });
+    const suspensionRetries = [...setup.repository.outbox.values()].filter(
+      (intent) => intent.dedupeKey.startsWith(`spend-suspension-retry:${accepted.run.id}:`),
+    );
+    expect(suspensionRetries).toHaveLength(1);
+    expect(suspensionRetries[0]).toMatchObject({
+      state: "pending",
+      deliveryToken: null,
+      claimedAt: null,
+      deliveredAt: null,
+    });
+    expect(providerCalls).toBe(0);
+
+    await quotaRepository.setSpendSuspended(WORKSPACE_ID, false);
+    const resumed = await setup.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_after_suspension",
+    });
+    expect(resumed.id).toBe(accepted.run.id);
+    expect(providerCalls).toBe(1);
+  });
+
+  it("keeps one provider wait through a concurrency race and launches with the resumed reservation", async () => {
+    let clockNow = new Date(NOW);
+    const quotaRepository = new InMemoryQuotaRepository(() => new Date(clockNow));
+    const quotas = new QuotaService(quotaRepository);
+    await quotas.createPolicyRevision({
+      workspaceId: WORKSPACE_ID, principalId: null, kind: "admission",
+      boundary: "run_admission", dimension: "runtime.run_admissions@1", unit: "count",
+      window: "calendar_day", timezone: "UTC", reservationRule: "consume",
+      warningThreshold: "8", hardLimit: "10", exhaustionBehavior: "deny",
+      actorUserId: "user_1", idempotencyKey: "race_admission_policy", recordedAt: NOW,
+    });
+    await quotas.createPolicyRevision({
+      workspaceId: WORKSPACE_ID, principalId: null, kind: "concurrency",
+      boundary: "run_concurrency", dimension: "runtime.concurrent_runs@1", unit: "count",
+      window: "concurrent", timezone: "UTC", reservationRule: "release_on_terminal",
+      warningThreshold: "0", hardLimit: "1", exhaustionBehavior: "wait",
+      actorUserId: "user_1", idempotencyKey: "race_concurrency_policy", recordedAt: NOW,
+    });
+    await quotas.createPolicyRevision({
+      workspaceId: WORKSPACE_ID, principalId: null, kind: "rate",
+      boundary: "provider_effect", dimension: "runtime.provider_calls@1", unit: "count",
+      window: "calendar_minute", timezone: "UTC", reservationRule: "consume",
+      warningThreshold: "0", hardLimit: "1", exhaustionBehavior: "wait",
+      actorUserId: "user_1", idempotencyKey: "race_provider_policy", recordedAt: NOW,
+    });
+    await expect(quotas.commitClaim(await quotas.planClaim({
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      runId: "rate_blocker",
+      transitionKey: "quota:provider_effect:rate_blocker:v1",
+      boundary: "provider_effect",
+      subject: { kind: "step_attempt", id: "rate_blocker_attempt" },
+      claims: [{ dimension: "runtime.provider_calls@1", unit: "count", amount: "1" }],
+      recordedAt: NOW,
+    }))).resolves.toMatchObject({ kind: "created" });
+
+    let providerCalls = 0;
+    const setup = await setupGoldenRun({
+      quotaRepository,
+      quotas,
+      clock: { now: () => new Date(clockNow) },
+      createExecutors: () => {
+        const base = createDeterministicWorkflowRunExecutorRegistry(
+          GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+        );
+        const wrap = (executor: WorkflowStepExecutor | undefined) => executor ? {
+          ...executor,
+          execute: async (...args: Parameters<WorkflowStepExecutor["execute"]>) => {
+            providerCalls += 1;
+            return executor.execute(...args);
+          },
+        } : undefined;
+        return {
+          get: (identity, digest) => wrap(base.get(identity, digest)),
+          resolve: (identity, digest, config) => wrap(base.resolve?.(identity, digest, config)),
+        };
+      },
+    });
+    const accepted = await acceptGoldenRun(setup.service, "provider_concurrency_race");
+
+    await expect(setup.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_rate_wait",
+    })).resolves.toMatchObject({ id: accepted.run.id, state: "waiting" });
+    expect(providerCalls).toBe(0);
+    const [providerWait] = await quotas.listWaits({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      state: "waiting",
+    });
+    expect(providerWait).toMatchObject({ boundary: "provider_effect" });
+
+    clockNow = new Date(clockNow.getTime() + 61_000);
+    await expect(quotas.commitClaim(await quotas.planClaim({
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      runId: "concurrency_blocker",
+      transitionKey: "quota:run_concurrency:concurrency_blocker:v1",
+      boundary: "run_concurrency",
+      subject: { kind: "run", id: "concurrency_blocker" },
+      claims: [{ dimension: "runtime.concurrent_runs@1", unit: "count", amount: "1" }],
+      recordedAt: clockNow,
+    }))).resolves.toMatchObject({ kind: "created" });
+
+    await expect(setup.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_concurrency_lost",
+    })).resolves.toMatchObject({ id: accepted.run.id, state: "waiting" });
+    expect(providerCalls).toBe(0);
+    expect(await quotas.listWaits({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      state: "waiting",
+    })).toEqual([expect.objectContaining({ id: providerWait!.id, boundary: "provider_effect" })]);
+    expect((await quotas.listReservations({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    })).filter((reservation) => reservation.boundary === "provider_effect")).toHaveLength(0);
+
+    await expect(quotas.commitTransition(await quotas.planTransition({
+      workspaceId: WORKSPACE_ID,
+      transitionId: "quota:release:concurrency_blocker:v1",
+      subject: { kind: "run", id: "concurrency_blocker" },
+      outcome: "release",
+      amount: null,
+      evidenceRef: "concurrency-blocker-finished",
+      recordedAt: clockNow,
+    }))).resolves.toMatchObject({ kind: "created" });
+
+    await expect(setup.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_provider_resume",
+    })).resolves.toMatchObject({ id: accepted.run.id, state: "running" });
+    expect(providerCalls).toBe(1);
+    expect(await quotas.listWaits({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      state: "waiting",
+    })).toHaveLength(0);
+    expect((await quotas.listReservations({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    })).filter((reservation) => reservation.boundary === "provider_effect")).toHaveLength(1);
+  });
+
   it("produces inspectable copy and hero Artifacts with exact provenance, lineage, attempts, snapshots, and events", async () => {
     const { artifactService, dispatcher, service } = await setupGoldenRun();
     const startInput = {
@@ -717,11 +1108,13 @@ describe("complete deterministic golden Workflow", () => {
         if (identity !== imageDefinition.identity || !executor) return executor;
         return {
           ...image,
-          model: "substituted-model-v1",
           providerResolution: {
             ...image.providerResolution!,
-            model: "substituted-model-v1",
-            adapterContractDigest: `sha256:${"f".repeat(64)}`,
+            usageCeilings: [{
+              dimension: "gemini.tokens.output@1",
+              unit: "count" as const,
+              maximumQuantity: "1",
+            }],
           },
           execute: async (input) => {
             providerCalls += 1;
@@ -748,6 +1141,102 @@ describe("complete deterministic golden Workflow", () => {
       }),
     ).rejects.toMatchObject({ code: "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW" });
     expect(providerCalls).toBe(0);
+  });
+
+  it("preserves a non-retryable Artifact quota denial after provider success is durable", async () => {
+    const current = new Date(NOW);
+    const base = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const imageDefinition =
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY.get("gemini.generate_image@1")!;
+    const imageBase = base.get(
+      imageDefinition.identity,
+      imageDefinition.contractDigest,
+    )!;
+    let providerExecutions = 0;
+    const executors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) => {
+        if (identity !== imageDefinition.identity) {
+          return base.get(identity, contractDigest);
+        }
+        return {
+          ...imageBase,
+          execute: async (input) => {
+            providerExecutions += 1;
+            return imageBase.execute(input);
+          },
+        };
+      },
+    };
+    const { repository, service, usageService } = await setupGoldenRun({
+      executors,
+      clock: { now: () => new Date(current) },
+      artifactPort: (artifacts) => ({
+        getArtifact: artifacts.getArtifact.bind(artifacts),
+        readArtifactBytes: artifacts.readArtifactBytes.bind(artifacts),
+        getGeneratedArtifact: artifacts.getGeneratedArtifact.bind(artifacts),
+        commitGenerated: async (input) => {
+          if (input.outputName === "image") {
+            throw new ArtifactServiceError(
+              "ARTIFACT_QUOTA_EXCEEDED",
+              "Artifact storage quota exceeded.",
+              {
+                claimDimension: "runtime.artifact_bytes@1",
+                limit: "1024",
+                requested: String(input.content.sizeBytes),
+              },
+            );
+          }
+          return artifacts.commitGenerated(input);
+        },
+      }),
+    });
+    const accepted = await acceptGoldenRun(
+      service,
+      "golden-artifact-quota-0001",
+    );
+    await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_copy_before_quota_denial",
+    });
+
+    await expect(
+      service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: "worker_artifact_quota_denial",
+      }),
+    ).rejects.toMatchObject({
+      code: "ARTIFACT_QUOTA_EXCEEDED",
+      retryable: false,
+      details: {
+        claimDimension: "runtime.artifact_bytes@1",
+        limit: "1024",
+      },
+    });
+
+    const attempts = await repository.listStepAttempts({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    });
+    expect(attempts?.[1]).toMatchObject({
+      state: "running",
+      providerOperationRef:
+        GOLDEN_PROVIDER_RESULTS.generateHero.providerOperationRef,
+      outcome: {
+        kind: "succeeded",
+        providerOperationRef:
+          GOLDEN_PROVIDER_RESULTS.generateHero.providerOperationRef,
+      },
+    });
+    expect(
+      await usageService.listUsageRecords(WORKSPACE_ID, {
+        stepAttemptId: attempts![1]!.id,
+      }),
+    ).not.toHaveLength(0);
+    expect(providerExecutions).toBe(1);
   });
 
   it("resumes the same Attempt and Effect Key when generated image storage fails", async () => {
@@ -1316,6 +1805,7 @@ describe("complete deterministic golden Workflow", () => {
         guard: "workflow-step-attempt/v1" as const,
         replay: "provider_deduplicated" as const,
       },
+      usageCeilings: [],
     };
     const restartExecutors: WorkflowStepExecutorRegistry = {
       get: (identity, contractDigest) => {
@@ -1889,6 +2379,193 @@ describe("complete deterministic golden Workflow", () => {
     expect([...value.usageRepository.valuations.values()].every((item) => item.amount === null)).toBe(true);
   });
 
+  it("fails closed before launch for a missing Workspace policy or an unbounded dimension", async () => {
+    for (const scenario of ["missing_policy", "unbounded"] as const) {
+      const quota = await configureRunAndUsageQuotas({
+        includeOutputPolicy: scenario !== "missing_policy",
+      });
+      let calls = 0;
+      const value = await setupGoldenRun({
+        ...quota,
+        executors: typedUsageExecutors({
+          inputMaximum: "30",
+          outputMaximum: scenario === "unbounded" ? null : "40",
+          onExecute: () => { calls += 1; },
+        }),
+      });
+      const accepted = await acceptGoldenRun(value.service, `typed_${scenario}_0001`);
+      const failed = await value.service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: `worker_${scenario}`,
+      });
+      expect(failed).toMatchObject({
+        state: "failed",
+        failureCode: "QUOTA_USAGE_CEILING_UNAVAILABLE",
+      });
+      expect(calls).toBe(0);
+      expect((await quota.quotas.listReservations({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+      })).filter((reservation) =>
+        reservation.boundary === "provider_effect" ||
+        reservation.boundary === "usage_settlement"))
+        .toHaveLength(0);
+    }
+  });
+
+  it("reconciles under, exact, overage, and unknown W+A holds without crossing Attempt subjects", async () => {
+    const quota = await configureRunAndUsageQuotas({ includeAgentPolicies: true });
+    const executors = typedUsageExecutors({
+      inputMaximum: "30",
+      outputMaximum: "40",
+      quantities: (operation) => operation === "generate_text"
+        ? { input: "10", output: null }
+        : { input: "35", output: "40" },
+    });
+    const value = await setupGoldenRun({
+      ...quota,
+      executors,
+    });
+    const accepted = await acceptGoldenRun(value.service, "typed_usage_matrix_0001");
+    const snapshot = [...value.repository.runs.values()].find(
+      (run) => run.id === accepted.run.id,
+    )!.startSnapshot;
+    expect(snapshot.providerResolutions?.[0]?.usageCeilings).toEqual([
+      { dimension: "gemini.tokens.input@1", unit: "count", maximumQuantity: "30" },
+      { dimension: "gemini.tokens.output@1", unit: "count", maximumQuantity: "40" },
+    ]);
+    expect(Object.isFrozen(snapshot.providerResolutions?.[0]?.usageCeilings[0])).toBe(true);
+
+    await value.service.executeOne({
+      workspaceId: WORKSPACE_ID, runId: accepted.run.id, workerId: "typed_usage_text",
+    });
+    const restarted = new WorkflowRunService(
+      value.repository,
+      value.revisions,
+      new InMemoryWorkflowRunQueue(),
+      executors,
+      runCursor(),
+      value.clock,
+      value.artifactService,
+      value.usageService,
+      undefined,
+      quota.quotas,
+    );
+    const completed = await restarted.executeOne({
+      workspaceId: WORKSPACE_ID, runId: accepted.run.id, workerId: "typed_usage_image",
+    });
+    expect(completed.state).toBe("completed");
+    const usage = (await quota.quotas.listReservations({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    })).filter((reservation) => reservation.boundary === "usage_settlement");
+    expect(usage).toHaveLength(8);
+    expect(usage.filter((item) => item.principalId === null)).toHaveLength(4);
+    expect(usage.filter((item) => item.principalId === PRINCIPAL_ID)).toHaveLength(4);
+    expect(usage.filter((item) => item.settledAmount === "10" && item.releasedAmount === "20"))
+      .toHaveLength(2);
+    expect(usage.filter((item) => item.settledAmount === "40" && item.releasedAmount === "0"))
+      .toHaveLength(2);
+    expect(usage.filter((item) => item.settledAmount === "30" && item.overageAmount === "5"))
+      .toHaveLength(2);
+    const unknown = usage.filter((item) => item.dimension === "gemini.tokens.output@1" && item.state === "held");
+    expect(unknown).toHaveLength(2);
+    expect(new Set(unknown.map((item) => item.subject.id))).toHaveProperty("size", 1);
+    expect(usage.filter((item) => item.dimension === "gemini.tokens.output@1" && item.state === "settled"))
+      .toHaveLength(2);
+    expect(quota.quotaRepository.usageReconciliationReceipts).toHaveProperty("size", 4);
+    const receiptSizes = {
+      claims: quota.quotaRepository.claimReceipts.size,
+      reconciliations: quota.quotaRepository.usageReconciliationReceipts.size,
+    };
+    await expect(restarted.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "typed_usage_completed_replay",
+    })).resolves.toMatchObject({ state: "completed" });
+    expect(quota.quotaRepository.claimReceipts).toHaveProperty("size", receiptSizes.claims);
+    expect(quota.quotaRepository.usageReconciliationReceipts)
+      .toHaveProperty("size", receiptSizes.reconciliations);
+  });
+
+  it("rolls back every provider and usage claim when one bounded dimension denies", async () => {
+    const quota = await configureRunAndUsageQuotas({ usageHardLimit: "20" });
+    let calls = 0;
+    const value = await setupGoldenRun({
+      ...quota,
+      executors: typedUsageExecutors({
+        inputMaximum: "30",
+        outputMaximum: "40",
+        onExecute: () => { calls += 1; },
+      }),
+    });
+    const accepted = await acceptGoldenRun(value.service, "typed_atomic_denial_0001");
+    await expect(value.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "typed_atomic_denial",
+    })).resolves.toMatchObject({ state: "running" });
+    expect(calls).toBe(0);
+    expect((await quota.quotas.listReservations({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    })).filter((reservation) =>
+      reservation.boundary === "provider_effect" ||
+      reservation.boundary === "usage_settlement"))
+      .toHaveLength(0);
+  });
+
+  it("terminalizes a usage policy disappearance after precheck without partial launch claims", async () => {
+    const quota = await configureRunAndUsageQuotas();
+    const commitClaimsAtomically = quota.quotaRepository.commitClaimsAtomically.bind(
+      quota.quotaRepository,
+    );
+    let revoked = false;
+    let plannedWorkspaceUsageReservation = false;
+    quota.quotaRepository.commitClaimsAtomically = async (plans, transaction) => {
+      plannedWorkspaceUsageReservation ||= plans.some((plan) =>
+        plan.boundary === "usage_settlement" &&
+        plan.reservations.some((reservation) => reservation.scope === "workspace"));
+      if (!revoked) {
+        const policy = [...quota.quotaRepository.policies.values()].find((candidate) =>
+          candidate.scope === "workspace" &&
+          candidate.dimension === "gemini.tokens.output@1");
+        if (!policy) throw new Error("Output usage policy fixture is unavailable.");
+        quota.quotaRepository.policies.set(policy.id, { ...policy, status: "revoked" });
+        revoked = true;
+      }
+      return commitClaimsAtomically(plans, transaction);
+    };
+    let calls = 0;
+    const value = await setupGoldenRun({
+      ...quota,
+      executors: typedUsageExecutors({
+        inputMaximum: "30",
+        outputMaximum: "40",
+        onExecute: () => { calls += 1; },
+      }),
+    });
+    const accepted = await acceptGoldenRun(value.service, "typed_policy_race_0001");
+    await expect(value.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "typed_policy_race",
+    })).resolves.toMatchObject({
+      state: "failed",
+      failureCode: "QUOTA_USAGE_CEILING_UNAVAILABLE",
+    });
+    expect(plannedWorkspaceUsageReservation).toBe(true);
+    expect(calls).toBe(0);
+    expect((await quota.quotas.listReservations({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    })).filter((reservation) =>
+      reservation.boundary === "provider_effect" ||
+      reservation.boundary === "usage_settlement"))
+      .toHaveLength(0);
+  });
+
   it("does not persist a provider outcome when its atomic usage append conflicts", async () => {
     const value = await setupGoldenRun();
     const accepted = await acceptGoldenRun(value.service, "golden-usage-conflict-0001");
@@ -1910,6 +2587,287 @@ describe("complete deterministic golden Workflow", () => {
     expect(attempts.items[0]).toMatchObject({ state: "running", outcome: null });
     expect(value.usageRepository.usageRecords.size).toBe(0);
     value.usageRepository.appendPlan = appendPlan;
+  });
+
+  it("isolates and rolls back late accounting failure without erasing unrelated Run writes", async () => {
+    const quota = await configureRunAndUsageQuotas();
+    const budgetRepository = new InMemoryBudgetRepository();
+    await budgetRepository.seedGrant({
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      grantId: "typed_late_failure_grant",
+      credentialSlotId: "slot_gemini_golden",
+      credentialProfileId: "profile_gemini_golden",
+      mode: "audited_unbounded",
+      limit: null,
+      committed: "0",
+      available: null,
+    });
+    const budgets = new BudgetService(budgetRepository);
+    await budgets.createPolicyRevision({
+      workspaceId: WORKSPACE_ID,
+      principalId: null,
+      currency: "USD",
+      period: "calendar_day",
+      timezone: "UTC",
+      warningThreshold: "900",
+      hardLimit: "1000",
+      unknownPriceTreatment: "fixed_allowance",
+      unknownPriceAllowance: "10",
+      actorUserId: "user_1",
+      idempotencyKey: "typed_late_failure_budget",
+      recordedAt: NOW,
+    });
+    const value = await setupGoldenRun({
+      ...quota,
+      budgetRepository,
+      budgets,
+      executors: typedUsageExecutors({ inputMaximum: "30", outputMaximum: "40" }),
+    });
+    const accepted = await acceptGoldenRun(value.service, "typed_late_quota_failure_0001");
+    const initialBudgetReservations = await budgetRepository.listReservations({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    });
+    expect(initialBudgetReservations).toHaveLength(1);
+    const reconcile = quota.quotaRepository.commitUsageReconciliation.bind(
+      quota.quotaRepository,
+    );
+    let enteredLateWrite!: () => void;
+    const lateWriteEntered = new Promise<void>((resolve) => { enteredLateWrite = resolve; });
+    let releaseLateWrite!: () => void;
+    const lateWriteGate = new Promise<void>((resolve) => { releaseLateWrite = resolve; });
+    quota.quotaRepository.commitUsageReconciliation = async () => {
+      enteredLateWrite();
+      await lateWriteGate;
+      return { kind: "unavailable" };
+    };
+    const execution = value.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "typed_late_quota_failure",
+    });
+    await lateWriteEntered;
+
+    let usageReadFinished = false;
+    const concurrentUsageRead = value.usageRepository.listUsageRecords(WORKSPACE_ID, {
+      runId: accepted.run.id,
+    }).then((records) => {
+      usageReadFinished = true;
+      return records;
+    });
+    let budgetReadFinished = false;
+    const concurrentBudgetRead = budgetRepository.listReservations({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    }).then((reservations) => {
+      budgetReadFinished = true;
+      return reservations;
+    });
+    await Promise.resolve();
+    expect(usageReadFinished).toBe(false);
+    expect(budgetReadFinished).toBe(false);
+
+    const concurrentRunMutation = await value.repository.claimOutbox({
+      now: NOW,
+      claimExpiresBefore: new Date(NOW.getTime() - 60_000),
+      deliveryToken: "unrelated_delivery_token",
+    });
+    expect(concurrentRunMutation).toMatchObject({ kind: "claimed" });
+
+    releaseLateWrite();
+    await expect(execution).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+    });
+    await expect(concurrentUsageRead).resolves.toHaveLength(0);
+    await expect(concurrentBudgetRead).resolves.toEqual(initialBudgetReservations);
+    expect(value.usageRepository.usageRecords).toHaveProperty("size", 0);
+    expect(value.usageRepository.receipts).toHaveProperty("size", 0);
+    expect(budgetRepository.settlementReceipts).toHaveProperty("size", 0);
+    expect(quota.quotaRepository.usageReconciliationReceipts).toHaveProperty("size", 0);
+    expect([...value.repository.outbox.values()]).toContainEqual(expect.objectContaining({
+      state: "delivering",
+      deliveryToken: "unrelated_delivery_token",
+    }));
+    expect((await value.service.listStepAttempts({
+      workspaceId: WORKSPACE_ID,
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+    })).items[0]).toMatchObject({ state: "running", outcome: null });
+    quota.quotaRepository.commitUsageReconciliation = reconcile;
+  });
+
+  it("settles typed W+A holds for failed_known reported usage and releases not-created effects at zero", async () => {
+    for (const disposition of ["terminal_failed", "not_created"] as const) {
+      const quota = await configureRunAndUsageQuotas({ includeAgentPolicies: true });
+      const base = createDeterministicWorkflowRunExecutorRegistry(
+        GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+      );
+      const registry: WorkflowStepExecutorRegistry = {
+        get: (identity, digest) => {
+          const executor = base.get(identity, digest);
+          if (!executor) return undefined;
+          return {
+            provider: executor.provider,
+            providerOperation: executor.providerOperation,
+            model: executor.model,
+            providerResolution: {
+              ...executor.providerResolution!,
+              usageCeilings: [
+                { dimension: "gemini.tokens.input@1", unit: "count", maximumQuantity: "30" },
+                { dimension: "gemini.tokens.output@1", unit: "count", maximumQuantity: "40" },
+              ],
+            },
+            execute: async () => ({
+              kind: "failed_known" as const,
+              failureCode: "PROVIDER_TYPED_FAILURE",
+              retryable: false,
+              providerOperationRef: disposition === "not_created" ? null : "provider:typed:failed",
+              providerMetadata: typedProviderMetadata({
+                disposition,
+                inputQuantity: "10",
+                outputQuantity: "20",
+              }),
+            }),
+          };
+        },
+        getPinned: (identity, digest, resolution) => {
+          const executor = registry.get(identity, digest);
+          return executor?.providerResolution &&
+            canonicalDigest(executor.providerResolution) === canonicalDigest(resolution)
+            ? executor
+            : undefined;
+        },
+      };
+      const value = await setupGoldenRun({ ...quota, executors: registry });
+      const accepted = await acceptGoldenRun(
+        value.service,
+        `typed_failed_known_${disposition}_0001`,
+      );
+      await expect(value.service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: `typed_failed_${disposition}`,
+      })).resolves.toMatchObject({ state: "failed", failureCode: "PROVIDER_TYPED_FAILURE" });
+      const reservations = (await quota.quotas.listReservations({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+      })).filter((reservation) => reservation.boundary === "usage_settlement");
+      expect(reservations).toHaveLength(4);
+      if (disposition === "not_created") {
+        expect(reservations.every((item) =>
+          item.state === "released" && item.settledAmount === "0" &&
+          item.releasedAmount === item.reservedAmount)).toBe(true);
+      } else {
+        expect(reservations.filter((item) => item.settledAmount === "10")).toHaveLength(2);
+        expect(reservations.filter((item) => item.settledAmount === "20")).toHaveLength(2);
+      }
+    }
+  });
+
+  it("retains explicit unknown holds and manually reconciles only the same typed subjects with exact replay", async () => {
+    const quota = await configureRunAndUsageQuotas({ includeAgentPolicies: true });
+    const base = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const registry: WorkflowStepExecutorRegistry = {
+      get: (identity, digest) => {
+        const executor = base.get(identity, digest);
+        if (!executor) return undefined;
+        const providerOperationRef = "provider:typed:unknown";
+        return {
+          provider: executor.provider,
+          providerOperation: executor.providerOperation,
+          model: executor.model,
+          providerResolution: {
+            ...executor.providerResolution!,
+            usageCeilings: [
+              { dimension: "gemini.tokens.input@1", unit: "count", maximumQuantity: "30" },
+              { dimension: "gemini.tokens.output@1", unit: "count", maximumQuantity: "40" },
+            ],
+          },
+          execute: async () => ({
+            kind: "outcome_unknown" as const,
+            failureCode: "PROVIDER_TYPED_UNKNOWN",
+            providerOperationRef,
+            providerMetadata: typedProviderMetadata({
+              disposition: "unknown",
+              inputQuantity: null,
+              outputQuantity: null,
+            }),
+          }),
+          reconcile: async (input) => {
+            const generated = await executor.execute(input);
+            if (generated.kind !== "generated") {
+              return {
+                kind: "outcome_unknown" as const,
+                failureCode: "PROVIDER_TYPED_STILL_UNKNOWN",
+                providerOperationRef,
+              };
+            }
+            return {
+              ...generated,
+              providerOperationRef,
+              providerMetadata: typedProviderMetadata({
+                disposition: "accepted",
+                inputQuantity: "12",
+                outputQuantity: "18",
+              }),
+            };
+          },
+        };
+      },
+      getPinned: (identity, digest, resolution) => {
+        const executor = registry.get(identity, digest);
+        return executor?.providerResolution &&
+          canonicalDigest(executor.providerResolution) === canonicalDigest(resolution)
+          ? executor
+          : undefined;
+      },
+    };
+    const value = await setupGoldenRun({ ...quota, executors: registry });
+    const accepted = await acceptGoldenRun(value.service, "typed_unknown_manual_0001");
+    await expect(value.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "typed_unknown",
+    })).resolves.toMatchObject({ state: "outcome_unknown" });
+    const attempts = await value.service.listStepAttempts({
+      workspaceId: WORKSPACE_ID,
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+    });
+    const attempt = attempts.items[0]!;
+    const before = (await quota.quotas.listReservations({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    })).filter((reservation) => reservation.boundary === "usage_settlement");
+    expect(before).toHaveLength(4);
+    expect(before.every((item) => item.state === "held")).toBe(true);
+    expect(quota.quotaRepository.usageReconciliationReceipts).toHaveProperty("size", 2);
+    const subjectIds = [...new Set(before.map((item) => item.subject.id))].sort();
+    const reconcileInput = {
+      workspaceId: WORKSPACE_ID,
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+      principalId: PRINCIPAL_ID,
+      keyId: "key_golden",
+      authorizationEvidenceRef: "trace_golden",
+      stepAttemptId: attempt.id,
+      idempotencyKey: "typed-unknown-manual-reconcile-0001",
+    };
+    const first = await value.service.reconcile(reconcileInput);
+    const after = (await quota.quotas.listReservations({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    })).filter((reservation) => reservation.boundary === "usage_settlement");
+    expect([...new Set(after.map((item) => item.subject.id))].sort()).toEqual(subjectIds);
+    expect(after.filter((item) => item.settledAmount === "12")).toHaveLength(2);
+    expect(after.filter((item) => item.settledAmount === "18")).toHaveLength(2);
+    expect(quota.quotaRepository.usageReconciliationReceipts).toHaveProperty("size", 4);
+    const replay = await value.service.reconcile(reconcileInput);
+    expect(replay).toEqual(first);
+    expect(quota.quotaRepository.usageReconciliationReceipts).toHaveProperty("size", 4);
   });
 });
 

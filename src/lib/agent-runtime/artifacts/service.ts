@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import type {
+  QuotaClaimInput,
+  QuotaClaimPlan,
+  QuotaExhaustionEvidence,
+  QuotaTransitionPlan,
+} from "../quotas/types";
 import {
   ArtifactServiceError,
   type ArtifactServiceErrorCode,
@@ -20,6 +26,7 @@ import type {
   ArtifactMutationReceiptRecord,
   ArtifactRecord,
   ArtifactRepository,
+  ArtifactStorageQuotaCommitPlan,
 } from "./types";
 import {
   ARTIFACT_IDEMPOTENCY_KEY_MAX_LENGTH,
@@ -38,6 +45,10 @@ const UPLOAD_HANDOFF_TTL_SECONDS = 300;
 const UPLOAD_SESSION_TTL_MS = 15 * 60 * 1_000;
 const DOWNLOAD_HANDOFF_TTL_SECONDS = 120;
 
+interface ArtifactQuotaPlanner {
+  planClaim(input: QuotaClaimInput): Promise<QuotaClaimPlan>;
+}
+
 export { ArtifactServiceError };
 export type { ArtifactServiceErrorCode };
 
@@ -46,6 +57,69 @@ interface ArtifactClock {
 }
 
 const systemClock: ArtifactClock = { now: () => new Date() };
+
+function quotaDenialDetails(
+  reasonCodes: string[],
+  evidence: QuotaExhaustionEvidence[],
+): Record<string, unknown> {
+  return {
+    reasonCodes: [...reasonCodes],
+    evidence: evidence.map((item) => ({
+      schema: item.schema,
+      scope: item.scope,
+      dimension: item.dimension,
+      unit: item.unit,
+      window: {
+        kind: item.window.kind,
+        timezone: item.window.timezone,
+        startsAt: item.window.startsAt.toISOString(),
+        endsAt: item.window.endsAt?.toISOString() ?? null,
+      },
+      hardLimit: item.hardLimit,
+      committed: item.committed,
+      requested: item.requested,
+      available: item.available,
+      evaluatedAt: item.evaluatedAt.toISOString(),
+    })),
+  };
+}
+
+function artifactQuotaExceeded(input: {
+  reasonCodes: string[];
+  evidence: QuotaExhaustionEvidence[];
+}): ArtifactServiceError {
+  return new ArtifactServiceError(
+    "ARTIFACT_QUOTA_EXCEEDED",
+    "The Artifact exceeds an applicable non-monetary storage quota.",
+    quotaDenialDetails(input.reasonCodes, input.evidence),
+  );
+}
+
+function storageSettlementPlan(input: {
+  claim: QuotaClaimPlan;
+  artifactId: string;
+  sizeBytes: number;
+  recordedAt: Date;
+}): QuotaTransitionPlan {
+  const base = {
+    workspaceId: input.claim.workspaceId,
+    transitionId: `artifact:${input.artifactId}:storage:settled`,
+    subject: { kind: "artifact" as const, id: input.artifactId },
+    outcome: "settle" as const,
+    amount: String(input.sizeBytes),
+    evidenceRef: `artifact:${input.artifactId}:canonical-created`,
+    reservationIds: input.claim.reservations.map((item) => item.id).sort(),
+    recordedAt: input.recordedAt,
+  };
+  return {
+    schema: "quota-transition-plan/v1",
+    ...base,
+    requestDigest: canonicalDigest({
+      ...base,
+      recordedAt: base.recordedAt.toISOString(),
+    }),
+  };
+}
 
 function digestBytes(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -377,7 +451,44 @@ export class ArtifactService {
     private readonly mediaInspector: ArtifactMediaInspector,
     private readonly cursorCodec: ArtifactCursorCodec,
     private readonly clock: ArtifactClock = systemClock,
+    private readonly quotas?: ArtifactQuotaPlanner,
   ) {}
+
+  private async planStorageQuota(input: {
+    workspaceId: string;
+    principalId: string;
+    artifactId: string;
+    runId: string | null;
+    sizeBytes: number;
+    recordedAt: Date;
+  }): Promise<ArtifactStorageQuotaCommitPlan | null> {
+    if (!this.quotas || input.sizeBytes === 0) return null;
+    const claim = await this.quotas.planClaim({
+      workspaceId: input.workspaceId,
+      principalId: input.principalId,
+      runId: input.runId,
+      transitionKey: `artifact:${input.artifactId}:storage:create`,
+      boundary: "artifact_storage",
+      subject: { kind: "artifact", id: input.artifactId },
+      claims: [
+        {
+          dimension: "runtime.artifact_bytes@1",
+          unit: "byte",
+          amount: String(input.sizeBytes),
+        },
+      ],
+      recordedAt: input.recordedAt,
+    });
+    return {
+      claim,
+      settle: storageSettlementPlan({
+        claim,
+        artifactId: input.artifactId,
+        sizeBytes: input.sizeBytes,
+        recordedAt: input.recordedAt,
+      }),
+    };
+  }
 
   async importText(input: {
     workspaceId: string;
@@ -468,6 +579,14 @@ export class ArtifactService {
     const committed = await this.repository.commitTextImport({
       artifact,
       content,
+      storageQuotaPlan: await this.planStorageQuota({
+        workspaceId,
+        principalId,
+        artifactId,
+        runId: null,
+        sizeBytes: bytes.length,
+        recordedAt: now,
+      }),
       receipt: receipt({
         workspaceId,
         principalId,
@@ -494,6 +613,9 @@ export class ArtifactService {
     }
     if (committed.kind === "replayed") {
       return this.requireMetadata(workspaceId, committed.resourceId);
+    }
+    if (committed.kind === "quota_denied") {
+      throw artifactQuotaExceeded(committed);
     }
     if (committed.kind !== "created") {
       throw new ArtifactServiceError(
@@ -830,6 +952,14 @@ export class ArtifactService {
         now,
       }),
       now,
+      storageQuotaPlan: await this.planStorageQuota({
+        workspaceId,
+        principalId,
+        artifactId,
+        runId: null,
+        sizeBytes,
+        recordedAt: now,
+      }),
     });
     if (committed.kind === "conflict") {
       throw new ArtifactServiceError(
@@ -839,6 +969,9 @@ export class ArtifactService {
     }
     if (committed.kind === "replayed") {
       return this.requireMetadata(workspaceId, committed.resourceId);
+    }
+    if (committed.kind === "quota_denied") {
+      throw artifactQuotaExceeded(committed);
     }
     if (committed.kind !== "created") {
       // The content-addressed promotion is safe to leave as an orphan. Removing
@@ -1031,12 +1164,23 @@ export class ArtifactService {
       content,
       origin,
       lineageInputs,
+      storageQuotaPlan: await this.planStorageQuota({
+        workspaceId,
+        principalId: creatorPrincipalId,
+        artifactId,
+        runId,
+        sizeBytes: prepared.sizeBytes,
+        recordedAt: now,
+      }),
     });
     if (committed.kind === "conflict") {
       throw new ArtifactServiceError(
         "ARTIFACT_IDEMPOTENCY_CONFLICT",
         "The Effect Key and output port are bound to another generated Artifact.",
       );
+    }
+    if (committed.kind === "quota_denied") {
+      throw artifactQuotaExceeded(committed);
     }
     if (committed.kind === "unavailable") {
       // Content addressing makes this write safe to retain and converge on a

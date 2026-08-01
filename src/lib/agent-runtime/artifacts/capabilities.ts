@@ -342,6 +342,7 @@ async function domain<T>(operation: () => Promise<T>): Promise<T> {
       category: ARTIFACT_ERROR_CATALOG[error.code].category,
       message: error.message,
       retryable: error.retryable,
+      details: error.details,
     });
   }
 }

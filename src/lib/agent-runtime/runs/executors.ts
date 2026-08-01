@@ -59,6 +59,7 @@ class DigestTextExecutor implements WorkflowStepExecutor {
       guard: "workflow-step-attempt/v1" as const,
       replay: "provider_deduplicated" as const,
     },
+    usageCeilings: [],
   };
   readonly calls: string[] = [];
 
@@ -122,6 +123,7 @@ class GoldenConformanceExecutor implements WorkflowStepExecutor {
         guard: "workflow-step-attempt/v1" as const,
         replay: "provider_deduplicated" as const,
       },
+      usageCeilings: [],
     };
   }
 

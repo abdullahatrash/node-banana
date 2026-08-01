@@ -98,6 +98,12 @@ describe("Postgres Budget repository contract", () => {
         operation.indexOf("runtimeSpendControls"),
       );
     }
+    expect(suspension).toContain("current?.suspended === input.suspended");
+    expect(suspension).toContain("current.reason === input.reason");
+    expect(suspension).toContain("current.updatedByUserId === input.actorUserId");
+    expect(suspension.indexOf("current?.suspended === input.suspended")).toBeLessThan(
+      suspension.indexOf("const revision = (current?.revision ?? 0) + 1"),
+    );
   });
 
   it("uses one global bounded-grant projection and excludes runtime-backed legacy receipts", () => {

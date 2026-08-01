@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { admissionExposureFor } from "@/lib/agent-runtime/budgets/catalog";
+import { canonicalDecimal } from "@/lib/agent-runtime/usage/decimal";
 import type {
   WorkflowStepExecutionResult,
   WorkflowStepExecutionInput,
@@ -47,6 +48,13 @@ export interface ProviderUsageDimensionContract {
   dimension: string;
   unit: "count" | "byte" | "millisecond" | "megapixel";
   applicability: "always" | "response_dependent";
+  maximumQuantity: string | null;
+}
+
+export interface ProviderUsageCeiling {
+  dimension: string;
+  unit: ProviderUsageDimensionContract["unit"];
+  maximumQuantity: string | null;
 }
 
 export interface ProviderAdapterContract<I, O> {
@@ -216,6 +224,19 @@ const usageDimensionSchema = z
     dimension: z.string().regex(USAGE_DIMENSION),
     unit: z.enum(["count", "byte", "millisecond", "megapixel"]),
     applicability: z.enum(["always", "response_dependent"]),
+    maximumQuantity: z
+      .string()
+      .refine(
+        (value) => {
+          try {
+            return canonicalDecimal(value) === value && value !== "0";
+          } catch {
+            return false;
+          }
+        },
+        "Expected a canonical positive exact decimal string.",
+      )
+      .nullable(),
   })
   .strict();
 
@@ -529,6 +550,21 @@ export function canonicalProviderAdapterContractDigest<I, O>(
   });
 }
 
+export function projectProviderUsageCeilings<I, O>(
+  contract: ProviderAdapterContract<I, O>,
+): readonly Readonly<ProviderUsageCeiling>[] {
+  validateProviderAdapterContract(contract);
+  return Object.freeze(
+    contract.usageDimensions.map((dimension) =>
+      Object.freeze({
+        dimension: dimension.dimension,
+        unit: dimension.unit,
+        maximumQuantity: dimension.maximumQuantity,
+      }),
+    ),
+  );
+}
+
 export function canonicalProviderSchemaDigest(descriptor: unknown): string {
   return canonicalDigest(descriptor);
 }
@@ -826,6 +862,7 @@ export function createWorkflowStepExecutorFromProviderAdapter<I>(
       effectKeySupport: adapter.contract.effectKeySupport,
       observation: adapter.contract.observation,
       launchSafety: adapter.contract.launchSafety,
+      usageCeilings: [...projectProviderUsageCeilings(adapter.contract)],
     },
     execute: async (input) => {
       const execute = (invocation: WorkflowProviderInvocation<I>) =>

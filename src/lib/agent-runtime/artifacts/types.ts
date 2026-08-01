@@ -1,3 +1,9 @@
+import type {
+  QuotaClaimPlan,
+  QuotaExhaustionEvidence,
+  QuotaTransitionPlan,
+} from "../quotas/types";
+
 export type ArtifactKind = "text" | "image";
 
 export type ArtifactRetentionMode = "workspace_default";
@@ -240,12 +246,33 @@ export type ArtifactCommitResult =
   | { kind: "created" }
   | { kind: "replayed"; resourceId: string }
   | { kind: "conflict" }
+  | ArtifactQuotaDeniedResult
   | { kind: "unavailable" };
 
 export type GeneratedArtifactCommitResult =
   | { kind: "created" | "replayed" }
   | { kind: "conflict" }
+  | ArtifactQuotaDeniedResult
   | { kind: "unavailable" };
+
+export interface ArtifactStorageQuotaCommitPlan {
+  claim: QuotaClaimPlan;
+  /**
+   * Canonical creation settles the held storage reservation while retaining
+   * its committed bytes. A future canonical Artifact deletion owns release.
+   */
+  settle: QuotaTransitionPlan;
+}
+
+export interface ArtifactQuotaDeniedResult {
+  kind: "quota_denied";
+  reasonCodes: Array<
+    | "QUOTA_POLICY_UNAVAILABLE"
+    | "QUOTA_CAPACITY_EXHAUSTED"
+    | "EMERGENCY_SPEND_SUSPENDED"
+  >;
+  evidence: QuotaExhaustionEvidence[];
+}
 
 export interface ArtifactRepositoryResult {
   artifact: ArtifactRecord;
@@ -268,6 +295,7 @@ export interface ArtifactRepository {
     content: ArtifactContentRecord;
     receipt: ArtifactMutationReceiptRecord;
     event: ArtifactAuditEventRecord;
+    storageQuotaPlan: ArtifactStorageQuotaCommitPlan | null;
   }): Promise<ArtifactCommitResult>;
 
   createUpload(input: {
@@ -290,6 +318,7 @@ export interface ArtifactRepository {
     receipt: ArtifactMutationReceiptRecord;
     event: ArtifactAuditEventRecord;
     now: Date;
+    storageQuotaPlan: ArtifactStorageQuotaCommitPlan | null;
   }): Promise<ArtifactCommitResult>;
 
   commitGenerated(input: {
@@ -297,6 +326,7 @@ export interface ArtifactRepository {
     content: ArtifactContentRecord;
     origin: ArtifactGeneratedOriginRecord;
     lineageInputs: ArtifactLineageInputRecord[];
+    storageQuotaPlan: ArtifactStorageQuotaCommitPlan | null;
   }): Promise<GeneratedArtifactCommitResult>;
 
   getArtifact(input: {

@@ -4,7 +4,7 @@ import { credentialEffectRef } from "@/lib/credential-vault/effect-ref";
 import { WorkflowRunError } from "./errors";
 import { parseWorkflowStepExecutionResult } from "./provider-adapter";
 import { GOLDEN_WORKFLOW_DEFINITION_DIGEST } from "./fixtures/golden";
-import { workflowRunDto } from "./types";
+import { workflowRunDto, workflowRunReceiptResult } from "./types";
 import type {
   WorkflowRunAcceptedDto,
   WorkflowRunArtifactPort,
@@ -27,6 +27,7 @@ import type {
   WorkflowStepExecutorRegistry,
   WorkflowRunProviderResolution,
   WorkflowRunBudgetPort,
+  WorkflowRunQuotaPort,
 } from "./types";
 import type { BudgetAdmissionInput, RunStepExposure } from "../budgets/types";
 import type { RunAdmissionPreview } from "../budgets/types";
@@ -35,6 +36,7 @@ import type {
   SettleProviderUsageInput,
   UsageSettlementPort,
 } from "../usage/types";
+import type { QuotaExhaustionEvidence } from "../quotas/types";
 
 const ID = /^[a-zA-Z0-9_-]{1,200}$/;
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{8,200}$/;
@@ -46,10 +48,83 @@ const GOLDEN_OPERATIONS = [
 ] as const;
 const PROVIDER_FAILURE_CODE = "STEP_EXECUTION_FAILED";
 const ARTIFACT_FAILURE_CODE = "ARTIFACT_PERSISTENCE_FAILED";
+const USAGE_QUOTA_FAILURE_CODE = "QUOTA_USAGE_CEILING_UNAVAILABLE";
 const systemClock: WorkflowRunClock = { now: () => new Date() };
+
+function artifactQuotaRunError(
+  error: unknown,
+  usageEvidenceDurable: boolean,
+): WorkflowRunError | null {
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    !("code" in error) ||
+    error.code !== "ARTIFACT_QUOTA_EXCEEDED"
+  ) {
+    return null;
+  }
+  return new WorkflowRunError(
+    "ARTIFACT_QUOTA_EXCEEDED",
+    usageEvidenceDurable
+      ? "Provider success and Usage evidence are durable, but the generated Artifact exceeds its storage quota."
+      : "Provider effect evidence is durable, but the generated Artifact exceeds its storage quota.",
+    "details" in error &&
+      typeof error.details === "object" &&
+      error.details !== null
+      ? (error.details as Record<string, unknown>)
+      : undefined,
+  );
+}
 
 function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function usageQuotaSubjectId(input: {
+  settlementId: string;
+  dimension: string;
+  unit: string;
+}): string {
+  return `usage_${canonicalDigest({
+    schema: "workflow-run-usage-quota-subject/v1",
+    ...input,
+  }).slice(7, 39)}`;
+}
+
+function usageQuotaReconciliationId(input: {
+  subjectId: string;
+  evidenceRef: string;
+  actualAmount: string | null;
+}): string {
+  return `usage_reconcile_${canonicalDigest({
+    schema: "workflow-run-usage-quota-reconciliation/v1",
+    ...input,
+  }).slice(7, 39)}`;
+}
+
+function quotaDenialDetails(
+  reasonCodes: string[],
+  evidence: QuotaExhaustionEvidence[],
+): Record<string, unknown> {
+  return {
+    reasonCodes: [...reasonCodes],
+    evidence: evidence.map((item) => ({
+      ...item,
+      window: {
+        ...item.window,
+        startsAt: item.window.startsAt.toISOString(),
+        endsAt: item.window.endsAt?.toISOString() ?? null,
+      },
+      evaluatedAt: item.evaluatedAt.toISOString(),
+      eligibleAt: item.eligibleAt?.toISOString() ?? null,
+      eligibility: item.eligibility.kind === "window_renewal"
+        ? {
+            kind: item.eligibility.kind,
+            eligibleAt: item.eligibility.eligibleAt.toISOString(),
+          }
+        : item.eligibility,
+    })),
+  };
 }
 
 function executorResolution(
@@ -77,6 +152,7 @@ function executorResolution(
         guard: "workflow-step-attempt/v1",
         replay: "provider_deduplicated",
       },
+      usageCeilings: [],
     },
   );
 }
@@ -288,7 +364,36 @@ export class WorkflowRunService {
     private readonly artifacts?: WorkflowRunArtifactPort,
     private readonly usage?: UsageSettlementPort,
     private readonly budgets?: WorkflowRunBudgetPort,
+    private readonly quotas?: WorkflowRunQuotaPort,
   ) {}
+
+  private quotaRunClaim(input: {
+    workspaceId: string;
+    principalId: string;
+    runId: string;
+    boundary: "run_admission" | "run_concurrency";
+    generation?: number;
+    at: Date;
+  }) {
+    return this.quotas?.planClaim({
+      workspaceId: input.workspaceId,
+      principalId: input.principalId,
+      runId: input.runId,
+      transitionKey: input.boundary === "run_concurrency"
+        ? `quota:${input.boundary}:${input.runId}:v${input.generation ?? 1}`
+        : `quota:${input.boundary}:${input.runId}:v1`,
+      boundary: input.boundary,
+      subject: { kind: "run", id: input.runId },
+      claims: [{
+        dimension: input.boundary === "run_admission"
+          ? "runtime.run_admissions@1"
+          : "runtime.concurrent_runs@1",
+        unit: "count",
+        amount: "1",
+      }],
+      recordedAt: input.at,
+    }) ?? Promise.resolve(null);
+  }
 
   private budgetAdmissionInput(input: {
     workspaceId: string;
@@ -459,6 +564,134 @@ export class WorkflowRunService {
         .filter((id): id is string => Boolean(id)),
       recordedAt: input.endedAt,
     };
+  }
+
+  private usageSettlementId(
+    run: WorkflowRunRecord,
+    attempt: WorkflowStepAttemptRecord,
+  ): string | null {
+    if (!this.usage) return null;
+    return this.usage.settlementIdFor(
+      this.usageInput({
+        run,
+        attempt,
+        metadata: null,
+        providerOperationRef: null,
+        outcome: "outcome_unknown",
+        endedAt: attempt.startedAt,
+      }).binding,
+    );
+  }
+
+  private async usageQuotaClaimPlans(input: {
+    run: WorkflowRunRecord;
+    attempt: WorkflowStepAttemptRecord;
+    resolution: WorkflowRunProviderResolution;
+    recordedAt: Date;
+  }): Promise<{ plans: import("../quotas/types").QuotaClaimPlan[]; unavailable: boolean }> {
+    if (!this.quotas) return { plans: [], unavailable: false };
+    const settlementId = this.usageSettlementId(input.run, input.attempt);
+    if (!settlementId || input.resolution.usageCeilings.some((item) => item.maximumQuantity === null)) {
+      return { plans: [], unavailable: true };
+    }
+    const capacities = await this.quotas.getEffectiveCapacity({
+      workspaceId: input.run.workspaceId,
+      principalId: input.run.startSnapshot.authorization.principalId,
+      boundary: "usage_settlement",
+      at: input.recordedAt,
+    });
+    if (input.resolution.usageCeilings.some((ceiling) =>
+      !capacities.some((capacity) =>
+        capacity.policy.scope === "workspace" &&
+        capacity.policy.dimension === ceiling.dimension &&
+        capacity.policy.unit === ceiling.unit))) {
+      return { plans: [], unavailable: true };
+    }
+    const plans = await Promise.all(
+      input.resolution.usageCeilings.map((ceiling) => {
+        const subjectId = usageQuotaSubjectId({
+          settlementId,
+          dimension: ceiling.dimension,
+          unit: ceiling.unit,
+        });
+        return this.quotas!.planClaim({
+          workspaceId: input.run.workspaceId,
+          principalId: input.run.startSnapshot.authorization.principalId,
+          runId: input.run.id,
+          transitionKey: `quota:usage:${subjectId}:v1`,
+          boundary: "usage_settlement",
+          subject: { kind: "usage_settlement", id: subjectId },
+          claims: [{
+            dimension: ceiling.dimension,
+            unit: ceiling.unit,
+            amount: ceiling.maximumQuantity!,
+          }],
+          recordedAt: input.recordedAt,
+        });
+      }),
+    );
+    return { plans, unavailable: false };
+  }
+
+  private async usageQuotaReconciliationPlans(input: {
+    run: WorkflowRunRecord;
+    attempt: WorkflowStepAttemptRecord;
+    usagePlan: import("../usage/types").UsageLedgerAppendPlan | null | undefined;
+    metadata: import("./types").WorkflowStepProviderMetadata | null;
+    recordedAt: Date;
+  }): Promise<import("../quotas/types").QuotaUsageReconciliationPlan[]> {
+    if (!this.quotas || !input.usagePlan) return [];
+    const resolution = input.run.startSnapshot.providerResolutions?.find(
+      (candidate) => candidate.stepId === input.attempt.stepId,
+    );
+    if (!resolution) return [];
+    const reservations = (await Promise.all(
+      resolution.usageCeilings.map(async (ceiling) => {
+        const subject = {
+          kind: "usage_settlement" as const,
+          id: usageQuotaSubjectId({
+          settlementId: input.usagePlan!.settlementId,
+          dimension: ceiling.dimension,
+          unit: ceiling.unit,
+          }),
+        };
+        return this.quotas!.listReservations({
+          workspaceId: input.run.workspaceId,
+          subject,
+        });
+      }),
+    )).flat();
+    const held = reservations.filter((reservation) =>
+      reservation.runId === input.run.id &&
+      reservation.boundary === "usage_settlement" &&
+      reservation.subject.kind === "usage_settlement" &&
+      reservation.state === "held" &&
+      reservation.heldAmount !== "0");
+    const subjects = new Map<string, (typeof held)[number]>();
+    for (const reservation of held) subjects.set(reservation.subject.id, reservation);
+    const provenNotCreated = input.metadata?.evidence.effectDisposition === "not_created";
+    const plans = [];
+    for (const reservation of subjects.values()) {
+      const record = input.usagePlan.records.find((candidate) =>
+        candidate.dimension === reservation.dimension && candidate.unit === reservation.unit);
+      const actualAmount = provenNotCreated ? "0" : record?.quantity ?? null;
+      const evidenceRef = record?.id ?? input.usagePlan.records[0]?.id ?? input.attempt.id;
+      plans.push(await this.quotas.planUsageReconciliation({
+        workspaceId: input.run.workspaceId,
+        reconciliationId: usageQuotaReconciliationId({
+          subjectId: reservation.subject.id,
+          evidenceRef,
+          actualAmount,
+        }),
+        subject: { kind: "usage_settlement", id: reservation.subject.id },
+        dimension: reservation.dimension,
+        unit: reservation.unit,
+        actualAmount,
+        evidenceRef,
+        recordedAt: input.recordedAt,
+      }));
+    }
+    return plans;
   }
 
   private async budgetSettlementForUsage(input: {
@@ -718,6 +951,13 @@ export class WorkflowRunService {
       completedAt: null,
       updatedAt: now,
     };
+    const quotaAdmissionPlan = await this.quotaRunClaim({
+      workspaceId: input.workspaceId,
+      principalId,
+      runId,
+      boundary: "run_admission",
+      at: now,
+    });
     let budgetAdmissionPlan = null;
     try {
       budgetAdmissionPlan = this.budgets
@@ -797,11 +1037,20 @@ export class WorkflowRunService {
         createdAt: now,
       },
       budgetAdmissionPlan,
+      quotaAdmissionPlan,
+      quotaWaitEventId: quotaAdmissionPlan ? randomUUID() : null,
     });
     if (result.kind === "conflict") {
       throw new WorkflowRunError(
         "IDEMPOTENCY_CONFLICT",
         "The idempotency key is already bound to another Workflow Run.",
+      );
+    }
+    if (result.kind === "quota_denied") {
+      throw new WorkflowRunError(
+        "QUOTA_EXCEEDED",
+        "The Workflow Run exceeds an applicable non-monetary quota.",
+        quotaDenialDetails(result.reasonCodes, result.evidence),
       );
     }
     if (result.kind === "unavailable") {
@@ -1008,6 +1257,13 @@ export class WorkflowRunService {
       completedAt: null,
       updatedAt: now,
     };
+    const quotaAdmissionPlan = await this.quotaRunClaim({
+      workspaceId: input.workspaceId,
+      principalId,
+      runId,
+      boundary: "run_admission",
+      at: now,
+    });
     let budgetAdmissionPlan = null;
     if (this.budgets) {
       const retrySteps = source.startSnapshot.definition.steps.slice(failedIndex);
@@ -1121,11 +1377,20 @@ export class WorkflowRunService {
         createdAt: now,
       },
       budgetAdmissionPlan,
+      quotaAdmissionPlan,
+      quotaWaitEventId: quotaAdmissionPlan ? randomUUID() : null,
     });
     if (result.kind === "conflict") {
       throw new WorkflowRunError(
         "IDEMPOTENCY_CONFLICT",
         "The idempotency key is already bound to another retry.",
+      );
+    }
+    if (result.kind === "quota_denied") {
+      throw new WorkflowRunError(
+        "QUOTA_EXCEEDED",
+        "The derived Workflow Run exceeds an applicable non-monetary quota.",
+        quotaDenialDetails(result.reasonCodes, result.evidence),
       );
     }
     if (result.kind !== "created" && result.kind !== "replayed") {
@@ -1210,6 +1475,53 @@ export class WorkflowRunService {
         "The retry backoff has not elapsed.",
       );
     }
+    let quotaResumePlan = null;
+    if (run.failureCode === "QUOTA_WAIT") {
+      if (!this.quotas) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_NOT_RESUMABLE",
+          "Quota capacity cannot be re-evaluated.",
+        );
+      }
+      const waitEvents = await this.repository.listEvents({
+        workspaceId: input.workspaceId,
+        workflowId,
+        runId,
+        afterSequence: waitEventSequence - 1,
+        limit: 1,
+      });
+      const requestedWaitId = waitEvents?.[0]?.sequence === waitEventSequence &&
+        waitEvents[0].type === "run.waiting" &&
+        typeof waitEvents[0].data.waitId === "string"
+        ? waitEvents[0].data.waitId
+        : null;
+      if (!requestedWaitId) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_NOT_RESUMABLE",
+          "The requested wait event has no durable Quota Wait evidence.",
+        );
+      }
+      const waits = await this.quotas.listWaits({
+        workspaceId: input.workspaceId,
+        runId,
+        state: "waiting",
+      });
+      const activeWait = waits.find((wait) => wait.id === requestedWaitId);
+      if (!activeWait) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_NOT_RESUMABLE",
+          "The durable Quota Wait is unavailable.",
+        );
+      }
+      quotaResumePlan = await this.quotas.planResumeWait({
+        workspaceId: input.workspaceId,
+        waitId: activeWait.id,
+        actor: { kind: "principal", principalId },
+        resumeReason: "manual_resume",
+        idempotencyKey,
+        recordedAt: now,
+      });
+    }
     const generation = run.nextEventSequence;
     const receipt = {
       workspaceId: input.workspaceId,
@@ -1257,6 +1569,7 @@ export class WorkflowRunService {
       },
       resumedAt: now,
       eventId: randomUUID(),
+      quotaResumePlan,
     });
     if (result.kind === "conflict") {
       throw new WorkflowRunError("IDEMPOTENCY_CONFLICT", "The idempotency key is already bound.");
@@ -1268,6 +1581,116 @@ export class WorkflowRunService {
       );
     }
     return mutationReceiptResult(result);
+  }
+
+  async resumeQuotaWait(input: {
+    workspaceId: string;
+    waitId: string;
+    actor: { kind: "human"; userId: string };
+    idempotencyKey: string;
+  }): Promise<WorkflowRunRecoveryDto> {
+    if (!this.quotas) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "Quota capacity cannot be re-evaluated.",
+      );
+    }
+    const idempotencyKey = stableKey(input.idempotencyKey);
+    const waits = await this.quotas.listWaits({
+      workspaceId: input.workspaceId,
+    });
+    const wait = waits.find((candidate) => candidate.id === input.waitId);
+    if (!wait) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "The durable Quota Wait is unavailable.",
+      );
+    }
+    const run = await this.repository.getById({
+      workspaceId: input.workspaceId,
+      runId: wait.runId,
+    });
+    if (!run) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_UNAVAILABLE",
+        "The Workflow Run is unavailable.",
+      );
+    }
+    const events = await this.repository.listEvents({
+      workspaceId: input.workspaceId,
+      workflowId: run.workflowId,
+      runId: run.id,
+      afterSequence: 0,
+      limit: 100,
+    });
+    const waitEvent = events?.find(
+      (event) => event.type === "run.waiting" && event.data.waitId === wait.id,
+    );
+    if (!waitEvent) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "The Quota Wait is not bound to this Run lifecycle.",
+      );
+    }
+    const initialEventCursor = this.cursors.seal({
+      workspaceId: input.workspaceId,
+      principalId: wait.admittedPrincipalId,
+      workflowId: run.workflowId,
+      runId: run.id,
+      afterSequence: 0,
+    });
+    if (wait.state === "resumed") {
+      if (
+        wait.resumedBy?.kind !== "human" ||
+        wait.resumedBy.userId !== input.actor.userId ||
+        wait.resumeIdempotencyKey !== idempotencyKey
+      ) {
+        throw new WorkflowRunError(
+          "IDEMPOTENCY_CONFLICT",
+          "The Quota Wait resume is bound to another actor or idempotency key.",
+        );
+      }
+      return workflowRunReceiptResult(run, initialEventCursor) as unknown as WorkflowRunRecoveryDto;
+    }
+    const now = this.clock.now();
+    const quotaResumePlan = await this.quotas.planResumeWait({
+      workspaceId: input.workspaceId,
+      waitId: wait.id,
+      actor: input.actor,
+      resumeReason: "manual_resume",
+      idempotencyKey,
+      recordedAt: now,
+    });
+    const result = await this.repository.resumeQuotaWait({
+      workspaceId: input.workspaceId,
+      workflowId: run.workflowId,
+      runId: run.id,
+      waitEventSequence: waitEvent.sequence,
+      quotaResumePlan,
+      outboxIntent: {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        runId: run.id,
+        generation: run.nextEventSequence,
+        dedupeKey: `quota-wait-manual-resume:${wait.id}`,
+        state: "pending",
+        deliveryToken: null,
+        deliveryAttempts: 0,
+        availableAt: now,
+        claimedAt: null,
+        deliveredAt: null,
+        createdAt: now,
+      },
+      resumedAt: now,
+      eventId: randomUUID(),
+    });
+    if (result.kind === "unavailable") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "Quota capacity is not currently available.",
+      );
+    }
+    return workflowRunReceiptResult(result.run, initialEventCursor) as unknown as WorkflowRunRecoveryDto;
   }
 
   async reconcile(input: {
@@ -1535,7 +1958,9 @@ export class WorkflowRunService {
         ([left], [right]) => compareCodeUnits(left, right),
       )) {
         const digest = bytesDigest(output.bytes);
-        const metadata = await this.artifacts.commitGenerated({
+        let metadata;
+        try {
+          metadata = await this.artifacts.commitGenerated({
           workspaceId: run.workspaceId,
           creatorPrincipalId: run.startSnapshot.authorization.principalId,
           effectKey: attempt.effectKey,
@@ -1583,7 +2008,10 @@ export class WorkflowRunService {
             contentDigest: item.contentDigest,
             sourceArtifactId: item.artifactId,
           })),
-        });
+          });
+        } catch (error) {
+          throw artifactQuotaRunError(error, false) ?? error;
+        }
         outputs[outputName] = {
           artifactId: metadata.id,
           digest: metadata.digest,
@@ -1732,6 +2160,34 @@ export class WorkflowRunService {
           ? resolution.finalSnapshot !== null
           : !resolution.retryable,
     });
+    const quotaTransitionPlans = this.quotas ? await Promise.all([
+      this.quotas.planTransition({
+        workspaceId: run.workspaceId,
+        transitionId: `quota:settle:${attempt.id}:reconciled:v1`,
+        subject: { kind: "step_attempt", id: attempt.id },
+        outcome: "settle",
+        amount: null,
+        evidenceRef: providerResult.providerOperationRef ?? attempt.effectKey,
+        recordedAt: now,
+      }),
+      this.quotas.planTransition({
+        workspaceId: run.workspaceId,
+        transitionId: `quota:release:${run.id}:reconciled:${attempt.id}:v1`,
+        subject: { kind: "run", id: run.id },
+        outcome: "release",
+        amount: null,
+        evidenceRef: `reconciliation:${attempt.id}`,
+        recordedAt: now,
+      }),
+    ]) : [];
+    const quotaUsageReconciliationPlans =
+      await this.usageQuotaReconciliationPlans({
+        run,
+        attempt,
+        usagePlan: reconciliationUsagePlan,
+        metadata: providerResult.providerMetadata ?? null,
+        recordedAt: now,
+      });
     const result = await this.repository.reconcileStepAttempt({
       workspaceId: run.workspaceId,
       workflowId,
@@ -1746,6 +2202,8 @@ export class WorkflowRunService {
       usagePlan: reconciliationUsagePlan,
       usageAttributionPlan: reconciliationAttributionPlan,
       budgetSettlementPlan,
+      quotaTransitionPlans,
+      quotaUsageReconciliationPlans,
       occurredAt: now,
       eventIds: {
         generated:
@@ -1966,6 +2424,31 @@ export class WorkflowRunService {
     }
   }
 
+  async sweepEligibleQuotaWaits(input: {
+    workspaceId: string;
+    limit?: number;
+  }): Promise<{ eligible: number; enqueued: number }> {
+    if (!this.quotas) return { eligible: 0, enqueued: 0 };
+    const limit = input.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_INVALID_INPUT",
+        "Quota Wait sweep limit must be between 1 and 500.",
+      );
+    }
+    const now = this.clock.now();
+    const waits = await this.quotas.listEligibleWaits({
+      workspaceId: input.workspaceId,
+      at: now,
+      limit,
+    });
+    const enqueued = await this.repository.enqueueQuotaWaitResumptions({
+      waits,
+      enqueuedAt: now,
+    });
+    return { eligible: waits.length, enqueued };
+  }
+
   async executeOne(input: {
     workspaceId: string;
     runId: string;
@@ -1982,12 +2465,87 @@ export class WorkflowRunService {
       );
     }
     const now = this.clock.now();
+    let quotaResumePlan = null;
+    let quotaConcurrencyPlan = null;
+    let quotaWaitGeneration = 0;
+    if (this.quotas) {
+      const durableRun = await this.repository.getById({
+        workspaceId: input.workspaceId,
+        runId,
+      });
+      if (!durableRun) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_UNAVAILABLE",
+          "The Workflow Run is unavailable.",
+        );
+      }
+      quotaWaitGeneration = durableRun.nextEventSequence;
+      const waits = await this.quotas.listWaits({
+        workspaceId: input.workspaceId,
+        runId,
+        state: "waiting",
+      });
+      if (waits.length > 1) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+          "The Workflow Run has multiple active Quota Waits.",
+        );
+      }
+      const activeWait = waits.sort((left, right) =>
+        right.createdAt.getTime() - left.createdAt.getTime() ||
+        left.id.localeCompare(right.id))[0];
+      quotaResumePlan = activeWait
+        ? await this.quotas.planResumeWait({
+            workspaceId: input.workspaceId,
+            waitId: activeWait.id,
+            actor: { kind: "system" },
+            resumeReason: "automatic_capacity_available",
+            idempotencyKey: `auto-resume-${activeWait.id}`,
+            recordedAt: now,
+          })
+        : null;
+      const heldRunConcurrency = (await this.quotas.listReservations({
+        workspaceId: input.workspaceId,
+        runId,
+        subject: { kind: "run", id: runId },
+      })).some((reservation) =>
+        reservation.boundary === "run_concurrency" &&
+        reservation.state === "held" &&
+        reservation.heldAmount !== "0");
+      quotaConcurrencyPlan = activeWait?.boundary === "run_concurrency" || heldRunConcurrency
+        ? null
+        : await this.quotaRunClaim({
+            workspaceId: input.workspaceId,
+            principalId: durableRun.startSnapshot.authorization.principalId,
+            runId,
+            boundary: "run_concurrency",
+            generation: durableRun.nextEventSequence,
+            at: now,
+          });
+    }
     const acquired = await this.repository.acquireLease({
       workspaceId: input.workspaceId,
       runId,
       workerId,
       now,
       expiresAt: new Date(now.getTime() + leaseMs),
+      quotaResumePlan,
+      quotaConcurrencyPlan,
+      quotaWaitEventId: quotaConcurrencyPlan || quotaResumePlan ? randomUUID() : null,
+      quotaWaitOutboxIntent: quotaConcurrencyPlan || quotaResumePlan ? {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        runId,
+        generation: quotaWaitGeneration,
+        dedupeKey: `workflow-run:${input.workspaceId}:${runId}:v${quotaWaitGeneration}:quota-wait`,
+        state: "pending",
+        deliveryToken: null,
+        deliveryAttempts: 0,
+        availableAt: now,
+        claimedAt: null,
+        deliveredAt: null,
+        createdAt: now,
+      } : null,
     });
     if (acquired.kind === "completed") return workflowRunDto(acquired.run);
     if (acquired.kind === "busy") {
@@ -1995,6 +2553,9 @@ export class WorkflowRunService {
         "WORKFLOW_RUN_LEASE_BUSY",
         "Another fenced worker currently owns the Workflow Run.",
       );
+    }
+    if (acquired.kind === "quota_wait") {
+      return workflowRunDto(acquired.run);
     }
     if (acquired.kind === "unavailable") {
       throw new WorkflowRunError(
@@ -2061,6 +2622,7 @@ export class WorkflowRunService {
       output = execution.output;
       canonicalDigest(output);
     } catch {
+      const failedAt = this.clock.now();
       const failed = await this.repository.failStep({
         workspaceId: run.workspaceId,
         runId: run.id,
@@ -2068,8 +2630,17 @@ export class WorkflowRunService {
         token: lease.token,
         fence: lease.fence,
         failureCode: "STEP_EXECUTION_FAILED",
-        failedAt: this.clock.now(),
+        failedAt,
         runEventId: randomUUID(),
+        quotaTransitionPlans: this.quotas ? [await this.quotas.planTransition({
+          workspaceId: run.workspaceId,
+          transitionId: `quota:release:${run.id}:failed:v1`,
+          subject: { kind: "run", id: run.id },
+          outcome: "release",
+          amount: null,
+          evidenceRef: "STEP_EXECUTION_FAILED",
+          recordedAt: failedAt,
+        })] : [],
       });
       if (failed.kind === "stale_fence") {
         throw new WorkflowRunError(
@@ -2085,6 +2656,7 @@ export class WorkflowRunService {
       }
       return workflowRunDto(failed.run);
     }
+    const completedAt = this.clock.now();
     const completed = await this.repository.completeStep({
       workspaceId: run.workspaceId,
       runId: run.id,
@@ -2092,9 +2664,18 @@ export class WorkflowRunService {
       token: lease.token,
       fence: lease.fence,
       output: structuredClone(output),
-      completedAt: this.clock.now(),
+      completedAt,
       stepEventId: randomUUID(),
       runEventId: randomUUID(),
+      quotaTransitionPlans: this.quotas ? [await this.quotas.planTransition({
+        workspaceId: run.workspaceId,
+        transitionId: `quota:release:${run.id}:completed:v1`,
+        subject: { kind: "run", id: run.id },
+        outcome: "release",
+        amount: null,
+        evidenceRef: `run:${run.id}:completed`,
+        recordedAt: completedAt,
+      })] : [],
     });
     if (completed.kind === "stale_fence") {
       throw new WorkflowRunError(
@@ -2344,6 +2925,78 @@ export class WorkflowRunService {
       startedAt: now,
       completedAt: null,
     };
+    const usageQuotaClaims = await this.usageQuotaClaimPlans({
+      run,
+      attempt: candidate,
+      resolution: providerResolution,
+      recordedAt: now,
+    });
+    if (usageQuotaClaims.unavailable) {
+      const quotaTransitionPlans = this.quotas ? [await this.quotas.planTransition({
+        workspaceId: run.workspaceId,
+        transitionId: `quota:release:${run.id}:usage-ceiling-unavailable:${candidate.id}:v1`,
+        subject: { kind: "run", id: run.id },
+        outcome: "release",
+        amount: null,
+        evidenceRef: candidate.id,
+        recordedAt: now,
+      })] : [];
+      const failed = await this.repository.failStep({
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        workerId: lease.workerId,
+        token: lease.token,
+        fence: lease.fence,
+        failureCode: USAGE_QUOTA_FAILURE_CODE,
+        failedAt: now,
+        runEventId: randomUUID(),
+        quotaTransitionPlans,
+      });
+      if (failed.kind !== "completed") {
+        throw new WorkflowRunError(
+          failed.kind === "stale_fence"
+            ? "WORKFLOW_RUN_STALE_FENCE"
+            : "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+          "The unbounded provider usage effect could not be blocked durably.",
+        );
+      }
+      return workflowRunDto(failed.run);
+    }
+    const quotaProviderTransitionKey = `quota:provider_effect:${candidate.id}:v1`;
+    const resumedProviderReservation = this.quotas
+      ? (await this.quotas.listReservations({
+          workspaceId: run.workspaceId,
+          runId: run.id,
+          subject: { kind: "step_attempt", id: candidate.id },
+        })).some((reservation) =>
+          reservation.boundary === "provider_effect" &&
+          reservation.transitionKey === quotaProviderTransitionKey &&
+          reservation.state === "held" &&
+          reservation.heldAmount !== "0")
+      : false;
+    const quotaProviderPlan = this.quotas && !resumedProviderReservation
+      ? await this.quotas.planClaim({
+          workspaceId: run.workspaceId,
+          principalId: run.startSnapshot.authorization.principalId,
+          runId: run.id,
+          transitionKey: quotaProviderTransitionKey,
+          boundary: "provider_effect",
+          subject: { kind: "step_attempt", id: candidate.id },
+          claims: [{ dimension: "runtime.provider_calls@1", unit: "count", amount: "1" }],
+          recordedAt: now,
+        })
+      : null;
+    const quotaWaitReleasePlans = this.quotas ? [
+      await this.quotas.planTransition({
+        workspaceId: run.workspaceId,
+        transitionId: `quota:release:${run.id}:provider-wait:${candidate.id}:v1`,
+        subject: { kind: "run", id: run.id },
+        outcome: "release",
+        amount: null,
+        evidenceRef: `provider-quota-wait:${candidate.id}`,
+        recordedAt: now,
+      }),
+    ] : [];
     const prepared = await this.repository.prepareStepAttempt({
       attempt: candidate,
       workerId: lease.workerId,
@@ -2377,6 +3030,27 @@ export class WorkflowRunService {
             recordedAt: now,
           }
         : null,
+      quotaClaimPlans: [
+        ...usageQuotaClaims.plans,
+        ...(quotaProviderPlan ? [quotaProviderPlan] : []),
+      ],
+      quotaWaitEventId: usageQuotaClaims.plans.length || quotaProviderPlan ? randomUUID() : null,
+      quotaWaitOutboxIntent: usageQuotaClaims.plans.length || quotaProviderPlan ? {
+        id: randomUUID(),
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        generation: run.nextEventSequence,
+        dedupeKey: `workflow-run:${run.workspaceId}:${run.id}:quota-provider:${candidate.id}`,
+        state: "pending",
+        deliveryToken: null,
+        deliveryAttempts: 0,
+        availableAt: now,
+        claimedAt: null,
+        deliveredAt: null,
+        createdAt: now,
+      } : null,
+      quotaWaitReleasePlans,
+      quotaPolicyUnavailableEventId: randomUUID(),
     });
     if (prepared.kind === "stale_fence") {
       throw new WorkflowRunError(
@@ -2395,6 +3069,12 @@ export class WorkflowRunService {
         "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
         "Workflow Step Attempt preparation could not be committed.",
       );
+    }
+    if (prepared.kind === "quota_wait") {
+      return workflowRunDto(prepared.run);
+    }
+    if (prepared.kind === "effect_blocked") {
+      return workflowRunDto(prepared.run);
     }
     const recoveringDurableSuccess =
       prepared.attempt.outcome?.kind === "succeeded";
@@ -2548,6 +3228,14 @@ export class WorkflowRunService {
         "Provider usage settlement is unavailable.",
       );
     }
+    const providerUsageQuotaReconciliationPlans =
+      await this.usageQuotaReconciliationPlans({
+        run,
+        attempt: prepared.attempt,
+        usagePlan,
+        metadata: execution.providerMetadata ?? null,
+        recordedAt: providerRecordedAt,
+      });
     const providerBudgetSettlementPlan = await this.budgetSettlementForUsage({
       plan: usagePlan,
       workspaceId: run.workspaceId,
@@ -2566,6 +3254,17 @@ export class WorkflowRunService {
         completedAttempts.length + 1 ===
         run.startSnapshot.definition.steps.length,
     });
+    const providerQuotaTransition = this.quotas
+      ? await this.quotas.planTransition({
+          workspaceId: run.workspaceId,
+          transitionId: `quota:settle:${prepared.attempt.id}:provider-success:v1`,
+          subject: { kind: "step_attempt", id: prepared.attempt.id },
+          outcome: "settle",
+          amount: null,
+          evidenceRef: execution.providerOperationRef,
+          recordedAt: providerRecordedAt,
+        })
+      : null;
     const providerRecorded =
       await this.repository.recordStepAttemptProviderSuccess({
         workspaceId: run.workspaceId,
@@ -2578,6 +3277,8 @@ export class WorkflowRunService {
         providerMetadata: execution.providerMetadata ?? null,
         usagePlan,
         budgetSettlementPlan: providerBudgetSettlementPlan,
+        quotaTransitionPlans: providerQuotaTransition ? [providerQuotaTransition] : [],
+        quotaUsageReconciliationPlans: providerUsageQuotaReconciliationPlans,
         recordedAt: providerRecordedAt,
       });
     if (providerRecorded.kind !== "settled") {
@@ -2703,7 +3404,9 @@ export class WorkflowRunService {
           recordedAt: this.clock.now(),
         });
       }
-    } catch {
+    } catch (error) {
+      const quotaError = artifactQuotaRunError(error, true);
+      if (quotaError) throw quotaError;
       throw new WorkflowRunError(
         "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
         `${ARTIFACT_FAILURE_CODE}: generated Artifact persistence can be resumed with the same Effect Key.`,
@@ -2786,6 +3489,21 @@ export class WorkflowRunService {
         : null,
       usageAttributionPlan,
       budgetSettlementPlan: null,
+      quotaTransitionPlans: this.quotas ? [
+        await this.quotas.planTransition({
+          workspaceId: run.workspaceId,
+          transitionId: finalSnapshot
+            ? `quota:release:${run.id}:completed:v1`
+            : `quota:release:${run.id}:step:${durableAttempt.id}:v1`,
+          subject: { kind: "run", id: run.id },
+          outcome: "release",
+          amount: null,
+          evidenceRef: finalSnapshot
+            ? `final-snapshot:${canonicalDigest(finalSnapshot)}`
+            : `step-attempt:${durableAttempt.id}:completed`,
+          recordedAt: completedAttempt.completedAt!,
+        }),
+      ] : [],
       completedAt: completedAttempt.completedAt!,
       eventIds: {
         generated: Object.keys(outputs).map(() => randomUUID()),
@@ -2856,11 +3574,39 @@ export class WorkflowRunService {
         "Provider usage settlement is unavailable.",
       );
     }
+    const usageQuotaReconciliationPlans =
+      await this.usageQuotaReconciliationPlans({
+        run: input.run,
+        attempt: input.attempt,
+        usagePlan,
+        metadata: input.providerMetadata,
+        recordedAt: failedAt,
+      });
     const budgetSettlementPlan = await this.budgetSettlementForUsage({
       plan: usagePlan,
       outcome: "failed_known",
       runTerminal: !canRetry,
     });
+    const quotaTransitionPlans = this.quotas ? await Promise.all([
+      this.quotas.planTransition({
+        workspaceId: input.run.workspaceId,
+        transitionId: `quota:settle:${input.attempt.id}:failed-known:v1`,
+        subject: { kind: "step_attempt", id: input.attempt.id },
+        outcome: "settle",
+        amount: null,
+        evidenceRef: input.providerOperationRef ?? input.failureCode,
+        recordedAt: failedAt,
+      }),
+      this.quotas.planTransition({
+        workspaceId: input.run.workspaceId,
+        transitionId: `quota:release:${input.run.id}:wait-or-failed:${input.attempt.id}:v1`,
+        subject: { kind: "run", id: input.run.id },
+        outcome: "release",
+        amount: null,
+        evidenceRef: input.failureCode,
+        recordedAt: failedAt,
+      }),
+    ]) : [];
     const failed = await this.repository.failStepAttempt({
       workspaceId: input.run.workspaceId,
       runId: input.run.id,
@@ -2874,6 +3620,8 @@ export class WorkflowRunService {
       providerMetadata: input.providerMetadata,
       usagePlan,
       budgetSettlementPlan,
+      quotaTransitionPlans,
+      quotaUsageReconciliationPlans: usageQuotaReconciliationPlans,
       retryAt,
       retryOutboxIntent: retryAt
         ? {
@@ -2957,6 +3705,14 @@ export class WorkflowRunService {
       outcome: "outcome_unknown",
       runTerminal: false,
     });
+    const quotaUsageReconciliationPlans =
+      await this.usageQuotaReconciliationPlans({
+        run: input.run,
+        attempt: input.attempt,
+        usagePlan,
+        metadata: input.providerMetadata,
+        recordedAt: occurredAt,
+      });
     const blocked =
       await this.repository.markStepAttemptOutcomeUnknown({
         workspaceId: input.run.workspaceId,
@@ -2970,6 +3726,16 @@ export class WorkflowRunService {
       providerMetadata: input.providerMetadata,
         usagePlan,
         budgetSettlementPlan,
+        quotaTransitionPlans: this.quotas ? [await this.quotas.planTransition({
+          workspaceId: input.run.workspaceId,
+          transitionId: `quota:release:${input.run.id}:outcome-unknown:${input.attempt.id}:v1`,
+          subject: { kind: "run", id: input.run.id },
+          outcome: "release",
+          amount: null,
+          evidenceRef: input.providerOperationRef ?? input.attempt.effectKey,
+          recordedAt: occurredAt,
+        })] : [],
+        quotaUsageReconciliationPlans,
         occurredAt,
         eventIds: {
           attemptOutcomeUnknown: randomUUID(),

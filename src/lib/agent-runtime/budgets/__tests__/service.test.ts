@@ -43,7 +43,7 @@ async function configured(options: {
   grantAvailable?: string;
 } = {}) {
   const repository = new InMemoryBudgetRepository();
-  repository.seedGrant({
+  await repository.seedGrant({
     workspaceId: "workspace_1",
     principalId: "principal_1",
     grantId: "grant_1",
@@ -301,7 +301,7 @@ describe("BudgetService", () => {
 
   it("uses active Workspace pricing overrides and pins FX evidence", async () => {
     const repository = new InMemoryBudgetRepository();
-    repository.seedGrant({
+    await repository.seedGrant({
       workspaceId: "workspace_1",
       principalId: "principal_1",
       grantId: "grant_1",
@@ -994,5 +994,49 @@ describe("BudgetService", () => {
     await expect(service.planAdmission({ ...proposal(), runId: "run_1" })).rejects.toMatchObject({
       code: "BUDGET_NOT_ADMISSIBLE",
     });
+  });
+
+  it("treats an identical serialized spend-control command as an intrinsic replay", async () => {
+    const repository = new InMemoryBudgetRepository();
+    const service = new BudgetService(repository);
+    const command = {
+      workspaceId: "workspace_1",
+      suspended: true,
+      reason: "provider incident",
+      actorUserId: "user_1",
+      recordedAt: new Date("2026-03-08T06:31:00.000Z"),
+    };
+
+    await Promise.all([
+      service.setSpendSuspended(command),
+      service.setSpendSuspended({
+        ...command,
+        recordedAt: new Date("2026-03-08T06:31:01.000Z"),
+      }),
+    ]);
+
+    expect(repository.suspensions.get("workspace_1")).toMatchObject({
+      suspended: true,
+      revision: 1,
+      reason: "provider incident",
+      actorUserId: "user_1",
+      recordedAt: command.recordedAt,
+    });
+    expect(repository.spendControlEvents).toHaveLength(1);
+
+    await service.setSpendSuspended({
+      ...command,
+      reason: "provider incident expanded",
+      recordedAt: new Date("2026-03-08T06:32:00.000Z"),
+    });
+    await service.setSpendSuspended({
+      ...command,
+      reason: "provider incident expanded",
+      actorUserId: "user_2",
+      recordedAt: new Date("2026-03-08T06:33:00.000Z"),
+    });
+
+    expect(repository.suspensions.get("workspace_1")?.revision).toBe(3);
+    expect(repository.spendControlEvents).toHaveLength(3);
   });
 });

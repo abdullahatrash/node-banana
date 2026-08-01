@@ -76,6 +76,17 @@ export const WORKFLOW_RUN_ERROR_CATALOG = {
     retryable: false,
     description: "Emergency provider spend suspension is active.",
   },
+  QUOTA_EXCEEDED: {
+    category: "authorization",
+    retryable: false,
+    description: "The proposed Run exceeds an applicable non-monetary Quota Policy.",
+  },
+  ARTIFACT_QUOTA_EXCEEDED: {
+    category: "authorization",
+    retryable: false,
+    description:
+      "A generated Artifact exceeds an applicable non-monetary storage Quota Policy.",
+  },
 } as const satisfies Record<string, Omit<CapabilityErrorContract, "code">>;
 
 export type WorkflowRunErrorCode = keyof typeof WORKFLOW_RUN_ERROR_CATALOG;
@@ -86,6 +97,7 @@ export class WorkflowRunError extends Error {
   constructor(
     readonly code: WorkflowRunErrorCode,
     message: string,
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "WorkflowRunError";
@@ -112,6 +124,8 @@ const PUBLIC_ERROR_CODES: WorkflowRunErrorCode[] = [
   "RUN_COST_UNKNOWN",
   "CREDENTIAL_SPEND_NOT_AUTHORIZED",
   "SPEND_SUSPENDED",
+  "QUOTA_EXCEEDED",
+  "ARTIFACT_QUOTA_EXCEEDED",
 ];
 
 export const WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS: CapabilityErrorContract[] =

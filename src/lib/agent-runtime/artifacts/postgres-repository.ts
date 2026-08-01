@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { getDb } from "@/lib/db";
+import type { QuotaCommitWriter } from "../quotas/types";
 import {
   artifactAuditEvents,
   artifactContents,
@@ -31,14 +32,28 @@ import type {
   ArtifactGeneratedOriginRecord,
   ArtifactLineageInputRecord,
   ArtifactMutationReceiptRecord,
+  ArtifactQuotaDeniedResult,
   ArtifactRecord,
   ArtifactRepositoryResult,
   ArtifactRepository,
+  ArtifactStorageQuotaCommitPlan,
   ArtifactUploadRecord,
 } from "./types";
+import { storageQuotaPlanMatchesArtifact } from "./storage-quota";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+type ArtifactQuotaBlock =
+  | ArtifactQuotaDeniedResult
+  | { kind: "unavailable" };
+
+class ArtifactQuotaCommitBlocked extends Error {
+  constructor(readonly result: ArtifactQuotaBlock) {
+    super("Artifact storage quota commit was blocked.");
+    this.name = "ArtifactQuotaCommitBlocked";
+  }
+}
 
 function mapArtifact(row: typeof artifacts.$inferSelect): ArtifactRecord {
   return {
@@ -277,7 +292,48 @@ async function insertOrVerifyContent(
 }
 
 export class DrizzleArtifactRepository implements ArtifactRepository {
-  constructor(private readonly getDatabase: () => Db) {}
+  constructor(
+    private readonly getDatabase: () => Db,
+    private readonly quotaWriter?: QuotaCommitWriter<Tx>,
+  ) {}
+
+  private async commitStorageQuota(
+    plan: ArtifactStorageQuotaCommitPlan | null,
+    tx: Tx,
+    artifact: ArtifactRecord,
+    runId: string | null,
+  ): Promise<void> {
+    if (!plan) {
+      if (this.quotaWriter && artifact.sizeBytes > 0) {
+        throw new ArtifactQuotaCommitBlocked({ kind: "unavailable" });
+      }
+      return;
+    }
+    if (!this.quotaWriter) {
+      throw new ArtifactQuotaCommitBlocked({ kind: "unavailable" });
+    }
+    if (!storageQuotaPlanMatchesArtifact({ plan, artifact, runId })) {
+      throw new ArtifactQuotaCommitBlocked({ kind: "unavailable" });
+    }
+    const claim = await this.quotaWriter.commitClaim(plan.claim, tx);
+    if (claim.kind === "denied") {
+      throw new ArtifactQuotaCommitBlocked({
+        kind: "quota_denied",
+        reasonCodes: claim.reasonCodes,
+        evidence: claim.evidence,
+      });
+    }
+    if (claim.kind !== "created" && claim.kind !== "replayed") {
+      throw new ArtifactQuotaCommitBlocked({ kind: "unavailable" });
+    }
+    const settlement = await this.quotaWriter.commitTransition(
+      plan.settle,
+      tx,
+    );
+    if (settlement.kind !== "created" && settlement.kind !== "replayed") {
+      throw new ArtifactQuotaCommitBlocked({ kind: "unavailable" });
+    }
+  }
 
   async readMutationReceipt(
     input: Parameters<ArtifactRepository["readMutationReceipt"]>[0],
@@ -307,17 +363,28 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
   async commitTextImport(
     input: Parameters<ArtifactRepository["commitTextImport"]>[0],
   ): Promise<ArtifactCommitResult> {
-    return this.getDatabase().transaction(async (tx) => {
-      const replay = await lockMutation(tx, input.receipt);
-      if (replay) return replay;
-      if (!(await insertOrVerifyContent(tx, input.content))) {
-        return { kind: "unavailable" as const };
-      }
-      await tx.insert(artifacts).values(input.artifact);
-      await tx.insert(artifactMutationReceipts).values(input.receipt);
-      await tx.insert(artifactAuditEvents).values(input.event);
-      return { kind: "created" as const };
-    });
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        const replay = await lockMutation(tx, input.receipt);
+        if (replay) return replay;
+        if (!(await insertOrVerifyContent(tx, input.content))) {
+          return { kind: "unavailable" as const };
+        }
+        await this.commitStorageQuota(
+          input.storageQuotaPlan,
+          tx,
+          input.artifact,
+          null,
+        );
+        await tx.insert(artifacts).values(input.artifact);
+        await tx.insert(artifactMutationReceipts).values(input.receipt);
+        await tx.insert(artifactAuditEvents).values(input.event);
+        return { kind: "created" as const };
+      });
+    } catch (error) {
+      if (error instanceof ArtifactQuotaCommitBlocked) return error.result;
+      throw error;
+    }
   }
 
   async createUpload(
@@ -353,7 +420,8 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
   async commitUpload(
     input: Parameters<ArtifactRepository["commitUpload"]>[0],
   ): Promise<ArtifactCommitResult> {
-    return this.getDatabase().transaction(async (tx) => {
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
       const replay = await lockMutation(tx, input.receipt);
       if (replay) return replay;
       const uploadRows = await tx
@@ -376,6 +444,12 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
       if (!(await insertOrVerifyContent(tx, input.content))) {
         return { kind: "unavailable" as const };
       }
+      await this.commitStorageQuota(
+        input.storageQuotaPlan,
+        tx,
+        input.artifact,
+        null,
+      );
       await tx.insert(artifacts).values(input.artifact);
       const updated = await tx
         .update(artifactUploads)
@@ -395,13 +469,18 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
       await tx.insert(artifactMutationReceipts).values(input.receipt);
       await tx.insert(artifactAuditEvents).values(input.event);
       return { kind: "created" as const };
-    });
+      });
+    } catch (error) {
+      if (error instanceof ArtifactQuotaCommitBlocked) return error.result;
+      throw error;
+    }
   }
 
   async commitGenerated(
     input: Parameters<ArtifactRepository["commitGenerated"]>[0],
   ) {
-    return this.getDatabase().transaction(async (tx) => {
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
       const outputLock = JSON.stringify([
         input.origin.workspaceId,
         input.origin.effectKey,
@@ -657,6 +736,12 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
       if (!(await insertOrVerifyContent(tx, input.content))) {
         return { kind: "unavailable" as const };
       }
+      await this.commitStorageQuota(
+        input.storageQuotaPlan,
+        tx,
+        input.artifact,
+        input.origin.runId,
+      );
       await tx.insert(artifacts).values(input.artifact);
       await tx.insert(artifactGeneratedOrigins).values(input.origin);
       if (input.lineageInputs.length > 0) {
@@ -669,7 +754,11 @@ export class DrizzleArtifactRepository implements ArtifactRepository {
           );
       }
       return { kind: "created" as const };
-    });
+      });
+    } catch (error) {
+      if (error instanceof ArtifactQuotaCommitBlocked) return error.result;
+      throw error;
+    }
   }
 
   async getArtifact(

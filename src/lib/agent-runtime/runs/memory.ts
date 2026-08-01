@@ -8,6 +8,14 @@ import type {
 } from "../usage/types";
 import type { BudgetCommitWriter } from "../budgets/types";
 import type {
+  QuotaClaimCommitResult,
+  QuotaCommitWriter,
+  QuotaEligibleWaitRef,
+  QuotaTransitionPlan,
+  QuotaUsageReconciliationPlan,
+  QuotaWait,
+} from "../quotas/types";
+import type {
   AcquireWorkflowRunLeaseResult,
   CompleteWorkflowRunStepResult,
   PrepareWorkflowStepAttemptResult,
@@ -22,6 +30,26 @@ import type {
   WorkflowRunRevisionReader,
   WorkflowStepAttemptRecord,
 } from "./types";
+import {
+  MemoryTransactionCoordinator,
+  isMemoryTransactionParticipant,
+  type MemoryTransactionParticipant,
+  type MemoryTransactionToken,
+} from "../memory-transaction";
+
+function sameQuotaResumeActor(
+  left: QuotaWait["resumedBy"],
+  right: QuotaWait["resumedBy"],
+): boolean {
+  if (!left || !right || left.kind !== right.kind) return false;
+  if (left.kind === "human" && right.kind === "human") {
+    return left.userId === right.userId;
+  }
+  if (left.kind === "principal" && right.kind === "principal") {
+    return left.principalId === right.principalId;
+  }
+  return left.kind === "system" && right.kind === "system";
+}
 
 const FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
 
@@ -45,13 +73,58 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-export class InMemoryWorkflowRunRepository
-  implements WorkflowRunRepository
-{
+function quotaWaitEventData(wait: QuotaWait): Record<string, unknown> {
+  return {
+    schema: wait.schema,
+    waitId: wait.id,
+    boundary: wait.boundary,
+    subject: clone(wait.subject),
+    claims: clone(wait.claims),
+    reasonCode: wait.reasonCode,
+    evidence: wait.evidence.map((item) => ({
+      ...clone(item),
+      window: {
+        ...clone(item.window),
+        startsAt: item.window.startsAt.toISOString(),
+        endsAt: item.window.endsAt?.toISOString() ?? null,
+      },
+      evaluatedAt: item.evaluatedAt.toISOString(),
+      eligibleAt: item.eligibleAt?.toISOString() ?? null,
+      eligibility: item.eligibility.kind === "window_renewal"
+        ? {
+            kind: item.eligibility.kind,
+            eligibleAt: item.eligibility.eligibleAt.toISOString(),
+          }
+        : clone(item.eligibility),
+    })),
+    eligibleAt: wait.eligibleAt?.toISOString() ?? null,
+    createdAt: wait.createdAt.toISOString(),
+  };
+}
+
+export class InMemoryWorkflowRunRepository implements WorkflowRunRepository {
+  private readonly memoryCoordinator = new MemoryTransactionCoordinator();
+  private readonly accountingParticipants: MemoryTransactionParticipant[];
+  private resumeQuotaWaitTail: Promise<void> = Promise.resolve();
+
   constructor(
-    private readonly usageWriter?: UsageCommitWriter<void>,
-    private readonly budgetWriter?: BudgetCommitWriter<void>,
-  ) {}
+    private readonly usageWriter?: UsageCommitWriter<MemoryTransactionToken>,
+    private readonly budgetWriter?: BudgetCommitWriter<MemoryTransactionToken>,
+    private readonly quotaWriter?: QuotaCommitWriter<MemoryTransactionToken>,
+  ) {
+    const writers: unknown[] = [usageWriter, budgetWriter, quotaWriter].filter(
+      (writer) => writer !== undefined,
+    );
+    if (writers.some((writer) => !isMemoryTransactionParticipant(writer))) {
+      throw new TypeError(
+        "In-memory Run accounting writers must participate in memory transactions.",
+      );
+    }
+    this.accountingParticipants = writers.filter(isMemoryTransactionParticipant);
+    for (const participant of this.accountingParticipants) {
+      participant.attachMemoryTransactionCoordinator(this.memoryCoordinator);
+    }
+  }
   readonly runs = new Map<string, WorkflowRunRecord>();
   readonly events = new Map<string, WorkflowRunEventRecord[]>();
   readonly receipts = new Map<string, WorkflowRunMutationReceiptRecord>();
@@ -62,6 +135,108 @@ export class InMemoryWorkflowRunRepository
   failNextStart = false;
   failNextFinish = false;
   failNextMarkOutboxDelivered = false;
+
+  private applyQuotaWaitOutboxUpdates(
+    updates: Array<{ wait: QuotaEligibleWaitRef; recordedAt: Date }>,
+  ): void {
+    for (const { wait, recordedAt } of updates) {
+      const run = this.runs.get(compound(wait.workspaceId, wait.runId));
+      if (!run) continue;
+      const id = `quota_resume_${wait.waitId}`;
+      const existing = [...this.outbox.values()].find(
+        (item) => item.dedupeKey === `quota-wait-resume:${wait.waitId}`,
+      );
+      if (existing) {
+        this.outbox.set(existing.id, immutable(clone({
+          ...existing,
+          state: "pending" as const,
+          deliveryToken: null,
+          claimedAt: null,
+          deliveredAt: null,
+          availableAt: wait.eligibleAt ?? recordedAt,
+        })));
+        continue;
+      }
+      this.outbox.set(id, immutable({
+        id,
+        workspaceId: wait.workspaceId,
+        runId: wait.runId,
+        generation: run.nextEventSequence,
+        dedupeKey: `quota-wait-resume:${wait.waitId}`,
+        state: "pending",
+        deliveryToken: null,
+        deliveryAttempts: 0,
+        availableAt: wait.eligibleAt ?? recordedAt,
+        claimedAt: null,
+        deliveredAt: null,
+        createdAt: recordedAt,
+      }));
+    }
+  }
+
+  private async commitQuotaClaim(
+    plan: import("../quotas/types").QuotaClaimPlan | null | undefined,
+    input: { workspaceId: string; runId: string },
+  ): Promise<QuotaClaimCommitResult | null> {
+    if (!plan) return null;
+    if (
+      !this.quotaWriter ||
+      plan.workspaceId !== input.workspaceId ||
+      plan.runId !== input.runId
+    ) return { kind: "unavailable" };
+    return this.quotaWriter.commitClaim(plan);
+  }
+
+  private async commitQuotaClaimsAtomically(
+    plans: import("../quotas/types").QuotaClaimPlan[],
+    input: { workspaceId: string; runId: string },
+  ) {
+    if (
+      !this.quotaWriter ||
+      plans.some((plan) => plan.workspaceId !== input.workspaceId || plan.runId !== input.runId)
+    ) return null;
+    return this.quotaWriter.commitClaimsAtomically(plans);
+  }
+
+  private async commitQuotaTransitions(
+    plans: QuotaTransitionPlan[] | undefined,
+    input: { workspaceId: string },
+    token?: MemoryTransactionToken,
+    stagedOutboxUpdates?: Array<{ wait: QuotaEligibleWaitRef; recordedAt: Date }>,
+  ): Promise<boolean> {
+    if (!plans?.length) return true;
+    if (
+      !this.quotaWriter ||
+      plans.some((plan) => plan.workspaceId !== input.workspaceId)
+    ) return false;
+    for (const plan of plans) {
+      const result = await this.quotaWriter.commitTransition(plan, token);
+      if (result.kind !== "created" && result.kind !== "replayed") return false;
+      const updates = result.newlyEligibleWaits.map((wait) => ({
+        wait,
+        recordedAt: plan.recordedAt,
+      }));
+      if (stagedOutboxUpdates) stagedOutboxUpdates.push(...updates);
+      else this.applyQuotaWaitOutboxUpdates(updates);
+    }
+    return true;
+  }
+
+  private async commitQuotaUsageReconciliations(
+    plans: QuotaUsageReconciliationPlan[] | undefined,
+    input: { workspaceId: string },
+    token?: MemoryTransactionToken,
+  ): Promise<boolean> {
+    if (!plans?.length) return true;
+    if (!this.quotaWriter || plans.some((plan) => plan.workspaceId !== input.workspaceId)) {
+      return false;
+    }
+    for (const plan of plans) {
+      const result = await this.quotaWriter.commitUsageReconciliation(plan, token);
+      if (result.kind !== "created" && result.kind !== "replayed") return false;
+    }
+    return true;
+  }
 
   private async appendUsage(
     plan: UsageLedgerAppendPlan | null | undefined,
@@ -102,6 +277,7 @@ export class InMemoryWorkflowRunRepository
   private async appendBudgetSettlement(
     plan: import("../budgets/types").BudgetSettlementPlan | null | undefined,
     attempt: WorkflowStepAttemptRecord,
+    token?: MemoryTransactionToken,
   ): Promise<boolean> {
     if (!plan) return true;
     if (
@@ -110,7 +286,7 @@ export class InMemoryWorkflowRunRepository
       plan.runId !== attempt.runId ||
       plan.stepAttemptId !== attempt.id
     ) return false;
-    const result = await this.budgetWriter.commitSettlement(plan);
+    const result = await this.budgetWriter.commitSettlement(plan, token);
     return result === "created" || result === "replayed";
   }
 
@@ -127,6 +303,7 @@ export class InMemoryWorkflowRunRepository
     usagePlan: UsageLedgerAppendPlan | null | undefined,
     attributionPlan: UsageAttributionAppendPlan | null | undefined,
     attempt: WorkflowStepAttemptRecord,
+    token?: MemoryTransactionToken,
   ): Promise<boolean> {
     if (!usagePlan && !attributionPlan) return true;
     if (!this.usageWriter) return false;
@@ -145,8 +322,74 @@ export class InMemoryWorkflowRunRepository
         attributionPlan.event.effectKey !== attempt.effectKey
       ))
     ) return false;
-    const result = await this.usageWriter.appendBundle({ usagePlan, attributionPlan });
+    const result = await this.usageWriter.appendBundle({ usagePlan, attributionPlan }, token);
     return result === "created" || result === "replayed";
+  }
+
+  private async commitProviderAccounting(input: {
+    attempt: WorkflowStepAttemptRecord;
+    usagePlan?: UsageLedgerAppendPlan | null;
+    attributionPlan?: UsageAttributionAppendPlan | null;
+    budgetSettlementPlan?: import("../budgets/types").BudgetSettlementPlan | null;
+    quotaUsageReconciliationPlans?: QuotaUsageReconciliationPlan[];
+    quotaTransitionPlans?: QuotaTransitionPlan[];
+    workspaceId: string;
+  }): Promise<boolean> {
+    const requiredWriters = [
+      input.usagePlan || input.attributionPlan ? this.usageWriter : undefined,
+      input.budgetSettlementPlan ? this.budgetWriter : undefined,
+      input.quotaUsageReconciliationPlans?.length || input.quotaTransitionPlans?.length
+        ? this.quotaWriter
+        : undefined,
+    ].filter((writer) => writer !== undefined);
+    if (requiredWriters.some((writer) => !isMemoryTransactionParticipant(writer))) {
+      return false;
+    }
+    const stagedOutboxUpdates: Array<{ wait: QuotaEligibleWaitRef; recordedAt: Date }> = [];
+    const committed = await this.memoryCoordinator.runExclusive(async (token) => {
+      const checkpoints = this.accountingParticipants.map((participant) => ({
+        participant,
+        state: participant.checkpointMemoryState(token),
+      }));
+      try {
+        const committed =
+          await this.appendUsageBundle(
+            input.usagePlan,
+            input.attributionPlan,
+            input.attempt,
+            token,
+          ) &&
+          await this.appendBudgetSettlement(
+            input.budgetSettlementPlan,
+            input.attempt,
+            token,
+          ) &&
+          await this.commitQuotaUsageReconciliations(
+            input.quotaUsageReconciliationPlans,
+            input,
+            token,
+          ) &&
+          await this.commitQuotaTransitions(
+            input.quotaTransitionPlans,
+            input,
+            token,
+            stagedOutboxUpdates,
+          );
+        if (!committed) {
+          for (const checkpoint of checkpoints.toReversed()) {
+            checkpoint.participant.restoreMemoryState(token, checkpoint.state);
+          }
+        }
+        return committed;
+      } catch (error) {
+        for (const checkpoint of checkpoints.toReversed()) {
+          checkpoint.participant.restoreMemoryState(token, checkpoint.state);
+        }
+        throw error;
+      }
+    });
+    if (committed) this.applyQuotaWaitOutboxUpdates(stagedOutboxUpdates);
+    return committed;
   }
 
   async getMutationReceipt(
@@ -209,14 +452,68 @@ export class InMemoryWorkflowRunRepository
         return { kind: "unavailable" as const };
       }
     }
-    const run = immutable(clone(input.run));
+    const quotaResult = await this.commitQuotaClaim(input.quotaAdmissionPlan, {
+      workspaceId: input.run.workspaceId,
+      runId: input.run.id,
+    });
+    if (quotaResult?.kind === "denied") {
+      return quotaResult.reasonCodes.includes("EMERGENCY_SPEND_SUSPENDED")
+        ? { kind: "unavailable" as const }
+        : {
+            kind: "quota_denied" as const,
+            reasonCodes: quotaResult.reasonCodes,
+            evidence: clone(quotaResult.evidence),
+          };
+    }
+    if (
+      quotaResult &&
+      quotaResult.kind !== "created" &&
+      quotaResult.kind !== "replayed" &&
+      quotaResult.kind !== "wait" &&
+      quotaResult.kind !== "replayed_wait"
+    ) return { kind: "unavailable" as const };
+    const quotaWait =
+      quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait"
+        ? quotaResult.wait
+        : null;
+    if (quotaWait && !input.quotaWaitEventId) {
+      return { kind: "unavailable" as const };
+    }
+    const run = immutable(clone(quotaWait ? {
+      ...input.run,
+      state: "waiting" as const,
+      nextEventSequence: input.run.nextEventSequence + 1,
+      resumeAt: quotaWait.eligibleAt,
+      failureCode: "QUOTA_WAIT",
+      updatedAt: quotaWait.createdAt,
+    } : input.run));
     const event = immutable(clone(input.firstEvent));
     const receipt = immutable(clone(input.receipt));
-    const intent = immutable(clone(input.outboxIntent));
     this.runs.set(compound(run.workspaceId, run.id), run);
-    this.events.set(compound(run.workspaceId, run.id), [event]);
+    this.events.set(compound(run.workspaceId, run.id), quotaWait ? [
+      event,
+      immutable({
+        id: input.quotaWaitEventId!,
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        sequence: input.run.nextEventSequence,
+        type: "run.waiting" as const,
+        data: quotaWaitEventData(quotaWait),
+        occurredAt: quotaWait.createdAt,
+      }),
+    ] : [event]);
     this.receipts.set(receiptKey, receipt);
-    this.outbox.set(intent.id, intent);
+    if (!quotaWait || quotaWait.eligibleAt) {
+      const intent = immutable(clone({
+        ...input.outboxIntent,
+        generation: quotaWait ? input.run.nextEventSequence : input.outboxIntent.generation,
+        dedupeKey: quotaWait
+          ? `workflow-run:${run.workspaceId}:${run.id}:v${input.run.nextEventSequence}:quota-wait`
+          : input.outboxIntent.dedupeKey,
+        availableAt: quotaWait?.eligibleAt ?? input.outboxIntent.availableAt,
+      }));
+      this.outbox.set(intent.id, intent);
+    }
     return {
       kind: "created" as const,
       run: clone(run),
@@ -227,6 +524,10 @@ export class InMemoryWorkflowRunRepository
   async get(input: Parameters<WorkflowRunRepository["get"]>[0]) {
     const run = this.runs.get(compound(input.workspaceId, input.runId));
     return run && run.workflowId === input.workflowId ? clone(run) : null;
+  }
+
+  async getById(input: Parameters<WorkflowRunRepository["getById"]>[0]) {
+    return clone(this.runs.get(compound(input.workspaceId, input.runId)) ?? null);
   }
 
   async listEvents(
@@ -327,6 +628,47 @@ export class InMemoryWorkflowRunRepository
     );
   }
 
+  async enqueueQuotaWaitResumptions(
+    input: Parameters<WorkflowRunRepository["enqueueQuotaWaitResumptions"]>[0],
+  ) {
+    let created = 0;
+    for (const wait of input.waits) {
+      const run = this.runs.get(compound(wait.workspaceId, wait.runId));
+      const id = `quota_resume_${wait.waitId}`;
+      if (!run) continue;
+      const existing = [...this.outbox.values()].find(
+        (item) => item.dedupeKey === `quota-wait-resume:${wait.waitId}`,
+      );
+      if (existing) {
+        this.outbox.set(existing.id, immutable(clone({
+          ...existing,
+          state: "pending" as const,
+          deliveryToken: null,
+          claimedAt: null,
+          deliveredAt: null,
+          availableAt: wait.eligibleAt ?? input.enqueuedAt,
+        })));
+        continue;
+      }
+      this.outbox.set(id, immutable({
+        id,
+        workspaceId: wait.workspaceId,
+        runId: wait.runId,
+        generation: run.nextEventSequence,
+        dedupeKey: `quota-wait-resume:${wait.waitId}`,
+        state: "pending",
+        deliveryToken: null,
+        deliveryAttempts: 0,
+        availableAt: wait.eligibleAt ?? input.enqueuedAt,
+        claimedAt: null,
+        deliveredAt: null,
+        createdAt: input.enqueuedAt,
+      }));
+      created += 1;
+    }
+    return created;
+  }
+
   async acquireLease(
     input: Parameters<WorkflowRunRepository["acquireLease"]>[0],
   ): Promise<AcquireWorkflowRunLeaseResult> {
@@ -337,6 +679,89 @@ export class InMemoryWorkflowRunRepository
       return { kind: "completed", run: clone(run) };
     }
     if (run.state === "outcome_unknown") return { kind: "unavailable" };
+    if (
+      ((run.state === "accepted" || run.state === "waiting") && input.quotaResumePlan) ||
+      ((run.state === "accepted" || run.state === "waiting" || run.state === "running") && input.quotaConcurrencyPlan) ||
+      (run.state === "waiting" && run.failureCode === "QUOTA_WAIT")
+    ) {
+      let quotaResult: QuotaClaimCommitResult | null;
+      if (input.quotaResumePlan && input.quotaConcurrencyPlan) {
+        const batch = await this.commitQuotaClaimsAtomically(
+          [input.quotaConcurrencyPlan, input.quotaResumePlan],
+          {
+            workspaceId: run.workspaceId,
+            runId: run.id,
+          },
+        );
+        if (!batch) return { kind: "unavailable" };
+        if (batch.kind === "blocked") {
+          const waitId = input.quotaResumePlan.resumesWaitId;
+          const wait = waitId
+            ? await this.quotaWriter?.getWait({ workspaceId: run.workspaceId, waitId })
+            : null;
+          return wait?.state === "waiting"
+            ? { kind: "quota_wait", run: clone(run), wait: clone(wait) }
+            : { kind: "unavailable" };
+        }
+        quotaResult = batch.results.at(-1) ?? null;
+      } else {
+        quotaResult = await this.commitQuotaClaim(input.quotaResumePlan, {
+          workspaceId: run.workspaceId,
+          runId: run.id,
+        });
+        if (
+          (!quotaResult || quotaResult.kind === "created" || quotaResult.kind === "replayed") &&
+          input.quotaConcurrencyPlan
+        ) {
+          quotaResult = await this.commitQuotaClaim(input.quotaConcurrencyPlan, {
+            workspaceId: run.workspaceId,
+            runId: run.id,
+          });
+        }
+      }
+      if (quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait") {
+        if (!input.quotaWaitEventId) return { kind: "unavailable" };
+        const wait = quotaResult.wait;
+        if (
+          quotaResult.kind === "replayed_wait" &&
+          run.state === "waiting" &&
+          run.failureCode === "QUOTA_WAIT" &&
+          (this.events.get(key) ?? []).some((event) => event.data.waitId === wait.id)
+        ) return { kind: "quota_wait", run: clone(run), wait: clone(wait) };
+        const waitingRun = immutable(clone({
+          ...run,
+          state: "waiting" as const,
+          resumeAt: wait.eligibleAt,
+          failureCode: "QUOTA_WAIT",
+          nextEventSequence: run.nextEventSequence + 1,
+          updatedAt: wait.createdAt,
+        }));
+        this.runs.set(key, waitingRun);
+        this.events.set(key, [
+          ...(this.events.get(key) ?? []),
+          immutable({
+            id: input.quotaWaitEventId,
+            workspaceId: run.workspaceId,
+            runId: run.id,
+            sequence: run.nextEventSequence,
+            type: "run.waiting" as const,
+            data: quotaWaitEventData(wait),
+            occurredAt: wait.createdAt,
+          }),
+        ]);
+        if (wait.eligibleAt && input.quotaWaitOutboxIntent) {
+          this.outbox.set(input.quotaWaitOutboxIntent.id, immutable(clone({
+            ...input.quotaWaitOutboxIntent,
+            availableAt: wait.eligibleAt,
+          })));
+        }
+        return { kind: "quota_wait", run: clone(waitingRun), wait: clone(wait) };
+      }
+      if (
+        !quotaResult ||
+        (quotaResult.kind !== "created" && quotaResult.kind !== "replayed")
+      ) return { kind: "busy" };
+    }
     if (
       run.state === "waiting" &&
       run.resumeAt !== null &&
@@ -401,7 +826,13 @@ export class InMemoryWorkflowRunRepository
           runId: run.id,
           sequence: run.nextEventSequence,
           type: "run.resumed",
-          data: { automatic: true },
+          data: input.quotaResumePlan ? {
+            automatic: true,
+            waitId: input.quotaResumePlan.resumesWaitId,
+            reason: input.quotaResumePlan.resumeReason,
+            actor: input.quotaResumePlan.resumeActor,
+            reservationIds: input.quotaResumePlan.reservations.map((item) => item.id),
+          } : { automatic: true },
           occurredAt: input.now,
         }),
       ]);
@@ -460,7 +891,7 @@ export class InMemoryWorkflowRunRepository
     });
   }
 
-  private finish(
+  private async finish(
     input: {
       workspaceId: string;
       runId: string;
@@ -471,13 +902,14 @@ export class InMemoryWorkflowRunRepository
       failedAt?: Date;
       stepEventId?: string;
       runEventId: string;
+      quotaTransitionPlans?: QuotaTransitionPlan[];
     },
     completion: {
       state: "completed" | "failed";
       output: Record<string, unknown> | null;
       failureCode: string | null;
     },
-  ): CompleteWorkflowRunStepResult {
+  ): Promise<CompleteWorkflowRunStepResult> {
     const at = input.completedAt ?? input.failedAt;
     if (!at) return { kind: "unavailable" };
     const key = compound(input.workspaceId, input.runId);
@@ -497,6 +929,9 @@ export class InMemoryWorkflowRunRepository
       lease.expiresAt <= at
     ) {
       return { kind: "stale_fence" };
+    }
+    if (!(await this.commitQuotaTransitions(input.quotaTransitionPlans, input))) {
+      return { kind: "unavailable" };
     }
     const nextRun = immutable(
       clone({
@@ -644,6 +1079,142 @@ export class InMemoryWorkflowRunRepository
     ) {
       return { kind: "conflict" };
     }
+    const quotaPlans = input.quotaClaimPlans ?? [];
+    const quotaBatch = quotaPlans.length
+      ? await this.commitQuotaClaimsAtomically(quotaPlans, {
+          workspaceId: run.workspaceId,
+          runId: run.id,
+        })
+      : null;
+    const blockedBoundary = quotaBatch?.kind === "blocked"
+      ? quotaBatch.blockedPlan.boundary
+      : null;
+    let quotaResult: QuotaClaimCommitResult | null =
+      quotaBatch?.kind === "blocked" ? quotaBatch.result : null;
+    if (quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait") {
+      const blockedWait = quotaResult.wait;
+      const waitPlan = quotaPlans.find(
+        (plan) => plan.transitionKey === blockedWait.transitionKey,
+      );
+      quotaResult = waitPlan
+        ? await this.commitQuotaClaim(waitPlan, {
+            workspaceId: run.workspaceId,
+            runId: run.id,
+          })
+        : { kind: "unavailable" };
+    }
+    if (quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait") {
+      if (!input.quotaWaitEventId) return { kind: "unavailable" };
+      const wait = quotaResult.wait;
+      if (!(await this.commitQuotaTransitions(input.quotaWaitReleasePlans, {
+        workspaceId: run.workspaceId,
+      }))) return { kind: "unavailable" };
+      const waitingRun = immutable(clone({
+        ...run,
+        state: "waiting" as const,
+        resumeAt: wait.eligibleAt,
+        failureCode: "QUOTA_WAIT",
+        nextEventSequence: run.nextEventSequence + 1,
+        updatedAt: wait.createdAt,
+      }));
+      this.runs.set(key, waitingRun);
+      this.leases.set(key, immutable(clone({
+        ...lease,
+        releasedAt: wait.createdAt,
+      })));
+      this.events.set(key, [
+        ...(this.events.get(key) ?? []),
+        immutable({
+          id: input.quotaWaitEventId,
+          workspaceId: run.workspaceId,
+          runId: run.id,
+          sequence: run.nextEventSequence,
+          type: "run.waiting" as const,
+          data: quotaWaitEventData(wait),
+          occurredAt: wait.createdAt,
+        }),
+      ]);
+      if (wait.eligibleAt && input.quotaWaitOutboxIntent) {
+        this.outbox.set(input.quotaWaitOutboxIntent.id, immutable(clone({
+          ...input.quotaWaitOutboxIntent,
+          availableAt: wait.eligibleAt,
+        })));
+      }
+      return { kind: "quota_wait", run: clone(waitingRun), wait: clone(wait) };
+    }
+    if (quotaResult?.kind === "denied") {
+      if (blockedBoundary !== "provider_effect" && blockedBoundary !== "usage_settlement") {
+        return { kind: "unavailable" };
+      }
+      const missingUsagePolicy =
+        quotaResult.reasonCodes.includes("QUOTA_POLICY_UNAVAILABLE") &&
+        blockedBoundary === "usage_settlement";
+      if (missingUsagePolicy) {
+        if (!input.quotaPolicyUnavailableEventId) return { kind: "unavailable" };
+        const failedAt = input.attempt.startedAt;
+        const failedRun = immutable(clone({
+          ...run,
+          state: "failed" as const,
+          output: null,
+          finalSnapshot: null,
+          finalSnapshotDigest: null,
+          failureCode: "QUOTA_USAGE_CEILING_UNAVAILABLE",
+          resumeAt: null,
+          nextEventSequence: run.nextEventSequence + 1,
+          completedAt: failedAt,
+          updatedAt: failedAt,
+        }));
+        this.runs.set(key, failedRun);
+        this.events.set(key, [
+          ...(this.events.get(key) ?? []),
+          immutable({
+            id: input.quotaPolicyUnavailableEventId,
+            workspaceId: run.workspaceId,
+            runId: run.id,
+            sequence: run.nextEventSequence,
+            type: "run.failed" as const,
+            data: {
+              reasonCode: "QUOTA_USAGE_CEILING_UNAVAILABLE",
+              quotaBoundary: "usage_settlement",
+            },
+            occurredAt: failedAt,
+          }),
+        ]);
+        this.leases.set(key, immutable(clone({ ...lease, releasedAt: failedAt })));
+        return {
+          kind: "effect_blocked",
+          run: clone(failedRun),
+          reasonCode: "QUOTA_POLICY_UNAVAILABLE",
+          blockedBoundary: "usage_settlement",
+        };
+      }
+      this.leases.set(key, immutable(clone({ ...lease, releasedAt: input.attempt.startedAt })));
+      if (input.quotaWaitOutboxIntent) {
+        const dedupeKey = `spend-suspension-retry:${run.id}:${run.nextEventSequence}`;
+        const existing = [...this.outbox.values()].find((item) => item.dedupeKey === dedupeKey);
+        const intent = existing ?? input.quotaWaitOutboxIntent;
+        this.outbox.set(intent.id, immutable(clone({
+          ...intent,
+          dedupeKey,
+          state: "pending" as const,
+          deliveryToken: null,
+          claimedAt: null,
+          deliveredAt: null,
+          availableAt: new Date(input.attempt.startedAt.getTime() + 30_000),
+        })));
+      }
+      return {
+        kind: "effect_blocked",
+        run: clone(run),
+        reasonCode: quotaResult.reasonCodes[0] ?? "QUOTA_POLICY_UNAVAILABLE",
+        blockedBoundary,
+      };
+    }
+    if (
+      quotaResult &&
+      quotaResult.kind !== "created" &&
+      quotaResult.kind !== "replayed"
+    ) return { kind: "unavailable" };
     if (!(await this.appendBudgetAttemptAllocation(input.budgetAttemptAllocation))) {
       return { kind: "unavailable" };
     }
@@ -719,6 +1290,9 @@ export class InMemoryWorkflowRunRepository
       if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
         return { kind: "unavailable" };
       }
+      if (!(await this.commitQuotaTransitions(input.quotaTransitionPlans, input))) {
+        return { kind: "unavailable" };
+      }
       return {
         kind: "settled",
         run: clone(run),
@@ -742,6 +1316,9 @@ export class InMemoryWorkflowRunRepository
       return { kind: "unavailable" };
     }
     if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+      return { kind: "unavailable" };
+    }
+    if (!(await this.commitQuotaTransitions(input.quotaTransitionPlans, input))) {
       return { kind: "unavailable" };
     }
     const completedAttempt = immutable(
@@ -878,19 +1455,19 @@ export class InMemoryWorkflowRunRepository
       return { kind: "unavailable" };
     }
     if (attempt.outcome?.kind === "succeeded") {
-      if (!(await this.appendUsage(input.usagePlan, attempt))) {
-        return { kind: "unavailable" };
-      }
-      if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+      if (!(await this.commitProviderAccounting({
+        ...input,
+        attempt,
+      }))) {
         return { kind: "unavailable" };
       }
       return { kind: "settled", run: clone(run), attempt: clone(attempt) };
     }
     if (!input.usagePlan) return { kind: "unavailable" };
-    if (!(await this.appendUsage(input.usagePlan, attempt))) {
-      return { kind: "unavailable" };
-    }
-    if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+    if (!(await this.commitProviderAccounting({
+      ...input,
+      attempt,
+    }))) {
       return { kind: "unavailable" };
     }
     const recorded = immutable(
@@ -934,10 +1511,10 @@ export class InMemoryWorkflowRunRepository
       attempt.failureCode === input.failureCode &&
       run.failureCode === input.failureCode
     ) {
-      if (!(await this.appendUsage(input.usagePlan, attempt))) {
-        return { kind: "unavailable" };
-      }
-      if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+      if (!(await this.commitProviderAccounting({
+        ...input,
+        attempt,
+      }))) {
         return { kind: "unavailable" };
       }
       return {
@@ -963,10 +1540,10 @@ export class InMemoryWorkflowRunRepository
     ) {
       return { kind: "stale_fence" };
     }
-    if (!(await this.appendUsage(input.usagePlan, attempt))) {
-      return { kind: "unavailable" };
-    }
-    if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+    if (!(await this.commitProviderAccounting({
+      ...input,
+      attempt,
+    }))) {
       return { kind: "unavailable" };
     }
     const failedAttempt = immutable(
@@ -1120,10 +1697,10 @@ export class InMemoryWorkflowRunRepository
     if (!input.usagePlan && attempt.outcome?.kind !== "succeeded") {
       return { kind: "unavailable" };
     }
-    if (!(await this.appendUsage(input.usagePlan, attempt))) {
-      return { kind: "unavailable" };
-    }
-    if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+    if (!(await this.commitProviderAccounting({
+      ...input,
+      attempt,
+    }))) {
       return { kind: "unavailable" };
     }
     const unknownAttempt = immutable(
@@ -1219,7 +1796,7 @@ export class InMemoryWorkflowRunRepository
         ? { kind: "replayed" as const, run: clone(run), receipt: clone(existing) }
         : { kind: "unavailable" as const };
     }
-    const run = immutable(clone(input.run));
+    let run = immutable(clone(input.run));
     if (input.budgetAdmissionPlan) {
       if (
         !this.budgetWriter ||
@@ -1232,10 +1809,52 @@ export class InMemoryWorkflowRunRepository
         return { kind: "unavailable" as const };
       }
     }
+    const quotaResult = await this.commitQuotaClaim(input.quotaAdmissionPlan, {
+      workspaceId: run.workspaceId,
+      runId: run.id,
+    });
+    if (quotaResult?.kind === "denied") {
+      return quotaResult.reasonCodes.includes("EMERGENCY_SPEND_SUSPENDED")
+        ? { kind: "unavailable" as const }
+        : {
+            kind: "quota_denied" as const,
+            reasonCodes: quotaResult.reasonCodes,
+            evidence: clone(quotaResult.evidence),
+          };
+    }
+    if (
+      quotaResult && quotaResult.kind !== "created" && quotaResult.kind !== "replayed" &&
+      quotaResult.kind !== "wait" && quotaResult.kind !== "replayed_wait"
+    ) return { kind: "unavailable" as const };
+    const wait = quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait"
+      ? quotaResult.wait
+      : null;
+    if (wait && !input.quotaWaitEventId) return { kind: "unavailable" as const };
+    if (wait) {
+      run = immutable(clone({
+        ...run,
+        state: "waiting" as const,
+        nextEventSequence: run.nextEventSequence + 1,
+        resumeAt: wait.eligibleAt,
+        failureCode: "QUOTA_WAIT",
+        updatedAt: wait.createdAt,
+      }));
+    }
     this.runs.set(compound(run.workspaceId, run.id), run);
     this.events.set(
       compound(run.workspaceId, run.id),
-      input.events.map((event) => immutable(clone(event))),
+      [
+        ...input.events.map((event) => immutable(clone(event))),
+        ...(wait ? [immutable({
+          id: input.quotaWaitEventId!,
+          workspaceId: run.workspaceId,
+          runId: run.id,
+          sequence: input.run.nextEventSequence,
+          type: "run.waiting" as const,
+          data: quotaWaitEventData(wait),
+          occurredAt: wait.createdAt,
+        })] : []),
+      ],
     );
     const receipt = immutable(
       clone({
@@ -1247,10 +1866,16 @@ export class InMemoryWorkflowRunRepository
       }),
     );
     this.receipts.set(receiptKey, receipt);
-    this.outbox.set(
-      input.outboxIntent.id,
-      immutable(clone(input.outboxIntent)),
-    );
+    if (!wait || wait.eligibleAt) {
+      this.outbox.set(input.outboxIntent.id, immutable(clone({
+        ...input.outboxIntent,
+        generation: wait ? input.run.nextEventSequence : input.outboxIntent.generation,
+        dedupeKey: wait
+          ? `workflow-run:${run.workspaceId}:${run.id}:v${input.run.nextEventSequence}:quota-wait`
+          : input.outboxIntent.dedupeKey,
+        availableAt: wait?.eligibleAt ?? input.outboxIntent.availableAt,
+      })));
+    }
     return {
       kind: "created" as const,
       run: clone(run),
@@ -1264,7 +1889,7 @@ export class InMemoryWorkflowRunRepository
     const receiptKey = compound(
       input.workspaceId,
       input.principalId,
-      "workflow_runs.resume@1",
+      input.receipt.capability,
       input.idempotencyKey,
     );
     const existing = this.receipts.get(receiptKey);
@@ -1294,10 +1919,20 @@ export class InMemoryWorkflowRunRepository
     ) {
       return { kind: "unavailable" as const };
     }
+    if (run.failureCode === "QUOTA_WAIT") {
+      const quotaResult = await this.commitQuotaClaim(input.quotaResumePlan, {
+        workspaceId: run.workspaceId,
+        runId: run.id,
+      });
+      if (
+        !quotaResult ||
+        (quotaResult.kind !== "created" && quotaResult.kind !== "replayed")
+      ) return { kind: "unavailable" as const };
+    }
     const resumed = immutable(
       clone({
         ...run,
-        state: "running" as const,
+        state: run.startedAt === null ? "accepted" as const : "running" as const,
         resumeAt: null,
         failureCode: null,
         nextEventSequence: run.nextEventSequence + 1,
@@ -1313,7 +1948,11 @@ export class InMemoryWorkflowRunRepository
         runId: input.runId,
         sequence: run.nextEventSequence,
         type: "run.resumed",
-        data: {},
+        data: input.quotaResumePlan ? {
+          waitId: input.quotaResumePlan.resumesWaitId,
+          reason: input.quotaResumePlan.resumeReason,
+          reservationIds: input.quotaResumePlan.reservations.map((item) => item.id),
+        } : {},
         occurredAt: input.resumedAt,
       }),
     ]);
@@ -1336,6 +1975,78 @@ export class InMemoryWorkflowRunRepository
       run: clone(resumed),
       receipt: clone(receipt),
     };
+  }
+
+  async resumeQuotaWait(
+    input: Parameters<WorkflowRunRepository["resumeQuotaWait"]>[0],
+  ) {
+    const previous = this.resumeQuotaWaitTail;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    this.resumeQuotaWaitTail = previous.then(() => current);
+    await previous;
+    try {
+    const key = compound(input.workspaceId, input.runId);
+    const run = this.runs.get(key);
+    const waitEvent = (this.events.get(key) ?? []).find(
+      (event) => event.sequence === input.waitEventSequence &&
+        event.type === "run.waiting" &&
+        event.data.waitId === input.quotaResumePlan.resumesWaitId,
+    );
+    if (!run || run.workflowId !== input.workflowId || !waitEvent) {
+      return { kind: "unavailable" as const };
+    }
+    if (run.state !== "waiting" || run.failureCode !== "QUOTA_WAIT") {
+      const waitId = input.quotaResumePlan.resumesWaitId;
+      const winningWait = waitId && this.quotaWriter
+        ? await this.quotaWriter.getWait({ workspaceId: input.workspaceId, waitId })
+        : null;
+      return winningWait?.state === "resumed" &&
+        sameQuotaResumeActor(winningWait.resumedBy, input.quotaResumePlan.resumeActor) &&
+        winningWait.resumeIdempotencyKey !== null &&
+        winningWait.resumeIdempotencyKey === input.quotaResumePlan.resumeIdempotencyKey
+        ? { kind: "replayed" as const, run: clone(run) }
+        : { kind: "unavailable" as const };
+    }
+    const quotaResult = await this.commitQuotaClaim(input.quotaResumePlan, {
+      workspaceId: run.workspaceId,
+      runId: run.id,
+    });
+    if (
+      !quotaResult ||
+      (quotaResult.kind !== "created" && quotaResult.kind !== "replayed")
+    ) return { kind: "unavailable" as const };
+    const resumed = immutable(clone({
+      ...run,
+      state: run.startedAt === null ? "accepted" as const : "running" as const,
+      resumeAt: null,
+      failureCode: null,
+      nextEventSequence: run.nextEventSequence + 1,
+      updatedAt: input.resumedAt,
+    }));
+    this.runs.set(key, resumed);
+    this.events.set(key, [...(this.events.get(key) ?? []), immutable({
+      id: input.eventId,
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      sequence: run.nextEventSequence,
+      type: "run.resumed" as const,
+      data: {
+        automatic: false,
+        waitId: input.quotaResumePlan.resumesWaitId,
+        reason: input.quotaResumePlan.resumeReason,
+        actor: input.quotaResumePlan.resumeActor,
+        reservationIds: input.quotaResumePlan.reservations.map((item) => item.id),
+      },
+      occurredAt: input.resumedAt,
+    })]);
+    if (![...this.outbox.values()].some((item) => item.dedupeKey === input.outboxIntent.dedupeKey)) {
+      this.outbox.set(input.outboxIntent.id, immutable(clone(input.outboxIntent)));
+    }
+    return { kind: quotaResult.kind === "replayed" ? "replayed" as const : "resumed" as const, run: clone(resumed) };
+    } finally {
+      release();
+    }
   }
 
   async reconcileStepAttempt(
@@ -1585,14 +2296,11 @@ export class InMemoryWorkflowRunRepository
         updatedAt: input.occurredAt,
       }));
     }
-    if (!(await this.appendUsageBundle(
-      input.usagePlan,
-      input.usageAttributionPlan,
+    if (!(await this.commitProviderAccounting({
+      ...input,
       attempt,
-    ))) {
-      return { kind: "unavailable" as const };
-    }
-    if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+      attributionPlan: input.usageAttributionPlan,
+    }))) {
       return { kind: "unavailable" as const };
     }
     if (input.resolution.outboxIntent) {

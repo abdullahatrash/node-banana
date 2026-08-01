@@ -48,6 +48,13 @@ describe("Workflow Run public schemas", () => {
     ]) {
       expect(registration(identity.name, identity.version).effect)
         .toMatchObject({ maySpendProviderBudget: true });
+      expect(registration(identity.name, identity.version).errors).toContainEqual(
+        expect.objectContaining({
+          code: "QUOTA_EXCEEDED",
+          category: "authorization",
+          retryable: false,
+        }),
+      );
     }
   });
 
@@ -81,8 +88,12 @@ describe("Workflow Run public schemas", () => {
         "effectKeySupport",
         "observation",
         "launchSafety",
+        "usageCeilings",
       ]),
     );
+    expect(
+      pinned.properties.providerResolutions.items.properties.usageCeilings.items.required,
+    ).toEqual(["dimension", "unit", "maximumQuantity"]);
   });
 
   it("publishes exact normalized provider metadata", () => {

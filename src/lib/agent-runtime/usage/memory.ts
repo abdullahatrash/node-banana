@@ -9,6 +9,12 @@ import type {
   UsageRepository,
   ValuationListFilters,
 } from "./types";
+import {
+  MEMORY_TRANSACTION_PARTICIPANT,
+  MemoryTransactionCoordinator,
+  type MemoryTransactionParticipant,
+  type MemoryTransactionToken,
+} from "../memory-transaction";
 
 function copy<T>(value: T): T {
   return structuredClone(value);
@@ -27,13 +33,67 @@ function beforePosition(
     (at.getTime() === before.recordedAt.getTime() && id < before.id);
 }
 
-export class InMemoryUsageRepository implements UsageRepository {
+export class InMemoryUsageRepository
+  implements UsageRepository, MemoryTransactionParticipant
+{
+  readonly [MEMORY_TRANSACTION_PARTICIPANT] = true as const;
+  private memoryCoordinator = new MemoryTransactionCoordinator();
   readonly usageRecords = new Map<string, UsageRecord>();
   readonly valuations = new Map<string, CostValuation>();
   readonly pricingSnapshots = new Map<string, PricingSnapshot>();
   readonly meteringEvents = new Map<string, UsageMeteringEvent>();
   readonly attributions = new Map<string, UsageArtifactAttribution>();
   readonly receipts = new Map<string, string>();
+
+  attachMemoryTransactionCoordinator(coordinator: MemoryTransactionCoordinator): void {
+    this.memoryCoordinator = coordinator;
+  }
+
+  checkpointMemoryState(token: MemoryTransactionToken): unknown {
+    if (!this.memoryCoordinator.isActive(token)) throw new TypeError("Inactive memory transaction.");
+    return structuredClone({
+      usageRecords: this.usageRecords,
+      valuations: this.valuations,
+      pricingSnapshots: this.pricingSnapshots,
+      meteringEvents: this.meteringEvents,
+      attributions: this.attributions,
+      receipts: this.receipts,
+    });
+  }
+
+  restoreMemoryState(token: MemoryTransactionToken, state: unknown): void {
+    if (!this.memoryCoordinator.isActive(token)) throw new TypeError("Inactive memory transaction.");
+    const snapshot = state as ReturnType<InMemoryUsageRepository["memoryState"]>;
+    for (const [target, source] of [
+      [this.usageRecords, snapshot.usageRecords],
+      [this.valuations, snapshot.valuations],
+      [this.pricingSnapshots, snapshot.pricingSnapshots],
+      [this.meteringEvents, snapshot.meteringEvents],
+      [this.attributions, snapshot.attributions],
+      [this.receipts, snapshot.receipts],
+    ] as Array<[Map<unknown, unknown>, Map<unknown, unknown>]>) {
+      target.clear();
+      for (const [key, value] of source) target.set(key, value);
+    }
+  }
+
+  private memoryState() {
+    return {
+      usageRecords: new Map(this.usageRecords), valuations: new Map(this.valuations),
+      pricingSnapshots: new Map(this.pricingSnapshots), meteringEvents: new Map(this.meteringEvents),
+      attributions: new Map(this.attributions), receipts: new Map(this.receipts),
+    };
+  }
+
+  private withAuthority<T>(
+    token: MemoryTransactionToken | undefined,
+    operation: (activeToken: MemoryTransactionToken) => Promise<T> | T,
+  ): Promise<T> {
+    return this.memoryCoordinator.isActive(token)
+      ? Promise.resolve(operation(token!))
+      : this.memoryCoordinator.runExclusive((activeToken) =>
+          Promise.resolve(operation(activeToken)));
+  }
 
   private append(input: {
     receiptId: string;
@@ -97,19 +157,23 @@ export class InMemoryUsageRepository implements UsageRepository {
     return "created";
   }
 
-  async appendSettlement(input: Parameters<UsageRepository["appendSettlement"]>[0]) {
-    return this.append({ ...input, receiptId: input.settlementId });
+  async appendSettlement(input: Parameters<UsageRepository["appendSettlement"]>[0], token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.append({ ...input, receiptId: input.settlementId }));
   }
 
-  async appendPlan(input: Parameters<UsageRepository["appendPlan"]>[0]) {
-    return this.append({ ...input, receiptId: input.receiptId });
+  async appendPlan(input: Parameters<UsageRepository["appendPlan"]>[0], token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.append({ ...input, receiptId: input.receiptId }));
   }
 
-  async appendCorrection(input: Parameters<UsageRepository["appendCorrection"]>[0]) {
-    return this.append({ ...input, receiptId: input.correctionId });
+  async appendCorrection(input: Parameters<UsageRepository["appendCorrection"]>[0], token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.append({ ...input, receiptId: input.correctionId }));
   }
 
-  async appendAttribution(input: Parameters<UsageRepository["appendAttribution"]>[0]) {
+  async appendAttribution(input: Parameters<UsageRepository["appendAttribution"]>[0], token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.appendAttributionUnlocked(input));
+  }
+
+  private appendAttributionUnlocked(input: Parameters<UsageRepository["appendAttribution"]>[0]) {
     const found = this.receipts.get(input.attributionId);
     if (found) return found === input.requestDigest ? "replayed" as const : "conflict" as const;
     const records = [...this.usageRecords.values()].filter(
@@ -138,7 +202,7 @@ export class InMemoryUsageRepository implements UsageRepository {
     return "created" as const;
   }
 
-  appendAttributionPlan(input: Parameters<UsageRepository["appendAttributionPlan"]>[0]) {
+  appendAttributionPlan(input: Parameters<UsageRepository["appendAttributionPlan"]>[0], token?: MemoryTransactionToken) {
     return this.appendAttribution({
       attributionId: input.receiptId,
       requestDigest: input.requestDigest,
@@ -146,13 +210,21 @@ export class InMemoryUsageRepository implements UsageRepository {
       artifactId: input.artifactId,
       attribution: input.attribution,
       event: input.event,
-    });
+    }, token);
   }
 
   async appendBundle(input: {
     usagePlan?: Parameters<UsageRepository["appendPlan"]>[0] | null;
     attributionPlan?: Parameters<UsageRepository["appendAttributionPlan"]>[0] | null;
-  }) {
+  }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, (activeToken) =>
+      this.appendBundleUnlocked(input, activeToken));
+  }
+
+  private async appendBundleUnlocked(input: {
+    usagePlan?: Parameters<UsageRepository["appendPlan"]>[0] | null;
+    attributionPlan?: Parameters<UsageRepository["appendAttributionPlan"]>[0] | null;
+  }, token?: MemoryTransactionToken) {
     const snapshot = {
       usageRecords: new Map(this.usageRecords),
       valuations: new Map(this.valuations),
@@ -177,7 +249,7 @@ export class InMemoryUsageRepository implements UsageRepository {
     };
     let created = false;
     if (input.usagePlan) {
-      const result = await this.appendPlan(input.usagePlan);
+      const result = await this.appendPlan(input.usagePlan, token);
       if (result === "conflict") {
         restore();
         return result;
@@ -185,7 +257,7 @@ export class InMemoryUsageRepository implements UsageRepository {
       created ||= result === "created";
     }
     if (input.attributionPlan) {
-      const result = await this.appendAttributionPlan(input.attributionPlan);
+      const result = await this.appendAttributionPlan(input.attributionPlan, token);
       if (result !== "created" && result !== "replayed") {
         restore();
         return result;
@@ -196,16 +268,18 @@ export class InMemoryUsageRepository implements UsageRepository {
   }
 
   async getUsageRecord(workspaceId: string, id: string) {
-    const found = this.usageRecords.get(id);
-    if (found?.binding.workspaceId !== workspaceId) return null;
-    const attribution = [...this.attributions.values()].find(
-      (value) => value.settlementId === found.settlementId,
-    );
-    return { ...copy(found), directArtifactId: attribution?.artifactId ?? null };
+    return this.withAuthority(undefined, () => {
+      const found = this.usageRecords.get(id);
+      if (found?.binding.workspaceId !== workspaceId) return null;
+      const attribution = [...this.attributions.values()].find(
+        (value) => value.settlementId === found.settlementId,
+      );
+      return { ...copy(found), directArtifactId: attribution?.artifactId ?? null };
+    });
   }
 
   async listUsageRecords(workspaceId: string, filters: UsageListFilters = {}) {
-    return [...this.usageRecords.values()]
+    return this.withAuthority(undefined, () => [...this.usageRecords.values()]
       .filter((record) =>
         record.binding.workspaceId === workspaceId &&
         (!filters.runId || record.binding.runId === filters.runId) &&
@@ -223,16 +297,18 @@ export class InMemoryUsageRepository implements UsageRepository {
         return { ...copy(record), directArtifactId: attribution?.artifactId ?? null };
       })
       .filter((record) => !filters.artifactId || record.directArtifactId === filters.artifactId)
-      .slice(0, filters.limit ?? Number.MAX_SAFE_INTEGER);
+      .slice(0, filters.limit ?? Number.MAX_SAFE_INTEGER));
   }
 
   async getCostValuation(workspaceId: string, id: string) {
-    const found = this.valuations.get(id);
-    return found?.workspaceId === workspaceId ? copy(found) : null;
+    return this.withAuthority(undefined, () => {
+      const found = this.valuations.get(id);
+      return found?.workspaceId === workspaceId ? copy(found) : null;
+    });
   }
 
   async listCostValuations(workspaceId: string, filters: ValuationListFilters = {}) {
-    return [...this.valuations.values()]
+    return this.withAuthority(undefined, () => [...this.valuations.values()]
       .filter((value) =>
         value.workspaceId === workspaceId &&
         (!filters.usageRecordId || value.usageRecordIds.includes(filters.usageRecordId)) &&
@@ -244,11 +320,11 @@ export class InMemoryUsageRepository implements UsageRepository {
         beforePosition(value.recordedAt, value.id, filters.before))
       .sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime() || b.id.localeCompare(a.id))
       .slice(0, filters.limit ?? Number.MAX_SAFE_INTEGER)
-      .map(copy);
+      .map(copy));
   }
 
   async listMeteringEvents(workspaceId: string, filters: MeteringEventListFilters = {}) {
-    return [...this.meteringEvents.values()]
+    return this.withAuthority(undefined, () => [...this.meteringEvents.values()]
       .filter((event) => event.workspaceId === workspaceId &&
         (!filters.principalId || event.principalId === filters.principalId) &&
         (!filters.types?.length || filters.types.includes(event.type)) &&
@@ -256,11 +332,11 @@ export class InMemoryUsageRepository implements UsageRepository {
         beforePosition(event.occurredAt, event.id, filters.before))
       .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime() || b.id.localeCompare(a.id))
       .slice(0, filters.limit ?? Number.MAX_SAFE_INTEGER)
-      .map(copy);
+      .map(copy));
   }
 
   async findPricingSnapshots(input: Parameters<UsageRepository["findPricingSnapshots"]>[0]) {
-    return [...this.pricingSnapshots.values()].filter((snapshot) =>
+    return this.withAuthority(undefined, () => [...this.pricingSnapshots.values()].filter((snapshot) =>
       snapshot.workspaceId === input.workspaceId &&
       snapshot.source === "workspace_override" &&
       snapshot.provider === input.provider &&
@@ -273,16 +349,16 @@ export class InMemoryUsageRepository implements UsageRepository {
         b.recordedAt.getTime() - a.recordedAt.getTime() ||
         b.id.localeCompare(a.id),
       )
-      .map(copy);
+      .map(copy));
   }
 
   async getSettlementRecords(workspaceId: string, settlementId: string) {
-    return [...this.usageRecords.values()].filter((record) =>
-      record.binding.workspaceId === workspaceId && record.settlementId === settlementId).map(copy);
+    return this.withAuthority(undefined, () => [...this.usageRecords.values()].filter((record) =>
+      record.binding.workspaceId === workspaceId && record.settlementId === settlementId).map(copy));
   }
 
   async getSettlementValuations(workspaceId: string, settlementId: string) {
-    return [...this.valuations.values()].filter((value) =>
-      value.workspaceId === workspaceId && value.settlementId === settlementId).map(copy);
+    return this.withAuthority(undefined, () => [...this.valuations.values()].filter((value) =>
+      value.workspaceId === workspaceId && value.settlementId === settlementId).map(copy));
   }
 }

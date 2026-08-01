@@ -259,6 +259,12 @@ export function CostDialog({ predictedCost, incurredCost, onClose }: CostDialogP
             >
               Manage Budgets
             </a>
+            <a
+              href="/studio/quotas"
+              className="ml-4 mt-2 inline-block text-xs text-sky-400 hover:text-sky-300"
+            >
+              Manage Quotas
+            </a>
 
             {incurredCost > 0 && (
               <button

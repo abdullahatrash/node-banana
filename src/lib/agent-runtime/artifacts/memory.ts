@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { QuotaCommitWriter } from "../quotas/types";
 import type {
   ArtifactAuditEventRecord,
   ArtifactCommitResult,
@@ -12,9 +13,11 @@ import type {
   ArtifactMutationReceiptRecord,
   ArtifactRecord,
   ArtifactRepository,
+  ArtifactStorageQuotaCommitPlan,
   ArtifactUploadHandoff,
   ArtifactUploadRecord,
 } from "./types";
+import { storageQuotaPlanMatchesArtifact } from "./storage-quota";
 
 function receiptKey(receipt: {
   workspaceId: string;
@@ -90,6 +93,55 @@ export class InMemoryArtifactRepository implements ArtifactRepository {
   readonly auditEvents: ArtifactAuditEventRecord[] = [];
   failNextCommit = false;
   failNextAudit = false;
+  private mutationTail: Promise<void> = Promise.resolve();
+
+  constructor(private readonly quotaWriter?: QuotaCommitWriter) {}
+
+  private async withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutationTail;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.mutationTail = previous.then(() => current);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private async commitStorageQuota(
+    plan: ArtifactStorageQuotaCommitPlan | null,
+    artifact: ArtifactRecord,
+    runId: string | null,
+  ): Promise<ArtifactCommitResult | null> {
+    if (!plan) {
+      return this.quotaWriter && artifact.sizeBytes > 0
+        ? { kind: "unavailable" }
+        : null;
+    }
+    if (!this.quotaWriter) return { kind: "unavailable" };
+    if (!storageQuotaPlanMatchesArtifact({ plan, artifact, runId })) {
+      return { kind: "unavailable" };
+    }
+    const claim = await this.quotaWriter.commitClaim(plan.claim);
+    if (claim.kind === "denied") {
+      return {
+        kind: "quota_denied",
+        reasonCodes: claim.reasonCodes,
+        evidence: claim.evidence,
+      };
+    }
+    if (claim.kind !== "created" && claim.kind !== "replayed") {
+      return { kind: "unavailable" };
+    }
+    const settlement = await this.quotaWriter.commitTransition(plan.settle);
+    return settlement.kind === "created" || settlement.kind === "replayed"
+      ? null
+      : { kind: "unavailable" };
+  }
 
   async readMutationReceipt(
     input: Parameters<ArtifactRepository["readMutationReceipt"]>[0],
@@ -120,21 +172,29 @@ export class InMemoryArtifactRepository implements ArtifactRepository {
   async commitTextImport(
     input: Parameters<ArtifactRepository["commitTextImport"]>[0],
   ): Promise<ArtifactCommitResult> {
-    const replay = this.existingReceipt(input.receipt);
-    if (replay) return replay;
-    if (this.failCommit()) return { kind: "unavailable" };
-    this.contents.set(
-      contentKey(input.content.workspaceId, input.content.digest),
-      structuredClone(
-        this.contents.get(
-          contentKey(input.content.workspaceId, input.content.digest),
-        ) ?? input.content,
-      ),
-    );
-    this.artifacts.set(input.artifact.id, structuredClone(input.artifact));
-    this.receipts.set(receiptKey(input.receipt), structuredClone(input.receipt));
-    this.auditEvents.push(structuredClone(input.event));
-    return { kind: "created" };
+    return this.withMutationLock(async () => {
+      const replay = this.existingReceipt(input.receipt);
+      if (replay) return replay;
+      if (this.failCommit()) return { kind: "unavailable" };
+      const quota = await this.commitStorageQuota(
+        input.storageQuotaPlan,
+        input.artifact,
+        null,
+      );
+      if (quota) return quota;
+      this.contents.set(
+        contentKey(input.content.workspaceId, input.content.digest),
+        structuredClone(
+          this.contents.get(
+            contentKey(input.content.workspaceId, input.content.digest),
+          ) ?? input.content,
+        ),
+      );
+      this.artifacts.set(input.artifact.id, structuredClone(input.artifact));
+      this.receipts.set(receiptKey(input.receipt), structuredClone(input.receipt));
+      this.auditEvents.push(structuredClone(input.event));
+      return { kind: "created" };
+    });
   }
 
   async createUpload(
@@ -163,42 +223,51 @@ export class InMemoryArtifactRepository implements ArtifactRepository {
   async commitUpload(
     input: Parameters<ArtifactRepository["commitUpload"]>[0],
   ): Promise<ArtifactCommitResult> {
-    const replay = this.existingReceipt(input.receipt);
-    if (replay) return replay;
-    const upload = this.uploads.get(input.uploadId);
-    if (
-      !upload ||
-      upload.workspaceId !== input.artifact.workspaceId ||
-      upload.principalId !== input.principalId ||
-      upload.status !== "pending" ||
-      upload.expiresAt <= input.now
-    ) {
-      return { kind: "unavailable" };
-    }
-    if (this.failCommit()) return { kind: "unavailable" };
-    this.contents.set(
-      contentKey(input.content.workspaceId, input.content.digest),
-      structuredClone(
-        this.contents.get(
-          contentKey(input.content.workspaceId, input.content.digest),
-        ) ?? input.content,
-      ),
-    );
-    this.artifacts.set(input.artifact.id, structuredClone(input.artifact));
-    this.uploads.set(input.uploadId, {
-      ...upload,
-      status: "completed",
-      artifactId: input.artifact.id,
-      completedAt: input.now,
+    return this.withMutationLock(async () => {
+      const replay = this.existingReceipt(input.receipt);
+      if (replay) return replay;
+      const upload = this.uploads.get(input.uploadId);
+      if (
+        !upload ||
+        upload.workspaceId !== input.artifact.workspaceId ||
+        upload.principalId !== input.principalId ||
+        upload.status !== "pending" ||
+        upload.expiresAt <= input.now
+      ) {
+        return { kind: "unavailable" };
+      }
+      if (this.failCommit()) return { kind: "unavailable" };
+      const quota = await this.commitStorageQuota(
+        input.storageQuotaPlan,
+        input.artifact,
+        null,
+      );
+      if (quota) return quota;
+      this.contents.set(
+        contentKey(input.content.workspaceId, input.content.digest),
+        structuredClone(
+          this.contents.get(
+            contentKey(input.content.workspaceId, input.content.digest),
+          ) ?? input.content,
+        ),
+      );
+      this.artifacts.set(input.artifact.id, structuredClone(input.artifact));
+      this.uploads.set(input.uploadId, {
+        ...upload,
+        status: "completed",
+        artifactId: input.artifact.id,
+        completedAt: input.now,
+      });
+      this.receipts.set(receiptKey(input.receipt), structuredClone(input.receipt));
+      this.auditEvents.push(structuredClone(input.event));
+      return { kind: "created" };
     });
-    this.receipts.set(receiptKey(input.receipt), structuredClone(input.receipt));
-    this.auditEvents.push(structuredClone(input.event));
-    return { kind: "created" };
   }
 
   async commitGenerated(
     input: Parameters<ArtifactRepository["commitGenerated"]>[0],
   ) {
+    return this.withMutationLock(async () => {
     const outputKey = generatedOutputKey(input.origin);
     const existingArtifactId = this.generatedOutputs.get(outputKey);
     if (existingArtifactId) {
@@ -255,6 +324,12 @@ export class InMemoryArtifactRepository implements ArtifactRepository {
       return { kind: "conflict" as const };
     }
     if (this.failCommit()) return { kind: "unavailable" as const };
+    const quota = await this.commitStorageQuota(
+      input.storageQuotaPlan,
+      input.artifact,
+      input.origin.runId,
+    );
+    if (quota) return quota;
     this.contents.set(
       contentKey(input.content.workspaceId, input.content.digest),
       structuredClone(
@@ -277,6 +352,7 @@ export class InMemoryArtifactRepository implements ArtifactRepository {
     );
     this.generatedOutputs.set(outputKey, input.artifact.id);
     return { kind: "created" as const };
+    });
   }
 
   async getArtifact(

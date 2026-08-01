@@ -309,6 +309,13 @@
       "when": 1785581924972,
       "tag": "0043_runtime_budget_authority",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1785586866436,
+      "tag": "0044_runtime_quota_authority",
+      "breakpoints": true
     }
   ]
 }

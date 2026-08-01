@@ -11,6 +11,12 @@ import type {
   CredentialSpendGrantEvidence,
   WorkspacePricingOverride,
 } from "./types";
+import {
+  MEMORY_TRANSACTION_PARTICIPANT,
+  MemoryTransactionCoordinator,
+  type MemoryTransactionParticipant,
+  type MemoryTransactionToken,
+} from "../memory-transaction";
 
 function copy<T>(value: T): T {
   return structuredClone(value);
@@ -69,7 +75,11 @@ function selectedOverrides(items: WorkspacePricingOverride[]): WorkspacePricingO
   return [...selected.values()];
 }
 
-export class InMemoryBudgetRepository implements BudgetRepository<void> {
+export class InMemoryBudgetRepository
+  implements BudgetRepository<MemoryTransactionToken>, MemoryTransactionParticipant
+{
+  readonly [MEMORY_TRANSACTION_PARTICIPANT] = true as const;
+  private memoryCoordinator = new MemoryTransactionCoordinator();
   readonly policies = new Map<string, BudgetPolicy>();
   readonly revisions = new Map<string, BudgetPolicyRevision>();
   readonly pricingOverrides = new Map<string, WorkspacePricingOverride>();
@@ -90,11 +100,76 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     resolvedHoldContribution: string;
     recordedAt: Date;
   }>();
-  readonly suspensions = new Map<string, { suspended: boolean; reason: string; actorUserId: string; recordedAt: Date }>();
+  readonly suspensions = new Map<string, {
+    suspended: boolean;
+    revision: number;
+    reason: string;
+    actorUserId: string;
+    recordedAt: Date;
+  }>();
+  readonly spendControlEvents: Array<{
+    workspaceId: string;
+    suspended: boolean;
+    revision: number;
+    reason: string;
+    actorUserId: string;
+    recordedAt: Date;
+  }> = [];
   private admissionTail: Promise<void> = Promise.resolve();
 
-  seedGrant(input: CredentialSpendGrantEvidence & { workspaceId: string; principalId: string }): void {
-    this.grants.set(input.grantId, copy(input));
+  attachMemoryTransactionCoordinator(coordinator: MemoryTransactionCoordinator): void {
+    this.memoryCoordinator = coordinator;
+  }
+
+  checkpointMemoryState(token: MemoryTransactionToken): unknown {
+    if (!this.memoryCoordinator.isActive(token)) throw new TypeError("Inactive memory transaction.");
+    return structuredClone({
+      policies: this.policies, revisions: this.revisions, pricingOverrides: this.pricingOverrides,
+      reservations: this.reservations, admissions: this.admissions,
+      admissionGrantReservations: this.admissionGrantReservations,
+      attemptAllocations: this.attemptAllocations, grants: this.grants, receipts: this.receipts,
+      settlementReceipts: this.settlementReceipts, settlementHeads: this.settlementHeads,
+      suspensions: this.suspensions,
+      spendControlEvents: this.spendControlEvents,
+    });
+  }
+
+  restoreMemoryState(token: MemoryTransactionToken, state: unknown): void {
+    if (!this.memoryCoordinator.isActive(token)) throw new TypeError("Inactive memory transaction.");
+    const snapshot = state as Record<string, unknown>;
+    for (const name of [
+      "policies", "revisions", "pricingOverrides", "reservations", "admissions",
+      "admissionGrantReservations", "attemptAllocations", "grants", "receipts",
+      "settlementReceipts", "settlementHeads", "suspensions",
+    ]) {
+      const target = this[name as keyof this] as unknown as Map<unknown, unknown>;
+      const source = snapshot[name] as Map<unknown, unknown>;
+      target.clear();
+      for (const [key, value] of source) target.set(key, value);
+    }
+    this.spendControlEvents.splice(
+      0,
+      this.spendControlEvents.length,
+      ...(snapshot.spendControlEvents as typeof this.spendControlEvents),
+    );
+  }
+
+  private withAuthority<T>(
+    token: MemoryTransactionToken | undefined,
+    operation: (activeToken: MemoryTransactionToken) => Promise<T> | T,
+  ): Promise<T> {
+    return this.memoryCoordinator.isActive(token)
+      ? Promise.resolve(operation(token!))
+      : this.memoryCoordinator.runExclusive((activeToken) =>
+          Promise.resolve(operation(activeToken)));
+  }
+
+  async seedGrant(
+    input: CredentialSpendGrantEvidence & { workspaceId: string; principalId: string },
+  ): Promise<void> {
+    await this.withAuthority(undefined, () => {
+      this.grants.set(input.grantId, copy(input));
+    });
   }
 
   private boundedGrantCommitted(grant: CredentialSpendGrantEvidence): string {
@@ -108,56 +183,71 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     workspaceId: string;
     kind: "policy_revision" | "pricing_override";
     idempotencyKey: string;
-  }) {
-    const receipt = this.receipts.get(`${input.kind === "policy_revision" ? "policy" : "pricing"}:${input.workspaceId}:${input.idempotencyKey}`);
-    return receipt ? copy(receipt) : null;
+  }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => {
+      const receipt = this.receipts.get(`${input.kind === "policy_revision" ? "policy" : "pricing"}:${input.workspaceId}:${input.idempotencyKey}`);
+      return receipt ? copy(receipt) : null;
+    });
   }
 
-  async getPolicyRevision(input: { workspaceId: string; revisionId: string }) {
-    const revision = this.revisions.get(input.revisionId);
-    const policy = revision ? this.policies.get(revision.policyId) : null;
-    return revision && policy && revision.workspaceId === input.workspaceId
-      ? {
-          policy: copy({
-            ...policy,
+  async getPolicyRevision(input: { workspaceId: string; revisionId: string }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => {
+      const revision = this.revisions.get(input.revisionId);
+      const policy = revision ? this.policies.get(revision.policyId) : null;
+      return revision && policy && revision.workspaceId === input.workspaceId
+        ? {
+            policy: copy({
+              ...policy,
+              status: "active" as const,
+              currentRevisionId: revision.id,
+              updatedAt: revision.createdAt,
+            }),
+            revision: copy(revision),
+          }
+        : null;
+    });
+  }
+
+  async getPricingOverride(input: { workspaceId: string; overrideId: string }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => {
+      const item = this.pricingOverrides.get(input.overrideId);
+      return item?.workspaceId === input.workspaceId
+        ? copy({
+            ...item,
             status: "active" as const,
-            currentRevisionId: revision.id,
-            updatedAt: revision.createdAt,
-          }),
-          revision: copy(revision),
-        }
-      : null;
+            revokedAt: null,
+            revokedByUserId: null,
+          })
+        : null;
+    });
   }
 
-  async getPricingOverride(input: { workspaceId: string; overrideId: string }) {
-    const item = this.pricingOverrides.get(input.overrideId);
-    return item?.workspaceId === input.workspaceId
-      ? copy({
-          ...item,
-          status: "active" as const,
-          revokedAt: null,
-          revokedByUserId: null,
-        })
-      : null;
-  }
-
-  async getEffectivePolicies(input: { workspaceId: string; principalId: string }) {
-    return [...this.policies.values()]
+  async getEffectivePolicies(input: { workspaceId: string; principalId: string }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => [...this.policies.values()]
       .filter((policy) =>
         policy.workspaceId === input.workspaceId &&
         policy.status === "active" &&
         (policy.principalId === null || policy.principalId === input.principalId))
       .map((policy) => ({ policy: copy(policy), revision: copy(this.revisions.get(policy.currentRevisionId)!) }))
-      .sort((a, b) => a.policy.scope.localeCompare(b.policy.scope));
+      .sort((a, b) => a.policy.scope.localeCompare(b.policy.scope)));
   }
 
-  async listPolicies(workspaceId: string) {
-    return [...this.policies.values()]
+  async listPolicies(workspaceId: string, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => [...this.policies.values()]
       .filter((policy) => policy.workspaceId === workspaceId)
-      .map((policy) => ({ policy: copy(policy), revision: copy(this.revisions.get(policy.currentRevisionId)!) }));
+      .map((policy) => ({ policy: copy(policy), revision: copy(this.revisions.get(policy.currentRevisionId)!) })));
   }
 
   async appendPolicyRevision(input: {
+    policy: BudgetPolicy;
+    revision: BudgetPolicyRevision;
+    requestDigest: string;
+    idempotencyKey: string;
+  }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.appendPolicyRevisionUnlocked(input));
+  }
+
+  private appendPolicyRevisionUnlocked(input: {
     policy: BudgetPolicy;
     revision: BudgetPolicyRevision;
     requestDigest: string;
@@ -186,32 +276,43 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     policyRevisionId: string;
     periodStartsAt: Date;
     periodEndsAt: Date | null;
-  }) {
-    const revision = this.revisions.get(input.policyRevisionId);
-    if (!revision || revision.workspaceId !== input.workspaceId) return "0";
-    return [...this.reservations.values()]
-      .filter((reservation) =>
-        reservation.workspaceId === input.workspaceId &&
-        reservation.policyId === revision.policyId &&
-        reservation.period.startsAt.getTime() === input.periodStartsAt.getTime() &&
-        (reservation.period.endsAt?.getTime() ?? null) === (input.periodEndsAt?.getTime() ?? null))
-      .reduce((total, reservation) => addDecimals(total, committedValue(reservation)), "0");
+  }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => {
+      const revision = this.revisions.get(input.policyRevisionId);
+      if (!revision || revision.workspaceId !== input.workspaceId) return "0";
+      return [...this.reservations.values()]
+        .filter((reservation) =>
+          reservation.workspaceId === input.workspaceId &&
+          reservation.policyId === revision.policyId &&
+          reservation.period.startsAt.getTime() === input.periodStartsAt.getTime() &&
+          (reservation.period.endsAt?.getTime() ?? null) === (input.periodEndsAt?.getTime() ?? null))
+        .reduce((total, reservation) => addDecimals(total, committedValue(reservation)), "0");
+    });
   }
 
-  async listActivePricingOverrides(input: { workspaceId: string; at: Date }) {
-    return selectedOverrides([...this.pricingOverrides.values()]
+  async listActivePricingOverrides(input: { workspaceId: string; at: Date }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => selectedOverrides([...this.pricingOverrides.values()]
       .filter((item) =>
         item.workspaceId === input.workspaceId &&
         item.status === "active" &&
         item.effectiveFrom <= input.at)
-      .map(copy));
+      .map(copy)));
   }
 
-  async listPricingOverrides(workspaceId: string) {
-    return [...this.pricingOverrides.values()].filter((item) => item.workspaceId === workspaceId).map(copy);
+  async listPricingOverrides(workspaceId: string, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => [...this.pricingOverrides.values()]
+      .filter((item) => item.workspaceId === workspaceId).map(copy));
   }
 
   async appendPricingOverride(input: {
+    override: WorkspacePricingOverride;
+    requestDigest: string;
+    idempotencyKey: string;
+  }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.appendPricingOverrideUnlocked(input));
+  }
+
+  private appendPricingOverrideUnlocked(input: {
     override: WorkspacePricingOverride;
     requestDigest: string;
     idempotencyKey: string;
@@ -234,6 +335,15 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     overrideId: string;
     actorUserId: string;
     recordedAt: Date;
+  }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.revokePricingOverrideUnlocked(input));
+  }
+
+  private revokePricingOverrideUnlocked(input: {
+    workspaceId: string;
+    overrideId: string;
+    actorUserId: string;
+    recordedAt: Date;
   }) {
     const current = this.pricingOverrides.get(input.overrideId);
     if (!current || current.workspaceId !== input.workspaceId) return false;
@@ -252,8 +362,8 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     principalId: string;
     credentialSlotIds: string[];
     credentialProfileIds: string[];
-  }) {
-    return [...this.grants.values()]
+  }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => [...this.grants.values()]
       .filter((grant) =>
         grant.workspaceId === input.workspaceId &&
         grant.principalId === input.principalId &&
@@ -268,11 +378,11 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
           committed,
           available: grant.limit === null ? null : subtractDecimals(grant.limit, committed),
         });
-      });
+      }));
   }
 
-  async isSpendSuspended(workspaceId: string) {
-    return this.suspensions.get(workspaceId)?.suspended ?? false;
+  async isSpendSuspended(workspaceId: string, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.suspensions.get(workspaceId)?.suspended ?? false);
   }
 
   async setSpendSuspended(input: {
@@ -281,11 +391,50 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     reason: string;
     actorUserId: string;
     recordedAt: Date;
-  }) {
-    this.suspensions.set(input.workspaceId, copy(input));
+  }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.setSpendSuspendedUnlocked(input));
   }
 
-  async commitAdmission(plan: BudgetAdmissionPlan) {
+  private async setSpendSuspendedUnlocked(input: {
+    workspaceId: string;
+    suspended: boolean;
+    reason: string;
+    actorUserId: string;
+    recordedAt: Date;
+  }) {
+    const previous = this.admissionTail;
+    let release!: () => void;
+    const currentGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.admissionTail = previous.then(() => currentGate);
+    await previous;
+    try {
+      const current = this.suspensions.get(input.workspaceId);
+      if (
+        current?.suspended === input.suspended &&
+        current.reason === input.reason &&
+        current.actorUserId === input.actorUserId
+      ) {
+        return;
+      }
+      const command = copy({
+        ...input,
+        revision: (current?.revision ?? 0) + 1,
+      });
+      this.suspensions.set(input.workspaceId, command);
+      this.spendControlEvents.push(copy(command));
+    } finally {
+      release();
+    }
+  }
+
+  async commitAdmission(plan: BudgetAdmissionPlan, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, (activeToken) =>
+      this.commitAdmissionUnlocked(plan, activeToken));
+  }
+
+  private async commitAdmissionUnlocked(plan: BudgetAdmissionPlan, token?: MemoryTransactionToken) {
     const previous = this.admissionTail;
     let release!: () => void;
     const current = new Promise<void>((resolve) => {
@@ -297,14 +446,14 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     const receiptKey = `admission:${plan.workspaceId}:${plan.runId}`;
     const receipt = this.receipts.get(receiptKey);
     if (receipt) return receipt.requestDigest === plan.requestDigest ? "replayed" as const : "conflict" as const;
-    if (await this.isSpendSuspended(plan.workspaceId)) return "unavailable" as const;
+    if (await this.isSpendSuspended(plan.workspaceId, token)) return "unavailable" as const;
     if (plan.reservations.length === 0 || plan.reservations.some((item) => item.workspaceId !== plan.workspaceId || item.runId !== plan.runId)) {
       return "unavailable" as const;
     }
     const activeOverrides = await this.listActivePricingOverrides({
       workspaceId: plan.workspaceId,
       at: new Date(),
-    });
+    }, token);
     for (const exposure of plan.stepExposures) {
       const applicable = selectedOverrides(activeOverrides.filter((item) =>
         item.provider === exposure.provider &&
@@ -338,7 +487,7 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
         policyRevisionId: revision.id,
         periodStartsAt: reservation.period.startsAt,
         periodEndsAt: reservation.period.endsAt,
-      });
+      }, token);
       if (compareDecimals(addDecimals(committed, reservation.reservedAmount), revision.hardLimit) > 0) {
         return "unavailable" as const;
       }
@@ -371,11 +520,16 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     }
   }
 
-  async commitAttemptAllocation(input: BudgetAttemptAllocationInput) {
+  async commitAttemptAllocation(input: BudgetAttemptAllocationInput, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, (activeToken) =>
+      this.commitAttemptAllocationUnlocked(input, activeToken));
+  }
+
+  private async commitAttemptAllocationUnlocked(input: BudgetAttemptAllocationInput, token?: MemoryTransactionToken) {
     const requestDigest = canonicalDigest({ ...input, recordedAt: input.recordedAt.toISOString() });
     const existing = this.attemptAllocations.get(input.id);
     if (existing) return existing.requestDigest === requestDigest ? "replayed" as const : "conflict" as const;
-    if (await this.isSpendSuspended(input.workspaceId)) return "unavailable" as const;
+    if (await this.isSpendSuspended(input.workspaceId, token)) return "unavailable" as const;
     const admission = this.admissions.get(input.runId);
     if (!admission || admission.workspaceId !== input.workspaceId || admission.principalId !== input.principalId) return "unavailable" as const;
     const exposure = admission.stepExposures.find((item) => item.stepId === input.stepId);
@@ -408,7 +562,11 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     return "created" as const;
   }
 
-  async commitSettlement(plan: BudgetSettlementPlan) {
+  async commitSettlement(plan: BudgetSettlementPlan, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => this.commitSettlementUnlocked(plan));
+  }
+
+  private async commitSettlementUnlocked(plan: BudgetSettlementPlan) {
     const digest = canonicalDigest({ ...plan, recordedAt: plan.recordedAt.toISOString() });
     const receiptKey = `${plan.workspaceId}:${plan.runId}:${plan.costValuationId}`;
     const receipt = this.settlementReceipts.get(receiptKey);
@@ -525,12 +683,12 @@ export class InMemoryBudgetRepository implements BudgetRepository<void> {
     return "created" as const;
   }
 
-  async listReservations(input: { workspaceId: string; runId?: string; principalId?: string }) {
-    return [...this.reservations.values()]
+  async listReservations(input: { workspaceId: string; runId?: string; principalId?: string }, token?: MemoryTransactionToken) {
+    return this.withAuthority(token, () => [...this.reservations.values()]
       .filter((item) =>
         item.workspaceId === input.workspaceId &&
         (!input.runId || item.runId === input.runId) &&
         (!input.principalId || item.admittedPrincipalId === input.principalId))
-      .map(copy);
+      .map(copy));
   }
 }

@@ -48,6 +48,10 @@ import {
   PRODUCTION_BUDGET_SERVICE,
   createBudgetRegistrations,
 } from "./budgets";
+import {
+  createQuotaRegistrations,
+  getQuotaService,
+} from "./quotas";
 
 export const PRODUCTION_CAPABILITY_AUTHORIZER =
   new CompositeCapabilityAuthorizer(
@@ -72,6 +76,9 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
   ...createWorkflowRunRegistrations(PRODUCTION_WORKFLOW_RUN_SERVICE),
   ...createUsageRegistrations(PRODUCTION_USAGE_SERVICE, PRODUCTION_USAGE_CURSOR),
   ...createBudgetRegistrations(PRODUCTION_BUDGET_SERVICE),
+  ...createQuotaRegistrations(getQuotaService(), {
+    waitResumeCoordinator: PRODUCTION_WORKFLOW_RUN_SERVICE,
+  }),
 ]);
 
 export const CAPABILITY_DISPATCHER = new CapabilityDispatcher(

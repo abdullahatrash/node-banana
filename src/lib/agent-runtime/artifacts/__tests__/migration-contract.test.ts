@@ -95,6 +95,38 @@ describe("Artifact persistence and storage contracts", () => {
     expect(complete).not.toContain(".transaction(");
   });
 
+  it("commits storage claim and settlement inside each canonical Artifact transaction", () => {
+    const repository = source(
+      "src/lib/agent-runtime/artifacts/postgres-repository.ts",
+    );
+    const quotaCommit = repository.slice(
+      repository.indexOf("private async commitStorageQuota"),
+      repository.indexOf("async readMutationReceipt"),
+    );
+    expect(quotaCommit).toContain(
+      "this.quotaWriter.commitClaim(plan.claim, tx)",
+    );
+    expect(quotaCommit).toContain("this.quotaWriter.commitTransition(");
+    expect(quotaCommit).toContain("plan.settle");
+    expect(quotaCommit).toContain("throw new ArtifactQuotaCommitBlocked");
+
+    for (const [start, end] of [
+      ["async commitTextImport", "async createUpload"],
+      ["async commitUpload", "async commitGenerated"],
+      ["async commitGenerated", "async getArtifact"],
+    ] as const) {
+      const commit = repository.slice(
+        repository.indexOf(start),
+        repository.indexOf(end),
+      );
+      expect(commit).toContain("this.getDatabase().transaction");
+      expect(commit).toContain("this.commitStorageQuota(");
+      expect(commit.indexOf("this.commitStorageQuota")).toBeLessThan(
+        commit.indexOf("tx.insert(artifacts)"),
+      );
+    }
+  });
+
   it("uses Artifact-only S3 keys and sharp inspection without legacy CDN helpers", () => {
     const storage = source(
       "src/lib/agent-runtime/artifacts/storage.ts",

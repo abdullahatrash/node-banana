@@ -415,6 +415,7 @@ const providerResolutionSchema: JsonSchema = {
     "effectKeySupport",
     "observation",
     "launchSafety",
+    "usageCeilings",
   ],
   properties: {
     stepId: { type: "string" },
@@ -432,6 +433,23 @@ const providerResolutionSchema: JsonSchema = {
       enum: ["none", "provider_operation_ref"],
     },
     launchSafety: launchSafetySchema,
+    usageCeilings: {
+      type: "array",
+      items: {
+        ...object,
+        required: ["dimension", "unit", "maximumQuantity"],
+        properties: {
+          dimension: { type: "string", pattern: "^[a-z][a-z0-9_.-]{0,99}@[1-9][0-9]{0,8}$" },
+          unit: { type: "string", enum: ["count", "byte", "millisecond", "megapixel"] },
+          maximumQuantity: {
+            oneOf: [
+              { type: "string", pattern: "^(?:0\\.[0-9]*[1-9]|[1-9][0-9]*(?:\\.[0-9]*[1-9])?)$" },
+              { type: "null" },
+            ],
+          },
+        },
+      },
+    },
   },
 };
 
@@ -1069,6 +1087,7 @@ async function domain<T>(operation: () => Promise<T>): Promise<T> {
       category: WORKFLOW_RUN_ERROR_CATALOG[error.code].category,
       message: error.message,
       retryable: error.retryable,
+      details: error.details,
     });
   }
 }

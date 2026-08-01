@@ -124,6 +124,42 @@ for (const subject of conformanceSubjects) {
 }
 
 describe("Provider Adapter runtime bridge", () => {
+  it("requires canonical positive maxima or an explicit unbounded marker", () => {
+    const contract = new ScriptedProviderAdapter(
+      new DeterministicProviderFaultKit(),
+    ).contract;
+    expect(
+      contract.usageDimensions.map((dimension) => dimension.maximumQuantity),
+    ).toEqual(["128", "64"]);
+
+    for (const maximumQuantity of [
+      undefined,
+      "0",
+      "01",
+      "1.0",
+      "-1",
+      "NaN",
+    ]) {
+      const invalid = {
+        ...contract,
+        usageDimensions: contract.usageDimensions.map((dimension, index) =>
+          index === 0 ? { ...dimension, maximumQuantity } : dimension,
+        ),
+      };
+      expect(() =>
+        validateProviderAdapterContract(invalid as typeof contract),
+      ).toThrow();
+    }
+    expect(() =>
+      validateProviderAdapterContract({
+        ...contract,
+        usageDimensions: contract.usageDimensions.map((dimension, index) =>
+          index === 0 ? { ...dimension, maximumQuantity: null } : dimension,
+        ),
+      }),
+    ).not.toThrow();
+  });
+
   it("resolves credentials at invocation time and preserves normalized metadata", async () => {
     const transport = new DeterministicProviderFaultKit();
     transport.enqueueLaunch({

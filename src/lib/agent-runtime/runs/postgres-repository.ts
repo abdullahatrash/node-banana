@@ -19,6 +19,7 @@ import {
   workflowRunOutboxIntents,
   workflowRuns,
   workflowStepAttempts,
+  runtimeQuotaWaits,
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type {
@@ -27,6 +28,15 @@ import type {
   UsageLedgerAppendPlan,
 } from "../usage/types";
 import type { BudgetCommitWriter } from "../budgets/types";
+import type {
+  QuotaClaimPlan,
+  QuotaClaimCommitResult,
+  QuotaCommitWriter,
+  QuotaExhaustionEvidence,
+  QuotaTransitionPlan,
+  QuotaUsageReconciliationPlan,
+  QuotaWait,
+} from "../quotas/types";
 import { workflowRunReceiptResult } from "./types";
 import type {
   CompleteWorkflowRunStepResult,
@@ -43,10 +53,59 @@ import type {
   WorkflowStepAttemptRecord,
 } from "./types";
 
+function sameQuotaResumeActor(
+  left: QuotaWait["resumedBy"],
+  right: QuotaWait["resumedBy"],
+): boolean {
+  if (!left || !right || left.kind !== right.kind) return false;
+  if (left.kind === "human" && right.kind === "human") {
+    return left.userId === right.userId;
+  }
+  if (left.kind === "principal" && right.kind === "principal") {
+    return left.principalId === right.principalId;
+  }
+  return left.kind === "system" && right.kind === "system";
+}
+
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
+class QuotaAdmissionDenied extends Error {
+  constructor(
+    readonly reasonCodes: Array<"QUOTA_POLICY_UNAVAILABLE" | "QUOTA_CAPACITY_EXHAUSTED" | "EMERGENCY_SPEND_SUSPENDED">,
+    readonly evidence: QuotaExhaustionEvidence[],
+  ) {
+    super("Run quota admission denied.");
+  }
+}
+
 const FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
+
+function quotaWaitEventData(wait: QuotaWait): Record<string, unknown> {
+  return {
+    schema: wait.schema,
+    waitId: wait.id,
+    boundary: wait.boundary,
+    subject: wait.subject,
+    claims: wait.claims,
+    reasonCode: wait.reasonCode,
+    evidence: wait.evidence.map((item) => ({
+      ...item,
+      window: {
+        ...item.window,
+        startsAt: item.window.startsAt.toISOString(),
+        endsAt: item.window.endsAt?.toISOString() ?? null,
+      },
+      evaluatedAt: item.evaluatedAt.toISOString(),
+      eligibleAt: item.eligibleAt?.toISOString() ?? null,
+      eligibility: item.eligibility.kind === "window_renewal"
+        ? { kind: item.eligibility.kind, eligibleAt: item.eligibility.eligibleAt.toISOString() }
+        : item.eligibility,
+    })),
+    eligibleAt: wait.eligibleAt?.toISOString() ?? null,
+    createdAt: wait.createdAt.toISOString(),
+  };
+}
 
 function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -368,7 +427,76 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
     private readonly getDatabase: () => Db,
     private readonly usageWriter?: UsageCommitWriter<Tx>,
     private readonly budgetWriter?: BudgetCommitWriter<Tx>,
+    private readonly quotaWriter?: QuotaCommitWriter<Tx>,
   ) {}
+
+  private async commitQuotaClaim(tx: Tx, plan: QuotaClaimPlan | null | undefined) {
+    if (!plan) return null;
+    if (!this.quotaWriter) throw new Error("Quota writer is unavailable.");
+    return this.quotaWriter.commitClaim(plan, tx);
+  }
+
+  private async commitQuotaClaimsAtomically(tx: Tx, plans: QuotaClaimPlan[]) {
+    if (!this.quotaWriter) throw new Error("Quota writer is unavailable.");
+    return this.quotaWriter.commitClaimsAtomically(plans, tx);
+  }
+
+  private async commitQuotaTransitions(tx: Tx, plans: QuotaTransitionPlan[] | undefined) {
+    if (!plans?.length) return;
+    if (!this.quotaWriter) throw new Error("Quota writer is unavailable.");
+    for (const plan of plans) {
+      const result = await this.quotaWriter.commitTransition(plan, tx);
+      if (result.kind !== "created" && result.kind !== "replayed") {
+        throw new Error("Quota transition could not be committed.");
+      }
+      for (const wait of result.newlyEligibleWaits) {
+        const runs = await tx.select({ nextEventSequence: workflowRuns.nextEventSequence })
+          .from(workflowRuns)
+          .where(and(
+            eq(workflowRuns.workspaceId, wait.workspaceId),
+            eq(workflowRuns.id, wait.runId),
+          )).limit(1);
+        if (!runs[0]) continue;
+        await tx.insert(workflowRunOutboxIntents).values({
+          id: randomUUID(),
+          workspaceId: wait.workspaceId,
+          runId: wait.runId,
+          generation: runs[0].nextEventSequence,
+          dedupeKey: `quota-wait-resume:${wait.waitId}`,
+          state: "pending",
+          deliveryToken: null,
+          deliveryAttempts: 0,
+          availableAt: wait.eligibleAt ?? plan.recordedAt,
+          claimedAt: null,
+          deliveredAt: null,
+          createdAt: plan.recordedAt,
+        }).onConflictDoUpdate({
+          target: workflowRunOutboxIntents.dedupeKey,
+          set: {
+            state: "pending",
+            deliveryToken: null,
+            claimedAt: null,
+            deliveredAt: null,
+            availableAt: wait.eligibleAt ?? plan.recordedAt,
+          },
+        });
+      }
+    }
+  }
+
+  private async commitQuotaUsageReconciliations(
+    tx: Tx,
+    plans: QuotaUsageReconciliationPlan[] | undefined,
+  ) {
+    if (!plans?.length) return;
+    if (!this.quotaWriter) throw new Error("Quota writer is unavailable.");
+    for (const plan of plans) {
+      const result = await this.quotaWriter.commitUsageReconciliation(plan, tx);
+      if (result.kind !== "created" && result.kind !== "replayed") {
+        throw new Error("Quota Usage reconciliation could not be committed.");
+      }
+    }
+  }
 
   private async appendUsage(
     tx: Tx,
@@ -639,6 +767,17 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           authorizationEvidenceRef:
             input.run.startSnapshot.authorization.evidenceRef,
         });
+        const quotaResult = await this.commitQuotaClaim(tx, input.quotaAdmissionPlan);
+        if (quotaResult?.kind === "denied") {
+          if (quotaResult.reasonCodes.includes("EMERGENCY_SPEND_SUSPENDED")) {
+            throw new Error("Spend suspension cannot be represented as quota admission denial.");
+          }
+          throw new QuotaAdmissionDenied(quotaResult.reasonCodes, quotaResult.evidence);
+        }
+        if (
+          quotaResult && quotaResult.kind !== "created" && quotaResult.kind !== "replayed" &&
+          quotaResult.kind !== "wait" && quotaResult.kind !== "replayed_wait"
+        ) throw new Error("Quota admission could not be committed.");
         if (input.budgetAdmissionPlan) {
           if (
             !this.budgetWriter ||
@@ -654,22 +793,87 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             throw new Error("Budget admission was not available at Durable Acceptance.");
           }
         }
+        const wait = quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait"
+          ? quotaResult.wait
+          : null;
+        if (wait && !input.quotaWaitEventId) throw new Error("Quota Wait event is unavailable.");
+        const persistedRun: WorkflowRunRecord = wait ? {
+          ...input.run,
+          state: "waiting",
+          nextEventSequence: input.run.nextEventSequence + 1,
+          resumeAt: wait.eligibleAt,
+          failureCode: "QUOTA_WAIT",
+          updatedAt: wait.createdAt,
+        } : input.run;
+        if (wait) {
+          const updated = await tx.update(workflowRuns).set({
+            state: persistedRun.state,
+            nextEventSequence: persistedRun.nextEventSequence,
+            resumeAt: persistedRun.resumeAt,
+            failureCode: persistedRun.failureCode,
+            updatedAt: persistedRun.updatedAt,
+          }).where(and(
+            eq(workflowRuns.workspaceId, input.run.workspaceId),
+            eq(workflowRuns.id, input.run.id),
+            eq(workflowRuns.state, "accepted"),
+          )).returning({ id: workflowRuns.id });
+          if (!updated[0]) throw new Error("Quota Wait acceptance transition was lost.");
+        }
         await tx.insert(workflowRunEvents).values(input.firstEvent);
+        if (wait) {
+          await tx.insert(workflowRunEvents).values({
+            id: input.quotaWaitEventId!,
+            workspaceId: input.run.workspaceId,
+            runId: input.run.id,
+            sequence: input.run.nextEventSequence,
+            type: "run.waiting",
+            data: quotaWaitEventData(wait),
+            occurredAt: wait.createdAt,
+          });
+        }
         await tx.insert(workflowRunMutationReceipts).values(input.receipt);
-        await tx.insert(workflowRunOutboxIntents).values(input.outboxIntent);
+        if (!wait || wait.eligibleAt) {
+          await tx.insert(workflowRunOutboxIntents).values({
+            ...input.outboxIntent,
+            generation: wait ? input.run.nextEventSequence : input.outboxIntent.generation,
+            dedupeKey: wait
+              ? `workflow-run:${input.run.workspaceId}:${input.run.id}:v${input.run.nextEventSequence}:quota-wait`
+              : input.outboxIntent.dedupeKey,
+            availableAt: wait?.eligibleAt ?? input.outboxIntent.availableAt,
+          });
+        }
         return {
           kind: "created" as const,
-          run: input.run,
+          run: persistedRun,
           receipt: input.receipt,
         };
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof QuotaAdmissionDenied) {
+        return {
+          kind: "quota_denied" as const,
+          reasonCodes: error.reasonCodes,
+          evidence: error.evidence,
+        };
+      }
       return { kind: "unavailable" as const };
     }
   }
 
   get(input: Parameters<WorkflowRunRepository["get"]>[0]) {
     return findRun(this.getDatabase(), input);
+  }
+
+  async getById(input: Parameters<WorkflowRunRepository["getById"]>[0]) {
+    const rows = await this.getDatabase()
+      .select()
+      .from(workflowRuns)
+      .where(and(
+        eq(workflowRuns.workspaceId, input.workspaceId),
+        eq(workflowRuns.id, input.runId),
+      ))
+      .limit(1);
+    return rows[0] ? mapRun(rows[0]) : null;
   }
 
   async listEvents(
@@ -797,6 +1001,49 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
     }
   }
 
+  async enqueueQuotaWaitResumptions(
+    input: Parameters<WorkflowRunRepository["enqueueQuotaWaitResumptions"]>[0],
+  ) {
+    return this.getDatabase().transaction(async (tx) => {
+      let created = 0;
+      for (const wait of input.waits) {
+        const runs = await tx.select({ nextEventSequence: workflowRuns.nextEventSequence })
+          .from(workflowRuns)
+          .where(and(
+            eq(workflowRuns.workspaceId, wait.workspaceId),
+            eq(workflowRuns.id, wait.runId),
+          )).limit(1);
+        if (!runs[0]) continue;
+        const inserted = await tx.insert(workflowRunOutboxIntents).values({
+          id: randomUUID(),
+          workspaceId: wait.workspaceId,
+          runId: wait.runId,
+          generation: runs[0].nextEventSequence,
+          dedupeKey: `quota-wait-resume:${wait.waitId}`,
+          state: "pending",
+          deliveryToken: null,
+          deliveryAttempts: 0,
+          availableAt: wait.eligibleAt ?? input.enqueuedAt,
+          claimedAt: null,
+          deliveredAt: null,
+          createdAt: input.enqueuedAt,
+        }).onConflictDoUpdate({
+          target: workflowRunOutboxIntents.dedupeKey,
+          set: {
+            state: "pending",
+            deliveryToken: null,
+            claimedAt: null,
+            deliveredAt: null,
+            availableAt: wait.eligibleAt ?? input.enqueuedAt,
+          },
+        })
+          .returning({ id: workflowRunOutboxIntents.id });
+        created += inserted.length;
+      }
+      return created;
+    });
+  }
+
   async acquireLease(
     input: Parameters<WorkflowRunRepository["acquireLease"]>[0],
   ) {
@@ -841,6 +1088,82 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           run.resumeAt > databaseNow
         ) {
           return { kind: "busy" as const };
+        }
+        if (
+          ((run.state === "accepted" || run.state === "waiting") && input.quotaResumePlan) ||
+          ((run.state === "accepted" || run.state === "waiting" || run.state === "running") && input.quotaConcurrencyPlan) ||
+          (run.state === "waiting" && run.failureCode === "QUOTA_WAIT")
+        ) {
+          let quotaResult;
+          if (input.quotaResumePlan && input.quotaConcurrencyPlan) {
+            const batch = await this.commitQuotaClaimsAtomically(
+              tx,
+              [input.quotaConcurrencyPlan, input.quotaResumePlan],
+            );
+            if (batch.kind === "blocked") {
+              const waitId = input.quotaResumePlan.resumesWaitId;
+              const wait = waitId && this.quotaWriter
+                ? await this.quotaWriter.getWait(
+                    { workspaceId: run.workspaceId, waitId },
+                    tx,
+                  )
+                : null;
+              return wait?.state === "waiting"
+                ? { kind: "quota_wait" as const, run, wait }
+                : { kind: "unavailable" as const };
+            }
+            quotaResult = batch.results.at(-1) ?? null;
+          } else {
+            quotaResult = await this.commitQuotaClaim(tx, input.quotaResumePlan);
+            if (
+              (!quotaResult || quotaResult.kind === "created" || quotaResult.kind === "replayed") &&
+              input.quotaConcurrencyPlan
+            ) {
+              quotaResult = await this.commitQuotaClaim(tx, input.quotaConcurrencyPlan);
+            }
+          }
+          if (quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait") {
+            if (!input.quotaWaitEventId) throw new Error("Quota Wait event is unavailable.");
+            const wait = quotaResult.wait;
+            if (
+              quotaResult.kind === "replayed_wait" &&
+              run.state === "waiting" &&
+              run.failureCode === "QUOTA_WAIT"
+            ) return { kind: "quota_wait" as const, run, wait };
+            const updated = await tx.update(workflowRuns).set({
+              state: "waiting",
+              resumeAt: wait.eligibleAt,
+              failureCode: "QUOTA_WAIT",
+              nextEventSequence: run.nextEventSequence + 1,
+              updatedAt: wait.createdAt,
+            }).where(and(
+              eq(workflowRuns.workspaceId, run.workspaceId),
+              eq(workflowRuns.id, run.id),
+              eq(workflowRuns.nextEventSequence, run.nextEventSequence),
+            )).returning();
+            if (!updated[0]) throw new Error("Quota Wait lost Run serialization.");
+            await tx.insert(workflowRunEvents).values({
+              id: input.quotaWaitEventId,
+              workspaceId: run.workspaceId,
+              runId: run.id,
+              sequence: run.nextEventSequence,
+              type: "run.waiting",
+              data: quotaWaitEventData(wait),
+              occurredAt: wait.createdAt,
+            });
+            if (wait.eligibleAt && input.quotaWaitOutboxIntent) {
+              await tx.insert(workflowRunOutboxIntents).values({
+                ...input.quotaWaitOutboxIntent,
+                generation: run.nextEventSequence,
+                availableAt: wait.eligibleAt,
+              }).onConflictDoNothing({ target: workflowRunOutboxIntents.dedupeKey });
+            }
+            return { kind: "quota_wait" as const, run: mapRun(updated[0]), wait };
+          }
+          if (
+            !quotaResult ||
+            (quotaResult.kind !== "created" && quotaResult.kind !== "replayed")
+          ) return { kind: "busy" as const };
         }
 
         const leaseRows = await tx
@@ -909,7 +1232,13 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
               runId: run.id,
               sequence: run.nextEventSequence,
               type: "run.resumed",
-              data: { automatic: true },
+              data: input.quotaResumePlan ? {
+                automatic: true,
+                waitId: input.quotaResumePlan.resumesWaitId,
+                reason: input.quotaResumePlan.resumeReason,
+                actor: input.quotaResumePlan.resumeActor,
+                reservationIds: input.quotaResumePlan.reservations.map((item) => item.id),
+              } : { automatic: true },
               occurredAt: databaseNow,
             });
           }
@@ -1038,6 +1367,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
       failedAt?: Date;
       stepEventId?: string;
       runEventId: string;
+      quotaTransitionPlans?: QuotaTransitionPlan[];
     },
     completion: {
       state: "completed" | "failed";
@@ -1101,6 +1431,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         }
 
         const occurredAt = postgresDate(selected.databaseNow);
+        await this.commitQuotaTransitions(tx, input.quotaTransitionPlans);
         const completionEvents: WorkflowRunEventRecord[] =
           completion.state === "completed"
             ? [
@@ -1341,6 +1672,153 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           return { kind: "conflict" as const };
         }
 
+        const quotaPlans = input.quotaClaimPlans ?? [];
+        const quotaBatch = quotaPlans.length
+          ? await this.commitQuotaClaimsAtomically(tx, quotaPlans)
+          : null;
+        const blockedBoundary = quotaBatch?.kind === "blocked"
+          ? quotaBatch.blockedPlan.boundary
+          : null;
+        let quotaResult: QuotaClaimCommitResult | null =
+          quotaBatch?.kind === "blocked" ? quotaBatch.result : null;
+        if (quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait") {
+          const blockedWait = quotaResult.wait;
+          const waitPlan = quotaPlans.find(
+            (plan) => plan.transitionKey === blockedWait.transitionKey,
+          );
+          quotaResult = waitPlan
+            ? await this.commitQuotaClaim(tx, waitPlan)
+            : { kind: "unavailable" };
+        }
+        if (quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait") {
+          if (!input.quotaWaitEventId) throw new Error("Quota Wait event is unavailable.");
+          const wait = quotaResult.wait;
+          await this.commitQuotaTransitions(tx, input.quotaWaitReleasePlans);
+          const updated = await tx.update(workflowRuns).set({
+            state: "waiting",
+            resumeAt: wait.eligibleAt,
+            failureCode: "QUOTA_WAIT",
+            nextEventSequence: run.nextEventSequence + 1,
+            updatedAt: wait.createdAt,
+          }).where(and(
+            eq(workflowRuns.workspaceId, run.workspaceId),
+            eq(workflowRuns.id, run.id),
+            eq(workflowRuns.state, "running"),
+            eq(workflowRuns.nextEventSequence, run.nextEventSequence),
+          )).returning();
+          if (!updated[0]) throw new Error("Quota Wait lost Run serialization.");
+          await tx.insert(workflowRunEvents).values({
+            id: input.quotaWaitEventId,
+            workspaceId: run.workspaceId,
+            runId: run.id,
+            sequence: run.nextEventSequence,
+            type: "run.waiting",
+            data: quotaWaitEventData(wait),
+            occurredAt: wait.createdAt,
+          });
+          await tx.update(workflowRunExecutionLeases).set({ releasedAt: wait.createdAt }).where(and(
+            eq(workflowRunExecutionLeases.workspaceId, run.workspaceId),
+            eq(workflowRunExecutionLeases.runId, run.id),
+            eq(workflowRunExecutionLeases.fence, input.fence),
+            isNull(workflowRunExecutionLeases.releasedAt),
+          ));
+          if (wait.eligibleAt && input.quotaWaitOutboxIntent) {
+            await tx.insert(workflowRunOutboxIntents).values({
+              ...input.quotaWaitOutboxIntent,
+              generation: run.nextEventSequence,
+              availableAt: wait.eligibleAt,
+            }).onConflictDoNothing({ target: workflowRunOutboxIntents.dedupeKey });
+          }
+          return { kind: "quota_wait" as const, run: mapRun(updated[0]), wait };
+        }
+        if (quotaResult?.kind === "denied") {
+          if (blockedBoundary !== "provider_effect" && blockedBoundary !== "usage_settlement") {
+            throw new Error("Provider quota claim returned an invalid blocked boundary.");
+          }
+          const missingUsagePolicy =
+            quotaResult.reasonCodes.includes("QUOTA_POLICY_UNAVAILABLE") &&
+            blockedBoundary === "usage_settlement";
+          if (missingUsagePolicy) {
+            if (!input.quotaPolicyUnavailableEventId) {
+              throw new Error("Usage quota policy failure event is unavailable.");
+            }
+            const failedRows = await tx.update(workflowRuns).set({
+              state: "failed",
+              output: null,
+              finalSnapshot: null,
+              finalSnapshotDigest: null,
+              failureCode: "QUOTA_USAGE_CEILING_UNAVAILABLE",
+              resumeAt: null,
+              nextEventSequence: run.nextEventSequence + 1,
+              completedAt: databaseNow,
+              updatedAt: databaseNow,
+            }).where(and(
+              eq(workflowRuns.workspaceId, run.workspaceId),
+              eq(workflowRuns.id, run.id),
+              eq(workflowRuns.state, "running"),
+              eq(workflowRuns.nextEventSequence, run.nextEventSequence),
+            )).returning();
+            if (!failedRows[0]) throw new Error("Usage quota failure lost Run serialization.");
+            await tx.insert(workflowRunEvents).values({
+              id: input.quotaPolicyUnavailableEventId,
+              workspaceId: run.workspaceId,
+              runId: run.id,
+              sequence: run.nextEventSequence,
+              type: "run.failed",
+              data: {
+                reasonCode: "QUOTA_USAGE_CEILING_UNAVAILABLE",
+                quotaBoundary: "usage_settlement",
+              },
+              occurredAt: databaseNow,
+            });
+            await tx.update(workflowRunExecutionLeases).set({ releasedAt: databaseNow }).where(and(
+              eq(workflowRunExecutionLeases.workspaceId, run.workspaceId),
+              eq(workflowRunExecutionLeases.runId, run.id),
+              eq(workflowRunExecutionLeases.fence, input.fence),
+              isNull(workflowRunExecutionLeases.releasedAt),
+            ));
+            return {
+              kind: "effect_blocked" as const,
+              run: mapRun(failedRows[0]),
+              reasonCode: "QUOTA_POLICY_UNAVAILABLE" as const,
+              blockedBoundary: "usage_settlement" as const,
+            };
+          }
+          await tx.update(workflowRunExecutionLeases).set({ releasedAt: databaseNow }).where(and(
+            eq(workflowRunExecutionLeases.workspaceId, run.workspaceId),
+            eq(workflowRunExecutionLeases.runId, run.id),
+            eq(workflowRunExecutionLeases.fence, input.fence),
+            isNull(workflowRunExecutionLeases.releasedAt),
+          ));
+          if (input.quotaWaitOutboxIntent) {
+            await tx.insert(workflowRunOutboxIntents).values({
+              ...input.quotaWaitOutboxIntent,
+              generation: run.nextEventSequence,
+              dedupeKey: `spend-suspension-retry:${run.id}:${run.nextEventSequence}`,
+              availableAt: new Date(databaseNow.getTime() + 30_000),
+              createdAt: databaseNow,
+            }).onConflictDoUpdate({
+              target: workflowRunOutboxIntents.dedupeKey,
+              set: {
+                state: "pending",
+                deliveryToken: null,
+                claimedAt: null,
+                deliveredAt: null,
+                availableAt: new Date(databaseNow.getTime() + 30_000),
+              },
+            });
+          }
+          return {
+            kind: "effect_blocked" as const,
+            run,
+            reasonCode: quotaResult.reasonCodes[0] ?? "QUOTA_POLICY_UNAVAILABLE" as const,
+            blockedBoundary,
+          };
+        }
+        if (
+          quotaResult && quotaResult.kind !== "created" && quotaResult.kind !== "replayed"
+        ) throw new Error("Provider quota claim could not be committed.");
+
         const attempt: WorkflowStepAttemptRecord = {
           ...input.attempt,
           inputs: structuredClone(input.attempt.inputs),
@@ -1455,6 +1933,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           }
           await this.appendUsageAttribution(tx, input.usageAttributionPlan, attempt);
           await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
+          await this.commitQuotaTransitions(tx, input.quotaTransitionPlans);
           return {
             kind: "settled" as const,
             run,
@@ -1553,6 +2032,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
 
         await this.appendUsageAttribution(tx, input.usageAttributionPlan, attempt);
         await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
+        await this.commitQuotaTransitions(tx, input.quotaTransitionPlans);
         const updatedAttempts = await tx
           .update(workflowStepAttempts)
           .set({
@@ -1782,12 +2262,16 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         }
         if (attempt.outcome?.kind === "succeeded") {
           await this.appendUsage(tx, input.usagePlan, attempt);
+          await this.commitQuotaUsageReconciliations(tx, input.quotaUsageReconciliationPlans);
           await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
+          await this.commitQuotaTransitions(tx, input.quotaTransitionPlans);
           return { kind: "settled" as const, run, attempt };
         }
         if (!input.usagePlan) return { kind: "unavailable" as const };
         await this.appendUsage(tx, input.usagePlan, attempt);
+        await this.commitQuotaUsageReconciliations(tx, input.quotaUsageReconciliationPlans);
         await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
+        await this.commitQuotaTransitions(tx, input.quotaTransitionPlans);
         const updated = await tx
           .update(workflowStepAttempts)
           .set({
@@ -1873,7 +2357,9 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           run.failureCode === input.failureCode
         ) {
           await this.appendUsage(tx, input.usagePlan, attempt);
+          await this.commitQuotaUsageReconciliations(tx, input.quotaUsageReconciliationPlans);
           await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
+          await this.commitQuotaTransitions(tx, input.quotaTransitionPlans);
           return {
             kind: "settled" as const,
             run,
@@ -1915,7 +2401,9 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         }
 
         await this.appendUsage(tx, input.usagePlan, attempt);
+        await this.commitQuotaUsageReconciliations(tx, input.quotaUsageReconciliationPlans);
         await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
+        await this.commitQuotaTransitions(tx, input.quotaTransitionPlans);
         const updatedAttempts = await tx
           .update(workflowStepAttempts)
           .set({
@@ -2169,7 +2657,9 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           return { kind: "stale_fence" as const };
         }
         await this.appendUsage(tx, input.usagePlan, attempt);
+        await this.commitQuotaUsageReconciliations(tx, input.quotaUsageReconciliationPlans);
         await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
+        await this.commitQuotaTransitions(tx, input.quotaTransitionPlans);
         const updatedAttempts = await tx
           .update(workflowStepAttempts)
           .set({
@@ -2275,7 +2765,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             and(
               eq(workflowRunMutationReceipts.workspaceId, input.receipt.workspaceId),
               eq(workflowRunMutationReceipts.principalId, input.receipt.principalId),
-              eq(workflowRunMutationReceipts.capability, input.receipt.capability),
+              eq(workflowRunMutationReceipts.capability, "workflow_runs.resume@1"),
               eq(workflowRunMutationReceipts.idempotencyKey, input.receipt.idempotencyKey),
             ),
           )
@@ -2434,6 +2924,17 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           rootRunId: input.run.derivation!.rootRunId,
           derivationDepth: sourceRow!.derivationDepth + 1,
         });
+        const quotaResult = await this.commitQuotaClaim(tx, input.quotaAdmissionPlan);
+        if (quotaResult?.kind === "denied") {
+          if (quotaResult.reasonCodes.includes("EMERGENCY_SPEND_SUSPENDED")) {
+            throw new Error("Spend suspension cannot be represented as derived quota admission denial.");
+          }
+          throw new QuotaAdmissionDenied(quotaResult.reasonCodes, quotaResult.evidence);
+        }
+        if (
+          quotaResult && quotaResult.kind !== "created" && quotaResult.kind !== "replayed" &&
+          quotaResult.kind !== "wait" && quotaResult.kind !== "replayed_wait"
+        ) throw new Error("Derived Run quota admission could not be committed.");
         if (input.budgetAdmissionPlan) {
           if (
             !this.budgetWriter ||
@@ -2449,23 +2950,70 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             throw new Error("Budget admission was unavailable for the derived Run.");
           }
         }
-        await tx.insert(workflowRunEvents).values(input.events);
+        const wait = quotaResult?.kind === "wait" || quotaResult?.kind === "replayed_wait"
+          ? quotaResult.wait
+          : null;
+        if (wait && !input.quotaWaitEventId) throw new Error("Derived Run Quota Wait event is unavailable.");
+        let persistedRun = input.run;
+        if (wait) {
+          const updated = await tx.update(workflowRuns).set({
+            state: "waiting",
+            nextEventSequence: input.run.nextEventSequence + 1,
+            resumeAt: wait.eligibleAt,
+            failureCode: "QUOTA_WAIT",
+            updatedAt: wait.createdAt,
+          }).where(and(
+            eq(workflowRuns.workspaceId, input.run.workspaceId),
+            eq(workflowRuns.id, input.run.id),
+            eq(workflowRuns.state, "accepted"),
+          )).returning();
+          if (!updated[0]) throw new Error("Derived Run Quota Wait transition was lost.");
+          persistedRun = mapRun(updated[0]);
+        }
+        await tx.insert(workflowRunEvents).values([
+          ...input.events,
+          ...(wait ? [{
+            id: input.quotaWaitEventId!,
+            workspaceId: input.run.workspaceId,
+            runId: input.run.id,
+            sequence: input.run.nextEventSequence,
+            type: "run.waiting" as const,
+            data: quotaWaitEventData(wait),
+            occurredAt: wait.createdAt,
+          }] : []),
+        ]);
         const receipt = {
           ...input.receipt,
           result: workflowRunReceiptResult(
-            input.run,
+            persistedRun,
             input.receipt.initialEventCursor,
           ),
         };
         await tx.insert(workflowRunMutationReceipts).values(receipt);
-        await tx.insert(workflowRunOutboxIntents).values(input.outboxIntent);
+        if (!wait || wait.eligibleAt) {
+          await tx.insert(workflowRunOutboxIntents).values({
+            ...input.outboxIntent,
+            generation: wait ? input.run.nextEventSequence : input.outboxIntent.generation,
+            dedupeKey: wait
+              ? `workflow-run:${input.run.workspaceId}:${input.run.id}:v${input.run.nextEventSequence}:quota-wait`
+              : input.outboxIntent.dedupeKey,
+            availableAt: wait?.eligibleAt ?? input.outboxIntent.availableAt,
+          });
+        }
         return {
           kind: "created" as const,
-          run: input.run,
+          run: persistedRun,
           receipt,
         };
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof QuotaAdmissionDenied) {
+        return {
+          kind: "quota_denied" as const,
+          reasonCodes: error.reasonCodes,
+          evidence: error.evidence,
+        };
+      }
       return { kind: "unavailable" as const };
     }
   }
@@ -2485,7 +3033,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             and(
               eq(workflowRunMutationReceipts.workspaceId, input.workspaceId),
               eq(workflowRunMutationReceipts.principalId, input.principalId),
-              eq(workflowRunMutationReceipts.capability, "workflow_runs.resume@1"),
+              eq(workflowRunMutationReceipts.capability, input.receipt.capability),
               eq(workflowRunMutationReceipts.idempotencyKey, input.idempotencyKey),
             ),
           )
@@ -2572,19 +3120,31 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         ) {
           return { kind: "unavailable" as const };
         }
+        if (run.failureCode === "QUOTA_WAIT") {
+          const quotaResult = await this.commitQuotaClaim(tx, input.quotaResumePlan);
+          if (
+            !quotaResult ||
+            (quotaResult.kind !== "created" && quotaResult.kind !== "replayed")
+          ) return { kind: "unavailable" as const };
+        }
         await tx.insert(workflowRunEvents).values({
           id: input.eventId,
           workspaceId: input.workspaceId,
           runId: input.runId,
           sequence: run.nextEventSequence,
           type: "run.resumed",
-          data: { automatic: false },
+          data: input.quotaResumePlan ? {
+            automatic: false,
+            waitId: input.quotaResumePlan.resumesWaitId,
+            reason: input.quotaResumePlan.resumeReason,
+            reservationIds: input.quotaResumePlan.reservations.map((item) => item.id),
+          } : { automatic: false },
           occurredAt: databaseNow,
         });
         const updated = await tx
           .update(workflowRuns)
           .set({
-            state: "running",
+            state: run.startedAt === null ? "accepted" : "running",
             resumeAt: null,
             failureCode: null,
             nextEventSequence: run.nextEventSequence + 1,
@@ -2618,6 +3178,104 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           kind: "created" as const,
           run: resumed,
           receipt,
+        };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
+  async resumeQuotaWait(
+    input: Parameters<WorkflowRunRepository["resumeQuotaWait"]>[0],
+  ) {
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        const rows = await tx.select({
+          run: workflowRuns,
+          databaseNow: sql<unknown>`clock_timestamp()`,
+        }).from(workflowRuns).where(and(
+          eq(workflowRuns.workspaceId, input.workspaceId),
+          eq(workflowRuns.workflowId, input.workflowId),
+          eq(workflowRuns.id, input.runId),
+        )).limit(1).for("update");
+        if (!rows[0]) return { kind: "unavailable" as const };
+        const run = mapRun(rows[0].run);
+        const waitEvents = await tx.select({ data: workflowRunEvents.data })
+          .from(workflowRunEvents).where(and(
+            eq(workflowRunEvents.workspaceId, input.workspaceId),
+            eq(workflowRunEvents.runId, input.runId),
+            eq(workflowRunEvents.sequence, input.waitEventSequence),
+            eq(workflowRunEvents.type, "run.waiting"),
+          )).limit(1).for("share");
+        if (
+          !waitEvents[0] ||
+          waitEvents[0].data.waitId !== input.quotaResumePlan.resumesWaitId
+        ) return { kind: "unavailable" as const };
+        const waitId = input.quotaResumePlan.resumesWaitId;
+        const [winningWaitRow] = waitId
+          ? await tx.select({ wait: runtimeQuotaWaits.wait })
+              .from(runtimeQuotaWaits)
+              .where(and(
+                eq(runtimeQuotaWaits.workspaceId, input.workspaceId),
+                eq(runtimeQuotaWaits.id, waitId),
+                eq(runtimeQuotaWaits.runId, input.runId),
+              ))
+              .limit(1)
+              .for("update")
+          : [];
+        if (run.state !== "waiting" || run.failureCode !== "QUOTA_WAIT") {
+          const winningWait = winningWaitRow?.wait;
+          return winningWait?.state === "resumed" &&
+            sameQuotaResumeActor(winningWait.resumedBy, input.quotaResumePlan.resumeActor) &&
+            winningWait.resumeIdempotencyKey !== null &&
+            winningWait.resumeIdempotencyKey === input.quotaResumePlan.resumeIdempotencyKey
+            ? { kind: "replayed" as const, run }
+            : { kind: "unavailable" as const };
+        }
+        if (!winningWaitRow) return { kind: "unavailable" as const };
+        const quotaResult = await this.commitQuotaClaim(tx, input.quotaResumePlan);
+        if (
+          !quotaResult ||
+          (quotaResult.kind !== "created" && quotaResult.kind !== "replayed")
+        ) return { kind: "unavailable" as const };
+        const databaseNow = postgresDate(rows[0].databaseNow);
+        await tx.insert(workflowRunEvents).values({
+          id: input.eventId,
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          sequence: run.nextEventSequence,
+          type: "run.resumed",
+          data: {
+            automatic: false,
+            waitId: input.quotaResumePlan.resumesWaitId,
+            reason: input.quotaResumePlan.resumeReason,
+            actor: input.quotaResumePlan.resumeActor,
+            reservationIds: input.quotaResumePlan.reservations.map((item) => item.id),
+          },
+          occurredAt: databaseNow,
+        });
+        const updated = await tx.update(workflowRuns).set({
+          state: run.startedAt === null ? "accepted" : "running",
+          resumeAt: null,
+          failureCode: null,
+          nextEventSequence: run.nextEventSequence + 1,
+          updatedAt: databaseNow,
+        }).where(and(
+          eq(workflowRuns.workspaceId, input.workspaceId),
+          eq(workflowRuns.id, input.runId),
+          eq(workflowRuns.state, "waiting"),
+          eq(workflowRuns.nextEventSequence, run.nextEventSequence),
+        )).returning();
+        if (!updated[0]) throw new Error("Quota Wait resume lost Run serialization.");
+        await tx.insert(workflowRunOutboxIntents).values({
+          ...input.outboxIntent,
+          generation: run.nextEventSequence,
+          availableAt: databaseNow,
+          createdAt: databaseNow,
+        }).onConflictDoNothing({ target: workflowRunOutboxIntents.dedupeKey });
+        return {
+          kind: quotaResult.kind === "replayed" ? "replayed" as const : "resumed" as const,
+          run: mapRun(updated[0]),
         };
       });
     } catch {
@@ -2744,7 +3402,9 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         }
         await this.appendUsage(tx, input.usagePlan, attempt);
         await this.appendUsageAttribution(tx, input.usageAttributionPlan, attempt);
+        await this.commitQuotaUsageReconciliations(tx, input.quotaUsageReconciliationPlans);
         await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
+        await this.commitQuotaTransitions(tx, input.quotaTransitionPlans);
         let sequence = run.nextEventSequence;
         const events: WorkflowRunEventRecord[] = [];
         if (input.resolution.kind === "succeeded") {

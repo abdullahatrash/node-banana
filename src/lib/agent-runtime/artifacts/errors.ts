@@ -37,6 +37,12 @@ export const ARTIFACT_ERROR_CATALOG = {
     retryable: true,
     description: "Artifact content storage is temporarily unavailable.",
   },
+  ARTIFACT_QUOTA_EXCEEDED: {
+    category: "authorization",
+    retryable: false,
+    description:
+      "The Artifact exceeds an applicable non-monetary storage Quota Policy.",
+  },
 } as const satisfies Record<string, Omit<CapabilityErrorContract, "code">>;
 
 export type ArtifactServiceErrorCode = keyof typeof ARTIFACT_ERROR_CATALOG;
@@ -47,6 +53,7 @@ export class ArtifactServiceError extends Error {
   constructor(
     readonly code: ArtifactServiceErrorCode,
     message: string,
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ArtifactServiceError";
