@@ -17,6 +17,10 @@
     {
       "path": "/api/agent-runtime/internal/run-relay",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/observability-retention",
+      "schedule": "* * * * *"
     }
   ]
 }

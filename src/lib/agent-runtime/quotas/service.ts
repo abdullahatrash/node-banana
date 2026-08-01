@@ -2,6 +2,10 @@ import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { addDecimals, canonicalDecimal } from "../usage/decimal";
 import { assertIanaTimezone } from "../budgets/period";
 import { quotaWindow } from "./window";
+import {
+  emitQuotaDecisionMetric,
+  quotaReasonFamily,
+} from "../operational-metrics";
 import type {
   CreateQuotaPolicyRevisionInput,
   EffectiveQuotaCapacity,
@@ -465,7 +469,27 @@ export class QuotaService {
   }
 
   async commitClaim(plan: QuotaClaimPlan): Promise<QuotaClaimCommitResult> {
-    return this.repository.commitClaim(plan);
+    const result = await this.repository.commitClaim(plan);
+    if (result.kind !== "conflict" && result.kind !== "unavailable") {
+      const reasonCodes = result.kind === "denied" ? result.reasonCodes : [];
+      void emitQuotaDecisionMetric({
+        workspaceId: plan.workspaceId,
+        canonicalEventId:
+          result.kind === "wait" || result.kind === "replayed_wait"
+            ? result.wait.id
+            : plan.transitionKey,
+        boundary: plan.boundary,
+        outcome:
+          result.kind === "denied"
+            ? "denied"
+            : result.kind === "wait" || result.kind === "replayed_wait"
+              ? "wait"
+              : "succeeded",
+        reasonFamily: quotaReasonFamily(reasonCodes),
+        recordedAt: plan.createdAt,
+      });
+    }
+    return result;
   }
 
   async planResumeWait(input: {

@@ -1,44 +1,38 @@
 /**
- * Centralized logging utility for Node Banana
+ * Fail-closed operational logger.
  *
- * Features:
- * - Session-based logging (one log file per workflow execution)
- * - Automatic rotation (keeps last 10 sessions)
- * - Privacy-aware (truncates prompts, logs image metadata not full data)
- * - Structured JSON format
+ * Canonical workflow/provider records own rich data. This sink intentionally
+ * stores only low-cardinality diagnostics and bounded counters so prompts,
+ * content, credentials, URLs, paths, provider bodies, and thrown Errors cannot
+ * become a second data plane.
  */
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export type LogCategory =
-  | 'workflow.start'
-  | 'workflow.end'
-  | 'workflow.error'
-  | 'workflow.validation'
-  | 'node.execution'
-  | 'node.error'
-  | 'api.gemini'
-  | 'api.openai'
-  | 'api.llm'
-  | 'api.error'
-  | 'file.save'
-  | 'file.load'
-  | 'file.error'
-  | 'connection.validation'
-  | 'state.change'
-  | 'system';
+  | "workflow.start"
+  | "workflow.end"
+  | "workflow.error"
+  | "workflow.validation"
+  | "node.execution"
+  | "node.error"
+  | "api.gemini"
+  | "api.openai"
+  | "api.llm"
+  | "api.error"
+  | "file.save"
+  | "file.load"
+  | "file.error"
+  | "connection.validation"
+  | "state.change"
+  | "system";
 
 export interface LogEntry {
   timestamp: string;
   level: LogLevel;
   category: LogCategory;
   message: string;
-  context?: Record<string, any>;
-  error?: {
-    message: string;
-    stack?: string;
-    name?: string;
-  };
+  context?: Record<string, unknown>;
 }
 
 export interface LogSession {
@@ -48,190 +42,201 @@ export interface LogSession {
   entries: LogEntry[];
 }
 
-// Type for server-only operations
-type LoggerServer = {
-  saveSession: (session: LogSession) => Promise<void>;
-  rotateLogFiles: () => Promise<void>;
+const SAFE_MESSAGE = "Operational event.";
+const MAX_CONTEXT_KEYS = 32;
+const MAX_CONTEXT_DEPTH = 4;
+
+const SENSITIVE_KEY =
+  /(prompt|content|media|image|audio|video|credential|header|cookie|token|key|url|uri|path|body|error|message|stack|cause|secret|auth|password|payload|response|request|file|directory)/i;
+
+const SAFE_SCALAR_KEYS = new Set([
+  "attempt",
+  "batchSize",
+  "bytes",
+  "configured",
+  "count",
+  "deletedCount",
+  "delayMs",
+  "duration",
+  "durationMs",
+  "edgeCount",
+  "enabled",
+  "exists",
+  "height",
+  "index",
+  "inputCount",
+  "isDataURI",
+  "levelIndex",
+  "maxAttempts",
+  "nodeCount",
+  "outputCount",
+  "processed",
+  "replayed",
+  "retryCount",
+  "size",
+  "sizeBytes",
+  "sizeKB",
+  "skipped",
+  "statusCode",
+  "success",
+  "total",
+  "totalCount",
+  "totalFiles",
+  "uploaded",
+  "valid",
+  "width",
+]);
+
+const SAFE_ENUM_VALUES: Readonly<Record<string, ReadonlySet<string>>> = {
+  action: new Set(["read", "write", "delete", "create", "update", "publish", "retry", "resume"]),
+  category: new Set(["authorization", "provider", "persistence", "quota", "budget", "artifact", "runtime", "validation"]),
+  mode: new Set(["sync", "async", "manual", "automatic", "create", "edit"]),
+  operation: new Set(["workflow", "text", "image", "audio", "video", "storage", "publish", "refresh", "cleanup"]),
+  outcome: new Set(["succeeded", "failed", "unknown", "denied", "waiting"]),
+  phase: new Set(["admission", "planning", "execution", "settlement", "reconciliation", "storage"]),
+  platform: new Set(["facebook", "instagram", "mastodon", "bluesky"]),
+  provider: new Set(["google", "openai", "anthropic", "kie", "internal", "unknown"]),
+  reason: new Set(["capacity", "policy", "suspension", "provider", "persistence", "validation", "unknown"]),
+  status: new Set(["accepted", "pending", "processing", "waiting", "completed", "published", "failed", "cancelled", "rejected", "active", "disabled", "revoked", "expired", "unknown"]),
 };
+
+function safeCode(value: string): string | undefined {
+  return /^[A-Z][A-Z0-9_]{0,79}$/.test(value) ? value : undefined;
+}
+
+function sanitizeValue(
+  key: string,
+  value: unknown,
+  depth: number,
+  seen: WeakSet<object>,
+): unknown {
+  if (SENSITIVE_KEY.test(key) || depth > MAX_CONTEXT_DEPTH) return undefined;
+  if (typeof value === "boolean") {
+    return SAFE_SCALAR_KEYS.has(key) ? value : undefined;
+  }
+  if (typeof value === "number") {
+    return SAFE_SCALAR_KEYS.has(key) &&
+      Number.isFinite(value) &&
+      Math.abs(value) <= Number.MAX_SAFE_INTEGER
+      ? value
+      : undefined;
+  }
+  if (typeof value === "string") {
+    if (key === "code") return safeCode(value);
+    return SAFE_ENUM_VALUES[key]?.has(value) ? value : undefined;
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    const sanitized = value
+      .slice(0, MAX_CONTEXT_KEYS)
+      .map((item) => sanitizeValue(key, item, depth + 1, seen))
+      .filter((item) => item !== undefined);
+    return sanitized.length > 0 ? sanitized : undefined;
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const nestedKey of Object.keys(descriptors).slice(0, MAX_CONTEXT_KEYS)) {
+    const descriptor = descriptors[nestedKey];
+    if (!("value" in descriptor)) continue;
+    const nested = sanitizeValue(
+      nestedKey,
+      descriptor.value,
+      depth + 1,
+      seen,
+    );
+    if (nested !== undefined) sanitized[nestedKey] = nested;
+  }
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+function sanitizeContext(context: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  const seen = new WeakSet<object>([context]);
+  const descriptors = Object.getOwnPropertyDescriptors(context);
+  for (const key of Object.keys(descriptors).slice(0, MAX_CONTEXT_KEYS)) {
+    const descriptor = descriptors[key];
+    if (!("value" in descriptor)) continue;
+    const value = sanitizeValue(key, descriptor.value, 0, seen);
+    if (value !== undefined) sanitized[key] = value;
+  }
+  return sanitized;
+}
 
 class Logger {
   private currentSession: LogSession | null = null;
-  private isClient: boolean;
 
-  constructor() {
-    this.isClient = typeof window !== 'undefined';
-  }
-
-  /**
-   * Initialize a new logging session for a workflow execution
-   * Note: On client side, this just tracks in memory. File writing happens server-side in API routes.
-   */
   async startSession(): Promise<string> {
     const sessionId = this.generateSessionId();
     const startTime = new Date().toISOString();
-
-    this.currentSession = {
-      sessionId,
-      startTime,
-      entries: [],
-    };
-
-    this.log('info', 'system', `Session started: ${sessionId}`);
-
+    this.currentSession = { sessionId, startTime, entries: [] };
+    this.log("info", "system", "Session started");
     return sessionId;
   }
 
-  /**
-   * End the current session
-   * Note: On client side, this just clears memory. File writing happens server-side in API routes.
-   */
   async endSession(): Promise<void> {
-    if (!this.currentSession) {
-      return;
-    }
-
+    if (!this.currentSession) return;
     this.currentSession.endTime = new Date().toISOString();
-    this.log('info', 'system', `Session ended: ${this.currentSession.sessionId}`);
-
+    this.log("info", "system", "Session ended");
     this.currentSession = null;
   }
 
-  /**
-   * Get the current session (useful for server-side code to save it)
-   */
   getCurrentSession(): LogSession | null {
     return this.currentSession;
   }
 
-  /**
-   * Log a message
-   */
   log(
     level: LogLevel,
     category: LogCategory,
-    message: string,
-    context?: Record<string, any>,
-    error?: Error
+    _message: string,
+    context?: Record<string, unknown>,
+    _error?: Error,
   ): void {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
       category,
-      message,
+      message: SAFE_MESSAGE,
     };
-
     if (context) {
-      entry.context = this.sanitizeContext(context);
+      const safeContext = sanitizeContext(context);
+      if (Object.keys(safeContext).length > 0) entry.context = safeContext;
     }
+    if (this.currentSession) this.currentSession.entries.push(entry);
 
-    if (error) {
-      entry.error = {
-        message: error.message,
-        stack: error.stack,
-        name: error.name,
-      };
-    }
-
-    // Add to current session if exists
-    if (this.currentSession) {
-      this.currentSession.entries.push(entry);
-    }
-
-    // Also log to console for development
-    const consoleMethod = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
-    console[consoleMethod](`[${category}] ${message}`, context || '', error || '');
+    const consoleMethod =
+      level === "error" ? "error" : level === "warn" ? "warn" : "log";
+    console[consoleMethod](entry);
   }
 
-  /**
-   * Convenience methods
-   */
-  info(category: LogCategory, message: string, context?: Record<string, any>): void {
-    this.log('info', category, message, context);
+  info(category: LogCategory, message: string, context?: Record<string, unknown>): void {
+    this.log("info", category, message, context);
   }
 
-  warn(category: LogCategory, message: string, context?: Record<string, any>): void {
-    this.log('warn', category, message, context);
+  warn(category: LogCategory, message: string, context?: Record<string, unknown>): void {
+    this.log("warn", category, message, context);
   }
 
-  error(category: LogCategory, message: string, context?: Record<string, any>, error?: Error): void {
-    this.log('error', category, message, context, error);
+  error(
+    category: LogCategory,
+    message: string,
+    context?: Record<string, unknown>,
+    error?: Error,
+  ): void {
+    this.log("error", category, message, context, error);
   }
 
-  /**
-   * Get the current session ID
-   */
   getSessionId(): string | null {
-    return this.currentSession?.sessionId || null;
+    return this.currentSession?.sessionId ?? null;
   }
 
-  /**
-   * Generate a unique session ID
-   */
   private generateSessionId(): string {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
     const random = Math.random().toString(36).substring(2, 8);
     return `exec-${timestamp}-${random}`;
   }
-
-  /**
-   * Sanitize context to protect privacy and reduce log size
-   */
-  private sanitizeContext(context: Record<string, any>): Record<string, any> {
-    const sanitized: Record<string, any> = {};
-
-    for (const [key, value] of Object.entries(context)) {
-      // Truncate prompts to 200 characters
-      if (key === 'prompt' && typeof value === 'string') {
-        sanitized[key] = value.length > 200 ? value.substring(0, 200) + '...[truncated]' : value;
-      }
-      // Convert image data URIs to metadata
-      else if (key === 'image' || key === 'images') {
-        if (typeof value === 'string' && value.startsWith('data:image')) {
-          sanitized[key] = this.extractImageMetadata(value);
-        } else if (Array.isArray(value)) {
-          sanitized[key] = value.map(img =>
-            typeof img === 'string' && img.startsWith('data:image')
-              ? this.extractImageMetadata(img)
-              : img
-          );
-        } else {
-          sanitized[key] = value;
-        }
-      }
-      // Handle nested objects
-      else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-        sanitized[key] = this.sanitizeContext(value);
-      }
-      // Keep other values as-is
-      else {
-        sanitized[key] = value;
-      }
-    }
-
-    return sanitized;
-  }
-
-  /**
-   * Extract metadata from image data URI
-   */
-  private extractImageMetadata(dataUri: string): object {
-    const match = dataUri.match(/^data:image\/(\w+);base64,(.+)$/);
-    if (!match) {
-      return { error: 'Invalid image data URI' };
-    }
-
-    const [, format, base64Data] = match;
-    const sizeInBytes = base64Data.length * 0.75; // Approximate size from base64
-    const sizeInKB = Math.round(sizeInBytes / 1024);
-
-    return {
-      format,
-      sizeKB: sizeInKB,
-      isDataURI: true,
-    };
-  }
-
 }
 
-// Export singleton instance
 export const logger = new Logger();

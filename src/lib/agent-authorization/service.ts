@@ -169,7 +169,7 @@ export class AgentAuthorizationService implements CapabilityAuthorizer {
       request.securityContext.kind !== "agent"
     ) {
       return deniedAdmission(
-        `trace_${randomUUID().replaceAll("-", "")}`,
+        `otr_${randomUUID().replaceAll("-", "")}`,
         exactCapability(request.capability.name, request.capability.version),
       );
     }
@@ -182,7 +182,7 @@ export class AgentAuthorizationService implements CapabilityAuthorizer {
       forceResourceUnavailable = true;
     }
     const now = this.clock.now();
-    const operatorTraceRef = `trace_${randomUUID().replaceAll("-", "")}`;
+    const operatorTraceRef = `otr_${randomUUID().replaceAll("-", "")}`;
     const result = await this.repository.admit({
       request,
       resources,

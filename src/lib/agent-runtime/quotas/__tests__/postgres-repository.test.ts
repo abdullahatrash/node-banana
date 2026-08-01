@@ -179,4 +179,45 @@ describe("Postgres Quota repository contract", () => {
     expect(transition).toContain('plan.subject.kind === "usage_settlement"');
     expect(transition).toContain('current.subject.kind === "usage_settlement"');
   });
+
+  it("cannot mutate a reservation or Wait without appending same-transaction Contract Evidence", () => {
+    const mutations = [
+      ...source.matchAll(
+        /await tx\.(?:insert|update)\(runtimeQuota(?:Reservations|Waits)\)/g,
+      ),
+    ];
+    const evidenceAppends = [
+      ...source.matchAll(/await appendContractEvidenceVersion\(tx(?: as Tx)?, \{/g),
+    ];
+
+    expect(mutations).toHaveLength(5);
+    expect(evidenceAppends).toHaveLength(mutations.length);
+
+    const claim = source.slice(
+      source.indexOf("async commitClaim("),
+      source.indexOf("async commitClaimsAtomically("),
+    );
+    expect(claim.indexOf("await tx.insert(runtimeQuotaWaits)")).toBeLessThan(
+      claim.indexOf('resourceKind: "quota_wait"'),
+    );
+    expect(claim.indexOf("await tx.insert(runtimeQuotaReservations)")).toBeLessThan(
+      claim.indexOf('resourceKind: "quota_reservation"'),
+    );
+    expect(claim.lastIndexOf("await tx.update(runtimeQuotaWaits)")).toBeLessThan(
+      claim.lastIndexOf('resourceKind: "quota_wait"'),
+    );
+
+    const reconciliation = source.slice(
+      source.indexOf("async commitUsageReconciliation("),
+      source.indexOf("async commitTransition("),
+    );
+    expect(reconciliation.indexOf("await tx.update(runtimeQuotaReservations)")).toBeLessThan(
+      reconciliation.indexOf('resourceKind: "quota_reservation"'),
+    );
+
+    const transition = source.slice(source.indexOf("async commitTransition("));
+    expect(transition.indexOf("await tx.update(runtimeQuotaReservations)")).toBeLessThan(
+      transition.indexOf('resourceKind: "quota_reservation"'),
+    );
+  });
 });

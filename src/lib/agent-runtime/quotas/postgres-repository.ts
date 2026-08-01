@@ -14,6 +14,11 @@ import {
   runtimeQuotaWindows,
   runtimeSpendControls,
 } from "@/lib/db/schema";
+import { appendContractEvidenceVersion } from "../contract-evidence/postgres-repository";
+import {
+  projectQuotaReservationContractEvidence,
+  projectQuotaWaitContractEvidence,
+} from "../contract-evidence/projectors";
 import { addDecimals, canonicalDecimal } from "../usage/decimal";
 import type {
   QuotaCapacityProjection,
@@ -521,7 +526,7 @@ export class DrizzleQuotaRepository implements QuotaRepository<Tx> {
   }
 
   async commitClaim(plan: QuotaClaimPlan, transaction?: Tx): Promise<QuotaClaimCommitResult> {
-    const execute = async (tx: Db | Tx): Promise<QuotaClaimCommitResult> => {
+    const execute = async (tx: Tx): Promise<QuotaClaimCommitResult> => {
       await lockQuotaGate(tx, plan.workspaceId);
       const [receipt] = await tx.select().from(runtimeQuotaClaimReceipts).where(and(
         eq(runtimeQuotaClaimReceipts.workspaceId, plan.workspaceId),
@@ -671,6 +676,15 @@ export class DrizzleQuotaRepository implements QuotaRepository<Tx> {
           runId: wait.runId, transitionKey: wait.transitionKey, state: wait.state, eligibleAt: wait.eligibleAt,
           reasonCode: wait.reasonCode, wait, createdAt: wait.createdAt, resolvedAt: null,
         });
+        await appendContractEvidenceVersion(tx, {
+          workspaceId: wait.workspaceId,
+          resourceKind: "quota_wait",
+          resourceId: wait.id,
+          canonicalSource: wait,
+          projectionKind: "quota_wait_summary",
+          projection: projectQuotaWaitContractEvidence(wait),
+          createdAt: wait.createdAt,
+        });
         return { kind: "wait", wait };
       }
       const persistedReservations: QuotaReservation[] = [];
@@ -693,6 +707,15 @@ export class DrizzleQuotaRepository implements QuotaRepository<Tx> {
           overageAmount: reservation.overageAmount,
           createdAt: reservation.createdAt, updatedAt: reservation.updatedAt,
         });
+        await appendContractEvidenceVersion(tx, {
+          workspaceId: reservation.workspaceId,
+          resourceKind: "quota_reservation",
+          resourceId: reservation.id,
+          canonicalSource: reservation,
+          projectionKind: "quota_reservation_summary",
+          projection: projectQuotaReservationContractEvidence(reservation),
+          createdAt: reservation.updatedAt,
+        });
         await tx.insert(runtimeQuotaReservationEvents).values({
           id: eventId("held", reservation.id), workspaceId: reservation.workspaceId,
           reservationId: reservation.id, transitionId: reservation.transitionKey, eventType: "held",
@@ -714,6 +737,15 @@ export class DrizzleQuotaRepository implements QuotaRepository<Tx> {
         };
         await tx.update(runtimeQuotaWaits).set({ state: updated.state, wait: updated, resolvedAt: updated.resolvedAt })
           .where(and(eq(runtimeQuotaWaits.workspaceId, plan.workspaceId), eq(runtimeQuotaWaits.id, updated.id)));
+        await appendContractEvidenceVersion(tx, {
+          workspaceId: updated.workspaceId,
+          resourceKind: "quota_wait",
+          resourceId: updated.id,
+          canonicalSource: updated,
+          projectionKind: "quota_wait_summary",
+          projection: projectQuotaWaitContractEvidence(updated),
+          createdAt: updated.resolvedAt ?? databaseNow,
+        });
       }
       return created;
     };
@@ -754,7 +786,7 @@ export class DrizzleQuotaRepository implements QuotaRepository<Tx> {
     plan: QuotaUsageReconciliationPlan,
     transaction?: Tx,
   ): Promise<QuotaUsageReconciliationCommitResult> {
-    const execute = async (tx: Db | Tx): Promise<QuotaUsageReconciliationCommitResult> => {
+    const execute = async (tx: Tx): Promise<QuotaUsageReconciliationCommitResult> => {
       await lockQuotaGate(tx, plan.workspaceId);
       const [receipt] = await tx.select().from(runtimeQuotaUsageReconciliationReceipts).where(and(
         eq(runtimeQuotaUsageReconciliationReceipts.workspaceId, plan.workspaceId),
@@ -832,6 +864,15 @@ export class DrizzleQuotaRepository implements QuotaRepository<Tx> {
           eq(runtimeQuotaReservations.workspaceId, plan.workspaceId),
           eq(runtimeQuotaReservations.id, next.id),
         ));
+        await appendContractEvidenceVersion(tx as Tx, {
+          workspaceId: next.workspaceId,
+          resourceKind: "quota_reservation",
+          resourceId: next.id,
+          canonicalSource: next,
+          projectionKind: "quota_reservation_summary",
+          projection: projectQuotaReservationContractEvidence(next),
+          createdAt: next.updatedAt,
+        });
         await tx.insert(runtimeQuotaReservationEvents).values({
           id: eventId("usage_reconciled", { reconciliationId: plan.reconciliationId, reservationId: next.id }),
           workspaceId: plan.workspaceId,
@@ -867,7 +908,7 @@ export class DrizzleQuotaRepository implements QuotaRepository<Tx> {
   }
 
   async commitTransition(plan: QuotaTransitionPlan, transaction?: Tx): Promise<QuotaTransitionCommitResult> {
-    const execute = async (tx: Db | Tx): Promise<QuotaTransitionCommitResult> => {
+    const execute = async (tx: Tx): Promise<QuotaTransitionCommitResult> => {
       await lockQuotaGate(tx, plan.workspaceId);
       if (plan.subject.kind === "usage_settlement") return { kind: "unavailable" };
       const [receipt] = await tx.select().from(runtimeQuotaTransitionReceipts).where(and(
@@ -936,6 +977,15 @@ export class DrizzleQuotaRepository implements QuotaRepository<Tx> {
           heldAmount, settledAmount, releasedAmount, state: updated.state,
           reservation: updated, updatedAt: plan.recordedAt,
         }).where(and(eq(runtimeQuotaReservations.workspaceId, plan.workspaceId), eq(runtimeQuotaReservations.id, current.id)));
+        await appendContractEvidenceVersion(tx as Tx, {
+          workspaceId: updated.workspaceId,
+          resourceKind: "quota_reservation",
+          resourceId: updated.id,
+          canonicalSource: updated,
+          projectionKind: "quota_reservation_summary",
+          projection: projectQuotaReservationContractEvidence(updated),
+          createdAt: updated.updatedAt,
+        });
         await tx.insert(runtimeQuotaReservationEvents).values({
           id: eventId(plan.outcome, { transitionId: plan.transitionId, reservationId: current.id }),
           workspaceId: plan.workspaceId, reservationId: current.id, transitionId: plan.transitionId,

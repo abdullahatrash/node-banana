@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { canUseS3Storage, createPresignedDownload, objectExistsInS3 } from "@/lib/storage";
 import { getProject } from "@/lib/studio/repository";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
@@ -20,7 +21,7 @@ export const POST = withStudioAuth<undefined>(
   { route: "/api/studio/assets/legacy-download", action: "read" },
   async (request: NextRequest, authz): Promise<NextResponse<LegacyDownloadResponse>> => {
     if (!canUseS3Storage()) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error:
@@ -35,7 +36,7 @@ export const POST = withStudioAuth<undefined>(
     const legacyKey = body.legacyKey?.trim();
 
     if (!projectId || !legacyKey) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error: "projectId and legacyKey are required.",
@@ -46,7 +47,7 @@ export const POST = withStudioAuth<undefined>(
 
     const project = await getProject(authz.workspaceId, projectId);
     if (!project) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error: "No access to this project.",
@@ -56,7 +57,7 @@ export const POST = withStudioAuth<undefined>(
     }
 
     if (!project.sourceDirectoryPath?.trim()) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error: "Project has no legacy source directory path.",
@@ -67,7 +68,7 @@ export const POST = withStudioAuth<undefined>(
 
     const allowedPrefix = `workflows/${encodeURIComponent(project.sourceDirectoryPath)}/`;
     if (!legacyKey.startsWith(allowedPrefix)) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error: "Legacy key does not belong to this project.",
@@ -78,7 +79,7 @@ export const POST = withStudioAuth<undefined>(
 
     const exists = await objectExistsInS3({ key: legacyKey });
     if (!exists) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error: "Legacy asset not found.",
@@ -89,7 +90,7 @@ export const POST = withStudioAuth<undefined>(
 
     const signed = await createPresignedDownload({ key: legacyKey });
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       key: signed.key,
       downloadUrl: signed.downloadUrl,

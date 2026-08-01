@@ -40,33 +40,129 @@ function safeRequestDigest(
   }
 }
 
-function traceRef(requestDigest: string): string {
-  // Discovery performs no operational side effect, so a request-bound opaque
-  // reference is sufficient and remains identical across thin transports.
-  return `trace_${requestDigest.slice(7, 31)}`;
+export interface CapabilityDiagnosticEvent {
+  workspaceId: string;
+  category: "authorization" | "runtime";
+  severity: "error";
+  code: string;
+  stage: "admission" | "execution";
+  outcome: "failed" | "denied";
+  providerFamily: "internal";
+  httpStatus: null;
+  retryable: boolean;
+  durationMs: null;
+  attempt: null;
+  createdAt: Date;
 }
 
-function toError(options: {
+export type CapabilityDiagnosticRecorder = (
+  event: CapabilityDiagnosticEvent,
+) => Promise<string | null>;
+
+const SAFE_ERROR_CATEGORIES = new Set<CapabilityError["category"]>([
+  "validation",
+  "not_found",
+  "lifecycle",
+  "authorization",
+  "approval",
+  "conflict",
+  "internal",
+]);
+
+const SAFE_ERROR_MESSAGES: Record<CapabilityError["category"], string> = {
+  validation: "The capability request is invalid.",
+  not_found: "The requested capability resource is unavailable.",
+  lifecycle: "The requested capability version is unavailable.",
+  authorization: "The capability request is not authorized.",
+  approval: "The capability request requires approval.",
+  conflict: "The capability request conflicts with current state.",
+  internal: "The capability request could not be completed.",
+};
+
+function safeErrorMessage(
+  category: CapabilityError["category"],
+  capability: CapabilityIdentity | null,
+): string {
+  if (category === "authorization" && capability) {
+    return `Capability ${formatCapabilityIdentity(capability)} is not authorized. Ask a Workspace owner or admin to grant that exact capability and its required resources.`;
+  }
+  return SAFE_ERROR_MESSAGES[category];
+}
+
+function safeRemediation(
+  remediation: CapabilityFailure["remediation"],
+): CapabilityError["remediation"] | undefined {
+  if (
+    !remediation ||
+    typeof remediation.capability?.name !== "string" ||
+    typeof remediation.capability?.version !== "number"
+  ) return undefined;
+  const capability = parseCapabilityIdentity(
+    formatCapabilityIdentity(remediation.capability),
+  );
+  return capability ? { capability } : undefined;
+}
+
+async function toError(options: {
   capability: CapabilityIdentity | null;
   requestDigest: string;
   failure: CapabilityFailure;
-  operatorTraceRef?: string;
-}): CapabilityError {
+  workspaceId?: string;
+  stage?: "admission" | "execution";
+  recorder?: CapabilityDiagnosticRecorder;
+}): Promise<CapabilityError> {
+  const safeCode =
+    typeof options.failure.code === "string" &&
+    /^[A-Z][A-Z0-9_]{0,79}$/.test(options.failure.code)
+    ? options.failure.code
+    : "CAPABILITY_FAILURE";
+  const safeCategory = SAFE_ERROR_CATEGORIES.has(options.failure.category)
+    ? options.failure.category
+    : "internal";
+  const safeRetryable =
+    typeof options.failure.retryable === "boolean"
+      ? options.failure.retryable
+      : false;
+  let operatorTraceRef: string | null = null;
+  if (options.workspaceId && options.recorder) {
+    try {
+      const recorded = await options.recorder({
+        workspaceId: options.workspaceId,
+        category:
+          safeCategory === "authorization"
+            ? "authorization"
+            : "runtime",
+        severity: "error",
+        code: safeCode,
+        stage: options.stage ?? "admission",
+        outcome:
+          safeCategory === "authorization" ? "denied" : "failed",
+        providerFamily: "internal",
+        httpStatus: null,
+        retryable: safeRetryable,
+        durationMs: null,
+        attempt: null,
+        createdAt: new Date(),
+      });
+      if (recorded && /^otr_[a-f0-9]{32}$/.test(recorded)) {
+        operatorTraceRef = recorded;
+      }
+    } catch {
+      // Diagnostics are deliberately unable to replace the canonical error.
+    }
+  }
   const response: CapabilityError = {
     type: "capability_error",
     capability: options.capability,
     requestDigest: options.requestDigest,
-    code: options.failure.code,
-    category: options.failure.category,
-    message: options.failure.message,
-    retryable: options.failure.retryable,
-    operatorTraceRef:
-      options.operatorTraceRef ?? traceRef(options.requestDigest),
+    code: safeCode,
+    category: safeCategory,
+    message: safeErrorMessage(safeCategory, options.capability),
+    retryable: safeRetryable,
+    operatorTraceRef,
   };
-  if (options.failure.details) response.details = options.failure.details;
-  if (options.failure.remediation) {
-    response.remediation = options.failure.remediation;
-  }
+  const remediation = safeRemediation(options.failure.remediation);
+  if (remediation) response.remediation = remediation;
   return response;
 }
 
@@ -89,6 +185,7 @@ export class CapabilityDispatcher {
   constructor(
     readonly registry: CapabilityRegistry,
     private readonly authorizer: CapabilityAuthorizer,
+    private readonly diagnosticRecorder?: CapabilityDiagnosticRecorder,
   ) {}
 
   async dispatch(
@@ -97,13 +194,24 @@ export class CapabilityDispatcher {
   ): Promise<CapabilityResponse> {
     const rawInput = invocation.input ?? {};
     const requestDigest = safeRequestDigest(invocation.capability, rawInput);
+    const errorResponse = (
+      options: Omit<
+        Parameters<typeof toError>[0],
+        "workspaceId" | "recorder"
+      >,
+    ) =>
+      toError({
+        ...options,
+        workspaceId: context.securityContext?.workspaceId,
+        recorder: this.diagnosticRecorder,
+      });
     const identity =
       typeof invocation.capability === "string"
         ? parseCapabilityIdentity(invocation.capability)
         : parseCapabilityIdentity(formatCapabilityIdentity(invocation.capability));
 
     if (!identity) {
-      return toError({
+      return errorResponse({
         capability: null,
         requestDigest,
         failure: new CapabilityFailure({
@@ -117,7 +225,7 @@ export class CapabilityDispatcher {
 
     const registration = this.registry.getRegistration(identity);
     if (!registration) {
-      return toError({
+      return errorResponse({
         capability: identity,
         requestDigest,
         failure: new CapabilityFailure({
@@ -130,7 +238,7 @@ export class CapabilityDispatcher {
     }
 
     if (registration.lifecycle.status === "retired") {
-      return toError({
+      return errorResponse({
         capability: identity,
         requestDigest,
         failure: new CapabilityFailure({
@@ -160,7 +268,7 @@ export class CapabilityDispatcher {
               message: issue.message,
             }))
           : undefined;
-      return toError({
+      return errorResponse({
         capability: identity,
         requestDigest,
         failure: new CapabilityFailure({
@@ -174,7 +282,7 @@ export class CapabilityDispatcher {
 
     const definition = this.registry.getDefinition(identity);
     if (!definition) {
-      return toError({
+      return errorResponse({
         capability: identity,
         requestDigest,
         failure: new CapabilityFailure({
@@ -185,7 +293,7 @@ export class CapabilityDispatcher {
       });
     }
     if (!context.securityContext) {
-      return toError({
+      return errorResponse({
         capability: identity,
         requestDigest,
         failure: new CapabilityFailure({
@@ -217,7 +325,7 @@ export class CapabilityDispatcher {
         resourceExtractionValid: extractedResources.valid,
       });
     } catch {
-      return toError({
+      return errorResponse({
         capability: identity,
         requestDigest,
         failure: new CapabilityFailure({
@@ -234,10 +342,9 @@ export class CapabilityDispatcher {
         capability: identity,
         input: "<authorization-redacted>",
       });
-      return toError({
+      return errorResponse({
         capability: identity,
         requestDigest: safeAuthorizationDigest,
-        operatorTraceRef: admission.operatorTraceRef,
         failure: new CapabilityFailure({
           code: admission.code ?? "CAPABILITY_NOT_AUTHORIZED",
           category: "authorization",
@@ -274,7 +381,12 @@ export class CapabilityDispatcher {
               category: "internal",
               message: `Capability ${formatCapabilityIdentity(identity)} failed.`,
             });
-      return toError({ capability: identity, requestDigest, failure });
+      return errorResponse({
+        capability: identity,
+        requestDigest,
+        failure,
+        stage: "execution",
+      });
     }
   }
 }
@@ -297,7 +409,10 @@ function extractAuthorizationResources(
           : undefined;
     }
     const ids = Array.isArray(value) ? value : [value];
-    if (ids.some((id) => typeof id !== "string" || id.trim().length === 0)) {
+    if (
+      ids.length === 0 ||
+      ids.some((id) => typeof id !== "string" || id.trim().length === 0)
+    ) {
       valid = false;
       continue;
     }

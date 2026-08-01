@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import {
   getAuthenticatedUserFromHeaders,
   getDevFallbackUserId,
@@ -499,7 +500,7 @@ export function authzErrorResponse(result: StudioAuthorizationFailure): NextResp
   success: false;
   error: string;
 }> {
-  return NextResponse.json(
+  return noStoreJson(
     {
       success: false,
       error: result.error,

@@ -154,4 +154,22 @@ describe("/api/studio/internal/orphan-cleanup POST", () => {
     expect(mockDeleteObjectFromS3).not.toHaveBeenCalled();
     expect(data.summary.failedAssets).toBe(1);
   });
+
+  it("returns only the allowlisted failure contract for raw backend errors", async () => {
+    const canary = "prompt api_key Authorization Cookie X-Amz-Signature providerBody";
+    mockListExpiredPendingAssets.mockRejectedValue(new Error(canary));
+    const { POST } = await import("../route");
+
+    const response = await POST(createRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(data).toEqual({
+      success: false,
+      code: "ORPHAN_CLEANUP_UNAVAILABLE",
+      error: "Orphan cleanup is temporarily unavailable.",
+    });
+    expect(JSON.stringify(data)).not.toContain(canary);
+  });
 });

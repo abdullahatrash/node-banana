@@ -4,6 +4,7 @@ import type { CredentialHumanCapabilityIdentity } from "@/lib/credential-vault/a
 import type { UsageCapabilityIdentity } from "@/lib/agent-runtime/usage/capabilities";
 import type { BudgetHumanCapabilityIdentity } from "@/lib/agent-runtime/budgets/capabilities";
 import type { QuotaCapabilityIdentity } from "@/lib/agent-runtime/quotas/capabilities";
+import type { ObservabilityCapabilityIdentity } from "@/lib/agent-runtime/observability/capabilities";
 
 export type QuotaApplicationCapabilityIdentity =
   | QuotaCapabilityIdentity
@@ -228,6 +229,32 @@ export async function invokeQuotaApplicationCapability(
     throw new StudioApiError(
       500,
       `Invalid output for Quota capability ${capability}.`,
+    );
+  }
+  return result;
+}
+
+export async function invokeObservabilityApplicationCapability(
+  capability: ObservabilityCapabilityIdentity,
+  input: Record<string, unknown> = {},
+  options: { idempotencyKey?: string } = {},
+): Promise<JsonRecord> {
+  const response = await fetchApi("/api/studio/observability/capabilities", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for observability capability ${capability}.`,
     );
   }
   return result;

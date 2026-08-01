@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
+import { recordSafeOperationalTrace } from "@/lib/agent-runtime/safe-diagnostics";
 import { isDatabaseConfigured } from "@/lib/db";
 import {
   authorizeStudioRequest,
   authzErrorResponse,
   type StudioAuthorizationResult,
 } from "@/lib/studio/authz";
-import { logger } from "@/utils/logger";
 
 type AuthorizedStudio = Extract<StudioAuthorizationResult, { authorized: true }>;
 
@@ -38,27 +39,42 @@ export function withStudioAuth<C extends RouteContext | undefined = undefined>(
     context?: RouteContext,
   ): Promise<NextResponse> => {
     if (!isDatabaseConfigured()) {
-      return NextResponse.json(
+      return noStoreJson(
         { success: false, error: "DATABASE_URL is not configured." },
         { status: 503 },
       );
     }
 
+    let authorizedWorkspaceId: string | null = null;
     try {
       const authz = await authorizeStudioRequest(request, options);
       if (!authz.authorized) {
         return authzErrorResponse(authz);
       }
+      authorizedWorkspaceId = authz.workspaceId;
       return await handler(request, authz, context as C);
-    } catch (error) {
-      logger.error(
-        "system",
-        "Unhandled studio route error",
-        { route: options.route },
-        error instanceof Error ? error : undefined,
-      );
-      return NextResponse.json(
-        { success: false, error: "Internal server error." },
+    } catch {
+      const operatorTraceRef = await recordSafeOperationalTrace({
+        workspaceId: authorizedWorkspaceId,
+        category: "runtime",
+        severity: "error",
+        code: "STUDIO_ROUTE_UNAVAILABLE",
+        stage: "execution",
+        outcome: "failed",
+        providerFamily: "internal",
+        httpStatus: null,
+        retryable: true,
+        durationMs: null,
+        attempt: null,
+        createdAt: new Date(),
+      });
+      return noStoreJson(
+        {
+          success: false,
+          error: "Internal server error.",
+          code: "STUDIO_ROUTE_UNAVAILABLE",
+          operatorTraceRef,
+        },
         { status: 500 },
       );
     }

@@ -2826,7 +2826,7 @@ describe("/api/generate route", () => {
       expect(data.model3dUrl).toBe("https://fal.media/hunyuan3d-v2-output.glb");
     });
 
-    it("should include Result keys in error log when no media URL found", async () => {
+    it("should not include provider Result keys in error logs when no media URL is found", async () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       // Schema fetch
@@ -2870,14 +2870,9 @@ describe("/api/generate route", () => {
       expect(data.success).toBe(false);
       expect(data.error).toContain("No media URL in response");
 
-      // Verify the enhanced error log includes Result keys
-      const errorCalls = consoleSpy.mock.calls;
-      const resultKeysLog = errorCalls.find(
-        (call) => typeof call[0] === "string" && call[0].includes("Result keys:")
-      );
-      expect(resultKeysLog).toBeDefined();
-      expect(resultKeysLog![0]).toContain("unknown_field");
-      expect(resultKeysLog![0]).toContain("another");
+      expect(consoleSpy).toHaveBeenCalled();
+      expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain("unknown_field");
+      expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain("another");
 
       consoleSpy.mockRestore();
     });

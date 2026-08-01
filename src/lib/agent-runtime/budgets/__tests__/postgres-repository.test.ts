@@ -138,4 +138,52 @@ describe("Postgres Budget repository contract", () => {
     expect(source).toContain("runtimeSpendControlEvents");
     expect(source).toContain("current?.revision ?? 0");
   });
+
+  it("cannot mutate a reservation without appending same-transaction Contract Evidence", () => {
+    const mutations = [
+      ...source.matchAll(
+        /await tx\.(?:insert|update)\(runtimeBudgetReservations\)/g,
+      ),
+    ];
+    const evidenceAppends = [
+      ...source.matchAll(/await appendBudgetReservationEvidence\(tx, /g),
+    ];
+
+    expect(mutations).toHaveLength(2);
+    expect(evidenceAppends).toHaveLength(mutations.length);
+
+    const admission = source.slice(
+      source.indexOf("async commitAdmission("),
+      source.indexOf("async commitAttemptAllocation("),
+    );
+    const admissionMutation = admission.indexOf(
+      "await tx.insert(runtimeBudgetReservations)",
+    );
+    const admissionEvidence = admission.indexOf(
+      "await appendBudgetReservationEvidence(tx, item.reservation)",
+    );
+    const admissionEvent = admission.indexOf(
+      "await tx.insert(runtimeBudgetReservationEvents)",
+    );
+    expect(admissionMutation).toBeGreaterThanOrEqual(0);
+    expect(admissionEvidence).toBeGreaterThan(admissionMutation);
+    expect(admissionEvent).toBeGreaterThan(admissionEvidence);
+
+    const settlement = source.slice(
+      source.indexOf("async commitSettlement("),
+      source.indexOf("async listReservations("),
+    );
+    const settlementMutation = settlement.indexOf(
+      "await tx.update(runtimeBudgetReservations)",
+    );
+    const settlementEvidence = settlement.indexOf(
+      "await appendBudgetReservationEvidence(tx, updated)",
+    );
+    const settlementEvent = settlement.indexOf(
+      "await tx.insert(runtimeBudgetReservationEvents)",
+    );
+    expect(settlementMutation).toBeGreaterThanOrEqual(0);
+    expect(settlementEvidence).toBeGreaterThan(settlementMutation);
+    expect(settlementEvent).toBeGreaterThan(settlementEvidence);
+  });
 });

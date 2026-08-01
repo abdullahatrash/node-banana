@@ -6,10 +6,10 @@ const NO_STORE_HEADERS = {
   Pragma: "no-cache",
 } as const;
 
-export function noStoreJson(
-  body: unknown,
+export function noStoreJson<Body>(
+  body: Body,
   init?: { status?: number },
-): NextResponse {
+): NextResponse<Body> {
   return NextResponse.json(body, {
     ...init,
     headers: NO_STORE_HEADERS,

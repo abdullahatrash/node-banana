@@ -20,6 +20,7 @@ import { generateWithReplicate } from "./providers/replicate";
 import { generateWithFalQueue } from "./providers/fal";
 import { generateWithKie } from "./providers/kie";
 import { generateWithWaveSpeed } from "./providers/wavespeed";
+import { safeGenerationLog } from "./providers/safe-generation-log";
 
 export const maxDuration = 300; // 5 minute timeout (Vercel hobby plan limit)
 export const dynamic = 'force-dynamic'; // Ensure this route is always dynamic
@@ -83,7 +84,7 @@ function capabilitiesForMediaType(mediaType?: string): ModelCapability[] {
 
 export async function POST(request: NextRequest) {
   const requestId = Math.random().toString(36).substring(7);
-  console.log(`\n[API:${requestId}] ========== NEW GENERATE REQUEST ==========`);
+  safeGenerationLog.log(`\n[API:${requestId}] ========== NEW GENERATE REQUEST ==========`);
 
   try {
     const body: MultiProviderGenerateRequest = await request.json();
@@ -141,7 +142,7 @@ export async function POST(request: NextRequest) {
 
     // Determine which provider to use
     const provider: ProviderType = selectedModel?.provider || "gemini";
-    console.log(`[API:${requestId}] Provider: ${provider}, Model: ${selectedModel?.modelId || model}`);
+    safeGenerationLog.log(`[API:${requestId}] Provider: ${provider}, Model: ${selectedModel?.modelId || model}`);
 
     // Route to appropriate provider
     if (provider === "replicate") {
@@ -236,7 +237,7 @@ export async function POST(request: NextRequest) {
       const falApiKey = request.headers.get("X-Fal-API-Key") || process.env.FAL_API_KEY || null;
 
       if (!falApiKey) {
-        console.warn(`[API:${requestId}] No FAL API key configured. Proceeding without auth (rate-limited).`);
+        safeGenerationLog.warn(`[API:${requestId}] No FAL API key configured. Proceeding without auth (rate-limited).`);
       }
 
       // Pass images as-is; generateWithFalQueue uploads base64 to CDN internally
@@ -573,7 +574,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.error(`[API:${requestId}] Generation error: ${errorMessage}${errorDetails ? ` (${errorDetails.substring(0, 200)})` : ""}`);
+    safeGenerationLog.error(`[API:${requestId}] Generation error: ${errorMessage}${errorDetails ? ` (${errorDetails.substring(0, 200)})` : ""}`);
     return NextResponse.json<GenerateResponse>(
       {
         success: false,

@@ -392,6 +392,52 @@ describe("Gemini BYOK Provider Adapters", () => {
     },
   );
 
+  it("maps unrecognized provider codes and finish reasons to fixed evidence", async () => {
+    const providerCodeTransport = new DeterministicProviderFaultKit();
+    providerCodeTransport.enqueueLaunch({
+      kind: "response",
+      effectDisposition: "not_created",
+      providerOperationRef: null,
+      response: {
+        status: 400,
+        requestId: null,
+        body: { errorCode: "API_KEY_CANARY_FROM_PROVIDER_BODY" },
+      },
+    });
+    await expect(
+      executeProviderEffect(new GeminiTextAdapter(providerCodeTransport), {
+        effectKey: "workflow-effect:v1:workspace:run:draft_copy:1",
+        intentDigest: DIGEST,
+        intent: { prompt: "Launch", instruction: "Write copy" },
+        credentials,
+      }),
+    ).resolves.toMatchObject({
+      evidence: { providerCode: "PROVIDER_ERROR" },
+    });
+
+    const finishReasonTransport = new DeterministicProviderFaultKit();
+    finishReasonTransport.enqueueLaunch({
+      kind: "response",
+      effectDisposition: "terminal_failed",
+      providerOperationRef: "gemini-terminal-unknown",
+      response: {
+        status: 200,
+        requestId: "gemini-terminal-unknown",
+        body: { finishReason: "PROMPT_CANARY_FROM_PROVIDER_BODY" },
+      },
+    });
+    await expect(
+      executeProviderEffect(new GeminiTextAdapter(finishReasonTransport), {
+        effectKey: "workflow-effect:v1:workspace:run:draft_copy:1",
+        intentDigest: DIGEST,
+        intent: { prompt: "Launch", instruction: "Write copy" },
+        credentials,
+      }),
+    ).resolves.toMatchObject({
+      evidence: { providerCode: "FINISH_REASON_UNKNOWN" },
+    });
+  });
+
   it.each([
     "STOP",
     "MAX_TOKENS",

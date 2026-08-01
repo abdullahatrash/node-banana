@@ -243,12 +243,24 @@ async function setupGoldenRun(options: {
         },
       }),
   };
+  const dispatchAs = (
+    principalId: string,
+    invocation: Parameters<typeof canonical.dispatch>[0],
+  ) => canonical.dispatch(invocation, {
+    securityContext: {
+      kind: "agent",
+      workspaceId: WORKSPACE_ID,
+      principalId,
+      keyId: `key_${principalId}`,
+    },
+  });
   return {
     artifactRepository,
     artifactService,
     artifactStore,
     clock,
     dispatcher,
+    dispatchAs,
     queue,
     repository,
     revisions,
@@ -811,6 +823,7 @@ describe("complete deterministic golden Workflow", () => {
 
     const attempts = await service.listStepAttempts({
       workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
       workflowId: WORKFLOW_ID,
       runId: accepted.run.id,
     });
@@ -858,12 +871,14 @@ describe("complete deterministic golden Workflow", () => {
     const heroReference = completed.finalSnapshot!.outputs.hero_image;
     const copy = await service.getRunArtifact({
       workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
       workflowId: WORKFLOW_ID,
       runId: accepted.run.id,
       artifactId: copyReference.artifactId,
     });
     const hero = await service.getRunArtifact({
       workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
       workflowId: WORKFLOW_ID,
       runId: accepted.run.id,
       artifactId: heroReference.artifactId,
@@ -988,6 +1003,97 @@ describe("complete deterministic golden Workflow", () => {
         resolve(process.cwd(), GOLDEN_IMAGE_FIXTURES.heroResult.path),
     ).byteLength,
     ).toBe(heroReference.sizeBytes);
+  });
+
+  it("hides one Agent's Run, events, attempts, and Artifact content from another Agent sharing the Workflow grant", async () => {
+    const { dispatchAs, repository, service } = await setupGoldenRun();
+    const accepted = await acceptGoldenRun(service, "cross-principal-read-0001");
+    await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_cross_principal_copy",
+    });
+    await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_cross_principal_image",
+    });
+    const attempts = await repository.listStepAttempts({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    });
+    const artifactId = Object.values(attempts![0]!.outputs!)[0]!.artifactId;
+    const foreignPort = {
+      dispatch: (invocation: Parameters<typeof dispatchAs>[1]) =>
+        dispatchAs("principal_foreign", invocation),
+    };
+    const inputs = [
+      ["workflow_runs.get@1", {
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+      }],
+      ["workflow_step_attempts.list@1", {
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+      }],
+      ["workflow_run_events.list@1", {
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+        cursor: accepted.events.input.cursor,
+      }],
+      ["workflow_run_artifacts.get@1", {
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+        artifactId,
+      }],
+    ] as const;
+    for (const [capability, input] of inputs) {
+      await expect(
+        dispatchCliCapability(capability, input, foreignPort),
+      ).resolves.toMatchObject({
+        type: "capability_error",
+        code: "WORKFLOW_RUN_UNAVAILABLE",
+      });
+    }
+    await expect(
+      dispatchMcpCapability(
+        "workflow_runs.get.v1",
+        inputs[0][1],
+        foreignPort,
+      ),
+    ).resolves.toMatchObject({
+      type: "capability_error",
+      code: "WORKFLOW_RUN_UNAVAILABLE",
+    });
+    await expect(service.get({
+      workspaceId: WORKSPACE_ID,
+      principalId: "principal_foreign",
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+    })).rejects.toMatchObject({ code: "WORKFLOW_RUN_UNAVAILABLE" });
+    const mutationIdentity = {
+      workspaceId: WORKSPACE_ID,
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+      principalId: "principal_foreign",
+      keyId: "key_principal_foreign",
+      authorizationEvidenceRef: "trace_principal_foreign",
+    };
+    await expect(service.retry({
+      ...mutationIdentity,
+      idempotencyKey: "foreign-retry-0001",
+      inputArtifactIds: [REFERENCE_ARTIFACT_ID],
+    })).rejects.toMatchObject({ code: "WORKFLOW_RUN_UNAVAILABLE" });
+    await expect(service.resume({
+      ...mutationIdentity,
+      idempotencyKey: "foreign-resume-0001",
+      waitEventSequence: 1,
+    })).rejects.toMatchObject({ code: "WORKFLOW_RUN_UNAVAILABLE" });
+    await expect(service.reconcile({
+      ...mutationIdentity,
+      idempotencyKey: "foreign-reconcile-0001",
+      stepAttemptId: attempts![0]!.id,
+    })).rejects.toMatchObject({ code: "WORKFLOW_RUN_UNAVAILABLE" });
   });
 
   it("durably fails the active Attempt and Run when the provider throws", async () => {
@@ -2204,6 +2310,7 @@ describe("complete deterministic golden Workflow", () => {
     const sourceBefore = JSON.stringify(
       await service.get({
         workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
         workflowId: WORKFLOW_ID,
         runId: accepted.run.id,
       }),
@@ -2259,6 +2366,7 @@ describe("complete deterministic golden Workflow", () => {
     expect(mcp).toEqual(cli);
     const derivedAttempts = await service.listStepAttempts({
       workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
       workflowId: WORKFLOW_ID,
       runId: derivedRunId,
     });
@@ -2291,6 +2399,7 @@ describe("complete deterministic golden Workflow", () => {
       JSON.stringify(
         await service.get({
           workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
           workflowId: WORKFLOW_ID,
           runId: accepted.run.id,
         }),
@@ -2580,6 +2689,7 @@ describe("complete deterministic golden Workflow", () => {
 
     const attempts = await value.service.listStepAttempts({
       workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
       workflowId: WORKFLOW_ID,
       runId: accepted.run.id,
     });
@@ -2691,6 +2801,7 @@ describe("complete deterministic golden Workflow", () => {
     }));
     expect((await value.service.listStepAttempts({
       workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
       workflowId: WORKFLOW_ID,
       runId: accepted.run.id,
     })).items[0]).toMatchObject({ state: "running", outcome: null });
@@ -2834,6 +2945,7 @@ describe("complete deterministic golden Workflow", () => {
     })).resolves.toMatchObject({ state: "outcome_unknown" });
     const attempts = await value.service.listStepAttempts({
       workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
       workflowId: WORKFLOW_ID,
       runId: accepted.run.id,
     });
@@ -2906,6 +3018,7 @@ describe("controlled Gemini BYOK golden Workflow live path", () => {
       });
       const attempts = await value.service.listStepAttempts({
         workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
         workflowId: WORKFLOW_ID,
         runId: accepted.run.id,
       });
@@ -2936,12 +3049,14 @@ describe("controlled Gemini BYOK golden Workflow live path", () => {
       );
       const copy = await value.service.getRunArtifact({
         workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
         workflowId: WORKFLOW_ID,
         runId: accepted.run.id,
         artifactId: completed.finalSnapshot!.outputs.post_copy.artifactId,
       });
       const hero = await value.service.getRunArtifact({
         workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
         workflowId: WORKFLOW_ID,
         runId: accepted.run.id,
         artifactId: completed.finalSnapshot!.outputs.hero_image.artifactId,

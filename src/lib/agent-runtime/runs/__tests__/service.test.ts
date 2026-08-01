@@ -755,6 +755,7 @@ describe("WorkflowRunService", () => {
     await expect(
       service.get({
         workspaceId: "workspace_1",
+        principalId: "principal_1",
         workflowId: "workflow_1",
         runId: accepted.run.id,
       }),
@@ -840,6 +841,34 @@ describe("WorkflowRunService", () => {
         cursor: page.nextCursor,
       }),
     ).resolves.toMatchObject({ items: [] });
+  });
+
+  it("projects retained event JSON through exact grammars and drops secret canaries even under allowlisted keys", async () => {
+    const { repository, service, start } = setup();
+    const accepted = await start();
+    const key = `workspace_1\u0000${accepted.run.id}`;
+    const [event] = repository.events.get(key)!;
+    repository.events.set(key, [{
+      ...event!,
+      data: {
+        startSnapshotDigest: "Bearer sk-event-secret",
+        reasonCode: "secret-token-value",
+        arbitraryPayload: { prompt: "do not publish me" },
+      },
+    }]);
+
+    const page = await service.listEvents({
+      workspaceId: "workspace_1",
+      principalId: "principal_1",
+      workflowId: "workflow_1",
+      runId: accepted.run.id,
+      cursor: accepted.events.input.cursor,
+    });
+    expect(page.items).toEqual([
+      expect.objectContaining({ type: "run.accepted", data: {} }),
+    ]);
+    expect(JSON.stringify(page)).not.toContain("secret");
+    expect(JSON.stringify(page)).not.toContain("prompt");
   });
 
   it("rejects stale fences after lease takeover", async () => {
@@ -985,6 +1014,6 @@ describe("WorkflowRunService", () => {
         runId: accepted.run.id,
         cursor: accepted.events.input.cursor,
       }),
-    ).rejects.toMatchObject({ code: "WORKFLOW_RUN_INVALID_INPUT" });
+    ).rejects.toMatchObject({ code: "WORKFLOW_RUN_UNAVAILABLE" });
   });
 });

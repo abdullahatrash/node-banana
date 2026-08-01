@@ -112,7 +112,11 @@ export interface CapabilityError {
     capability: CapabilityIdentity;
     input?: Record<string, unknown>;
   };
-  operatorTraceRef: string;
+  /**
+   * Present only when the server durably recorded a sanitized diagnostic.
+   * Authorization decision references are never forwarded as diagnostic refs.
+   */
+  operatorTraceRef: string | null;
 }
 
 export type CapabilityResponse<Output = unknown> =

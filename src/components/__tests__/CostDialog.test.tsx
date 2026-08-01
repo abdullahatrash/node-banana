@@ -507,6 +507,10 @@ describe("CostDialog", () => {
         "href",
         "/studio/quotas",
       );
+      expect(screen.getByRole("link", { name: "Open Observability" })).toHaveAttribute(
+        "href",
+        "/studio/observability",
+      );
     });
   });
 

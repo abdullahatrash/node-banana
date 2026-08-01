@@ -63,6 +63,8 @@ describe("/api/studio/assets/ingest", () => {
     mockBuildAssetObjectKey.mockReturnValue("env/dev/ws/ws_1/proj/proj_1/image/2026/03/29/key.png");
     mockRecordPending.mockResolvedValue({ id: "asset_1" });
     mockFinalizeAssetUpload.mockResolvedValue({ id: "asset_1" });
+    mockPutObjectToS3.mockResolvedValue(undefined);
+    mockStreamUploadToS3.mockResolvedValue({ sizeBytes: 5 });
     mockDeleteObjectFromS3.mockResolvedValue(undefined);
     mockCreatePresignedDownload.mockResolvedValue({
       key: "env/dev/ws/ws_1/proj/proj_1/image/2026/03/29/key.png",
@@ -134,6 +136,8 @@ describe("/api/studio/assets/ingest", () => {
     const data = await response.json();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     expect(data).toEqual({
       success: true,
       assetId: "asset_1",
@@ -175,6 +179,58 @@ describe("/api/studio/assets/ingest", () => {
       success: false,
       error: "Workspace storage quota exceeded.",
     });
+  });
+
+  it("does not expose or persist raw source/provider failure evidence", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+    const canaries = [
+      "private prompt text",
+      "api_key_canary_123",
+      "Authorization: Bearer auth_canary",
+      "Cookie: session=cookie_canary",
+      "https://storage.invalid/object?X-Amz-Signature=signed_canary",
+      '{"providerBody":"provider_body_canary"}',
+    ];
+    mockPutObjectToS3.mockRejectedValue(new Error(canaries.join(" | ")));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const response = await POST(
+        createRequest({
+          assetType: "image",
+          sourceDataUrl: "data:image/png;base64,aGVsbG8=",
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(data).toEqual({
+        success: false,
+        code: "ASSET_INGEST_FAILED",
+        error: "Asset ingest failed.",
+      });
+      expect(mockFinalizeAssetUpload).toHaveBeenCalledWith(expect.objectContaining({
+        workspaceId: "ws_1",
+        assetId: "asset_1",
+        uploadState: "failed",
+        error: "ASSET_INGEST_FAILED",
+      }));
+      const exposed = JSON.stringify({
+        response: data,
+        persisted: mockFinalizeAssetUpload.mock.calls,
+        logs: consoleError.mock.calls,
+      });
+      for (const canary of canaries) expect(exposed).not.toContain(canary);
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("uses putObjectToS3 for sourceDataUrl (no streaming)", async () => {

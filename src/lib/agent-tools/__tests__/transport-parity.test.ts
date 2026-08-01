@@ -54,6 +54,12 @@ describe("production CLI and stdio MCP composition parity", () => {
     };
   }
 
+  function withoutOperatorTraceRef(response: CapabilityResponse) {
+    if (response.type !== "capability_error") return response;
+    const { operatorTraceRef: _operatorTraceRef, ...canonical } = response;
+    return canonical;
+  }
+
   it.each([
     {
       label: "success",
@@ -90,21 +96,26 @@ describe("production CLI and stdio MCP composition parity", () => {
         | CapabilityResponse
         | undefined;
 
-      expect(mcpResponse).toEqual(cliResult.response);
+      expect(withoutOperatorTraceRef(mcpResponse!)).toEqual(
+        withoutOperatorTraceRef(cliResult.response),
+      );
       expect(mcpResult.isError ?? false).toBe(Boolean(errorCode));
       expect(cliResult.exitCode).toBe(errorCode ? 1 : 0);
       const content = mcpResult.content as Array<{
         type: string;
         text?: string;
       }>;
-      expect(JSON.parse(content[0].text as string)).toEqual(
-        cliResult.response,
-      );
+      expect(JSON.parse(content[0].text as string)).toEqual(mcpResponse);
 
       if (errorCode) {
         expect(cliResult.response).toMatchObject({
           type: "capability_error",
           code: errorCode,
+          operatorTraceRef: null,
+        });
+        expect(mcpResponse).toMatchObject({
+          type: "capability_error",
+          operatorTraceRef: null,
         });
       }
       if (cli === "fixtures.deprecated@1") {

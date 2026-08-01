@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { isDatabaseConfigured } from "@/lib/db";
 import { deleteObjectFromS3 } from "@/lib/storage";
 import { ensureInternalStudioAuth } from "@/lib/studio/internal-auth";
@@ -16,6 +17,7 @@ interface PurgeDeletedResponse {
     errors: number;
   };
   error?: string;
+  code?: "PURGE_DELETED_UNAVAILABLE";
 }
 
 const DEFAULT_BATCH_SIZE = 100;
@@ -33,7 +35,7 @@ export async function POST(
   request: NextRequest,
 ): Promise<NextResponse<PurgeDeletedResponse>> {
   if (!isDatabaseConfigured()) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: "DATABASE_URL is not configured." },
       { status: 503 },
     );
@@ -84,7 +86,7 @@ export async function POST(
       }
     }
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       summary: {
         scanned: purgeableAssets.length,
@@ -93,14 +95,12 @@ export async function POST(
         errors,
       },
     });
-  } catch (error) {
-    return NextResponse.json(
+  } catch {
+    return noStoreJson(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to purge deleted assets",
+        code: "PURGE_DELETED_UNAVAILABLE",
+        error: "Deleted-asset purge is temporarily unavailable.",
       },
       { status: 500 },
     );

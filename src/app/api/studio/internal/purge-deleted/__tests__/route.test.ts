@@ -138,4 +138,22 @@ describe("/api/studio/internal/purge-deleted POST", () => {
       limit: 100,
     });
   });
+
+  it("returns only the allowlisted failure contract for raw backend errors", async () => {
+    const canary = "prompt api_key Authorization Cookie X-Amz-Signature providerBody";
+    mockListPurgeableSoftDeletedAssets.mockRejectedValue(new Error(canary));
+    const { POST } = await import("../route");
+
+    const response = await POST(createRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(data).toEqual({
+      success: false,
+      code: "PURGE_DELETED_UNAVAILABLE",
+      error: "Deleted-asset purge is temporarily unavailable.",
+    });
+    expect(JSON.stringify(data)).not.toContain(canary);
+  });
 });

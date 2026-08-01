@@ -1,6 +1,8 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { getDb } from "@/lib/db";
+import { appendContractEvidenceVersion } from "../contract-evidence/postgres-repository";
+import { projectBudgetReservationContractEvidence } from "../contract-evidence/projectors";
 import {
   credentialSlots,
   credentialSpendEvents,
@@ -165,6 +167,21 @@ function periodId(reservation: BudgetReservation): string {
 
 function eventId(kind: string, value: unknown): string {
   return `budget_event_${canonicalDigest({ kind, value }).slice(7, 39)}`;
+}
+
+async function appendBudgetReservationEvidence(
+  tx: Tx,
+  reservation: BudgetReservation,
+): Promise<void> {
+  await appendContractEvidenceVersion(tx, {
+    workspaceId: reservation.workspaceId,
+    resourceKind: "budget_reservation",
+    resourceId: reservation.id,
+    canonicalSource: reservation,
+    projectionKind: "budget_summary",
+    projection: projectBudgetReservationContractEvidence(reservation),
+    createdAt: reservation.updatedAt,
+  });
 }
 
 function pricingIdentity(item: Pick<WorkspacePricingOverride,
@@ -457,7 +474,7 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
   }
 
   async commitAdmission(plan: BudgetAdmissionPlan, transaction?: Tx): Promise<Result> {
-    const execute = async (tx: Db | Tx): Promise<Result> => {
+    const execute = async (tx: Tx): Promise<Result> => {
       await lockWorkspaceSpendGate(tx, plan.workspaceId);
       const [receipt] = await tx.select().from(runtimeBudgetAdmissions).where(and(eq(runtimeBudgetAdmissions.workspaceId, plan.workspaceId), eq(runtimeBudgetAdmissions.runId, plan.runId))).limit(1);
       if (receipt) return receipt.requestDigest === plan.requestDigest ? "replayed" : "conflict";
@@ -573,6 +590,7 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
       if (grantReservations.length) await tx.insert(runtimeBudgetAdmissionGrants).values(grantReservations.map((item) => ({ workspaceId: plan.workspaceId, runId: plan.runId, ...item })));
       for (const item of periods) {
         await tx.insert(runtimeBudgetReservations).values({ id: item.reservation.id, workspaceId: plan.workspaceId, admittedPrincipalId: item.reservation.admittedPrincipalId, principalId: item.reservation.principalId, runId: plan.runId, policyId: item.reservation.policyId, policyRevisionId: item.reservation.policyRevisionId, periodId: item.id, scope: item.reservation.scope, currency: item.reservation.currency, reservedAmount: item.reservation.reservedAmount, heldAmount: item.reservation.heldAmount, settledAmount: item.reservation.settledAmount, releasedAmount: item.reservation.releasedAmount, state: item.reservation.state, pricingSnapshotIds: item.reservation.pricingSnapshotIds, reservation: item.reservation, createdAt: item.reservation.createdAt, updatedAt: item.reservation.updatedAt });
+        await appendBudgetReservationEvidence(tx, item.reservation);
         await tx.insert(runtimeBudgetReservationEvents).values({ id: eventId("held", item.reservation.id), workspaceId: plan.workspaceId, reservationId: item.reservation.id, runId: plan.runId, settlementId: null, costValuationId: null, eventType: "held", amount: item.reservation.reservedAmount, currency: item.reservation.currency, event: { schema: "budget-reservation-event/v1", type: "held", reservationId: item.reservation.id, requestDigest: plan.requestDigest }, occurredAt: plan.createdAt });
       }
       return "created";
@@ -693,7 +711,7 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
   }
 
   async commitSettlement(plan: BudgetSettlementPlan, transaction?: Tx): Promise<Result> {
-    const execute = async (tx: Db | Tx): Promise<Result> => {
+    const execute = async (tx: Tx): Promise<Result> => {
       const digest = canonicalDigest({ ...plan, recordedAt: plan.recordedAt.toISOString() });
       const [receipt] = await tx.select().from(runtimeBudgetSettlementReceipts).where(and(eq(runtimeBudgetSettlementReceipts.workspaceId, plan.workspaceId), eq(runtimeBudgetSettlementReceipts.costValuationId, plan.costValuationId))).limit(1);
       if (receipt) return receipt.requestDigest === digest ? "replayed" : "conflict";
@@ -821,6 +839,7 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
               : "held";
         const updated: BudgetReservation = { ...current, heldAmount: held, settledAmount: settled, releasedAmount: released, state, updatedAt: plan.recordedAt };
         await tx.update(runtimeBudgetReservations).set({ heldAmount: held, settledAmount: settled, releasedAmount: released, state, reservation: updated, updatedAt: plan.recordedAt }).where(and(eq(runtimeBudgetReservations.workspaceId, plan.workspaceId), eq(runtimeBudgetReservations.id, row.id)));
+        await appendBudgetReservationEvidence(tx, updated);
         await tx.insert(runtimeBudgetReservationEvents).values({ id: eventId("settlement", { valuation: plan.costValuationId, reservation: row.id }), workspaceId: plan.workspaceId, reservationId: row.id, runId: plan.runId, settlementId: plan.settlementId, costValuationId: plan.costValuationId, eventType: costUnknown ? "held_unknown_cost" : outcomeUnknown ? "outcome_unknown" : compareDecimals(released, current.releasedAmount) > 0 ? "released" : "settled", amount: plan.amount, currency: currencylessKnownZero ? row.currency : plan.currency, event: { schema: "budget-reservation-event/v1", outcome: plan.outcome, stepAttemptId: plan.stepAttemptId, runTerminal: plan.runTerminal, fxSnapshotId: plan.fxSnapshotId, supersedesCostValuationId: valuation.supersedesCostValuationId, settledContribution, releasedContribution, resolvedHoldContribution }, occurredAt: plan.recordedAt });
       }
       return "created";

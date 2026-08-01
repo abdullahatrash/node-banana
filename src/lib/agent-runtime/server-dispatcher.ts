@@ -52,6 +52,10 @@ import {
   createQuotaRegistrations,
   getQuotaService,
 } from "./quotas";
+import { recordOperationalTrace } from "./observability/production";
+import { createObservabilityRegistrations } from "./observability/capabilities";
+import { getObservabilityService } from "./observability/production";
+import { getSupportBundleApplication } from "./observability/support-bundles-production";
 
 export const PRODUCTION_CAPABILITY_AUTHORIZER =
   new CompositeCapabilityAuthorizer(
@@ -79,11 +83,16 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
   ...createQuotaRegistrations(getQuotaService(), {
     waitResumeCoordinator: PRODUCTION_WORKFLOW_RUN_SERVICE,
   }),
+  ...createObservabilityRegistrations(
+    getObservabilityService(),
+    getSupportBundleApplication(),
+  ),
 ]);
 
 export const CAPABILITY_DISPATCHER = new CapabilityDispatcher(
   PRODUCTION_CAPABILITY_REGISTRY,
   PRODUCTION_CAPABILITY_AUTHORIZER,
+  recordOperationalTrace,
 );
 
 export function dispatchCapability(

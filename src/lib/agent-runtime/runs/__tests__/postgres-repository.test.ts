@@ -110,6 +110,20 @@ describe("DrizzleWorkflowRunRepository", () => {
       expect(body).toContain("commitQuotaUsageReconciliations");
     }
   });
+  it("attaches a durable Run evidence version to every canonical insert and update", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/agent-runtime/runs/postgres-repository.ts"),
+      "utf8",
+    );
+    expect(source.match(/(?:insert|update)\(workflowRuns\)/g)).toHaveLength(17);
+    // Reconciliation has two mutually-exclusive updates followed by one shared append.
+    expect(source.match(/await appendRunContractEvidence\(tx,/g)).toHaveLength(16);
+    const reconcile = source.slice(source.indexOf("  async reconcileStepAttempt("));
+    expect(reconcile.match(/update\(workflowRuns\)/g)).toHaveLength(2);
+    expect(reconcile.match(/await appendRunContractEvidence\(tx,/g)).toHaveLength(1);
+    expect(source).toContain("canonicalSource: row");
+    expect(source).toContain("projection: projectRunContractEvidence(");
+  });
   it("rejects inconsistent atomic acceptance before opening a database", async () => {
     const getDatabase = vi.fn(() => {
       throw new Error("must not open");

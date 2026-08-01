@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { emitArtifactBytesMetric } from "../operational-metrics";
 import type {
   QuotaClaimInput,
   QuotaClaimPlan,
@@ -623,6 +624,12 @@ export class ArtifactService {
         "Artifact metadata could not be committed.",
       );
     }
+    void emitArtifactBytesMetric({
+      workspaceId,
+      canonicalEventId: artifact.id,
+      sizeBytes: content.sizeBytes,
+      recordedAt: artifact.createdAt,
+    });
     return artifactMetadata(artifact, content);
   }
 
@@ -984,6 +991,12 @@ export class ArtifactService {
     void this.store
       .deleteStaged({ stagingKey: upload.stagingKey })
       .catch(() => undefined);
+    void emitArtifactBytesMetric({
+      workspaceId,
+      canonicalEventId: artifact.id,
+      sizeBytes: content.sizeBytes,
+      recordedAt: artifact.createdAt,
+    });
     return artifactMetadata(artifact, content);
   }
 
@@ -1189,6 +1202,14 @@ export class ArtifactService {
         "ARTIFACT_CONTENT_STORE_UNAVAILABLE",
         "Generated Artifact metadata could not be committed.",
       );
+    }
+    if (committed.kind === "created") {
+      void emitArtifactBytesMetric({
+        workspaceId,
+        canonicalEventId: artifact.id,
+        sizeBytes: content.sizeBytes,
+        recordedAt: artifact.createdAt,
+      });
     }
     return this.requireMetadata(workspaceId, artifactId);
   }

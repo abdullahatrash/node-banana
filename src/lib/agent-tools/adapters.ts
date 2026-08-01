@@ -31,8 +31,11 @@ export async function discoverCapabilityDefinitions(
     input: {},
   });
   if (response.type === "capability_error") {
+    const traceSuffix = response.operatorTraceRef
+      ? ` (${response.operatorTraceRef})`
+      : "";
     throw new Error(
-      `Capability discovery failed: ${response.code} (${response.operatorTraceRef})`,
+      `Capability discovery failed: ${response.code}${traceSuffix}`,
     );
   }
   const output = response.output as {

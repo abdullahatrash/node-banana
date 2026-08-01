@@ -22,6 +22,10 @@ import {
   runtimeQuotaWaits,
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import {
+  appendContractEvidenceVersion,
+  projectRunContractEvidence,
+} from "../contract-evidence";
 import type {
   UsageAttributionAppendPlan,
   UsageCommitWriter,
@@ -422,6 +426,32 @@ async function findRun(
   return rows[0] ? mapRun(rows[0]) : null;
 }
 
+async function appendRunContractEvidence(
+  tx: Tx,
+  input: { workspaceId: string; runId: string },
+): Promise<void> {
+  const [row] = await tx.select().from(workflowRuns).where(and(
+    eq(workflowRuns.workspaceId, input.workspaceId),
+    eq(workflowRuns.id, input.runId),
+  )).limit(1);
+  if (!row) throw new Error("Workflow Run Contract Evidence source is unavailable.");
+  const run = mapRun(row);
+  await appendContractEvidenceVersion(tx, {
+    workspaceId: row.workspaceId,
+    resourceKind: "run",
+    resourceId: row.id,
+    canonicalSource: row,
+    projectionKind: "run_summary",
+    projection: projectRunContractEvidence({
+      ...run,
+      sourceRunId: row.sourceRunId,
+      rootRunId: row.rootRunId,
+      derivationDepth: row.derivationDepth,
+    }),
+    createdAt: row.updatedAt,
+  });
+}
+
 export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
   constructor(
     private readonly getDatabase: () => Db,
@@ -767,6 +797,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           authorizationEvidenceRef:
             input.run.startSnapshot.authorization.evidenceRef,
         });
+        await appendRunContractEvidence(tx, {
+          workspaceId: input.run.workspaceId,
+          runId: input.run.id,
+        });
         const quotaResult = await this.commitQuotaClaim(tx, input.quotaAdmissionPlan);
         if (quotaResult?.kind === "denied") {
           if (quotaResult.reasonCodes.includes("EMERGENCY_SPEND_SUSPENDED")) {
@@ -818,6 +852,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             eq(workflowRuns.state, "accepted"),
           )).returning({ id: workflowRuns.id });
           if (!updated[0]) throw new Error("Quota Wait acceptance transition was lost.");
+          await appendRunContractEvidence(tx, {
+            workspaceId: input.run.workspaceId,
+            runId: input.run.id,
+          });
         }
         await tx.insert(workflowRunEvents).values(input.firstEvent);
         if (wait) {
@@ -1142,6 +1180,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
               eq(workflowRuns.nextEventSequence, run.nextEventSequence),
             )).returning();
             if (!updated[0]) throw new Error("Quota Wait lost Run serialization.");
+            await appendRunContractEvidence(tx, {
+              workspaceId: run.workspaceId,
+              runId: run.id,
+            });
             await tx.insert(workflowRunEvents).values({
               id: input.quotaWaitEventId,
               workspaceId: run.workspaceId,
@@ -1263,6 +1305,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             .returning();
           if (!updated[0]) return { kind: "unavailable" as const };
           nextRun = mapRun(updated[0]);
+          await appendRunContractEvidence(tx, {
+            workspaceId: run.workspaceId,
+            runId: run.id,
+          });
         }
         return { kind: "acquired" as const, run: nextRun, lease };
       });
@@ -1491,6 +1537,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           )
           .returning();
         if (!updated[0]) throw new Error("Workflow Run transition was lost.");
+        await appendRunContractEvidence(tx, {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+        });
         const released = await tx
           .update(workflowRunExecutionLeases)
           .set({ releasedAt: occurredAt })
@@ -1707,6 +1757,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             eq(workflowRuns.nextEventSequence, run.nextEventSequence),
           )).returning();
           if (!updated[0]) throw new Error("Quota Wait lost Run serialization.");
+          await appendRunContractEvidence(tx, {
+            workspaceId: run.workspaceId,
+            runId: run.id,
+          });
           await tx.insert(workflowRunEvents).values({
             id: input.quotaWaitEventId,
             workspaceId: run.workspaceId,
@@ -1759,6 +1813,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
               eq(workflowRuns.nextEventSequence, run.nextEventSequence),
             )).returning();
             if (!failedRows[0]) throw new Error("Usage quota failure lost Run serialization.");
+            await appendRunContractEvidence(tx, {
+              workspaceId: run.workspaceId,
+              runId: run.id,
+            });
             await tx.insert(workflowRunEvents).values({
               id: input.quotaPolicyUnavailableEventId,
               workspaceId: run.workspaceId,
@@ -1868,6 +1926,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         if (!updatedRuns[0]) {
           throw new Error("Workflow Step Attempt preparation was lost.");
         }
+        await appendRunContractEvidence(tx, {
+          workspaceId: run.workspaceId,
+          runId: run.id,
+        });
         return {
           kind: "created" as const,
           run: mapRun(updatedRuns[0]),
@@ -2152,6 +2214,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         if (!updatedRuns[0]) {
           throw new Error("Workflow Run settlement was lost.");
         }
+        await appendRunContractEvidence(tx, {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+        });
 
         const released = await tx
           .update(workflowRunExecutionLeases)
@@ -2547,6 +2613,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         if (!updatedRuns[0]) {
           throw new Error("Workflow Run failure settlement was lost.");
         }
+        await appendRunContractEvidence(tx, {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+        });
 
         const released = await tx
           .update(workflowRunExecutionLeases)
@@ -2739,6 +2809,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         if (!updatedAttempts[0] || !updatedRuns[0]) {
           throw new Error("Unknown outcome transition was lost.");
         }
+        await appendRunContractEvidence(tx, {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+        });
         return {
           kind: "settled" as const,
           run: mapRun(updatedRuns[0]),
@@ -2924,6 +2998,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           rootRunId: input.run.derivation!.rootRunId,
           derivationDepth: sourceRow!.derivationDepth + 1,
         });
+        await appendRunContractEvidence(tx, {
+          workspaceId: input.run.workspaceId,
+          runId: input.run.id,
+        });
         const quotaResult = await this.commitQuotaClaim(tx, input.quotaAdmissionPlan);
         if (quotaResult?.kind === "denied") {
           if (quotaResult.reasonCodes.includes("EMERGENCY_SPEND_SUSPENDED")) {
@@ -2969,6 +3047,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           )).returning();
           if (!updated[0]) throw new Error("Derived Run Quota Wait transition was lost.");
           persistedRun = mapRun(updated[0]);
+          await appendRunContractEvidence(tx, {
+            workspaceId: input.run.workspaceId,
+            runId: input.run.id,
+          });
         }
         await tx.insert(workflowRunEvents).values([
           ...input.events,
@@ -3165,6 +3247,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         });
         if (!updated[0]) throw new Error("Workflow Run resume was lost.");
         const resumed = mapRun(updated[0]);
+        await appendRunContractEvidence(tx, {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+        });
         const receipt = {
           ...input.receipt,
           result: workflowRunReceiptResult(
@@ -3267,6 +3353,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           eq(workflowRuns.nextEventSequence, run.nextEventSequence),
         )).returning();
         if (!updated[0]) throw new Error("Quota Wait resume lost Run serialization.");
+        await appendRunContractEvidence(tx, {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+        });
         await tx.insert(workflowRunOutboxIntents).values({
           ...input.outboxIntent,
           generation: run.nextEventSequence,
@@ -3639,6 +3729,10 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           runId: input.runId,
         });
         if (!updated) throw new Error("Reconciliation was lost.");
+        await appendRunContractEvidence(tx, {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+        });
         const receipt = {
           ...input.receipt,
           result: workflowRunReceiptResult(

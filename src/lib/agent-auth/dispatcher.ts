@@ -1,5 +1,4 @@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import { randomUUID } from "node:crypto";
 import {
   parseCapabilityIdentity,
   type CapabilityDispatcher,
@@ -66,7 +65,7 @@ export class AgentAuthenticatedCapabilityDispatcher
           ? `Capability ${identity.name}@${identity.version} is not authorized. Ask a Workspace owner or admin to grant that exact capability and its required resources.`
           : "The requested capability is not authorized.",
         retryable: false,
-        operatorTraceRef: `trace_${randomUUID().replaceAll("-", "")}`,
+        operatorTraceRef: null,
       };
     }
   }

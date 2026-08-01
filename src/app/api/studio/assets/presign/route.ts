@@ -1,5 +1,6 @@
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { assetTypeEnum } from "@/lib/db/schema";
 import { canUseS3Storage, buildAssetObjectKey, createPresignedUpload } from "@/lib/storage";
 import {
@@ -31,7 +32,7 @@ export const POST = withStudioAuth<undefined>(
   { route: "/api/studio/assets/presign", action: "write" },
   async (request: NextRequest, authz): Promise<NextResponse<PresignResponse>> => {
     if (!canUseS3Storage()) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error:
@@ -44,13 +45,13 @@ export const POST = withStudioAuth<undefined>(
     try {
       const body = (await request.json()) as PresignRequest;
       if (!assetTypeEnum.enumValues.includes(body.assetType)) {
-        return NextResponse.json(
+        return noStoreJson(
           { success: false, error: `Unsupported asset type: ${body.assetType}` },
           { status: 400 },
         );
       }
       if (!body.contentType?.trim()) {
-        return NextResponse.json(
+        return noStoreJson(
           { success: false, error: "contentType is required." },
           { status: 400 },
         );
@@ -61,7 +62,7 @@ export const POST = withStudioAuth<undefined>(
         !Number.isInteger(body.expectedSizeBytes) ||
         body.expectedSizeBytes < 0
       ) {
-        return NextResponse.json(
+        return noStoreJson(
           {
             success: false,
             error: "expectedSizeBytes is required and must be a non-negative integer.",
@@ -73,7 +74,7 @@ export const POST = withStudioAuth<undefined>(
       if (body.projectId) {
         const project = await getProject(authz.workspaceId, body.projectId);
         if (!project) {
-          return NextResponse.json(
+          return noStoreJson(
             {
               success: false,
               error: "No access to this project.",
@@ -108,7 +109,7 @@ export const POST = withStudioAuth<undefined>(
         expectedSizeBytes: body.expectedSizeBytes,
       });
 
-      return NextResponse.json({
+      return noStoreJson({
         success: true,
         assetId: asset.id,
         key: signed.key,
@@ -118,7 +119,7 @@ export const POST = withStudioAuth<undefined>(
       });
     } catch (error) {
       if (error instanceof StudioAssetQuotaExceededError) {
-        return NextResponse.json(
+        return noStoreJson(
           {
             success: false,
             error: "Workspace storage quota exceeded.",

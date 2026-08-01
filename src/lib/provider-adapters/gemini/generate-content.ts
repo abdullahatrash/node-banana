@@ -27,6 +27,47 @@ const INPUT_IMAGE_MEDIA_TYPES = [
 ] as const;
 const OUTPUT_IMAGE_MEDIA_TYPES = ["image/png"] as const;
 const IMAGE_ASPECT_RATIOS = ["1:1", "4:5", "16:9"] as const;
+const SAFE_PROVIDER_ERROR_CODES = new Set([
+  "API_KEY_INVALID",
+  "PERMISSION_DENIED",
+  "UNAUTHENTICATED",
+  "RESOURCE_EXHAUSTED",
+  "INVALID_ARGUMENT",
+  "MISSING_KEY",
+]);
+const SAFE_FINISH_REASONS = new Set([
+  "FINISH_REASON_UNSPECIFIED",
+  "STOP",
+  "MAX_TOKENS",
+  "SAFETY",
+  "RECITATION",
+  "LANGUAGE",
+  "OTHER",
+  "BLOCKLIST",
+  "PROHIBITED_CONTENT",
+  "SPII",
+  "MALFORMED_FUNCTION_CALL",
+  "IMAGE_SAFETY",
+  "UNEXPECTED_TOOL_CALL",
+  "IMAGE_PROHIBITED_CONTENT",
+  "NO_IMAGE",
+]);
+
+function safeProviderErrorCode(value: string | undefined): string | null {
+  if (!value) return null;
+  if (SAFE_PROVIDER_ERROR_CODES.has(value) || /^HTTP_[1-5][0-9]{2}$/.test(value)) {
+    return value;
+  }
+  return "PROVIDER_ERROR";
+}
+
+function safeFinishReasonCode(value: string | undefined): string | null {
+  return value && SAFE_FINISH_REASONS.has(value)
+    ? `FINISH_REASON_${value}`
+    : value
+      ? "FINISH_REASON_UNKNOWN"
+      : null;
+}
 
 const byteArray = z.custom<Uint8Array>(
   (value) =>
@@ -339,10 +380,8 @@ function normalize<I>(
     httpStatus: response.status,
     providerCode:
       typeof body.errorCode === "string"
-        ? body.errorCode
-        : body.finishReason
-          ? `FINISH_REASON_${body.finishReason}`
-          : null,
+        ? safeProviderErrorCode(body.errorCode)
+        : safeFinishReasonCode(body.finishReason),
     operatorTraceRef: null,
   };
   if (response.status >= 400 && response.status < 500) {

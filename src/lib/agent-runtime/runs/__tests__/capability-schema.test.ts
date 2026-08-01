@@ -121,4 +121,26 @@ describe("Workflow Run public schemas", () => {
     expect(usage[1].properties.source.const).toBe("unknown");
     expect(usage[1].properties.quantity.type).toBe("null");
   });
+
+  it("publishes a strict event discriminator with no arbitrary data branch", () => {
+    const schema = registration(
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.events.name,
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.events.version,
+    ).outputSchema as any;
+    const event = schema.properties.items.items;
+    expect(event.oneOf).toHaveLength(15);
+    for (const branch of event.oneOf) {
+      expect(branch.additionalProperties).toBe(false);
+      expect(branch.properties.type.const).toEqual(expect.any(String));
+      expect(branch.properties.data.additionalProperties).toBe(false);
+      expect(branch.properties.data).not.toHaveProperty("patternProperties");
+    }
+    const accepted = event.oneOf.find(
+      (branch: any) => branch.properties.type.const === "run.accepted",
+    );
+    expect(accepted.properties.data.properties.startSnapshotDigest).toEqual({
+      type: "string",
+      pattern: "^sha256:[a-f0-9]{64}$",
+    });
+  });
 });

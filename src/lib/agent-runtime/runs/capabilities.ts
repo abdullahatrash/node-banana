@@ -619,36 +619,141 @@ const recoverySchema: JsonSchema = {
   },
 };
 
-const eventSchema: JsonSchema = {
-  ...object,
-  required: ["id", "runId", "sequence", "type", "data", "occurredAt"],
-  properties: {
-    id: { type: "string" },
-    runId: { type: "string" },
-    sequence: { type: "integer", minimum: 1 },
-    type: {
-      type: "string",
-      enum: [
-        "run.accepted",
-        "run.derived",
-        "step.attempt.started",
-        "artifact.generated",
-        "step.attempt.completed",
-        "step.attempt.failed",
-        "step.retry.scheduled",
-        "step.attempt.outcome_unknown",
-        "step.attempt.reconciled",
-        "run.waiting",
-        "run.resumed",
-        "run.outcome_unknown",
-        "step.completed",
-        "run.completed",
-        "run.failed",
-      ],
+const eventId = {
+  type: "string",
+  pattern: "^[a-zA-Z0-9_-]{1,200}$",
+} as const;
+const eventDigest = {
+  type: "string",
+  pattern: "^sha256:[a-f0-9]{64}$",
+} as const;
+const eventCode = {
+  type: "string",
+  pattern: "^[A-Z][A-Z0-9_]{0,79}$",
+} as const;
+const eventDateTime = { type: "string", format: "date-time" } as const;
+const eventEffectKey = {
+  type: "string",
+  pattern:
+    "^workflow-effect:v1:[A-Za-z0-9_-]{1,200}:[A-Za-z0-9_-]{1,200}:[A-Za-z0-9_-]{1,200}:[1-9][0-9]*$",
+} as const;
+const eventOperationIdentity = {
+  type: "string",
+  pattern: "^[a-z][a-z0-9_.-]{0,199}@[1-9][0-9]*$",
+} as const;
+const eventInteger = { type: "integer", minimum: 1 } as const;
+const eventIdArray = { type: "array", items: eventId } as const;
+
+function eventVariant(
+  type: string,
+  dataProperties: Record<string, JsonSchema>,
+): JsonSchema {
+  return {
+    ...object,
+    required: ["id", "runId", "sequence", "type", "data", "occurredAt"],
+    properties: {
+      id: eventId,
+      runId: eventId,
+      sequence: eventInteger,
+      type: { const: type },
+      data: {
+        ...object,
+        properties: dataProperties,
+      },
+      occurredAt: { type: "string", format: "date-time" },
     },
-    data: { type: "object" },
-    occurredAt: { type: "string", format: "date-time" },
-  },
+  };
+}
+
+const eventSchema: JsonSchema = {
+  oneOf: [
+    eventVariant("run.accepted", { startSnapshotDigest: eventDigest }),
+    eventVariant("run.derived", {
+      kind: { const: "manual_retry" },
+      sourceRunId: eventId,
+      rootRunId: eventId,
+      retryFromStepId: eventId,
+    }),
+    eventVariant("step.attempt.started", {
+      stepAttemptId: eventId,
+      stepId: eventId,
+      attempt: eventInteger,
+      effectKey: eventEffectKey,
+      operationIdentity: eventOperationIdentity,
+      intentDigest: eventDigest,
+    }),
+    eventVariant("artifact.generated", {
+      stepAttemptId: eventId,
+      stepId: eventId,
+      outputName: eventId,
+      artifactId: eventId,
+      digest: eventDigest,
+    }),
+    eventVariant("step.attempt.completed", {
+      stepAttemptId: eventId,
+      stepId: eventId,
+      attempt: eventInteger,
+      effectKey: eventEffectKey,
+      outputArtifactIds: eventIdArray,
+    }),
+    eventVariant("step.attempt.failed", {
+      stepAttemptId: eventId,
+      stepId: eventId,
+      attempt: eventInteger,
+      effectKey: eventEffectKey,
+      reasonCode: eventCode,
+    }),
+    eventVariant("step.retry.scheduled", {
+      stepAttemptId: eventId,
+      stepId: eventId,
+      attempt: eventInteger,
+      nextAttempt: eventInteger,
+      effectKey: eventEffectKey,
+      retryAt: eventDateTime,
+    }),
+    eventVariant("step.attempt.outcome_unknown", {
+      stepAttemptId: eventId,
+      stepId: eventId,
+      attempt: eventInteger,
+      effectKey: eventEffectKey,
+      reasonCode: eventCode,
+    }),
+    eventVariant("step.attempt.reconciled", {
+      stepAttemptId: eventId,
+      resolution: { type: "string", enum: ["succeeded", "failed_known"] },
+    }),
+    eventVariant("run.waiting", {
+      waitId: eventId,
+      boundary: { type: "string", enum: ["run_admission", "run_concurrency", "provider_effect", "usage_settlement", "artifact_storage"] },
+      reasonCode: eventCode,
+      eligibleAt: eventDateTime,
+      resumeAt: eventDateTime,
+      stepAttemptId: eventId,
+    }),
+    eventVariant("run.resumed", {
+      automatic: { type: "boolean" },
+      waitId: eventId,
+      reason: eventId,
+      reservationIds: eventIdArray,
+    }),
+    eventVariant("run.outcome_unknown", {
+      stepAttemptId: eventId,
+      reasonCode: eventCode,
+    }),
+    eventVariant("step.completed", {
+      stepId: eventId,
+      outputDigest: eventDigest,
+    }),
+    eventVariant("run.completed", {
+      finalSnapshotDigest: eventDigest,
+      outputArtifactIds: eventIdArray,
+    }),
+    eventVariant("run.failed", {
+      stepAttemptId: eventId,
+      reasonCode: eventCode,
+      quotaBoundary: { type: "string", enum: ["run_admission", "run_concurrency", "provider_effect", "usage_settlement", "artifact_storage"] },
+    }),
+  ],
 };
 
 const lineageSourceSchema: JsonSchema = {
@@ -1275,7 +1380,11 @@ export function createWorkflowRunRegistrations(
       handler: (input, context) => {
         const principal = agent(context.securityContext);
         return domain(() =>
-          service.get({ workspaceId: principal.workspaceId, ...input }),
+          service.get({
+            workspaceId: principal.workspaceId,
+            principalId: principal.principalId,
+            ...input,
+          }),
         );
       },
     }),
@@ -1455,6 +1564,7 @@ export function createWorkflowRunRegistrations(
         return domain(() =>
           service.listStepAttempts({
             workspaceId: principal.workspaceId,
+            principalId: principal.principalId,
             ...input,
           }),
         );
@@ -1492,6 +1602,7 @@ export function createWorkflowRunRegistrations(
         return domain(() =>
           service.getRunArtifact({
             workspaceId: principal.workspaceId,
+            principalId: principal.principalId,
             ...input,
           }),
         );

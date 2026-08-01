@@ -560,13 +560,27 @@ describe("Workspace Agent pairing and authentication", () => {
     );
     setup.clock.advance(61_000);
 
+    const responses: Array<Awaited<ReturnType<typeof dispatchIdentity>>> = [];
     for (const key of [undefined, "bad-key", redeemed.agentKey]) {
       const response = await dispatchIdentity(setup, key ?? "");
       expect(response).toMatchObject({
         type: "capability_error",
         code: "CAPABILITY_NOT_AUTHORIZED",
+        category: "authorization",
+        message:
+          "Capability agents.current.get@1 is not authorized. Ask a Workspace owner or admin to grant that exact capability and its required resources.",
+        retryable: false,
+        operatorTraceRef: null,
       });
+      expect(JSON.stringify(response)).not.toMatch(/otr_[a-f0-9]{32}/);
+      responses.push(response);
     }
+    const withoutDigest = (response: (typeof responses)[number]) => {
+      const { requestDigest: _requestDigest, ...stable } = response;
+      return stable;
+    };
+    expect(withoutDigest(responses[1])).toEqual(withoutDigest(responses[0]));
+    expect(withoutDigest(responses[2])).toEqual(withoutDigest(responses[0]));
   });
 
   it("rejects expired and replayed challenges and refuses member-only sponsors", async () => {

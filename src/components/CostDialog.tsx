@@ -265,6 +265,12 @@ export function CostDialog({ predictedCost, incurredCost, onClose }: CostDialogP
             >
               Manage Quotas
             </a>
+            <a
+              href="/studio/observability"
+              className="ml-4 mt-2 inline-block text-xs text-violet-400 hover:text-violet-300"
+            >
+              Open Observability
+            </a>
 
             {incurredCost > 0 && (
               <button

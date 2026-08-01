@@ -1,5 +1,6 @@
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { assetTypeEnum } from "@/lib/db/schema";
 import {
   abortMultipartUpload,
@@ -65,7 +66,7 @@ export const POST = withStudioAuth<undefined>(
   { route: "/api/studio/assets/presign-multipart", action: "write" },
   async (request: NextRequest, authz): Promise<NextResponse<MultipartResponse>> => {
     if (!canUseS3Storage()) {
-      return NextResponse.json(
+      return noStoreJson(
         { success: false, error: "S3 storage is not configured." },
         { status: 400 },
       );
@@ -75,7 +76,7 @@ export const POST = withStudioAuth<undefined>(
       const body = (await request.json()) as MultipartRequest;
 
       if (!isValidAction(body.action)) {
-        return NextResponse.json(
+        return noStoreJson(
           { success: false, error: "action must be one of: create, complete, abort." },
           { status: 400 },
         );
@@ -90,7 +91,7 @@ export const POST = withStudioAuth<undefined>(
       return await handleAbort(body, authz);
     } catch (error) {
       if (error instanceof StudioAssetQuotaExceededError) {
-        return NextResponse.json(
+        return noStoreJson(
           { success: false, error: "Workspace storage quota exceeded." },
           { status: 403 },
         );
@@ -106,13 +107,13 @@ async function handleCreate(
   authz: { workspaceId: string; userId: string },
 ): Promise<NextResponse<MultipartResponse>> {
   if (!assetTypeEnum.enumValues.includes(body.assetType)) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: `Unsupported asset type: ${body.assetType}` },
       { status: 400 },
     );
   }
   if (!body.contentType?.trim()) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: "contentType is required." },
       { status: 400 },
     );
@@ -122,7 +123,7 @@ async function handleCreate(
     !Number.isFinite(body.expectedSizeBytes) ||
     body.expectedSizeBytes < 0
   ) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: "expectedSizeBytes must be a non-negative number." },
       { status: 400 },
     );
@@ -133,7 +134,7 @@ async function handleCreate(
     body.totalParts < 1 ||
     body.totalParts > 10000
   ) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: "totalParts must be an integer between 1 and 10000." },
       { status: 400 },
     );
@@ -142,7 +143,7 @@ async function handleCreate(
   if (body.projectId) {
     const project = await getProject(authz.workspaceId, body.projectId);
     if (!project) {
-      return NextResponse.json(
+      return noStoreJson(
         { success: false, error: "No access to this project." },
         { status: 403 },
       );
@@ -180,7 +181,7 @@ async function handleCreate(
     ),
   );
 
-  return NextResponse.json({
+  return noStoreJson({
     success: true,
     assetId: asset.id,
     key,
@@ -195,13 +196,13 @@ async function handleComplete(
   authz: { workspaceId: string },
 ): Promise<NextResponse<MultipartResponse>> {
   if (!body.key || !body.uploadId || !body.assetId) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: "key, uploadId, and assetId are required." },
       { status: 400 },
     );
   }
   if (!Array.isArray(body.parts) || body.parts.length === 0) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: "parts array is required and must not be empty." },
       { status: 400 },
     );
@@ -220,7 +221,7 @@ async function handleComplete(
     sizeBytes: body.sizeBytes,
   });
 
-  return NextResponse.json({
+  return noStoreJson({
     success: true,
     assetId: body.assetId,
     key: body.key,
@@ -232,7 +233,7 @@ async function handleAbort(
   authz: { workspaceId: string },
 ): Promise<NextResponse<MultipartResponse>> {
   if (!body.key || !body.uploadId || !body.assetId) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: "key, uploadId, and assetId are required." },
       { status: 400 },
     );
@@ -250,7 +251,7 @@ async function handleAbort(
     error: "Multipart upload aborted by client.",
   });
 
-  return NextResponse.json({
+  return noStoreJson({
     success: true,
     assetId: body.assetId,
   });

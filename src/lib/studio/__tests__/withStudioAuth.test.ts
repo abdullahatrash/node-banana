@@ -3,6 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 const mockIsDatabaseConfigured = vi.fn(() => true);
 const mockAuthorizeStudioRequest = vi.fn();
+const mockRecordSafeOperationalTrace = vi.fn<
+  (input: unknown) => Promise<string | null>
+>(
+  async (_input: unknown) => "otr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+);
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: () => mockIsDatabaseConfigured(),
@@ -18,12 +23,9 @@ vi.mock("@/lib/studio/authz", () => ({
     ),
 }));
 
-vi.mock("@/utils/logger", () => ({
-  logger: {
-    error: vi.fn(),
-    warn: vi.fn(),
-    info: vi.fn(),
-  },
+vi.mock("@/lib/agent-runtime/safe-diagnostics", () => ({
+  recordSafeOperationalTrace: (input: unknown) =>
+    mockRecordSafeOperationalTrace(input),
 }));
 
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
@@ -47,6 +49,9 @@ describe("withStudioAuth", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsDatabaseConfigured.mockReturnValue(true);
+    mockRecordSafeOperationalTrace.mockResolvedValue(
+      "otr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
   });
 
   it("returns 503 when database is not configured (handler not called)", async () => {
@@ -117,7 +122,10 @@ describe("withStudioAuth", () => {
 
   it("returns 500 with generic message when handler throws (not leaking error.message)", async () => {
     mockAuthorizeStudioRequest.mockResolvedValue(authorizedResult);
-    const handler = vi.fn().mockRejectedValue(new Error("secret DB connection string"));
+    const canary =
+      "PROMPT_CANARY Authorization: Bearer token Cookie=secret https://signed.example/private";
+    const handler = vi.fn().mockRejectedValue(new Error(canary));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const route = withStudioAuth({ route: "/api/studio/test", action: "write" }, handler);
     const response = await route(createRequest(), undefined as never);
@@ -126,7 +134,45 @@ describe("withStudioAuth", () => {
     expect(response.status).toBe(500);
     expect(data.success).toBe(false);
     expect(data.error).toBe("Internal server error.");
-    expect(data.error).not.toContain("secret DB connection string");
+    expect(data.code).toBe("STUDIO_ROUTE_UNAVAILABLE");
+    expect(data.operatorTraceRef).toBe("otr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(JSON.stringify(data)).not.toContain(canary);
+    expect(JSON.stringify(mockRecordSafeOperationalTrace.mock.calls)).not.toContain(canary);
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain(canary);
+    expect(mockRecordSafeOperationalTrace).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      category: "runtime",
+      severity: "error",
+      code: "STUDIO_ROUTE_UNAVAILABLE",
+      stage: "execution",
+      outcome: "failed",
+      providerFamily: "internal",
+      httpStatus: null,
+      retryable: true,
+      durationMs: null,
+      attempt: null,
+      createdAt: expect.any(Date),
+    });
+    consoleError.mockRestore();
+  });
+
+  it("returns a null trace reference when no sanitized diagnostic was persisted", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue(authorizedResult);
+    mockRecordSafeOperationalTrace.mockResolvedValue(null);
+    const handler = vi.fn().mockRejectedValue(new Error("private failure"));
+
+    const route = withStudioAuth(
+      { route: "/api/studio/test", action: "write" },
+      handler,
+    );
+    const response = await route(createRequest(), undefined as never);
+
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      code: "STUDIO_ROUTE_UNAVAILABLE",
+      operatorTraceRef: null,
+    });
   });
 
   it("forwards context to the handler for dynamic routes", async () => {

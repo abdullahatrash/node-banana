@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { buildCdnDownloadUrl, canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { getAsset } from "@/lib/studio/repository";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
@@ -33,7 +34,7 @@ export const GET = withStudioAuth<AssetIdContext>(
     context,
   ): Promise<NextResponse<AssetDownloadResponse>> => {
     if (!canUseS3Storage()) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error:
@@ -46,7 +47,7 @@ export const GET = withStudioAuth<AssetIdContext>(
     const { assetId } = await context.params;
     const asset = await getAsset(authz.workspaceId, assetId);
     if (!asset) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error: "Asset not found.",
@@ -56,7 +57,7 @@ export const GET = withStudioAuth<AssetIdContext>(
     }
 
     if (asset.storageProvider !== "s3") {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error: "Asset is not stored in S3/R2.",
@@ -66,7 +67,7 @@ export const GET = withStudioAuth<AssetIdContext>(
     }
 
     if (!asset.storageKey?.trim()) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error: "Asset has no storage key.",
@@ -76,7 +77,7 @@ export const GET = withStudioAuth<AssetIdContext>(
     }
 
     if (!isAssetReady(asset.metadata)) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error: "Asset upload is not ready.",
@@ -87,7 +88,7 @@ export const GET = withStudioAuth<AssetIdContext>(
 
     const cdnUrl = buildCdnDownloadUrl({ key: asset.storageKey });
     if (cdnUrl) {
-      return NextResponse.json({
+      return noStoreJson({
         success: true,
         assetId: asset.id,
         key: asset.storageKey,
@@ -99,7 +100,7 @@ export const GET = withStudioAuth<AssetIdContext>(
       key: asset.storageKey,
     });
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       assetId: asset.id,
       key: signed.key,

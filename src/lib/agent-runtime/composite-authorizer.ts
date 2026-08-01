@@ -20,7 +20,7 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
   async authorize(
     request: CapabilityAuthorizationRequest,
   ): Promise<CapabilityAuthorizationAdmission> {
-    const trace = `trace_${randomUUID().replaceAll("-", "")}`;
+    const trace = `otr_${randomUUID().replaceAll("-", "")}`;
     const context = request.securityContext;
     return this.database().transaction(async (tx) => {
       const isHumanAdmission =

@@ -108,6 +108,8 @@ describe("/api/studio/assets/legacy-download", () => {
     const data = await response.json();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     expect(data).toEqual({
       success: true,
       key: "workflows/project_a/generations/file.png",

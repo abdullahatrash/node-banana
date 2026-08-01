@@ -103,6 +103,8 @@ describe("/api/studio/assets/[assetId]/download", () => {
     const data = await response.json();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     expect(data).toEqual({
       success: true,
       assetId: "asset_1",

@@ -244,8 +244,10 @@ const evidenceSchema = z
   .object({
     providerRequestId: z.string().regex(SAFE_ID).nullable(),
     httpStatus: z.number().int().min(100).max(599).nullable(),
-    providerCode: z.string().regex(SAFE_ID).nullable(),
-    operatorTraceRef: z.string().regex(SAFE_ID).nullable(),
+    providerCode: z.string().regex(SAFE_CODE).nullable(),
+    // Operator traces are runtime-owned. Adapters must never smuggle provider
+    // strings into the diagnostic plane under an apparently safe field name.
+    operatorTraceRef: z.null(),
     effectDisposition: z.enum([
       "not_created",
       "accepted",

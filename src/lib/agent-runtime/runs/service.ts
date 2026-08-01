@@ -37,6 +37,15 @@ import type {
   UsageSettlementPort,
 } from "../usage/types";
 import type { QuotaExhaustionEvidence } from "../quotas/types";
+import {
+  emitProviderEffectMetric,
+  emitQueueWaitMetric,
+  emitQuotaDecisionMetric,
+  emitRunStatusMetric,
+  operationFamily,
+  providerFamily,
+  quotaReasonFamily,
+} from "../operational-metrics";
 
 const ID = /^[a-zA-Z0-9_-]{1,200}$/;
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{8,200}$/;
@@ -305,12 +314,177 @@ function eventDto(event: {
   data: Record<string, unknown>;
   occurredAt: Date;
 }): WorkflowRunEventDto {
+  if (
+    !ID.test(event.id) ||
+    !ID.test(event.runId) ||
+    !Number.isInteger(event.sequence) ||
+    event.sequence < 1 ||
+    !Number.isFinite(event.occurredAt.getTime())
+  ) {
+    throw new WorkflowRunError(
+      "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+      "Retained Workflow Run event evidence is invalid.",
+    );
+  }
+  const matched = (key: string, pattern: RegExp) => {
+    const value = event.data[key];
+    return typeof value === "string" && pattern.test(value) ? value : undefined;
+  };
+  const id = (key: string) => matched(key, ID);
+  const digest = (key: string) =>
+    matched(key, /^sha256:[a-f0-9]{64}$/);
+  const code = (key: string) =>
+    matched(key, /^[A-Z][A-Z0-9_]{0,79}$/);
+  const dateTime = (key: string) => {
+    const value = event.data[key];
+    if (typeof value !== "string") return undefined;
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value
+      ? value
+      : undefined;
+  };
+  const oneOf = <T extends string>(key: string, values: readonly T[]) => {
+    const value = event.data[key];
+    return typeof value === "string" && values.includes(value as T)
+      ? value as T
+      : undefined;
+  };
+  const effectKey = (key: string) =>
+    matched(
+      key,
+      /^workflow-effect:v1:[A-Za-z0-9_-]{1,200}:[A-Za-z0-9_-]{1,200}:[A-Za-z0-9_-]{1,200}:[1-9][0-9]*$/,
+    );
+  const operationIdentity = (key: string) =>
+    matched(key, /^[a-z][a-z0-9_.-]{0,199}@[1-9][0-9]*$/);
+  const boolean = (key: string) =>
+    typeof event.data[key] === "boolean" ? event.data[key] : undefined;
+  const integer = (key: string) =>
+    Number.isInteger(event.data[key]) ? event.data[key] : undefined;
+  const ids = (key: string) =>
+    Array.isArray(event.data[key]) &&
+    (event.data[key] as unknown[]).every(
+      (value) => typeof value === "string" && ID.test(value),
+    )
+      ? structuredClone(event.data[key])
+      : undefined;
+  const compact = (value: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
+  const data = (() => {
+    switch (event.type) {
+      case "run.accepted":
+        return compact({ startSnapshotDigest: digest("startSnapshotDigest") });
+      case "run.derived":
+        return compact({
+          kind: oneOf("kind", ["manual_retry"] as const),
+          sourceRunId: id("sourceRunId"),
+          rootRunId: id("rootRunId"),
+          retryFromStepId: id("retryFromStepId"),
+        });
+      case "step.attempt.started":
+        return compact({
+          stepAttemptId: id("stepAttemptId"),
+          stepId: id("stepId"),
+          attempt: integer("attempt"),
+          effectKey: effectKey("effectKey"),
+          operationIdentity: operationIdentity("operationIdentity"),
+          intentDigest: digest("intentDigest"),
+        });
+      case "artifact.generated":
+        return compact({
+          stepAttemptId: id("stepAttemptId"),
+          stepId: id("stepId"),
+          outputName: id("outputName"),
+          artifactId: id("artifactId"),
+          digest: digest("digest"),
+        });
+      case "step.attempt.completed":
+        return compact({
+          stepAttemptId: id("stepAttemptId"),
+          stepId: id("stepId"),
+          attempt: integer("attempt"),
+          effectKey: effectKey("effectKey"),
+          outputArtifactIds: ids("outputArtifactIds"),
+        });
+      case "step.attempt.failed":
+      case "step.attempt.outcome_unknown":
+        return compact({
+          stepAttemptId: id("stepAttemptId"),
+          stepId: id("stepId"),
+          attempt: integer("attempt"),
+          effectKey: effectKey("effectKey"),
+          reasonCode: code("reasonCode"),
+        });
+      case "step.retry.scheduled":
+        return compact({
+          stepAttemptId: id("stepAttemptId"),
+          stepId: id("stepId"),
+          attempt: integer("attempt"),
+          nextAttempt: integer("nextAttempt"),
+          effectKey: effectKey("effectKey"),
+          retryAt: dateTime("retryAt"),
+        });
+      case "step.attempt.reconciled":
+        return compact({
+          stepAttemptId: id("stepAttemptId"),
+          resolution: oneOf("resolution", ["succeeded", "failed_known"] as const),
+        });
+      case "run.waiting":
+        return compact({
+          waitId: id("waitId"),
+          boundary: oneOf("boundary", [
+            "run_admission",
+            "run_concurrency",
+            "provider_effect",
+            "usage_settlement",
+            "artifact_storage",
+          ] as const),
+          reasonCode: code("reasonCode"),
+          eligibleAt: dateTime("eligibleAt"),
+          resumeAt: dateTime("resumeAt"),
+          stepAttemptId: id("stepAttemptId"),
+        });
+      case "run.resumed":
+        return compact({
+          automatic: boolean("automatic"),
+          waitId: id("waitId"),
+          reason: id("reason"),
+          reservationIds: ids("reservationIds"),
+        });
+      case "run.outcome_unknown":
+        return compact({
+          stepAttemptId: id("stepAttemptId"),
+          reasonCode: code("reasonCode"),
+        });
+      case "step.completed":
+        return compact({
+          stepId: id("stepId"),
+          outputDigest: digest("outputDigest"),
+        });
+      case "run.completed":
+        return compact({
+          finalSnapshotDigest: digest("finalSnapshotDigest"),
+          outputArtifactIds: ids("outputArtifactIds"),
+        });
+      case "run.failed":
+        return compact({
+          stepAttemptId: id("stepAttemptId"),
+          reasonCode: code("reasonCode"),
+          quotaBoundary: oneOf("quotaBoundary", [
+            "run_admission",
+            "run_concurrency",
+            "provider_effect",
+            "usage_settlement",
+            "artifact_storage",
+          ] as const),
+        });
+    }
+  })();
   return {
     id: event.id,
     runId: event.runId,
     sequence: event.sequence,
     type: event.type,
-    data: structuredClone(event.data),
+    data,
     occurredAt: event.occurredAt.toISOString(),
   };
 }
@@ -351,6 +525,18 @@ function acceptance(
       },
     },
   };
+}
+
+function requireRunPrincipal(
+  run: WorkflowRunRecord,
+  principalId: string,
+): void {
+  if (run.startSnapshot.authorization.principalId !== principalId) {
+    throw new WorkflowRunError(
+      "WORKFLOW_RUN_UNAVAILABLE",
+      "The Workflow Run is unavailable.",
+    );
+  }
 }
 
 export class WorkflowRunService {
@@ -1047,6 +1233,16 @@ export class WorkflowRunService {
       );
     }
     if (result.kind === "quota_denied") {
+      if (quotaAdmissionPlan) {
+        void emitQuotaDecisionMetric({
+          workspaceId: input.workspaceId,
+          canonicalEventId: quotaAdmissionPlan.transitionKey,
+          boundary: quotaAdmissionPlan.boundary,
+          outcome: "denied",
+          reasonFamily: quotaReasonFamily(result.reasonCodes),
+          recordedAt: quotaAdmissionPlan.createdAt,
+        });
+      }
       throw new WorkflowRunError(
         "QUOTA_EXCEEDED",
         "The Workflow Run exceeds an applicable non-monetary quota.",
@@ -1059,11 +1255,28 @@ export class WorkflowRunService {
         "Workflow Run acceptance could not be committed.",
       );
     }
+    void emitRunStatusMetric({
+      workspaceId: result.run.workspaceId,
+      canonicalEventId: result.run.id,
+      status: "accepted",
+      recordedAt: result.run.acceptedAt,
+    });
+    if (quotaAdmissionPlan) {
+      void emitQuotaDecisionMetric({
+        workspaceId: result.run.workspaceId,
+        canonicalEventId: quotaAdmissionPlan.transitionKey,
+        boundary: quotaAdmissionPlan.boundary,
+        outcome: "succeeded",
+        reasonFamily: "unknown",
+        recordedAt: quotaAdmissionPlan.createdAt,
+      });
+    }
     return acceptance(result.run, result.receipt.initialEventCursor);
   }
 
   async get(input: {
     workspaceId: string;
+    principalId: string;
     workflowId: string;
     runId: string;
   }): Promise<WorkflowRunDto> {
@@ -1080,6 +1293,7 @@ export class WorkflowRunService {
         "The Workflow Run is unavailable.",
       );
     }
+    requireRunPrincipal(run, evidence(input.principalId, "Principal"));
     return workflowRunDto(run);
   }
 
@@ -1136,6 +1350,7 @@ export class WorkflowRunService {
         "The source Workflow Run is unavailable.",
       );
     }
+    requireRunPrincipal(source, principalId);
     if (
       source.startSnapshot.schema !== "workflow-run-start-snapshot/v2" ||
       !source.startSnapshot.providerResolutions?.length
@@ -1387,6 +1602,16 @@ export class WorkflowRunService {
       );
     }
     if (result.kind === "quota_denied") {
+      if (quotaAdmissionPlan) {
+        void emitQuotaDecisionMetric({
+          workspaceId: input.workspaceId,
+          canonicalEventId: quotaAdmissionPlan.transitionKey,
+          boundary: quotaAdmissionPlan.boundary,
+          outcome: "denied",
+          reasonFamily: quotaReasonFamily(result.reasonCodes),
+          recordedAt: quotaAdmissionPlan.createdAt,
+        });
+      }
       throw new WorkflowRunError(
         "QUOTA_EXCEEDED",
         "The derived Workflow Run exceeds an applicable non-monetary quota.",
@@ -1398,6 +1623,22 @@ export class WorkflowRunService {
         "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
         "The derived Workflow Run could not be committed.",
       );
+    }
+    void emitRunStatusMetric({
+      workspaceId: result.run.workspaceId,
+      canonicalEventId: result.run.id,
+      status: "accepted",
+      recordedAt: result.run.acceptedAt,
+    });
+    if (quotaAdmissionPlan) {
+      void emitQuotaDecisionMetric({
+        workspaceId: result.run.workspaceId,
+        canonicalEventId: quotaAdmissionPlan.transitionKey,
+        boundary: quotaAdmissionPlan.boundary,
+        outcome: "succeeded",
+        reasonFamily: "unknown",
+        recordedAt: quotaAdmissionPlan.createdAt,
+      });
     }
     return mutationReceiptResult(result);
   }
@@ -1456,6 +1697,7 @@ export class WorkflowRunService {
     if (!run) {
       throw new WorkflowRunError("WORKFLOW_RUN_UNAVAILABLE", "The Workflow Run is unavailable.");
     }
+    requireRunPrincipal(run, principalId);
     if (run.state === "outcome_unknown") {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_RECONCILIATION_REQUIRED",
@@ -1744,6 +1986,7 @@ export class WorkflowRunService {
     if (!run) {
       throw new WorkflowRunError("WORKFLOW_RUN_UNAVAILABLE", "The Workflow Run is unavailable.");
     }
+    requireRunPrincipal(run, principalId);
     if (run.state !== "outcome_unknown") {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_NOT_RESUMABLE",
@@ -2246,6 +2489,7 @@ export class WorkflowRunService {
 
   async listStepAttempts(input: {
     workspaceId: string;
+    principalId: string;
     workflowId: string;
     runId: string;
   }): Promise<{ items: WorkflowStepAttemptDto[] }> {
@@ -2262,6 +2506,7 @@ export class WorkflowRunService {
         "The Workflow Run is unavailable.",
       );
     }
+    requireRunPrincipal(run, evidence(input.principalId, "Principal"));
     const attempts = await this.repository.listStepAttempts({
       workspaceId: input.workspaceId,
       runId,
@@ -2277,6 +2522,7 @@ export class WorkflowRunService {
 
   async getRunArtifact(input: {
     workspaceId: string;
+    principalId: string;
     workflowId: string;
     runId: string;
     artifactId: string;
@@ -2301,6 +2547,7 @@ export class WorkflowRunService {
         "The Workflow Run is unavailable.",
       );
     }
+    requireRunPrincipal(run, evidence(input.principalId, "Principal"));
     const attempts = await this.repository.listStepAttempts({
       workspaceId: input.workspaceId,
       runId,
@@ -2342,12 +2589,25 @@ export class WorkflowRunService {
   }): Promise<{ items: WorkflowRunEventDto[]; nextCursor: string }> {
     const workflowId = identifier(input.workflowId, "Workflow ID");
     const runId = identifier(input.runId, "Workflow Run ID");
+    const principalId = evidence(input.principalId, "Principal");
+    const run = await this.repository.get({
+      workspaceId: input.workspaceId,
+      workflowId,
+      runId,
+    });
+    if (!run) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_UNAVAILABLE",
+        "The Workflow Run is unavailable.",
+      );
+    }
+    requireRunPrincipal(run, principalId);
     let afterSequence: number;
     try {
       afterSequence = this.cursors.open({
         cursor: input.cursor,
         workspaceId: input.workspaceId,
-        principalId: input.principalId,
+        principalId,
         workflowId,
         runId,
       });
@@ -2376,7 +2636,7 @@ export class WorkflowRunService {
       items: events.map(eventDto),
       nextCursor: this.cursors.seal({
         workspaceId: input.workspaceId,
-        principalId: input.principalId,
+        principalId,
         workflowId,
         runId,
         afterSequence: lastSequence,
@@ -2465,20 +2725,20 @@ export class WorkflowRunService {
       );
     }
     const now = this.clock.now();
+    const durableRun = await this.repository.getById({
+      workspaceId: input.workspaceId,
+      runId,
+    });
+    if (!durableRun) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_UNAVAILABLE",
+        "The Workflow Run is unavailable.",
+      );
+    }
     let quotaResumePlan = null;
     let quotaConcurrencyPlan = null;
     let quotaWaitGeneration = 0;
     if (this.quotas) {
-      const durableRun = await this.repository.getById({
-        workspaceId: input.workspaceId,
-        runId,
-      });
-      if (!durableRun) {
-        throw new WorkflowRunError(
-          "WORKFLOW_RUN_UNAVAILABLE",
-          "The Workflow Run is unavailable.",
-        );
-      }
       quotaWaitGeneration = durableRun.nextEventSequence;
       const waits = await this.quotas.listWaits({
         workspaceId: input.workspaceId,
@@ -2555,6 +2815,20 @@ export class WorkflowRunService {
       );
     }
     if (acquired.kind === "quota_wait") {
+      void emitRunStatusMetric({
+        workspaceId: acquired.run.workspaceId,
+        canonicalEventId: acquired.wait.id,
+        status: "waiting",
+        recordedAt: acquired.wait.createdAt,
+      });
+      void emitQuotaDecisionMetric({
+        workspaceId: acquired.run.workspaceId,
+        canonicalEventId: acquired.wait.id,
+        boundary: acquired.wait.boundary,
+        outcome: "wait",
+        reasonFamily: "capacity",
+        recordedAt: acquired.wait.createdAt,
+      });
       return workflowRunDto(acquired.run);
     }
     if (acquired.kind === "unavailable") {
@@ -2562,6 +2836,17 @@ export class WorkflowRunService {
         "WORKFLOW_RUN_UNAVAILABLE",
         "The Workflow Run is unavailable.",
       );
+    }
+    if (durableRun.state === "waiting") {
+      void emitQueueWaitMetric({
+        workspaceId: acquired.run.workspaceId,
+        canonicalEventId: `${acquired.run.id}:${acquired.lease.fence.toString()}`,
+        durationMs: Math.max(
+          0,
+          acquired.lease.acquiredAt.getTime() - durableRun.updatedAt.getTime(),
+        ),
+        recordedAt: acquired.lease.acquiredAt,
+      });
     }
     return this.executeAcquired(acquired.run, acquired.lease);
   }
@@ -2654,6 +2939,12 @@ export class WorkflowRunService {
           "Workflow Run failure could not be committed.",
         );
       }
+      void emitRunStatusMetric({
+        workspaceId: failed.run.workspaceId,
+        canonicalEventId: failed.run.id,
+        status: "failed",
+        recordedAt: failed.run.completedAt ?? failedAt,
+      });
       return workflowRunDto(failed.run);
     }
     const completedAt = this.clock.now();
@@ -2689,6 +2980,12 @@ export class WorkflowRunService {
         "Workflow Run completion could not be committed.",
       );
     }
+    void emitRunStatusMetric({
+      workspaceId: completed.run.workspaceId,
+      canonicalEventId: completed.run.id,
+      status: "completed",
+      recordedAt: completed.run.completedAt ?? completedAt,
+    });
     return workflowRunDto(completed.run);
   }
 
@@ -3071,9 +3368,31 @@ export class WorkflowRunService {
       );
     }
     if (prepared.kind === "quota_wait") {
+      void emitRunStatusMetric({
+        workspaceId: prepared.run.workspaceId,
+        canonicalEventId: prepared.wait.id,
+        status: "waiting",
+        recordedAt: prepared.wait.createdAt,
+      });
+      void emitQuotaDecisionMetric({
+        workspaceId: prepared.run.workspaceId,
+        canonicalEventId: prepared.wait.id,
+        boundary: prepared.wait.boundary,
+        outcome: "wait",
+        reasonFamily: "capacity",
+        recordedAt: prepared.wait.createdAt,
+      });
       return workflowRunDto(prepared.run);
     }
     if (prepared.kind === "effect_blocked") {
+      void emitQuotaDecisionMetric({
+        workspaceId: prepared.run.workspaceId,
+        canonicalEventId: candidate.id,
+        boundary: prepared.blockedBoundary,
+        outcome: "denied",
+        reasonFamily: quotaReasonFamily([prepared.reasonCode]),
+        recordedAt: now,
+      });
       return workflowRunDto(prepared.run);
     }
     const recoveringDurableSuccess =
@@ -3289,6 +3608,14 @@ export class WorkflowRunService {
         "Provider success evidence could not be committed.",
       );
     }
+    void emitProviderEffectMetric({
+      workspaceId: run.workspaceId,
+      canonicalEventId: providerRecorded.attempt.id,
+      outcome: "succeeded",
+      providerFamily: providerFamily(providerRecorded.attempt.provider),
+      operationFamily: operationFamily(step.operation.identity),
+      recordedAt: providerRecordedAt,
+    });
     const durableAttempt = providerRecorded.attempt;
     const outputs: Record<string, import("./types").WorkflowRunArtifactReference> =
       {};
@@ -3523,6 +3850,14 @@ export class WorkflowRunService {
         "Workflow Step Attempt settlement could not be committed.",
       );
     }
+    if (settled.run.state === "completed") {
+      void emitRunStatusMetric({
+        workspaceId: settled.run.workspaceId,
+        canonicalEventId: settled.run.id,
+        status: "completed",
+        recordedAt: settled.run.completedAt ?? completedAttempt.completedAt!,
+      });
+    }
     return workflowRunDto(settled.run);
   }
 
@@ -3659,6 +3994,20 @@ export class WorkflowRunService {
         "Workflow Step Attempt failure could not be committed.",
       );
     }
+    void emitProviderEffectMetric({
+      workspaceId: input.run.workspaceId,
+      canonicalEventId: input.attempt.id,
+      outcome: "failed_known",
+      providerFamily: providerFamily(input.attempt.provider),
+      operationFamily: operationFamily(step.operation.identity),
+      recordedAt: failedAt,
+    });
+    void emitRunStatusMetric({
+      workspaceId: failed.run.workspaceId,
+      canonicalEventId: `${failed.run.id}:${input.attempt.id}`,
+      status: canRetry ? "waiting" : "failed",
+      recordedAt: failed.run.completedAt ?? failedAt,
+    });
     return workflowRunDto(failed.run);
   }
 
@@ -3750,6 +4099,20 @@ export class WorkflowRunService {
         "Unknown provider outcome could not be committed.",
       );
     }
+    void emitProviderEffectMetric({
+      workspaceId: input.run.workspaceId,
+      canonicalEventId: input.attempt.id,
+      outcome: "outcome_unknown",
+      providerFamily: providerFamily(input.attempt.provider),
+      operationFamily: operationFamily(input.attempt.providerOperation),
+      recordedAt: occurredAt,
+    });
+    void emitRunStatusMetric({
+      workspaceId: blocked.run.workspaceId,
+      canonicalEventId: `${blocked.run.id}:${input.attempt.id}`,
+      status: "outcome_unknown",
+      recordedAt: occurredAt,
+    });
     return workflowRunDto(blocked.run);
   }
 

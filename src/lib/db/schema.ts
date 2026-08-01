@@ -50,6 +50,20 @@ import type {
   QuotaUsageReconciliationCommitResult,
   QuotaWait,
 } from "@/lib/agent-runtime/quotas/types";
+import type {
+  DiagnosticTrace,
+  DiagnosticTraceAccessAuditEvent,
+  ObservabilityRetentionPolicy,
+  ObservabilityRetentionRevision,
+  OperationalMetricAggregate,
+  SupportBundleAuditEvent,
+  SupportBundleAccessAuditEvent,
+  SupportBundleRecord,
+  WorkspaceTelemetryOperatorGrant,
+  OperatorGrantAuditEvent,
+} from "@/lib/agent-runtime/observability/types";
+import type { SupportBundleBindIntent } from "@/lib/agent-runtime/observability/support-bundles";
+import type { ContractEvidenceVersionRecord } from "@/lib/agent-runtime/contract-evidence/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -4793,6 +4807,166 @@ export const runtimeQuotaReservationEvents = pgTable(
   { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), reservationId: text("reservation_id").notNull(), transitionId: text("transition_id").notNull(), eventType: text("event_type").notNull(), amount: text("amount").notNull(), evidenceRef: text("evidence_ref").notNull(), event: jsonb("event").$type<Record<string, unknown>>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull() },
   (table) => ({ reservationFk: foreignKey({ columns: [table.workspaceId, table.reservationId], foreignColumns: [runtimeQuotaReservations.workspaceId, runtimeQuotaReservations.id], name: "runtime_quota_reservation_events_reservation_fk" }).onDelete("restrict"), reservationOccurredIdx: index("runtime_quota_reservation_events_reservation_occurred_idx").on(table.workspaceId, table.reservationId, table.occurredAt), valueCheck: check("runtime_quota_reservation_events_value_check", sql`${table.eventType} in ('held','settled','released') and ${table.amount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$'`) }),
 );
+
+export const runtimeContractEvidenceBackfillQuarantine = pgTable(
+  "runtime_contract_evidence_backfill_quarantine",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    resourceKind: text("resource_kind").notNull(),
+    resourceReferenceDigest: text("resource_reference_digest").notNull(),
+    canonicalOwnerDigest: text("canonical_owner_digest").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.resourceKind, table.resourceReferenceDigest],
+      name: "runtime_contract_evidence_backfill_quarantine_pk",
+    }),
+    kindCheck: check("runtime_contract_evidence_backfill_quarantine_kind_check", sql`${table.resourceKind} in ('run','budget_reservation','quota_reservation','quota_wait')`),
+    digestCheck: check("runtime_contract_evidence_backfill_quarantine_digest_check", sql`${table.resourceReferenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.canonicalOwnerDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    reasonCheck: check("runtime_contract_evidence_backfill_quarantine_reason_check", sql`${table.reasonCode} = 'LEGACY_PROJECTION_INVALID'`),
+  }),
+);
+
+export const runtimeContractEvidenceVersions = pgTable(
+  "runtime_contract_evidence_versions",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    resourceKind: text("resource_kind").$type<ContractEvidenceVersionRecord["resourceKind"]>().notNull(),
+    resourceId: text("resource_id").notNull(),
+    runOwnerId: text("run_owner_id").generatedAlwaysAs(sql`case when "resource_kind" = 'run' then "resource_id" else null end`),
+    budgetReservationOwnerId: text("budget_reservation_owner_id").generatedAlwaysAs(sql`case when "resource_kind" = 'budget_reservation' then "resource_id" else null end`),
+    quotaReservationOwnerId: text("quota_reservation_owner_id").generatedAlwaysAs(sql`case when "resource_kind" = 'quota_reservation' then "resource_id" else null end`),
+    quotaWaitOwnerId: text("quota_wait_owner_id").generatedAlwaysAs(sql`case when "resource_kind" = 'quota_wait' then "resource_id" else null end`),
+    version: integer("version").notNull(),
+    canonicalDigest: text("canonical_digest").notNull(),
+    projectionKind: text("projection_kind").$type<ContractEvidenceVersionRecord["projectionKind"]>().notNull(),
+    projection: jsonb("projection").$type<ContractEvidenceVersionRecord["projection"]>().notNull(),
+    projectionDigest: text("projection_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.resourceKind, table.resourceId, table.version],
+      name: "runtime_contract_evidence_versions_pk",
+    }),
+    latestIdx: index("runtime_contract_evidence_versions_latest_idx").on(
+      table.workspaceId,
+      table.resourceKind,
+      table.resourceId,
+      table.version,
+    ),
+    runOwnerFk: foreignKey({
+      columns: [table.workspaceId, table.runOwnerId],
+      foreignColumns: [workflowRuns.workspaceId, workflowRuns.id],
+      name: "runtime_contract_evidence_versions_run_owner_fk",
+    }).onDelete("cascade"),
+    budgetReservationOwnerFk: foreignKey({
+      columns: [table.workspaceId, table.budgetReservationOwnerId],
+      foreignColumns: [runtimeBudgetReservations.workspaceId, runtimeBudgetReservations.id],
+      name: "runtime_contract_evidence_versions_budget_reservation_owner_fk",
+    }).onDelete("cascade"),
+    quotaReservationOwnerFk: foreignKey({
+      columns: [table.workspaceId, table.quotaReservationOwnerId],
+      foreignColumns: [runtimeQuotaReservations.workspaceId, runtimeQuotaReservations.id],
+      name: "runtime_contract_evidence_versions_quota_reservation_owner_fk",
+    }).onDelete("cascade"),
+    quotaWaitOwnerFk: foreignKey({
+      columns: [table.workspaceId, table.quotaWaitOwnerId],
+      foreignColumns: [runtimeQuotaWaits.workspaceId, runtimeQuotaWaits.id],
+      name: "runtime_contract_evidence_versions_quota_wait_owner_fk",
+    }).onDelete("cascade"),
+    versionCheck: check("runtime_contract_evidence_versions_version_check", sql`${table.version} > 0`),
+    digestCheck: check("runtime_contract_evidence_versions_digest_check", sql`${table.canonicalDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.projectionDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    kindCheck: check("runtime_contract_evidence_versions_kind_check", sql`(
+      (${table.resourceKind} = 'run' and ${table.projectionKind} = 'run_summary' and ${table.projection}->>'schema' = 'support-run-summary/v1' and ${table.projection}->>'id' = ${table.resourceId}) or
+      (${table.resourceKind} = 'budget_reservation' and ${table.projectionKind} = 'budget_summary' and ${table.projection}->>'schema' = 'support-budget-summary/v1' and ${table.projection}->>'id' = ${table.resourceId}) or
+      (${table.resourceKind} = 'quota_reservation' and ${table.projectionKind} = 'quota_reservation_summary' and ${table.projection}->>'schema' = 'support-quota-reservation-summary/v1' and ${table.projection}->>'id' = ${table.resourceId}) or
+      (${table.resourceKind} = 'quota_wait' and ${table.projectionKind} = 'quota_wait_summary' and ${table.projection}->>'schema' = 'support-quota-wait-summary/v1' and ${table.projection}->>'id' = ${table.resourceId})
+    )`),
+    ownerCheck: check("runtime_contract_evidence_versions_owner_check", sql`
+      num_nonnulls(${table.runOwnerId}, ${table.budgetReservationOwnerId}, ${table.quotaReservationOwnerId}, ${table.quotaWaitOwnerId}) = 1
+      and (
+        (${table.resourceKind} = 'run' and ${table.runOwnerId} = ${table.resourceId}) or
+        (${table.resourceKind} = 'budget_reservation' and ${table.budgetReservationOwnerId} = ${table.resourceId}) or
+        (${table.resourceKind} = 'quota_reservation' and ${table.quotaReservationOwnerId} = ${table.resourceId}) or
+        (${table.resourceKind} = 'quota_wait' and ${table.quotaWaitOwnerId} = ${table.resourceId})
+      )
+    `),
+    projectionCheck: check("runtime_contract_evidence_versions_projection_check", sql`
+      runtime_contract_evidence_projection_is_valid(
+        ${table.resourceKind},
+        ${table.resourceId},
+        ${table.projectionKind},
+        ${table.projection}
+      )
+    `),
+  }),
+);
+
+export const runtimeObservabilityRetentionPolicies = pgTable("runtime_observability_retention_policies", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().unique(), currentRevisionId: text("current_revision_id").notNull(), status: text("status").notNull(), policy: jsonb("policy").$type<ObservabilityRetentionPolicy>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_observability_retention_policies_workspace_fk" }).onDelete("restrict"), stateCheck: check("runtime_observability_retention_policies_state_check", sql`${table.status} in ('active','expired')`) }));
+
+export const runtimeObservabilityRetentionRevisions = pgTable("runtime_observability_retention_revisions", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), policyId: text("policy_id").notNull(), revision: integer("revision").notNull(), metricTtlSeconds: integer("metric_ttl_seconds").notNull(), traceTtlSeconds: integer("trace_ttl_seconds").notNull(), supportBundleTtlSeconds: integer("support_bundle_ttl_seconds").notNull(), revisionRecord: jsonb("revision_record").$type<ObservabilityRetentionRevision>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ policyRevisionUnique: uniqueIndex("runtime_observability_retention_revisions_policy_revision_unique").on(table.workspaceId, table.policyId, table.revision), policyFk: foreignKey({ columns: [table.policyId], foreignColumns: [runtimeObservabilityRetentionPolicies.id], name: "runtime_observability_retention_revisions_policy_fk" }).onDelete("restrict"), ttlCheck: check("runtime_observability_retention_revisions_ttl_check", sql`${table.metricTtlSeconds} between 60 and 31536000 and ${table.traceTtlSeconds} between 60 and 2592000 and ${table.supportBundleTtlSeconds} between 60 and 604800`) }));
+
+export const runtimeObservabilityAdminReceipts = pgTable("runtime_observability_admin_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), resourceId: text("resource_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ columns: [table.workspaceId, table.idempotencyKey], name: "runtime_observability_admin_receipts_pk" }), digestCheck: check("runtime_observability_admin_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const runtimeOperationalMetrics = pgTable("runtime_operational_metrics", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), name: text("name").notNull(), metric: jsonb("metric").$type<OperationalMetricAggregate>().notNull(), windowStartsAt: timestamp("window_starts_at", { withTimezone: true }).notNull(), windowEndsAt: timestamp("window_ends_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ expiryIdx: index("runtime_operational_metrics_expiry_idx").on(table.expiresAt, table.id), nameCheck: check("runtime_operational_metrics_name_check", sql`${table.name} in ('runtime.run.count','runtime.provider.effect.count','runtime.quota.decision.count','runtime.artifact.bytes','runtime.queue.wait_ms')`), leakageCheck: check("runtime_operational_metrics_leakage_check", sql`${table.metric}::text !~* '(prompt|content|secret|token|password|ciphertext|signed[_-]?url|authorization|headers?|provider[_-]?body|resourceId|runId|artifactId|principalId)'`) }));
+
+export const runtimeOperationalMetricDeltaReceipts = pgTable("runtime_operational_metric_delta_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), eventId: text("event_id").notNull(), requestDigest: text("request_digest").notNull(), aggregateId: text("aggregate_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ columns: [table.workspaceId, table.eventId], name: "runtime_operational_metric_delta_receipts_pk" }), aggregateFk: foreignKey({ columns: [table.aggregateId], foreignColumns: [runtimeOperationalMetrics.id], name: "runtime_operational_metric_delta_receipts_aggregate_fk" }).onDelete("cascade"), digestCheck: check("runtime_operational_metric_delta_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const runtimeDiagnosticTraces = pgTable("runtime_diagnostic_traces", {
+  operatorTraceRef: text("operator_trace_ref").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), trace: jsonb("trace").$type<DiagnosticTrace>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({ expiryIdx: index("runtime_diagnostic_traces_expiry_idx").on(table.expiresAt, table.operatorTraceRef), refCheck: check("runtime_diagnostic_traces_ref_check", sql`${table.operatorTraceRef} ~ '^otr_[a-f0-9]{32}$'`), leakageCheck: check("runtime_diagnostic_traces_leakage_check", sql`jsonb_typeof(${table.trace}) = 'object' and ${table.trace} ?& array['schema','operatorTraceRef','workspaceId','category','severity','code','stage','outcome','providerFamily','httpStatus','retryable','durationMs','attempt','createdAt','expiresAt'] and (${table.trace} - array['schema','operatorTraceRef','workspaceId','category','severity','code','stage','outcome','providerFamily','httpStatus','retryable','durationMs','attempt','createdAt','expiresAt']) = '{}'::jsonb and ${table.trace}->>'schema' = 'diagnostic-trace/v1' and ${table.trace}->>'operatorTraceRef' = ${table.operatorTraceRef} and ${table.trace}->>'workspaceId' = ${table.workspaceId} and ${table.trace}->>'category' in ('authorization','provider','persistence','quota','budget','artifact','runtime') and ${table.trace}->>'severity' in ('info','warning','error') and ${table.trace}->>'stage' in ('admission','planning','execution','settlement','reconciliation','storage') and ${table.trace}->>'outcome' in ('succeeded','failed','unknown','denied','waiting') and ${table.trace}->>'providerFamily' in ('google','openai','kie','internal','unknown') and ${table.trace}->>'code' ~ '^[A-Z][A-Z0-9_]{0,79}$' and case when jsonb_typeof(${table.trace}->'httpStatus') = 'number' then (${table.trace}->>'httpStatus')::integer between 100 and 599 else jsonb_typeof(${table.trace}->'httpStatus') = 'null' end and jsonb_typeof(${table.trace}->'retryable') in ('boolean','null') and case when jsonb_typeof(${table.trace}->'durationMs') = 'number' then (${table.trace}->>'durationMs')::bigint >= 0 else jsonb_typeof(${table.trace}->'durationMs') = 'null' end and case when jsonb_typeof(${table.trace}->'attempt') = 'number' then (${table.trace}->>'attempt')::integer >= 1 else jsonb_typeof(${table.trace}->'attempt') = 'null' end and jsonb_typeof(${table.trace}->'createdAt') = 'string' and (${table.trace}->>'createdAt')::timestamptz = ${table.createdAt} and jsonb_typeof(${table.trace}->'expiresAt') = 'string' and (${table.trace}->>'expiresAt')::timestamptz = ${table.expiresAt}`) }));
+
+export const runtimeDiagnosticTraceAccessAudits = pgTable("runtime_diagnostic_trace_access_audits", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), operatorTraceRef: text("operator_trace_ref").notNull(), operatorId: text("operator_id").notNull(), outcome: text("outcome").notNull(), audit: jsonb("audit").$type<DiagnosticTraceAccessAuditEvent>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+}, (table) => ({ occurredIdx: index("runtime_diagnostic_trace_access_audits_occurred_idx").on(table.workspaceId, table.occurredAt, table.id), outcomeCheck: check("runtime_diagnostic_trace_access_audits_outcome_check", sql`${table.outcome} in ('granted','denied','not_found')`) }));
+
+export const runtimeTelemetryOperatorGrants = pgTable("runtime_telemetry_operator_grants", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), operatorId: text("operator_id").notNull(), status: text("status").notNull(), grant: jsonb("grant").$type<WorkspaceTelemetryOperatorGrant>().notNull(), issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (table) => ({ workspaceIdUnique: uniqueIndex("runtime_telemetry_operator_grants_workspace_id_unique").on(table.workspaceId, table.id), activeIdx: index("runtime_telemetry_operator_grants_active_idx").on(table.workspaceId, table.operatorId, table.status, table.expiresAt), stateCheck: check("runtime_telemetry_operator_grants_state_check", sql`${table.status} in ('active','revoked','expired')`) }));
+
+export const runtimeTelemetryOperatorGrantAudits = pgTable("runtime_telemetry_operator_grant_audits", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), grantId: text("grant_id").notNull(), eventType: text("event_type").notNull(), audit: jsonb("audit").$type<OperatorGrantAuditEvent>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+}, (table) => ({ grantFk: foreignKey({ columns: [table.workspaceId, table.grantId], foreignColumns: [runtimeTelemetryOperatorGrants.workspaceId, runtimeTelemetryOperatorGrants.id], name: "runtime_telemetry_operator_grant_audits_grant_fk" }).onDelete("restrict"), eventCheck: check("runtime_telemetry_operator_grant_audits_event_check", sql`${table.eventType} in ('grant.issued','grant.revoked','grant.expired')`) }));
+
+export const runtimeSupportBundles = pgTable("runtime_support_bundles", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), state: text("state").notNull(), bundle: jsonb("bundle").$type<SupportBundleRecord>().notNull(), storageKey: text("storage_key"), contentDigest: text("content_digest"), sizeBytes: integer("size_bytes").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), storedAt: timestamp("stored_at", { withTimezone: true }).notNull(),
+}, (table) => ({ workspaceIdUnique: uniqueIndex("runtime_support_bundles_workspace_id_unique").on(table.workspaceId, table.id), expiryIdx: index("runtime_support_bundles_expiry_idx").on(table.expiresAt, table.id), stateCheck: check("runtime_support_bundles_state_check", sql`${table.state} in ('stored','expired','revoked')`), digestCheck: check("runtime_support_bundles_digest_check", sql`${table.contentDigest} is null or ${table.contentDigest} ~ '^sha256:[a-f0-9]{64}$'`), sizeCheck: check("runtime_support_bundles_size_check", sql`${table.sizeBytes} between 1 and 10000000`) }));
+
+export const runtimeSupportBundleBindIntents = pgTable("runtime_support_bundle_bind_intents", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), state: text("state").notNull(), selections: jsonb("selections").$type<SupportBundleBindIntent["selections"]>().notNull(), consent: jsonb("consent").$type<SupportBundleBindIntent["consent"]>().notNull(), contentDigest: text("content_digest").notNull(), sizeBytes: integer("size_bytes").notNull(), storageKey: text("storage_key").notNull(), payloadJson: text("payload_json"), bundleId: text("bundle_id"), consentExpiresAt: timestamp("consent_expires_at", { withTimezone: true }).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  workspaceKeyUnique: uniqueIndex("runtime_support_bundle_bind_intents_workspace_key_unique").on(table.workspaceId, table.idempotencyKey),
+  pendingIdx: index("runtime_support_bundle_bind_intents_pending_idx").on(table.state, table.updatedAt, table.id),
+  bundleFk: foreignKey({ columns: [table.workspaceId, table.bundleId], foreignColumns: [runtimeSupportBundles.workspaceId, runtimeSupportBundles.id], name: "runtime_support_bundle_bind_intents_bundle_fk" }).onDelete("restrict"),
+  digestCheck: check("runtime_support_bundle_bind_intents_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.contentDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  sizeCheck: check("runtime_support_bundle_bind_intents_size_check", sql`${table.sizeBytes} between 1 and 10000000 and (${table.payloadJson} is null or octet_length(${table.payloadJson}) between 1 and 10000000)`),
+  stateCheck: check("runtime_support_bundle_bind_intents_state_check", sql`(${table.state} = 'pending' and ${table.payloadJson} is not null and ${table.bundleId} is null) or (${table.state} in ('bound','cleanup') and ${table.payloadJson} is null and ${table.bundleId} is not null) or (${table.state} = 'abandoned' and ${table.payloadJson} is null and ${table.bundleId} is null)`),
+}));
+
+export const runtimeSupportBundleAuditEvents = pgTable("runtime_support_bundle_audit_events", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), bundleId: text("bundle_id").notNull(), eventType: text("event_type").notNull(), audit: jsonb("audit").$type<SupportBundleAuditEvent>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+}, (table) => ({ bundleFk: foreignKey({ columns: [table.workspaceId, table.bundleId], foreignColumns: [runtimeSupportBundles.workspaceId, runtimeSupportBundles.id], name: "runtime_support_bundle_audit_events_bundle_fk" }).onDelete("restrict"), occurredIdx: index("runtime_support_bundle_audit_events_occurred_idx").on(table.workspaceId, table.occurredAt, table.id), eventCheck: check("runtime_support_bundle_audit_events_event_check", sql`${table.eventType} in ('bundle.stored','bundle.expired','bundle.revoked')`) }));
+
+export const runtimeSupportBundleAccessAudits = pgTable("runtime_support_bundle_access_audits", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), bundleId: text("bundle_id").notNull(), operatorId: text("operator_id").notNull(), outcome: text("outcome").notNull(), audit: jsonb("audit").$type<SupportBundleAccessAuditEvent>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+}, (table) => ({ occurredIdx: index("runtime_support_bundle_access_audits_occurred_idx").on(table.workspaceId, table.occurredAt, table.id), outcomeCheck: check("runtime_support_bundle_access_audits_outcome_check", sql`${table.outcome} in ('granted','denied','not_found')`) }));
+
+export const runtimeSupportBundleReceipts = pgTable("runtime_support_bundle_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), bundleId: text("bundle_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ columns: [table.workspaceId, table.idempotencyKey], name: "runtime_support_bundle_receipts_pk" }), digestCheck: check("runtime_support_bundle_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
 
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];

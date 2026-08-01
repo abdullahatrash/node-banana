@@ -377,6 +377,14 @@ describe("deny-by-default Agent authorization", () => {
     expect(setup.repository.decisions).toHaveLength(1);
     expect(setup.repository.securityEvents).toHaveLength(1);
     expect(setup.repository.decisions[0].resources).toEqual([]);
+    expect(response.type).toBe("capability_error");
+    if (response.type !== "capability_error") return;
+    expect(response.operatorTraceRef).toBeNull();
+    expect(setup.repository.decisions[0]).toMatchObject({
+      outcome: "denied",
+      workspaceId: "workspace-1",
+      operatorTraceRef: expect.stringMatching(/^otr_[a-f0-9]{32}$/),
+    });
     const durable = JSON.stringify({
       decisions: setup.repository.decisions,
       events: setup.repository.securityEvents,
