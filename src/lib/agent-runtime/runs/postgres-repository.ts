@@ -26,6 +26,7 @@ import type {
   UsageCommitWriter,
   UsageLedgerAppendPlan,
 } from "../usage/types";
+import type { BudgetCommitWriter } from "../budgets/types";
 import { workflowRunReceiptResult } from "./types";
 import type {
   CompleteWorkflowRunStepResult,
@@ -366,6 +367,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
   constructor(
     private readonly getDatabase: () => Db,
     private readonly usageWriter?: UsageCommitWriter<Tx>,
+    private readonly budgetWriter?: BudgetCommitWriter<Tx>,
   ) {}
 
   private async appendUsage(
@@ -411,6 +413,47 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
     const result = await this.usageWriter.appendAttributionPlan(plan, tx);
     if (result !== "created" && result !== "replayed") {
       throw new Error("Usage attribution append failed.");
+    }
+  }
+
+  private async appendBudgetSettlement(
+    tx: Tx,
+    plan: import("../budgets/types").BudgetSettlementPlan | null | undefined,
+    attempt: WorkflowStepAttemptRecord,
+  ): Promise<void> {
+    if (!plan) return;
+    if (
+      !this.budgetWriter ||
+      plan.workspaceId !== attempt.workspaceId ||
+      plan.runId !== attempt.runId ||
+      plan.stepAttemptId !== attempt.id
+    ) {
+      throw new Error("Budget settlement plan does not match the Step Attempt.");
+    }
+    const result = await this.budgetWriter.commitSettlement(plan, tx);
+    if (result !== "created" && result !== "replayed") {
+      throw new Error("Budget settlement append failed.");
+    }
+  }
+
+  private async appendBudgetAttemptAllocation(
+    tx: Tx,
+    input: import("../budgets/types").BudgetAttemptAllocationInput | null | undefined,
+    attempt: WorkflowStepAttemptRecord,
+  ): Promise<void> {
+    if (!input) return;
+    if (
+      !this.budgetWriter || input.workspaceId !== attempt.workspaceId ||
+      input.runId !== attempt.runId || input.stepAttemptId !== attempt.id ||
+      input.stepId !== attempt.stepId || input.attempt !== attempt.attempt ||
+      input.effectKey !== attempt.effectKey || input.provider !== attempt.provider ||
+      input.providerOperation !== attempt.providerOperation || input.model !== attempt.model
+    ) {
+      throw new Error("Budget Attempt allocation does not match the Step Attempt.");
+    }
+    const result = await this.budgetWriter.commitAttemptAllocation(input, tx);
+    if (result !== "created" && result !== "replayed") {
+      throw new Error("Budget Attempt allocation is unavailable.");
     }
   }
 
@@ -596,6 +639,21 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           authorizationEvidenceRef:
             input.run.startSnapshot.authorization.evidenceRef,
         });
+        if (input.budgetAdmissionPlan) {
+          if (
+            !this.budgetWriter ||
+            input.budgetAdmissionPlan.workspaceId !== input.run.workspaceId ||
+            input.budgetAdmissionPlan.principalId !== input.receipt.principalId ||
+            input.budgetAdmissionPlan.runId !== input.run.id
+          ) throw new Error("Budget admission plan does not match the Run.");
+          const budgetResult = await this.budgetWriter.commitAdmission(
+            input.budgetAdmissionPlan,
+            tx,
+          );
+          if (budgetResult !== "created" && budgetResult !== "replayed") {
+            throw new Error("Budget admission was not available at Durable Acceptance.");
+          }
+        }
         await tx.insert(workflowRunEvents).values(input.firstEvent);
         await tx.insert(workflowRunMutationReceipts).values(input.receipt);
         await tx.insert(workflowRunOutboxIntents).values(input.outboxIntent);
@@ -1243,6 +1301,11 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           if (!existing || existingRows.length > 1) {
             return { kind: "conflict" as const };
           }
+          await this.appendBudgetAttemptAllocation(
+            tx,
+            input.budgetAttemptAllocation,
+            existing,
+          );
           return {
             kind: "replayed" as const,
             run,
@@ -1284,6 +1347,11 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           startedAt: databaseNow,
         };
         await tx.insert(workflowStepAttempts).values(attempt);
+        await this.appendBudgetAttemptAllocation(
+          tx,
+          input.budgetAttemptAllocation,
+          attempt,
+        );
         const event: WorkflowRunEventRecord = {
           id: input.eventId,
           workspaceId: run.workspaceId,
@@ -1386,6 +1454,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             return { kind: "unavailable" as const };
           }
           await this.appendUsageAttribution(tx, input.usageAttributionPlan, attempt);
+          await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
           return {
             kind: "settled" as const,
             run,
@@ -1483,6 +1552,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         }
 
         await this.appendUsageAttribution(tx, input.usageAttributionPlan, attempt);
+        await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
         const updatedAttempts = await tx
           .update(workflowStepAttempts)
           .set({
@@ -1712,10 +1782,12 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         }
         if (attempt.outcome?.kind === "succeeded") {
           await this.appendUsage(tx, input.usagePlan, attempt);
+          await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
           return { kind: "settled" as const, run, attempt };
         }
         if (!input.usagePlan) return { kind: "unavailable" as const };
         await this.appendUsage(tx, input.usagePlan, attempt);
+        await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
         const updated = await tx
           .update(workflowStepAttempts)
           .set({
@@ -1801,6 +1873,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           run.failureCode === input.failureCode
         ) {
           await this.appendUsage(tx, input.usagePlan, attempt);
+          await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
           return {
             kind: "settled" as const,
             run,
@@ -1842,6 +1915,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         }
 
         await this.appendUsage(tx, input.usagePlan, attempt);
+        await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
         const updatedAttempts = await tx
           .update(workflowStepAttempts)
           .set({
@@ -2095,6 +2169,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           return { kind: "stale_fence" as const };
         }
         await this.appendUsage(tx, input.usagePlan, attempt);
+        await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
         const updatedAttempts = await tx
           .update(workflowStepAttempts)
           .set({
@@ -2359,6 +2434,21 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           rootRunId: input.run.derivation!.rootRunId,
           derivationDepth: sourceRow!.derivationDepth + 1,
         });
+        if (input.budgetAdmissionPlan) {
+          if (
+            !this.budgetWriter ||
+            input.budgetAdmissionPlan.workspaceId !== input.run.workspaceId ||
+            input.budgetAdmissionPlan.principalId !== input.receipt.principalId ||
+            input.budgetAdmissionPlan.runId !== input.run.id
+          ) throw new Error("Budget admission plan does not match the derived Run.");
+          const budgetResult = await this.budgetWriter.commitAdmission(
+            input.budgetAdmissionPlan,
+            tx,
+          );
+          if (budgetResult !== "created" && budgetResult !== "replayed") {
+            throw new Error("Budget admission was unavailable for the derived Run.");
+          }
+        }
         await tx.insert(workflowRunEvents).values(input.events);
         const receipt = {
           ...input.receipt,
@@ -2654,6 +2744,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         }
         await this.appendUsage(tx, input.usagePlan, attempt);
         await this.appendUsageAttribution(tx, input.usageAttributionPlan, attempt);
+        await this.appendBudgetSettlement(tx, input.budgetSettlementPlan, attempt);
         let sequence = run.nextEventSequence;
         const events: WorkflowRunEventRecord[] = [];
         if (input.resolution.kind === "succeeded") {

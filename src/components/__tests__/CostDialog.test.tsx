@@ -499,6 +499,10 @@ describe("CostDialog", () => {
         "href",
         "/studio/usage",
       );
+      expect(screen.getByRole("link", { name: "Manage Budgets" })).toHaveAttribute(
+        "href",
+        "/studio/budgets",
+      );
     });
   });
 

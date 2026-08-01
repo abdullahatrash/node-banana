@@ -8,9 +8,12 @@ import {
   InMemoryWorkflowRunRevisionReader,
 } from "../memory";
 import { WorkflowRunService } from "../service";
+import { BudgetService } from "../../budgets/service";
+import { InMemoryBudgetRepository } from "../../budgets/memory";
 import { workflowRunWorkerId } from "../worker-identity";
 import { GOLDEN_WORKFLOW_OPERATION_REGISTRY } from "../../workflows";
 import type { ResolvedWorkflowDefinition } from "../../workflows/types";
+import type { WorkflowRunBudgetPort } from "../types";
 
 function definition(
   operation = GOLDEN_WORKFLOW_OPERATION_REGISTRY.get(
@@ -108,6 +111,155 @@ function setup() {
 }
 
 describe("WorkflowRunService", () => {
+  it("previews without binding, admits atomically, and replays before fresh budget evaluation", async () => {
+    const budgetRepository = new InMemoryBudgetRepository();
+    const budgets = new BudgetService(budgetRepository);
+    await budgets.createPolicyRevision({
+      workspaceId: "workspace_1",
+      principalId: null,
+      currency: "USD",
+      period: "calendar_day",
+      timezone: "UTC",
+      warningThreshold: "5",
+      hardLimit: "10",
+      unknownPriceTreatment: "deny",
+      unknownPriceAllowance: null,
+      actorUserId: "user_1",
+      idempotencyKey: "policy_1",
+      recordedAt: new Date("2026-07-25T12:00:00.000Z"),
+    });
+    const revisions = new InMemoryWorkflowRunRevisionReader();
+    const resolved = definition();
+    revisions.put("workspace_1", {
+      id: "revision_1",
+      workflowId: "workflow_1",
+      revision: 1,
+      definitionDigest: canonicalDigest(resolved),
+      definition: resolved,
+      operationRegistryDigest: GOLDEN_WORKFLOW_OPERATION_REGISTRY.digest,
+    });
+    const repository = new InMemoryWorkflowRunRepository(undefined, budgetRepository);
+    const service = new WorkflowRunService(
+      repository,
+      revisions,
+      new InMemoryWorkflowRunQueue(),
+      createDeterministicWorkflowRunExecutorRegistry(GOLDEN_WORKFLOW_OPERATION_REGISTRY),
+      new AesGcmWorkflowRunEventCursorCodec(() => ({
+        active: { id: "test", key: Buffer.alloc(32, 7) },
+        all: [{ id: "test", key: Buffer.alloc(32, 7) }],
+      })),
+      { now: () => new Date("2026-07-25T12:00:00.000Z") },
+      undefined,
+      undefined,
+      budgets,
+    );
+    const request = {
+      workspaceId: "workspace_1",
+      workflowId: "workflow_1",
+      revisionId: "revision_1",
+      inputs: { text: "hello" },
+      principalId: "principal_1",
+      keyId: "key_1",
+      authorizationEvidenceRef: "trace_1",
+      idempotencyKey: "start_run_1",
+    };
+    await expect(service.preview(request)).resolves.toMatchObject({
+      admissible: true,
+      ceiling: { amount: "0", currency: "USD" },
+    });
+    expect(budgetRepository.reservations.size).toBe(0);
+    const accepted = await service.start(request);
+    expect(budgetRepository.reservations.size).toBe(1);
+    await budgets.setSpendSuspended({
+      workspaceId: "workspace_1",
+      suspended: true,
+      reason: "emergency",
+      actorUserId: "user_1",
+      recordedAt: new Date("2026-07-25T12:01:00.000Z"),
+    });
+    await expect(service.start({ ...request, authorizationEvidenceRef: "trace_2" }))
+      .resolves.toEqual(accepted);
+    expect(budgetRepository.reservations.size).toBe(1);
+  });
+
+  it("applies the same Workflow eligibility gate to preview and start", async () => {
+    const unsupported = definition();
+    unsupported.steps.push({
+      ...structuredClone(unsupported.steps[0]!),
+      id: "digest_again",
+    });
+    const revisions = new InMemoryWorkflowRunRevisionReader();
+    revisions.put("workspace_1", {
+      id: "revision_unsupported",
+      workflowId: "workflow_1",
+      revision: 2,
+      definitionDigest: canonicalDigest(unsupported),
+      definition: unsupported,
+      operationRegistryDigest: GOLDEN_WORKFLOW_OPERATION_REGISTRY.digest,
+    });
+    const budgets: WorkflowRunBudgetPort = {
+      previewRun: async (input) => ({
+        schema: "run-admission-preview/v1",
+        workspaceId: input.workspaceId,
+        principalId: input.principalId,
+        workflowId: input.workflowId,
+        workflowRevisionId: input.workflowRevisionId,
+        evaluatedAt: input.at,
+        ceiling: {
+          amount: "0",
+          currency: "USD",
+          certainty: "conservative",
+          fxSnapshotIds: [],
+        },
+        applicableCredentialSpendGrants: [],
+        applicablePolicies: [],
+        requiredReservations: [],
+        stepExposures: input.stepExposures,
+        warnings: [],
+        admissible: true,
+        denialReasons: [],
+      }),
+      planAdmission: async () => {
+        throw new Error("Eligibility must fail before Budget admission.");
+      },
+      planSettlement: async (input) => input,
+    };
+    const service = new WorkflowRunService(
+      new InMemoryWorkflowRunRepository(),
+      revisions,
+      new InMemoryWorkflowRunQueue(),
+      createDeterministicWorkflowRunExecutorRegistry(
+        GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+      ),
+      new AesGcmWorkflowRunEventCursorCodec(() => ({
+        active: { id: "test", key: Buffer.alloc(32, 7) },
+        all: [{ id: "test", key: Buffer.alloc(32, 7) }],
+      })),
+      { now: () => new Date("2026-07-25T12:00:00.000Z") },
+      undefined,
+      undefined,
+      budgets,
+    );
+    const proposed = {
+      workspaceId: "workspace_1",
+      workflowId: "workflow_1",
+      revisionId: "revision_unsupported",
+      inputs: { text: "hello" },
+      principalId: "principal_1",
+    };
+    await expect(service.preview(proposed)).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
+    });
+    await expect(service.start({
+      ...proposed,
+      keyId: "key_1",
+      authorizationEvidenceRef: "trace_1",
+      idempotencyKey: "unsupported-start-1",
+    })).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
+    });
+  });
+
   it("atomically accepts the Run, immutable snapshot, event, receipt, and outbox", async () => {
     const { repository, start } = setup();
     const accepted = await start();

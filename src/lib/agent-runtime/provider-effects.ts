@@ -10,6 +10,7 @@ import {
   authorizationContractDigestFor,
 } from "@/lib/agent-tools/registry";
 import { credentialSecretCipher } from "@/lib/credential-vault/crypto";
+import { credentialEffectRef } from "@/lib/credential-vault/effect-ref";
 import { DrizzleCredentialVaultRepository } from "@/lib/credential-vault/repository";
 import {
   CredentialEffectExecutor,
@@ -621,12 +622,12 @@ export function createGeminiInvocationBoundary<I extends
   const artifacts = dependencies.artifacts ?? PRODUCTION_ARTIFACT_SERVICE;
 
   const effectRefFor = (input: WorkflowStepExecutionInput) =>
-    `credential-effect:v1:${canonicalDigest({
+    credentialEffectRef({
       workspaceId: input.workspaceId,
       effectKey: input.effectKey,
       stepAttemptId: input.stepAttemptId,
       attempt: input.attempt,
-    })}`;
+    });
   const securityContextFor = (input: WorkflowStepExecutionInput) => ({
     workspaceId: input.workspaceId,
     principalId: input.snapshot.authorization.principalId,

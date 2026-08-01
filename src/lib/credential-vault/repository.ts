@@ -25,7 +25,10 @@ import {
   credentialSpendGrants,
   contentWorkflowRevisions,
   projects,
+  runtimeBudgetAdmissionGrants,
+  runtimeBudgetAttemptAllocations,
   workspaceMembers,
+  workflowRuns,
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { parseWorkflowCredentialSlots } from "@/types";
@@ -1746,24 +1749,61 @@ export class DrizzleCredentialVaultRepository
       const row = rows[0];
       if (!row) return { kind: "unavailable" as const };
       const mode = row.grant.mode as CredentialSpendGrant["mode"];
-      const usage = await tx
-        .select({
-          total: sql<number>`coalesce(sum(${credentialSpendEvents.priceCeilingCents}), 0)::int`,
-        })
-        .from(credentialSpendEvents)
-        .where(
-          and(
-            eq(credentialSpendEvents.workspaceId, intent.workspaceId),
-            eq(credentialSpendEvents.spendGrantId, row.grant.id),
-            inArray(credentialSpendEvents.status, [
-              "pending",
-              "completed",
-              "unknown",
-            ]),
-          ),
-        );
+      const [usage] = await tx.select({
+        runtimeHeldCents: sql<number>`coalesce((
+          select sum(${runtimeBudgetAdmissionGrants.reservedCents})
+          from ${runtimeBudgetAdmissionGrants}
+          inner join ${workflowRuns}
+            on ${workflowRuns.workspaceId} = ${runtimeBudgetAdmissionGrants.workspaceId}
+            and ${workflowRuns.id} = ${runtimeBudgetAdmissionGrants.runId}
+          where ${runtimeBudgetAdmissionGrants.grantId} = ${row.grant.id}
+            and ${workflowRuns.state} in ('accepted', 'running', 'waiting', 'outcome_unknown')
+        ), 0)::integer`,
+        externalLegacyCents: sql<number>`coalesce((
+          select sum(${credentialSpendEvents.priceCeilingCents})
+          from ${credentialSpendEvents}
+          where ${credentialSpendEvents.workspaceId} = ${intent.workspaceId}
+            and ${credentialSpendEvents.spendGrantId} = ${row.grant.id}
+            and ${credentialSpendEvents.status} in ('pending', 'completed', 'unknown')
+            and not exists (
+              select 1
+              from ${runtimeBudgetAttemptAllocations}
+              inner join ${workflowRuns}
+                on ${workflowRuns.workspaceId} = ${runtimeBudgetAttemptAllocations.workspaceId}
+                and ${workflowRuns.id} = ${runtimeBudgetAttemptAllocations.runId}
+              inner join ${runtimeBudgetAdmissionGrants}
+                on ${runtimeBudgetAdmissionGrants.workspaceId} = ${runtimeBudgetAttemptAllocations.workspaceId}
+                and ${runtimeBudgetAdmissionGrants.runId} = ${runtimeBudgetAttemptAllocations.runId}
+                and ${runtimeBudgetAdmissionGrants.grantId} = ${runtimeBudgetAttemptAllocations.grantId}
+              where ${runtimeBudgetAttemptAllocations.workspaceId} = ${credentialSpendEvents.workspaceId}
+                and ${runtimeBudgetAttemptAllocations.grantId} = ${credentialSpendEvents.spendGrantId}
+                and ${runtimeBudgetAttemptAllocations.credentialEffectRef} = ${credentialSpendEvents.effectRef}
+                and ${workflowRuns.state} in ('accepted', 'running', 'waiting', 'outcome_unknown')
+            )
+        ), 0)::integer`,
+        currentAllocationCents: sql<number | null>`(
+          select ${runtimeBudgetAttemptAllocations.grantAmountCents}
+          from ${runtimeBudgetAttemptAllocations}
+          where ${runtimeBudgetAttemptAllocations.workspaceId} = ${intent.workspaceId}
+            and ${runtimeBudgetAttemptAllocations.grantId} = ${row.grant.id}
+            and ${runtimeBudgetAttemptAllocations.credentialEffectRef} = ${intent.effectRef}
+          limit 1
+        )`,
+      }).from(credentialSpendGrants)
+        .where(eq(credentialSpendGrants.id, row.grant.id))
+        .limit(1);
+      const runtimeBacked = usage?.currentAllocationCents !== null &&
+        usage?.currentAllocationCents !== undefined;
+      if (
+        runtimeBacked &&
+        input.priceCeilingCents > Number(usage.currentAllocationCents)
+      ) {
+        return { kind: "unavailable" as const };
+      }
       const nextSpend =
-        Number(usage[0]?.total ?? 0) + input.priceCeilingCents;
+        Number(usage?.runtimeHeldCents ?? 0) +
+        Number(usage?.externalLegacyCents ?? 0) +
+        (runtimeBacked ? 0 : input.priceCeilingCents);
       if (
         nextSpend > 2_147_483_647 ||
         (mode === "bounded" &&

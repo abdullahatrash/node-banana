@@ -16,8 +16,10 @@ import {
   WorkflowRunError,
 } from "./errors";
 import { WorkflowRunService } from "./service";
+import type { RunAdmissionPreview } from "../budgets/types";
 
 export const WORKFLOW_RUN_CAPABILITY_IDENTITIES = {
+  preview: { name: "workflow_runs.preview", version: 1 },
   start: { name: "workflow_runs.start", version: 1 },
   startV2: { name: "workflow_runs.start", version: 2 },
   retry: { name: "workflow_runs.retry", version: 1 },
@@ -60,6 +62,14 @@ const inputArtifactIds = z
     (values) => new Set(values).size === values.length,
     "Input Artifact IDs must be unique.",
   );
+const previewInputArtifactIds = z
+  .array(id)
+  .max(100)
+  .refine(
+    (values) => new Set(values).size === values.length,
+    "Input Artifact IDs must be unique.",
+  )
+  .default([]);
 
 const safeRunRefSchema: JsonSchema = {
   ...object,
@@ -133,6 +143,222 @@ const acceptedSchema: JsonSchema = {
       "workflow_run_events.list@1",
       ["workflowId", "runId", "cursor"],
     ),
+  },
+};
+
+const decimalSchema: JsonSchema = {
+  type: "string",
+  pattern: "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$",
+};
+const nullableDecimalSchema: JsonSchema = {
+  oneOf: [decimalSchema, { type: "null" }],
+};
+const nullableStringSchema: JsonSchema = { type: ["string", "null"] };
+const budgetPeriodSchema: JsonSchema = {
+  ...object,
+  required: ["kind", "timezone", "startsAt", "endsAt"],
+  properties: {
+    kind: {
+      type: "string",
+      enum: ["calendar_day", "calendar_week", "calendar_month", "lifetime"],
+    },
+    timezone: { type: "string" },
+    startsAt: { type: "string", format: "date-time" },
+    endsAt: {
+      oneOf: [
+        { type: "string", format: "date-time" },
+        { type: "null" },
+      ],
+    },
+  },
+};
+const previewPolicySchema: JsonSchema = {
+  ...object,
+  required: [
+    "schema", "id", "workspaceId", "principalId", "scope", "currency",
+    "period", "timezone", "status", "currentRevisionId", "createdAt", "updatedAt",
+  ],
+  properties: {
+    schema: { const: "budget-policy/v1" },
+    id: { type: "string" },
+    workspaceId: { type: "string" },
+    principalId: nullableStringSchema,
+    scope: { type: "string", enum: ["workspace", "principal"] },
+    currency: { type: "string", pattern: "^[A-Z]{3}$" },
+    period: {
+      type: "string",
+      enum: ["calendar_day", "calendar_week", "calendar_month", "lifetime"],
+    },
+    timezone: { type: "string" },
+    status: { type: "string", enum: ["active", "revoked"] },
+    currentRevisionId: { type: "string" },
+    createdAt: { type: "string", format: "date-time" },
+    updatedAt: { type: "string", format: "date-time" },
+  },
+};
+const previewPolicyRevisionSchema: JsonSchema = {
+  ...object,
+  required: [
+    "schema", "id", "policyId", "workspaceId", "principalId", "revision",
+    "warningThreshold", "hardLimit", "unknownPriceTreatment",
+    "unknownPriceAllowance", "createdAt",
+  ],
+  properties: {
+    schema: { const: "budget-policy-revision/v1" },
+    id: { type: "string" },
+    policyId: { type: "string" },
+    workspaceId: { type: "string" },
+    principalId: nullableStringSchema,
+    revision: { type: "integer", minimum: 1 },
+    warningThreshold: decimalSchema,
+    hardLimit: decimalSchema,
+    unknownPriceTreatment: {
+      type: "string",
+      enum: ["deny", "fixed_allowance"],
+    },
+    unknownPriceAllowance: nullableDecimalSchema,
+    createdAt: { type: "string", format: "date-time" },
+  },
+};
+const stepExposureSchema: JsonSchema = {
+  ...object,
+  required: [
+    "stepId", "provider", "providerOperation", "model", "serviceTier",
+    "automaticAttempts", "credentialSlotId", "credentialProfileId",
+    "amountPerAttempt", "currency", "pricingSnapshotIds", "pricingSource",
+  ],
+  properties: {
+    stepId: { type: "string" },
+    provider: { type: "string" },
+    providerOperation: { type: "string" },
+    model: { type: "string" },
+    serviceTier: { type: "string" },
+    automaticAttempts: { type: "integer", minimum: 1, maximum: 100 },
+    credentialSlotId: nullableStringSchema,
+    credentialProfileId: nullableStringSchema,
+    amountPerAttempt: nullableDecimalSchema,
+    currency: {
+      oneOf: [
+        { type: "string", pattern: "^[A-Z]{3}$" },
+        { type: "null" },
+      ],
+    },
+    pricingSnapshotIds: {
+      type: "array",
+      items: { type: "string" },
+      uniqueItems: true,
+    },
+    pricingSource: {
+      type: "string",
+      enum: ["workspace_override", "builtin_catalog", "unknown"],
+    },
+  },
+};
+const admissionPreviewSchema: JsonSchema = {
+  ...object,
+  required: [
+    "schema", "workspaceId", "principalId", "workflowId",
+    "workflowRevisionId", "evaluatedAt", "ceiling",
+    "applicableCredentialSpendGrants", "applicablePolicies",
+    "requiredReservations", "stepExposures", "warnings", "admissible",
+    "denialReasons",
+  ],
+  properties: {
+    schema: { const: "run-admission-preview/v1" },
+    workspaceId: { type: "string" },
+    principalId: { type: "string" },
+    workflowId: { type: "string" },
+    workflowRevisionId: { type: "string" },
+    evaluatedAt: { type: "string", format: "date-time" },
+    ceiling: {
+      ...object,
+      required: ["amount", "currency", "certainty", "fxSnapshotIds"],
+      properties: {
+        amount: nullableDecimalSchema,
+        currency: {
+          oneOf: [
+            { type: "string", pattern: "^[A-Z]{3}$" },
+            { type: "null" },
+          ],
+        },
+        certainty: { type: "string", enum: ["conservative", "unknown"] },
+        fxSnapshotIds: {
+          type: "array",
+          items: { type: "string" },
+          uniqueItems: true,
+        },
+      },
+    },
+    applicableCredentialSpendGrants: {
+      type: "array",
+      items: {
+        ...object,
+        required: [
+          "grantId", "credentialSlotId", "credentialProfileId", "mode",
+          "limit", "committed", "available",
+        ],
+        properties: {
+          grantId: { type: "string" },
+          credentialSlotId: { type: "string" },
+          credentialProfileId: { type: "string" },
+          mode: { type: "string", enum: ["bounded", "audited_unbounded"] },
+          limit: nullableDecimalSchema,
+          committed: decimalSchema,
+          available: nullableDecimalSchema,
+        },
+      },
+    },
+    applicablePolicies: {
+      type: "array",
+      maxItems: 2,
+      items: {
+        ...object,
+        required: ["policy", "revision", "period"],
+        properties: {
+          policy: previewPolicySchema,
+          revision: previewPolicyRevisionSchema,
+          period: budgetPeriodSchema,
+        },
+      },
+    },
+    requiredReservations: {
+      type: "array",
+      items: {
+        ...object,
+        required: [
+          "scope", "policyId", "policyRevisionId", "principalId", "period",
+          "amount", "currency", "committedBefore", "availableBefore",
+          "stepAllocations",
+        ],
+        properties: {
+          scope: { type: "string", enum: ["workspace", "principal"] },
+          policyId: { type: "string" },
+          policyRevisionId: { type: "string" },
+          principalId: nullableStringSchema,
+          period: budgetPeriodSchema,
+          amount: decimalSchema,
+          currency: { type: "string", pattern: "^[A-Z]{3}$" },
+          committedBefore: decimalSchema,
+          availableBefore: decimalSchema,
+          stepAllocations: {
+            type: "array",
+            items: {
+              ...object,
+              required: ["stepId", "amountPerAttempt", "automaticAttempts"],
+              properties: {
+                stepId: { type: "string" },
+                amountPerAttempt: decimalSchema,
+                automaticAttempts: { type: "integer", minimum: 1, maximum: 100 },
+              },
+            },
+          },
+        },
+      },
+    },
+    stepExposures: { type: "array", items: stepExposureSchema },
+    warnings: { type: "array", items: { type: "string" } },
+    admissible: { type: "boolean" },
+    denialReasons: { type: "array", items: { type: "string" } },
   },
 };
 
@@ -847,10 +1073,85 @@ async function domain<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
+function admissionPreviewDto(preview: RunAdmissionPreview) {
+  return {
+    ...preview,
+    evaluatedAt: preview.evaluatedAt.toISOString(),
+    applicablePolicies: preview.applicablePolicies.map(
+      ({ policy, revision, period }) => {
+        const { createdByUserId: _createdByUserId, ...safeRevision } = revision;
+        return {
+          policy: {
+            ...policy,
+            createdAt: policy.createdAt.toISOString(),
+            updatedAt: policy.updatedAt.toISOString(),
+          },
+          revision: {
+            ...safeRevision,
+            createdAt: revision.createdAt.toISOString(),
+          },
+          period: {
+            ...period,
+            startsAt: period.startsAt.toISOString(),
+            endsAt: period.endsAt?.toISOString() ?? null,
+          },
+        };
+      },
+    ),
+    requiredReservations: preview.requiredReservations.map((reservation) => ({
+      ...reservation,
+      period: {
+        ...reservation.period,
+        startsAt: reservation.period.startsAt.toISOString(),
+        endsAt: reservation.period.endsAt?.toISOString() ?? null,
+      },
+    })),
+  };
+}
+
 export function createWorkflowRunRegistrations(
   service: WorkflowRunService,
 ): CapabilityRegistration[] {
   return [
+    defineCapability({
+      identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.preview,
+      summary:
+        "Validate a proposed Workflow Run and report current Budget admission without creating a Run or reservation.",
+      lifecycle,
+      input: z
+        .object({
+          workflowId: id,
+          revisionId: id,
+          inputs: z.record(z.string(), z.unknown()),
+          inputArtifactIds: previewInputArtifactIds,
+        })
+        .strict(),
+      outputSchema: admissionPreviewSchema,
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: {
+        resources: [
+          { kind: "workflow", inputPath: "workflowId" },
+          { kind: "artifact", inputPath: "inputArtifactIds" },
+        ],
+      },
+      errors: [
+        ...COMMON_DISCOVERY_ERRORS,
+        ...WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS,
+      ],
+      handler: async (input, context) => {
+        const principal = agent(context.securityContext);
+        const preview = await domain(() =>
+          service.preview({
+            workspaceId: principal.workspaceId,
+            principalId: principal.principalId,
+            ...input,
+          }),
+        );
+        return admissionPreviewDto(preview);
+      },
+    }),
     defineCapability({
       identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.start,
       summary:
@@ -870,7 +1171,7 @@ export function createWorkflowRunRegistrations(
         visibility: "private",
         timing: "durable-async",
         reversibility: "conditional",
-        maySpendProviderBudget: false,
+        maySpendProviderBudget: true,
       },
       approval: { mode: "none" },
       idempotency: { mode: "key-required" },
@@ -911,7 +1212,7 @@ export function createWorkflowRunRegistrations(
         visibility: "private",
         timing: "durable-async",
         reversibility: "conditional",
-        maySpendProviderBudget: false,
+        maySpendProviderBudget: true,
       },
       approval: { mode: "none" },
       idempotency: { mode: "key-required" },
@@ -978,7 +1279,7 @@ export function createWorkflowRunRegistrations(
         visibility: "private",
         timing: "durable-async",
         reversibility: "conditional",
-        maySpendProviderBudget: false,
+        maySpendProviderBudget: true,
       },
       approval: { mode: "none" },
       idempotency: { mode: "key-required" },

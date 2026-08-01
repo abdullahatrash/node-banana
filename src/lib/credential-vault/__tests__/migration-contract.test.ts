@@ -143,6 +143,13 @@ describe("credential vault migration contract", () => {
     expect(repository).toContain(
       "sum(${credentialSpendEvents.priceCeilingCents})",
     );
+    expect(repository).toContain("runtimeHeldCents");
+    expect(repository).toContain("externalLegacyCents");
+    expect(repository).toContain("currentAllocationCents");
+    expect(repository).toContain("runtimeBudgetAttemptAllocations.credentialEffectRef");
+    expect(repository).toContain("runtimeBudgetAdmissionGrants");
+    expect(repository).toContain("runtimeBudgetAttemptAllocations");
+    expect(repository).toContain("runtimeBacked ? 0 : input.priceCeilingCents");
     expect(repository).toContain(
       'inArray(credentialSpendEvents.status, [',
     );

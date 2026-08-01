@@ -44,6 +44,10 @@ import {
   PRODUCTION_USAGE_CURSOR,
   createUsageRegistrations,
 } from "./usage";
+import {
+  PRODUCTION_BUDGET_SERVICE,
+  createBudgetRegistrations,
+} from "./budgets";
 
 export const PRODUCTION_CAPABILITY_AUTHORIZER =
   new CompositeCapabilityAuthorizer(
@@ -67,6 +71,7 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
   ),
   ...createWorkflowRunRegistrations(PRODUCTION_WORKFLOW_RUN_SERVICE),
   ...createUsageRegistrations(PRODUCTION_USAGE_SERVICE, PRODUCTION_USAGE_CURSOR),
+  ...createBudgetRegistrations(PRODUCTION_BUDGET_SERVICE),
 ]);
 
 export const CAPABILITY_DISPATCHER = new CapabilityDispatcher(

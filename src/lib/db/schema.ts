@@ -32,6 +32,15 @@ import type {
   UsageMeteringEvent,
   UsageRecord,
 } from "@/lib/agent-runtime/usage/types";
+import type {
+  BudgetAdmissionPlan,
+  BudgetAttemptAllocationInput,
+  BudgetPolicy,
+  BudgetPolicyRevision,
+  BudgetReservation,
+  RunStepExposure,
+  WorkspacePricingOverride,
+} from "@/lib/agent-runtime/budgets/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -4084,6 +4093,7 @@ export const runtimeCostValuations = pgTable(
     stateCheck: check(
       "runtime_cost_valuations_state_check",
       sql`(${table.source} = 'unknown' and ${table.amount} is null and ${table.currency} is null)
+        or (${table.source} = 'effect_not_created' and ${table.amount} = '0' and ${table.currency} is null)
         or (${table.source} in ('provider_reported', 'workspace_override', 'builtin_catalog', 'mixed')
           and ${table.amount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$'
           and ${table.currency} ~ '^[A-Z]{3}$')`,
@@ -4358,6 +4368,290 @@ export const runtimeUsageMeteringEvents = pgTable(
         and octet_length(${table.event}::text) <= 16384
         and ${table.event}::text !~* '"[^"\\n]*(secret|token|password|ciphertext|prompt|content)[^"\\n]*"\\s*:'`,
     ),
+  }),
+);
+
+/** Stable budget identity. Currency and calendar semantics cannot change in a revision. */
+export const runtimeBudgetPolicies = pgTable(
+  "runtime_budget_policies",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    principalId: text("principal_id"),
+    scope: text("scope").notNull(),
+    currency: text("currency").notNull(),
+    period: text("period").notNull(),
+    timezone: text("timezone").notNull(),
+    status: text("status").notNull(),
+    currentRevisionId: text("current_revision_id").notNull(),
+    policy: jsonb("policy").$type<BudgetPolicy>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_budget_policies_workspace_id_unique").on(table.workspaceId, table.id),
+    workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_budget_policies_workspace_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_budget_policies_principal_fk" }).onDelete("restrict"),
+    activeWorkspaceUnique: uniqueIndex("runtime_budget_policies_active_workspace_unique").on(table.workspaceId).where(sql`${table.status} = 'active' and ${table.principalId} is null`),
+    activePrincipalUnique: uniqueIndex("runtime_budget_policies_active_principal_unique").on(table.workspaceId, table.principalId).where(sql`${table.status} = 'active' and ${table.principalId} is not null`),
+    identityCheck: check("runtime_budget_policies_identity_check", sql`(${table.scope} = 'workspace' and ${table.principalId} is null) or (${table.scope} = 'principal' and ${table.principalId} is not null)`),
+    valueCheck: check("runtime_budget_policies_value_check", sql`${table.scope} in ('workspace', 'principal') and ${table.status} in ('active', 'revoked') and ${table.currency} ~ '^[A-Z]{3}$' and ${table.period} in ('calendar_day', 'calendar_week', 'calendar_month', 'lifetime') and length(${table.timezone}) between 1 and 255`),
+  }),
+);
+
+/** Append-only mutable terms for a stable policy identity. */
+export const runtimeBudgetPolicyRevisions = pgTable(
+  "runtime_budget_policy_revisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    policyId: text("policy_id").notNull(),
+    principalId: text("principal_id"),
+    revision: integer("revision").notNull(),
+    warningThreshold: text("warning_threshold").notNull(),
+    hardLimit: text("hard_limit").notNull(),
+    unknownPriceTreatment: text("unknown_price_treatment").notNull(),
+    unknownPriceAllowance: text("unknown_price_allowance"),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    revisionRecord: jsonb("revision_record").$type<BudgetPolicyRevision>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_budget_policy_revisions_workspace_id_unique").on(table.workspaceId, table.id),
+    policyRevisionUnique: uniqueIndex("runtime_budget_policy_revisions_policy_revision_unique").on(table.workspaceId, table.policyId, table.revision),
+    principalIdx: index("runtime_budget_policy_revisions_principal_idx").on(table.workspaceId, table.principalId),
+    policyFk: foreignKey({ columns: [table.workspaceId, table.policyId], foreignColumns: [runtimeBudgetPolicies.workspaceId, runtimeBudgetPolicies.id], name: "runtime_budget_policy_revisions_policy_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_budget_policy_revisions_principal_fk" }).onDelete("restrict"),
+    revisionCheck: check("runtime_budget_policy_revisions_revision_check", sql`${table.revision} > 0`),
+    decimalCheck: check("runtime_budget_policy_revisions_decimal_check", sql`${table.warningThreshold} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.hardLimit} ~ '^[1-9][0-9]*(\\.[0-9]+)?$' and ${table.warningThreshold}::numeric <= ${table.hardLimit}::numeric and (${table.unknownPriceAllowance} is null or ${table.unknownPriceAllowance} ~ '^[1-9][0-9]*(\\.[0-9]+)?$')`),
+    unknownCheck: check("runtime_budget_policy_revisions_unknown_check", sql`(${table.unknownPriceTreatment} = 'deny' and ${table.unknownPriceAllowance} is null) or (${table.unknownPriceTreatment} = 'fixed_allowance' and ${table.unknownPriceAllowance} is not null)`),
+  }),
+);
+
+export const runtimeBudgetAdminReceipts = pgTable(
+  "runtime_budget_admin_receipts",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    kind: text("kind").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    resourceId: text("resource_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.kind, table.idempotencyKey], name: "runtime_budget_admin_receipts_pk" }),
+    workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_budget_admin_receipts_workspace_fk" }).onDelete("restrict"),
+    kindCheck: check("runtime_budget_admin_receipts_kind_check", sql`${table.kind} in ('policy_revision', 'pricing_override')`),
+    digestCheck: check("runtime_budget_admin_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+/** One stable row per policy/window; this row is the admission capacity mutex. */
+export const runtimeBudgetPeriods = pgTable(
+  "runtime_budget_periods",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    policyId: text("policy_id").notNull(),
+    kind: text("kind").notNull(),
+    timezone: text("timezone").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_budget_periods_workspace_id_unique").on(table.workspaceId, table.id),
+    windowUnique: uniqueIndex("runtime_budget_periods_window_unique").on(table.workspaceId, table.policyId, table.startsAt, table.endsAt),
+    policyFk: foreignKey({ columns: [table.workspaceId, table.policyId], foreignColumns: [runtimeBudgetPolicies.workspaceId, runtimeBudgetPolicies.id], name: "runtime_budget_periods_policy_fk" }).onDelete("restrict"),
+    intervalCheck: check("runtime_budget_periods_interval_check", sql`(${table.kind} = 'lifetime' and ${table.endsAt} is null) or (${table.kind} in ('calendar_day', 'calendar_week', 'calendar_month') and ${table.endsAt} > ${table.startsAt})`),
+  }),
+);
+
+export const runtimeBudgetAdmissions = pgTable(
+  "runtime_budget_admissions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    principalId: text("principal_id").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    grantIds: jsonb("grant_ids").$type<string[]>().notNull(),
+    stepExposures: jsonb("step_exposures").$type<RunStepExposure[]>().notNull(),
+    admission: jsonb("admission").$type<BudgetAdmissionPlan>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.runId], name: "runtime_budget_admissions_pk" }),
+    runFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "runtime_budget_admissions_run_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_budget_admissions_principal_fk" }).onDelete("restrict"),
+    principalCreatedIdx: index("runtime_budget_admissions_principal_created_idx").on(table.workspaceId, table.principalId, table.createdAt),
+    digestCheck: check("runtime_budget_admissions_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const runtimeBudgetAdmissionGrants = pgTable(
+  "runtime_budget_admission_grants",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    grantId: text("grant_id").notNull(),
+    reservedCents: integer("reserved_cents"),
+    currency: text("currency"),
+    exposureDigest: text("exposure_digest").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.runId, table.grantId], name: "runtime_budget_admission_grants_pk" }),
+    admissionFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [runtimeBudgetAdmissions.workspaceId, runtimeBudgetAdmissions.runId], name: "runtime_budget_admission_grants_admission_fk" }).onDelete("restrict"),
+    grantFk: foreignKey({ columns: [table.grantId], foreignColumns: [credentialSpendGrants.id], name: "runtime_budget_admission_grants_grant_fk" }).onDelete("restrict"),
+    grantIdx: index("runtime_budget_admission_grants_grant_idx").on(table.grantId),
+    capacityCheck: check("runtime_budget_admission_grants_capacity_check", sql`(${table.reservedCents} is null and ${table.currency} is null) or (${table.reservedCents} >= 0 and ${table.currency} = 'USD')`),
+    digestCheck: check("runtime_budget_admission_grants_digest_check", sql`${table.exposureDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const runtimeBudgetReservations = pgTable(
+  "runtime_budget_reservations",
+  {
+    id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), admittedPrincipalId: text("admitted_principal_id").notNull(), principalId: text("principal_id"), runId: text("run_id").notNull(), policyId: text("policy_id").notNull(), policyRevisionId: text("policy_revision_id").notNull(), periodId: text("period_id").notNull(), scope: text("scope").notNull(), currency: text("currency").notNull(), reservedAmount: text("reserved_amount").notNull(), heldAmount: text("held_amount").notNull(), settledAmount: text("settled_amount").notNull(), releasedAmount: text("released_amount").notNull(), state: text("state").notNull(), pricingSnapshotIds: jsonb("pricing_snapshot_ids").$type<string[]>().notNull(), reservation: jsonb("reservation").$type<BudgetReservation>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_budget_reservations_workspace_id_unique").on(table.workspaceId, table.id),
+    runPolicyUnique: uniqueIndex("runtime_budget_reservations_run_policy_unique").on(table.workspaceId, table.runId, table.policyId),
+    periodStateIdx: index("runtime_budget_reservations_period_state_idx").on(table.workspaceId, table.periodId, table.state),
+    principalCreatedIdx: index("runtime_budget_reservations_principal_created_idx").on(table.workspaceId, table.admittedPrincipalId, table.createdAt),
+    revisionIdx: index("runtime_budget_reservations_revision_idx").on(table.workspaceId, table.policyRevisionId),
+    admissionFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [runtimeBudgetAdmissions.workspaceId, runtimeBudgetAdmissions.runId], name: "runtime_budget_reservations_admission_fk" }).onDelete("restrict"),
+    policyFk: foreignKey({ columns: [table.workspaceId, table.policyId], foreignColumns: [runtimeBudgetPolicies.workspaceId, runtimeBudgetPolicies.id], name: "runtime_budget_reservations_policy_fk" }).onDelete("restrict"),
+    revisionFk: foreignKey({ columns: [table.workspaceId, table.policyRevisionId], foreignColumns: [runtimeBudgetPolicyRevisions.workspaceId, runtimeBudgetPolicyRevisions.id], name: "runtime_budget_reservations_revision_fk" }).onDelete("restrict"),
+    periodFk: foreignKey({ columns: [table.workspaceId, table.periodId], foreignColumns: [runtimeBudgetPeriods.workspaceId, runtimeBudgetPeriods.id], name: "runtime_budget_reservations_period_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_budget_reservations_principal_fk" }).onDelete("restrict"),
+    admittedPrincipalFk: foreignKey({ columns: [table.workspaceId, table.admittedPrincipalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_budget_reservations_admitted_principal_fk" }).onDelete("restrict"),
+    scopeCheck: check("runtime_budget_reservations_scope_check", sql`(${table.scope} = 'workspace' and ${table.principalId} is null) or (${table.scope} = 'principal' and ${table.principalId} is not null)`),
+    amountCheck: check("runtime_budget_reservations_amount_check", sql`${table.reservedAmount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.heldAmount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.settledAmount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.releasedAmount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.heldAmount}::numeric <= ${table.reservedAmount}::numeric and ${table.releasedAmount}::numeric <= ${table.reservedAmount}::numeric`),
+    stateCheck: check("runtime_budget_reservations_state_check", sql`${table.state} in ('held', 'settled', 'released', 'outcome_unknown', 'held_unknown_cost') and ${table.currency} ~ '^[A-Z]{3}$'`),
+  }),
+);
+
+/** One immutable provider-launch allocation under the accepted Run envelope. */
+export const runtimeBudgetAttemptAllocations = pgTable(
+  "runtime_budget_attempt_allocations",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    principalId: text("principal_id").notNull(),
+    runId: text("run_id").notNull(),
+    stepAttemptId: text("step_attempt_id").notNull(),
+    stepId: text("step_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    effectKey: text("effect_key").notNull(),
+    credentialEffectRef: text("credential_effect_ref").notNull(),
+    provider: text("provider").notNull(),
+    providerOperation: text("provider_operation").notNull(),
+    model: text("model").notNull(),
+    sourceAmount: text("source_amount"),
+    sourceCurrency: text("source_currency"),
+    grantId: text("grant_id"),
+    grantAmountCents: integer("grant_amount_cents"),
+    requestDigest: text("request_digest").notNull(),
+    allocation: jsonb("allocation").$type<BudgetAttemptAllocationInput>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_budget_attempt_allocations_workspace_id_unique").on(table.workspaceId, table.id),
+    attemptUnique: uniqueIndex("runtime_budget_attempt_allocations_attempt_unique").on(table.workspaceId, table.runId, table.stepAttemptId),
+    runStepIdx: index("runtime_budget_attempt_allocations_run_step_idx").on(table.workspaceId, table.runId, table.stepId, table.attempt),
+    grantIdx: index("runtime_budget_attempt_allocations_grant_idx").on(table.grantId),
+    admissionFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [runtimeBudgetAdmissions.workspaceId, runtimeBudgetAdmissions.runId], name: "runtime_budget_attempt_allocations_admission_fk" }).onDelete("restrict"),
+    attemptFk: foreignKey({ columns: [table.workspaceId, table.runId, table.stepAttemptId], foreignColumns: [workflowStepAttempts.workspaceId, workflowStepAttempts.runId, workflowStepAttempts.id], name: "runtime_budget_attempt_allocations_attempt_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_budget_attempt_allocations_principal_fk" }).onDelete("restrict"),
+    grantFk: foreignKey({ columns: [table.grantId], foreignColumns: [credentialSpendGrants.id], name: "runtime_budget_attempt_allocations_grant_fk" }).onDelete("restrict"),
+    attemptCheck: check("runtime_budget_attempt_allocations_attempt_check", sql`${table.attempt} > 0`),
+    amountCheck: check("runtime_budget_attempt_allocations_amount_check", sql`(${table.sourceAmount} is null and ${table.sourceCurrency} is null) or (${table.sourceAmount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.sourceCurrency} ~ '^[A-Z]{3}$')`),
+    grantAmountCheck: check("runtime_budget_attempt_allocations_grant_amount_check", sql`(${table.grantId} is null and ${table.grantAmountCents} is null) or (${table.grantId} is not null and ${table.grantAmountCents} >= 0)`),
+    digestCheck: check("runtime_budget_attempt_allocations_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const runtimeBudgetAttemptReservationAllocations = pgTable(
+  "runtime_budget_attempt_reservation_allocations",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    allocationId: text("allocation_id").notNull(),
+    reservationId: text("reservation_id").notNull(),
+    amount: text("amount"),
+    currency: text("currency").notNull(),
+    basis: text("basis").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.allocationId, table.reservationId], name: "runtime_budget_attempt_reservation_allocations_pk" }),
+    allocationFk: foreignKey({ columns: [table.workspaceId, table.allocationId], foreignColumns: [runtimeBudgetAttemptAllocations.workspaceId, runtimeBudgetAttemptAllocations.id], name: "runtime_budget_attempt_reservation_allocations_allocation_fk" }).onDelete("restrict"),
+    reservationFk: foreignKey({ columns: [table.workspaceId, table.reservationId], foreignColumns: [runtimeBudgetReservations.workspaceId, runtimeBudgetReservations.id], name: "runtime_budget_attempt_reservation_allocations_reservation_fk" }).onDelete("restrict"),
+    reservationIdx: index("runtime_budget_attempt_reservation_allocations_reservation_idx").on(table.workspaceId, table.reservationId),
+    valueCheck: check("runtime_budget_attempt_reservation_allocations_value_check", sql`(${table.basis} = 'exact' and ${table.amount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$') or (${table.basis} = 'envelope_bound' and ${table.amount} is null)`),
+    currencyCheck: check("runtime_budget_attempt_reservation_allocations_currency_check", sql`${table.currency} ~ '^[A-Z]{3}$'`),
+  }),
+);
+
+export const runtimeBudgetReservationEvents = pgTable(
+  "runtime_budget_reservation_events",
+  {
+    id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), reservationId: text("reservation_id").notNull(), runId: text("run_id").notNull(), settlementId: text("settlement_id"), costValuationId: text("cost_valuation_id"), eventType: text("event_type").notNull(), amount: text("amount"), currency: text("currency"), event: jsonb("event").$type<Record<string, unknown>>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    reservationFk: foreignKey({ columns: [table.workspaceId, table.reservationId], foreignColumns: [runtimeBudgetReservations.workspaceId, runtimeBudgetReservations.id], name: "runtime_budget_reservation_events_reservation_fk" }).onDelete("restrict"),
+    valuationFk: foreignKey({ columns: [table.workspaceId, table.costValuationId], foreignColumns: [runtimeCostValuations.workspaceId, runtimeCostValuations.id], name: "runtime_budget_reservation_events_valuation_fk" }).onDelete("restrict"),
+    reservationOccurredIdx: index("runtime_budget_reservation_events_reservation_occurred_idx").on(table.workspaceId, table.reservationId, table.occurredAt),
+    valuationIdx: index("runtime_budget_reservation_events_valuation_idx").on(table.workspaceId, table.costValuationId),
+    eventCheck: check("runtime_budget_reservation_events_event_check", sql`${table.eventType} in ('held', 'settled', 'released', 'outcome_unknown', 'held_unknown_cost') and ((${table.amount} is null and ${table.currency} is null) or (${table.amount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.currency} ~ '^[A-Z]{3}$'))`),
+  }),
+);
+
+export const runtimeBudgetSettlementReceipts = pgTable(
+  "runtime_budget_settlement_receipts",
+  { workspaceId: text("workspace_id").notNull(), costValuationId: text("cost_valuation_id").notNull(), runId: text("run_id").notNull(), requestDigest: text("request_digest").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull() },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.costValuationId], name: "runtime_budget_settlement_receipts_pk" }),
+    valuationFk: foreignKey({ columns: [table.workspaceId, table.costValuationId], foreignColumns: [runtimeCostValuations.workspaceId, runtimeCostValuations.id], name: "runtime_budget_settlement_receipts_valuation_fk" }).onDelete("restrict"),
+  }),
+);
+
+export const runtimeWorkspacePricingOverrides = pgTable(
+  "runtime_workspace_pricing_overrides",
+  {
+    id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), provider: text("provider").notNull(), providerOperation: text("provider_operation").notNull(), model: text("model").notNull(), serviceTier: text("service_tier").notNull(), dimension: text("dimension").notNull(), unit: text("unit").notNull(), price: text("price").notNull(), currency: text("currency").notNull(), perQuantity: text("per_quantity").notNull(), runCeiling: text("run_ceiling").notNull(), sourceRef: text("source_ref").notNull(), effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(), status: text("status").notNull(), createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), revokedAt: timestamp("revoked_at", { withTimezone: true }), revokedByUserId: text("revoked_by_user_id").references(() => user.id, { onDelete: "restrict" }), override: jsonb("override").$type<WorkspacePricingOverride>().notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("runtime_workspace_pricing_overrides_workspace_id_unique").on(table.workspaceId, table.id),
+    workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_workspace_pricing_overrides_workspace_fk" }).onDelete("restrict"),
+    activeIdentityUnique: uniqueIndex("runtime_workspace_pricing_overrides_active_identity_unique").on(table.workspaceId, table.provider, table.providerOperation, table.model, table.serviceTier, table.dimension).where(sql`${table.status} = 'active'`),
+    decimalCheck: check("runtime_workspace_pricing_overrides_decimal_check", sql`${table.price} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$' and ${table.perQuantity} ~ '^[1-9][0-9]*(\\.[0-9]+)?$' and ${table.runCeiling} ~ '^[1-9][0-9]*(\\.[0-9]+)?$' and ${table.currency} ~ '^[A-Z]{3}$'`),
+  }),
+);
+
+/** Immutable snapshots of pricing override creation and revocation. */
+export const runtimeWorkspacePricingOverrideRevisions = pgTable(
+  "runtime_workspace_pricing_override_revisions",
+  { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), overrideId: text("override_id").notNull(), revision: integer("revision").notNull(), eventType: text("event_type").notNull(), override: jsonb("override").$type<WorkspacePricingOverride>().notNull(), actorUserId: text("actor_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull() },
+  (table) => ({
+    overrideRevisionUnique: uniqueIndex("runtime_workspace_pricing_override_revisions_unique").on(table.workspaceId, table.overrideId, table.revision),
+    overrideFk: foreignKey({ columns: [table.workspaceId, table.overrideId], foreignColumns: [runtimeWorkspacePricingOverrides.workspaceId, runtimeWorkspacePricingOverrides.id], name: "runtime_workspace_pricing_override_revisions_override_fk" }).onDelete("restrict"),
+    eventCheck: check("runtime_workspace_pricing_override_revisions_event_check", sql`${table.eventType} in ('created', 'revoked') and ${table.revision} > 0`),
+  }),
+);
+
+export const runtimeSpendControls = pgTable(
+  "runtime_spend_controls",
+  { workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "restrict" }), suspended: boolean("suspended").notNull(), revision: integer("revision").notNull(), reason: text("reason").notNull(), updatedByUserId: text("updated_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull() },
+  (table) => ({ revisionCheck: check("runtime_spend_controls_revision_check", sql`${table.revision} > 0 and length(${table.reason}) between 1 and 500`) }),
+);
+
+export const runtimeSpendControlEvents = pgTable(
+  "runtime_spend_control_events",
+  { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), revision: integer("revision").notNull(), suspended: boolean("suspended").notNull(), reason: text("reason").notNull(), actorUserId: text("actor_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull() },
+  (table) => ({
+    workspaceRevisionUnique: uniqueIndex("runtime_spend_control_events_workspace_revision_unique").on(table.workspaceId, table.revision),
+    workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_spend_control_events_workspace_fk" }).onDelete("restrict"),
+    valueCheck: check("runtime_spend_control_events_value_check", sql`${table.revision} > 0 and length(${table.reason}) between 1 and 500`),
   }),
 );
 

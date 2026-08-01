@@ -48,7 +48,11 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
       const role = rows[0]?.role;
       const allowed =
         isHumanAdmission &&
-        (role === "owner" || role === "admin" || role === "member") &&
+        (
+          request.audience === "shared"
+            ? role === "owner" || role === "admin" || role === "member"
+            : role === "owner" || role === "admin"
+        ) &&
         role === context.role;
       const reason = !isHumanAdmission
         ? "security_context_mismatch"
@@ -81,7 +85,7 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
             message:
               request.audience === "shared"
                 ? "This Workspace read requires an active membership."
-                : "Credential management requires an active Workspace owner or admin membership.",
+                : "Workspace administration requires an active owner or admin membership.",
             operatorTraceRef: trace,
           };
     });

@@ -253,6 +253,12 @@ export function CostDialog({ predictedCost, incurredCost, onClose }: CostDialogP
             >
               Open Usage Ledger
             </a>
+            <a
+              href="/studio/budgets"
+              className="ml-4 mt-2 inline-block text-xs text-emerald-400 hover:text-emerald-300"
+            >
+              Manage Budgets
+            </a>
 
             {incurredCost > 0 && (
               <button

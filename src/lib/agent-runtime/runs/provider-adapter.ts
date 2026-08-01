@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { admissionExposureFor } from "@/lib/agent-runtime/budgets/catalog";
 import type {
   WorkflowStepExecutionResult,
   WorkflowStepExecutionInput,
@@ -807,6 +808,13 @@ export function createWorkflowStepExecutorFromProviderAdapter<I>(
     provider: adapter.contract.identity.provider,
     providerOperation: adapter.contract.identity.operation,
     model: adapter.contract.identity.model,
+    admissionExposure: () =>
+      admissionExposureFor({
+        provider: adapter.contract.identity.provider,
+        providerOperation: adapter.contract.identity.operation,
+        model: adapter.contract.identity.model,
+        serviceTier: "standard",
+      }),
     providerResolution: {
       adapterModule,
       adapterContractDigest: canonicalProviderAdapterContractDigest(

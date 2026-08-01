@@ -13,6 +13,44 @@ function registration(name: string, version: number) {
 }
 
 describe("Workflow Run public schemas", () => {
+  it("publishes a strict non-binding preview with immutable FX evidence", () => {
+    const preview = registration(
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.preview.name,
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.preview.version,
+    );
+    expect(preview.effect).toEqual({
+      mutation: "none",
+      visibility: "private",
+      timing: "immediate",
+      reversibility: "reversible",
+      maySpendProviderBudget: false,
+    });
+    expect(preview.idempotency).toEqual({ mode: "retry-safe" });
+    expect(preview.authorization.resources).toEqual([
+      { kind: "workflow", inputPath: "workflowId" },
+      { kind: "artifact", inputPath: "inputArtifactIds" },
+    ]);
+    const schema = preview.outputSchema as any;
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties.ceiling.required).toContain("fxSnapshotIds");
+    expect(schema.properties.ceiling.properties.fxSnapshotIds).toMatchObject({
+      type: "array",
+      uniqueItems: true,
+    });
+    const policyRevision =
+      schema.properties.applicablePolicies.items.properties.revision;
+    expect(policyRevision.additionalProperties).toBe(false);
+    expect(policyRevision.properties).not.toHaveProperty("createdByUserId");
+    for (const identity of [
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.start,
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.startV2,
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.retry,
+    ]) {
+      expect(registration(identity.name, identity.version).effect)
+        .toMatchObject({ maySpendProviderBudget: true });
+    }
+  });
+
   it("discriminates legacy and provider-pinned start snapshots", () => {
     const schema = registration(
       WORKFLOW_RUN_CAPABILITY_IDENTITIES.get.name,

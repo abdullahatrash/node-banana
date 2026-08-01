@@ -5,6 +5,13 @@ import type {
   ArtifactProviderMetadata,
 } from "../artifacts/types";
 import type { UsageAttributionAppendPlan, UsageLedgerAppendPlan } from "../usage/types";
+import type {
+  BudgetAdmissionInput,
+  BudgetAdmissionPlan,
+  BudgetAttemptAllocationInput,
+  BudgetSettlementPlan,
+  RunAdmissionPreview,
+} from "../budgets/types";
 
 export type WorkflowRunState =
   | "accepted"
@@ -478,6 +485,7 @@ export interface WorkflowRunRepository {
     firstEvent: WorkflowRunEventRecord;
     receipt: WorkflowRunMutationReceiptRecord;
     outboxIntent: WorkflowRunOutboxIntentRecord;
+    budgetAdmissionPlan?: BudgetAdmissionPlan | null;
   }): Promise<StartWorkflowRunResult>;
   get(input: {
     workspaceId: string;
@@ -556,6 +564,7 @@ export interface WorkflowRunRepository {
     token: string;
     fence: bigint;
     eventId: string;
+    budgetAttemptAllocation?: BudgetAttemptAllocationInput | null;
   }): Promise<PrepareWorkflowStepAttemptResult>;
   recordStepAttemptProviderSuccess(input: {
     workspaceId: string;
@@ -567,6 +576,7 @@ export interface WorkflowRunRepository {
     providerOperationRef: string;
     providerMetadata?: WorkflowStepProviderMetadata | null;
     usagePlan?: UsageLedgerAppendPlan | null;
+    budgetSettlementPlan?: BudgetSettlementPlan | null;
     recordedAt: Date;
   }): Promise<SettleWorkflowStepAttemptResult>;
   settleStepAttempt(input: {
@@ -581,6 +591,7 @@ export interface WorkflowRunRepository {
     finalSnapshot: WorkflowRunFinalSnapshot | null;
     finalSnapshotDigest: string | null;
     usageAttributionPlan?: UsageAttributionAppendPlan | null;
+    budgetSettlementPlan?: BudgetSettlementPlan | null;
     completedAt: Date;
     eventIds: {
       generated: string[];
@@ -600,6 +611,7 @@ export interface WorkflowRunRepository {
     retryable: boolean;
     providerMetadata?: WorkflowStepProviderMetadata | null;
     usagePlan: UsageLedgerAppendPlan;
+    budgetSettlementPlan?: BudgetSettlementPlan | null;
     retryAt: Date | null;
     retryOutboxIntent: WorkflowRunOutboxIntentRecord | null;
     failedAt: Date;
@@ -621,6 +633,7 @@ export interface WorkflowRunRepository {
     providerOperationRef: string | null;
     providerMetadata?: WorkflowStepProviderMetadata | null;
     usagePlan?: UsageLedgerAppendPlan | null;
+    budgetSettlementPlan?: BudgetSettlementPlan | null;
     occurredAt: Date;
     eventIds: {
       attemptOutcomeUnknown: string;
@@ -632,6 +645,7 @@ export interface WorkflowRunRepository {
     events: WorkflowRunEventRecord[];
     receipt: WorkflowRunMutationReceiptRecord;
     outboxIntent: WorkflowRunOutboxIntentRecord;
+    budgetAdmissionPlan?: BudgetAdmissionPlan | null;
   }): Promise<MutateWorkflowRunResult>;
   resumeRun(input: {
     workspaceId: string;
@@ -678,6 +692,7 @@ export interface WorkflowRunRepository {
           outboxIntent: WorkflowRunOutboxIntentRecord | null;
         };
     usagePlan?: UsageLedgerAppendPlan | null;
+    budgetSettlementPlan?: BudgetSettlementPlan | null;
     usageAttributionPlan?: UsageAttributionAppendPlan | null;
     occurredAt: Date;
     eventIds: {
@@ -691,6 +706,12 @@ export interface WorkflowRunRepository {
       runWaiting: string | null;
     };
   }): Promise<MutateWorkflowRunResult>;
+}
+
+export interface WorkflowRunBudgetPort {
+  previewRun(input: BudgetAdmissionInput): Promise<RunAdmissionPreview>;
+  planAdmission(input: BudgetAdmissionInput & { runId: string }): Promise<BudgetAdmissionPlan>;
+  planSettlement(input: BudgetSettlementPlan): Promise<BudgetSettlementPlan>;
 }
 
 export interface WorkflowRunRevisionReader {
@@ -738,11 +759,43 @@ export interface WorkflowStepExecutor {
   readonly providerOperation: string;
   readonly model: string;
   readonly providerResolution?: Omit<WorkflowRunProviderResolution, "stepId">;
+  admissionExposure?(): WorkflowStepAdmissionExposure;
   execute(input: WorkflowStepExecutionInput): Promise<WorkflowStepExecutionResult>;
   reconcile?(
     input: WorkflowStepReconciliationInput,
   ): Promise<WorkflowStepProviderResult>;
 }
+
+export interface WorkflowStepAdmissionExposureIdentity {
+  provider: string;
+  providerOperation: string;
+  model: string;
+  serviceTier: string;
+}
+
+interface WorkflowStepAdmissionExposureBase
+  extends WorkflowStepAdmissionExposureIdentity {
+  schema: "workflow-step-admission-exposure/v1";
+  catalogVersion: string;
+  sourceReferences: string[];
+}
+
+export type WorkflowStepAdmissionExposure =
+  | (WorkflowStepAdmissionExposureBase & {
+      certainty: "exact";
+      perAttemptCeiling: string;
+      currency: string;
+      pricingSnapshotIds: string[];
+    })
+  | (WorkflowStepAdmissionExposureBase & {
+      certainty: "unknown";
+      reason:
+        | "pricing_catalog_entry_unavailable"
+        | "provider_contract_has_unbounded_billable_usage";
+      perAttemptCeiling: null;
+      currency: null;
+      pricingSnapshotIds: [];
+    });
 
 export interface WorkflowStepExecutionInput {
   workspaceId: string;

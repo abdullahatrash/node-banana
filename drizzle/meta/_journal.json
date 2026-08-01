@@ -302,6 +302,13 @@
       "when": 1785578561056,
       "tag": "0042_runtime_usage_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1785581924972,
+      "tag": "0043_runtime_budget_authority",
+      "breakpoints": true
     }
   ]
 }

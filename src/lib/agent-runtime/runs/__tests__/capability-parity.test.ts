@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import {
   dispatchCliCapability,
@@ -120,6 +120,128 @@ function setup() {
 }
 
 describe("Workflow Run capability parity", () => {
+  it("returns the same non-binding Budget preview through CLI and MCP", async () => {
+    const { dispatcher, requests, service } = setup();
+    vi.spyOn(service, "preview").mockResolvedValue({
+      schema: "run-admission-preview/v1",
+      workspaceId: "workspace_1",
+      principalId: "principal_1",
+      workflowId: "workflow_1",
+      workflowRevisionId: "revision_1",
+      evaluatedAt: new Date("2026-08-01T12:00:00.000Z"),
+      ceiling: {
+        amount: "0",
+        currency: "USD",
+        certainty: "conservative",
+        fxSnapshotIds: [],
+      },
+      applicableCredentialSpendGrants: [],
+      applicablePolicies: [{
+        policy: {
+          schema: "budget-policy/v1",
+          id: "policy_1",
+          workspaceId: "workspace_1",
+          principalId: null,
+          scope: "workspace",
+          currency: "USD",
+          period: "calendar_month",
+          timezone: "UTC",
+          status: "active",
+          currentRevisionId: "policy_revision_1",
+          createdAt: new Date("2026-08-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+        },
+        revision: {
+          schema: "budget-policy-revision/v1",
+          id: "policy_revision_1",
+          policyId: "policy_1",
+          workspaceId: "workspace_1",
+          principalId: null,
+          revision: 1,
+          warningThreshold: "80",
+          hardLimit: "100",
+          unknownPriceTreatment: "deny",
+          unknownPriceAllowance: null,
+          createdByUserId: "owner_1",
+          createdAt: new Date("2026-08-01T00:00:00.000Z"),
+        },
+        period: {
+          kind: "calendar_month",
+          timezone: "UTC",
+          startsAt: new Date("2026-08-01T00:00:00.000Z"),
+          endsAt: new Date("2026-09-01T00:00:00.000Z"),
+        },
+      }],
+      requiredReservations: [{
+        scope: "workspace",
+        policyId: "policy_1",
+        policyRevisionId: "policy_revision_1",
+        principalId: null,
+        period: {
+          kind: "calendar_month",
+          timezone: "UTC",
+          startsAt: new Date("2026-08-01T00:00:00.000Z"),
+          endsAt: new Date("2026-09-01T00:00:00.000Z"),
+        },
+        amount: "0",
+        currency: "USD",
+        committedBefore: "0",
+        availableBefore: "100",
+        stepAllocations: [{
+          stepId: "digest",
+          amountPerAttempt: "0",
+          automaticAttempts: 1,
+        }],
+      }],
+      stepExposures: [{
+        stepId: "digest",
+        provider: "internal",
+        providerOperation: "digest_text",
+        model: "deterministic",
+        serviceTier: "standard",
+        automaticAttempts: 1,
+        credentialSlotId: null,
+        credentialProfileId: null,
+        amountPerAttempt: "0",
+        currency: "USD",
+        pricingSnapshotIds: ["pricing_1"],
+        pricingSource: "builtin_catalog",
+      }],
+      warnings: [],
+      admissible: true,
+      denialReasons: [],
+    });
+    const input = {
+      workflowId: "workflow_1",
+      revisionId: "revision_1",
+      inputs: { text: "hello" },
+    };
+    const cli = await dispatchCliCapability(
+      "workflow_runs.preview@1",
+      input,
+      dispatcher,
+    );
+    const mcp = await dispatchMcpCapability(
+      "workflow_runs.preview.v1",
+      input,
+      dispatcher,
+    );
+    expect(cli).toEqual(mcp);
+    expect(cli).toMatchObject({
+      type: "capability_result",
+      status: "completed",
+      output: {
+        admissible: true,
+        evaluatedAt: "2026-08-01T12:00:00.000Z",
+      },
+    });
+    expect(JSON.stringify(cli)).not.toContain("createdByUserId");
+    expect(requests.slice(-2).map(({ resources }) => resources)).toEqual([
+      [{ kind: "workflow", id: "workflow_1" }],
+      [{ kind: "workflow", id: "workflow_1" }],
+    ]);
+  });
+
   it("returns one stable durable acceptance across CLI and MCP", async () => {
     const { dispatcher } = setup();
     const input = {
@@ -200,6 +322,7 @@ describe("Workflow Run capability parity", () => {
       "workflow_run_artifacts.get@1",
       "workflow_run_events.list@1",
       "workflow_runs.get@1",
+      "workflow_runs.preview@1",
       "workflow_runs.reconcile@1",
       "workflow_runs.resume@1",
       "workflow_runs.retry@1",

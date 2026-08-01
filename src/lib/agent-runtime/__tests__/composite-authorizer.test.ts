@@ -86,6 +86,26 @@ describe("unified capability authorization", () => {
     expect(admission.allowed).toBe(true);
   });
 
+  it("denies a Workspace member access to human administration capabilities", async () => {
+    const db = database("member");
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize(
+      request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "member",
+      }),
+    );
+    expect(admission.allowed).toBe(false);
+    expect(db.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "authorization.denied",
+        reason: "workspace_policy_denied",
+      }),
+    );
+  });
+
   it("routes shared Agent reads through deny-by-default Agent authorization", async () => {
     const db = database(undefined);
     const human = new HumanCapabilityAuthorizer(db.getDb);

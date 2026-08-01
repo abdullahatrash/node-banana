@@ -149,7 +149,14 @@ export class UsageLedgerService {
     let snapshots: PricingSnapshot[] = [];
     let providerCostEvidenceRef: string | null = null;
 
-    if (input.providerReportedCost) {
+    if (input.records.every((record) =>
+      record.outcome === "failed_known" &&
+      record.evidence.effectDisposition === "not_created" &&
+      record.quantity === "0")) {
+      basis = "effect_not_created";
+      pricingSource = "effect_not_created";
+      amount = "0";
+    } else if (input.providerReportedCost) {
       basis = "provider_reported";
       pricingSource = "provider_reported";
       amount = canonicalDecimal(input.providerReportedCost.amount);
@@ -243,9 +250,29 @@ export class UsageLedgerService {
     if (input.interval.endedAt < input.interval.startedAt) {
       throw new UsageServiceError("USAGE_INVALID_INPUT", "Usage interval is invalid.");
     }
-    const usage = normalizedUsage(input.metadata?.usage.length
-      ? input.metadata.usage
-      : [{
+    const provenNotCreated =
+      input.outcome === "failed_known" &&
+      input.metadata?.evidence.effectDisposition === "not_created";
+    if (
+      provenNotCreated &&
+      (input.providerReportedCost || input.metadata?.usage.some((item) =>
+        item.quantity !== null && canonicalDecimal(item.quantity) !== "0"))
+    ) {
+      throw new UsageServiceError(
+        "USAGE_INVALID_INPUT",
+        "Provider evidence cannot report billable usage for an effect that was not created.",
+      );
+    }
+    const usage = normalizedUsage(provenNotCreated
+      ? [{
+          dimension: "runtime.provider_operation@1",
+          unit: "count" as const,
+          source: "measured" as const,
+          quantity: "0",
+        }]
+      : input.metadata?.usage.length
+        ? input.metadata.usage
+        : [{
           dimension: "runtime.provider_operation@1",
           unit: "count" as const,
           source: "unknown" as const,
@@ -357,6 +384,12 @@ export class UsageLedgerService {
     if (result === "conflict") {
       throw new UsageServiceError("USAGE_CONFLICT", "Usage ledger replay conflicts with existing evidence.");
     }
+  }
+
+  async getCurrentValuation(workspaceId: string, settlementId: string): Promise<CostValuation | null> {
+    const history = await this.repository.getSettlementValuations(workspaceId, settlementId);
+    return history.find((candidate) =>
+      !history.some((value) => value.supersedesCostValuationId === candidate.id)) ?? null;
   }
 
   async settleProviderOutcome(input: SettleProviderUsageInput): Promise<{ settlementId: string }> {

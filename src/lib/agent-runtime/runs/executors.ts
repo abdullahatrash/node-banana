@@ -1,4 +1,5 @@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { admissionExposureFor } from "@/lib/agent-runtime/budgets/catalog";
 import {
   PROVIDER_ADAPTER_MANIFEST,
   type ProviderAdapterModuleId,
@@ -61,6 +62,15 @@ class DigestTextExecutor implements WorkflowStepExecutor {
   };
   readonly calls: string[] = [];
 
+  admissionExposure() {
+    return admissionExposureFor({
+      provider: this.provider,
+      providerOperation: this.providerOperation,
+      model: this.model,
+      serviceTier: "local",
+    });
+  }
+
   async execute(
     input: Parameters<WorkflowStepExecutor["execute"]>[0],
   ): ReturnType<WorkflowStepExecutor["execute"]> {
@@ -113,6 +123,15 @@ class GoldenConformanceExecutor implements WorkflowStepExecutor {
         replay: "provider_deduplicated" as const,
       },
     };
+  }
+
+  admissionExposure() {
+    return admissionExposureFor({
+      provider: this.provider,
+      providerOperation: this.providerOperation,
+      model: this.model,
+      serviceTier: "test",
+    });
   }
 
   async execute(

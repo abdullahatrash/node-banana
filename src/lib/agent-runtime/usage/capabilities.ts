@@ -99,6 +99,7 @@ const valuationProperties: Record<string, JsonSchema> = {
 };
 const valuationSchema: JsonSchema = { type: "object", oneOf: [
   strictObject(valuationRequired, { ...valuationProperties, basis: { const: "unknown" }, pricingSource: { const: "unknown" }, amount: { type: "null" }, currency: { type: "null" }, providerCostEvidenceRef: { type: "null" }, pricingSnapshotIds: { type: "array", maxItems: 0 }, pricingSnapshots: { type: "array", maxItems: 0 }, fxSnapshotId: { type: "null" } }),
+  strictObject(valuationRequired, { ...valuationProperties, basis: { const: "effect_not_created" }, pricingSource: { const: "effect_not_created" }, amount: { const: "0" }, currency: { type: "null" }, providerCostEvidenceRef: { type: "null" }, pricingSnapshotIds: { type: "array", maxItems: 0 }, pricingSnapshots: { type: "array", maxItems: 0 }, fxSnapshotId: { type: "null" } }),
   strictObject(valuationRequired, { ...valuationProperties, basis: { const: "provider_reported" }, pricingSource: { const: "provider_reported" }, amount: decimal, currency: { type: "string", pattern: "^[A-Z]{3}$" }, providerCostEvidenceRef: { type: "string", pattern: "^evidence:sha256:[a-f0-9]{64}$" }, pricingSnapshotIds: { type: "array", maxItems: 0 }, pricingSnapshots: { type: "array", maxItems: 0 } }),
   strictObject(valuationRequired, { ...valuationProperties, basis: { const: "runtime_calculated" }, pricingSource: { type: "string", enum: ["workspace_override", "builtin_catalog", "mixed"] }, amount: decimal, currency: { type: "string", pattern: "^[A-Z]{3}$" }, providerCostEvidenceRef: { type: "null" }, pricingSnapshotIds: { type: "array", items: { type: "string" }, minItems: 1 }, pricingSnapshots: { type: "array", items: pricingSnapshotSchema, minItems: 1 } }),
 ] };
@@ -342,7 +343,7 @@ export function createUsageRegistrations(service: UsageLedgerService, cursorCode
       lifecycle,
       input: z.object({
         usageRecordId: id.optional(), runId: id.optional(), principalId: id.optional(),
-        pricingSource: z.enum(["provider_reported", "workspace_override", "builtin_catalog", "mixed", "unknown"]).optional(),
+        pricingSource: z.enum(["effect_not_created", "provider_reported", "workspace_override", "builtin_catalog", "mixed", "unknown"]).optional(),
         currency: z.string().regex(/^[A-Z]{3}$/).optional(), ...interval, limit, cursor,
       }).strict(),
       outputSchema: page("cost-valuation-page/v1", valuationSchema),

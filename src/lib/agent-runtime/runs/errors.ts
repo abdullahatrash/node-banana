@@ -56,6 +56,26 @@ export const WORKFLOW_RUN_ERROR_CATALOG = {
     retryable: true,
     description: "The provider outcome is still unknown.",
   },
+  BUDGET_LIMIT_EXCEEDED: {
+    category: "authorization",
+    retryable: false,
+    description: "The proposed Run exceeds an applicable Budget Policy.",
+  },
+  RUN_COST_UNKNOWN: {
+    category: "authorization",
+    retryable: false,
+    description: "The proposed Run has no policy-authorized conservative cost ceiling.",
+  },
+  CREDENTIAL_SPEND_NOT_AUTHORIZED: {
+    category: "authorization",
+    retryable: false,
+    description: "A required Credential Spend Grant is unavailable.",
+  },
+  SPEND_SUSPENDED: {
+    category: "authorization",
+    retryable: false,
+    description: "Emergency provider spend suspension is active.",
+  },
 } as const satisfies Record<string, Omit<CapabilityErrorContract, "code">>;
 
 export type WorkflowRunErrorCode = keyof typeof WORKFLOW_RUN_ERROR_CATALOG;
@@ -88,6 +108,10 @@ const PUBLIC_ERROR_CODES: WorkflowRunErrorCode[] = [
   "WORKFLOW_RUN_NOT_RESUMABLE",
   "WORKFLOW_RUN_RECONCILIATION_REQUIRED",
   "WORKFLOW_RUN_RECONCILIATION_PENDING",
+  "BUDGET_LIMIT_EXCEEDED",
+  "RUN_COST_UNKNOWN",
+  "CREDENTIAL_SPEND_NOT_AUTHORIZED",
+  "SPEND_SUSPENDED",
 ];
 
 export const WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS: CapabilityErrorContract[] =

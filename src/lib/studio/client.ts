@@ -2,6 +2,7 @@ import type { WorkflowFile } from "@/store/workflowStore";
 import { parseWorkflowCredentialSlots } from "@/types";
 import type { CredentialHumanCapabilityIdentity } from "@/lib/credential-vault/application-capabilities";
 import type { UsageCapabilityIdentity } from "@/lib/agent-runtime/usage/capabilities";
+import type { BudgetHumanCapabilityIdentity } from "@/lib/agent-runtime/budgets/capabilities";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -171,6 +172,32 @@ export async function invokeUsageApplicationCapability(
   const result = asRecord(response.result);
   if (!result) {
     throw new StudioApiError(500, `Invalid output for usage capability ${capability}.`);
+  }
+  return result;
+}
+
+export async function invokeBudgetApplicationCapability(
+  capability: BudgetHumanCapabilityIdentity,
+  input: Record<string, unknown> = {},
+  options: { idempotencyKey?: string } = {},
+): Promise<JsonRecord> {
+  const response = await fetchApi("/api/studio/budgets/capabilities", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for Budget capability ${capability}.`,
+    );
   }
   return result;
 }

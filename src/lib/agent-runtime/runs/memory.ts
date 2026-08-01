@@ -6,6 +6,7 @@ import type {
   UsageCommitWriter,
   UsageLedgerAppendPlan,
 } from "../usage/types";
+import type { BudgetCommitWriter } from "../budgets/types";
 import type {
   AcquireWorkflowRunLeaseResult,
   CompleteWorkflowRunStepResult,
@@ -47,7 +48,10 @@ function clone<T>(value: T): T {
 export class InMemoryWorkflowRunRepository
   implements WorkflowRunRepository
 {
-  constructor(private readonly usageWriter?: UsageCommitWriter<void>) {}
+  constructor(
+    private readonly usageWriter?: UsageCommitWriter<void>,
+    private readonly budgetWriter?: BudgetCommitWriter<void>,
+  ) {}
   readonly runs = new Map<string, WorkflowRunRecord>();
   readonly events = new Map<string, WorkflowRunEventRecord[]>();
   readonly receipts = new Map<string, WorkflowRunMutationReceiptRecord>();
@@ -92,6 +96,30 @@ export class InMemoryWorkflowRunRepository
       plan.event.effectKey !== attempt.effectKey
     ) return false;
     const result = await this.usageWriter.appendAttributionPlan(plan);
+    return result === "created" || result === "replayed";
+  }
+
+  private async appendBudgetSettlement(
+    plan: import("../budgets/types").BudgetSettlementPlan | null | undefined,
+    attempt: WorkflowStepAttemptRecord,
+  ): Promise<boolean> {
+    if (!plan) return true;
+    if (
+      !this.budgetWriter ||
+      plan.workspaceId !== attempt.workspaceId ||
+      plan.runId !== attempt.runId ||
+      plan.stepAttemptId !== attempt.id
+    ) return false;
+    const result = await this.budgetWriter.commitSettlement(plan);
+    return result === "created" || result === "replayed";
+  }
+
+  private async appendBudgetAttemptAllocation(
+    input: import("../budgets/types").BudgetAttemptAllocationInput | null | undefined,
+  ): Promise<boolean> {
+    if (!input) return true;
+    if (!this.budgetWriter) return false;
+    const result = await this.budgetWriter.commitAttemptAllocation(input);
     return result === "created" || result === "replayed";
   }
 
@@ -168,6 +196,18 @@ export class InMemoryWorkflowRunRepository
     if (this.failNextStart) {
       this.failNextStart = false;
       return { kind: "unavailable" as const };
+    }
+    if (input.budgetAdmissionPlan) {
+      if (
+        !this.budgetWriter ||
+        input.budgetAdmissionPlan.workspaceId !== input.run.workspaceId ||
+        input.budgetAdmissionPlan.principalId !== input.receipt.principalId ||
+        input.budgetAdmissionPlan.runId !== input.run.id
+      ) return { kind: "unavailable" as const };
+      const budgetResult = await this.budgetWriter.commitAdmission(input.budgetAdmissionPlan);
+      if (budgetResult !== "created" && budgetResult !== "replayed") {
+        return { kind: "unavailable" as const };
+      }
     }
     const run = immutable(clone(input.run));
     const event = immutable(clone(input.firstEvent));
@@ -585,6 +625,9 @@ export class InMemoryWorkflowRunRepository
       ) {
         return { kind: "conflict" };
       }
+      if (!(await this.appendBudgetAttemptAllocation(input.budgetAttemptAllocation))) {
+        return { kind: "unavailable" };
+      }
       return {
         kind: "replayed",
         run: clone(run),
@@ -600,6 +643,9 @@ export class InMemoryWorkflowRunRepository
           input.attempt.operationContractDigest)
     ) {
       return { kind: "conflict" };
+    }
+    if (!(await this.appendBudgetAttemptAllocation(input.budgetAttemptAllocation))) {
+      return { kind: "unavailable" };
     }
     const attempt = immutable(clone(input.attempt));
     const event: WorkflowRunEventRecord = immutable({
@@ -670,6 +716,9 @@ export class InMemoryWorkflowRunRepository
       ) {
         return { kind: "unavailable" };
       }
+      if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+        return { kind: "unavailable" };
+      }
       return {
         kind: "settled",
         run: clone(run),
@@ -690,6 +739,9 @@ export class InMemoryWorkflowRunRepository
         attempt,
       ))
     ) {
+      return { kind: "unavailable" };
+    }
+    if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
       return { kind: "unavailable" };
     }
     const completedAttempt = immutable(
@@ -829,10 +881,16 @@ export class InMemoryWorkflowRunRepository
       if (!(await this.appendUsage(input.usagePlan, attempt))) {
         return { kind: "unavailable" };
       }
+      if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+        return { kind: "unavailable" };
+      }
       return { kind: "settled", run: clone(run), attempt: clone(attempt) };
     }
     if (!input.usagePlan) return { kind: "unavailable" };
     if (!(await this.appendUsage(input.usagePlan, attempt))) {
+      return { kind: "unavailable" };
+    }
+    if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
       return { kind: "unavailable" };
     }
     const recorded = immutable(
@@ -879,6 +937,9 @@ export class InMemoryWorkflowRunRepository
       if (!(await this.appendUsage(input.usagePlan, attempt))) {
         return { kind: "unavailable" };
       }
+      if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+        return { kind: "unavailable" };
+      }
       return {
         kind: "settled",
         run: clone(run),
@@ -903,6 +964,9 @@ export class InMemoryWorkflowRunRepository
       return { kind: "stale_fence" };
     }
     if (!(await this.appendUsage(input.usagePlan, attempt))) {
+      return { kind: "unavailable" };
+    }
+    if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
       return { kind: "unavailable" };
     }
     const failedAttempt = immutable(
@@ -1059,6 +1123,9 @@ export class InMemoryWorkflowRunRepository
     if (!(await this.appendUsage(input.usagePlan, attempt))) {
       return { kind: "unavailable" };
     }
+    if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
+      return { kind: "unavailable" };
+    }
     const unknownAttempt = immutable(
       clone({
         ...attempt,
@@ -1153,6 +1220,18 @@ export class InMemoryWorkflowRunRepository
         : { kind: "unavailable" as const };
     }
     const run = immutable(clone(input.run));
+    if (input.budgetAdmissionPlan) {
+      if (
+        !this.budgetWriter ||
+        input.budgetAdmissionPlan.workspaceId !== run.workspaceId ||
+        input.budgetAdmissionPlan.principalId !== input.receipt.principalId ||
+        input.budgetAdmissionPlan.runId !== run.id
+      ) return { kind: "unavailable" as const };
+      const budgetResult = await this.budgetWriter.commitAdmission(input.budgetAdmissionPlan);
+      if (budgetResult !== "created" && budgetResult !== "replayed") {
+        return { kind: "unavailable" as const };
+      }
+    }
     this.runs.set(compound(run.workspaceId, run.id), run);
     this.events.set(
       compound(run.workspaceId, run.id),
@@ -1511,6 +1590,9 @@ export class InMemoryWorkflowRunRepository
       input.usageAttributionPlan,
       attempt,
     ))) {
+      return { kind: "unavailable" as const };
+    }
+    if (!(await this.appendBudgetSettlement(input.budgetSettlementPlan, attempt))) {
       return { kind: "unavailable" as const };
     }
     if (input.resolution.outboxIntent) {

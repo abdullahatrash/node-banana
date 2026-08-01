@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { credentialEffectRef } from "@/lib/credential-vault/effect-ref";
 import { WorkflowRunError } from "./errors";
 import { parseWorkflowStepExecutionResult } from "./provider-adapter";
 import { GOLDEN_WORKFLOW_DEFINITION_DIGEST } from "./fixtures/golden";
@@ -25,7 +26,11 @@ import type {
   WorkflowStepExecutor,
   WorkflowStepExecutorRegistry,
   WorkflowRunProviderResolution,
+  WorkflowRunBudgetPort,
 } from "./types";
+import type { BudgetAdmissionInput, RunStepExposure } from "../budgets/types";
+import type { RunAdmissionPreview } from "../budgets/types";
+import { BudgetServiceError } from "../budgets/service";
 import type {
   SettleProviderUsageInput,
   UsageSettlementPort,
@@ -86,6 +91,55 @@ function matchesPinnedExecutor(
       canonicalDigest(executorResolution(executor, step)) ===
         canonicalDigest(pinned),
   );
+}
+
+type ResolvedRunRevision = NonNullable<
+  Awaited<ReturnType<WorkflowRunRevisionReader["getRevision"]>>
+>;
+
+function eligibleWorkflowExecutors(
+  revision: ResolvedRunRevision,
+  registry: WorkflowStepExecutorRegistry,
+): { executors: WorkflowStepExecutor[]; isGolden: boolean } {
+  const steps = revision.definition.steps;
+  const isLegacy =
+    steps.length === 1 &&
+    steps[0]?.operation.identity === EXECUTABLE_OPERATION &&
+    Object.values(revision.definition.inputs).every(
+      (definition) => definition.kind === "text",
+    ) &&
+    Object.keys(steps[0]?.credentials ?? {}).length === 0;
+  const isGolden =
+    revision.definitionDigest === GOLDEN_WORKFLOW_DEFINITION_DIGEST &&
+    steps.length === 2 &&
+    steps.every(
+      (step, index) => step.operation.identity === GOLDEN_OPERATIONS[index],
+    ) &&
+    Object.values(revision.definition.inputs).filter(
+      (definition) => definition.kind === "text",
+    ).length === 1 &&
+    Object.values(revision.definition.inputs).filter(
+      (definition) => definition.kind === "image",
+    ).length === 1;
+  const resolved = steps.map((step) =>
+    registry.resolve
+      ? registry.resolve(
+          step.operation.identity,
+          step.operation.contractDigest,
+          step.config,
+        )
+      : registry.get(step.operation.identity, step.operation.contractDigest),
+  );
+  if ((!isLegacy && !isGolden) || resolved.some((executor) => !executor)) {
+    throw new WorkflowRunError(
+      "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
+      "This runtime slice accepts the exact deterministic digest or frozen two-step golden Workflow.",
+    );
+  }
+  return {
+    executors: resolved as WorkflowStepExecutor[],
+    isGolden,
+  };
 }
 
 function identifier(value: string, label: string): string {
@@ -233,7 +287,142 @@ export class WorkflowRunService {
     private readonly clock: WorkflowRunClock = systemClock,
     private readonly artifacts?: WorkflowRunArtifactPort,
     private readonly usage?: UsageSettlementPort,
+    private readonly budgets?: WorkflowRunBudgetPort,
   ) {}
+
+  private budgetAdmissionInput(input: {
+    workspaceId: string;
+    principalId: string;
+    workflowId: string;
+    workflowRevisionId: string;
+    steps: WorkflowRunStartSnapshot["definition"]["steps"];
+    executors: WorkflowStepExecutor[];
+    credentialReferences: WorkflowRunStartSnapshot["credentialReferences"];
+    at: Date;
+  }): BudgetAdmissionInput {
+    const stepExposures: RunStepExposure[] = input.steps.map((step, index) => {
+      const executor = input.executors[index]!;
+      const exposure = executor.admissionExposure?.() ?? {
+        schema: "workflow-step-admission-exposure/v1" as const,
+        provider: executor.provider,
+        providerOperation: executor.providerOperation,
+        model: executor.model,
+        serviceTier: "standard",
+        certainty: "unknown" as const,
+        reason: "pricing_catalog_entry_unavailable" as const,
+        perAttemptCeiling: null,
+        currency: null,
+        pricingSnapshotIds: [] as [],
+        catalogVersion: "unavailable",
+        sourceReferences: [] as string[],
+      };
+      const credentialSlotId = input.credentialReferences.find(
+        (reference) => reference.stepId === step.id && reference.requirement === "provider",
+      )?.slotId ?? null;
+      return {
+        stepId: step.id,
+        provider: exposure.provider,
+        providerOperation: exposure.providerOperation,
+        model: exposure.model,
+        serviceTier: exposure.serviceTier,
+        automaticAttempts: step.retry.maxAttempts,
+        credentialSlotId,
+        credentialProfileId: null,
+        amountPerAttempt: exposure.perAttemptCeiling,
+        currency: exposure.currency,
+        pricingSnapshotIds: [...exposure.pricingSnapshotIds],
+        pricingSource: exposure.certainty === "exact" ? "builtin_catalog" : "unknown",
+      };
+    });
+    return {
+      workspaceId: input.workspaceId,
+      principalId: input.principalId,
+      workflowId: input.workflowId,
+      workflowRevisionId: input.workflowRevisionId,
+      stepExposures,
+      at: input.at,
+    };
+  }
+
+  async preview(input: {
+    workspaceId: string;
+    workflowId: string;
+    revisionId: string;
+    inputs: Record<string, unknown>;
+    principalId: string;
+    inputArtifactIds?: string[];
+  }): Promise<RunAdmissionPreview> {
+    if (!this.budgets) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        "Run admission preview is unavailable.",
+      );
+    }
+    const workflowId = identifier(input.workflowId, "Workflow ID");
+    const revisionId = identifier(input.revisionId, "Workflow Revision ID");
+    const principalId = evidence(input.principalId, "Principal");
+    const inputs = canonicalInputs(input.inputs);
+    const revision = await this.revisions.getRevision({
+      workspaceId: input.workspaceId,
+      workflowId,
+      revisionId,
+    });
+    if (!revision) {
+      throw new WorkflowRunError("WORKFLOW_RUN_UNAVAILABLE", "The immutable Workflow Revision is unavailable.");
+    }
+    const steps = revision.definition.steps;
+    const { executors: resolvedExecutors } = eligibleWorkflowExecutors(
+      revision,
+      this.executors,
+    );
+    const resolvedArtifactIds: string[] = [];
+    for (const [name, definition] of Object.entries(revision.definition.inputs)) {
+      const value = inputs[name];
+      if (definition.required && value === undefined) {
+        throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", `Required Workflow input ${name} is missing.`);
+      }
+      if (value === undefined) continue;
+      if (typeof value !== "string") {
+        throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", `Workflow input ${name} must be text or an Artifact ID.`);
+      }
+      if (definition.kind === "image") {
+        if (!this.artifacts) {
+          throw new WorkflowRunError("WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE", "Artifact input resolution is unavailable.");
+        }
+        const found = await this.artifacts.getArtifact({ workspaceId: input.workspaceId, artifactId: value });
+        if (found.artifact.kind !== "image" || found.artifact.origin.kind !== "imported") {
+          throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", `Workflow input ${name} must reference an imported image Artifact.`);
+        }
+        resolvedArtifactIds.push(found.artifact.id);
+      }
+    }
+    const unexpected = Object.keys(inputs).filter((name) => !(name in revision.definition.inputs));
+    if (unexpected.length) {
+      throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", `Workflow input ${unexpected.sort(compareCodeUnits)[0]} is not declared.`);
+    }
+    const declared = [...(input.inputArtifactIds ?? [])].map((id) => identifier(id, "Input Artifact ID")).sort(compareCodeUnits);
+    resolvedArtifactIds.sort(compareCodeUnits);
+    if (declared.length !== resolvedArtifactIds.length || declared.some((id, index) => id !== resolvedArtifactIds[index])) {
+      throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", "inputArtifactIds must exactly match the Workflow input Artifact bindings.");
+    }
+    const credentialReferences = steps.flatMap((step) =>
+      Object.entries(step.credentials).map(([requirement, slotName]) => ({
+        stepId: step.id,
+        requirement,
+        slotId: revision.definition.credentialSlots[slotName]?.slotId ?? slotName,
+      })),
+    );
+    return this.budgets.previewRun(this.budgetAdmissionInput({
+      workspaceId: input.workspaceId,
+      principalId,
+      workflowId,
+      workflowRevisionId: revision.id,
+      steps,
+      executors: resolvedExecutors,
+      credentialReferences,
+      at: this.clock.now(),
+    }));
+  }
 
   private usageInput(input: {
     run: WorkflowRunRecord;
@@ -272,6 +461,36 @@ export class WorkflowRunService {
     };
   }
 
+  private async budgetSettlementForUsage(input: {
+    plan: import("../usage/types").UsageLedgerAppendPlan | null | undefined;
+    workspaceId?: string;
+    settlementId?: string;
+    outcome: import("../budgets/types").BudgetSettlementPlan["outcome"];
+    runTerminal: boolean;
+  }): Promise<import("../budgets/types").BudgetSettlementPlan | null> {
+    if (!this.budgets) return null;
+    const valuation = input.plan?.valuation ?? (
+      input.workspaceId && input.settlementId && this.usage?.getCurrentValuation
+        ? await this.usage.getCurrentValuation(input.workspaceId, input.settlementId)
+        : null
+    );
+    if (!valuation) return null;
+    return this.budgets.planSettlement({
+      schema: "budget-settlement-plan/v1",
+      workspaceId: valuation.workspaceId,
+      runId: valuation.runId,
+      stepAttemptId: valuation.stepAttemptId,
+      settlementId: valuation.settlementId,
+      costValuationId: valuation.id,
+      outcome: input.outcome,
+      amount: valuation.amount,
+      currency: valuation.currency,
+      fxSnapshotId: valuation.fxSnapshotId,
+      runTerminal: input.runTerminal,
+      recordedAt: valuation.recordedAt,
+    });
+  }
+
   async start(input: {
     workspaceId: string;
     workflowId: string;
@@ -307,47 +526,8 @@ export class WorkflowRunService {
       );
     }
     const steps = revision.definition.steps;
-    const isLegacy =
-      steps.length === 1 &&
-      steps[0]?.operation.identity === EXECUTABLE_OPERATION &&
-      Object.values(revision.definition.inputs).every(
-        (definition) => definition.kind === "text",
-      ) &&
-      Object.keys(steps[0]?.credentials ?? {}).length === 0;
-    const isGolden =
-      revision.definitionDigest === GOLDEN_WORKFLOW_DEFINITION_DIGEST &&
-      steps.length === 2 &&
-      steps.every(
-        (step, index) =>
-          step.operation.identity === GOLDEN_OPERATIONS[index],
-      ) &&
-      Object.values(revision.definition.inputs).filter(
-        (definition) => definition.kind === "text",
-      ).length === 1 &&
-      Object.values(revision.definition.inputs).filter(
-        (definition) => definition.kind === "image",
-      ).length === 1;
-    const resolvedExecutors = steps.map((step) =>
-      this.executors.resolve
-        ? this.executors.resolve(
-            step.operation.identity,
-            step.operation.contractDigest,
-            step.config,
-          )
-        : this.executors.get(
-            step.operation.identity,
-            step.operation.contractDigest,
-          ),
-    );
-    if (
-      (!isLegacy && !isGolden) ||
-      resolvedExecutors.some((executor) => !executor)
-    ) {
-      throw new WorkflowRunError(
-        "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
-        "This runtime slice accepts the exact deterministic digest or frozen two-step golden Workflow.",
-      );
-    }
+    const { executors: resolvedExecutors, isGolden } =
+      eligibleWorkflowExecutors(revision, this.executors);
     if (isGolden && capability !== "workflow_runs.start@2") {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_INVALID_INPUT",
@@ -501,6 +681,21 @@ export class WorkflowRunService {
       inputs: normalizedInputs,
       inputArtifactIds: resolvedArtifactIds,
     });
+    const replay = await this.repository.getMutationReceipt({
+      workspaceId: input.workspaceId,
+      principalId,
+      capability,
+      idempotencyKey,
+    });
+    if (replay) {
+      if (replay.receipt.requestFingerprint !== requestFingerprint) {
+        throw new WorkflowRunError(
+          "IDEMPOTENCY_CONFLICT",
+          "The idempotency key is already bound to another Workflow Run.",
+        );
+      }
+      return acceptance(replay.run, replay.receipt.initialEventCursor);
+    }
     const now = this.clock.now();
     const runId = `run_${randomUUID().replaceAll("-", "")}`;
     const run: WorkflowRunRecord = {
@@ -523,6 +718,35 @@ export class WorkflowRunService {
       completedAt: null,
       updatedAt: now,
     };
+    let budgetAdmissionPlan = null;
+    try {
+      budgetAdmissionPlan = this.budgets
+        ? await this.budgets.planAdmission({
+          ...this.budgetAdmissionInput({
+            workspaceId: input.workspaceId,
+            principalId,
+            workflowId,
+            workflowRevisionId: revision.id,
+            steps,
+            executors: resolvedExecutors,
+            credentialReferences: snapshot.credentialReferences,
+            at: now,
+          }),
+          runId,
+        })
+        : null;
+    } catch (error) {
+      if (!(error instanceof BudgetServiceError)) throw error;
+      const message = error.message;
+      const code = message.includes("EMERGENCY_SPEND_SUSPENDED")
+        ? "SPEND_SUSPENDED"
+        : message.includes("CREDENTIAL_SPEND_GRANT_UNAVAILABLE")
+          ? "CREDENTIAL_SPEND_NOT_AUTHORIZED"
+          : message.includes("UNKNOWN_PRICING") || message.includes("unknown ceiling")
+            ? "RUN_COST_UNKNOWN"
+            : "BUDGET_LIMIT_EXCEEDED";
+      throw new WorkflowRunError(code, message);
+    }
     const initialEventCursor = this.cursors.seal({
       workspaceId: input.workspaceId,
       principalId,
@@ -572,6 +796,7 @@ export class WorkflowRunService {
         deliveredAt: null,
         createdAt: now,
       },
+      budgetAdmissionPlan,
     });
     if (result.kind === "conflict") {
       throw new WorkflowRunError(
@@ -783,6 +1008,56 @@ export class WorkflowRunService {
       completedAt: null,
       updatedAt: now,
     };
+    let budgetAdmissionPlan = null;
+    if (this.budgets) {
+      const retrySteps = source.startSnapshot.definition.steps.slice(failedIndex);
+      const retryExecutors = retrySteps.map((step) =>
+        this.executors.resolve
+          ? this.executors.resolve(
+              step.operation.identity,
+              step.operation.contractDigest,
+              step.config,
+            )
+          : this.executors.get(
+              step.operation.identity,
+              step.operation.contractDigest,
+            ),
+      );
+      if (retryExecutors.some((executor) => !executor)) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
+          "A retried Workflow operation has no pinned runtime executor.",
+        );
+      }
+      try {
+        budgetAdmissionPlan = await this.budgets.planAdmission({
+          ...this.budgetAdmissionInput({
+            workspaceId: input.workspaceId,
+            principalId,
+            workflowId,
+            workflowRevisionId: source.workflowRevisionId,
+            steps: retrySteps,
+            executors: retryExecutors.map((executor) => executor!),
+            credentialReferences: snapshot.credentialReferences.filter((reference) =>
+              retrySteps.some((step) => step.id === reference.stepId),
+            ),
+            at: now,
+          }),
+          runId,
+        });
+      } catch (error) {
+        if (!(error instanceof BudgetServiceError)) throw error;
+        const message = error.message;
+        const code = message.includes("EMERGENCY_SPEND_SUSPENDED")
+          ? "SPEND_SUSPENDED"
+          : message.includes("CREDENTIAL_SPEND_GRANT_UNAVAILABLE")
+            ? "CREDENTIAL_SPEND_NOT_AUTHORIZED"
+            : message.includes("UNKNOWN_PRICING") || message.includes("unknown ceiling")
+              ? "RUN_COST_UNKNOWN"
+              : "BUDGET_LIMIT_EXCEEDED";
+        throw new WorkflowRunError(code, message);
+      }
+    }
     const cursor = this.cursors.seal({
       workspaceId: input.workspaceId,
       principalId,
@@ -845,6 +1120,7 @@ export class WorkflowRunService {
         deliveredAt: null,
         createdAt: now,
       },
+      budgetAdmissionPlan,
     });
     if (result.kind === "conflict") {
       throw new WorkflowRunError(
@@ -1437,6 +1713,25 @@ export class WorkflowRunService {
       result: null,
       createdAt: now,
     };
+    const budgetSettlementPlan = await this.budgetSettlementForUsage({
+      plan: reconciliationUsagePlan,
+      workspaceId: run.workspaceId,
+      settlementId: reconciliationUsagePlan?.settlementId ?? (this.usage
+        ? this.usage.settlementIdFor(this.usageInput({
+            run,
+            attempt,
+            metadata: providerResult.providerMetadata ?? null,
+            providerOperationRef: providerResult.providerOperationRef,
+            outcome: providerResult.kind === "failed_known" ? "failed_known" : "succeeded",
+            endedAt: now,
+          }).binding)
+        : undefined),
+      outcome: providerResult.kind === "failed_known" ? "failed_known" : "succeeded",
+      runTerminal:
+        resolution.kind === "succeeded"
+          ? resolution.finalSnapshot !== null
+          : !resolution.retryable,
+    });
     const result = await this.repository.reconcileStepAttempt({
       workspaceId: run.workspaceId,
       workflowId,
@@ -1450,6 +1745,7 @@ export class WorkflowRunService {
       resolution,
       usagePlan: reconciliationUsagePlan,
       usageAttributionPlan: reconciliationAttributionPlan,
+      budgetSettlementPlan,
       occurredAt: now,
       eventIds: {
         generated:
@@ -2054,6 +2350,33 @@ export class WorkflowRunService {
       token: lease.token,
       fence: lease.fence,
       eventId: randomUUID(),
+      budgetAttemptAllocation: this.budgets
+        ? {
+            schema: "budget-attempt-allocation-input/v1",
+            id: `budget_attempt_${canonicalDigest({
+              workspaceId: run.workspaceId,
+              runId: run.id,
+              stepAttemptId: candidate.id,
+            }).slice(7, 39)}`,
+            workspaceId: run.workspaceId,
+            principalId: run.startSnapshot.authorization.principalId,
+            runId: run.id,
+            stepAttemptId: candidate.id,
+            stepId: candidate.stepId,
+            attempt: candidate.attempt,
+            effectKey: candidate.effectKey,
+            credentialEffectRef: credentialEffectRef({
+              workspaceId: run.workspaceId,
+              effectKey: candidate.effectKey,
+              stepAttemptId: candidate.id,
+              attempt: candidate.attempt,
+            }),
+            provider: candidate.provider,
+            providerOperation: candidate.providerOperation,
+            model: candidate.model,
+            recordedAt: now,
+          }
+        : null,
     });
     if (prepared.kind === "stale_fence") {
       throw new WorkflowRunError(
@@ -2225,6 +2548,24 @@ export class WorkflowRunService {
         "Provider usage settlement is unavailable.",
       );
     }
+    const providerBudgetSettlementPlan = await this.budgetSettlementForUsage({
+      plan: usagePlan,
+      workspaceId: run.workspaceId,
+      settlementId: usagePlan?.settlementId ?? (this.usage
+        ? this.usage.settlementIdFor(this.usageInput({
+            run,
+            attempt: prepared.attempt,
+            metadata: execution.providerMetadata ?? null,
+            providerOperationRef: execution.providerOperationRef,
+            outcome: "succeeded",
+            endedAt: providerRecordedAt,
+          }).binding)
+        : undefined),
+      outcome: "succeeded",
+      runTerminal:
+        completedAttempts.length + 1 ===
+        run.startSnapshot.definition.steps.length,
+    });
     const providerRecorded =
       await this.repository.recordStepAttemptProviderSuccess({
         workspaceId: run.workspaceId,
@@ -2236,6 +2577,7 @@ export class WorkflowRunService {
         providerOperationRef: execution.providerOperationRef,
         providerMetadata: execution.providerMetadata ?? null,
         usagePlan,
+        budgetSettlementPlan: providerBudgetSettlementPlan,
         recordedAt: providerRecordedAt,
       });
     if (providerRecorded.kind !== "settled") {
@@ -2443,6 +2785,7 @@ export class WorkflowRunService {
         ? canonicalDigest(finalSnapshot)
         : null,
       usageAttributionPlan,
+      budgetSettlementPlan: null,
       completedAt: completedAttempt.completedAt!,
       eventIds: {
         generated: Object.keys(outputs).map(() => randomUUID()),
@@ -2513,6 +2856,11 @@ export class WorkflowRunService {
         "Provider usage settlement is unavailable.",
       );
     }
+    const budgetSettlementPlan = await this.budgetSettlementForUsage({
+      plan: usagePlan,
+      outcome: "failed_known",
+      runTerminal: !canRetry,
+    });
     const failed = await this.repository.failStepAttempt({
       workspaceId: input.run.workspaceId,
       runId: input.run.id,
@@ -2525,6 +2873,7 @@ export class WorkflowRunService {
       retryable: input.retryable,
       providerMetadata: input.providerMetadata,
       usagePlan,
+      budgetSettlementPlan,
       retryAt,
       retryOutboxIntent: retryAt
         ? {
@@ -2603,6 +2952,11 @@ export class WorkflowRunService {
         "Provider usage settlement is unavailable.",
       );
     }
+    const budgetSettlementPlan = await this.budgetSettlementForUsage({
+      plan: usagePlan,
+      outcome: "outcome_unknown",
+      runTerminal: false,
+    });
     const blocked =
       await this.repository.markStepAttemptOutcomeUnknown({
         workspaceId: input.run.workspaceId,
@@ -2614,7 +2968,8 @@ export class WorkflowRunService {
         failureCode: input.failureCode,
       providerOperationRef: input.providerOperationRef,
       providerMetadata: input.providerMetadata,
-      usagePlan,
+        usagePlan,
+        budgetSettlementPlan,
         occurredAt,
         eventIds: {
           attemptOutcomeUnknown: randomUUID(),

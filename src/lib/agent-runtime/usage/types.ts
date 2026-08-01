@@ -3,12 +3,17 @@ import type { ArtifactProviderMetadata } from "../artifacts/types";
 export type UsageUnit = "count" | "byte" | "millisecond" | "megapixel";
 export type UsageSource = "reported" | "measured" | "estimated" | "unknown";
 export type PricingSource =
+  | "effect_not_created"
   | "provider_reported"
   | "workspace_override"
   | "builtin_catalog"
   | "mixed"
   | "unknown";
-export type ValuationBasis = "provider_reported" | "runtime_calculated" | "unknown";
+export type ValuationBasis =
+  | "effect_not_created"
+  | "provider_reported"
+  | "runtime_calculated"
+  | "unknown";
 
 export interface UsageBinding {
   workspaceId: string;
@@ -287,6 +292,7 @@ export interface UsageSettlementPort {
   planProviderOutcome(input: SettleProviderUsageInput): Promise<UsageLedgerAppendPlan>;
   planProviderReconciliation(input: SettleProviderUsageInput): Promise<UsageLedgerAppendPlan | null>;
   commitPlan(plan: UsageLedgerAppendPlan): Promise<void>;
+  getCurrentValuation?(workspaceId: string, settlementId: string): Promise<CostValuation | null>;
   planGeneratedArtifactAttribution(input: {
     workspaceId: string;
     principalId: string;

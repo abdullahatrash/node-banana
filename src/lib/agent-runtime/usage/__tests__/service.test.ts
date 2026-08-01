@@ -132,6 +132,33 @@ describe("UsageLedgerService", () => {
     expect(summary.costSubtotals).toEqual([]);
   });
 
+  it("records an exact currency-neutral zero when evidence proves the effect was not created", async () => {
+    const repository = new InMemoryUsageRepository();
+    const service = new UsageLedgerService(repository);
+    await service.settleProviderOutcome(settlement({
+      outcome: "failed_known",
+      metadata: {
+        evidence: {
+          providerRequestId: null,
+          httpStatus: 400,
+          providerCode: "INVALID_REQUEST",
+          operatorTraceRef: "trace_not_created",
+          effectDisposition: "not_created",
+        },
+        usage: [],
+        retryAfterMs: null,
+        pollAfterMs: null,
+      },
+    }));
+    expect([...repository.valuations.values()][0]).toMatchObject({
+      basis: "effect_not_created",
+      pricingSource: "effect_not_created",
+      amount: "0",
+      currency: null,
+      pricingSnapshotIds: [],
+    });
+  });
+
   it("rejects contradictory unknown and known quantity evidence", async () => {
     const service = new UsageLedgerService(new InMemoryUsageRepository());
     await expect(service.settleProviderOutcome(settlement({
