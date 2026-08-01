@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { WorkflowRunError } from "./errors";
+import { parseWorkflowStepExecutionResult } from "./provider-adapter";
 import { GOLDEN_WORKFLOW_DEFINITION_DIGEST } from "./fixtures/golden";
 import { workflowRunDto } from "./types";
 import type {
@@ -1874,30 +1875,34 @@ export class WorkflowRunService {
             providerOperationRef: prepared.attempt.providerOperationRef,
           };
         } else {
-          execution = await this.executeWithLeaseRenewal(lease, () =>
-            executor.reconcile!({
+          execution = parseWorkflowStepExecutionResult(
+            await this.executeWithLeaseRenewal(lease, () =>
+              executor.reconcile!({
+                runId: run.id,
+                stepAttemptId: prepared.attempt.id,
+                effectKey: prepared.attempt.effectKey,
+                intentDigest: prepared.attempt.intentDigest,
+                providerOperationRef: prepared.attempt.providerOperationRef,
+                snapshot: structuredClone(run.startSnapshot),
+                step: structuredClone(step),
+                inputs: structuredClone(resolved),
+              }),
+            ),
+          );
+        }
+      } else {
+        execution = parseWorkflowStepExecutionResult(
+          await this.executeWithLeaseRenewal(lease, () =>
+            executor.execute({
               runId: run.id,
               stepAttemptId: prepared.attempt.id,
               effectKey: prepared.attempt.effectKey,
               intentDigest: prepared.attempt.intentDigest,
-              providerOperationRef: prepared.attempt.providerOperationRef,
               snapshot: structuredClone(run.startSnapshot),
               step: structuredClone(step),
               inputs: structuredClone(resolved),
             }),
-          );
-        }
-      } else {
-        execution = await this.executeWithLeaseRenewal(lease, () =>
-          executor.execute({
-            runId: run.id,
-            stepAttemptId: prepared.attempt.id,
-            effectKey: prepared.attempt.effectKey,
-            intentDigest: prepared.attempt.intentDigest,
-            snapshot: structuredClone(run.startSnapshot),
-            step: structuredClone(step),
-            inputs: structuredClone(resolved),
-          }),
+          ),
         );
       }
     } catch (error) {

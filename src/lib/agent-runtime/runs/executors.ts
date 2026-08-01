@@ -1,4 +1,8 @@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import {
+  PROVIDER_ADAPTER_MANIFEST,
+  type ProviderAdapterModuleId,
+} from "@/lib/provider-adapters/manifest";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { WorkflowOperationRegistryReader } from "../workflows/types";
@@ -8,6 +12,12 @@ import {
   GOLDEN_LINKEDIN_COPY,
   GOLDEN_PROVIDER_RESULTS,
 } from "./fixtures/golden";
+import type {
+  ProviderAdapter,
+  ResolveWorkflowProviderInvocation,
+  WorkflowProviderOutputs,
+} from "./provider-adapter";
+import { createWorkflowStepExecutorFromProviderAdapter } from "./provider-adapter";
 import type {
   WorkflowStepExecutor,
   WorkflowStepExecutorRegistry,
@@ -145,7 +155,7 @@ export class WorkflowRunExecutorRegistry
 {
   private readonly executors = new Map<string, WorkflowStepExecutor>();
 
-  register(
+  private register(
     identity: string,
     contractDigest: string,
     executor: WorkflowStepExecutor,
@@ -157,6 +167,81 @@ export class WorkflowRunExecutorRegistry
     this.executors.set(key, executor);
   }
 
+  registerProviderAdapter<I>(
+    moduleId: ProviderAdapterModuleId,
+    identity: string,
+    contractDigest: string,
+    adapter: ProviderAdapter<I, WorkflowProviderOutputs>,
+    resolveInvocation: ResolveWorkflowProviderInvocation<I>,
+  ): void {
+    const registration = PROVIDER_ADAPTER_MANIFEST.find(
+      (candidate) => candidate.module === moduleId,
+    );
+    if (
+      !registration ||
+      registration.workflowOperationIdentity !==
+        adapter.contract.identity.workflowOperationIdentity ||
+      registration.workflowOperationContractDigest !==
+        adapter.contract.identity.workflowOperationContractDigest ||
+      registration.provider !== adapter.contract.identity.provider ||
+      registration.operation !== adapter.contract.identity.operation ||
+      registration.model !== adapter.contract.identity.model
+    ) {
+      throw new TypeError(
+        "Provider Adapter identity does not match its reviewed manifest entry.",
+      );
+    }
+    if (adapter.contract.effectKeySupport !== "native") {
+      throw new TypeError(
+        "Provider Adapter must support the runtime Effect Key before registration.",
+      );
+    }
+    if (
+      adapter.contract.identity.workflowOperationIdentity !== identity ||
+      adapter.contract.identity.workflowOperationContractDigest !==
+        contractDigest
+    ) {
+      throw new TypeError(
+        "Provider Adapter identity does not match the Workflow operation contract.",
+      );
+    }
+    this.register(
+      identity,
+      contractDigest,
+      createWorkflowStepExecutorFromProviderAdapter(adapter, resolveInvocation),
+    );
+  }
+
+  static createDeterministic(
+    operations: WorkflowOperationRegistryReader,
+  ): WorkflowRunExecutorRegistry {
+    const operation = operations.get(IDENTITY);
+    if (!operation) {
+      throw new TypeError(`${IDENTITY} must be published before execution.`);
+    }
+    const registry = new WorkflowRunExecutorRegistry();
+    registry.register(
+      operation.identity,
+      operation.contractDigest,
+      new DigestTextExecutor(),
+    );
+    for (const [identity, providerOperation] of [
+      ["gemini.generate_text@1", "generate_text"],
+      ["gemini.generate_image@1", "generate_image"],
+    ] as const) {
+      const definition = operations.get(identity);
+      if (!definition) {
+        throw new TypeError(`${identity} must be published before execution.`);
+      }
+      registry.register(
+        identity,
+        definition.contractDigest,
+        new GoldenConformanceExecutor(providerOperation),
+      );
+    }
+    return registry;
+  }
+
   get(identity: string, contractDigest: string) {
     return this.executors.get(`${identity}\u0000${contractDigest}`);
   }
@@ -165,29 +250,5 @@ export class WorkflowRunExecutorRegistry
 export function createDeterministicWorkflowRunExecutorRegistry(
   operations: WorkflowOperationRegistryReader,
 ): WorkflowRunExecutorRegistry {
-  const operation = operations.get(IDENTITY);
-  if (!operation) {
-    throw new TypeError(`${IDENTITY} must be published before execution.`);
-  }
-  const registry = new WorkflowRunExecutorRegistry();
-  registry.register(
-    operation.identity,
-    operation.contractDigest,
-    new DigestTextExecutor(),
-  );
-  for (const [identity, providerOperation] of [
-    ["gemini.generate_text@1", "generate_text"],
-    ["gemini.generate_image@1", "generate_image"],
-  ] as const) {
-    const definition = operations.get(identity);
-    if (!definition) {
-      throw new TypeError(`${identity} must be published before execution.`);
-    }
-    registry.register(
-      identity,
-      definition.contractDigest,
-      new GoldenConformanceExecutor(providerOperation),
-    );
-  }
-  return registry;
+  return WorkflowRunExecutorRegistry.createDeterministic(operations);
 }

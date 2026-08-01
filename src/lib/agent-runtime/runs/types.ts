@@ -734,10 +734,41 @@ export type WorkflowStepGeneratedOutput =
       height: number;
     };
 
+export interface WorkflowStepProviderMetadata {
+  evidence: {
+    providerRequestId: string | null;
+    httpStatus: number | null;
+    providerCode: string | null;
+    operatorTraceRef: string | null;
+    effectDisposition:
+      | "not_created"
+      | "accepted"
+      | "terminal_failed"
+      | "unknown";
+  };
+  usage: Array<
+    | {
+        dimension: string;
+        unit: "count" | "byte" | "millisecond" | "megapixel";
+        source: "reported" | "measured" | "estimated";
+        quantity: string;
+      }
+    | {
+        dimension: string;
+        unit: "count" | "byte" | "millisecond" | "megapixel";
+        source: "unknown";
+        quantity: null;
+      }
+  >;
+  retryAfterMs: number | null;
+  pollAfterMs: number | null;
+}
+
 export interface WorkflowStepGeneratedResult {
   kind: "generated";
   providerOperationRef: string;
   outputs: Record<string, WorkflowStepGeneratedOutput>;
+  providerMetadata?: WorkflowStepProviderMetadata;
 }
 
 export interface WorkflowStepFailedKnownResult {
@@ -745,12 +776,14 @@ export interface WorkflowStepFailedKnownResult {
   failureCode: string;
   retryable: boolean;
   providerOperationRef: string | null;
+  providerMetadata?: WorkflowStepProviderMetadata;
 }
 
 export interface WorkflowStepOutcomeUnknownResult {
   kind: "outcome_unknown";
   failureCode: string;
   providerOperationRef: string | null;
+  providerMetadata?: WorkflowStepProviderMetadata;
 }
 
 export type WorkflowStepProviderResult =
