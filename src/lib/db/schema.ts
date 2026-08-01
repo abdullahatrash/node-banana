@@ -24,6 +24,14 @@ import type {
   WorkflowStepAttemptInput,
   WorkflowStepAttemptRecord,
 } from "@/lib/agent-runtime/runs/types";
+import type {
+  CostValuation,
+  FxSnapshot,
+  PricingSnapshot,
+  UsageArtifactAttribution,
+  UsageMeteringEvent,
+  UsageRecord,
+} from "@/lib/agent-runtime/usage/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -2178,6 +2186,11 @@ export const workflowStepAttempts = pgTable(
           or (
             jsonb_typeof(${table.providerMetadata}) = 'object'
             and octet_length(${table.providerMetadata}::text) <= 65536
+            and (
+              not (${table.providerMetadata} ? 'reportedCost')
+              or ${table.providerMetadata}->'reportedCost' = 'null'::jsonb
+              or (${table.providerMetadata}->'reportedCost'->>'evidenceRef' ~ '^evidence:sha256:[a-f0-9]{64}$') is true
+            )
           )
         )`,
     ),
@@ -2335,6 +2348,16 @@ export const artifactGeneratedOrigins = pgTable(
     workspaceEffectOutputUnique: uniqueIndex(
       "artifact_generated_origins_workspace_effect_output_unique",
     ).on(table.workspaceId, table.effectKey, table.outputName),
+    workspaceGenerationIdentityUnique: uniqueIndex(
+      "artifact_generated_origins_workspace_generation_identity_unique",
+    ).on(
+      table.workspaceId,
+      table.artifactId,
+      table.runId,
+      table.stepAttemptId,
+      table.effectKey,
+      table.outputName,
+    ),
     workspaceRunIdx: index(
       "artifact_generated_origins_workspace_run_idx",
     ).on(
@@ -2353,7 +2376,14 @@ export const artifactGeneratedOrigins = pgTable(
     ),
     providerMetadataRedactionCheck: check(
       "artifact_generated_origins_provider_metadata_redaction_check",
-      sql`${table.providerMetadata} is null or ${table.providerMetadata}::text !~* '"[^"]*(secret|token|password|ciphertext)[^"]*"\\s*:'`,
+      sql`${table.providerMetadata} is null or (
+        ${table.providerMetadata}::text !~* '"[^"]*(secret|token|password|ciphertext)[^"]*"\\s*:'
+        and (
+          not (${table.providerMetadata} ? 'reportedCost')
+          or ${table.providerMetadata}->'reportedCost' = 'null'::jsonb
+          or (${table.providerMetadata}->'reportedCost'->>'evidenceRef' ~ '^evidence:sha256:[a-f0-9]{64}$') is true
+        )
+      )`,
     ),
     artifactOriginCheck: check(
       "artifact_generated_origins_artifact_origin_check",
@@ -3717,6 +3747,617 @@ export const savedPrompts = pgTable(
       table.deletedAt,
     ),
     createdAtIdx: index("saved_prompts_created_at_idx").on(table.createdAt),
+  }),
+);
+
+/**
+ * Immutable Usage Ledger and valuation evidence. Runtime consumption is kept
+ * separate from mutable reservation/budget projections and browser estimates.
+ */
+export const usageLedgerReceipts = pgTable(
+  "usage_ledger_receipts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    requestDigest: text("request_digest").notNull(),
+    kind: text("kind").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceIdUnique: uniqueIndex("usage_ledger_receipts_workspace_id_unique").on(
+      table.workspaceId,
+      table.id,
+    ),
+    workspaceCreatedIdx: index("usage_ledger_receipts_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt,
+      table.id,
+    ),
+    digestCheck: check(
+      "usage_ledger_receipts_digest_check",
+      sql`${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    kindCheck: check(
+      "usage_ledger_receipts_kind_check",
+      sql`${table.kind} in ('settlement', 'correction', 'attribution')`,
+    ),
+  }),
+);
+
+export const runtimeUsageRecords = pgTable(
+  "runtime_usage_records",
+  {
+    id: text("id").primaryKey(),
+    settlementId: text("settlement_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    principalId: text("principal_id").notNull(),
+    workflowId: text("workflow_id").notNull(),
+    runId: text("run_id").notNull(),
+    stepAttemptId: text("step_attempt_id").notNull(),
+    stepId: text("step_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    effectKey: text("effect_key").notNull(),
+    provider: text("provider").notNull(),
+    providerOperation: text("provider_operation").notNull(),
+    providerOperationRef: text("provider_operation_ref"),
+    model: text("model").notNull(),
+    intervalStartedAt: timestamp("interval_started_at", { withTimezone: true }).notNull(),
+    intervalEndedAt: timestamp("interval_ended_at", { withTimezone: true }).notNull(),
+    dimension: text("dimension").notNull(),
+    unit: text("unit").notNull(),
+    source: text("source").notNull(),
+    quantity: text("quantity"),
+    outcome: text("outcome").notNull(),
+    supersedesUsageRecordId: text("supersedes_usage_record_id"),
+    record: jsonb("record").$type<UsageRecord>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    settlementFk: foreignKey({
+      columns: [table.workspaceId, table.settlementId],
+      foreignColumns: [usageLedgerReceipts.workspaceId, usageLedgerReceipts.id],
+      name: "runtime_usage_records_settlement_fk",
+    }).onDelete("restrict"),
+    workspaceRunFk: foreignKey({
+      columns: [table.workspaceId, table.workflowId, table.runId],
+      foreignColumns: [workflowRuns.workspaceId, workflowRuns.workflowId, workflowRuns.id],
+      name: "runtime_usage_records_workspace_run_fk",
+    }).onDelete("restrict"),
+    workspaceAttemptFk: foreignKey({
+      columns: [table.workspaceId, table.runId, table.stepAttemptId],
+      foreignColumns: [workflowStepAttempts.workspaceId, workflowStepAttempts.runId, workflowStepAttempts.id],
+      name: "runtime_usage_records_workspace_attempt_fk",
+    }).onDelete("restrict"),
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_usage_records_workspace_principal_fk",
+    }).onDelete("restrict"),
+    settlementDimensionUnique: uniqueIndex(
+      "runtime_usage_records_settlement_dimension_unique",
+    )
+      .on(table.settlementId, table.dimension, table.unit)
+      .where(sql`${table.supersedesUsageRecordId} is null`),
+    supersededUnique: uniqueIndex("runtime_usage_records_superseded_unique")
+      .on(table.supersedesUsageRecordId)
+      .where(sql`${table.supersedesUsageRecordId} is not null`),
+    chainTargetUnique: uniqueIndex("runtime_usage_records_chain_target_unique").on(
+      table.workspaceId,
+      table.settlementId,
+      table.dimension,
+      table.unit,
+      table.id,
+    ),
+    workspaceIdUnique: uniqueIndex("runtime_usage_records_workspace_id_unique").on(
+      table.workspaceId,
+      table.id,
+    ),
+    workspaceSettlementIdUnique: uniqueIndex("runtime_usage_records_workspace_settlement_id_unique").on(
+      table.workspaceId,
+      table.settlementId,
+      table.id,
+    ),
+    supersedesFk: foreignKey({
+      columns: [table.workspaceId, table.settlementId, table.dimension, table.unit, table.supersedesUsageRecordId],
+      foreignColumns: [table.workspaceId, table.settlementId, table.dimension, table.unit, table.id],
+      name: "runtime_usage_records_supersedes_fk",
+    }).onDelete("restrict"),
+    workspaceRecordedIdx: index("runtime_usage_records_workspace_recorded_idx").on(
+      table.workspaceId,
+      table.recordedAt,
+      table.id,
+    ),
+    runIdx: index("runtime_usage_records_run_idx").on(table.workspaceId, table.runId),
+    attemptIdx: index("runtime_usage_records_attempt_idx").on(
+      table.workspaceId,
+      table.stepAttemptId,
+    ),
+    decimalCheck: check(
+      "runtime_usage_records_decimal_check",
+      sql`(${table.source} = 'unknown' and ${table.quantity} is null)
+        or (${table.source} in ('reported', 'measured', 'estimated')
+          and ${table.quantity} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$')`,
+    ),
+    dimensionCheck: check(
+      "runtime_usage_records_dimension_check",
+      sql`${table.dimension} ~ '^[a-z][a-z0-9_.-]{0,99}@[1-9][0-9]{0,8}$'`,
+    ),
+    unitCheck: check(
+      "runtime_usage_records_unit_check",
+      sql`${table.unit} in ('count', 'byte', 'millisecond', 'megapixel')`,
+    ),
+    outcomeCheck: check(
+      "runtime_usage_records_outcome_check",
+      sql`${table.outcome} in ('succeeded', 'failed_known', 'outcome_unknown')`,
+    ),
+    intervalCheck: check(
+      "runtime_usage_records_interval_check",
+      sql`${table.intervalEndedAt} >= ${table.intervalStartedAt}`,
+    ),
+    attemptCheck: check("runtime_usage_records_attempt_check", sql`${table.attempt} > 0`),
+    supersedesSelfCheck: check(
+      "runtime_usage_records_supersedes_self_check",
+      sql`${table.supersedesUsageRecordId} is null or ${table.supersedesUsageRecordId} <> ${table.id}`,
+    ),
+    payloadCheck: check(
+      "runtime_usage_records_payload_check",
+      sql`jsonb_typeof(${table.record}) is not distinct from 'object'
+        and ${table.record} ?& array['schema', 'id', 'settlementId', 'binding', 'interval', 'dimension', 'unit', 'source', 'quantity', 'outcome', 'evidence', 'directArtifactId', 'lineageArtifactIds', 'supersedesUsageRecordId', 'correctionReason', 'recordedAt']
+        and jsonb_typeof(${table.record}->'binding') is not distinct from 'object'
+        and ${table.record}->'binding' ?& array['workspaceId', 'principalId', 'workflowId', 'runId', 'stepAttemptId', 'stepId', 'attempt', 'effectKey', 'provider', 'providerOperation', 'providerOperationRef', 'model']
+        and jsonb_typeof(${table.record}->'interval') is not distinct from 'object'
+        and ${table.record}->'interval' ?& array['startedAt', 'endedAt']
+        and (${table.record}->>'schema') is not distinct from 'usage-record/v1'
+        and (${table.record}->>'id') is not distinct from ${table.id}
+        and (${table.record}->>'settlementId') is not distinct from ${table.settlementId}
+        and (${table.record}->'binding'->>'workspaceId') is not distinct from ${table.workspaceId}
+        and (${table.record}->'binding'->>'principalId') is not distinct from ${table.principalId}
+        and (${table.record}->'binding'->>'workflowId') is not distinct from ${table.workflowId}
+        and (${table.record}->'binding'->>'runId') is not distinct from ${table.runId}
+        and (${table.record}->'binding'->>'stepAttemptId') is not distinct from ${table.stepAttemptId}
+        and (${table.record}->'binding'->>'stepId') is not distinct from ${table.stepId}
+        and ((${table.record}->'binding'->>'attempt')::integer) is not distinct from ${table.attempt}
+        and (${table.record}->'binding'->>'effectKey') is not distinct from ${table.effectKey}
+        and (${table.record}->'binding'->>'provider') is not distinct from ${table.provider}
+        and (${table.record}->'binding'->>'providerOperation') is not distinct from ${table.providerOperation}
+        and (${table.record}->'binding'->>'providerOperationRef') is not distinct from ${table.providerOperationRef}
+        and (${table.record}->'binding'->>'model') is not distinct from ${table.model}
+        and ((${table.record}->'interval'->>'startedAt')::timestamptz) is not distinct from ${table.intervalStartedAt}
+        and ((${table.record}->'interval'->>'endedAt')::timestamptz) is not distinct from ${table.intervalEndedAt}
+        and (${table.record}->>'dimension') is not distinct from ${table.dimension}
+        and (${table.record}->>'unit') is not distinct from ${table.unit}
+        and (${table.record}->>'source') is not distinct from ${table.source}
+        and (${table.record}->>'quantity') is not distinct from ${table.quantity}
+        and (${table.record}->>'outcome') is not distinct from ${table.outcome}
+        and (${table.record}->>'supersedesUsageRecordId') is not distinct from ${table.supersedesUsageRecordId}
+        and (${table.record}->>'recordedAt')::timestamptz is not distinct from ${table.recordedAt}
+        and (${table.record}->>'directArtifactId') is null
+        and jsonb_typeof(${table.record}->'lineageArtifactIds') is not distinct from 'array'
+        and jsonb_typeof(${table.record}->'evidence') is not distinct from 'object'
+        and octet_length(${table.record}::text) <= 65536
+        and ${table.record}::text !~* '"[^"\\n]*(secret|token|password|ciphertext|prompt|content)[^"\\n]*"\\s*:'`,
+    ),
+  }),
+);
+
+export const runtimePricingSnapshots = pgTable(
+  "runtime_pricing_snapshots",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id"),
+    source: text("source").notNull(),
+    provider: text("provider").notNull(),
+    providerOperation: text("provider_operation").notNull(),
+    model: text("model").notNull(),
+    dimension: text("dimension").notNull(),
+    unit: text("unit").notNull(),
+    price: text("price").notNull(),
+    currency: text("currency").notNull(),
+    perQuantity: text("per_quantity").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    snapshot: jsonb("snapshot").$type<PricingSnapshot>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    workspaceFk: foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "runtime_pricing_snapshots_workspace_fk",
+    }).onDelete("restrict"),
+    lookupIdx: index("runtime_pricing_snapshots_lookup_idx").on(
+      table.workspaceId,
+      table.provider,
+      table.providerOperation,
+      table.model,
+      table.effectiveFrom,
+    ),
+    workspaceIdUnique: uniqueIndex("runtime_pricing_snapshots_workspace_id_unique").on(
+      table.workspaceId,
+      table.id,
+    ),
+    idSourceUnique: uniqueIndex("runtime_pricing_snapshots_id_source_unique").on(
+      table.id,
+      table.source,
+    ),
+    sourceCheck: check(
+      "runtime_pricing_snapshots_source_check",
+      sql`${table.source} in ('workspace_override', 'builtin_catalog')`,
+    ),
+    decimalCheck: check(
+      "runtime_pricing_snapshots_decimal_check",
+      sql`${table.price} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$'
+        and ${table.perQuantity} ~ '^[1-9][0-9]*(\\.[0-9]+)?$'`,
+    ),
+    currencyCheck: check(
+      "runtime_pricing_snapshots_currency_check",
+      sql`${table.currency} ~ '^[A-Z]{3}$'`,
+    ),
+    intervalCheck: check(
+      "runtime_pricing_snapshots_interval_check",
+      sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`,
+    ),
+    payloadCheck: check(
+      "runtime_pricing_snapshots_payload_check",
+      sql`jsonb_typeof(${table.snapshot}) is not distinct from 'object'
+        and ${table.snapshot} ?& array['schema', 'id', 'workspaceId', 'source', 'provider', 'providerOperation', 'model', 'dimension', 'unit', 'price', 'currency', 'perQuantity', 'version', 'sourceUrl', 'effectiveFrom', 'effectiveTo', 'recordedAt']
+        and (${table.snapshot}->>'schema') is not distinct from 'pricing-snapshot/v1'
+        and (${table.snapshot}->>'id') is not distinct from ${table.id}
+        and (${table.snapshot}->>'workspaceId') is not distinct from ${table.workspaceId}
+        and (${table.snapshot}->>'source') is not distinct from ${table.source}
+        and (${table.snapshot}->>'provider') is not distinct from ${table.provider}
+        and (${table.snapshot}->>'providerOperation') is not distinct from ${table.providerOperation}
+        and (${table.snapshot}->>'model') is not distinct from ${table.model}
+        and (${table.snapshot}->>'dimension') is not distinct from ${table.dimension}
+        and (${table.snapshot}->>'unit') is not distinct from ${table.unit}
+        and (${table.snapshot}->>'price') is not distinct from ${table.price}
+        and (${table.snapshot}->>'currency') is not distinct from ${table.currency}
+        and (${table.snapshot}->>'perQuantity') is not distinct from ${table.perQuantity}
+        and (${table.snapshot}->>'effectiveFrom')::timestamptz is not distinct from ${table.effectiveFrom}
+        and (${table.snapshot}->>'effectiveTo')::timestamptz is not distinct from ${table.effectiveTo}
+        and (${table.snapshot}->>'recordedAt')::timestamptz is not distinct from ${table.recordedAt}
+        and octet_length(${table.snapshot}::text) <= 32768`,
+    ),
+  }),
+);
+
+export const runtimeCostValuations = pgTable(
+  "runtime_cost_valuations",
+  {
+    id: text("id").primaryKey(),
+    settlementId: text("settlement_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    principalId: text("principal_id").notNull(),
+    runId: text("run_id").notNull(),
+    stepAttemptId: text("step_attempt_id").notNull(),
+    source: text("source").notNull(),
+    amount: text("amount"),
+    currency: text("currency"),
+    supersedesCostValuationId: text("supersedes_cost_valuation_id"),
+    valuation: jsonb("valuation").$type<CostValuation>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    settlementFk: foreignKey({
+      columns: [table.workspaceId, table.settlementId],
+      foreignColumns: [usageLedgerReceipts.workspaceId, usageLedgerReceipts.id],
+      name: "runtime_cost_valuations_settlement_fk",
+    }).onDelete("restrict"),
+    workspaceRunFk: foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [workflowRuns.workspaceId, workflowRuns.id],
+      name: "runtime_cost_valuations_workspace_run_fk",
+    }).onDelete("restrict"),
+    workspaceAttemptFk: foreignKey({
+      columns: [table.workspaceId, table.runId, table.stepAttemptId],
+      foreignColumns: [workflowStepAttempts.workspaceId, workflowStepAttempts.runId, workflowStepAttempts.id],
+      name: "runtime_cost_valuations_workspace_attempt_fk",
+    }).onDelete("restrict"),
+    supersededUnique: uniqueIndex("runtime_cost_valuations_superseded_unique")
+      .on(table.supersedesCostValuationId)
+      .where(sql`${table.supersedesCostValuationId} is not null`),
+    chainTargetUnique: uniqueIndex("runtime_cost_valuations_chain_target_unique").on(
+      table.workspaceId,
+      table.settlementId,
+      table.id,
+    ),
+    workspaceIdUnique: uniqueIndex("runtime_cost_valuations_workspace_id_unique").on(
+      table.workspaceId,
+      table.id,
+    ),
+    supersedesFk: foreignKey({
+      columns: [table.workspaceId, table.settlementId, table.supersedesCostValuationId],
+      foreignColumns: [table.workspaceId, table.settlementId, table.id],
+      name: "runtime_cost_valuations_supersedes_fk",
+    }).onDelete("restrict"),
+    supersedesSelfCheck: check(
+      "runtime_cost_valuations_supersedes_self_check",
+      sql`${table.supersedesCostValuationId} is null or ${table.supersedesCostValuationId} <> ${table.id}`,
+    ),
+    workspaceRecordedIdx: index("runtime_cost_valuations_workspace_recorded_idx").on(
+      table.workspaceId,
+      table.recordedAt,
+      table.id,
+    ),
+    stateCheck: check(
+      "runtime_cost_valuations_state_check",
+      sql`(${table.source} = 'unknown' and ${table.amount} is null and ${table.currency} is null)
+        or (${table.source} in ('provider_reported', 'workspace_override', 'builtin_catalog', 'mixed')
+          and ${table.amount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]+)?$'
+          and ${table.currency} ~ '^[A-Z]{3}$')`,
+    ),
+    payloadCheck: check(
+      "runtime_cost_valuations_payload_check",
+      sql`jsonb_typeof(${table.valuation}) is not distinct from 'object'
+        and ${table.valuation} ?& array['schema', 'id', 'settlementId', 'workspaceId', 'principalId', 'runId', 'stepAttemptId', 'usageRecordIds', 'basis', 'pricingSource', 'amount', 'currency', 'providerCostEvidenceRef', 'pricingSnapshotIds', 'pricingSnapshots', 'fxSnapshotId', 'supersedesCostValuationId', 'recordedAt']
+        and (${table.valuation}->>'schema') is not distinct from 'cost-valuation/v1'
+        and (${table.valuation}->>'id') is not distinct from ${table.id}
+        and (${table.valuation}->>'settlementId') is not distinct from ${table.settlementId}
+        and (${table.valuation}->>'workspaceId') is not distinct from ${table.workspaceId}
+        and (${table.valuation}->>'principalId') is not distinct from ${table.principalId}
+        and (${table.valuation}->>'runId') is not distinct from ${table.runId}
+        and (${table.valuation}->>'stepAttemptId') is not distinct from ${table.stepAttemptId}
+        and (${table.valuation}->>'pricingSource') is not distinct from ${table.source}
+        and (${table.valuation}->>'amount') is not distinct from ${table.amount}
+        and (${table.valuation}->>'currency') is not distinct from ${table.currency}
+        and (${table.valuation}->>'supersedesCostValuationId') is not distinct from ${table.supersedesCostValuationId}
+        and (${table.valuation}->>'recordedAt')::timestamptz is not distinct from ${table.recordedAt}
+        and jsonb_typeof(${table.valuation}->'usageRecordIds') is not distinct from 'array'
+        and jsonb_typeof(${table.valuation}->'pricingSnapshotIds') is not distinct from 'array'
+        and jsonb_typeof(${table.valuation}->'pricingSnapshots') is not distinct from 'array'
+        and (
+          (${table.source} = 'unknown' and (${table.valuation}->>'basis') is not distinct from 'unknown')
+          or (${table.source} = 'provider_reported' and (${table.valuation}->>'basis') is not distinct from 'provider_reported')
+          or (${table.source} in ('workspace_override', 'builtin_catalog', 'mixed') and (${table.valuation}->>'basis') is not distinct from 'runtime_calculated')
+        )
+        and (
+          ${table.source} <> 'provider_reported'
+          or (${table.valuation}->>'providerCostEvidenceRef' ~ '^evidence:sha256:[a-f0-9]{64}$') is true
+        )
+        and octet_length(${table.valuation}::text) <= 65536`,
+    ),
+  }),
+);
+
+export const runtimeCostValuationUsageRecords = pgTable(
+  "runtime_cost_valuation_usage_records",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    settlementId: text("settlement_id").notNull(),
+    costValuationId: text("cost_valuation_id").notNull(),
+    usageRecordId: text("usage_record_id").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.costValuationId, table.usageRecordId],
+      name: "runtime_cost_valuation_usage_records_pk",
+    }),
+    valuationFk: foreignKey({
+      columns: [table.workspaceId, table.settlementId, table.costValuationId],
+      foreignColumns: [runtimeCostValuations.workspaceId, runtimeCostValuations.settlementId, runtimeCostValuations.id],
+      name: "runtime_cost_valuation_usage_records_valuation_fk",
+    }).onDelete("restrict"),
+    usageRecordFk: foreignKey({
+      columns: [table.workspaceId, table.settlementId, table.usageRecordId],
+      foreignColumns: [runtimeUsageRecords.workspaceId, runtimeUsageRecords.settlementId, runtimeUsageRecords.id],
+      name: "runtime_cost_valuation_usage_records_usage_record_fk",
+    }).onDelete("restrict"),
+  }),
+);
+
+export const runtimeCostValuationPricingSnapshots = pgTable(
+  "runtime_cost_valuation_pricing_snapshots",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    costValuationId: text("cost_valuation_id").notNull(),
+    pricingWorkspaceId: text("pricing_workspace_id"),
+    pricingSnapshotId: text("pricing_snapshot_id").notNull(),
+    pricingSource: text("pricing_source").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.costValuationId, table.pricingSnapshotId],
+      name: "runtime_cost_valuation_pricing_snapshots_pk",
+    }),
+    valuationFk: foreignKey({
+      columns: [table.workspaceId, table.costValuationId],
+      foreignColumns: [runtimeCostValuations.workspaceId, runtimeCostValuations.id],
+      name: "runtime_cost_valuation_pricing_snapshots_valuation_fk",
+    }).onDelete("restrict"),
+    workspacePricingFk: foreignKey({
+      columns: [table.pricingWorkspaceId, table.pricingSnapshotId],
+      foreignColumns: [runtimePricingSnapshots.workspaceId, runtimePricingSnapshots.id],
+      name: "runtime_cost_valuation_pricing_snapshots_workspace_pricing_fk",
+    }).onDelete("restrict"),
+    pricingIdentityFk: foreignKey({
+      columns: [table.pricingSnapshotId, table.pricingSource],
+      foreignColumns: [runtimePricingSnapshots.id, runtimePricingSnapshots.source],
+      name: "runtime_cost_valuation_pricing_snapshots_identity_fk",
+    }).onDelete("restrict"),
+    workspaceScopeCheck: check(
+      "runtime_cost_valuation_pricing_snapshots_workspace_scope_check",
+      sql`(${table.pricingSource} = 'builtin_catalog' and ${table.pricingWorkspaceId} is null)
+        or (${table.pricingSource} = 'workspace_override' and ${table.pricingWorkspaceId} = ${table.workspaceId})`,
+    ),
+  }),
+);
+
+export const runtimeFxSnapshots = pgTable(
+  "runtime_fx_snapshots",
+  {
+    id: text("id").primaryKey(),
+    baseCurrency: text("base_currency").notNull(),
+    quoteCurrency: text("quote_currency").notNull(),
+    rate: text("rate").notNull(),
+    source: text("source").notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    snapshot: jsonb("snapshot").$type<FxSnapshot>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pairObservedIdx: index("runtime_fx_snapshots_pair_observed_idx").on(
+      table.baseCurrency,
+      table.quoteCurrency,
+      table.observedAt,
+    ),
+    currencyCheck: check(
+      "runtime_fx_snapshots_currency_check",
+      sql`${table.baseCurrency} ~ '^[A-Z]{3}$'
+        and ${table.quoteCurrency} ~ '^[A-Z]{3}$'
+        and ${table.baseCurrency} <> ${table.quoteCurrency}`,
+    ),
+    rateCheck: check(
+      "runtime_fx_snapshots_rate_check",
+      sql`${table.rate} ~ '^[1-9][0-9]*(\\.[0-9]+)?$|^0\\.[0-9]*[1-9][0-9]*$'`,
+    ),
+    payloadCheck: check(
+      "runtime_fx_snapshots_payload_check",
+      sql`jsonb_typeof(${table.snapshot}) is not distinct from 'object'
+        and ${table.snapshot} ?& array['schema', 'id', 'baseCurrency', 'quoteCurrency', 'rate', 'source', 'observedAt', 'recordedAt']
+        and (${table.snapshot}->>'schema') is not distinct from 'fx-snapshot/v1'
+        and (${table.snapshot}->>'id') is not distinct from ${table.id}
+        and (${table.snapshot}->>'baseCurrency') is not distinct from ${table.baseCurrency}
+        and (${table.snapshot}->>'quoteCurrency') is not distinct from ${table.quoteCurrency}
+        and (${table.snapshot}->>'rate') is not distinct from ${table.rate}
+        and (${table.snapshot}->>'source') is not distinct from ${table.source}
+        and (${table.snapshot}->>'observedAt')::timestamptz is not distinct from ${table.observedAt}
+        and (${table.snapshot}->>'recordedAt')::timestamptz is not distinct from ${table.recordedAt}
+        and octet_length(${table.snapshot}::text) <= 16384`,
+    ),
+  }),
+);
+
+export const runtimeUsageArtifactAttributions = pgTable(
+  "runtime_usage_artifact_attributions",
+  {
+    id: text("id").primaryKey(),
+    settlementId: text("settlement_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    runId: text("run_id").notNull(),
+    stepAttemptId: text("step_attempt_id").notNull(),
+    effectKey: text("effect_key").notNull(),
+    outputName: text("output_name").notNull(),
+    basis: text("basis").notNull(),
+    attribution: jsonb("attribution").$type<UsageArtifactAttribution>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    settlementFk: foreignKey({
+      columns: [table.workspaceId, table.settlementId],
+      foreignColumns: [usageLedgerReceipts.workspaceId, usageLedgerReceipts.id],
+      name: "runtime_usage_artifact_attributions_settlement_fk",
+    }).onDelete("restrict"),
+    workspaceArtifactFk: foreignKey({
+      columns: [table.workspaceId, table.artifactId],
+      foreignColumns: [artifacts.workspaceId, artifacts.id],
+      name: "runtime_usage_artifact_attributions_workspace_artifact_fk",
+    }).onDelete("restrict"),
+    generatedOriginFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.artifactId,
+        table.runId,
+        table.stepAttemptId,
+        table.effectKey,
+        table.outputName,
+      ],
+      foreignColumns: [
+        artifactGeneratedOrigins.workspaceId,
+        artifactGeneratedOrigins.artifactId,
+        artifactGeneratedOrigins.runId,
+        artifactGeneratedOrigins.stepAttemptId,
+        artifactGeneratedOrigins.effectKey,
+        artifactGeneratedOrigins.outputName,
+      ],
+      name: "runtime_usage_artifact_attributions_generated_origin_fk",
+    }).onDelete("restrict"),
+    settlementArtifactUnique: uniqueIndex(
+      "runtime_usage_artifact_attributions_settlement_unique",
+    ).on(table.workspaceId, table.settlementId),
+    basisCheck: check(
+      "runtime_usage_artifact_attributions_basis_check",
+      sql`${table.basis} = 'single_output'`,
+    ),
+    payloadCheck: check(
+      "runtime_usage_artifact_attributions_payload_check",
+      sql`jsonb_typeof(${table.attribution}) is not distinct from 'object'
+        and ${table.attribution} ?& array['schema', 'id', 'settlementId', 'workspaceId', 'artifactId', 'runId', 'stepAttemptId', 'effectKey', 'outputName', 'basis', 'recordedAt']
+        and (${table.attribution}->>'schema') is not distinct from 'usage-artifact-attribution/v1'
+        and (${table.attribution}->>'id') is not distinct from ${table.id}
+        and (${table.attribution}->>'settlementId') is not distinct from ${table.settlementId}
+        and (${table.attribution}->>'workspaceId') is not distinct from ${table.workspaceId}
+        and (${table.attribution}->>'artifactId') is not distinct from ${table.artifactId}
+        and (${table.attribution}->>'runId') is not distinct from ${table.runId}
+        and (${table.attribution}->>'stepAttemptId') is not distinct from ${table.stepAttemptId}
+        and (${table.attribution}->>'effectKey') is not distinct from ${table.effectKey}
+        and (${table.attribution}->>'outputName') is not distinct from ${table.outputName}
+        and (${table.attribution}->>'basis') is not distinct from ${table.basis}
+        and (${table.attribution}->>'recordedAt')::timestamptz is not distinct from ${table.recordedAt}
+        and octet_length(${table.attribution}::text) <= 16384`,
+    ),
+  }),
+);
+
+export const runtimeUsageMeteringEvents = pgTable(
+  "runtime_usage_metering_events",
+  {
+    id: text("id").primaryKey(),
+    settlementId: text("settlement_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    principalId: text("principal_id").notNull(),
+    runId: text("run_id").notNull(),
+    stepAttemptId: text("step_attempt_id").notNull(),
+    effectKey: text("effect_key").notNull(),
+    eventType: text("event_type").notNull(),
+    event: jsonb("event").$type<UsageMeteringEvent>().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    settlementFk: foreignKey({
+      columns: [table.workspaceId, table.settlementId],
+      foreignColumns: [usageLedgerReceipts.workspaceId, usageLedgerReceipts.id],
+      name: "runtime_usage_metering_events_settlement_fk",
+    }).onDelete("restrict"),
+    workspaceRunFk: foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [workflowRuns.workspaceId, workflowRuns.id],
+      name: "runtime_usage_metering_events_workspace_run_fk",
+    }).onDelete("restrict"),
+    workspaceAttemptFk: foreignKey({
+      columns: [table.workspaceId, table.runId, table.stepAttemptId],
+      foreignColumns: [workflowStepAttempts.workspaceId, workflowStepAttempts.runId, workflowStepAttempts.id],
+      name: "runtime_usage_metering_events_workspace_attempt_fk",
+    }).onDelete("restrict"),
+    workspaceOccurredIdx: index("runtime_usage_metering_events_workspace_occurred_idx").on(
+      table.workspaceId,
+      table.occurredAt,
+      table.id,
+    ),
+    typeCheck: check(
+      "runtime_usage_metering_events_type_check",
+      sql`${table.eventType} in ('usage.settled', 'usage.corrected', 'cost.valued', 'artifact.attributed')`,
+    ),
+    payloadCheck: check(
+      "runtime_usage_metering_events_payload_check",
+      sql`jsonb_typeof(${table.event}) is not distinct from 'object'
+        and ${table.event} ?& array['schema', 'id', 'settlementId', 'workspaceId', 'principalId', 'runId', 'stepAttemptId', 'effectKey', 'type', 'usageRecordIds', 'costValuationId', 'measurements', 'details', 'occurredAt']
+        and (${table.event}->>'schema') is not distinct from 'usage-metering-event/v1'
+        and (${table.event}->>'id') is not distinct from ${table.id}
+        and (${table.event}->>'settlementId') is not distinct from ${table.settlementId}
+        and (${table.event}->>'workspaceId') is not distinct from ${table.workspaceId}
+        and (${table.event}->>'principalId') is not distinct from ${table.principalId}
+        and (${table.event}->>'runId') is not distinct from ${table.runId}
+        and (${table.event}->>'stepAttemptId') is not distinct from ${table.stepAttemptId}
+        and (${table.event}->>'effectKey') is not distinct from ${table.effectKey}
+        and (${table.event}->>'type') is not distinct from ${table.eventType}
+        and jsonb_typeof(${table.event}->'measurements') is not distinct from 'array'
+        and (${table.event}->>'occurredAt')::timestamptz is not distinct from ${table.occurredAt}
+        and octet_length(${table.event}::text) <= 16384
+        and ${table.event}::text !~* '"[^"\\n]*(secret|token|password|ciphertext|prompt|content)[^"\\n]*"\\s*:'`,
+    ),
   }),
 );
 

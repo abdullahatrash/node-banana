@@ -519,6 +519,20 @@ const providerMetadataSchema: JsonSchema = {
         ],
       },
     },
+    reportedCost: {
+      oneOf: [
+        { type: "null" },
+        {
+          ...object,
+          required: ["amount", "currency", "evidenceRef"],
+          properties: {
+            amount: { type: "string", pattern: "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$" },
+            currency: { type: "string", pattern: "^[A-Z]{3}$" },
+            evidenceRef: { type: "string", pattern: "^evidence:sha256:[a-f0-9]{64}$" },
+          },
+        },
+      ],
+    },
     retryAfterMs: { type: ["integer", "null"], minimum: 0 },
     pollAfterMs: { type: ["integer", "null"], minimum: 0 },
   },

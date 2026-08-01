@@ -20,7 +20,7 @@ const TEST_DISPATCHER: CapabilityDispatcherPort = (() => {
   const dispatcher = new CapabilityDispatcher(CAPABILITY_REGISTRY, {
     authorize: async (request) => ({
       allowed:
-        request.audience === "agent" &&
+        (request.audience === "agent" || request.audience === "shared") &&
         request.securityContext.kind === "agent",
     }),
   });
@@ -64,6 +64,7 @@ describe("production Capability Registry", () => {
         formatCapabilityIdentity(definition.identity),
       ),
     ).toEqual([
+      "agent_usage.get@1",
       "agents.current.get@1",
       "artifact_downloads.create@1",
       "artifact_uploads.begin@1",
@@ -73,6 +74,8 @@ describe("production Capability Registry", () => {
       "artifacts.list@1",
       "capabilities.get@1",
       "capabilities.list@1",
+      "cost_valuations.get@1",
+      "cost_valuations.list@1",
       "credentials.audit.export@1",
       "credentials.audit.list@1",
       "credentials.profile.get@1",
@@ -86,6 +89,10 @@ describe("production Capability Registry", () => {
       "credentials.spend_grants.list@1",
       "credentials.spend_grants.revoke@1",
       "credentials.versions.revoke@1",
+      "usage_events.list@1",
+      "usage_records.get@1",
+      "usage_records.list@1",
+      "usage_summaries.get@1",
       "workflow_operations.get@1",
       "workflow_operations.list@1",
       "workflow_run_artifacts.get@1",
@@ -118,7 +125,7 @@ describe("production Capability Registry", () => {
       expect(definition.schemas.input).toMatchObject({ type: "object" });
       expect(definition.schemas.output).toMatchObject({ type: "object" });
       if (
-        definition.audience === "agent" &&
+        (definition.audience === "agent" || definition.audience === "shared") &&
         definition.effect.mutation === "none"
       ) {
         expect(definition.effect).toEqual({
@@ -182,6 +189,7 @@ describe("production Capability Registry", () => {
     });
     const mcpTools = await listMcpCapabilityTools(TEST_DISPATCHER);
     expect(mcpTools.map((tool) => tool.name)).toEqual([
+      "agent_usage.get.v1",
       "agents.current.get.v1",
       "artifact_downloads.create.v1",
       "artifact_uploads.begin.v1",
@@ -191,6 +199,8 @@ describe("production Capability Registry", () => {
       "artifacts.list.v1",
       "capabilities.get.v1",
       "capabilities.list.v1",
+      "cost_valuations.get.v1",
+      "cost_valuations.list.v1",
       "credentials.audit.export.v1",
       "credentials.audit.list.v1",
       "credentials.profile.get.v1",
@@ -204,6 +214,10 @@ describe("production Capability Registry", () => {
       "credentials.spend_grants.list.v1",
       "credentials.spend_grants.revoke.v1",
       "credentials.versions.revoke.v1",
+      "usage_events.list.v1",
+      "usage_records.get.v1",
+      "usage_records.list.v1",
+      "usage_summaries.get.v1",
       "workflow_operations.get.v1",
       "workflow_operations.list.v1",
       "workflow_run_artifacts.get.v1",

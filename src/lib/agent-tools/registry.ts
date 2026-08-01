@@ -198,7 +198,7 @@ export const CAPABILITY_DEFINITION_SCHEMA: JsonSchema = {
   ],
   properties: {
     identity: identitySchema,
-    audience: { type: "string", enum: ["agent", "human"] },
+    audience: { type: "string", enum: ["agent", "human", "shared"] },
     summary: { type: "string", minLength: 1 },
     contractDigest: {
       type: "string",

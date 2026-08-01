@@ -72,6 +72,39 @@ describe("unified capability authorization", () => {
     );
   });
 
+  it("allows a Workspace member to use shared read capabilities", async () => {
+    const db = database("member");
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize(
+      request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "member",
+      }, "shared"),
+    );
+    expect(admission.allowed).toBe(true);
+  });
+
+  it("routes shared Agent reads through deny-by-default Agent authorization", async () => {
+    const db = database(undefined);
+    const human = new HumanCapabilityAuthorizer(db.getDb);
+    const agent: CapabilityAuthorizer = {
+      authorize: vi.fn(async () => ({ allowed: true, operatorTraceRef: "trace_agent" })),
+    };
+    const authorizer = new CompositeCapabilityAuthorizer(agent, human);
+    const admission = await authorizer.authorize(
+      request({
+        kind: "agent",
+        workspaceId: "workspace-1",
+        principalId: "principal-1",
+        keyId: "key-1",
+      }, "shared"),
+    );
+    expect(admission.allowed).toBe(true);
+    expect(agent.authorize).toHaveBeenCalledOnce();
+  });
+
   it("persists cross-audience attempts as denied decisions", async () => {
     const db = database(undefined);
     const human = new HumanCapabilityAuthorizer(db.getDb);

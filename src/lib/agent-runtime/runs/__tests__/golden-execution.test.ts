@@ -39,6 +39,8 @@ import {
 } from "../../artifacts/memory";
 import { ArtifactService } from "../../artifacts/service";
 import { SharpArtifactMediaInspector } from "../../artifacts/storage";
+import { InMemoryUsageRepository } from "../../usage/memory";
+import { UsageLedgerService } from "../../usage/service";
 import { AesGcmWorkflowRunEventCursorCodec } from "../cursor";
 import { createWorkflowRunRegistrations } from "../capabilities";
 import {
@@ -164,7 +166,8 @@ async function setupGoldenRun(options: {
     deletedAt: null,
   });
 
-  const repository = new InMemoryWorkflowRunRepository();
+  const usageRepository = new InMemoryUsageRepository();
+  const repository = new InMemoryWorkflowRunRepository(usageRepository);
   const revisions = new InMemoryWorkflowRunRevisionReader();
   revisions.put(WORKSPACE_ID, {
     id: REVISION_ID,
@@ -175,6 +178,7 @@ async function setupGoldenRun(options: {
     operationRegistryDigest: GOLDEN_WORKFLOW_OPERATION_REGISTRY.digest,
   });
   const queue = new InMemoryWorkflowRunQueue();
+  const usageService = new UsageLedgerService(usageRepository);
   const executors =
     options.executors ??
     (options.createExecutors
@@ -190,6 +194,7 @@ async function setupGoldenRun(options: {
     runCursor(),
     clock,
     artifactService,
+    usageService,
   );
   const authorizer: CapabilityAuthorizer = {
     authorize: async () => ({
@@ -230,6 +235,8 @@ async function setupGoldenRun(options: {
     repository,
     revisions,
     service,
+    usageRepository,
+    usageService,
   };
 }
 
@@ -685,7 +692,7 @@ describe("complete deterministic golden Workflow", () => {
     const base = createDeterministicWorkflowRunExecutorRegistry(
       GOLDEN_WORKFLOW_OPERATION_REGISTRY,
     );
-    const { artifactService, clock, repository, revisions, service } =
+    const { artifactService, clock, repository, revisions, service, usageService } =
       await setupGoldenRun({ executors: base });
     const accepted = await acceptGoldenRun(
       service,
@@ -731,6 +738,7 @@ describe("complete deterministic golden Workflow", () => {
       runCursor(),
       clock,
       artifactService,
+      usageService,
     );
     await expect(
       restarted.executeOne({
@@ -743,6 +751,7 @@ describe("complete deterministic golden Workflow", () => {
   });
 
   it("resumes the same Attempt and Effect Key when generated image storage fails", async () => {
+    let current = new Date(NOW);
     const base = createDeterministicWorkflowRunExecutorRegistry(
       GOLDEN_WORKFLOW_OPERATION_REGISTRY,
     );
@@ -779,7 +788,8 @@ describe("complete deterministic golden Workflow", () => {
       artifactStore,
       repository,
       service,
-    } = await setupGoldenRun({ executors });
+      usageService,
+    } = await setupGoldenRun({ executors, clock: { now: () => new Date(current) } });
     const accepted = await acceptGoldenRun(
       service,
       "golden-artifact-failure-0001",
@@ -856,6 +866,7 @@ describe("complete deterministic golden Workflow", () => {
       { sequence: 5, type: "step.attempt.started" },
     ]);
 
+    current = new Date(current.getTime() + 1_000);
     const recovered = await service.executeOne({
       workspaceId: WORKSPACE_ID,
       runId: accepted.run.id,
@@ -870,6 +881,11 @@ describe("complete deterministic golden Workflow", () => {
     expect(artifactRepository.generatedOrigins.size).toBe(generatedOriginCount + 1);
     expect(providerExecutions).toBe(1);
     expect(providerReconciliations).toBe(1);
+    const recoveredUsage = await usageService.listUsageRecords(WORKSPACE_ID, {
+      stepAttemptId: interruptedAttempts![1]!.id,
+    });
+    expect(recoveredUsage.length).toBeGreaterThan(0);
+    expect(recoveredUsage.every((record) => record.directArtifactId)).toBe(true);
     expect(
       (await service.listEvents({
         workspaceId: WORKSPACE_ID,
@@ -948,6 +964,7 @@ describe("complete deterministic golden Workflow", () => {
       repository,
       revisions,
       service,
+      usageService,
     } = await setupGoldenRun({ executors });
     const accepted = await acceptGoldenRun(
       service,
@@ -977,6 +994,7 @@ describe("complete deterministic golden Workflow", () => {
       runCursor(),
       clock,
       artifactService,
+      usageService,
     );
     const blocked = await restartedService.executeOne({
       workspaceId: WORKSPACE_ID,
@@ -1099,6 +1117,7 @@ describe("complete deterministic golden Workflow", () => {
       repository,
       revisions,
       service,
+      usageService,
     } = await setupGoldenRun({ executors: firstExecutors });
     const accepted = await acceptGoldenRun(
       service,
@@ -1197,6 +1216,7 @@ describe("complete deterministic golden Workflow", () => {
       runCursor(),
       clock,
       artifactService,
+      usageService,
     );
     const recovered = await restartedService.executeOne({
       workspaceId: WORKSPACE_ID,
@@ -1242,6 +1262,7 @@ describe("complete deterministic golden Workflow", () => {
       repository,
       revisions,
       service,
+      usageService,
     } = await setupGoldenRun({ executors: firstExecutors });
     const accepted = await acceptGoldenRun(
       service,
@@ -1325,6 +1346,7 @@ describe("complete deterministic golden Workflow", () => {
       runCursor(),
       clock,
       artifactService,
+      usageService,
     );
     const blocked = await restartedService.executeOne({
       workspaceId: WORKSPACE_ID,
@@ -1533,11 +1555,17 @@ describe("complete deterministic golden Workflow", () => {
       },
       reconcile: async (input) => {
         reconciliations += 1;
+        if (!input.providerOperationRef) {
+          throw new Error("Unknown outcome reconciliation requires a provider reference.");
+        }
         const result = await textBase.execute(input);
         if (result.kind === "legacy") {
           throw new Error("Golden reconciliation cannot return a legacy result.");
         }
-        return result;
+        return {
+          ...result,
+          providerOperationRef: input.providerOperationRef,
+        };
       },
     };
     const executors: WorkflowStepExecutorRegistry = {
@@ -1778,6 +1806,110 @@ describe("complete deterministic golden Workflow", () => {
         }),
       ),
     ).toBe(sourceBefore);
+  });
+  it("settles exactly one immutable usage series per provider-facing Attempt and directly attributes single outputs", async () => {
+    const base = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const executors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) => {
+        const executor = base.get(identity, contractDigest);
+        if (!executor) return undefined;
+        return {
+          provider: executor.provider,
+          providerOperation: executor.providerOperation,
+          model: executor.model,
+          providerResolution: executor.providerResolution,
+          execute: async (input) => {
+            const result = await executor.execute(input);
+            return result.kind === "generated"
+              ? {
+                  ...result,
+                  providerMetadata: {
+                    evidence: {
+                      providerRequestId: result.providerOperationRef,
+                      httpStatus: 200,
+                      providerCode: null,
+                      operatorTraceRef: null,
+                      effectDisposition: "accepted" as const,
+                    },
+                    usage: [
+                      {
+                        dimension: "gemini.tokens.input@1",
+                        unit: "count" as const,
+                        source: "reported" as const,
+                        quantity: "10",
+                      },
+                      {
+                        dimension: "gemini.tokens.output@1",
+                        unit: "count" as const,
+                        source: "reported" as const,
+                        quantity: "20",
+                      },
+                    ],
+                    retryAfterMs: null,
+                    pollAfterMs: null,
+                  },
+                }
+              : result;
+          },
+          reconcile: executor.reconcile?.bind(executor),
+        };
+      },
+      getPinned: (identity, contractDigest, resolution) => {
+        const executor = executors.get(identity, contractDigest);
+        return executor?.providerResolution &&
+          canonicalDigest(executor.providerResolution) === canonicalDigest(resolution)
+          ? executor
+          : undefined;
+      },
+    };
+    const value = await setupGoldenRun({ executors });
+    const accepted = await acceptGoldenRun(
+      value.service,
+      "golden-usage-ledger-0001",
+    );
+    await value.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "usage_text",
+    });
+    const completed = await value.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "usage_image",
+    });
+
+    expect(completed.state).toBe("completed");
+    const records = await value.usageService.listUsageRecords(WORKSPACE_ID);
+    expect(records).toHaveLength(4);
+    expect(new Set(records.map((record) => record.settlementId))).toHaveProperty("size", 2);
+    expect(records.every((record) => record.directArtifactId)).toBe(true);
+    expect(value.usageRepository.valuations.size).toBe(2);
+    expect([...value.usageRepository.valuations.values()].every((item) => item.amount === null)).toBe(true);
+  });
+
+  it("does not persist a provider outcome when its atomic usage append conflicts", async () => {
+    const value = await setupGoldenRun();
+    const accepted = await acceptGoldenRun(value.service, "golden-usage-conflict-0001");
+    const appendPlan = value.usageRepository.appendPlan.bind(value.usageRepository);
+    value.usageRepository.appendPlan = async () => "conflict";
+
+    await expect(value.service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "usage_conflict",
+    })).rejects.toMatchObject({ code: "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE" });
+
+    const attempts = await value.service.listStepAttempts({
+      workspaceId: WORKSPACE_ID,
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+    });
+    expect(attempts.items).toHaveLength(1);
+    expect(attempts.items[0]).toMatchObject({ state: "running", outcome: null });
+    expect(value.usageRepository.usageRecords.size).toBe(0);
+    value.usageRepository.appendPlan = appendPlan;
   });
 });
 

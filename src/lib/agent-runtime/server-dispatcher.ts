@@ -39,6 +39,11 @@ import {
   CREDENTIAL_EFFECT_EXECUTOR,
   PRODUCTION_AGENT_AUTHORIZER,
 } from "./provider-effects";
+import {
+  PRODUCTION_USAGE_SERVICE,
+  PRODUCTION_USAGE_CURSOR,
+  createUsageRegistrations,
+} from "./usage";
 
 export const PRODUCTION_CAPABILITY_AUTHORIZER =
   new CompositeCapabilityAuthorizer(
@@ -61,6 +66,7 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
     GOLDEN_WORKFLOW_OPERATION_REGISTRY,
   ),
   ...createWorkflowRunRegistrations(PRODUCTION_WORKFLOW_RUN_SERVICE),
+  ...createUsageRegistrations(PRODUCTION_USAGE_SERVICE, PRODUCTION_USAGE_CURSOR),
 ]);
 
 export const CAPABILITY_DISPATCHER = new CapabilityDispatcher(

@@ -236,17 +236,23 @@ export function CostDialog({ predictedCost, incurredCost, onClose }: CostDialogP
             </div>
           )}
 
-          {/* Incurred Cost Section - Gemini only */}
+          {/* Local session estimate - Gemini only */}
           <div className="bg-neutral-900 rounded-lg p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-neutral-400">Incurred Cost</span>
+              <span className="text-sm text-neutral-400">Local Session Estimate</span>
               <span className="text-lg font-semibold text-green-400">
                 {formatCost(incurredCost)}
               </span>
             </div>
             <p className="text-xs text-neutral-500">
-              Actual API spend from Gemini generations
+              Local session estimate; not authoritative billing evidence
             </p>
+            <a
+              href="/studio/usage"
+              className="mt-2 inline-block text-xs text-emerald-400 hover:text-emerald-300"
+            >
+              Open Usage Ledger
+            </a>
 
             {incurredCost > 0 && (
               <button

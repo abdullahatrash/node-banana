@@ -165,7 +165,7 @@ export class AgentAuthorizationService implements CapabilityAuthorizer {
     request: CapabilityAuthorizationRequest,
   ): Promise<CapabilityAuthorizationAdmission> {
     if (
-      request.audience !== "agent" ||
+      (request.audience !== "agent" && request.audience !== "shared") ||
       request.securityContext.kind !== "agent"
     ) {
       return deniedAdmission(

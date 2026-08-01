@@ -196,7 +196,7 @@ export interface AgentAuthorizationRepository {
 
 export interface CapabilityAuthorizationRequest {
   securityContext: ResolvedSecurityContext;
-  audience: "agent" | "human";
+  audience: "agent" | "human" | "shared";
   capability: CapabilityIdentity;
   authorizationContractDigest: string;
   resources: AgentResourceRef[];

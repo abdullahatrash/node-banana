@@ -18,6 +18,7 @@ const SAFE_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
 const SAFE_NAME = /^[a-z][a-z0-9_.-]{0,99}$/;
 const USAGE_DIMENSION = /^[a-z][a-z0-9_.-]{0,99}@[1-9][0-9]{0,8}$/;
 const DECIMAL = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
+const OPAQUE_EVIDENCE_REF = /^evidence:sha256:[a-f0-9]{64}$/;
 
 const byteArraySchema = z.custom<Uint8Array>(
   (value) =>
@@ -112,6 +113,7 @@ export type ProviderOutcome<O> =
       outputs: O;
       evidence: SafeProviderEvidence;
       usage: readonly ProviderUsageEvidence[];
+      reportedCost?: { amount: string; currency: string; evidenceRef: string } | null;
     }
   | {
       kind: "failed_known";
@@ -120,6 +122,7 @@ export type ProviderOutcome<O> =
       retryHint: ProviderRetryHint;
       evidence: SafeProviderEvidence;
       usage: readonly ProviderUsageEvidence[];
+      reportedCost?: { amount: string; currency: string; evidenceRef: string } | null;
     }
   | {
       kind: "outcome_unknown";
@@ -128,6 +131,7 @@ export type ProviderOutcome<O> =
       pollAfterMs: number | null;
       evidence: SafeProviderEvidence;
       usage: readonly ProviderUsageEvidence[];
+      reportedCost?: { amount: string; currency: string; evidenceRef: string } | null;
     };
 
 export interface ProviderAdapter<I, O> {
@@ -257,6 +261,21 @@ const retryHintSchema = z.discriminatedUnion("retryable", [
     })
     .strict(),
 ]);
+const reportedCostSchema = z.object({
+  amount: z.string().regex(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  evidenceRef: z.string().trim().min(1).max(500),
+}).strict().nullable().optional();
+
+function opaqueProviderCostEvidenceRef(value: string): string {
+  const ref = value.trim();
+  if (!ref || ref.length > 500 || /[\u0000-\u001f\u007f]/.test(ref)) {
+    throw new ProviderAdapterContractError();
+  }
+  return OPAQUE_EVIDENCE_REF.test(ref)
+    ? ref
+    : `evidence:${canonicalDigest({ kind: "provider_cost", reference: ref })}`;
+}
 
 const rawOutcomeSchema = z.discriminatedUnion("kind", [
   z
@@ -266,6 +285,7 @@ const rawOutcomeSchema = z.discriminatedUnion("kind", [
       outputs: z.unknown(),
       evidence: evidenceSchema,
       usage: z.array(usageSchema),
+      reportedCost: reportedCostSchema,
     })
     .strict(),
   z
@@ -276,6 +296,7 @@ const rawOutcomeSchema = z.discriminatedUnion("kind", [
       retryHint: retryHintSchema,
       evidence: evidenceSchema,
       usage: z.array(usageSchema),
+      reportedCost: reportedCostSchema,
     })
     .strict(),
   z
@@ -286,6 +307,7 @@ const rawOutcomeSchema = z.discriminatedUnion("kind", [
       pollAfterMs: z.number().int().nonnegative().nullable(),
       evidence: evidenceSchema,
       usage: z.array(usageSchema),
+      reportedCost: reportedCostSchema,
     })
     .strict(),
 ]);
@@ -313,6 +335,7 @@ const workflowProviderMetadataSchema = z
   .object({
     evidence: evidenceSchema,
     usage: z.array(usageSchema),
+    reportedCost: reportedCostSchema,
     retryAfterMs: z.number().int().nonnegative().nullable(),
     pollAfterMs: z.number().int().nonnegative().nullable(),
   })
@@ -541,10 +564,19 @@ export function parseProviderOutcome<I, O>(
       contract as ProviderAdapterContract<unknown, unknown>,
       parsed.usage,
     );
+    const safeParsed = parsed.reportedCost
+      ? {
+          ...parsed,
+          reportedCost: {
+            ...parsed.reportedCost,
+            evidenceRef: opaqueProviderCostEvidenceRef(parsed.reportedCost.evidenceRef),
+          },
+        }
+      : parsed;
     const result =
       parsed.kind === "succeeded"
-        ? { ...parsed, outputs: contract.outputSchema.parse(parsed.outputs) }
-        : parsed;
+        ? { ...safeParsed, outputs: contract.outputSchema.parse(parsed.outputs) }
+        : safeParsed;
     assertSecretSafe(result, options.forbiddenSubstrings ?? []);
     return result as ProviderOutcome<O>;
   } catch (error) {
@@ -727,6 +759,7 @@ function metadata<O>(outcome: ProviderOutcome<O>): WorkflowStepProviderMetadata 
   return {
     evidence: outcome.evidence,
     usage: [...outcome.usage],
+    reportedCost: outcome.reportedCost ?? null,
     retryAfterMs:
       outcome.kind === "failed_known" ? outcome.retryHint.retryAfterMs : null,
     pollAfterMs:

@@ -4,6 +4,7 @@ import type {
   ArtifactMetadata,
   ArtifactProviderMetadata,
 } from "../artifacts/types";
+import type { UsageAttributionAppendPlan, UsageLedgerAppendPlan } from "../usage/types";
 
 export type WorkflowRunState =
   | "accepted"
@@ -565,6 +566,7 @@ export interface WorkflowRunRepository {
     fence: bigint;
     providerOperationRef: string;
     providerMetadata?: WorkflowStepProviderMetadata | null;
+    usagePlan?: UsageLedgerAppendPlan | null;
     recordedAt: Date;
   }): Promise<SettleWorkflowStepAttemptResult>;
   settleStepAttempt(input: {
@@ -578,6 +580,7 @@ export interface WorkflowRunRepository {
     providerOperationRef: string;
     finalSnapshot: WorkflowRunFinalSnapshot | null;
     finalSnapshotDigest: string | null;
+    usageAttributionPlan?: UsageAttributionAppendPlan | null;
     completedAt: Date;
     eventIds: {
       generated: string[];
@@ -596,6 +599,7 @@ export interface WorkflowRunRepository {
     providerOperationRef: string | null;
     retryable: boolean;
     providerMetadata?: WorkflowStepProviderMetadata | null;
+    usagePlan: UsageLedgerAppendPlan;
     retryAt: Date | null;
     retryOutboxIntent: WorkflowRunOutboxIntentRecord | null;
     failedAt: Date;
@@ -616,6 +620,7 @@ export interface WorkflowRunRepository {
     failureCode: string;
     providerOperationRef: string | null;
     providerMetadata?: WorkflowStepProviderMetadata | null;
+    usagePlan?: UsageLedgerAppendPlan | null;
     occurredAt: Date;
     eventIds: {
       attemptOutcomeUnknown: string;
@@ -672,6 +677,8 @@ export interface WorkflowRunRepository {
           retryAt: Date | null;
           outboxIntent: WorkflowRunOutboxIntentRecord | null;
         };
+    usagePlan?: UsageLedgerAppendPlan | null;
+    usageAttributionPlan?: UsageAttributionAppendPlan | null;
     occurredAt: Date;
     eventIds: {
       generated: string[];

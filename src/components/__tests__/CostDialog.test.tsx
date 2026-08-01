@@ -175,7 +175,7 @@ describe("CostDialog", () => {
         />
       );
 
-      expect(screen.getByText("Incurred Cost")).toBeInTheDocument();
+      expect(screen.getByText("Local Session Estimate")).toBeInTheDocument();
     });
   });
 
@@ -492,7 +492,13 @@ describe("CostDialog", () => {
         />
       );
 
-      expect(screen.getByText("Actual API spend from Gemini generations")).toBeInTheDocument();
+      expect(
+        screen.getByText("Local session estimate; not authoritative billing evidence"),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Open Usage Ledger" })).toHaveAttribute(
+        "href",
+        "/studio/usage",
+      );
     });
   });
 

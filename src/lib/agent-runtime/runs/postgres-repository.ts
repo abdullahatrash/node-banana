@@ -21,6 +21,11 @@ import {
   workflowStepAttempts,
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import type {
+  UsageAttributionAppendPlan,
+  UsageCommitWriter,
+  UsageLedgerAppendPlan,
+} from "../usage/types";
 import { workflowRunReceiptResult } from "./types";
 import type {
   CompleteWorkflowRunStepResult,
@@ -358,7 +363,56 @@ async function findRun(
 }
 
 export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
-  constructor(private readonly getDatabase: () => Db) {}
+  constructor(
+    private readonly getDatabase: () => Db,
+    private readonly usageWriter?: UsageCommitWriter<Tx>,
+  ) {}
+
+  private async appendUsage(
+    tx: Tx,
+    plan: UsageLedgerAppendPlan | null | undefined,
+    attempt: WorkflowStepAttemptRecord,
+  ): Promise<void> {
+    if (!plan) return;
+    const records = plan.records;
+    if (
+      !this.usageWriter ||
+      records.length === 0 ||
+      records.some(
+        (record) =>
+          record.settlementId !== plan.settlementId ||
+          record.binding.workspaceId !== attempt.workspaceId ||
+          record.binding.runId !== attempt.runId ||
+          record.binding.stepAttemptId !== attempt.id ||
+          record.binding.effectKey !== attempt.effectKey,
+      )
+    ) {
+      throw new Error("Usage append plan is unavailable or does not match the Step Attempt.");
+    }
+    const result = await this.usageWriter.appendPlan(plan, tx);
+    if (result === "conflict") throw new Error("Usage append plan conflicts.");
+  }
+
+  private async appendUsageAttribution(
+    tx: Tx,
+    plan: UsageAttributionAppendPlan | null | undefined,
+    attempt: WorkflowStepAttemptRecord,
+  ): Promise<void> {
+    if (!plan) return;
+    if (
+      !this.usageWriter ||
+      plan.event.workspaceId !== attempt.workspaceId ||
+      plan.event.runId !== attempt.runId ||
+      plan.event.stepAttemptId !== attempt.id ||
+      plan.event.effectKey !== attempt.effectKey
+    ) {
+      throw new Error("Usage attribution plan does not match the Step Attempt.");
+    }
+    const result = await this.usageWriter.appendAttributionPlan(plan, tx);
+    if (result !== "created" && result !== "replayed") {
+      throw new Error("Usage attribution append failed.");
+    }
+  }
 
   async getMutationReceipt(
     input: Parameters<WorkflowRunRepository["getMutationReceipt"]>[0],
@@ -1331,6 +1385,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           ) {
             return { kind: "unavailable" as const };
           }
+          await this.appendUsageAttribution(tx, input.usageAttributionPlan, attempt);
           return {
             kind: "settled" as const,
             run,
@@ -1427,6 +1482,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           return { kind: "stale_fence" as const };
         }
 
+        await this.appendUsageAttribution(tx, input.usageAttributionPlan, attempt);
         const updatedAttempts = await tx
           .update(workflowStepAttempts)
           .set({
@@ -1655,8 +1711,11 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           return { kind: "unavailable" as const };
         }
         if (attempt.outcome?.kind === "succeeded") {
+          await this.appendUsage(tx, input.usagePlan, attempt);
           return { kind: "settled" as const, run, attempt };
         }
+        if (!input.usagePlan) return { kind: "unavailable" as const };
+        await this.appendUsage(tx, input.usagePlan, attempt);
         const updated = await tx
           .update(workflowStepAttempts)
           .set({
@@ -1741,6 +1800,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           attempt.failureCode === input.failureCode &&
           run.failureCode === input.failureCode
         ) {
+          await this.appendUsage(tx, input.usagePlan, attempt);
           return {
             kind: "settled" as const,
             run,
@@ -1781,6 +1841,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           return { kind: "stale_fence" as const };
         }
 
+        await this.appendUsage(tx, input.usagePlan, attempt);
         const updatedAttempts = await tx
           .update(workflowStepAttempts)
           .set({
@@ -2020,6 +2081,9 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         ) {
           return { kind: "unavailable" as const };
         }
+        if (!input.usagePlan && attempt.outcome?.kind !== "succeeded") {
+          return { kind: "unavailable" as const };
+        }
         if (
           !lease ||
           lease.releasedAt !== null ||
@@ -2030,6 +2094,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         ) {
           return { kind: "stale_fence" as const };
         }
+        await this.appendUsage(tx, input.usagePlan, attempt);
         const updatedAttempts = await tx
           .update(workflowStepAttempts)
           .set({
@@ -2587,6 +2652,8 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         ) {
           return { kind: "unavailable" as const };
         }
+        await this.appendUsage(tx, input.usagePlan, attempt);
+        await this.appendUsageAttribution(tx, input.usageAttributionPlan, attempt);
         let sequence = run.nextEventSequence;
         const events: WorkflowRunEventRecord[] = [];
         if (input.resolution.kind === "succeeded") {

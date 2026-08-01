@@ -26,6 +26,10 @@ import type {
   WorkflowStepExecutorRegistry,
   WorkflowRunProviderResolution,
 } from "./types";
+import type {
+  SettleProviderUsageInput,
+  UsageSettlementPort,
+} from "../usage/types";
 
 const ID = /^[a-zA-Z0-9_-]{1,200}$/;
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{8,200}$/;
@@ -228,7 +232,45 @@ export class WorkflowRunService {
     private readonly cursors: WorkflowRunEventCursorCodec,
     private readonly clock: WorkflowRunClock = systemClock,
     private readonly artifacts?: WorkflowRunArtifactPort,
+    private readonly usage?: UsageSettlementPort,
   ) {}
+
+  private usageInput(input: {
+    run: WorkflowRunRecord;
+    attempt: WorkflowStepAttemptRecord;
+    metadata: import("./types").WorkflowStepProviderMetadata | null;
+    providerOperationRef: string | null;
+    outcome: SettleProviderUsageInput["outcome"];
+    endedAt: Date;
+  }): SettleProviderUsageInput {
+    return {
+      binding: {
+        workspaceId: input.run.workspaceId,
+        principalId: input.run.startSnapshot.authorization.principalId,
+        workflowId: input.run.workflowId,
+        runId: input.run.id,
+        stepAttemptId: input.attempt.id,
+        stepId: input.attempt.stepId,
+        attempt: input.attempt.attempt,
+        provider: input.attempt.provider,
+        providerOperation: input.attempt.providerOperation,
+        providerOperationRef: input.providerOperationRef,
+        model: input.attempt.model,
+        effectKey: input.attempt.effectKey,
+      },
+      interval: {
+        startedAt: input.attempt.startedAt,
+        endedAt: input.endedAt,
+      },
+      metadata: input.metadata,
+      providerReportedCost: input.metadata?.reportedCost ?? null,
+      outcome: input.outcome,
+      lineageArtifactIds: input.attempt.inputs
+        .map((item) => item.artifactId)
+        .filter((id): id is string => Boolean(id)),
+      recordedAt: input.endedAt,
+    };
+  }
 
   async start(input: {
     workspaceId: string;
@@ -1143,6 +1185,24 @@ export class WorkflowRunService {
       );
     }
     const now = this.clock.now();
+    const reconciliationUsagePlan = this.usage
+      ? await this.usage.planProviderReconciliation(
+          this.usageInput({
+            run,
+            attempt,
+            metadata: providerResult.providerMetadata ?? null,
+            providerOperationRef: providerResult.providerOperationRef,
+            outcome:
+              providerResult.kind === "failed_known"
+                ? "failed_known"
+                : "succeeded",
+            endedAt: now,
+          }),
+        )
+      : null;
+    let reconciliationAttributionPlan: ReturnType<
+      UsageSettlementPort["planGeneratedArtifactAttribution"]
+    > | null = null;
     let resolution:
       Parameters<WorkflowRunRepository["reconcileStepAttempt"]>[0]["resolution"];
     if (providerResult.kind === "failed_known") {
@@ -1256,6 +1316,35 @@ export class WorkflowRunService {
           sizeBytes: metadata.sizeBytes,
         };
       }
+      const outputArtifacts = Object.entries(outputs);
+      if (
+        this.usage &&
+        outputArtifacts.length === 1
+      ) {
+        reconciliationAttributionPlan =
+          this.usage.planGeneratedArtifactAttribution({
+            workspaceId: run.workspaceId,
+            principalId: run.startSnapshot.authorization.principalId,
+            runId: run.id,
+            stepAttemptId: attempt.id,
+            effectKey: attempt.effectKey,
+            settlementId:
+              reconciliationUsagePlan?.settlementId ??
+              this.usage.settlementIdFor(
+                this.usageInput({
+                  run,
+                  attempt,
+                  metadata: providerResult.providerMetadata ?? null,
+                  providerOperationRef: providerResult.providerOperationRef,
+                  outcome: "succeeded",
+                  endedAt: now,
+                }).binding,
+              ),
+            artifactId: outputArtifacts[0]![1].artifactId,
+            outputName: outputArtifacts[0]![0],
+            recordedAt: now,
+          });
+      }
       const completed = {
         ...attempt,
         state: "completed" as const,
@@ -1359,6 +1448,8 @@ export class WorkflowRunService {
       requestFingerprint,
       receipt,
       resolution,
+      usagePlan: reconciliationUsagePlan,
+      usageAttributionPlan: reconciliationAttributionPlan,
       occurredAt: now,
       eventIds: {
         generated:
@@ -2104,6 +2195,36 @@ export class WorkflowRunService {
         providerMetadata: null,
       });
     }
+    const providerRecordedAt = this.clock.now();
+    const usagePlan = this.usage
+      ? recoveringDurableSuccess
+        ? await this.usage.planProviderReconciliation(
+            this.usageInput({
+              run,
+              attempt: prepared.attempt,
+              metadata: execution.providerMetadata ?? null,
+              providerOperationRef: execution.providerOperationRef,
+              outcome: "succeeded",
+              endedAt: providerRecordedAt,
+            }),
+          )
+        : await this.usage.planProviderOutcome(
+          this.usageInput({
+            run,
+            attempt: prepared.attempt,
+            metadata: execution.providerMetadata ?? null,
+            providerOperationRef: execution.providerOperationRef,
+            outcome: "succeeded",
+            endedAt: providerRecordedAt,
+          }),
+          )
+      : null;
+    if (!usagePlan && !recoveringDurableSuccess) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        "Provider usage settlement is unavailable.",
+      );
+    }
     const providerRecorded =
       await this.repository.recordStepAttemptProviderSuccess({
         workspaceId: run.workspaceId,
@@ -2114,7 +2235,8 @@ export class WorkflowRunService {
         fence: lease.fence,
         providerOperationRef: execution.providerOperationRef,
         providerMetadata: execution.providerMetadata ?? null,
-        recordedAt: this.clock.now(),
+        usagePlan,
+        recordedAt: providerRecordedAt,
       });
     if (providerRecorded.kind !== "settled") {
       throw new WorkflowRunError(
@@ -2127,6 +2249,9 @@ export class WorkflowRunService {
     const durableAttempt = providerRecorded.attempt;
     const outputs: Record<string, import("./types").WorkflowRunArtifactReference> =
       {};
+    let usageAttributionPlan: ReturnType<
+      UsageSettlementPort["planGeneratedArtifactAttribution"]
+    > | null = null;
     try {
       for (const [outputName, output] of Object.entries(
         execution.outputs,
@@ -2209,6 +2334,33 @@ export class WorkflowRunService {
           sizeBytes: metadata.sizeBytes,
         };
       }
+      const outputArtifacts = Object.entries(outputs);
+      if (
+        this.usage &&
+        outputArtifacts.length === 1
+      ) {
+        const usageBinding = this.usageInput({
+          run,
+          attempt: prepared.attempt,
+          metadata: execution.providerMetadata ?? null,
+          providerOperationRef: execution.providerOperationRef,
+          outcome: "succeeded",
+          endedAt: providerRecordedAt,
+        }).binding;
+        usageAttributionPlan = this.usage.planGeneratedArtifactAttribution({
+          workspaceId: run.workspaceId,
+          principalId: run.startSnapshot.authorization.principalId,
+          runId: run.id,
+          stepAttemptId: prepared.attempt.id,
+          effectKey: prepared.attempt.effectKey,
+          settlementId:
+            usagePlan?.settlementId ??
+            this.usage.settlementIdFor(usageBinding),
+          artifactId: outputArtifacts[0]![1].artifactId,
+          outputName: outputArtifacts[0]![0],
+          recordedAt: this.clock.now(),
+        });
+      }
     } catch {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
@@ -2290,6 +2442,7 @@ export class WorkflowRunService {
       finalSnapshotDigest: finalSnapshot
         ? canonicalDigest(finalSnapshot)
         : null,
+      usageAttributionPlan,
       completedAt: completedAttempt.completedAt!,
       eventIds: {
         generated: Object.keys(outputs).map(() => randomUUID()),
@@ -2342,6 +2495,24 @@ export class WorkflowRunService {
       ? new Date(failedAt.getTime() + delay)
       : null;
     const generation = input.run.nextEventSequence + 1;
+    const usagePlan = this.usage
+      ? await this.usage.planProviderOutcome(
+          this.usageInput({
+            run: input.run,
+            attempt: input.attempt,
+            metadata: input.providerMetadata,
+            providerOperationRef: input.providerOperationRef,
+            outcome: "failed_known",
+            endedAt: failedAt,
+          }),
+        )
+      : null;
+    if (!usagePlan) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        "Provider usage settlement is unavailable.",
+      );
+    }
     const failed = await this.repository.failStepAttempt({
       workspaceId: input.run.workspaceId,
       runId: input.run.id,
@@ -2353,6 +2524,7 @@ export class WorkflowRunService {
       providerOperationRef: input.providerOperationRef,
       retryable: input.retryable,
       providerMetadata: input.providerMetadata,
+      usagePlan,
       retryAt,
       retryOutboxIntent: retryAt
         ? {
@@ -2401,6 +2573,36 @@ export class WorkflowRunService {
     providerOperationRef: string | null;
     providerMetadata: import("./types").WorkflowStepProviderMetadata | null;
   }): Promise<WorkflowRunDto> {
+    const occurredAt = this.clock.now();
+    const usagePlan = this.usage
+      ? await (input.attempt.outcome?.kind === "succeeded"
+        ? this.usage.planProviderReconciliation(
+          this.usageInput({
+            run: input.run,
+            attempt: input.attempt,
+            metadata: input.providerMetadata,
+            providerOperationRef: input.providerOperationRef,
+            outcome: "outcome_unknown",
+            endedAt: occurredAt,
+          }),
+        )
+        : this.usage.planProviderOutcome(
+          this.usageInput({
+            run: input.run,
+            attempt: input.attempt,
+            metadata: input.providerMetadata,
+            providerOperationRef: input.providerOperationRef,
+            outcome: "outcome_unknown",
+            endedAt: occurredAt,
+          }),
+        ))
+      : null;
+    if (!this.usage) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        "Provider usage settlement is unavailable.",
+      );
+    }
     const blocked =
       await this.repository.markStepAttemptOutcomeUnknown({
         workspaceId: input.run.workspaceId,
@@ -2412,7 +2614,8 @@ export class WorkflowRunService {
         failureCode: input.failureCode,
       providerOperationRef: input.providerOperationRef,
       providerMetadata: input.providerMetadata,
-        occurredAt: this.clock.now(),
+      usagePlan,
+        occurredAt,
         eventIds: {
           attemptOutcomeUnknown: randomUUID(),
           runOutcomeUnknown: randomUUID(),

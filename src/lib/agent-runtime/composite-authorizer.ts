@@ -24,7 +24,8 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
     const context = request.securityContext;
     return this.database().transaction(async (tx) => {
       const isHumanAdmission =
-        request.audience === "human" && context.kind === "human";
+        (request.audience === "human" || request.audience === "shared") &&
+        context.kind === "human";
       const rows = isHumanAdmission
         ? await tx
             .select({ role: workspaceMembers.role })
@@ -47,7 +48,7 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
       const role = rows[0]?.role;
       const allowed =
         isHumanAdmission &&
-        (role === "owner" || role === "admin") &&
+        (role === "owner" || role === "admin" || role === "member") &&
         role === context.role;
       const reason = !isHumanAdmission
         ? "security_context_mismatch"
@@ -78,7 +79,9 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
             allowed: false,
             code: "CAPABILITY_NOT_AUTHORIZED" as const,
             message:
-              "Credential management requires an active Workspace owner or admin membership.",
+              request.audience === "shared"
+                ? "This Workspace read requires an active membership."
+                : "Credential management requires an active Workspace owner or admin membership.",
             operatorTraceRef: trace,
           };
     });
@@ -94,8 +97,8 @@ export class CompositeCapabilityAuthorizer implements CapabilityAuthorizer {
   authorize(
     request: CapabilityAuthorizationRequest,
   ): Promise<CapabilityAuthorizationAdmission> {
-    return request.audience === "agent" &&
-      request.securityContext.kind === "agent"
+    return request.securityContext.kind === "agent" &&
+      (request.audience === "agent" || request.audience === "shared")
       ? this.agent.authorize(request)
       : this.human.authorize(request);
   }

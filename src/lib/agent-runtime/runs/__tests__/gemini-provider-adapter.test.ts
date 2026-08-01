@@ -11,6 +11,7 @@ import {
   canonicalProviderAdapterContractDigest,
   canonicalProviderSchemaDigest,
   executeProviderEffect,
+  parseProviderOutcome,
 } from "../provider-adapter";
 import { DeterministicProviderFaultKit } from "../testing/provider-adapter-fault-kit";
 import { WorkflowRunExecutorRegistry } from "../executors";
@@ -193,6 +194,41 @@ describe("Gemini BYOK Provider Adapters", () => {
       quantity: "21",
     });
     expect(JSON.stringify(outcome)).not.toContain(credentials.primary.secret);
+  });
+
+  it("converts provider cost references into opaque evidence IDs at the boundary", () => {
+    const outcome = parseProviderOutcome(GEMINI_TEXT_CONTRACT, {
+      kind: "succeeded",
+      providerOperationRef: "gemini-response-cost-1",
+      outputs: {
+        text: {
+          kind: "text",
+          mediaType: "text/plain; charset=utf-8",
+          bytes: new TextEncoder().encode("ok"),
+        },
+      },
+      evidence: {
+        providerRequestId: "request_cost_1",
+        httpStatus: 200,
+        providerCode: null,
+        operatorTraceRef: null,
+        effectDisposition: "accepted",
+      },
+      usage: [{
+        dimension: "gemini.tokens.input@1",
+        unit: "count",
+        source: "reported",
+        quantity: "1",
+      }],
+      reportedCost: {
+        amount: "0.01",
+        currency: "USD",
+        evidenceRef: "https://provider.invalid/invoice?token=secret",
+      },
+    });
+    expect(outcome.reportedCost?.evidenceRef).toMatch(/^evidence:sha256:[a-f0-9]{64}$/);
+    expect(JSON.stringify(outcome)).not.toContain("provider.invalid");
+    expect(JSON.stringify(outcome)).not.toContain("secret");
   });
 
   it("normalizes an inline PNG image without leaking input bytes", async () => {

@@ -26,6 +26,8 @@ import type {
   WorkflowRunStartSnapshot,
 } from "../types";
 import { DrizzleWorkflowRunRepository } from "../postgres-repository";
+import { DrizzleUsageRepository } from "../../usage/postgres-repository";
+import { UsageLedgerService } from "../../usage/service";
 import { DrizzleArtifactRepository } from
   "../../artifacts/postgres-repository";
 import {
@@ -1018,8 +1020,11 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
     const database = drizzle(pool, { schema });
     try {
       const fixture = await database.transaction((tx) => seed(tx));
+      const usageRepository = new DrizzleUsageRepository(() => database as Db);
+      const usageService = new UsageLedgerService(usageRepository);
       const repository = new DrizzleWorkflowRunRepository(
         () => database as Db,
+        usageRepository,
       );
       const acceptedInput = startInput(
         fixture,
@@ -1083,6 +1088,7 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
       expect(prepared.kind).toBe("created");
       if (prepared.kind !== "created") return;
 
+      const failedAt = new Date();
       const failureInput = {
         workspaceId: fixture.workspaceId,
         runId: accepted.run.id,
@@ -1095,7 +1101,27 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
         retryable: false,
         retryAt: null,
         retryOutboxIntent: null,
-        failedAt: new Date(),
+        usagePlan: await usageService.planProviderOutcome({
+          binding: {
+            workspaceId: fixture.workspaceId,
+            principalId: accepted.run.startSnapshot.authorization.principalId,
+            workflowId: fixture.workflowId,
+            runId: accepted.run.id,
+            stepAttemptId: attemptId,
+            stepId: step.id,
+            attempt: 1,
+            provider: "runtime",
+            providerOperation: "digest_text",
+            providerOperationRef: null,
+            model: "sha256",
+            effectKey,
+          },
+          interval: { startedAt: leaseNow, endedAt: failedAt },
+          metadata: null,
+          outcome: "failed_known",
+          recordedAt: failedAt,
+        }),
+        failedAt,
         eventIds: {
           attemptFailed: randomUUID(),
           retryScheduled: null,

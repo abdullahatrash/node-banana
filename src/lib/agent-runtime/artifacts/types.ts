@@ -76,6 +76,11 @@ export interface ArtifactProviderMetadata {
         quantity: null;
       }
   >;
+  reportedCost?: {
+    amount: string;
+    currency: string;
+    evidenceRef: string;
+  } | null;
   retryAfterMs: number | null;
   pollAfterMs: number | null;
 }

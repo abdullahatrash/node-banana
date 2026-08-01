@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { workflowRunReceiptResult } from "./types";
 import type {
+  UsageAttributionAppendPlan,
+  UsageCommitWriter,
+  UsageLedgerAppendPlan,
+} from "../usage/types";
+import type {
   AcquireWorkflowRunLeaseResult,
   CompleteWorkflowRunStepResult,
   PrepareWorkflowStepAttemptResult,
@@ -42,6 +47,7 @@ function clone<T>(value: T): T {
 export class InMemoryWorkflowRunRepository
   implements WorkflowRunRepository
 {
+  constructor(private readonly usageWriter?: UsageCommitWriter<void>) {}
   readonly runs = new Map<string, WorkflowRunRecord>();
   readonly events = new Map<string, WorkflowRunEventRecord[]>();
   readonly receipts = new Map<string, WorkflowRunMutationReceiptRecord>();
@@ -52,6 +58,68 @@ export class InMemoryWorkflowRunRepository
   failNextStart = false;
   failNextFinish = false;
   failNextMarkOutboxDelivered = false;
+
+  private async appendUsage(
+    plan: UsageLedgerAppendPlan | null | undefined,
+    attempt: WorkflowStepAttemptRecord,
+  ): Promise<boolean> {
+    if (!plan) return true;
+    if (
+      !this.usageWriter ||
+      plan.records.length === 0 ||
+      plan.records.some(
+        (record) =>
+          record.settlementId !== plan.settlementId ||
+          record.binding.workspaceId !== attempt.workspaceId ||
+          record.binding.runId !== attempt.runId ||
+          record.binding.stepAttemptId !== attempt.id ||
+          record.binding.effectKey !== attempt.effectKey,
+      )
+    ) return false;
+    return (await this.usageWriter.appendPlan(plan)) !== "conflict";
+  }
+
+  private async appendUsageAttribution(
+    plan: UsageAttributionAppendPlan | null | undefined,
+    attempt: WorkflowStepAttemptRecord,
+  ): Promise<boolean> {
+    if (!plan) return true;
+    if (
+      !this.usageWriter ||
+      plan.event.workspaceId !== attempt.workspaceId ||
+      plan.event.runId !== attempt.runId ||
+      plan.event.stepAttemptId !== attempt.id ||
+      plan.event.effectKey !== attempt.effectKey
+    ) return false;
+    const result = await this.usageWriter.appendAttributionPlan(plan);
+    return result === "created" || result === "replayed";
+  }
+
+  private async appendUsageBundle(
+    usagePlan: UsageLedgerAppendPlan | null | undefined,
+    attributionPlan: UsageAttributionAppendPlan | null | undefined,
+    attempt: WorkflowStepAttemptRecord,
+  ): Promise<boolean> {
+    if (!usagePlan && !attributionPlan) return true;
+    if (!this.usageWriter) return false;
+    if (
+      usagePlan?.records.some(
+        (record) =>
+          record.binding.workspaceId !== attempt.workspaceId ||
+          record.binding.runId !== attempt.runId ||
+          record.binding.stepAttemptId !== attempt.id ||
+          record.binding.effectKey !== attempt.effectKey,
+      ) ||
+      (attributionPlan && (
+        attributionPlan.event.workspaceId !== attempt.workspaceId ||
+        attributionPlan.event.runId !== attempt.runId ||
+        attributionPlan.event.stepAttemptId !== attempt.id ||
+        attributionPlan.event.effectKey !== attempt.effectKey
+      ))
+    ) return false;
+    const result = await this.usageWriter.appendBundle({ usagePlan, attributionPlan });
+    return result === "created" || result === "replayed";
+  }
 
   async getMutationReceipt(
     input: Parameters<WorkflowRunRepository["getMutationReceipt"]>[0],
@@ -594,6 +662,14 @@ export class InMemoryWorkflowRunRepository
     if (!entry) return { kind: "unavailable" };
     const [attemptKey, attempt] = entry;
     if (attempt.state === "completed") {
+      if (
+        !(await this.appendUsageAttribution(
+          input.usageAttributionPlan,
+          attempt,
+        ))
+      ) {
+        return { kind: "unavailable" };
+      }
       return {
         kind: "settled",
         run: clone(run),
@@ -605,6 +681,14 @@ export class InMemoryWorkflowRunRepository
       Boolean(input.finalSnapshot) !== Boolean(input.finalSnapshotDigest) ||
       (input.finalSnapshot &&
         canonicalDigest(input.finalSnapshot) !== input.finalSnapshotDigest)
+    ) {
+      return { kind: "unavailable" };
+    }
+    if (
+      !(await this.appendUsageAttribution(
+        input.usageAttributionPlan,
+        attempt,
+      ))
     ) {
       return { kind: "unavailable" };
     }
@@ -741,6 +825,16 @@ export class InMemoryWorkflowRunRepository
     ) {
       return { kind: "unavailable" };
     }
+    if (attempt.outcome?.kind === "succeeded") {
+      if (!(await this.appendUsage(input.usagePlan, attempt))) {
+        return { kind: "unavailable" };
+      }
+      return { kind: "settled", run: clone(run), attempt: clone(attempt) };
+    }
+    if (!input.usagePlan) return { kind: "unavailable" };
+    if (!(await this.appendUsage(input.usagePlan, attempt))) {
+      return { kind: "unavailable" };
+    }
     const recorded = immutable(
       clone({
         ...attempt,
@@ -782,6 +876,9 @@ export class InMemoryWorkflowRunRepository
       attempt.failureCode === input.failureCode &&
       run.failureCode === input.failureCode
     ) {
+      if (!(await this.appendUsage(input.usagePlan, attempt))) {
+        return { kind: "unavailable" };
+      }
       return {
         kind: "settled",
         run: clone(run),
@@ -804,6 +901,9 @@ export class InMemoryWorkflowRunRepository
       lease.expiresAt <= input.failedAt
     ) {
       return { kind: "stale_fence" };
+    }
+    if (!(await this.appendUsage(input.usagePlan, attempt))) {
+      return { kind: "unavailable" };
     }
     const failedAttempt = immutable(
       clone({
@@ -952,6 +1052,12 @@ export class InMemoryWorkflowRunRepository
       lease.expiresAt <= input.occurredAt
     ) {
       return { kind: "stale_fence" };
+    }
+    if (!input.usagePlan && attempt.outcome?.kind !== "succeeded") {
+      return { kind: "unavailable" };
+    }
+    if (!(await this.appendUsage(input.usagePlan, attempt))) {
+      return { kind: "unavailable" };
     }
     const unknownAttempt = immutable(
       clone({
@@ -1296,12 +1402,6 @@ export class InMemoryWorkflowRunRepository
         nextEventSequence: sequence,
         updatedAt: input.occurredAt,
       }));
-      if (input.resolution.outboxIntent) {
-        this.outbox.set(
-          input.resolution.outboxIntent.id,
-          immutable(clone(input.resolution.outboxIntent)),
-        );
-      }
     } else {
       events.push(
         {
@@ -1405,12 +1505,19 @@ export class InMemoryWorkflowRunRepository
         nextEventSequence: sequence,
         updatedAt: input.occurredAt,
       }));
-      if (input.resolution.outboxIntent) {
-        this.outbox.set(
-          input.resolution.outboxIntent.id,
-          immutable(clone(input.resolution.outboxIntent)),
-        );
-      }
+    }
+    if (!(await this.appendUsageBundle(
+      input.usagePlan,
+      input.usageAttributionPlan,
+      attempt,
+    ))) {
+      return { kind: "unavailable" as const };
+    }
+    if (input.resolution.outboxIntent) {
+      this.outbox.set(
+        input.resolution.outboxIntent.id,
+        immutable(clone(input.resolution.outboxIntent)),
+      );
     }
     this.stepAttempts.set(attemptKey, nextAttempt);
     this.runs.set(key, nextRun);

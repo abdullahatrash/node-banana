@@ -63,7 +63,7 @@ export interface CapabilityErrorContract {
 
 export interface CapabilityDefinition {
   identity: CapabilityIdentity;
-  audience: "agent" | "human";
+  audience: "agent" | "human" | "shared";
   summary: string;
   contractDigest: string;
   lifecycle: CapabilityLifecycle;
@@ -160,7 +160,7 @@ export interface CapabilityHandlerContext extends CapabilityDispatchContext {
 
 export interface CapabilityRegistration<Input = unknown, Output = unknown> {
   identity: CapabilityIdentity;
-  audience?: "agent" | "human";
+  audience?: "agent" | "human" | "shared";
   summary: string;
   lifecycle: CapabilityLifecycle;
   input: z.ZodType<Input>;

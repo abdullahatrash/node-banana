@@ -19,9 +19,10 @@ import type {
 import { DrizzleWorkflowRunRepository } from "./postgres-repository";
 import { DurableWorkflowRunQueue } from "./queue";
 import { WorkflowRunService } from "./service";
+import { PRODUCTION_USAGE_REPOSITORY, PRODUCTION_USAGE_SERVICE } from "../usage/production";
 
 export const PRODUCTION_WORKFLOW_RUN_SERVICE = new WorkflowRunService(
-  new DrizzleWorkflowRunRepository(getDb),
+  new DrizzleWorkflowRunRepository(getDb, PRODUCTION_USAGE_REPOSITORY),
   new DrizzleWorkflowRevisionRepository(getDb),
   new DurableWorkflowRunQueue(),
   WorkflowRunExecutorRegistry.createProduction(
@@ -36,6 +37,7 @@ export const PRODUCTION_WORKFLOW_RUN_SERVICE = new WorkflowRunService(
   ),
   undefined,
   PRODUCTION_ARTIFACT_SERVICE,
+  PRODUCTION_USAGE_SERVICE,
 );
 
 export async function executeProductionWorkflowRun(input: {
