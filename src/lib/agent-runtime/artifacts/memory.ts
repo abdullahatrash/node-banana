@@ -589,6 +589,17 @@ export class InMemoryArtifactContentStore implements ArtifactContentStore {
     return { storageKey };
   }
 
+  async readContent(input: { storageKey: string }) {
+    const found = this.content.get(input.storageKey);
+    if (!found) throw new Error("content unavailable");
+    return {
+      chunks: (async function* () {
+        yield Uint8Array.from(found.bytes);
+      })(),
+      mediaType: found.mediaType,
+    };
+  }
+
   async createDownloadHandoff(input: {
     storageKey: string;
     mediaType: string;

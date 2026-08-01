@@ -8,6 +8,7 @@ import { PROVIDER_ADAPTER_MANIFEST } from "@/lib/provider-adapters/manifest";
 import { WorkflowRunExecutorRegistry } from "../executors";
 import {
   createWorkflowStepExecutorFromProviderAdapter,
+  validateProviderAdapterContract,
   type ProviderAdapter,
   type WorkflowProviderOutputs,
 } from "../provider-adapter";
@@ -111,7 +112,9 @@ describe("Provider Adapter conformance catalog", () => {
     const modules = conformanceSubjects.map((subject) => subject.module);
     expect(new Set(modules).size).toBe(modules.length);
     expect(modules).toEqual(
-      PROVIDER_ADAPTER_MANIFEST.map((entry) => entry.module),
+      PROVIDER_ADAPTER_MANIFEST.filter(
+        (entry) => entry.provider === "conformance",
+      ).map((entry) => entry.module),
     );
   });
 });
@@ -138,6 +141,7 @@ describe("Provider Adapter runtime bridge", () => {
       }),
     });
     const executor = createWorkflowStepExecutorFromProviderAdapter(
+      scriptedSubject.module,
       new ScriptedProviderAdapter(transport) as ProviderAdapter<
         { prompt: string },
         WorkflowProviderOutputs
@@ -182,6 +186,7 @@ describe("Provider Adapter runtime bridge", () => {
   it("does not substitute an Effect Key for a missing provider operation reference", async () => {
     const transport = new DeterministicProviderFaultKit();
     const executor = createWorkflowStepExecutorFromProviderAdapter(
+      scriptedSubject.module,
       new ScriptedProviderAdapter(transport) as ProviderAdapter<
         { prompt: string },
         WorkflowProviderOutputs
@@ -202,15 +207,24 @@ describe("Provider Adapter runtime bridge", () => {
     expect(transport.observationCalls).toHaveLength(0);
   });
 
-  it("rejects registration when the provider has no proven Effect Key support", () => {
+  it("accepts unsupported Effect Keys only behind the durable at-most-once guard", () => {
     const transport = new DeterministicProviderFaultKit();
     const base = new ScriptedProviderAdapter(transport);
     const unsupported = {
       ...base,
-      contract: { ...base.contract, effectKeySupport: "unsupported" as const },
+      contract: {
+        ...base.contract,
+        effectKeySupport: "unsupported" as const,
+        launchSafety: {
+          mode: "durable_at_most_once" as const,
+          guard: "workflow-step-attempt/v1" as const,
+          replay: "never_launch" as const,
+        },
+      },
       execute: base.execute.bind(base),
       observe: base.observe.bind(base),
     } as ProviderAdapter<{ prompt: string }, WorkflowProviderOutputs>;
+    expect(() => validateProviderAdapterContract(unsupported.contract)).not.toThrow();
     expect(() =>
       new WorkflowRunExecutorRegistry().registerProviderAdapter(
         scriptedSubject.module,
@@ -219,6 +233,6 @@ describe("Provider Adapter runtime bridge", () => {
         unsupported,
         () => ({ intent: { prompt: "Never launched." }, credentials: {} }),
       ),
-    ).toThrow("Provider Adapter must support the runtime Effect Key");
+    ).toThrow(TypeError);
   });
 });

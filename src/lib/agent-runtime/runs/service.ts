@@ -22,7 +22,9 @@ import type {
   WorkflowStepAttemptDto,
   WorkflowStepAttemptInput,
   WorkflowStepAttemptRecord,
+  WorkflowStepExecutor,
   WorkflowStepExecutorRegistry,
+  WorkflowRunProviderResolution,
 } from "./types";
 
 const ID = /^[a-zA-Z0-9_-]{1,200}$/;
@@ -39,6 +41,47 @@ const systemClock: WorkflowRunClock = { now: () => new Date() };
 
 function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function executorResolution(
+  executor: WorkflowStepExecutor,
+  step: WorkflowRunRecord["startSnapshot"]["definition"]["steps"][number],
+): Omit<WorkflowRunProviderResolution, "stepId"> {
+  return structuredClone(
+    executor.providerResolution ?? {
+      adapterModule: "runtime/legacy-executor",
+      adapterContractDigest: canonicalDigest({
+        schema: "runtime-step-executor/v1",
+        operationIdentity: step.operation.identity,
+        operationContractDigest: step.operation.contractDigest,
+        provider: executor.provider,
+        providerOperation: executor.providerOperation,
+        model: executor.model,
+      }),
+      provider: executor.provider,
+      providerOperation: executor.providerOperation,
+      model: executor.model,
+      effectKeySupport: "native",
+      observation: executor.reconcile ? "provider_operation_ref" : "none",
+      launchSafety: {
+        mode: "native_effect_key",
+        guard: "workflow-step-attempt/v1",
+        replay: "provider_deduplicated",
+      },
+    },
+  );
+}
+
+function matchesPinnedExecutor(
+  executor: WorkflowStepExecutor | undefined,
+  step: WorkflowRunRecord["startSnapshot"]["definition"]["steps"][number],
+  pinned: Omit<WorkflowRunProviderResolution, "stepId">,
+): executor is WorkflowStepExecutor {
+  return Boolean(
+    executor &&
+      canonicalDigest(executorResolution(executor, step)) ===
+        canonicalDigest(pinned),
+  );
 }
 
 function identifier(value: string, label: string): string {
@@ -242,15 +285,21 @@ export class WorkflowRunService {
       Object.values(revision.definition.inputs).filter(
         (definition) => definition.kind === "image",
       ).length === 1;
-    if (
-      (!isLegacy && !isGolden) ||
-      steps.some(
-        (step) =>
-          !this.executors.get(
+    const resolvedExecutors = steps.map((step) =>
+      this.executors.resolve
+        ? this.executors.resolve(
+            step.operation.identity,
+            step.operation.contractDigest,
+            step.config,
+          )
+        : this.executors.get(
             step.operation.identity,
             step.operation.contractDigest,
           ),
-      )
+    );
+    if (
+      (!isLegacy && !isGolden) ||
+      resolvedExecutors.some((executor) => !executor)
     ) {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
@@ -362,7 +411,7 @@ export class WorkflowRunService {
     }
 
     const snapshot: WorkflowRunStartSnapshot = {
-      schema: "workflow-run-start-snapshot/v1",
+      schema: "workflow-run-start-snapshot/v2",
       workflowId,
       workflowRevisionId: revision.id,
       workflowRevision: revision.revision,
@@ -374,6 +423,10 @@ export class WorkflowRunService {
         stepId: step.id,
         identity: step.operation.identity,
         contractDigest: step.operation.contractDigest,
+      })),
+      providerResolutions: steps.map((step, index) => ({
+        stepId: step.id,
+        ...executorResolution(resolvedExecutors[index]!, step),
       })),
       artifactReferences,
       credentialReferences: steps.flatMap((step) =>
@@ -565,6 +618,15 @@ export class WorkflowRunService {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_UNAVAILABLE",
         "The source Workflow Run is unavailable.",
+      );
+    }
+    if (
+      source.startSnapshot.schema !== "workflow-run-start-snapshot/v2" ||
+      !source.startSnapshot.providerResolutions?.length
+    ) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "Legacy Runs without immutable provider resolutions cannot be retried.",
       );
     }
     if (source.state === "outcome_unknown") {
@@ -966,17 +1028,40 @@ export class WorkflowRunService {
     const step = run.startSnapshot.definition.steps.find(
       (candidate) => candidate.id === attempt.stepId,
     )!;
-    const executor = this.executors.get(
-      step.operation.identity,
-      step.operation.contractDigest,
+    const providerResolution = run.startSnapshot.providerResolutions?.find(
+      (candidate) => candidate.stepId === step.id,
     );
+    if (!providerResolution) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
+        "The Run has no immutable provider resolution for this step.",
+      );
+    }
+    const { stepId: _stepId, ...pinnedResolution } = providerResolution;
+    const selectedExecutor = this.executors.getPinned
+      ? this.executors.getPinned(
+          step.operation.identity,
+          step.operation.contractDigest,
+          pinnedResolution,
+        )
+      : this.executors.get(
+          step.operation.identity,
+          step.operation.contractDigest,
+        );
+    const executor = matchesPinnedExecutor(
+      selectedExecutor,
+      step,
+      pinnedResolution,
+    )
+      ? selectedExecutor
+      : undefined;
     if (!executor?.reconcile) {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_RECONCILIATION_PENDING",
         "The provider adapter cannot yet reconcile this effect.",
       );
     }
-    const completedByStep = new Map([
+    const completedByStep = new Map<string, WorkflowStepAttemptRecord>([
       ...(run.derivation?.reusedOutputs.map((reused) => [
         reused.stepId,
         {
@@ -1025,8 +1110,10 @@ export class WorkflowRunService {
       completedByStep,
     );
     const providerResult = await executor.reconcile({
+      workspaceId: run.workspaceId,
       runId,
       stepAttemptId: attempt.id,
+      attempt: attempt.attempt,
       effectKey: attempt.effectKey,
       intentDigest: attempt.intentDigest,
       providerOperationRef: attempt.providerOperationRef,
@@ -1081,6 +1168,7 @@ export class WorkflowRunService {
         providerOperationRef: providerResult.providerOperationRef,
         failureCode: providerResult.failureCode,
         retryable,
+        providerMetadata: providerResult.providerMetadata ?? null,
         retryAt,
         outboxIntent: retryable
           ? {
@@ -1150,6 +1238,7 @@ export class WorkflowRunService {
             providerOperationRef: providerResult.providerOperationRef,
             model: attempt.model,
             intentDigest: attempt.intentDigest,
+            providerMetadata: providerResult.providerMetadata ?? null,
           },
           lineageInputs: lineage.map((item) => ({
             port: item.port,
@@ -1172,6 +1261,7 @@ export class WorkflowRunService {
         state: "completed" as const,
         outputs,
         providerOperationRef: providerResult.providerOperationRef,
+        providerMetadata: providerResult.providerMetadata ?? null,
       };
       const completedAttempts = [
         ...attempts.filter((candidate) => candidate.state === "completed"),
@@ -1217,6 +1307,7 @@ export class WorkflowRunService {
       resolution = {
         kind: "succeeded",
         providerOperationRef: providerResult.providerOperationRef,
+        providerMetadata: providerResult.providerMetadata ?? null,
         outputs,
         finalSnapshot,
         finalSnapshotDigest: finalSnapshot ? canonicalDigest(finalSnapshot) : null,
@@ -1555,8 +1646,10 @@ export class WorkflowRunService {
       }
       const execution = await this.executeWithLeaseRenewal(lease, () =>
         executor.execute({
+          workspaceId: run.workspaceId,
           runId: run.id,
           stepAttemptId: `legacy_${run.id}`,
+          attempt: 1,
           effectKey: `workflow-effect:v1:${run.workspaceId}:${run.id}:${step.id}:1`,
           intentDigest: canonicalDigest({ text }),
           snapshot: structuredClone(run.startSnapshot),
@@ -1766,10 +1859,33 @@ export class WorkflowRunService {
         "The Run has no executable step but is not terminal.",
       );
     }
-    const executor = this.executors.get(
-      step.operation.identity,
-      step.operation.contractDigest,
+    const providerResolution = run.startSnapshot.providerResolutions?.find(
+      (candidate) => candidate.stepId === step.id,
     );
+    if (!providerResolution) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
+        "Legacy golden Runs without a pinned provider resolution cannot execute.",
+      );
+    }
+    const { stepId: _stepId, ...pinnedResolution } = providerResolution;
+    const selectedExecutor = this.executors.getPinned
+      ? this.executors.getPinned(
+          step.operation.identity,
+          step.operation.contractDigest,
+          pinnedResolution,
+        )
+      : this.executors.get(
+          step.operation.identity,
+          step.operation.contractDigest,
+        );
+    const executor = matchesPinnedExecutor(
+      selectedExecutor,
+      step,
+      pinnedResolution,
+    )
+      ? selectedExecutor
+      : undefined;
     if (!executor) {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
@@ -1784,6 +1900,7 @@ export class WorkflowRunService {
     const intentDigest = canonicalDigest({
       operationIdentity: step.operation.identity,
       operationContractDigest: step.operation.contractDigest,
+      providerResolution,
       config: step.config,
       inputs: Object.fromEntries(
         Object.entries(resolved)
@@ -1824,12 +1941,17 @@ export class WorkflowRunService {
       provider: executor.provider,
       providerOperation: executor.providerOperation,
       model: executor.model,
+      providerAdapterModule: providerResolution.adapterModule,
+      providerAdapterContractDigest:
+        providerResolution.adapterContractDigest,
+      launchSafety: structuredClone(providerResolution.launchSafety),
       intentDigest,
       effectKey,
       inputs: lineage,
       outputs: null,
       providerOperationRef: null,
       outcome: null,
+      providerMetadata: null,
       reconciliation: null,
       failureCode: null,
       startedAt: now,
@@ -1878,8 +2000,10 @@ export class WorkflowRunService {
           execution = parseWorkflowStepExecutionResult(
             await this.executeWithLeaseRenewal(lease, () =>
               executor.reconcile!({
+                workspaceId: run.workspaceId,
                 runId: run.id,
                 stepAttemptId: prepared.attempt.id,
+                attempt: prepared.attempt.attempt,
                 effectKey: prepared.attempt.effectKey,
                 intentDigest: prepared.attempt.intentDigest,
                 providerOperationRef: prepared.attempt.providerOperationRef,
@@ -1891,16 +2015,22 @@ export class WorkflowRunService {
           );
         }
       } else {
+        const invocationInputs =
+          providerResolution.provider === "gemini"
+            ? await this.hydrateStepInputBytes(run.workspaceId, resolved)
+            : resolved;
         execution = parseWorkflowStepExecutionResult(
           await this.executeWithLeaseRenewal(lease, () =>
             executor.execute({
+              workspaceId: run.workspaceId,
               runId: run.id,
               stepAttemptId: prepared.attempt.id,
+              attempt: prepared.attempt.attempt,
               effectKey: prepared.attempt.effectKey,
               intentDigest: prepared.attempt.intentDigest,
               snapshot: structuredClone(run.startSnapshot),
               step: structuredClone(step),
-              inputs: structuredClone(resolved),
+              inputs: structuredClone(invocationInputs),
             }),
           ),
         );
@@ -1919,6 +2049,7 @@ export class WorkflowRunService {
           attempt: prepared.attempt,
           failureCode: "PROVIDER_RECONCILIATION_UNAVAILABLE",
           providerOperationRef: prepared.attempt.providerOperationRef,
+          providerMetadata: null,
         });
       }
       return this.failGoldenStepAttempt({
@@ -1928,6 +2059,7 @@ export class WorkflowRunService {
         failureCode: PROVIDER_FAILURE_CODE,
         providerOperationRef: null,
         retryable: false,
+        providerMetadata: null,
       });
     }
     if (recoveringDurableSuccess && execution.kind !== "generated") {
@@ -1937,6 +2069,7 @@ export class WorkflowRunService {
         attempt: prepared.attempt,
         failureCode: "PROVIDER_SUCCESS_OUTPUTS_UNAVAILABLE",
         providerOperationRef: prepared.attempt.providerOperationRef,
+        providerMetadata: prepared.attempt.providerMetadata ?? null,
       });
     }
     if (execution.kind === "failed_known") {
@@ -1947,6 +2080,7 @@ export class WorkflowRunService {
         failureCode: execution.failureCode,
         providerOperationRef: execution.providerOperationRef,
         retryable: execution.retryable,
+        providerMetadata: execution.providerMetadata ?? null,
       });
     }
     if (execution.kind === "outcome_unknown") {
@@ -1956,6 +2090,7 @@ export class WorkflowRunService {
         attempt: prepared.attempt,
         failureCode: execution.failureCode,
         providerOperationRef: execution.providerOperationRef,
+        providerMetadata: execution.providerMetadata ?? null,
       });
     }
     if (execution.kind !== "generated") {
@@ -1966,6 +2101,7 @@ export class WorkflowRunService {
         failureCode: PROVIDER_FAILURE_CODE,
         providerOperationRef: null,
         retryable: false,
+        providerMetadata: null,
       });
     }
     const providerRecorded =
@@ -1977,6 +2113,7 @@ export class WorkflowRunService {
         token: lease.token,
         fence: lease.fence,
         providerOperationRef: execution.providerOperationRef,
+        providerMetadata: execution.providerMetadata ?? null,
         recordedAt: this.clock.now(),
       });
     if (providerRecorded.kind !== "settled") {
@@ -2054,6 +2191,7 @@ export class WorkflowRunService {
             providerOperationRef: execution.providerOperationRef,
             model: durableAttempt.model,
             intentDigest: durableAttempt.intentDigest,
+            providerMetadata: execution.providerMetadata ?? null,
           },
           lineageInputs: lineage.map((lineageInput) => ({
             port: lineageInput.port,
@@ -2082,6 +2220,7 @@ export class WorkflowRunService {
       state: "completed",
       outputs,
       providerOperationRef: execution.providerOperationRef,
+      providerMetadata: execution.providerMetadata ?? null,
       outcome: {
         kind: "succeeded",
         providerOperationRef: execution.providerOperationRef,
@@ -2180,6 +2319,7 @@ export class WorkflowRunService {
     failureCode: string;
     providerOperationRef: string | null;
     retryable: boolean;
+    providerMetadata: import("./types").WorkflowStepProviderMetadata | null;
   }): Promise<WorkflowRunDto> {
     const step = input.run.startSnapshot.definition.steps.find(
       (candidate) => candidate.id === input.attempt.stepId,
@@ -2212,6 +2352,7 @@ export class WorkflowRunService {
       failureCode: input.failureCode,
       providerOperationRef: input.providerOperationRef,
       retryable: input.retryable,
+      providerMetadata: input.providerMetadata,
       retryAt,
       retryOutboxIntent: retryAt
         ? {
@@ -2258,6 +2399,7 @@ export class WorkflowRunService {
     attempt: WorkflowStepAttemptRecord;
     failureCode: string;
     providerOperationRef: string | null;
+    providerMetadata: import("./types").WorkflowStepProviderMetadata | null;
   }): Promise<WorkflowRunDto> {
     const blocked =
       await this.repository.markStepAttemptOutcomeUnknown({
@@ -2268,7 +2410,8 @@ export class WorkflowRunService {
         token: input.lease.token,
         fence: input.lease.fence,
         failureCode: input.failureCode,
-        providerOperationRef: input.providerOperationRef,
+      providerOperationRef: input.providerOperationRef,
+      providerMetadata: input.providerMetadata,
         occurredAt: this.clock.now(),
         eventIds: {
           attemptOutcomeUnknown: randomUUID(),
@@ -2333,6 +2476,7 @@ export class WorkflowRunService {
             sizeBytes: bytes.length,
             width: null,
             height: null,
+            source,
           };
         } else {
           artifactId = run.startSnapshot.artifactReferences.find(
@@ -2364,6 +2508,7 @@ export class WorkflowRunService {
           sizeBytes: found.artifact.sizeBytes,
           width: found.artifact.width,
           height: found.artifact.height,
+          source,
         };
       }
       const value = resolved[port];
@@ -2382,5 +2527,21 @@ export class WorkflowRunService {
       });
     }
     return { resolved, lineage };
+  }
+
+  private async hydrateStepInputBytes(
+    workspaceId: string,
+    inputs: Record<string, ResolvedWorkflowStepInput>,
+  ): Promise<Record<string, ResolvedWorkflowStepInput>> {
+    const hydrated = structuredClone(inputs);
+    for (const value of Object.values(hydrated)) {
+      if (value.kind !== "image" || !value.artifactId) continue;
+      if (!this.artifacts?.readArtifactBytes) continue;
+      value.bytes = await this.artifacts.readArtifactBytes({
+        workspaceId,
+        artifactId: value.artifactId,
+      });
+    }
+    return hydrated;
   }
 }

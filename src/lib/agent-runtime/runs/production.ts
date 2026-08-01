@@ -10,7 +10,12 @@ import {
   AesGcmWorkflowRunEventCursorCodec,
   workflowRunCursorKeysFromEnvironment,
 } from "./cursor";
-import { createDeterministicWorkflowRunExecutorRegistry } from "./executors";
+import { WorkflowRunExecutorRegistry } from "./executors";
+import { createGeminiInvocationBoundary } from "../provider-effects";
+import type {
+  GeminiImageIntent,
+  GeminiTextIntent,
+} from "@/lib/provider-adapters/gemini/generate-content";
 import { DrizzleWorkflowRunRepository } from "./postgres-repository";
 import { DurableWorkflowRunQueue } from "./queue";
 import { WorkflowRunService } from "./service";
@@ -19,8 +24,12 @@ export const PRODUCTION_WORKFLOW_RUN_SERVICE = new WorkflowRunService(
   new DrizzleWorkflowRunRepository(getDb),
   new DrizzleWorkflowRevisionRepository(getDb),
   new DurableWorkflowRunQueue(),
-  createDeterministicWorkflowRunExecutorRegistry(
+  WorkflowRunExecutorRegistry.createProduction(
     GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    {
+      text: createGeminiInvocationBoundary<GeminiTextIntent>(),
+      image: createGeminiInvocationBoundary<GeminiImageIntent>(),
+    },
   ),
   new AesGcmWorkflowRunEventCursorCodec(
     workflowRunCursorKeysFromEnvironment,

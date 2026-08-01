@@ -3,6 +3,12 @@ import {
   PROVIDER_ADAPTER_MANIFEST,
   type ProviderAdapterModuleId,
 } from "@/lib/provider-adapters/manifest";
+import {
+  GeminiImageAdapter,
+  GeminiTextAdapter,
+  type GeminiImageIntent,
+  type GeminiTextIntent,
+} from "@/lib/provider-adapters/gemini/generate-content";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { WorkflowOperationRegistryReader } from "../workflows/types";
@@ -15,9 +21,13 @@ import {
 import type {
   ProviderAdapter,
   ResolveWorkflowProviderInvocation,
+  WorkflowProviderInvocationBoundary,
   WorkflowProviderOutputs,
 } from "./provider-adapter";
-import { createWorkflowStepExecutorFromProviderAdapter } from "./provider-adapter";
+import {
+  canonicalProviderAdapterContractDigest,
+  createWorkflowStepExecutorFromProviderAdapter,
+} from "./provider-adapter";
 import type {
   WorkflowStepExecutor,
   WorkflowStepExecutorRegistry,
@@ -29,6 +39,26 @@ class DigestTextExecutor implements WorkflowStepExecutor {
   readonly provider = "runtime";
   readonly providerOperation = "digest_text";
   readonly model = "sha256";
+  readonly providerResolution = {
+    adapterModule: "runtime/digest-text",
+    adapterContractDigest: canonicalDigest({
+      schema: "runtime-step-executor/v1",
+      identity: IDENTITY,
+      provider: "runtime",
+      operation: "digest_text",
+      model: "sha256",
+    }),
+    provider: "runtime",
+    providerOperation: "digest_text",
+    model: "sha256",
+    effectKeySupport: "native" as const,
+    observation: "none" as const,
+    launchSafety: {
+      mode: "native_effect_key" as const,
+      guard: "workflow-step-attempt/v1" as const,
+      replay: "provider_deduplicated" as const,
+    },
+  };
   readonly calls: string[] = [];
 
   async execute(
@@ -62,6 +92,28 @@ class GoldenConformanceExecutor implements WorkflowStepExecutor {
   constructor(
     readonly providerOperation: "generate_text" | "generate_image",
   ) {}
+
+  get providerResolution() {
+    return {
+      adapterModule: "runtime/golden-conformance",
+      adapterContractDigest: canonicalDigest({
+        schema: "runtime-step-executor/v1",
+        provider: this.provider,
+        operation: this.providerOperation,
+        model: this.model,
+      }),
+      provider: this.provider,
+      providerOperation: this.providerOperation,
+      model: this.model,
+      effectKeySupport: "native" as const,
+      observation: "provider_operation_ref" as const,
+      launchSafety: {
+        mode: "native_effect_key" as const,
+        guard: "workflow-step-attempt/v1" as const,
+        replay: "provider_deduplicated" as const,
+      },
+    };
+  }
 
   async execute(
     input: Parameters<WorkflowStepExecutor["execute"]>[0],
@@ -172,15 +224,24 @@ export class WorkflowRunExecutorRegistry
     identity: string,
     contractDigest: string,
     adapter: ProviderAdapter<I, WorkflowProviderOutputs>,
-    resolveInvocation: ResolveWorkflowProviderInvocation<I>,
+    resolveInvocation:
+      | ResolveWorkflowProviderInvocation<I>
+      | WorkflowProviderInvocationBoundary<I>,
   ): void {
     const registration = PROVIDER_ADAPTER_MANIFEST.find(
-      (candidate) => candidate.module === moduleId,
+      (candidate) =>
+        candidate.module === moduleId &&
+        candidate.workflowOperationIdentity ===
+          adapter.contract.identity.workflowOperationIdentity &&
+        candidate.model === adapter.contract.identity.model,
     );
     if (
       !registration ||
       registration.workflowOperationIdentity !==
         adapter.contract.identity.workflowOperationIdentity ||
+      registration.adapterRevision !== adapter.contract.adapterRevision ||
+      registration.adapterContractDigest !==
+        canonicalProviderAdapterContractDigest(adapter.contract) ||
       registration.workflowOperationContractDigest !==
         adapter.contract.identity.workflowOperationContractDigest ||
       registration.provider !== adapter.contract.identity.provider ||
@@ -191,9 +252,13 @@ export class WorkflowRunExecutorRegistry
         "Provider Adapter identity does not match its reviewed manifest entry.",
       );
     }
-    if (adapter.contract.effectKeySupport !== "native") {
+    if (
+      adapter.contract.effectKeySupport === "unsupported" &&
+      (adapter.contract.launchSafety.mode !== "durable_at_most_once" ||
+        adapter.contract.launchSafety.replay !== "never_launch")
+    ) {
       throw new TypeError(
-        "Provider Adapter must support the runtime Effect Key before registration.",
+        "Provider Adapter without native Effect Key support requires the durable at-most-once launch guard.",
       );
     }
     if (
@@ -208,7 +273,11 @@ export class WorkflowRunExecutorRegistry
     this.register(
       identity,
       contractDigest,
-      createWorkflowStepExecutorFromProviderAdapter(adapter, resolveInvocation),
+      createWorkflowStepExecutorFromProviderAdapter(
+        moduleId,
+        adapter,
+        resolveInvocation,
+      ),
     );
   }
 
@@ -242,8 +311,70 @@ export class WorkflowRunExecutorRegistry
     return registry;
   }
 
+  static createProduction(
+    operations: WorkflowOperationRegistryReader,
+    boundaries: {
+      text: WorkflowProviderInvocationBoundary<GeminiTextIntent>;
+      image: WorkflowProviderInvocationBoundary<GeminiImageIntent>;
+    },
+  ): WorkflowRunExecutorRegistry {
+    const digest = operations.get(IDENTITY);
+    const text = operations.get("gemini.generate_text@1");
+    const image = operations.get("gemini.generate_image@1");
+    if (!digest || !text || !image) {
+      throw new TypeError("Production Workflow operations must be published.");
+    }
+    const registry = new WorkflowRunExecutorRegistry();
+    registry.register(digest.identity, digest.contractDigest, new DigestTextExecutor());
+    registry.registerProviderAdapter(
+      "gemini/generate-content",
+      text.identity,
+      text.contractDigest,
+      new GeminiTextAdapter(),
+      boundaries.text,
+    );
+    registry.registerProviderAdapter(
+      "gemini/generate-content",
+      image.identity,
+      image.contractDigest,
+      new GeminiImageAdapter(),
+      boundaries.image,
+    );
+    return registry;
+  }
+
   get(identity: string, contractDigest: string) {
     return this.executors.get(`${identity}\u0000${contractDigest}`);
+  }
+
+  resolve(
+    identity: string,
+    contractDigest: string,
+    config: Record<string, unknown>,
+  ) {
+    const executor = this.get(identity, contractDigest);
+    if (!executor) return undefined;
+    if (
+      executor.provider === "gemini" &&
+      typeof config.model === "string" &&
+      executor.model !== config.model
+    ) {
+      return undefined;
+    }
+    return executor;
+  }
+
+  getPinned(
+    identity: string,
+    contractDigest: string,
+    resolution: NonNullable<WorkflowStepExecutor["providerResolution"]>,
+  ) {
+    const executor = this.get(identity, contractDigest);
+    return executor &&
+      executor.providerResolution &&
+      canonicalDigest(executor.providerResolution) === canonicalDigest(resolution)
+      ? executor
+      : undefined;
   }
 }
 

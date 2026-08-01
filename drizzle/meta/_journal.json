@@ -260,6 +260,41 @@
       "when": 1784947806452,
       "tag": "0036_short_network",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1785565753782,
+      "tag": "0037_rapid_dexter_bennett",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1785566038815,
+      "tag": "0038_marvelous_spirit",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1785568252890,
+      "tag": "0039_illegal_thundra",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1785568696860,
+      "tag": "0040_overrated_morlun",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1785569407761,
+      "tag": "0041_grey_blink",
+      "breakpoints": true
     }
   ]
 }

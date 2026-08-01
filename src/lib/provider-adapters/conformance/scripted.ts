@@ -53,8 +53,18 @@ export const SCRIPTED_PROVIDER_CONTRACT: ProviderAdapterContract<
   ScriptedProviderOutput
 > = Object.freeze({
   schema: "provider-adapter-contract/v1",
+  adapterRevision: "scripted-provider-adapter-v1",
+  inputSchemaDigest:
+    "sha256:48a9a589e193e6f4682fb05a066cacdf89c8b61f3a6ef171c9bdca2437f176ef",
+  outputSchemaDigest:
+    "sha256:bfc10bce9a4b3d8cfc4efc771edf3c6c8744dcbec564194f366f7924a0442441",
   identity: Object.freeze(operationIdentity),
   effectKeySupport: "native",
+  launchSafety: Object.freeze({
+    mode: "native_effect_key",
+    guard: "workflow-step-attempt/v1",
+    replay: "provider_deduplicated",
+  }),
   observation: "provider_operation_ref",
   inputSchema: intentSchema,
   outputSchema: textOutputSchema,

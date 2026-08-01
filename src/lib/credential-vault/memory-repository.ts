@@ -5,6 +5,7 @@ import type {
   SafeCredentialProfile,
 } from "@/types/credentials";
 import type {
+  CredentialEffectRecoveryReceipt,
   CredentialSafeEffectResult,
   CredentialEffectAuditEventRecord,
   CredentialEffectAuditEventType,
@@ -852,6 +853,49 @@ export class InMemoryCredentialVaultRepository
     };
   }
 
+  async inspectEffectReceipt(
+    input: Parameters<CredentialVaultRepository["inspectEffectReceipt"]>[0],
+  ): Promise<CredentialEffectRecoveryReceipt> {
+    const receipt = this.spendEvents.find(
+      (event) =>
+        event.workspaceId === input.workspaceId &&
+        event.effectRef === input.effectRef,
+    );
+    if (!receipt) return { kind: "absent" as const };
+    const target = {
+      workspaceId: receipt.workspaceId,
+      principalId: receipt.principalId,
+      slotId: receipt.slotId,
+      profileId: receipt.profileId,
+      versionId: receipt.versionId,
+      version: receipt.resolvedVersion,
+      provider: receipt.resolvedProvider,
+      spendGrantId: receipt.spendGrantId,
+    };
+    if (receipt.status === "completed" && receipt.safeResult !== null) {
+      return {
+        kind: "completed" as const,
+        target,
+        requestFingerprint: receipt.requestFingerprint,
+        safeResult: receipt.safeResult,
+      };
+    }
+    if (receipt.status === "failed" && receipt.failureCode !== null) {
+      return {
+        kind: "failed" as const,
+        target,
+        requestFingerprint: receipt.requestFingerprint,
+        failureCode: receipt.failureCode,
+        safeResult: receipt.safeResult,
+      };
+    }
+    return {
+      kind: receipt.status as "pending" | "unknown",
+      target,
+      requestFingerprint: receipt.requestFingerprint,
+    };
+  }
+
   async completeEffect(
     input: Parameters<CredentialVaultRepository["completeEffect"]>[0],
   ): Promise<boolean> {
@@ -901,6 +945,7 @@ export class InMemoryCredentialVaultRepository
     effectRef: string;
     requestFingerprint: string;
     failureCode: string;
+    safeResult?: CredentialSafeEffectResult;
     status: "failed" | "unknown";
     now: Date;
   }): boolean {
@@ -916,6 +961,7 @@ export class InMemoryCredentialVaultRepository
     if (receipt.status !== "pending") return false;
     receipt.status = input.status;
     receipt.failureCode = input.failureCode;
+    receipt.safeResult = input.status === "failed" ? input.safeResult ?? null : null;
     receipt.failedAt = input.status === "failed" ? input.now : null;
     receipt.unknownAt = input.status === "unknown" ? input.now : null;
     receipt.updatedAt = input.now;

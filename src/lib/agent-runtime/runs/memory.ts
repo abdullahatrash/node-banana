@@ -749,6 +749,7 @@ export class InMemoryWorkflowRunRepository
           kind: "succeeded" as const,
           providerOperationRef: input.providerOperationRef,
         },
+        providerMetadata: structuredClone(input.providerMetadata ?? null),
       }),
     );
     this.stepAttempts.set(attemptKey, recorded);
@@ -816,6 +817,7 @@ export class InMemoryWorkflowRunRepository
           retryable: input.retryable,
         },
         failureCode: input.failureCode,
+        providerMetadata: structuredClone(input.providerMetadata ?? null),
         completedAt: input.failedAt,
       }),
     );
@@ -965,6 +967,7 @@ export class InMemoryWorkflowRunRepository
               : null,
         },
         failureCode: input.failureCode,
+        providerMetadata: structuredClone(input.providerMetadata ?? null),
         completedAt: null,
       }),
     );
@@ -1277,6 +1280,7 @@ export class InMemoryWorkflowRunRepository
           resolution: "succeeded" as const,
           reconciledAt: input.occurredAt.toISOString(),
         },
+        providerMetadata: structuredClone(input.resolution.providerMetadata),
         failureCode: null,
         completedAt: input.occurredAt,
       }));
@@ -1384,6 +1388,7 @@ export class InMemoryWorkflowRunRepository
           resolution: "failed_known" as const,
           reconciledAt: input.occurredAt.toISOString(),
         },
+        providerMetadata: structuredClone(input.resolution.providerMetadata),
         failureCode: input.resolution.failureCode,
         completedAt: input.occurredAt,
       }));

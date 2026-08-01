@@ -15,6 +15,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { ResolvedWorkflowDefinition } from "@/lib/agent-runtime/workflows/types";
+import type { ArtifactProviderMetadata } from "@/lib/agent-runtime/artifacts/types";
 import type {
   WorkflowRunArtifactReference,
   WorkflowRunDerivation,
@@ -988,7 +989,6 @@ export const credentialSpendEvents = pgTable(
           and ${table.failedAt} is null)
         or
         (${table.status} = 'failed'
-          and ${table.safeResult} is null
           and ${table.failureCode} is not null
           and ${table.completedAt} is null
           and ${table.failedAt} is not null
@@ -1908,7 +1908,14 @@ export const workflowRuns = pgTable(
     snapshotCheck: check(
       "workflow_runs_snapshot_check",
       sql`jsonb_typeof(${table.startSnapshot}) = 'object'
-        and ${table.startSnapshot}->>'schema' = 'workflow-run-start-snapshot/v1'
+        and ${table.startSnapshot}->>'schema' in ('workflow-run-start-snapshot/v1', 'workflow-run-start-snapshot/v2')
+        and (
+          ${table.startSnapshot}->>'schema' <> 'workflow-run-start-snapshot/v2'
+          or (
+            jsonb_typeof(${table.startSnapshot}->'providerResolutions') = 'array'
+            and jsonb_array_length(${table.startSnapshot}->'providerResolutions') > 0
+          )
+        )
         and ${table.startSnapshot}->>'workflowId' = ${table.workflowId}
         and ${table.startSnapshot}->>'workflowRevisionId' = ${table.workflowRevisionId}
         and ${table.startSnapshot}->'authorization'->>'principalId' = ${table.principalId}
@@ -2047,12 +2054,18 @@ export const workflowStepAttempts = pgTable(
     provider: text("provider").notNull(),
     providerOperation: text("provider_operation").notNull(),
     model: text("model").notNull(),
+    providerAdapterModule: text("provider_adapter_module"),
+    providerAdapterContractDigest: text("provider_adapter_contract_digest"),
+    launchSafety: jsonb("launch_safety")
+      .$type<WorkflowStepAttemptRecord["launchSafety"]>(),
     intentDigest: text("intent_digest").notNull(),
     effectKey: text("effect_key").notNull(),
     inputs: jsonb("inputs").$type<WorkflowStepAttemptInput[]>().notNull(),
     outputs: jsonb("outputs")
       .$type<Record<string, WorkflowRunArtifactReference>>(),
     providerOperationRef: text("provider_operation_ref"),
+    providerMetadata: jsonb("provider_metadata")
+      .$type<WorkflowStepAttemptRecord["providerMetadata"]>(),
     outcome: jsonb("outcome")
       .$type<WorkflowStepAttemptRecord["outcome"]>(),
     reconciliation: jsonb("reconciliation")
@@ -2114,6 +2127,19 @@ export const workflowStepAttempts = pgTable(
         and length(${table.model}) between 1 and 200
         and length(${table.effectKey}) between 1 and 500`,
     ),
+    adapterIdentityCheck: check(
+      "workflow_step_attempts_adapter_identity_check",
+      sql`(
+        ${table.providerAdapterModule} is null
+        and ${table.providerAdapterContractDigest} is null
+        and ${table.launchSafety} is null
+      ) or (
+        length(${table.providerAdapterModule}) between 1 and 200
+        and ${table.providerAdapterContractDigest} ~ '^sha256:[0-9a-f]{64}$'
+        and jsonb_typeof(${table.launchSafety}) = 'object'
+        and octet_length(${table.launchSafety}::text) <= 1024
+      )`,
+    ),
     providerEvidenceCheck: check(
       "workflow_step_attempts_provider_evidence_check",
       sql`${table.providerOperationRef} is null or (
@@ -2145,6 +2171,13 @@ export const workflowStepAttempts = pgTable(
           or (
             jsonb_typeof(${table.reconciliation}) = 'object'
             and octet_length(${table.reconciliation}::text) <= 4096
+          )
+        )
+        and (
+          ${table.providerMetadata} is null
+          or (
+            jsonb_typeof(${table.providerMetadata}) = 'object'
+            and octet_length(${table.providerMetadata}::text) <= 65536
           )
         )`,
     ),
@@ -2239,6 +2272,7 @@ export const artifactGeneratedOrigins = pgTable(
     providerOperationRef: text("provider_operation_ref").notNull(),
     model: text("model").notNull(),
     intentDigest: text("intent_digest").notNull(),
+    providerMetadata: jsonb("provider_metadata").$type<ArtifactProviderMetadata>(),
     effectKey: text("effect_key").notNull(),
     outputName: text("output_name").notNull(),
     generatedAt: timestamp("generated_at", {
@@ -2312,6 +2346,14 @@ export const artifactGeneratedOrigins = pgTable(
     revisionAttemptCheck: check(
       "artifact_generated_origins_revision_attempt_check",
       sql`${table.workflowRevision} > 0 and ${table.attempt} > 0`,
+    ),
+    providerMetadataSizeCheck: check(
+      "artifact_generated_origins_provider_metadata_size_check",
+      sql`${table.providerMetadata} is null or (jsonb_typeof(${table.providerMetadata}) = 'object' and octet_length(${table.providerMetadata}::text) <= 65536)`,
+    ),
+    providerMetadataRedactionCheck: check(
+      "artifact_generated_origins_provider_metadata_redaction_check",
+      sql`${table.providerMetadata} is null or ${table.providerMetadata}::text !~* '"[^"]*(secret|token|password|ciphertext)[^"]*"\\s*:'`,
     ),
     artifactOriginCheck: check(
       "artifact_generated_origins_artifact_origin_check",

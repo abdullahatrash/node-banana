@@ -125,8 +125,25 @@ describe("WorkflowRunService", () => {
     expect(repository.receipts.size).toBe(1);
     expect(repository.outbox.size).toBe(1);
     const stored = [...repository.runs.values()][0];
+    expect(stored.startSnapshot.schema).toBe(
+      "workflow-run-start-snapshot/v2",
+    );
     expect(stored.startSnapshot.operationContracts).toEqual([
       expect.objectContaining({ identity: "runtime.digest_text@1" }),
+    ]);
+    expect(stored.startSnapshot.providerResolutions).toEqual([
+      expect.objectContaining({
+        stepId: "digest",
+        provider: "runtime",
+        providerOperation: "digest_text",
+        model: "sha256",
+        adapterContractDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        launchSafety: {
+          mode: "native_effect_key",
+          guard: "workflow-step-attempt/v1",
+          replay: "provider_deduplicated",
+        },
+      }),
     ]);
     expect(stored.startSnapshot.artifactReferences).toEqual([]);
     expect(stored.startSnapshot.credentialReferences).toEqual([]);

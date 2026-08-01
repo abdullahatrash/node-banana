@@ -50,6 +50,36 @@ export interface ArtifactLineageInputRecord {
   sourceArtifactId: string | null;
 }
 
+export interface ArtifactProviderMetadata {
+  evidence: {
+    providerRequestId: string | null;
+    httpStatus: number | null;
+    providerCode: string | null;
+    operatorTraceRef: string | null;
+    effectDisposition:
+      | "not_created"
+      | "accepted"
+      | "terminal_failed"
+      | "unknown";
+  };
+  usage: Array<
+    | {
+        dimension: string;
+        unit: "count" | "byte" | "millisecond" | "megapixel";
+        source: "reported" | "measured" | "estimated";
+        quantity: string;
+      }
+    | {
+        dimension: string;
+        unit: "count" | "byte" | "millisecond" | "megapixel";
+        source: "unknown";
+        quantity: null;
+      }
+  >;
+  retryAfterMs: number | null;
+  pollAfterMs: number | null;
+}
+
 export interface ArtifactGeneratedOriginRecord {
   workspaceId: string;
   artifactId: string;
@@ -68,6 +98,7 @@ export interface ArtifactGeneratedOriginRecord {
   providerOperationRef: string;
   model: string;
   intentDigest: string;
+  providerMetadata: ArtifactProviderMetadata | null;
   effectKey: string;
   outputName: string;
   generatedAt: Date;
@@ -113,6 +144,7 @@ export interface ArtifactMetadata {
           ref: string;
           model: string;
           intentDigest: string;
+          metadata: ArtifactProviderMetadata | null;
         };
         effectKey: string;
         outputName: string;
@@ -343,6 +375,13 @@ export interface ArtifactContentStore {
     mediaType: string;
     bytes: Uint8Array;
   }): Promise<{ storageKey: string }>;
+
+  readContent(input: {
+    storageKey: string;
+  }): Promise<{
+    chunks: AsyncIterable<Uint8Array>;
+    mediaType: string | null;
+  }>;
 
   createDownloadHandoff(input: {
     storageKey: string;

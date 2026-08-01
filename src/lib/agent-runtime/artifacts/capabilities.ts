@@ -82,6 +82,164 @@ const mediaType = z
   .max(ARTIFACT_MEDIA_TYPE_MAX_LENGTH)
   .refine(isValidArtifactMediaType, "Artifact media type is invalid.");
 
+const strictObject = (
+  required: string[],
+  properties: Record<string, JsonSchema>,
+): JsonSchema => ({
+  type: "object",
+  additionalProperties: false,
+  required,
+  properties,
+});
+
+const providerEvidenceSchema = strictObject(
+  [
+    "providerRequestId",
+    "httpStatus",
+    "providerCode",
+    "operatorTraceRef",
+    "effectDisposition",
+  ],
+  {
+    providerRequestId: { type: ["string", "null"] },
+    httpStatus: { type: ["integer", "null"], minimum: 100, maximum: 599 },
+    providerCode: { type: ["string", "null"] },
+    operatorTraceRef: { type: ["string", "null"] },
+    effectDisposition: {
+      type: "string",
+      enum: ["not_created", "accepted", "terminal_failed", "unknown"],
+    },
+  },
+);
+const usageCommon = {
+  dimension: {
+    type: "string",
+    pattern: "^[a-z][a-z0-9_.-]{0,99}@[1-9][0-9]{0,8}$",
+  },
+  unit: {
+    type: "string",
+    enum: ["count", "byte", "millisecond", "megapixel"],
+  },
+} satisfies Record<string, JsonSchema>;
+const providerMetadataSchema = strictObject(
+  ["evidence", "usage", "retryAfterMs", "pollAfterMs"],
+  {
+    evidence: providerEvidenceSchema,
+    usage: {
+      type: "array",
+      items: {
+        oneOf: [
+          strictObject(["dimension", "unit", "source", "quantity"], {
+            ...usageCommon,
+            source: {
+              type: "string",
+              enum: ["reported", "measured", "estimated"],
+            },
+            quantity: {
+              type: "string",
+              pattern: "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$",
+            },
+          }),
+          strictObject(["dimension", "unit", "source", "quantity"], {
+            ...usageCommon,
+            source: { const: "unknown" },
+            quantity: { type: "null" },
+          }),
+        ],
+      },
+    },
+    retryAfterMs: { type: ["integer", "null"], minimum: 0 },
+    pollAfterMs: { type: ["integer", "null"], minimum: 0 },
+  },
+);
+
+const importedOriginSchema = strictObject(["kind", "importedAt"], {
+  kind: { const: "imported" },
+  importedAt: { type: "string", format: "date-time" },
+});
+const generatedOriginSchema = strictObject(
+  [
+    "kind",
+    "generatedAt",
+    "workflowRevision",
+    "run",
+    "stepAttempt",
+    "providerOperation",
+    "effectKey",
+    "outputName",
+  ],
+  {
+    kind: { const: "generated" },
+    generatedAt: { type: "string", format: "date-time" },
+    workflowRevision: strictObject(
+      ["workflowId", "revisionId", "revision", "definitionDigest"],
+      {
+        workflowId: { type: "string" },
+        revisionId: { type: "string" },
+        revision: { type: "integer", minimum: 1 },
+        definitionDigest: {
+          type: "string",
+          pattern: ARTIFACT_DIGEST_PATTERN.source,
+        },
+      },
+    ),
+    run: strictObject(["runId", "startSnapshotDigest"], {
+      runId: { type: "string" },
+      startSnapshotDigest: {
+        type: "string",
+        pattern: ARTIFACT_DIGEST_PATTERN.source,
+      },
+    }),
+    stepAttempt: strictObject(
+      ["stepAttemptId", "stepId", "attempt"],
+      {
+        stepAttemptId: { type: "string" },
+        stepId: { type: "string" },
+        attempt: { type: "integer", minimum: 1 },
+      },
+    ),
+    providerOperation: strictObject(
+      [
+        "provider",
+        "operationIdentity",
+        "operation",
+        "ref",
+        "model",
+        "intentDigest",
+        "metadata",
+      ],
+      {
+        provider: { type: "string" },
+        operationIdentity: { type: "string" },
+        operation: { type: "string" },
+        ref: { type: "string" },
+        model: { type: "string" },
+        intentDigest: {
+          type: "string",
+          pattern: ARTIFACT_DIGEST_PATTERN.source,
+        },
+        metadata: { oneOf: [{ type: "null" }, providerMetadataSchema] },
+      },
+    ),
+    effectKey: { type: "string" },
+    outputName: { type: "string" },
+  },
+);
+
+const lineageSourceSchema: JsonSchema = {
+  oneOf: [
+    strictObject(["kind", "inputName"], {
+      kind: { const: "workflow_input" },
+      inputName: { type: "string" },
+    }),
+    strictObject(["kind", "stepAttemptId", "outputName"], {
+      kind: { const: "step_output" },
+      stepAttemptId: { type: "string" },
+      outputName: { type: "string" },
+    }),
+  ],
+};
+
 const metadataSchema: JsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -110,15 +268,7 @@ const metadataSchema: JsonSchema = {
     width: { type: ["integer", "null"] },
     height: { type: ["integer", "null"] },
     creatorPrincipalId: { type: "string" },
-    origin: {
-      type: "object",
-      additionalProperties: false,
-      required: ["kind", "importedAt"],
-      properties: {
-        kind: { type: "string", const: "imported" },
-        importedAt: { type: "string", format: "date-time" },
-      },
-    },
+    origin: { oneOf: [importedOriginSchema, generatedOriginSchema] },
     retention: {
       type: "object",
       additionalProperties: false,
@@ -131,11 +281,26 @@ const metadataSchema: JsonSchema = {
     lineage: {
       type: "object",
       additionalProperties: false,
-      required: ["sourceArtifactIds"],
+      required: ["inputs", "sourceArtifactIds"],
       properties: {
+        inputs: {
+          type: "array",
+          items: strictObject(
+            ["port", "kind", "source", "contentDigest", "artifactId"],
+            {
+              port: { type: "string" },
+              kind: { type: "string", enum: ["text", "image"] },
+              source: lineageSourceSchema,
+              contentDigest: {
+                type: "string",
+                pattern: ARTIFACT_DIGEST_PATTERN.source,
+              },
+              artifactId: { type: ["string", "null"] },
+            },
+          ),
+        },
         sourceArtifactIds: {
           type: "array",
-          maxItems: 0,
           items: { type: "string" },
         },
       },

@@ -184,6 +184,7 @@ function generatedBindingDigest(input: {
       providerOperationRef: input.origin.providerOperationRef,
       model: input.origin.model,
       intentDigest: input.origin.intentDigest,
+      providerMetadata: input.origin.providerMetadata,
       effectKey: input.origin.effectKey,
       outputName: input.origin.outputName,
     },

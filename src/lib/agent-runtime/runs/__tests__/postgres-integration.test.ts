@@ -33,7 +33,10 @@ import {
   InMemoryArtifactMediaInspector,
 } from "../../artifacts/memory";
 import { AesGcmArtifactCursorCodec } from "../../artifacts/cursor";
-import { ArtifactService } from "../../artifacts/service";
+import {
+  ArtifactService,
+  type CommitGeneratedArtifactInput,
+} from "../../artifacts/service";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -858,7 +861,7 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
         })),
       );
       const generatedText = "durable generated output";
-      const generated = await artifactService.commitGenerated({
+      const generatedInput: CommitGeneratedArtifactInput = {
         workspaceId: fixture.workspaceId,
         creatorPrincipalId: fixture.principalId,
         effectKey,
@@ -887,6 +890,18 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
           providerOperationRef: `runtime:${effectKey}`,
           model: "sha256",
           intentDigest,
+          providerMetadata: {
+            evidence: {
+              providerRequestId: `runtime:${effectKey}`,
+              httpStatus: 200,
+              providerCode: null,
+              operatorTraceRef: null,
+              effectDisposition: "accepted" as const,
+            },
+            usage: [],
+            retryAfterMs: null,
+            pollAfterMs: null,
+          },
         },
         lineageInputs: [{
           port: "text",
@@ -895,7 +910,24 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
           contentDigest: inputDigest,
           sourceArtifactId: null,
         }],
-      });
+      };
+      const generated = await artifactService.commitGenerated(generatedInput);
+      const providerMetadata = generatedInput.origin.providerMetadata!;
+      await expect(
+        artifactService.commitGenerated({
+          ...generatedInput,
+          origin: {
+            ...generatedInput.origin,
+            providerMetadata: {
+              ...providerMetadata,
+              evidence: {
+                ...providerMetadata.evidence,
+                providerRequestId: "runtime-conflicting-request",
+              },
+            },
+          },
+        }),
+      ).rejects.toMatchObject({ code: "ARTIFACT_IDEMPOTENCY_CONFLICT" });
       const output = {
         artifactId: generated.id,
         digest: generated.digest,

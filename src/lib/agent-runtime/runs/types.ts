@@ -2,6 +2,7 @@ import type { ResolvedWorkflowDefinition } from "../workflows/types";
 import type {
   ArtifactKind,
   ArtifactMetadata,
+  ArtifactProviderMetadata,
 } from "../artifacts/types";
 
 export type WorkflowRunState =
@@ -12,8 +13,7 @@ export type WorkflowRunState =
   | "completed"
   | "failed";
 
-export interface WorkflowRunStartSnapshot {
-  schema: "workflow-run-start-snapshot/v1";
+interface WorkflowRunStartSnapshotBase {
   workflowId: string;
   workflowRevisionId: string;
   workflowRevision: number;
@@ -50,6 +50,34 @@ export interface WorkflowRunStartSnapshot {
     keyId: string;
     evidenceRef: string;
   };
+}
+
+export type WorkflowRunStartSnapshot =
+  | (WorkflowRunStartSnapshotBase & {
+      schema: "workflow-run-start-snapshot/v1";
+      providerResolutions?: never;
+    })
+  | (WorkflowRunStartSnapshotBase & {
+      schema: "workflow-run-start-snapshot/v2";
+      providerResolutions: WorkflowRunProviderResolution[];
+    });
+
+export interface WorkflowProviderLaunchSafety {
+  mode: "native_effect_key" | "durable_at_most_once";
+  guard: "workflow-step-attempt/v1";
+  replay: "provider_deduplicated" | "never_launch";
+}
+
+export interface WorkflowRunProviderResolution {
+  stepId: string;
+  adapterModule: string;
+  adapterContractDigest: string;
+  provider: string;
+  providerOperation: string;
+  model: string;
+  effectKeySupport: "native" | "unsupported";
+  observation: "none" | "provider_operation_ref";
+  launchSafety: WorkflowProviderLaunchSafety;
 }
 
 export interface WorkflowRunArtifactReference {
@@ -147,6 +175,9 @@ export interface WorkflowStepAttemptRecord {
   provider: string;
   providerOperation: string;
   model: string;
+  providerAdapterModule?: string;
+  providerAdapterContractDigest?: string;
+  launchSafety?: WorkflowProviderLaunchSafety;
   intentDigest: string;
   effectKey: string;
   inputs: WorkflowStepAttemptInput[];
@@ -168,6 +199,7 @@ export interface WorkflowStepAttemptRecord {
         failureCode: string;
         priorSucceededProviderOperationRef: string | null;
       };
+  providerMetadata?: WorkflowStepProviderMetadata | null;
   reconciliation: {
     reference: string;
     resolution: "succeeded" | "failed_known";
@@ -532,6 +564,7 @@ export interface WorkflowRunRepository {
     token: string;
     fence: bigint;
     providerOperationRef: string;
+    providerMetadata?: WorkflowStepProviderMetadata | null;
     recordedAt: Date;
   }): Promise<SettleWorkflowStepAttemptResult>;
   settleStepAttempt(input: {
@@ -562,6 +595,7 @@ export interface WorkflowRunRepository {
     failureCode: string;
     providerOperationRef: string | null;
     retryable: boolean;
+    providerMetadata?: WorkflowStepProviderMetadata | null;
     retryAt: Date | null;
     retryOutboxIntent: WorkflowRunOutboxIntentRecord | null;
     failedAt: Date;
@@ -581,6 +615,7 @@ export interface WorkflowRunRepository {
     fence: bigint;
     failureCode: string;
     providerOperationRef: string | null;
+    providerMetadata?: WorkflowStepProviderMetadata | null;
     occurredAt: Date;
     eventIds: {
       attemptOutcomeUnknown: string;
@@ -622,6 +657,7 @@ export interface WorkflowRunRepository {
       | {
           kind: "succeeded";
           providerOperationRef: string;
+          providerMetadata: WorkflowStepProviderMetadata | null;
           outputs: Record<string, WorkflowRunArtifactReference>;
           finalSnapshot: WorkflowRunFinalSnapshot | null;
           finalSnapshotDigest: string | null;
@@ -632,6 +668,7 @@ export interface WorkflowRunRepository {
           providerOperationRef: string | null;
           failureCode: string;
           retryable: boolean;
+          providerMetadata: WorkflowStepProviderMetadata | null;
           retryAt: Date | null;
           outboxIntent: WorkflowRunOutboxIntentRecord | null;
         };
@@ -693,6 +730,7 @@ export interface WorkflowStepExecutor {
   readonly provider: string;
   readonly providerOperation: string;
   readonly model: string;
+  readonly providerResolution?: Omit<WorkflowRunProviderResolution, "stepId">;
   execute(input: WorkflowStepExecutionInput): Promise<WorkflowStepExecutionResult>;
   reconcile?(
     input: WorkflowStepReconciliationInput,
@@ -700,8 +738,10 @@ export interface WorkflowStepExecutor {
 }
 
 export interface WorkflowStepExecutionInput {
+  workspaceId: string;
   runId: string;
   stepAttemptId: string;
+  attempt: number;
   effectKey: string;
   intentDigest: string;
   snapshot: WorkflowRunStartSnapshot;
@@ -710,8 +750,10 @@ export interface WorkflowStepExecutionInput {
 }
 
 export interface WorkflowStepReconciliationInput {
+  workspaceId: string;
   runId: string;
   stepAttemptId: string;
+  attempt: number;
   effectKey: string;
   intentDigest: string;
   providerOperationRef: string | null;
@@ -734,35 +776,7 @@ export type WorkflowStepGeneratedOutput =
       height: number;
     };
 
-export interface WorkflowStepProviderMetadata {
-  evidence: {
-    providerRequestId: string | null;
-    httpStatus: number | null;
-    providerCode: string | null;
-    operatorTraceRef: string | null;
-    effectDisposition:
-      | "not_created"
-      | "accepted"
-      | "terminal_failed"
-      | "unknown";
-  };
-  usage: Array<
-    | {
-        dimension: string;
-        unit: "count" | "byte" | "millisecond" | "megapixel";
-        source: "reported" | "measured" | "estimated";
-        quantity: string;
-      }
-    | {
-        dimension: string;
-        unit: "count" | "byte" | "millisecond" | "megapixel";
-        source: "unknown";
-        quantity: null;
-      }
-  >;
-  retryAfterMs: number | null;
-  pollAfterMs: number | null;
-}
+export type WorkflowStepProviderMetadata = ArtifactProviderMetadata;
 
 export interface WorkflowStepGeneratedResult {
   kind: "generated";
@@ -804,12 +818,25 @@ export interface ResolvedWorkflowStepInput {
   sizeBytes: number;
   width: number | null;
   height: number | null;
+  source?: WorkflowStepAttemptInput["source"];
+  /** Runtime-only and populated only after the durable launch guard is prepared. */
+  bytes?: Uint8Array;
 }
 
 export interface WorkflowStepExecutorRegistry {
   get(
     identity: string,
     contractDigest: string,
+  ): WorkflowStepExecutor | undefined;
+  resolve?(
+    identity: string,
+    contractDigest: string,
+    config: Record<string, unknown>,
+  ): WorkflowStepExecutor | undefined;
+  getPinned?(
+    identity: string,
+    contractDigest: string,
+    resolution: Omit<WorkflowRunProviderResolution, "stepId">,
   ): WorkflowStepExecutor | undefined;
 }
 
@@ -825,6 +852,18 @@ export interface WorkflowRunArtifactPort {
     artifact: ArtifactMetadata;
     textContent: string | null;
   }>;
+  readArtifactBytes?(input: {
+    workspaceId: string;
+    artifactId: string;
+  }): Promise<Uint8Array>;
+  getGeneratedArtifact?(input: {
+    workspaceId: string;
+    effectKey: string;
+    outputName: string;
+  }): Promise<{
+    artifact: ArtifactMetadata;
+    textContent: string | null;
+  } | null>;
   commitGenerated(input: {
     workspaceId: string;
     creatorPrincipalId: string;
@@ -854,7 +893,8 @@ export interface WorkflowRunArtifactPort {
       | "effectKey"
       | "outputName"
       | "generatedAt"
-    >;
+      | "providerMetadata"
+    > & { providerMetadata?: WorkflowStepProviderMetadata | null };
     lineageInputs: Array<
       Omit<
         import("../artifacts/types").ArtifactLineageInputRecord,

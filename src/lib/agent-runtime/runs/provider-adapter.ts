@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type {
   WorkflowStepExecutionResult,
   WorkflowStepExecutionInput,
+  WorkflowStepReconciliationInput,
   WorkflowStepExecutor,
   WorkflowStepGeneratedOutput,
   WorkflowStepProviderMetadata,
@@ -47,8 +49,12 @@ export interface ProviderUsageDimensionContract {
 
 export interface ProviderAdapterContract<I, O> {
   schema: "provider-adapter-contract/v1";
+  adapterRevision: string;
+  inputSchemaDigest: string;
+  outputSchemaDigest: string;
   identity: NormalizedProviderOperationIdentity;
   effectKeySupport: "native" | "unsupported";
+  launchSafety: import("./types").WorkflowProviderLaunchSafety;
   observation: "none" | "provider_operation_ref";
   inputSchema: z.ZodType<I>;
   outputSchema: z.ZodType<O>;
@@ -437,14 +443,28 @@ export function validateProviderAdapterContract<I, O>(
     z
       .object({
         schema: z.literal("provider-adapter-contract/v1"),
+        adapterRevision: z.string().regex(SAFE_ID),
+        inputSchemaDigest: z.string().regex(SHA256),
+        outputSchemaDigest: z.string().regex(SHA256),
         effectKeySupport: z.enum(["native", "unsupported"]),
+        launchSafety: z
+          .object({
+            mode: z.enum(["native_effect_key", "durable_at_most_once"]),
+            guard: z.literal("workflow-step-attempt/v1"),
+            replay: z.enum(["provider_deduplicated", "never_launch"]),
+          })
+          .strict(),
         observation: z.enum(["none", "provider_operation_ref"]),
         usageDimensions: z.array(usageDimensionSchema),
       })
       .strict()
       .parse({
         schema: contract.schema,
+        adapterRevision: contract.adapterRevision,
+        inputSchemaDigest: contract.inputSchemaDigest,
+        outputSchemaDigest: contract.outputSchemaDigest,
         effectKeySupport: contract.effectKeySupport,
+        launchSafety: contract.launchSafety,
         observation: contract.observation,
         usageDimensions: contract.usageDimensions,
       });
@@ -452,10 +472,41 @@ export function validateProviderAdapterContract<I, O>(
     if (new Set(names).size !== names.length) {
       throw new ProviderAdapterContractError();
     }
+    if (
+      (contract.effectKeySupport === "native" &&
+        (contract.launchSafety.mode !== "native_effect_key" ||
+          contract.launchSafety.replay !== "provider_deduplicated")) ||
+      (contract.effectKeySupport === "unsupported" &&
+        (contract.launchSafety.mode !== "durable_at_most_once" ||
+          contract.launchSafety.replay !== "never_launch"))
+    ) {
+      throw new ProviderAdapterContractError();
+    }
   } catch (error) {
     if (error instanceof ProviderAdapterContractError) throw error;
     throw new ProviderAdapterContractError();
   }
+}
+
+export function canonicalProviderAdapterContractDigest<I, O>(
+  contract: ProviderAdapterContract<I, O>,
+): string {
+  validateProviderAdapterContract(contract);
+  return canonicalDigest({
+    schema: contract.schema,
+    adapterRevision: contract.adapterRevision,
+    inputSchemaDigest: contract.inputSchemaDigest,
+    outputSchemaDigest: contract.outputSchemaDigest,
+    identity: contract.identity,
+    effectKeySupport: contract.effectKeySupport,
+    launchSafety: contract.launchSafety,
+    observation: contract.observation,
+    usageDimensions: contract.usageDimensions,
+  });
+}
+
+export function canonicalProviderSchemaDigest(descriptor: unknown): string {
+  return canonicalDigest(descriptor);
 }
 
 export function parseProviderOutcome<I, O>(
@@ -641,6 +692,37 @@ export type ResolveWorkflowProviderInvocation<I> = (
   | WorkflowProviderInvocation<I>
   | Promise<WorkflowProviderInvocation<I>>;
 
+/**
+ * Server-only boundary that owns plaintext credential lifetime. The runtime
+ * supplies the normalized adapter callback but never receives the secret.
+ */
+export interface WorkflowProviderInvocationBoundary<I> {
+  invoke(
+    input: WorkflowStepExecutionInput,
+    execute: (
+      invocation: WorkflowProviderInvocation<I>,
+    ) => Promise<ProviderOutcome<WorkflowProviderOutputs>>,
+  ): Promise<ProviderOutcome<WorkflowProviderOutputs>>;
+  observe?(
+    input: WorkflowStepExecutionInput & { providerOperationRef: string },
+    observe: (
+      invocation: WorkflowProviderInvocation<I>,
+    ) => Promise<ProviderOutcome<WorkflowProviderOutputs>>,
+  ): Promise<ProviderOutcome<WorkflowProviderOutputs>>;
+  /** Non-launching recovery from a server-owned durable settlement. */
+  recover?(
+    input: WorkflowStepReconciliationInput,
+  ): Promise<ProviderOutcome<WorkflowProviderOutputs>>;
+}
+
+function isInvocationBoundary<I>(
+  value:
+    | ResolveWorkflowProviderInvocation<I>
+    | WorkflowProviderInvocationBoundary<I>,
+): value is WorkflowProviderInvocationBoundary<I> {
+  return typeof value === "object" && value !== null && "invoke" in value;
+}
+
 function metadata<O>(outcome: ProviderOutcome<O>): WorkflowStepProviderMetadata {
   return {
     evidence: outcome.evidence,
@@ -681,28 +763,55 @@ function toWorkflowProviderResult(
 }
 
 export function createWorkflowStepExecutorFromProviderAdapter<I>(
+  adapterModule: string,
   adapter: ProviderAdapter<I, WorkflowProviderOutputs>,
-  resolveInvocation: ResolveWorkflowProviderInvocation<I>,
+  invocationBoundary:
+    | ResolveWorkflowProviderInvocation<I>
+    | WorkflowProviderInvocationBoundary<I>,
 ): WorkflowStepExecutor {
   validateProviderAdapterContract(adapter.contract);
   return {
     provider: adapter.contract.identity.provider,
     providerOperation: adapter.contract.identity.operation,
     model: adapter.contract.identity.model,
+    providerResolution: {
+      adapterModule,
+      adapterContractDigest: canonicalProviderAdapterContractDigest(
+        adapter.contract,
+      ),
+      provider: adapter.contract.identity.provider,
+      providerOperation: adapter.contract.identity.operation,
+      model: adapter.contract.identity.model,
+      effectKeySupport: adapter.contract.effectKeySupport,
+      observation: adapter.contract.observation,
+      launchSafety: adapter.contract.launchSafety,
+    },
     execute: async (input) => {
-      const invocation = await resolveInvocation(input);
-      return toWorkflowProviderResult(
-        await executeProviderEffect(adapter, {
+      const execute = (invocation: WorkflowProviderInvocation<I>) =>
+        executeProviderEffect(adapter, {
           effectKey: input.effectKey,
           intentDigest: input.intentDigest,
           intent: invocation.intent,
           credentials: invocation.credentials,
-        }),
-      );
+        });
+      const outcome = isInvocationBoundary(invocationBoundary)
+        ? await invocationBoundary.invoke(input, execute)
+        : await execute(await invocationBoundary(input));
+      return toWorkflowProviderResult(outcome);
     },
     reconcile:
-      adapter.contract.observation === "provider_operation_ref"
-        ? async (input) => {
+      adapter.contract.observation === "provider_operation_ref" ||
+      (isInvocationBoundary(invocationBoundary) && invocationBoundary.recover)
+          ? async (input) => {
+            if (
+              adapter.contract.observation === "none" &&
+              isInvocationBoundary(invocationBoundary) &&
+              invocationBoundary.recover
+            ) {
+              return toWorkflowProviderResult(
+                await invocationBoundary.recover(input),
+              );
+            }
             if (input.providerOperationRef === null) {
               return {
                 kind: "outcome_unknown",
@@ -710,16 +819,40 @@ export function createWorkflowStepExecutorFromProviderAdapter<I>(
                 providerOperationRef: null,
               };
             }
-            const invocation = await resolveInvocation(input);
-            return toWorkflowProviderResult(
-              await observeProviderEffect(adapter, {
+            const providerOperationRef = input.providerOperationRef;
+            const observe = (invocation: WorkflowProviderInvocation<I>) =>
+              observeProviderEffect(adapter, {
                 effectKey: input.effectKey,
                 intentDigest: input.intentDigest,
-                providerOperationRef: input.providerOperationRef,
+                providerOperationRef,
                 intent: invocation.intent,
                 credentials: invocation.credentials,
-              }),
-            );
+              });
+            const outcome = isInvocationBoundary(invocationBoundary)
+              ? invocationBoundary.observe
+                ? await invocationBoundary.observe(
+                    {
+                      ...input,
+                      providerOperationRef,
+                    },
+                    observe,
+                  )
+                : {
+                    kind: "outcome_unknown" as const,
+                    providerOperationRef,
+                    failureCode: "PROVIDER_EFFECT_RECONCILIATION_REQUIRED",
+                    pollAfterMs: null,
+                    evidence: {
+                      providerRequestId: null,
+                      httpStatus: null,
+                      providerCode: null,
+                      operatorTraceRef: null,
+                      effectDisposition: "unknown" as const,
+                    },
+                    usage: [],
+                  }
+              : await observe(await invocationBoundary(input));
+            return toWorkflowProviderResult(outcome);
           }
         : undefined,
   };

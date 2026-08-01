@@ -1,0 +1,3 @@
+ALTER TABLE "artifact_generated_origins" ADD COLUMN "provider_metadata" jsonb;--> statement-breakpoint
+ALTER TABLE "artifact_generated_origins" ADD CONSTRAINT "artifact_generated_origins_provider_metadata_size_check" CHECK ("artifact_generated_origins"."provider_metadata" is null or (jsonb_typeof("artifact_generated_origins"."provider_metadata") = 'object' and octet_length("artifact_generated_origins"."provider_metadata"::text) <= 65536));--> statement-breakpoint
+ALTER TABLE "artifact_generated_origins" ADD CONSTRAINT "artifact_generated_origins_provider_metadata_redaction_check" CHECK ("artifact_generated_origins"."provider_metadata" is null or "artifact_generated_origins"."provider_metadata"::text !~* '"[^"]*(secret|token|password|ciphertext)[^"]*"\s*:');

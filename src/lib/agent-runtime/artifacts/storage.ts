@@ -124,6 +124,11 @@ export class S3ArtifactContentStore implements ArtifactContentStore {
     return { storageKey };
   }
 
+  async readContent(input: { storageKey: string }) {
+    const snapshot = await getObjectStreamFromS3({ key: input.storageKey });
+    return { chunks: snapshot.body, mediaType: snapshot.contentType };
+  }
+
   async createDownloadHandoff(
     input: Parameters<ArtifactContentStore["createDownloadHandoff"]>[0],
   ) {

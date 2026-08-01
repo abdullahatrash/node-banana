@@ -18,6 +18,26 @@ const recoveryEvidenceMigration = readFileSync(
   resolve(process.cwd(), "drizzle/0036_short_network.sql"),
   "utf8",
 );
+const byokMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0037_rapid_dexter_bennett.sql"),
+  "utf8",
+);
+const byokMetadataGuardMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0038_marvelous_spirit.sql"),
+  "utf8",
+);
+const byokPinMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0039_illegal_thundra.sql"),
+  "utf8",
+);
+const byokFailureReceiptMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0040_overrated_morlun.sql"),
+  "utf8",
+);
+const byokArtifactMetadataMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0041_grey_blink.sql"),
+  "utf8",
+);
 
 describe("Workflow Run PostgreSQL migration", () => {
   it("creates Run authority, retained events, scoped receipts, outbox, and leases", () => {
@@ -191,6 +211,51 @@ describe("Workflow Run PostgreSQL migration", () => {
     );
     expect(recoveryEvidenceMigration).toContain(
       '"workflow_run_mutation_receipts_authorization_evidence_fk"',
+    );
+  });
+
+  it("admits v2 provider snapshots and persists normalized provider evidence", () => {
+    expect(byokMigration).toContain(
+      'ADD COLUMN "provider_metadata" jsonb',
+    );
+    expect(byokMigration).toContain("workflow-run-start-snapshot/v2");
+    expect(byokMigration).toContain("workflow-run-start-snapshot/v1");
+    expect(byokMetadataGuardMigration).toContain(
+      'octet_length("workflow_step_attempts"."provider_metadata"::text) <= 65536',
+    );
+    for (const column of [
+      "provider_adapter_module",
+      "provider_adapter_contract_digest",
+      "launch_safety",
+    ]) {
+      expect(byokPinMigration).toContain(`ADD COLUMN "${column}"`);
+    }
+    expect(byokPinMigration).toContain(
+      '"workflow_step_attempts_adapter_identity_check"',
+    );
+    expect(byokPinMigration).toContain(
+      "jsonb_array_length(\"workflow_runs\".\"start_snapshot\"->'providerResolutions') > 0",
+    );
+    expect(byokPinMigration).toContain(
+      'CREATE OR REPLACE FUNCTION "workflow_step_attempt_identity_guard"',
+    );
+    expect(byokPinMigration).toMatch(
+      /'provider_operation_ref', 'provider_metadata',[\s\S]*'provider_operation_ref', 'provider_metadata'/,
+    );
+    expect(byokFailureReceiptMigration).toContain(
+      '"credential_spend_events_state_check"',
+    );
+    expect(byokFailureReceiptMigration).toMatch(
+      /status" = 'failed'[\s\S]*failure_code" is not null/,
+    );
+    expect(byokArtifactMetadataMigration).toContain(
+      'ALTER TABLE "artifact_generated_origins" ADD COLUMN "provider_metadata" jsonb',
+    );
+    expect(byokArtifactMetadataMigration).toContain(
+      '"artifact_generated_origins_provider_metadata_redaction_check"',
+    );
+    expect(byokArtifactMetadataMigration).toContain(
+      'jsonb_typeof("artifact_generated_origins"."provider_metadata") = \'object\'',
     );
   });
 });

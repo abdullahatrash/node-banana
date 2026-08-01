@@ -154,6 +154,119 @@ const artifactReferenceSchema: JsonSchema = {
   },
 };
 
+const launchSafetySchema: JsonSchema = {
+  oneOf: [
+    {
+      ...object,
+      required: ["mode", "guard", "replay"],
+      properties: {
+        mode: { const: "native_effect_key" },
+        guard: { const: "workflow-step-attempt/v1" },
+        replay: { const: "provider_deduplicated" },
+      },
+    },
+    {
+      ...object,
+      required: ["mode", "guard", "replay"],
+      properties: {
+        mode: { const: "durable_at_most_once" },
+        guard: { const: "workflow-step-attempt/v1" },
+        replay: { const: "never_launch" },
+      },
+    },
+  ],
+};
+
+const providerResolutionSchema: JsonSchema = {
+  ...object,
+  required: [
+    "stepId",
+    "adapterModule",
+    "adapterContractDigest",
+    "provider",
+    "providerOperation",
+    "model",
+    "effectKeySupport",
+    "observation",
+    "launchSafety",
+  ],
+  properties: {
+    stepId: { type: "string" },
+    adapterModule: { type: "string" },
+    adapterContractDigest: {
+      type: "string",
+      pattern: "^sha256:[a-f0-9]{64}$",
+    },
+    provider: { type: "string" },
+    providerOperation: { type: "string" },
+    model: { type: "string" },
+    effectKeySupport: { type: "string", enum: ["native", "unsupported"] },
+    observation: {
+      type: "string",
+      enum: ["none", "provider_operation_ref"],
+    },
+    launchSafety: launchSafetySchema,
+  },
+};
+
+const startSnapshotRequired = [
+  "schema",
+  "workflowId",
+  "workflowRevisionId",
+  "workflowRevision",
+  "definitionDigest",
+  "operationRegistryDigest",
+  "definition",
+  "inputs",
+  "operationContracts",
+  "artifactReferences",
+  "credentialReferences",
+  "authorization",
+];
+
+const startSnapshotProperties: Record<string, JsonSchema> = {
+  workflowId: { type: "string" },
+  workflowRevisionId: { type: "string" },
+  workflowRevision: { type: "integer", minimum: 1 },
+  definitionDigest: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
+  operationRegistryDigest: {
+    type: "string",
+    pattern: "^sha256:[a-f0-9]{64}$",
+  },
+  definition: { type: "object" },
+  inputs: { type: "array", items: { type: "object" } },
+  operationContracts: { type: "array", items: { type: "object" } },
+  artifactReferences: { type: "array", items: { type: "object" } },
+  credentialReferences: { type: "array", items: { type: "object" } },
+  authorization: { type: "object" },
+};
+
+const startSnapshotSchema: JsonSchema = {
+  oneOf: [
+    {
+      ...object,
+      required: startSnapshotRequired,
+      properties: {
+        schema: { const: "workflow-run-start-snapshot/v1" },
+        ...startSnapshotProperties,
+      },
+    },
+    {
+      ...object,
+      required: [...startSnapshotRequired, "providerResolutions"],
+      properties: {
+        schema: { const: "workflow-run-start-snapshot/v2" },
+        ...startSnapshotProperties,
+        providerResolutions: {
+          type: "array",
+          minItems: 1,
+          items: providerResolutionSchema,
+        },
+      },
+    },
+  ],
+};
+
 const runSchema: JsonSchema = {
   ...object,
   required: [
@@ -178,37 +291,7 @@ const runSchema: JsonSchema = {
   properties: {
     ...(safeRunRefSchema.properties ?? {}),
     workspaceId: { type: "string" },
-    startSnapshot: {
-      ...object,
-      required: [
-        "schema",
-        "workflowId",
-        "workflowRevisionId",
-        "workflowRevision",
-        "definitionDigest",
-        "operationRegistryDigest",
-        "definition",
-        "inputs",
-        "operationContracts",
-        "artifactReferences",
-        "credentialReferences",
-        "authorization",
-      ],
-      properties: {
-        schema: { const: "workflow-run-start-snapshot/v1" },
-        workflowId: { type: "string" },
-        workflowRevisionId: { type: "string" },
-        workflowRevision: { type: "integer", minimum: 1 },
-        definitionDigest: { type: "string" },
-        operationRegistryDigest: { type: "string" },
-        definition: { type: "object" },
-        inputs: { type: "array", items: { type: "object" } },
-        operationContracts: { type: "array", items: { type: "object" } },
-        artifactReferences: { type: "array", items: { type: "object" } },
-        credentialReferences: { type: "array", items: { type: "object" } },
-        authorization: { type: "object" },
-      },
-    },
+    startSnapshot: startSnapshotSchema,
     output: { type: ["object", "null"] },
     finalSnapshot: { type: ["object", "null"] },
     finalSnapshotDigest: {
@@ -368,6 +451,79 @@ const lineageInputSchema: JsonSchema = {
   },
 };
 
+const providerEvidenceSchema: JsonSchema = {
+  ...object,
+  required: [
+    "providerRequestId",
+    "httpStatus",
+    "providerCode",
+    "operatorTraceRef",
+    "effectDisposition",
+  ],
+  properties: {
+    providerRequestId: { type: ["string", "null"] },
+    httpStatus: { type: ["integer", "null"], minimum: 100, maximum: 599 },
+    providerCode: { type: ["string", "null"] },
+    operatorTraceRef: { type: ["string", "null"] },
+    effectDisposition: {
+      type: "string",
+      enum: ["not_created", "accepted", "terminal_failed", "unknown"],
+    },
+  },
+};
+
+const providerUsageCommon = {
+  dimension: {
+    type: "string",
+    pattern: "^[a-z][a-z0-9_.-]{0,99}@[1-9][0-9]{0,8}$",
+  },
+  unit: {
+    type: "string",
+    enum: ["count", "byte", "millisecond", "megapixel"],
+  },
+} satisfies Record<string, JsonSchema>;
+
+const providerMetadataSchema: JsonSchema = {
+  ...object,
+  required: ["evidence", "usage", "retryAfterMs", "pollAfterMs"],
+  properties: {
+    evidence: providerEvidenceSchema,
+    usage: {
+      type: "array",
+      items: {
+        oneOf: [
+          {
+            ...object,
+            required: ["dimension", "unit", "source", "quantity"],
+            properties: {
+              ...providerUsageCommon,
+              source: {
+                type: "string",
+                enum: ["reported", "measured", "estimated"],
+              },
+              quantity: {
+                type: "string",
+                pattern: "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$",
+              },
+            },
+          },
+          {
+            ...object,
+            required: ["dimension", "unit", "source", "quantity"],
+            properties: {
+              ...providerUsageCommon,
+              source: { const: "unknown" },
+              quantity: { type: "null" },
+            },
+          },
+        ],
+      },
+    },
+    retryAfterMs: { type: ["integer", "null"], minimum: 0 },
+    pollAfterMs: { type: ["integer", "null"], minimum: 0 },
+  },
+};
+
 const stepAttemptSchema: JsonSchema = {
   ...object,
   required: [
@@ -411,6 +567,12 @@ const stepAttemptSchema: JsonSchema = {
     provider: { type: "string" },
     providerOperation: { type: "string" },
     model: { type: "string" },
+    providerAdapterModule: { type: "string" },
+    providerAdapterContractDigest: {
+      type: "string",
+      pattern: "^sha256:[a-f0-9]{64}$",
+    },
+    launchSafety: launchSafetySchema,
     intentDigest: {
       type: "string",
       pattern: "^sha256:[a-f0-9]{64}$",
@@ -430,6 +592,9 @@ const stepAttemptSchema: JsonSchema = {
       ],
     },
     providerOperationRef: { type: ["string", "null"] },
+    providerMetadata: {
+      oneOf: [{ type: "null" }, providerMetadataSchema],
+    },
     outcome: {
       oneOf: [
         { type: "null" },
@@ -579,6 +744,7 @@ const generatedArtifactSchema: JsonSchema = {
             "ref",
             "model",
             "intentDigest",
+            "metadata",
           ],
           properties: {
             provider: { type: "string" },
@@ -589,6 +755,9 @@ const generatedArtifactSchema: JsonSchema = {
             intentDigest: {
               type: "string",
               pattern: "^sha256:[a-f0-9]{64}$",
+            },
+            metadata: {
+              oneOf: [{ type: "null" }, providerMetadataSchema],
             },
           },
         },

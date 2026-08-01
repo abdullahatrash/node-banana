@@ -15,6 +15,7 @@ import type {
   ArtifactListFilters,
   ArtifactMediaInspector,
   ArtifactMetadata,
+  ArtifactProviderMetadata,
   ArtifactMutationCapability,
   ArtifactMutationReceiptRecord,
   ArtifactRecord,
@@ -258,6 +259,9 @@ export function artifactMetadata(
               ref: generatedOrigin.providerOperationRef,
               model: generatedOrigin.model,
               intentDigest: generatedOrigin.intentDigest,
+              metadata: generatedOrigin.providerMetadata
+                ? structuredClone(generatedOrigin.providerMetadata)
+                : null,
             },
             effectKey: generatedOrigin.effectKey,
             outputName: generatedOrigin.outputName,
@@ -361,7 +365,8 @@ export interface CommitGeneratedArtifactInput {
     | "effectKey"
     | "outputName"
     | "generatedAt"
-  >;
+    | "providerMetadata"
+  > & { providerMetadata?: ArtifactProviderMetadata | null };
   lineageInputs: GeneratedArtifactLineageInput[];
 }
 
@@ -1014,6 +1019,9 @@ export class ArtifactService {
       providerOperationRef,
       model,
       intentDigest: originInput.intentDigest,
+      providerMetadata: originInput.providerMetadata
+        ? structuredClone(originInput.providerMetadata)
+        : null,
       effectKey,
       outputName,
       generatedAt: now,
@@ -1070,6 +1078,104 @@ export class ArtifactService {
       textContent:
         found.artifact.kind === "text" ? found.content.inlineText : null,
     };
+  }
+
+  /** Runtime-only lookup for replaying a durably settled provider output. */
+  async getGeneratedArtifact(input: {
+    workspaceId: string;
+    effectKey: string;
+    outputName: string;
+  }): Promise<{
+    artifact: ArtifactMetadata;
+    textContent: string | null;
+  } | null> {
+    const workspaceId = assertId(input.workspaceId, "Workspace ID");
+    const effectKey = assertBoundedString(input.effectKey, "Effect Key", 500);
+    const outputName = assertBoundedString(input.outputName, "Output name", 200);
+    const artifactId = generatedArtifactId({ workspaceId, effectKey, outputName });
+    const found = await this.repository.getArtifact({ workspaceId, artifactId });
+    if (!found) return null;
+    return {
+      artifact: artifactMetadata(
+        found.artifact,
+        found.content,
+        found.generatedOrigin,
+        found.lineageInputs,
+      ),
+      textContent:
+        found.artifact.kind === "text" ? found.content.inlineText : null,
+    };
+  }
+
+  /** Runtime-only byte access; intentionally absent from capability DTOs. */
+  async readArtifactBytes(input: {
+    workspaceId: string;
+    artifactId: string;
+  }): Promise<Uint8Array> {
+    const workspaceId = assertId(input.workspaceId, "Workspace ID");
+    const artifactId = assertId(input.artifactId, "Artifact ID");
+    const found = await this.repository.getArtifact({ workspaceId, artifactId });
+    if (!found || found.artifact.kind !== "image" || !found.content.storageKey) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_UNAVAILABLE",
+        "Artifact image bytes are unavailable.",
+      );
+    }
+    let snapshot: Awaited<ReturnType<ArtifactContentStore["readContent"]>>;
+    try {
+      snapshot = await this.store.readContent({
+        storageKey: found.content.storageKey,
+      });
+    } catch {
+      throw new ArtifactServiceError(
+        "ARTIFACT_CONTENT_STORE_UNAVAILABLE",
+        "Artifact image bytes are unavailable.",
+      );
+    }
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for await (const chunk of snapshot.chunks) {
+      size += chunk.byteLength;
+      if (size > ARTIFACT_MAX_IMAGE_BYTES) {
+        throw new ArtifactServiceError(
+          "ARTIFACT_CONTENT_MISMATCH",
+          "Artifact image exceeds its execution bound.",
+        );
+      }
+      chunks.push(Uint8Array.from(chunk));
+    }
+    const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+    if (
+      size !== found.content.sizeBytes ||
+      digestBytes(bytes) !== found.content.digest ||
+      normalizeArtifactMediaType(snapshot.mediaType ?? "") !==
+        found.content.mediaType
+    ) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_CONTENT_MISMATCH",
+        "Artifact execution bytes failed integrity validation.",
+      );
+    }
+    let inspected: Awaited<ReturnType<ArtifactMediaInspector["inspectImage"]>>;
+    try {
+      inspected = await this.mediaInspector.inspectImage(bytes);
+    } catch {
+      throw new ArtifactServiceError(
+        "ARTIFACT_CONTENT_MISMATCH",
+        "Artifact execution image failed media validation.",
+      );
+    }
+    if (
+      inspected.mediaType !== found.content.mediaType ||
+      inspected.width !== found.content.width ||
+      inspected.height !== found.content.height
+    ) {
+      throw new ArtifactServiceError(
+        "ARTIFACT_CONTENT_MISMATCH",
+        "Artifact execution image dimensions failed integrity validation.",
+      );
+    }
+    return Uint8Array.from(bytes);
   }
 
   async listArtifacts(input: {

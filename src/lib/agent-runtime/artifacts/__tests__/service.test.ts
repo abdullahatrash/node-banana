@@ -578,4 +578,33 @@ describe("ArtifactService", () => {
     );
     expect(error.message).not.toContain(artifact.id);
   });
+
+  it("reads image bytes only through the runtime seam and revalidates integrity", async () => {
+    const value = fixture();
+    const bytes = Buffer.from("bounded-reference-image");
+    const upload = await beginAndSeed(value, {
+      idempotencyKey: "runtime-read-begin",
+      bytes,
+    });
+    const artifact = await value.service.completeImageUpload({
+      workspaceId: "workspace-1",
+      principalId: "principal-1",
+      idempotencyKey: "runtime-read-complete",
+      uploadId: upload.uploadId,
+    });
+    await expect(
+      value.service.readArtifactBytes({
+        workspaceId: "workspace-1",
+        artifactId: artifact.id,
+      }),
+    ).resolves.toEqual(Uint8Array.from(bytes));
+    const content = [...value.store.content.values()][0]!;
+    content.bytes[0] = content.bytes[0]! ^ 0xff;
+    await expect(
+      value.service.readArtifactBytes({
+        workspaceId: "workspace-1",
+        artifactId: artifact.id,
+      }),
+    ).rejects.toMatchObject({ code: "ARTIFACT_CONTENT_MISMATCH" });
+  });
 });

@@ -11,6 +11,17 @@ import {
   createDiscoveryRegistrations,
 } from "@/lib/agent-tools/registry";
 import type { CapabilityAuthorizer } from "@/types/agentAuthorization";
+import { createGeminiInvocationBoundary } from "@/lib/agent-runtime/provider-effects";
+import { InMemoryCredentialVaultRepository } from "@/lib/credential-vault/memory-repository";
+import {
+  CredentialEffectExecutor,
+  CredentialVaultService,
+} from "@/lib/credential-vault/service";
+import type { CredentialProviderEffectAdapter } from "@/lib/credential-vault/types";
+import type {
+  GeminiImageIntent,
+  GeminiTextIntent,
+} from "@/lib/provider-adapters/gemini/generate-content";
 import { describe, expect, it } from "vitest";
 import fixture from "../../workflows/__fixtures__/linkedin-golden-workflow-v1.json";
 import {
@@ -30,7 +41,10 @@ import { ArtifactService } from "../../artifacts/service";
 import { SharpArtifactMediaInspector } from "../../artifacts/storage";
 import { AesGcmWorkflowRunEventCursorCodec } from "../cursor";
 import { createWorkflowRunRegistrations } from "../capabilities";
-import { createDeterministicWorkflowRunExecutorRegistry } from "../executors";
+import {
+  createDeterministicWorkflowRunExecutorRegistry,
+  WorkflowRunExecutorRegistry,
+} from "../executors";
 import {
   GOLDEN_BRIEF,
   GOLDEN_IMAGE_FIXTURES,
@@ -56,6 +70,11 @@ const PRINCIPAL_ID = "principal_golden";
 const WORKFLOW_ID = "fixture-workflow";
 const REVISION_ID = "revision_golden_1";
 const REFERENCE_ARTIFACT_ID = "artifact_reference_golden";
+const liveGeminiEnabled =
+  process.env.RUN_LIVE_GEMINI_BYOK === "1" &&
+  process.env.ACK_LIVE_GEMINI_COST === "1" &&
+  Boolean(process.env.GEMINI_API_KEY);
+const liveGeminiIt = liveGeminiEnabled ? it : it.skip;
 
 function artifactCursor() {
   return new AesGcmArtifactCursorCodec(() => ({
@@ -73,6 +92,9 @@ function runCursor() {
 
 async function setupGoldenRun(options: {
   executors?: WorkflowStepExecutorRegistry;
+  createExecutors?: (
+    artifacts: ArtifactService,
+  ) => Promise<WorkflowStepExecutorRegistry> | WorkflowStepExecutorRegistry;
   clock?: WorkflowRunClock;
 } = {}) {
   const clock = options.clock ?? { now: () => new Date(NOW) };
@@ -153,14 +175,18 @@ async function setupGoldenRun(options: {
     operationRegistryDigest: GOLDEN_WORKFLOW_OPERATION_REGISTRY.digest,
   });
   const queue = new InMemoryWorkflowRunQueue();
+  const executors =
+    options.executors ??
+    (options.createExecutors
+      ? await options.createExecutors(artifactService)
+      : createDeterministicWorkflowRunExecutorRegistry(
+          GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+        ));
   const service = new WorkflowRunService(
     repository,
     revisions,
     queue,
-    options.executors ??
-      createDeterministicWorkflowRunExecutorRegistry(
-        GOLDEN_WORKFLOW_OPERATION_REGISTRY,
-      ),
+    executors,
     runCursor(),
     clock,
     artifactService,
@@ -226,6 +252,109 @@ async function acceptGoldenRun(
     inputArtifactIds: [REFERENCE_ARTIFACT_ID],
     capability: "workflow_runs.start@2",
   });
+}
+
+async function createLiveGoldenExecutors(
+  artifacts: ArtifactService,
+  secret: string,
+): Promise<WorkflowStepExecutorRegistry> {
+  const repository = new InMemoryCredentialVaultRepository();
+  repository.addAdministrator(WORKSPACE_ID, "live-owner");
+  repository.addPrincipal(WORKSPACE_ID, PRINCIPAL_ID);
+  const cipher = {
+    encrypt: (value: string) =>
+      `live-vault:${Buffer.from(value, "utf8").toString("base64url")}`,
+    decrypt: (value: string) =>
+      Buffer.from(value.slice("live-vault:".length), "base64url").toString(
+        "utf8",
+      ),
+  };
+  const vault = new CredentialVaultService(repository, cipher, () => NOW);
+  const profile = await vault.createProfile({
+    workspaceId: WORKSPACE_ID,
+    actorUserId: "live-owner",
+    idempotencyKey: "live-golden-gemini-profile-0001",
+    name: "Live golden Gemini",
+    provider: "gemini",
+    slotName: "generation_provider",
+    secret,
+  });
+  const createdSlot = repository.slots.get(profile.slotId!);
+  const storedProfile = repository.profiles.get(profile.id);
+  if (!createdSlot || !storedProfile) {
+    throw new Error("Live Credential Profile setup failed.");
+  }
+  repository.slots.delete(createdSlot.id);
+  repository.slots.set("slot_gemini_golden", {
+    ...createdSlot,
+    id: "slot_gemini_golden",
+  });
+  storedProfile.slotId = "slot_gemini_golden";
+  await vault.createSpendGrant({
+    workspaceId: WORKSPACE_ID,
+    actorUserId: "live-owner",
+    idempotencyKey: "live-golden-gemini-grant-0001",
+    principalId: PRINCIPAL_ID,
+    profileId: profile.id,
+    mode: "bounded",
+    limitCents: 100,
+  });
+  for (const [nodeId, operationIdentity] of [
+    ["draft_copy", "gemini.generate_text@1"],
+    ["generate_hero", "gemini.generate_image@1"],
+  ] as const) {
+    repository.addWorkflowBinding({
+      workspaceId: WORKSPACE_ID,
+      workflowId: WORKFLOW_ID,
+      workflowRevision: REVISION_ID,
+      binding: {
+        nodeId,
+        operationIdentity,
+        slotId: "slot_gemini_golden",
+      },
+    });
+  }
+  const policy: CredentialProviderEffectAdapter = {
+    provider: "gemini",
+    validate: ({ operation, intent }) => {
+      if (
+        !["generate_text", "generate_image"].includes(operation) ||
+        typeof intent.prompt !== "string"
+      ) {
+        throw new Error("Invalid live Gemini intent.");
+      }
+    },
+    quote: ({ operation }) => ({
+      priceCeilingCents: operation === "generate_image" ? 25 : 5,
+    }),
+    execute: async () => {
+      throw new Error("The legacy provider path must remain disabled.");
+    },
+  };
+  const credentialExecutor = new CredentialEffectExecutor(
+    repository,
+    cipher,
+    { authorize: async () => ({ allowed: true }) },
+    {
+      capability: { name: "credential_profiles.get", version: 1 },
+      authorizationContractDigest: `sha256:${"a".repeat(64)}`,
+    },
+    [policy],
+    () => NOW,
+  );
+  return WorkflowRunExecutorRegistry.createProduction(
+    GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    {
+      text: createGeminiInvocationBoundary<GeminiTextIntent>({
+        credentialExecutor,
+        artifacts,
+      }),
+      image: createGeminiInvocationBoundary<GeminiImageIntent>({
+        credentialExecutor,
+        artifacts,
+      }),
+    },
+  );
 }
 
 describe("complete deterministic golden Workflow", () => {
@@ -550,6 +679,67 @@ describe("complete deterministic golden Workflow", () => {
       cursor: accepted.events.input.cursor,
     });
     expect(replayEvents.items).toEqual(firstEvents.items);
+  });
+
+  it("rejects a restarted executor that does not match the exact provider pin", async () => {
+    const base = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const { artifactService, clock, repository, revisions, service } =
+      await setupGoldenRun({ executors: base });
+    const accepted = await acceptGoldenRun(
+      service,
+      "golden-provider-pin-substitution-0001",
+    );
+    await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_provider_pin_copy",
+    });
+    let providerCalls = 0;
+    const imageDefinition = GOLDEN_WORKFLOW_OPERATION_REGISTRY.get(
+      "gemini.generate_image@1",
+    )!;
+    const image = base.get(
+      imageDefinition.identity,
+      imageDefinition.contractDigest,
+    )!;
+    const substituted: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) => {
+        const executor = base.get(identity, contractDigest);
+        if (identity !== imageDefinition.identity || !executor) return executor;
+        return {
+          ...image,
+          model: "substituted-model-v1",
+          providerResolution: {
+            ...image.providerResolution!,
+            model: "substituted-model-v1",
+            adapterContractDigest: `sha256:${"f".repeat(64)}`,
+          },
+          execute: async (input) => {
+            providerCalls += 1;
+            return image.execute(input);
+          },
+        };
+      },
+    };
+    const restarted = new WorkflowRunService(
+      repository,
+      revisions,
+      new InMemoryWorkflowRunQueue(),
+      substituted,
+      runCursor(),
+      clock,
+      artifactService,
+    );
+    await expect(
+      restarted.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: "worker_provider_pin_substitution",
+      }),
+    ).rejects.toMatchObject({ code: "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW" });
+    expect(providerCalls).toBe(0);
   });
 
   it("resumes the same Attempt and Effect Key when generated image storage fails", async () => {
@@ -883,6 +1073,15 @@ describe("complete deterministic golden Workflow", () => {
           provider: firstImage.provider,
           providerOperation: firstImage.providerOperation,
           model: firstImage.model,
+          providerResolution: {
+            ...firstImage.providerResolution!,
+            effectKeySupport: "unsupported" as const,
+            launchSafety: {
+              mode: "durable_at_most_once" as const,
+              guard: "workflow-step-attempt/v1" as const,
+              replay: "never_launch" as const,
+            },
+          },
           execute: async (input) => {
             providerExecutions += 1;
             const result = await firstImage.execute(input);
@@ -936,6 +1135,10 @@ describe("complete deterministic golden Workflow", () => {
       state: "running",
       providerOperationRef: null,
       outcome: null,
+      launchSafety: {
+        mode: "durable_at_most_once",
+        replay: "never_launch",
+      },
     });
 
     const restartBase = createDeterministicWorkflowRunExecutorRegistry(
@@ -954,6 +1157,15 @@ describe("complete deterministic golden Workflow", () => {
           provider: restartImage.provider,
           providerOperation: restartImage.providerOperation,
           model: restartImage.model,
+          providerResolution: {
+            ...restartImage.providerResolution!,
+            effectKeySupport: "unsupported" as const,
+            launchSafety: {
+              mode: "durable_at_most_once" as const,
+              guard: "workflow-step-attempt/v1" as const,
+              replay: "never_launch" as const,
+            },
+          },
           execute: async () => {
             providerExecutions += 1;
             throw new Error("Ambiguous launched effects must not execute again.");
@@ -1063,6 +1275,27 @@ describe("complete deterministic golden Workflow", () => {
       imageDefinition.identity,
       imageDefinition.contractDigest,
     )!;
+    const restartResolution = {
+      adapterModule: "runtime/legacy-executor",
+      adapterContractDigest: canonicalDigest({
+        schema: "runtime-step-executor/v1",
+        operationIdentity: imageDefinition.identity,
+        operationContractDigest: imageDefinition.contractDigest,
+        provider: firstImage.provider,
+        providerOperation: firstImage.providerOperation,
+        model: firstImage.model,
+      }),
+      provider: firstImage.provider,
+      providerOperation: firstImage.providerOperation,
+      model: firstImage.model,
+      effectKeySupport: "native" as const,
+      observation: "none" as const,
+      launchSafety: {
+        mode: "native_effect_key" as const,
+        guard: "workflow-step-attempt/v1" as const,
+        replay: "provider_deduplicated" as const,
+      },
+    };
     const restartExecutors: WorkflowStepExecutorRegistry = {
       get: (identity, contractDigest) => {
         if (identity !== imageDefinition.identity) {
@@ -1072,6 +1305,7 @@ describe("complete deterministic golden Workflow", () => {
           provider: restartImage.provider,
           providerOperation: restartImage.providerOperation,
           model: restartImage.model,
+          providerResolution: restartResolution,
           execute: async () => {
             providerExecutions += 1;
             throw new Error("Ambiguous launched effects must not execute again.");
@@ -1545,4 +1779,115 @@ describe("complete deterministic golden Workflow", () => {
       ),
     ).toBe(sourceBefore);
   });
+});
+
+describe("controlled Gemini BYOK golden Workflow live path", () => {
+  liveGeminiIt(
+    "resolves the Credential only at the effect boundary and produces both golden outputs",
+    async () => {
+      const secret = process.env.GEMINI_API_KEY!;
+      const value = await setupGoldenRun({
+        createExecutors: (artifacts) =>
+          createLiveGoldenExecutors(artifacts, secret),
+      });
+      const accepted = await acceptGoldenRun(
+        value.service,
+        "live-golden-run-start-0001",
+      );
+      const afterText = await value.service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: "live-gemini-text",
+      });
+      expect(afterText.state).toBe("running");
+      const completed = await value.service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: "live-gemini-image",
+      });
+      expect(completed).toMatchObject({
+        state: "completed",
+        finalSnapshot: {
+          outputs: {
+            post_copy: { kind: "text" },
+            hero_image: { kind: "image", mediaType: "image/png" },
+          },
+        },
+      });
+      const attempts = await value.service.listStepAttempts({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+      });
+      expect(attempts.items).toHaveLength(2);
+      expect(attempts.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            stepId: "draft_copy",
+            state: "completed",
+            provider: "gemini",
+            model: "gemini-2.5-flash",
+            providerMetadata: {
+              evidence: expect.objectContaining({
+                effectDisposition: "accepted",
+              }),
+              usage: expect.any(Array),
+              retryAfterMs: null,
+              pollAfterMs: null,
+            },
+          }),
+          expect.objectContaining({
+            stepId: "generate_hero",
+            state: "completed",
+            provider: "gemini",
+            model: "gemini-2.5-flash-image",
+          }),
+        ]),
+      );
+      const copy = await value.service.getRunArtifact({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+        artifactId: completed.finalSnapshot!.outputs.post_copy.artifactId,
+      });
+      const hero = await value.service.getRunArtifact({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+        artifactId: completed.finalSnapshot!.outputs.hero_image.artifactId,
+      });
+      expect(copy).toMatchObject({
+        textContent: expect.any(String),
+        artifact: {
+          origin: {
+            kind: "generated",
+            providerOperation: {
+              provider: "gemini",
+              model: "gemini-2.5-flash",
+              metadata: {
+                evidence: expect.objectContaining({
+                  effectDisposition: "accepted",
+                }),
+              },
+            },
+          },
+        },
+      });
+      expect(hero.artifact).toMatchObject({
+        kind: "image",
+        mediaType: "image/png",
+        origin: {
+          kind: "generated",
+          providerOperation: {
+            provider: "gemini",
+            model: "gemini-2.5-flash-image",
+          },
+        },
+      });
+      expect(
+        JSON.stringify({ completed, attempts, copy, hero }),
+      ).not.toContain(secret);
+    },
+    300_000,
+  );
 });

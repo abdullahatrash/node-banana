@@ -1,0 +1,75 @@
+import { describe, expect, it } from "vitest";
+import {
+  createWorkflowRunRegistrations,
+  WORKFLOW_RUN_CAPABILITY_IDENTITIES,
+} from "../capabilities";
+import type { WorkflowRunService } from "../service";
+
+function registration(name: string, version: number) {
+  return createWorkflowRunRegistrations({} as WorkflowRunService).find(
+    (candidate) =>
+      candidate.identity.name === name && candidate.identity.version === version,
+  )!;
+}
+
+describe("Workflow Run public schemas", () => {
+  it("discriminates legacy and provider-pinned start snapshots", () => {
+    const schema = registration(
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.get.name,
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.get.version,
+    ).outputSchema as any;
+    const branches = schema.properties.startSnapshot.oneOf;
+    expect(branches).toHaveLength(2);
+    const legacy = branches.find(
+      (branch: any) =>
+        branch.properties.schema.const === "workflow-run-start-snapshot/v1",
+    );
+    const pinned = branches.find(
+      (branch: any) =>
+        branch.properties.schema.const === "workflow-run-start-snapshot/v2",
+    );
+    expect(legacy.properties).not.toHaveProperty("providerResolutions");
+    expect(legacy.additionalProperties).toBe(false);
+    expect(pinned.required).toContain("providerResolutions");
+    expect(pinned.properties.providerResolutions.minItems).toBe(1);
+    expect(pinned.properties.providerResolutions.items.required).toEqual(
+      expect.arrayContaining([
+        "stepId",
+        "adapterModule",
+        "adapterContractDigest",
+        "provider",
+        "providerOperation",
+        "model",
+        "effectKeySupport",
+        "observation",
+        "launchSafety",
+      ]),
+    );
+  });
+
+  it("publishes exact normalized provider metadata", () => {
+    const schema = registration(
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.stepAttempts.name,
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.stepAttempts.version,
+    ).outputSchema as any;
+    const metadata = schema.properties.items.items.properties.providerMetadata;
+    const exact = metadata.oneOf.find((branch: any) => branch.type === "object");
+    expect(exact.additionalProperties).toBe(false);
+    expect(exact.required).toEqual([
+      "evidence",
+      "usage",
+      "retryAfterMs",
+      "pollAfterMs",
+    ]);
+    expect(exact.properties.evidence.additionalProperties).toBe(false);
+    const usage = exact.properties.usage.items.oneOf;
+    expect(usage[0].properties.source.enum).toEqual([
+      "reported",
+      "measured",
+      "estimated",
+    ]);
+    expect(usage[0].properties.quantity.type).toBe("string");
+    expect(usage[1].properties.source.const).toBe("unknown");
+    expect(usage[1].properties.quantity.type).toBe("null");
+  });
+});

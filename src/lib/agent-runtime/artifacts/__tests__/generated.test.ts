@@ -250,8 +250,43 @@ describe("generated Artifact settlement", () => {
     ).rejects.toMatchObject({
       code: "ARTIFACT_IDEMPOTENCY_CONFLICT",
     });
-    expect(value.repository.artifacts.size).toBe(1);
-    expect(value.repository.generatedOrigins.size).toBe(1);
+    const metadataEffect = generatedTextInput({
+      effectKey: "effect-copy-metadata-0001",
+      origin: {
+        providerMetadata: {
+          evidence: {
+            providerRequestId: "provider-request-1",
+            httpStatus: 200,
+            providerCode: null,
+            operatorTraceRef: null,
+            effectDisposition: "accepted",
+          },
+          usage: [],
+          retryAfterMs: null,
+          pollAfterMs: null,
+        },
+      },
+    });
+    await value.service.commitGenerated(metadataEffect);
+    await expect(
+      value.service.commitGenerated({
+        ...metadataEffect,
+        origin: {
+          ...metadataEffect.origin,
+          providerMetadata: {
+            ...metadataEffect.origin.providerMetadata!,
+            evidence: {
+              ...metadataEffect.origin.providerMetadata!.evidence,
+              providerRequestId: "provider-request-conflict",
+            },
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "ARTIFACT_IDEMPOTENCY_CONFLICT",
+    });
+    expect(value.repository.artifacts.size).toBe(2);
+    expect(value.repository.generatedOrigins.size).toBe(2);
   });
 
   it("validates generated image bytes, digest, media type, and dimensions before storage", async () => {

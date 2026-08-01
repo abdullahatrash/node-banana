@@ -1,10 +1,6 @@
 import { getDb } from "@/lib/db";
-import { AgentAuthorizationService } from "@/lib/agent-authorization/service";
-import { DrizzleAgentAuthorizationRepository } from "@/lib/agent-authorization/repository";
 import { CapabilityDispatcher } from "@/lib/agent-tools/dispatcher";
 import {
-  CREDENTIAL_PROFILE_GET_IDENTITY,
-  authorizationContractDigestFor,
   createAgentIdentityRegistrations,
   createCapabilityRegistry,
   createCredentialProfileRegistrations,
@@ -15,11 +11,6 @@ import {
   CredentialVaultError,
   createCredentialHumanRegistrations,
 } from "@/lib/credential-vault";
-import {
-  CredentialEffectExecutor,
-} from "@/lib/credential-vault/service";
-import { credentialSecretCipher } from "@/lib/credential-vault/crypto";
-import { DrizzleCredentialVaultRepository } from "@/lib/credential-vault/repository";
 import type {
   CapabilityDispatchContext,
   CapabilityInvocation,
@@ -44,41 +35,20 @@ import {
 import {
   PRODUCTION_WORKFLOW_RUN_SERVICE,
 } from "./runs/production";
+import {
+  CREDENTIAL_EFFECT_EXECUTOR,
+  PRODUCTION_AGENT_AUTHORIZER,
+} from "./provider-effects";
 
-export const PRODUCTION_AGENT_AUTHORIZER = new AgentAuthorizationService(
-  new DrizzleAgentAuthorizationRepository(getDb),
-);
 export const PRODUCTION_CAPABILITY_AUTHORIZER =
   new CompositeCapabilityAuthorizer(
     PRODUCTION_AGENT_AUTHORIZER,
     new HumanCapabilityAuthorizer(getDb),
   );
 
-/**
- * No legacy browser header/provider adapter is registered here. Credential
- * Slots fail closed until a server-owned adapter explicitly implements
- * idempotent provider effects at this seam.
- */
-export const CREDENTIAL_EFFECT_EXECUTOR = new CredentialEffectExecutor(
-  new DrizzleCredentialVaultRepository(getDb),
-  credentialSecretCipher,
-  PRODUCTION_AGENT_AUTHORIZER,
-  {
-    capability: CREDENTIAL_PROFILE_GET_IDENTITY,
-    authorizationContractDigest: authorizationContractDigestFor(
-      CREDENTIAL_PROFILE_GET_IDENTITY,
-      {
-        resources: [
-          {
-            kind: "credential_profile",
-            inputPath: "credentialProfileId",
-          },
-        ],
-      },
-    ),
-  },
-  [],
-);
+/** Shared server-only credential-effect composition; never exported through
+ * the capability registry or any public DTO. */
+export { CREDENTIAL_EFFECT_EXECUTOR, PRODUCTION_AGENT_AUTHORIZER };
 
 export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
   ...createDiscoveryRegistrations(),

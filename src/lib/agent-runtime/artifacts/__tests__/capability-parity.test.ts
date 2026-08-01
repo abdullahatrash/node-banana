@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   AgentAuthorizationService,
@@ -83,6 +84,57 @@ describe("Artifact capability CLI/MCP parity", () => {
       idempotencyKey: "parity-seed-complete",
       uploadId: seedUpload.uploadId,
     });
+    const generatedText = "generated provider copy";
+    const generatedBytes = Buffer.from(generatedText, "utf8");
+    const generated = await service.commitGenerated({
+      workspaceId: "workspace-1",
+      creatorPrincipalId: "principal-1",
+      effectKey: "effect-generated-parity-0001",
+      outputName: "text",
+      content: {
+        kind: "text",
+        text: generatedText,
+        mediaType: "text/plain; charset=utf-8",
+        digest: `sha256:${createHash("sha256").update(generatedBytes).digest("hex")}`,
+        sizeBytes: generatedBytes.byteLength,
+      },
+      origin: {
+        workflowId: "workflow-parity",
+        workflowRevisionId: "revision-parity-1",
+        workflowRevision: 1,
+        definitionDigest: `sha256:${"1".repeat(64)}`,
+        runId: "run-parity-1",
+        runStartSnapshotDigest: `sha256:${"2".repeat(64)}`,
+        stepAttemptId: "attempt-parity-1",
+        stepId: "draft-copy",
+        attempt: 1,
+        provider: "gemini",
+        operationIdentity: "gemini.generate_text@1",
+        providerOperation:
+          "generativelanguage.v1beta.models.generateContent",
+        providerOperationRef: "gemini-parity-response-1",
+        model: "gemini-2.5-flash",
+        intentDigest: `sha256:${"3".repeat(64)}`,
+        providerMetadata: {
+          evidence: {
+            providerRequestId: "gemini-parity-response-1",
+            httpStatus: 200,
+            providerCode: null,
+            operatorTraceRef: null,
+            effectDisposition: "accepted",
+          },
+          usage: [{
+            dimension: "gemini.tokens.input@1",
+            unit: "count",
+            source: "reported",
+            quantity: "4",
+          }],
+          retryAfterMs: null,
+          pollAfterMs: null,
+        },
+      },
+      lineageInputs: [],
+    });
     const registrations = [
       ...createDiscoveryRegistrations(),
       ...createArtifactRegistrations(service),
@@ -107,7 +159,7 @@ describe("Artifact capability CLI/MCP parity", () => {
       exact("import"),
       exact("uploadBegin"),
       exact("uploadComplete"),
-      exact("get", [text.id, image.id]),
+      exact("get", [text.id, image.id, generated.id]),
       exact("list"),
       exact("downloadCreate", [image.id]),
     ];
@@ -148,6 +200,10 @@ describe("Artifact capability CLI/MCP parity", () => {
     authorizationRepository.setResourceActive("workspace-1", {
       kind: "artifact",
       id: image.id,
+    });
+    authorizationRepository.setResourceActive("workspace-1", {
+      kind: "artifact",
+      id: generated.id,
     });
     const authorization = new AgentAuthorizationService(
       authorizationRepository,
@@ -293,6 +349,32 @@ describe("Artifact capability CLI/MCP parity", () => {
       expect(JSON.stringify(get)).not.toContain("downloadUrl");
 
       await expect(
+        transport.invoke("artifacts.get@1", {
+          artifactId: generated.id,
+        }),
+      ).resolves.toMatchObject({
+        type: "capability_result",
+        output: {
+          artifact: {
+            id: generated.id,
+            origin: {
+              kind: "generated",
+              providerOperation: {
+                provider: "gemini",
+                metadata: {
+                  evidence: {
+                    providerRequestId: "gemini-parity-response-1",
+                  },
+                },
+              },
+            },
+            lineage: { inputs: [], sourceArtifactIds: [] },
+          },
+          textContent: generatedText,
+        },
+      });
+
+      await expect(
         transport.invoke("artifacts.list@1", { limit: 100 }),
       ).resolves.toMatchObject({
         type: "capability_result",
@@ -300,6 +382,7 @@ describe("Artifact capability CLI/MCP parity", () => {
           artifacts: expect.arrayContaining([
             expect.objectContaining({ id: text.id }),
             expect.objectContaining({ id: image.id }),
+            expect.objectContaining({ id: generated.id }),
           ]),
         },
       });

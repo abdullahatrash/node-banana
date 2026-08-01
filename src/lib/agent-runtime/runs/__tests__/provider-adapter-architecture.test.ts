@@ -8,7 +8,7 @@ import type { ProviderEffectRequest } from "../provider-adapter";
 
 const ROOT = resolve(process.cwd(), "src/lib/provider-adapters");
 const RUNTIME_BOUNDARY = "@/lib/agent-runtime/runs/provider-adapter";
-const ALLOWED_EXTERNAL_MODULES = new Set(["zod"]);
+const ALLOWED_EXTERNAL_MODULES = new Set(["zod", "@google/genai"]);
 
 async function sourceFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -64,7 +64,7 @@ describe("Provider Adapter architecture boundary", () => {
       "effectKey" | "intentDigest" | "intent" | "credentials"
     >();
     expectTypeOf<keyof WorkflowRunExecutorRegistry>().toEqualTypeOf<
-      "get" | "registerProviderAdapter"
+      "get" | "resolve" | "getPinned" | "registerProviderAdapter"
     >();
   });
 
@@ -101,8 +101,8 @@ describe("Provider Adapter architecture boundary", () => {
       .map((entry) => relative(ROOT, entry).replace(/\.[^.]+$/, ""))
       .filter((entry) => entry !== "manifest")
       .sort();
-    expect(PROVIDER_ADAPTER_MANIFEST.map((entry) => entry.module).sort()).toEqual(
-      modules,
-    );
+    expect(
+      [...new Set(PROVIDER_ADAPTER_MANIFEST.map((entry) => entry.module))].sort(),
+    ).toEqual(modules);
   });
 });

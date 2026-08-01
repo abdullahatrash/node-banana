@@ -63,6 +63,26 @@ export type CredentialSafeEffectResult = Exclude<
   null
 >;
 
+export type CredentialTransientEffectResult<Result> =
+  | {
+      effectRef: string;
+      profileId: string;
+      versionId: string;
+      version: number;
+      spendGrantId: string;
+      replayed: false;
+      result: Result;
+    }
+  | {
+      effectRef: string;
+      profileId: string;
+      versionId: string;
+      version: number;
+      spendGrantId: string;
+      replayed: true;
+      safeResult: CredentialSafeEffectResult;
+    };
+
 export interface CredentialHumanMutationReceipt {
   capabilityIdentity: string;
   idempotencyKey: string;
@@ -91,6 +111,28 @@ export type CredentialEffectReservation =
 export type CredentialEffectReceiptLookup =
   | { kind: "absent" }
   | Exclude<CredentialEffectReservation, { kind: "reserved" }>;
+
+/** Internal recovery projection keyed only by the opaque per-Attempt ref. */
+export type CredentialEffectRecoveryReceipt =
+  | { kind: "absent" }
+  | {
+      kind: "pending" | "unknown";
+      target: CredentialEffectTarget;
+      requestFingerprint: string;
+    }
+  | {
+      kind: "failed";
+      target: CredentialEffectTarget;
+      requestFingerprint: string;
+      failureCode: string;
+      safeResult: CredentialSafeEffectResult | null;
+    }
+  | {
+      kind: "completed";
+      target: CredentialEffectTarget;
+      requestFingerprint: string;
+      safeResult: CredentialSafeEffectResult;
+    };
 
 export interface CredentialProviderEffectAdapter {
   readonly provider: string;
@@ -220,6 +262,10 @@ export interface CredentialVaultRepository {
     requestFingerprint: string;
     now: Date;
   }): Promise<CredentialEffectReceiptLookup>;
+  inspectEffectReceipt(input: {
+    workspaceId: string;
+    effectRef: string;
+  }): Promise<CredentialEffectRecoveryReceipt>;
   reserveEffect(input: {
     intent: CredentialEffectIntent;
     requestFingerprint: string;
@@ -239,6 +285,7 @@ export interface CredentialVaultRepository {
     effectRef: string;
     requestFingerprint: string;
     failureCode: string;
+    safeResult?: CredentialSafeEffectResult;
     now: Date;
   }): Promise<boolean>;
   markEffectUnknown(input: {

@@ -144,6 +144,7 @@ function generatedCopy(runId: string): ArtifactMetadata {
         ref: "conformance:golden:draft_copy:v1",
         model: "golden-v1",
         intentDigest: `sha256:${"3".repeat(64)}`,
+        metadata: null,
       },
       effectKey: `workflow-effect:v1:${WORKSPACE_ID}:${runId}:draft_copy:1`,
       outputName: "text",
@@ -363,6 +364,25 @@ describe("Workflow Run v2 public surface parity", () => {
         kind: "succeeded",
         providerOperationRef: `conformance:${runId}:draft_copy`,
       },
+      providerMetadata: {
+        evidence: {
+          providerRequestId: `conformance:${runId}:draft_copy`,
+          httpStatus: 200,
+          providerCode: null,
+          operatorTraceRef: null,
+          effectDisposition: "accepted",
+        },
+        usage: [
+          {
+            dimension: "conformance.tokens.input@1",
+            unit: "count",
+            source: "reported",
+            quantity: "8",
+          },
+        ],
+        retryAfterMs: null,
+        pollAfterMs: null,
+      },
       reconciliation: null,
       inputs: [{
         port: "prompt",
@@ -408,6 +428,14 @@ describe("Workflow Run v2 public surface parity", () => {
           operationIdentity: "gemini.generate_text@1",
           outputs: {
             text: { artifactId: GENERATED_ARTIFACT_ID },
+          },
+          providerMetadata: {
+            evidence: {
+              providerRequestId: `conformance:${runId}:draft_copy`,
+              httpStatus: 200,
+              effectDisposition: "accepted",
+            },
+            usage: [{ quantity: "8" }],
           },
         }],
       },

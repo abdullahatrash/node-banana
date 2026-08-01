@@ -279,6 +279,11 @@ function mapStepAttempt(
 ): WorkflowStepAttemptRecord {
   return {
     ...row,
+    providerAdapterModule: row.providerAdapterModule ?? undefined,
+    providerAdapterContractDigest:
+      row.providerAdapterContractDigest ?? undefined,
+    launchSafety: row.launchSafety ?? undefined,
+    providerMetadata: row.providerMetadata ?? undefined,
     state: row.state as WorkflowStepAttemptRecord["state"],
     inputs: row.inputs as WorkflowStepAttemptRecord["inputs"],
     outputs:
@@ -1656,6 +1661,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           .update(workflowStepAttempts)
           .set({
             providerOperationRef: input.providerOperationRef,
+            providerMetadata: input.providerMetadata ?? null,
             outcome: {
               kind: "succeeded",
               providerOperationRef: input.providerOperationRef,
@@ -1787,6 +1793,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
               retryable: input.retryable,
             },
             failureCode: input.failureCode,
+            providerMetadata: input.providerMetadata ?? null,
             completedAt: databaseNow,
           })
           .where(
@@ -2037,6 +2044,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
                   : null,
             },
             failureCode: input.failureCode,
+            providerMetadata: input.providerMetadata ?? null,
           })
           .where(eq(workflowStepAttempts.id, input.stepAttemptId))
           .returning();
@@ -2657,6 +2665,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
                 resolution: "succeeded",
                 reconciledAt: databaseNow.toISOString(),
               },
+              providerMetadata: input.resolution.providerMetadata,
               failureCode: null,
               completedAt: databaseNow,
             })
@@ -2776,6 +2785,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
                 resolution: "failed_known",
                 reconciledAt: databaseNow.toISOString(),
               },
+              providerMetadata: input.resolution.providerMetadata,
               failureCode: input.resolution.failureCode,
               completedAt: databaseNow,
             })

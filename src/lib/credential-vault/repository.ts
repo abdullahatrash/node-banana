@@ -23,6 +23,7 @@ import {
   credentialSlots,
   credentialSpendEvents,
   credentialSpendGrants,
+  contentWorkflowRevisions,
   projects,
   workspaceMembers,
 } from "@/lib/db/schema";
@@ -35,6 +36,7 @@ import type {
   WorkflowCredentialMetadataReader,
 } from "@/types/credentials";
 import type {
+  CredentialEffectRecoveryReceipt,
   CredentialSafeEffectResult,
   CredentialHumanMutationReceipt,
   CredentialHumanMutationResult,
@@ -1348,6 +1350,35 @@ export class DrizzleCredentialVaultRepository
       CredentialVaultRepository["resolveWorkflowStepBinding"]
     >[0],
   ) {
+    const revisionRows = await this.getDatabase()
+      .select({ definition: contentWorkflowRevisions.definition })
+      .from(contentWorkflowRevisions)
+      .where(
+        and(
+          eq(contentWorkflowRevisions.workspaceId, input.workspaceId),
+          eq(contentWorkflowRevisions.workflowId, input.step.workflowId),
+          eq(contentWorkflowRevisions.id, input.step.workflowRevision),
+        ),
+      )
+      .limit(1);
+    const immutableStep = revisionRows[0]?.definition.steps.find(
+      (step) =>
+        step.id === input.step.nodeId &&
+        step.operation.identity === input.step.operationIdentity,
+    );
+    if (immutableStep) {
+      const slotNames = [...new Set(Object.values(immutableStep.credentials))];
+      if (slotNames.length !== 1) return null;
+      const slotId =
+        revisionRows[0]!.definition.credentialSlots[slotNames[0]!]?.slotId;
+      return slotId
+        ? {
+            nodeId: immutableStep.id,
+            operationIdentity: immutableStep.operation.identity,
+            slotId,
+          }
+        : null;
+    }
     const rows = await this.getDatabase()
       .select({
         id: projects.id,
@@ -1525,6 +1556,59 @@ export class DrizzleCredentialVaultRepository
         safeResult: receipt.safeResult as CredentialSafeEffectResult,
       };
     });
+  }
+
+  async inspectEffectReceipt(
+    input: Parameters<CredentialVaultRepository["inspectEffectReceipt"]>[0],
+  ): Promise<CredentialEffectRecoveryReceipt> {
+    const rows = await this.getDatabase()
+      .select()
+      .from(credentialSpendEvents)
+      .where(
+        and(
+          eq(credentialSpendEvents.workspaceId, input.workspaceId),
+          eq(credentialSpendEvents.effectRef, input.effectRef),
+        ),
+      )
+      .limit(1);
+    const receipt = rows[0];
+    if (!receipt) return { kind: "absent" as const };
+    const target = {
+      workspaceId: receipt.workspaceId,
+      principalId: receipt.principalId,
+      slotId: receipt.slotId,
+      profileId: receipt.profileId,
+      versionId: receipt.versionId,
+      version: receipt.resolvedVersion,
+      provider: receipt.resolvedProvider,
+      spendGrantId: receipt.spendGrantId,
+    };
+    if (receipt.status === "completed" && receipt.safeResult !== null) {
+      return {
+        kind: "completed" as const,
+        target,
+        requestFingerprint: receipt.requestFingerprint,
+        safeResult: receipt.safeResult as CredentialSafeEffectResult,
+      };
+    }
+    if (receipt.status === "failed" && receipt.failureCode !== null) {
+      return {
+        kind: "failed" as const,
+        target,
+        requestFingerprint: receipt.requestFingerprint,
+        failureCode: receipt.failureCode,
+        safeResult:
+          receipt.safeResult as CredentialSafeEffectResult | null,
+      };
+    }
+    if (receipt.status !== "pending" && receipt.status !== "unknown") {
+      return { kind: "absent" as const };
+    }
+    return {
+      kind: receipt.status,
+      target,
+      requestFingerprint: receipt.requestFingerprint,
+    };
   }
 
   async reserveEffect(
@@ -1804,6 +1888,7 @@ export class DrizzleCredentialVaultRepository
     effectRef: string;
     requestFingerprint: string;
     failureCode: string;
+    safeResult?: CredentialSafeEffectResult;
     status: "failed" | "unknown";
     now: Date;
   }): Promise<boolean> {
@@ -1839,6 +1924,8 @@ export class DrizzleCredentialVaultRepository
         .set({
           status: input.status,
           failureCode: input.failureCode,
+          safeResult:
+            input.status === "failed" ? input.safeResult ?? null : null,
           failedAt: input.status === "failed" ? input.now : null,
           unknownAt: input.status === "unknown" ? input.now : null,
           updatedAt: input.now,
