@@ -10,6 +10,14 @@ const goldenMigration = readFileSync(
   resolve(process.cwd(), "drizzle/0034_dry_katie_power.sql"),
   "utf8",
 );
+const recoveryMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0035_redundant_kate_bishop.sql"),
+  "utf8",
+);
+const recoveryEvidenceMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0036_short_network.sql"),
+  "utf8",
+);
 
 describe("Workflow Run PostgreSQL migration", () => {
   it("creates Run authority, retained events, scoped receipts, outbox, and leases", () => {
@@ -110,6 +118,79 @@ describe("Workflow Run PostgreSQL migration", () => {
     );
     expect(goldenMigration).toContain(
       "'workflow_runs.start@1', 'workflow_runs.start@2'",
+    );
+  });
+
+  it("adds derivations, retry generations, unknown outcomes, and upgraded guards", () => {
+    expect(recoveryMigration).toContain('"source_run_id" text');
+    expect(recoveryMigration).toContain('"root_run_id" text');
+    expect(recoveryMigration).toContain('"derivation" jsonb');
+    expect(recoveryMigration).toContain('"resume_at" timestamp with time zone');
+    expect(recoveryMigration).toContain('"generation" integer DEFAULT 1 NOT NULL');
+    expect(recoveryMigration).toContain(
+      '"workflow_run_outbox_intents_workspace_run_generation_unique"',
+    );
+    expect(recoveryMigration).toContain(
+      'CREATE INDEX "workflow_step_attempts_workspace_effect_key_idx"',
+    );
+    expect(recoveryMigration).toContain("'workflow_runs.retry@1'");
+    expect(recoveryMigration).toContain("'workflow_runs.reconcile@1'");
+    expect(recoveryMigration).toContain("'workflow_runs.resume@1'");
+    expect(recoveryMigration).toContain("'outcome_unknown'");
+    expect(recoveryMigration).toContain("'step.retry.scheduled'");
+    expect(recoveryMigration).toContain(
+      'CREATE OR REPLACE FUNCTION "workflow_run_identity_guard"',
+    );
+    expect(recoveryMigration).toContain(
+      "Workflow Run start snapshot, derivation, and provenance are immutable",
+    );
+    expect(recoveryMigration).toContain(
+      'CREATE OR REPLACE FUNCTION "workflow_step_attempt_identity_guard"',
+    );
+    expect(recoveryMigration).toContain(
+      "Workflow Run event stream has an invalid canonical transition",
+    );
+    expect(recoveryMigration).toContain(
+      "Workflow Run transition events are incomplete",
+    );
+    expect(recoveryMigration).toContain(
+      "Reconciled Step Attempt event has no reconciliation evidence",
+    );
+    expect(recoveryMigration).toContain(
+      '"intent_digest" = NEW.data->>\'intentDigest\'',
+    );
+    expect(recoveryMigration).toContain(
+      '"attempt"::text = NEW.data->>\'attempt\'',
+    );
+    expect(recoveryMigration).toContain(
+      '"failure_code" = NEW.data->>\'reasonCode\'',
+    );
+    expect(recoveryMigration).toContain(
+      '"resume_at" = (NEW.data->>\'retryAt\')::timestamptz',
+    );
+    expect(recoveryMigration).toContain(
+      "'priorSucceededProviderOperationRef'",
+    );
+    expect(recoveryMigration).toContain(
+      "Durable provider success evidence cannot be contradicted",
+    );
+    expect(recoveryMigration).toContain(
+      '"workflow_step_attempts_provider_evidence_check"',
+    );
+  });
+
+  it("backfills and foreign-keys exact authorization evidence on mutation receipts", () => {
+    expect(recoveryEvidenceMigration).toContain(
+      'ADD COLUMN "key_id" text;',
+    );
+    expect(recoveryEvidenceMigration).toContain(
+      'ADD COLUMN "authorization_evidence_ref" text;',
+    );
+    expect(recoveryEvidenceMigration).toContain(
+      'UPDATE "workflow_run_mutation_receipts" AS receipt',
+    );
+    expect(recoveryEvidenceMigration).toContain(
+      '"workflow_run_mutation_receipts_authorization_evidence_fk"',
     );
   });
 });

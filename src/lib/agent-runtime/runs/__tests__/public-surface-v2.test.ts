@@ -358,6 +358,12 @@ describe("Workflow Run v2 public surface parity", () => {
       model: "golden-v1",
       intentDigest: `sha256:${"3".repeat(64)}`,
       effectKey: `workflow-effect:v1:${WORKSPACE_ID}:${runId}:draft_copy:1`,
+      providerOperationRef: `conformance:${runId}:draft_copy`,
+      outcome: {
+        kind: "succeeded",
+        providerOperationRef: `conformance:${runId}:draft_copy`,
+      },
+      reconciliation: null,
       inputs: [{
         port: "prompt",
         kind: "text",

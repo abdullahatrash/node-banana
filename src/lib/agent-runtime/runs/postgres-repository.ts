@@ -3,6 +3,7 @@ import {
   and,
   asc,
   eq,
+  inArray,
   isNull,
   lte,
   or,
@@ -20,6 +21,7 @@ import {
   workflowStepAttempts,
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { workflowRunReceiptResult } from "./types";
 import type {
   CompleteWorkflowRunStepResult,
   PrepareWorkflowStepAttemptResult,
@@ -110,6 +112,7 @@ function validFinalSnapshot(
   run: WorkflowRunRecord,
   attempt: WorkflowStepAttemptRecord,
   outputs: WorkflowStepAttemptRecord["outputs"],
+  providerOperationRef: string,
   persistedAttempts: WorkflowStepAttemptRecord[],
 ): boolean {
   if (Boolean(snapshot) !== Boolean(digest)) return false;
@@ -133,6 +136,7 @@ function validFinalSnapshot(
           ...candidate,
           state: "completed" as const,
           outputs,
+          providerOperationRef,
         }
       : candidate,
   );
@@ -160,6 +164,8 @@ function validFinalSnapshot(
       persisted.state !== "completed" ||
       persisted.attempt !== snapshottedAttempt.attempt ||
       persisted.effectKey !== snapshottedAttempt.effectKey ||
+      persisted.providerOperationRef !==
+        snapshottedAttempt.providerOperationRef ||
       !sameCanonicalValue(
         persisted.outputs,
         snapshottedAttempt.outputs,
@@ -223,6 +229,8 @@ function mapRun(row: typeof workflowRuns.$inferSelect): WorkflowRunRecord {
     finalSnapshot:
       row.finalSnapshot as WorkflowRunFinalSnapshot | null,
     finalSnapshotDigest: row.finalSnapshotDigest,
+    derivation: row.derivation,
+    resumeAt: row.resumeAt,
     failureCode: row.failureCode,
     acceptedAt: row.acceptedAt,
     startedAt: row.startedAt,
@@ -294,6 +302,8 @@ function validStartInput(
     run.output === null &&
     run.finalSnapshot === null &&
     run.finalSnapshotDigest === null &&
+    run.derivation === null &&
+    run.resumeAt === null &&
     run.failureCode === null &&
     run.startedAt === null &&
     run.completedAt === null &&
@@ -305,6 +315,7 @@ function validStartInput(
     run.id === receipt.runId &&
     (receipt.capability === "workflow_runs.start@1" ||
       receipt.capability === "workflow_runs.start@2") &&
+    receipt.result === null &&
     run.startSnapshot.workflowId === run.workflowId &&
     run.startSnapshot.workflowRevisionId === run.workflowRevisionId &&
     run.startSnapshot.authorization.principalId === receipt.principalId &&
@@ -312,6 +323,7 @@ function validStartInput(
     run.id === outboxIntent.runId &&
     outboxIntent.dedupeKey ===
       `workflow-run:${run.workspaceId}:${run.id}:v1` &&
+    outboxIntent.generation === 1 &&
     outboxIntent.state === "pending" &&
     outboxIntent.deliveryToken === null &&
     outboxIntent.deliveryAttempts === 0 &&
@@ -342,6 +354,32 @@ async function findRun(
 
 export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
   constructor(private readonly getDatabase: () => Db) {}
+
+  async getMutationReceipt(
+    input: Parameters<WorkflowRunRepository["getMutationReceipt"]>[0],
+  ) {
+    const database = this.getDatabase();
+    const rows = await database
+      .select()
+      .from(workflowRunMutationReceipts)
+      .where(
+        and(
+          eq(workflowRunMutationReceipts.workspaceId, input.workspaceId),
+          eq(workflowRunMutationReceipts.principalId, input.principalId),
+          eq(workflowRunMutationReceipts.capability, input.capability),
+          eq(workflowRunMutationReceipts.idempotencyKey, input.idempotencyKey),
+        ),
+      )
+      .limit(1);
+    const receipt = rows[0] ? mapReceipt(rows[0]) : null;
+    const run = receipt
+      ? await findRun(database, {
+          workspaceId: receipt.workspaceId,
+          runId: receipt.runId,
+        })
+      : null;
+    return receipt && run ? { receipt, run } : null;
+  }
 
   async start(input: Parameters<WorkflowRunRepository["start"]>[0]) {
     try {
@@ -677,6 +715,16 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         if (run.state === "completed" || run.state === "failed") {
           return { kind: "completed" as const, run };
         }
+        if (run.state === "outcome_unknown") {
+          return { kind: "unavailable" as const };
+        }
+        if (
+          run.state === "waiting" &&
+          run.resumeAt !== null &&
+          run.resumeAt > databaseNow
+        ) {
+          return { kind: "busy" as const };
+        }
 
         const leaseRows = await tx
           .select()
@@ -735,19 +783,35 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         }
 
         let nextRun = run;
-        if (run.state === "accepted") {
+        if (run.state === "accepted" || run.state === "waiting") {
+          const shouldResume = run.state === "waiting";
+          if (shouldResume) {
+            await tx.insert(workflowRunEvents).values({
+              id: randomUUID(),
+              workspaceId: run.workspaceId,
+              runId: run.id,
+              sequence: run.nextEventSequence,
+              type: "run.resumed",
+              data: { automatic: true },
+              occurredAt: databaseNow,
+            });
+          }
           const updated = await tx
             .update(workflowRuns)
             .set({
               state: "running",
-              startedAt: databaseNow,
+              startedAt: run.startedAt ?? databaseNow,
+              resumeAt: null,
+              failureCode: shouldResume ? null : run.failureCode,
+              nextEventSequence:
+                run.nextEventSequence + (shouldResume ? 1 : 0),
               updatedAt: databaseNow,
             })
             .where(
               and(
                 eq(workflowRuns.workspaceId, input.workspaceId),
                 eq(workflowRuns.id, input.runId),
-                eq(workflowRuns.state, "accepted"),
+                eq(workflowRuns.state, run.state),
               ),
             )
             .returning();
@@ -758,6 +822,70 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
       });
     } catch {
       return { kind: "unavailable" as const };
+    }
+  }
+
+  async renewLease(
+    input: Parameters<WorkflowRunRepository["renewLease"]>[0],
+  ): Promise<
+    | { kind: "renewed"; lease: WorkflowRunExecutionLeaseRecord }
+    | { kind: "stale_fence" | "unavailable" }
+  > {
+    const requestedLeaseMs =
+      input.expiresAt.getTime() - input.now.getTime();
+    if (requestedLeaseMs <= 0 || requestedLeaseMs > 60_000) {
+      return { kind: "unavailable" };
+    }
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        const rows = await tx
+          .select({
+            lease: workflowRunExecutionLeases,
+            databaseNow: sql<unknown>`clock_timestamp()`,
+          })
+          .from(workflowRunExecutionLeases)
+          .where(
+            and(
+              eq(workflowRunExecutionLeases.workspaceId, input.workspaceId),
+              eq(workflowRunExecutionLeases.runId, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selected = rows[0];
+        if (!selected) return { kind: "unavailable" as const };
+        const databaseNow = postgresDate(selected.databaseNow);
+        const lease = selected.lease;
+        if (
+          lease.releasedAt !== null ||
+          lease.workerId !== input.workerId ||
+          lease.token !== input.token ||
+          lease.fence !== input.fence ||
+          lease.expiresAt <= databaseNow
+        ) {
+          return { kind: "stale_fence" as const };
+        }
+        const expiresAt = new Date(databaseNow.getTime() + requestedLeaseMs);
+        const updated = await tx
+          .update(workflowRunExecutionLeases)
+          .set({ expiresAt })
+          .where(
+            and(
+              eq(workflowRunExecutionLeases.workspaceId, input.workspaceId),
+              eq(workflowRunExecutionLeases.runId, input.runId),
+              eq(workflowRunExecutionLeases.workerId, input.workerId),
+              eq(workflowRunExecutionLeases.token, input.token),
+              eq(workflowRunExecutionLeases.fence, input.fence),
+              isNull(workflowRunExecutionLeases.releasedAt),
+            ),
+          )
+          .returning();
+        return updated[0]
+          ? { kind: "renewed" as const, lease: mapLease(updated[0]) }
+          : { kind: "stale_fence" as const };
+      });
+    } catch {
+      return { kind: "unavailable" };
     }
   }
 
@@ -1033,25 +1161,17 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
                 workflowStepAttempts.workspaceId,
                 input.attempt.workspaceId,
               ),
-              or(
-                and(
-                  eq(
-                    workflowStepAttempts.runId,
-                    input.attempt.runId,
-                  ),
-                  eq(
-                    workflowStepAttempts.stepId,
-                    input.attempt.stepId,
-                  ),
-                  eq(
-                    workflowStepAttempts.attempt,
-                    input.attempt.attempt,
-                  ),
-                ),
-                eq(
-                  workflowStepAttempts.effectKey,
-                  input.attempt.effectKey,
-                ),
+              eq(
+                workflowStepAttempts.runId,
+                input.attempt.runId,
+              ),
+              eq(
+                workflowStepAttempts.stepId,
+                input.attempt.stepId,
+              ),
+              eq(
+                workflowStepAttempts.attempt,
+                input.attempt.attempt,
               ),
             ),
           )
@@ -1069,6 +1189,34 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             run,
             attempt: existing,
           };
+        }
+        const effectOwners = await tx
+          .select()
+          .from(workflowStepAttempts)
+          .where(
+            and(
+              eq(
+                workflowStepAttempts.workspaceId,
+                input.attempt.workspaceId,
+              ),
+              eq(
+                workflowStepAttempts.effectKey,
+                input.attempt.effectKey,
+              ),
+            ),
+          )
+          .for("update");
+        if (
+          effectOwners.map(mapStepAttempt).some(
+            (owner) =>
+              owner.runId !== input.attempt.runId ||
+              owner.stepId !== input.attempt.stepId ||
+              owner.intentDigest !== input.attempt.intentDigest ||
+              owner.operationContractDigest !==
+                input.attempt.operationContractDigest,
+          )
+        ) {
+          return { kind: "conflict" as const };
         }
 
         const attempt: WorkflowStepAttemptRecord = {
@@ -1204,6 +1352,22 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
                 .for("update")
             ).map(mapStepAttempt)
           : [attempt];
+        if (input.finalSnapshot && run.derivation?.reusedOutputs.length) {
+          const reusedIds = run.derivation.reusedOutputs.map(
+            (reused) => reused.sourceStepAttemptId,
+          );
+          const reusedRows = await tx
+            .select()
+            .from(workflowStepAttempts)
+            .where(
+              and(
+                eq(workflowStepAttempts.workspaceId, input.workspaceId),
+                inArray(workflowStepAttempts.id, reusedIds),
+              ),
+            )
+            .for("update");
+          persistedAttempts.push(...reusedRows.map(mapStepAttempt));
+        }
         if (
           run.state !== "running" ||
           attempt.state !== "running" ||
@@ -1213,6 +1377,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             run,
             attempt,
             input.outputs,
+            input.providerOperationRef,
             persistedAttempts,
           )
         ) {
@@ -1262,6 +1427,11 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           .set({
             state: "completed",
             outputs: structuredClone(input.outputs),
+            providerOperationRef: input.providerOperationRef,
+            outcome: {
+              kind: "succeeded",
+              providerOperationRef: input.providerOperationRef,
+            },
             failureCode: null,
             completedAt: databaseNow,
           })
@@ -1409,6 +1579,110 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
     }
   }
 
+  async recordStepAttemptProviderSuccess(
+    input: Parameters<
+      WorkflowRunRepository["recordStepAttemptProviderSuccess"]
+    >[0],
+  ): Promise<SettleWorkflowStepAttemptResult> {
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        const runRows = await tx
+          .select({
+            run: workflowRuns,
+            databaseNow: sql<unknown>`clock_timestamp()`,
+          })
+          .from(workflowRuns)
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.id, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selected = runRows[0];
+        if (!selected) return { kind: "unavailable" as const };
+        const run = mapRun(selected.run);
+        const databaseNow = postgresDate(selected.databaseNow);
+        const leaseRows = await tx
+          .select()
+          .from(workflowRunExecutionLeases)
+          .where(
+            and(
+              eq(workflowRunExecutionLeases.workspaceId, input.workspaceId),
+              eq(workflowRunExecutionLeases.runId, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const lease = leaseRows[0];
+        if (
+          run.state !== "running" ||
+          !lease ||
+          lease.releasedAt !== null ||
+          lease.workerId !== input.workerId ||
+          lease.token !== input.token ||
+          lease.fence !== input.fence ||
+          lease.expiresAt <= databaseNow
+        ) {
+          return { kind: "stale_fence" as const };
+        }
+        const attemptRows = await tx
+          .select()
+          .from(workflowStepAttempts)
+          .where(
+            and(
+              eq(workflowStepAttempts.workspaceId, input.workspaceId),
+              eq(workflowStepAttempts.runId, input.runId),
+              eq(workflowStepAttempts.id, input.stepAttemptId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const attempt = attemptRows[0] ? mapStepAttempt(attemptRows[0]) : null;
+        if (
+          !attempt ||
+          attempt.state !== "running" ||
+          (attempt.outcome !== null &&
+            (attempt.outcome.kind !== "succeeded" ||
+              attempt.providerOperationRef !== input.providerOperationRef))
+        ) {
+          return { kind: "unavailable" as const };
+        }
+        if (attempt.outcome?.kind === "succeeded") {
+          return { kind: "settled" as const, run, attempt };
+        }
+        const updated = await tx
+          .update(workflowStepAttempts)
+          .set({
+            providerOperationRef: input.providerOperationRef,
+            outcome: {
+              kind: "succeeded",
+              providerOperationRef: input.providerOperationRef,
+            },
+          })
+          .where(
+            and(
+              eq(workflowStepAttempts.workspaceId, input.workspaceId),
+              eq(workflowStepAttempts.runId, input.runId),
+              eq(workflowStepAttempts.id, input.stepAttemptId),
+              eq(workflowStepAttempts.state, "running"),
+              isNull(workflowStepAttempts.outcome),
+            ),
+          )
+          .returning();
+        if (!updated[0]) throw new Error("Provider success evidence was lost.");
+        return {
+          kind: "settled" as const,
+          run,
+          attempt: mapStepAttempt(updated[0]),
+        };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
   async failStepAttempt(
     input: Parameters<WorkflowRunRepository["failStepAttempt"]>[0],
   ): Promise<SettleWorkflowStepAttemptResult> {
@@ -1457,7 +1731,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         const attempt = mapStepAttempt(selectedAttempt);
         if (
           attempt.state === "failed" &&
-          run.state === "failed" &&
+          (run.state === "failed" || run.state === "waiting") &&
           attempt.failureCode === input.failureCode &&
           run.failureCode === input.failureCode
         ) {
@@ -1506,6 +1780,12 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           .set({
             state: "failed",
             outputs: null,
+            providerOperationRef: input.providerOperationRef,
+            outcome: {
+              kind: "failed_known",
+              failureCode: input.failureCode,
+              retryable: input.retryable,
+            },
             failureCode: input.failureCode,
             completedAt: databaseNow,
           })
@@ -1525,6 +1805,19 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           throw new Error("Workflow Step Attempt failure was lost.");
         }
 
+        const retryAt = input.retryAt
+          ? new Date(
+              databaseNow.getTime() +
+                Math.max(
+                  0,
+                  input.retryAt.getTime() - input.failedAt.getTime(),
+                ),
+            )
+          : null;
+        const shouldRetry =
+          input.retryable &&
+          retryAt !== null &&
+          input.retryOutboxIntent !== null;
         const events: WorkflowRunEventRecord[] = [
           {
             id: input.eventIds.attemptFailed,
@@ -1541,30 +1834,72 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             },
             occurredAt: databaseNow,
           },
-          {
-            id: input.eventIds.runFailed,
-            workspaceId: input.workspaceId,
-            runId: input.runId,
-            sequence: run.nextEventSequence + 1,
-            type: "run.failed",
-            data: {
-              stepAttemptId: attempt.id,
-              reasonCode: input.failureCode,
-            },
-            occurredAt: databaseNow,
-          },
+          ...(shouldRetry
+            ? [
+                {
+                  id: input.eventIds.retryScheduled!,
+                  workspaceId: input.workspaceId,
+                  runId: input.runId,
+                  sequence: run.nextEventSequence + 1,
+                  type: "step.retry.scheduled" as const,
+                  data: {
+                    stepAttemptId: attempt.id,
+                    stepId: attempt.stepId,
+                    attempt: attempt.attempt,
+                    nextAttempt: attempt.attempt + 1,
+                    effectKey: attempt.effectKey,
+                    retryAt: retryAt!.toISOString(),
+                  },
+                  occurredAt: databaseNow,
+                },
+                {
+                  id: input.eventIds.runWaiting!,
+                  workspaceId: input.workspaceId,
+                  runId: input.runId,
+                  sequence: run.nextEventSequence + 2,
+                  type: "run.waiting" as const,
+                  data: {
+                    stepAttemptId: attempt.id,
+                    reasonCode: input.failureCode,
+                    resumeAt: retryAt!.toISOString(),
+                  },
+                  occurredAt: databaseNow,
+                },
+              ]
+            : [
+                {
+                  id: input.eventIds.runFailed!,
+                  workspaceId: input.workspaceId,
+                  runId: input.runId,
+                  sequence: run.nextEventSequence + 1,
+                  type: "run.failed" as const,
+                  data: {
+                    stepAttemptId: attempt.id,
+                    reasonCode: input.failureCode,
+                  },
+                  occurredAt: databaseNow,
+                },
+              ]),
         ];
         await tx.insert(workflowRunEvents).values(events);
+        if (shouldRetry) {
+          await tx.insert(workflowRunOutboxIntents).values({
+            ...input.retryOutboxIntent!,
+            availableAt: retryAt!,
+            createdAt: databaseNow,
+          });
+        }
         const updatedRuns = await tx
           .update(workflowRuns)
           .set({
-            state: "failed",
+            state: shouldRetry ? "waiting" : "failed",
             output: null,
             finalSnapshot: null,
             finalSnapshotDigest: null,
             failureCode: input.failureCode,
+            resumeAt: shouldRetry ? retryAt : null,
             nextEventSequence: run.nextEventSequence + events.length,
-            completedAt: databaseNow,
+            completedAt: shouldRetry ? null : databaseNow,
             updatedAt: databaseNow,
           })
           .where(
@@ -1613,6 +1948,882 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           kind: "settled" as const,
           run: mapRun(updatedRuns[0]),
           attempt: mapStepAttempt(updatedAttempts[0]),
+        };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
+  async markStepAttemptOutcomeUnknown(
+    input: Parameters<
+      WorkflowRunRepository["markStepAttemptOutcomeUnknown"]
+    >[0],
+  ): Promise<SettleWorkflowStepAttemptResult> {
+    if (!FAILURE_CODE.test(input.failureCode)) return { kind: "unavailable" };
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        const rows = await tx
+          .select({
+            run: workflowRuns,
+            databaseNow: sql<unknown>`clock_timestamp()`,
+          })
+          .from(workflowRuns)
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.id, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selected = rows[0];
+        if (!selected) return { kind: "unavailable" as const };
+        const run = mapRun(selected.run);
+        const databaseNow = postgresDate(selected.databaseNow);
+        const attempts = await tx
+          .select()
+          .from(workflowStepAttempts)
+          .where(
+            and(
+              eq(workflowStepAttempts.workspaceId, input.workspaceId),
+              eq(workflowStepAttempts.runId, input.runId),
+              eq(workflowStepAttempts.id, input.stepAttemptId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const attempt = attempts[0] ? mapStepAttempt(attempts[0]) : null;
+        const leases = await tx
+          .select()
+          .from(workflowRunExecutionLeases)
+          .where(
+            and(
+              eq(workflowRunExecutionLeases.workspaceId, input.workspaceId),
+              eq(workflowRunExecutionLeases.runId, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const lease = leases[0];
+        if (
+          !attempt ||
+          run.state !== "running" ||
+          attempt.state !== "running"
+        ) {
+          return { kind: "unavailable" as const };
+        }
+        if (
+          !lease ||
+          lease.releasedAt !== null ||
+          lease.workerId !== input.workerId ||
+          lease.token !== input.token ||
+          lease.fence !== input.fence ||
+          lease.expiresAt <= databaseNow
+        ) {
+          return { kind: "stale_fence" as const };
+        }
+        const updatedAttempts = await tx
+          .update(workflowStepAttempts)
+          .set({
+            state: "outcome_unknown",
+            providerOperationRef: input.providerOperationRef,
+            outcome: {
+              kind: "outcome_unknown",
+              failureCode: input.failureCode,
+              priorSucceededProviderOperationRef:
+                attempt.outcome?.kind === "succeeded"
+                  ? attempt.outcome.providerOperationRef
+                  : null,
+            },
+            failureCode: input.failureCode,
+          })
+          .where(eq(workflowStepAttempts.id, input.stepAttemptId))
+          .returning();
+        const events: WorkflowRunEventRecord[] = [
+          {
+            id: input.eventIds.attemptOutcomeUnknown,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: run.nextEventSequence,
+            type: "step.attempt.outcome_unknown",
+            data: {
+              stepAttemptId: attempt.id,
+              stepId: attempt.stepId,
+              attempt: attempt.attempt,
+              effectKey: attempt.effectKey,
+              reasonCode: input.failureCode,
+            },
+            occurredAt: databaseNow,
+          },
+          {
+            id: input.eventIds.runOutcomeUnknown,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: run.nextEventSequence + 1,
+            type: "run.outcome_unknown",
+            data: {
+              stepAttemptId: attempt.id,
+              reasonCode: input.failureCode,
+            },
+            occurredAt: databaseNow,
+          },
+        ];
+        await tx.insert(workflowRunEvents).values(events);
+        const updatedRuns = await tx
+          .update(workflowRuns)
+          .set({
+            state: "outcome_unknown",
+            failureCode: input.failureCode,
+            resumeAt: null,
+            nextEventSequence: run.nextEventSequence + events.length,
+            updatedAt: databaseNow,
+          })
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.id, input.runId),
+              eq(workflowRuns.state, "running"),
+            ),
+          )
+          .returning();
+        await tx
+          .update(workflowRunExecutionLeases)
+          .set({ releasedAt: databaseNow })
+          .where(
+            and(
+              eq(workflowRunExecutionLeases.workspaceId, input.workspaceId),
+              eq(workflowRunExecutionLeases.runId, input.runId),
+              eq(workflowRunExecutionLeases.token, input.token),
+              eq(workflowRunExecutionLeases.fence, input.fence),
+            ),
+          );
+        if (!updatedAttempts[0] || !updatedRuns[0]) {
+          throw new Error("Unknown outcome transition was lost.");
+        }
+        return {
+          kind: "settled" as const,
+          run: mapRun(updatedRuns[0]),
+          attempt: mapStepAttempt(updatedAttempts[0]),
+        };
+      });
+    } catch {
+      return { kind: "unavailable" };
+    }
+  }
+
+  async deriveRun(
+    input: Parameters<WorkflowRunRepository["deriveRun"]>[0],
+  ) {
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtextextended(${receiptLock(input.receipt)}, 0))`,
+        );
+        const existingRows = await tx
+          .select()
+          .from(workflowRunMutationReceipts)
+          .where(
+            and(
+              eq(workflowRunMutationReceipts.workspaceId, input.receipt.workspaceId),
+              eq(workflowRunMutationReceipts.principalId, input.receipt.principalId),
+              eq(workflowRunMutationReceipts.capability, input.receipt.capability),
+              eq(workflowRunMutationReceipts.idempotencyKey, input.receipt.idempotencyKey),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const existing = existingRows[0];
+        if (existing) {
+          if (existing.requestFingerprint !== input.receipt.requestFingerprint) {
+            return { kind: "conflict" as const };
+          }
+          const run = await findRun(tx, {
+            workspaceId: input.receipt.workspaceId,
+            runId: existing.runId,
+          });
+          return run
+            ? { kind: "replayed" as const, run, receipt: mapReceipt(existing) }
+            : { kind: "unavailable" as const };
+        }
+        const sourceRows = input.run.derivation
+          ? await tx
+              .select()
+              .from(workflowRuns)
+              .where(
+                and(
+                  eq(workflowRuns.workspaceId, input.run.workspaceId),
+                  eq(
+                    workflowRuns.id,
+                    input.run.derivation.sourceRunId,
+                  ),
+                ),
+              )
+              .limit(1)
+              .for("share")
+          : [];
+        const sourceRow = sourceRows[0];
+        const source = sourceRow ? mapRun(sourceRow) : null;
+        const derivation = input.run.derivation;
+        const expectedSnapshot = source
+          ? {
+              ...source.startSnapshot,
+              authorization: input.run.startSnapshot.authorization,
+            }
+          : null;
+        if (
+          !source ||
+          !derivation ||
+          source.state !== "failed" ||
+          input.run.workflowId !== source.workflowId ||
+          input.run.workflowRevisionId !== source.workflowRevisionId ||
+          derivation.sourceRunId !== source.id ||
+          derivation.sourceStartSnapshotDigest !== source.startSnapshotDigest ||
+          derivation.rootRunId !== (source.derivation?.rootRunId ?? source.id) ||
+          !source.startSnapshot.definition.steps.some(
+            (step) => step.id === derivation.retryFromStepId,
+          ) ||
+          !expectedSnapshot ||
+          !sameCanonicalValue(input.run.startSnapshot, expectedSnapshot)
+        ) {
+          return { kind: "unavailable" as const };
+        }
+        for (const reused of derivation.reusedOutputs) {
+          if (reused.sourceRunId === source.id) {
+            const rows = await tx
+              .select()
+              .from(workflowStepAttempts)
+              .where(
+                and(
+                  eq(workflowStepAttempts.workspaceId, input.run.workspaceId),
+                  eq(workflowStepAttempts.runId, source.id),
+                  eq(workflowStepAttempts.id, reused.sourceStepAttemptId),
+                ),
+              )
+              .limit(1)
+              .for("share");
+            const attempt = rows[0] ? mapStepAttempt(rows[0]) : null;
+            if (
+              !attempt ||
+              attempt.state !== "completed" ||
+              attempt.stepId !== reused.stepId ||
+              attempt.attempt !== reused.sourceAttempt ||
+              attempt.effectKey !== reused.sourceEffectKey ||
+              attempt.providerOperationRef !==
+                reused.sourceProviderOperationRef ||
+              !sameCanonicalValue(attempt.outputs, reused.outputs)
+            ) {
+              return { kind: "unavailable" as const };
+            }
+          } else if (
+            !source.derivation?.reusedOutputs.some((inherited) =>
+              sameCanonicalValue(inherited, reused),
+            )
+          ) {
+            return { kind: "unavailable" as const };
+          }
+        }
+        const evidenceRows = await tx
+          .select({ resources: agentAuthorizationDecisions.resources })
+          .from(agentAuthorizationDecisions)
+          .where(
+            and(
+              eq(
+                agentAuthorizationDecisions.workspaceId,
+                input.run.workspaceId,
+              ),
+              eq(
+                agentAuthorizationDecisions.principalId,
+                input.receipt.principalId,
+              ),
+              eq(
+                agentAuthorizationDecisions.keyId,
+                input.run.startSnapshot.authorization.keyId,
+              ),
+              eq(
+                agentAuthorizationDecisions.operatorTraceRef,
+                input.run.startSnapshot.authorization.evidenceRef,
+              ),
+              eq(
+                agentAuthorizationDecisions.capabilityName,
+                "workflow_runs.retry",
+              ),
+              eq(agentAuthorizationDecisions.capabilityVersion, 1),
+              eq(agentAuthorizationDecisions.outcome, "allowed"),
+            ),
+          )
+          .limit(1)
+          .for("share");
+        const evidence = evidenceRows[0];
+        const requiredArtifacts = input.run.startSnapshot.artifactReferences.map(
+          (reference) => reference.artifactId,
+        );
+        if (
+          !evidence ||
+          !evidence.resources.some(
+            (resource) =>
+              resource.kind === "workflow" &&
+              resource.id === input.run.workflowId,
+          ) ||
+          requiredArtifacts.some(
+            (artifactId) =>
+              !evidence.resources.some(
+                (resource) =>
+                  resource.kind === "artifact" &&
+                  resource.id === artifactId,
+              ),
+          )
+        ) {
+          return { kind: "unavailable" as const };
+        }
+        await tx.insert(workflowRuns).values({
+          ...input.run,
+          principalId: input.receipt.principalId,
+          keyId: input.run.startSnapshot.authorization.keyId,
+          authorizationEvidenceRef:
+            input.run.startSnapshot.authorization.evidenceRef,
+          sourceRunId: input.run.derivation!.sourceRunId,
+          rootRunId: input.run.derivation!.rootRunId,
+          derivationDepth: sourceRow!.derivationDepth + 1,
+        });
+        await tx.insert(workflowRunEvents).values(input.events);
+        const receipt = {
+          ...input.receipt,
+          result: workflowRunReceiptResult(
+            input.run,
+            input.receipt.initialEventCursor,
+          ),
+        };
+        await tx.insert(workflowRunMutationReceipts).values(receipt);
+        await tx.insert(workflowRunOutboxIntents).values(input.outboxIntent);
+        return {
+          kind: "created" as const,
+          run: input.run,
+          receipt,
+        };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
+  async resumeRun(
+    input: Parameters<WorkflowRunRepository["resumeRun"]>[0],
+  ) {
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtextextended(${receiptLock(input.receipt)}, 0))`,
+        );
+        const receipts = await tx
+          .select()
+          .from(workflowRunMutationReceipts)
+          .where(
+            and(
+              eq(workflowRunMutationReceipts.workspaceId, input.workspaceId),
+              eq(workflowRunMutationReceipts.principalId, input.principalId),
+              eq(workflowRunMutationReceipts.capability, "workflow_runs.resume@1"),
+              eq(workflowRunMutationReceipts.idempotencyKey, input.idempotencyKey),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const existing = receipts[0];
+        if (existing) {
+          if (existing.requestFingerprint !== input.requestFingerprint) {
+            return { kind: "conflict" as const };
+          }
+          const run = await findRun(tx, {
+            workspaceId: input.workspaceId,
+            runId: existing.runId,
+          });
+          return run
+            ? { kind: "replayed" as const, run, receipt: mapReceipt(existing) }
+            : { kind: "unavailable" as const };
+        }
+        const rows = await tx
+          .select({
+            run: workflowRuns,
+            databaseNow: sql<unknown>`clock_timestamp()`,
+          })
+          .from(workflowRuns)
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.workflowId, input.workflowId),
+              eq(workflowRuns.id, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selected = rows[0];
+        if (!selected) return { kind: "unavailable" as const };
+        const run = mapRun(selected.run);
+        const databaseNow = postgresDate(selected.databaseNow);
+        const waitEvents = await tx
+          .select({ id: workflowRunEvents.id })
+          .from(workflowRunEvents)
+          .where(
+            and(
+              eq(workflowRunEvents.workspaceId, input.workspaceId),
+              eq(workflowRunEvents.runId, input.runId),
+              eq(workflowRunEvents.sequence, input.waitEventSequence),
+              eq(workflowRunEvents.type, "run.waiting"),
+            ),
+          )
+          .limit(1)
+          .for("share");
+        const evidenceRows = await tx
+          .select({ resources: agentAuthorizationDecisions.resources })
+          .from(agentAuthorizationDecisions)
+          .where(
+            and(
+              eq(agentAuthorizationDecisions.workspaceId, input.workspaceId),
+              eq(agentAuthorizationDecisions.principalId, input.principalId),
+              eq(agentAuthorizationDecisions.keyId, input.keyId),
+              eq(
+                agentAuthorizationDecisions.operatorTraceRef,
+                input.authorizationEvidenceRef,
+              ),
+              eq(
+                agentAuthorizationDecisions.capabilityName,
+                "workflow_runs.resume",
+              ),
+              eq(agentAuthorizationDecisions.capabilityVersion, 1),
+              eq(agentAuthorizationDecisions.outcome, "allowed"),
+            ),
+          )
+          .limit(1)
+          .for("share");
+        const evidence = evidenceRows[0];
+        if (
+          run.state !== "waiting" ||
+          run.nextEventSequence !== input.waitEventSequence + 1 ||
+          !waitEvents[0] ||
+          (run.resumeAt !== null && run.resumeAt > databaseNow) ||
+          !evidence?.resources.some(
+            (resource) =>
+              resource.kind === "workflow" &&
+              resource.id === input.workflowId,
+          )
+        ) {
+          return { kind: "unavailable" as const };
+        }
+        await tx.insert(workflowRunEvents).values({
+          id: input.eventId,
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          sequence: run.nextEventSequence,
+          type: "run.resumed",
+          data: { automatic: false },
+          occurredAt: databaseNow,
+        });
+        const updated = await tx
+          .update(workflowRuns)
+          .set({
+            state: "running",
+            resumeAt: null,
+            failureCode: null,
+            nextEventSequence: run.nextEventSequence + 1,
+            updatedAt: databaseNow,
+          })
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.id, input.runId),
+              eq(workflowRuns.state, "waiting"),
+            ),
+          )
+          .returning();
+        await tx.insert(workflowRunOutboxIntents).values({
+          ...input.outboxIntent,
+          availableAt: databaseNow,
+          createdAt: databaseNow,
+        });
+        if (!updated[0]) throw new Error("Workflow Run resume was lost.");
+        const resumed = mapRun(updated[0]);
+        const receipt = {
+          ...input.receipt,
+          result: workflowRunReceiptResult(
+            resumed,
+            input.receipt.initialEventCursor,
+          ),
+          createdAt: databaseNow,
+        };
+        await tx.insert(workflowRunMutationReceipts).values(receipt);
+        return {
+          kind: "created" as const,
+          run: resumed,
+          receipt,
+        };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
+  async reconcileStepAttempt(
+    input: Parameters<WorkflowRunRepository["reconcileStepAttempt"]>[0],
+  ) {
+    try {
+      return await this.getDatabase().transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtextextended(${receiptLock(input.receipt)}, 0))`,
+        );
+        const receiptRows = await tx
+          .select()
+          .from(workflowRunMutationReceipts)
+          .where(
+            and(
+              eq(workflowRunMutationReceipts.workspaceId, input.workspaceId),
+              eq(workflowRunMutationReceipts.principalId, input.principalId),
+              eq(workflowRunMutationReceipts.capability, "workflow_runs.reconcile@1"),
+              eq(workflowRunMutationReceipts.idempotencyKey, input.receipt.idempotencyKey),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const existing = receiptRows[0];
+        if (existing) {
+          if (existing.requestFingerprint !== input.requestFingerprint) {
+            return { kind: "conflict" as const };
+          }
+          const replay = await findRun(tx, {
+            workspaceId: input.workspaceId,
+            runId: existing.runId,
+          });
+          return replay
+            ? { kind: "replayed" as const, run: replay, receipt: mapReceipt(existing) }
+            : { kind: "unavailable" as const };
+        }
+        const runRows = await tx
+          .select({
+            run: workflowRuns,
+            databaseNow: sql<unknown>`clock_timestamp()`,
+          })
+          .from(workflowRuns)
+          .where(
+            and(
+              eq(workflowRuns.workspaceId, input.workspaceId),
+              eq(workflowRuns.workflowId, input.workflowId),
+              eq(workflowRuns.id, input.runId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const selected = runRows[0];
+        if (!selected) return { kind: "unavailable" as const };
+        const run = mapRun(selected.run);
+        const databaseNow = postgresDate(selected.databaseNow);
+        const evidenceRows = await tx
+          .select({ resources: agentAuthorizationDecisions.resources })
+          .from(agentAuthorizationDecisions)
+          .where(
+            and(
+              eq(agentAuthorizationDecisions.workspaceId, input.workspaceId),
+              eq(agentAuthorizationDecisions.principalId, input.principalId),
+              eq(agentAuthorizationDecisions.keyId, input.keyId),
+              eq(
+                agentAuthorizationDecisions.operatorTraceRef,
+                input.authorizationEvidenceRef,
+              ),
+              eq(
+                agentAuthorizationDecisions.capabilityName,
+                "workflow_runs.reconcile",
+              ),
+              eq(agentAuthorizationDecisions.capabilityVersion, 1),
+              eq(agentAuthorizationDecisions.outcome, "allowed"),
+            ),
+          )
+          .limit(1)
+          .for("share");
+        const evidence = evidenceRows[0];
+        if (
+          !evidence?.resources.some(
+            (resource) =>
+              resource.kind === "workflow" &&
+              resource.id === input.workflowId,
+          )
+        ) {
+          return { kind: "unavailable" as const };
+        }
+        const attemptRows = await tx
+          .select()
+          .from(workflowStepAttempts)
+          .where(
+            and(
+              eq(workflowStepAttempts.workspaceId, input.workspaceId),
+              eq(workflowStepAttempts.runId, input.runId),
+              eq(workflowStepAttempts.id, input.stepAttemptId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        const attempt = attemptRows[0] ? mapStepAttempt(attemptRows[0]) : null;
+        if (
+          run.state !== "outcome_unknown" ||
+          !attempt ||
+          attempt.state !== "outcome_unknown"
+        ) {
+          return { kind: "unavailable" as const };
+        }
+        const priorSucceededProviderOperationRef =
+          attempt.outcome?.kind === "outcome_unknown"
+            ? attempt.outcome.priorSucceededProviderOperationRef
+            : null;
+        if (
+          priorSucceededProviderOperationRef !== null &&
+          (input.resolution.kind !== "succeeded" ||
+            input.resolution.providerOperationRef !==
+              priorSucceededProviderOperationRef)
+        ) {
+          return { kind: "unavailable" as const };
+        }
+        let sequence = run.nextEventSequence;
+        const events: WorkflowRunEventRecord[] = [];
+        if (input.resolution.kind === "succeeded") {
+          const entries = Object.entries(input.resolution.outputs).sort(
+            ([left], [right]) => compareCodeUnits(left, right),
+          );
+          entries.forEach(([outputName, output], index) => {
+            events.push({
+              id: input.eventIds.generated[index]!,
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              sequence: sequence++,
+              type: "artifact.generated",
+              data: {
+                stepAttemptId: attempt.id,
+                stepId: attempt.stepId,
+                outputName,
+                artifactId: output.artifactId,
+                digest: output.digest,
+              },
+              occurredAt: databaseNow,
+            });
+          });
+          events.push(
+            {
+              id: input.eventIds.reconciled,
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              sequence: sequence++,
+              type: "step.attempt.reconciled",
+              data: { stepAttemptId: attempt.id, resolution: "succeeded" },
+              occurredAt: databaseNow,
+            },
+            {
+              id: input.eventIds.attemptCompleted!,
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              sequence: sequence++,
+              type: "step.attempt.completed",
+              data: {
+                stepAttemptId: attempt.id,
+                stepId: attempt.stepId,
+                attempt: attempt.attempt,
+                effectKey: attempt.effectKey,
+                outputArtifactIds: entries.map(
+                  ([, output]) => output.artifactId,
+                ),
+              },
+              occurredAt: databaseNow,
+            },
+          );
+          const final = input.resolution.finalSnapshot !== null;
+          events.push({
+            id: final ? input.eventIds.runCompleted! : input.eventIds.runWaiting!,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: sequence++,
+            type: final ? "run.completed" : "run.waiting",
+            data: final
+              ? { finalSnapshotDigest: input.resolution.finalSnapshotDigest }
+              : { reasonCode: "RECONCILED_NEXT_STEP", resumeAt: databaseNow.toISOString() },
+            occurredAt: databaseNow,
+          });
+          await tx
+            .update(workflowStepAttempts)
+            .set({
+              state: "completed",
+              outputs: input.resolution.outputs,
+              providerOperationRef: input.resolution.providerOperationRef,
+              outcome: {
+                kind: "succeeded",
+                providerOperationRef: input.resolution.providerOperationRef,
+              },
+              reconciliation: {
+                reference: input.resolution.providerOperationRef,
+                resolution: "succeeded",
+                reconciledAt: databaseNow.toISOString(),
+              },
+              failureCode: null,
+              completedAt: databaseNow,
+            })
+            .where(eq(workflowStepAttempts.id, attempt.id));
+          if (input.resolution.outboxIntent) {
+            await tx.insert(workflowRunOutboxIntents).values({
+              ...input.resolution.outboxIntent,
+              availableAt: databaseNow,
+              createdAt: databaseNow,
+            });
+          }
+          await tx.insert(workflowRunEvents).values(events);
+          await tx
+            .update(workflowRuns)
+            .set({
+              state: final ? "completed" : "waiting",
+              output: input.resolution.finalSnapshot?.outputs ?? null,
+              finalSnapshot: input.resolution.finalSnapshot,
+              finalSnapshotDigest: input.resolution.finalSnapshotDigest,
+              failureCode: final ? null : "RECONCILED_NEXT_STEP",
+              resumeAt: final ? null : databaseNow,
+              completedAt: final ? databaseNow : null,
+              nextEventSequence: sequence,
+              updatedAt: databaseNow,
+            })
+            .where(
+              and(
+                eq(workflowRuns.workspaceId, input.workspaceId),
+                eq(workflowRuns.id, run.id),
+                eq(workflowRuns.state, "outcome_unknown"),
+              ),
+            );
+        } else {
+          events.push(
+            {
+              id: input.eventIds.reconciled,
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              sequence: sequence++,
+              type: "step.attempt.reconciled",
+              data: { stepAttemptId: attempt.id, resolution: "failed_known" },
+              occurredAt: databaseNow,
+            },
+            {
+              id: input.eventIds.attemptFailed!,
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              sequence: sequence++,
+              type: "step.attempt.failed",
+              data: {
+                stepAttemptId: attempt.id,
+                stepId: attempt.stepId,
+                attempt: attempt.attempt,
+                effectKey: attempt.effectKey,
+                reasonCode: input.resolution.failureCode,
+              },
+              occurredAt: databaseNow,
+            },
+          );
+          if (input.resolution.retryable) {
+            events.push(
+              {
+                id: input.eventIds.retryScheduled!,
+                workspaceId: input.workspaceId,
+                runId: input.runId,
+                sequence: sequence++,
+                type: "step.retry.scheduled",
+                data: {
+                  stepAttemptId: attempt.id,
+                  stepId: attempt.stepId,
+                  attempt: attempt.attempt,
+                  nextAttempt: attempt.attempt + 1,
+                  retryAt: input.resolution.retryAt!.toISOString(),
+                  effectKey: attempt.effectKey,
+                },
+                occurredAt: databaseNow,
+              },
+              {
+                id: input.eventIds.runWaiting!,
+                workspaceId: input.workspaceId,
+                runId: input.runId,
+                sequence: sequence++,
+                type: "run.waiting",
+                data: {
+                  reasonCode: input.resolution.failureCode,
+                  resumeAt: input.resolution.retryAt!.toISOString(),
+                },
+                occurredAt: databaseNow,
+              },
+            );
+          } else {
+            events.push({
+              id: input.eventIds.runFailed!,
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              sequence: sequence++,
+              type: "run.failed",
+              data: {
+                stepAttemptId: attempt.id,
+                reasonCode: input.resolution.failureCode,
+              },
+              occurredAt: databaseNow,
+            });
+          }
+          await tx
+            .update(workflowStepAttempts)
+            .set({
+              state: "failed",
+              providerOperationRef: input.resolution.providerOperationRef,
+              outcome: {
+                kind: "failed_known",
+                failureCode: input.resolution.failureCode,
+                retryable: input.resolution.retryable,
+              },
+              reconciliation: {
+                reference: input.resolution.providerOperationRef ?? attempt.effectKey,
+                resolution: "failed_known",
+                reconciledAt: databaseNow.toISOString(),
+              },
+              failureCode: input.resolution.failureCode,
+              completedAt: databaseNow,
+            })
+            .where(eq(workflowStepAttempts.id, attempt.id));
+          if (input.resolution.outboxIntent) {
+            await tx.insert(workflowRunOutboxIntents).values({
+              ...input.resolution.outboxIntent,
+              availableAt: input.resolution.retryAt!,
+              createdAt: databaseNow,
+            });
+          }
+          await tx.insert(workflowRunEvents).values(events);
+          await tx
+            .update(workflowRuns)
+            .set({
+              state: input.resolution.retryable ? "waiting" : "failed",
+              failureCode: input.resolution.failureCode,
+              resumeAt: input.resolution.retryAt,
+              completedAt: input.resolution.retryable ? null : databaseNow,
+              nextEventSequence: sequence,
+              updatedAt: databaseNow,
+            })
+            .where(
+              and(
+                eq(workflowRuns.workspaceId, input.workspaceId),
+                eq(workflowRuns.id, run.id),
+                eq(workflowRuns.state, "outcome_unknown"),
+              ),
+            );
+        }
+        const updated = await findRun(tx, {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+        });
+        if (!updated) throw new Error("Reconciliation was lost.");
+        const receipt = {
+          ...input.receipt,
+          result: workflowRunReceiptResult(
+            updated,
+            input.receipt.initialEventCursor,
+          ),
+          createdAt: databaseNow,
+        };
+        await tx.insert(workflowRunMutationReceipts).values(receipt);
+        return {
+          kind: "created" as const,
+          run: updated,
+          receipt,
         };
       });
     } catch {

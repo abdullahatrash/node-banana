@@ -6,7 +6,7 @@ export const WORKFLOW_RUN_ERROR_CATALOG = {
     retryable: false,
     description: "Workflow Run input violates the published contract.",
   },
-  WORKFLOW_RUN_IDEMPOTENCY_CONFLICT: {
+  IDEMPOTENCY_CONFLICT: {
     category: "conflict",
     retryable: false,
     description: "The idempotency key is bound to another Workflow Run.",
@@ -41,6 +41,21 @@ export const WORKFLOW_RUN_ERROR_CATALOG = {
     retryable: false,
     description: "A stale worker cannot mutate the Workflow Run.",
   },
+  WORKFLOW_RUN_NOT_RESUMABLE: {
+    category: "conflict",
+    retryable: false,
+    description: "The Workflow Run is not in a known-safe resumable state.",
+  },
+  WORKFLOW_RUN_RECONCILIATION_REQUIRED: {
+    category: "conflict",
+    retryable: false,
+    description: "The Workflow Run has an unknown provider outcome that must be reconciled.",
+  },
+  WORKFLOW_RUN_RECONCILIATION_PENDING: {
+    category: "conflict",
+    retryable: true,
+    description: "The provider outcome is still unknown.",
+  },
 } as const satisfies Record<string, Omit<CapabilityErrorContract, "code">>;
 
 export type WorkflowRunErrorCode = keyof typeof WORKFLOW_RUN_ERROR_CATALOG;
@@ -66,10 +81,13 @@ export const WORKFLOW_RUN_ERROR_CONTRACTS: CapabilityErrorContract[] =
 
 const PUBLIC_ERROR_CODES: WorkflowRunErrorCode[] = [
   "WORKFLOW_RUN_INVALID_INPUT",
-  "WORKFLOW_RUN_IDEMPOTENCY_CONFLICT",
+  "IDEMPOTENCY_CONFLICT",
   "WORKFLOW_RUN_UNAVAILABLE",
   "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
   "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+  "WORKFLOW_RUN_NOT_RESUMABLE",
+  "WORKFLOW_RUN_RECONCILIATION_REQUIRED",
+  "WORKFLOW_RUN_RECONCILIATION_PENDING",
 ];
 
 export const WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS: CapabilityErrorContract[] =

@@ -88,9 +88,15 @@ describe("production Capability Registry", () => {
       "credentials.versions.revoke@1",
       "workflow_operations.get@1",
       "workflow_operations.list@1",
+      "workflow_run_artifacts.get@1",
       "workflow_run_events.list@1",
       "workflow_runs.get@1",
+      "workflow_runs.reconcile@1",
+      "workflow_runs.resume@1",
+      "workflow_runs.retry@1",
       "workflow_runs.start@1",
+      "workflow_runs.start@2",
+      "workflow_step_attempts.list@1",
       "workflow_versions.create@1",
       "workflow_versions.get@1",
       "workflow_versions.validate@1",
@@ -105,7 +111,9 @@ describe("production Capability Registry", () => {
       );
       expect(definition.lifecycle).toMatchObject({
         status: "active",
-        recommended: true,
+        recommended:
+          formatCapabilityIdentity(definition.identity) !==
+          "workflow_runs.start@1",
       });
       expect(definition.schemas.input).toMatchObject({ type: "object" });
       expect(definition.schemas.output).toMatchObject({ type: "object" });
@@ -198,9 +206,15 @@ describe("production Capability Registry", () => {
       "credentials.versions.revoke.v1",
       "workflow_operations.get.v1",
       "workflow_operations.list.v1",
+      "workflow_run_artifacts.get.v1",
       "workflow_run_events.list.v1",
       "workflow_runs.get.v1",
+      "workflow_runs.reconcile.v1",
+      "workflow_runs.resume.v1",
+      "workflow_runs.retry.v1",
       "workflow_runs.start.v1",
+      "workflow_runs.start.v2",
+      "workflow_step_attempts.list.v1",
       "workflow_versions.create.v1",
       "workflow_versions.get.v1",
       "workflow_versions.validate.v1",

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { workflowRunReceiptResult } from "./types";
 import type {
   AcquireWorkflowRunLeaseResult,
   CompleteWorkflowRunStepResult,
@@ -50,6 +51,26 @@ export class InMemoryWorkflowRunRepository
   readonly fences = new Map<string, bigint>();
   failNextStart = false;
   failNextFinish = false;
+  failNextMarkOutboxDelivered = false;
+
+  async getMutationReceipt(
+    input: Parameters<WorkflowRunRepository["getMutationReceipt"]>[0],
+  ) {
+    const receipt = this.receipts.get(
+      compound(
+        input.workspaceId,
+        input.principalId,
+        input.capability,
+        input.idempotencyKey,
+      ),
+    );
+    const run = receipt
+      ? this.runs.get(compound(receipt.workspaceId, receipt.runId))
+      : null;
+    return receipt && run
+      ? { receipt: clone(receipt), run: clone(run) }
+      : null;
+  }
 
   async start(input: Parameters<WorkflowRunRepository["start"]>[0]) {
     const receiptKey = compound(
@@ -147,6 +168,10 @@ export class InMemoryWorkflowRunRepository
     input: Parameters<WorkflowRunRepository["markOutboxDelivered"]>[0],
   ) {
     const intent = this.outbox.get(input.intentId);
+    if (this.failNextMarkOutboxDelivered) {
+      this.failNextMarkOutboxDelivered = false;
+      return false;
+    }
     if (
       !intent ||
       intent.state === "delivered" ||
@@ -203,6 +228,14 @@ export class InMemoryWorkflowRunRepository
     if (run.state === "completed" || run.state === "failed") {
       return { kind: "completed", run: clone(run) };
     }
+    if (run.state === "outcome_unknown") return { kind: "unavailable" };
+    if (
+      run.state === "waiting" &&
+      run.resumeAt !== null &&
+      run.resumeAt > input.now
+    ) {
+      return { kind: "busy" };
+    }
     const existing = this.leases.get(key);
     if (
       existing &&
@@ -232,25 +265,71 @@ export class InMemoryWorkflowRunRepository
     this.fences.set(key, fence);
     this.leases.set(key, lease);
 
+    const shouldResume = run.state === "waiting";
     const nextRun =
-      run.state === "accepted"
+      run.state === "accepted" || shouldResume
         ? immutable(
             clone({
               ...run,
               state: "running" as const,
-              startedAt: input.now,
+              startedAt: run.startedAt ?? input.now,
+              resumeAt: null,
+              failureCode: shouldResume ? null : run.failureCode,
+              nextEventSequence:
+                run.nextEventSequence + (shouldResume ? 1 : 0),
               updatedAt: input.now,
             }),
           )
         : run;
-    if (run.state === "accepted") {
+    if (run.state === "accepted" || shouldResume) {
       this.runs.set(key, nextRun);
+    }
+    if (shouldResume) {
+      this.events.set(key, [
+        ...(this.events.get(key) ?? []),
+        immutable({
+          id: randomUUID(),
+          workspaceId: run.workspaceId,
+          runId: run.id,
+          sequence: run.nextEventSequence,
+          type: "run.resumed",
+          data: { automatic: true },
+          occurredAt: input.now,
+        }),
+      ]);
     }
     return {
       kind: "acquired",
       run: clone(nextRun),
       lease: clone(lease),
     };
+  }
+
+  async renewLease(
+    input: Parameters<WorkflowRunRepository["renewLease"]>[0],
+  ): Promise<
+    | { kind: "renewed"; lease: WorkflowRunExecutionLeaseRecord }
+    | { kind: "stale_fence" | "unavailable" }
+  > {
+    const key = compound(input.workspaceId, input.runId);
+    const run = this.runs.get(key);
+    const lease = this.leases.get(key);
+    if (!run || run.state !== "running" || !lease) {
+      return { kind: "unavailable" };
+    }
+    if (
+      lease.releasedAt !== null ||
+      lease.workerId !== input.workerId ||
+      lease.token !== input.token ||
+      lease.fence !== input.fence ||
+      lease.expiresAt <= input.now ||
+      input.expiresAt <= input.now
+    ) {
+      return { kind: "stale_fence" };
+    }
+    const renewed = immutable(clone({ ...lease, expiresAt: input.expiresAt }));
+    this.leases.set(key, renewed);
+    return { kind: "renewed", lease: clone(renewed) };
   }
 
   async completeStep(
@@ -427,8 +506,8 @@ export class InMemoryWorkflowRunRepository
         attempt.workspaceId === input.attempt.workspaceId &&
         attempt.effectKey === input.attempt.effectKey,
     );
-    if (existing || effectOwner) {
-      const found = existing ?? effectOwner!;
+    if (existing) {
+      const found = existing;
       if (
         found.id !== input.attempt.id ||
         found.effectKey !== input.attempt.effectKey ||
@@ -443,6 +522,16 @@ export class InMemoryWorkflowRunRepository
         run: clone(run),
         attempt: clone(found),
       };
+    }
+    if (
+      effectOwner &&
+      (effectOwner.runId !== input.attempt.runId ||
+        effectOwner.stepId !== input.attempt.stepId ||
+        effectOwner.intentDigest !== input.attempt.intentDigest ||
+        effectOwner.operationContractDigest !==
+          input.attempt.operationContractDigest)
+    ) {
+      return { kind: "conflict" };
     }
     const attempt = immutable(clone(input.attempt));
     const event: WorkflowRunEventRecord = immutable({
@@ -524,6 +613,11 @@ export class InMemoryWorkflowRunRepository
         ...attempt,
         state: "completed" as const,
         outputs: input.outputs,
+        providerOperationRef: input.providerOperationRef,
+        outcome: {
+          kind: "succeeded" as const,
+          providerOperationRef: input.providerOperationRef,
+        },
         completedAt: input.completedAt,
       }),
     );
@@ -612,6 +706,59 @@ export class InMemoryWorkflowRunRepository
     };
   }
 
+  async recordStepAttemptProviderSuccess(
+    input: Parameters<
+      WorkflowRunRepository["recordStepAttemptProviderSuccess"]
+    >[0],
+  ): Promise<SettleWorkflowStepAttemptResult> {
+    const key = compound(input.workspaceId, input.runId);
+    const run = this.runs.get(key);
+    const lease = this.leases.get(key);
+    const entry = [...this.stepAttempts.entries()].find(
+      ([, attempt]) =>
+        attempt.workspaceId === input.workspaceId &&
+        attempt.runId === input.runId &&
+        attempt.id === input.stepAttemptId,
+    );
+    if (!run || run.state !== "running" || !lease || !entry) {
+      return { kind: "unavailable" };
+    }
+    if (
+      lease.releasedAt !== null ||
+      lease.workerId !== input.workerId ||
+      lease.token !== input.token ||
+      lease.fence !== input.fence ||
+      lease.expiresAt <= input.recordedAt
+    ) {
+      return { kind: "stale_fence" };
+    }
+    const [attemptKey, attempt] = entry;
+    if (
+      attempt.state !== "running" ||
+      (attempt.outcome !== null &&
+        (attempt.outcome.kind !== "succeeded" ||
+          attempt.providerOperationRef !== input.providerOperationRef))
+    ) {
+      return { kind: "unavailable" };
+    }
+    const recorded = immutable(
+      clone({
+        ...attempt,
+        providerOperationRef: input.providerOperationRef,
+        outcome: {
+          kind: "succeeded" as const,
+          providerOperationRef: input.providerOperationRef,
+        },
+      }),
+    );
+    this.stepAttempts.set(attemptKey, recorded);
+    return {
+      kind: "settled",
+      run: clone(run),
+      attempt: clone(recorded),
+    };
+  }
+
   async failStepAttempt(
     input: Parameters<WorkflowRunRepository["failStepAttempt"]>[0],
   ): Promise<SettleWorkflowStepAttemptResult> {
@@ -630,7 +777,7 @@ export class InMemoryWorkflowRunRepository
     const [attemptKey, attempt] = entry;
     if (
       attempt.state === "failed" &&
-      run.state === "failed" &&
+      (run.state === "failed" || run.state === "waiting") &&
       attempt.failureCode === input.failureCode &&
       run.failureCode === input.failureCode
     ) {
@@ -662,10 +809,20 @@ export class InMemoryWorkflowRunRepository
         ...attempt,
         state: "failed" as const,
         outputs: null,
+        providerOperationRef: input.providerOperationRef,
+        outcome: {
+          kind: "failed_known" as const,
+          failureCode: input.failureCode,
+          retryable: input.retryable,
+        },
         failureCode: input.failureCode,
         completedAt: input.failedAt,
       }),
     );
+    const shouldRetry =
+      input.retryable &&
+      input.retryAt !== null &&
+      input.retryOutboxIntent !== null;
     const events: WorkflowRunEventRecord[] = [
       {
         id: input.eventIds.attemptFailed,
@@ -682,29 +839,64 @@ export class InMemoryWorkflowRunRepository
         },
         occurredAt: input.failedAt,
       },
-      {
-        id: input.eventIds.runFailed,
-        workspaceId: input.workspaceId,
-        runId: input.runId,
-        sequence: run.nextEventSequence + 1,
-        type: "run.failed",
-        data: {
-          stepAttemptId: attempt.id,
-          reasonCode: input.failureCode,
-        },
-        occurredAt: input.failedAt,
-      },
+      ...(shouldRetry
+        ? [
+            {
+              id: input.eventIds.retryScheduled!,
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              sequence: run.nextEventSequence + 1,
+              type: "step.retry.scheduled" as const,
+              data: {
+                stepAttemptId: attempt.id,
+                stepId: attempt.stepId,
+                attempt: attempt.attempt,
+                nextAttempt: attempt.attempt + 1,
+                effectKey: attempt.effectKey,
+                retryAt: input.retryAt!.toISOString(),
+              },
+              occurredAt: input.failedAt,
+            },
+            {
+              id: input.eventIds.runWaiting!,
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              sequence: run.nextEventSequence + 2,
+              type: "run.waiting" as const,
+              data: {
+                stepAttemptId: attempt.id,
+                reasonCode: input.failureCode,
+                resumeAt: input.retryAt!.toISOString(),
+              },
+              occurredAt: input.failedAt,
+            },
+          ]
+        : [
+            {
+              id: input.eventIds.runFailed!,
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              sequence: run.nextEventSequence + 1,
+              type: "run.failed" as const,
+              data: {
+                stepAttemptId: attempt.id,
+                reasonCode: input.failureCode,
+              },
+              occurredAt: input.failedAt,
+            },
+          ]),
     ];
     const failedRun = immutable(
       clone({
         ...run,
-        state: "failed" as const,
+        state: shouldRetry ? ("waiting" as const) : ("failed" as const),
         output: null,
         finalSnapshot: null,
         finalSnapshotDigest: null,
         failureCode: input.failureCode,
+        resumeAt: shouldRetry ? input.retryAt : null,
         nextEventSequence: run.nextEventSequence + events.length,
-        completedAt: input.failedAt,
+        completedAt: shouldRetry ? null : input.failedAt,
         updatedAt: input.failedAt,
       }),
     );
@@ -714,6 +906,12 @@ export class InMemoryWorkflowRunRepository
       ...(this.events.get(key) ?? []),
       ...events.map((event) => immutable(event)),
     ]);
+    if (shouldRetry) {
+      this.outbox.set(
+        input.retryOutboxIntent!.id,
+        immutable(clone(input.retryOutboxIntent!)),
+      );
+    }
     this.leases.set(
       key,
       immutable(clone({ ...lease, releasedAt: input.failedAt })),
@@ -722,6 +920,513 @@ export class InMemoryWorkflowRunRepository
       kind: "settled",
       run: clone(failedRun),
       attempt: clone(failedAttempt),
+    };
+  }
+
+  async markStepAttemptOutcomeUnknown(
+    input: Parameters<
+      WorkflowRunRepository["markStepAttemptOutcomeUnknown"]
+    >[0],
+  ): Promise<SettleWorkflowStepAttemptResult> {
+    if (!FAILURE_CODE.test(input.failureCode)) return { kind: "unavailable" };
+    const key = compound(input.workspaceId, input.runId);
+    const run = this.runs.get(key);
+    const lease = this.leases.get(key);
+    const entry = [...this.stepAttempts.entries()].find(
+      ([, attempt]) =>
+        attempt.workspaceId === input.workspaceId &&
+        attempt.runId === input.runId &&
+        attempt.id === input.stepAttemptId,
+    );
+    if (!run || !lease || !entry) return { kind: "unavailable" };
+    const [attemptKey, attempt] = entry;
+    if (
+      run.state !== "running" ||
+      attempt.state !== "running" ||
+      lease.releasedAt !== null ||
+      lease.workerId !== input.workerId ||
+      lease.token !== input.token ||
+      lease.fence !== input.fence ||
+      lease.expiresAt <= input.occurredAt
+    ) {
+      return { kind: "stale_fence" };
+    }
+    const unknownAttempt = immutable(
+      clone({
+        ...attempt,
+        state: "outcome_unknown" as const,
+        providerOperationRef: input.providerOperationRef,
+        outcome: {
+          kind: "outcome_unknown" as const,
+          failureCode: input.failureCode,
+          priorSucceededProviderOperationRef:
+            attempt.outcome?.kind === "succeeded"
+              ? attempt.outcome.providerOperationRef
+              : null,
+        },
+        failureCode: input.failureCode,
+        completedAt: null,
+      }),
+    );
+    const events: WorkflowRunEventRecord[] = [
+      {
+        id: input.eventIds.attemptOutcomeUnknown,
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        sequence: run.nextEventSequence,
+        type: "step.attempt.outcome_unknown",
+        data: {
+          stepAttemptId: attempt.id,
+          stepId: attempt.stepId,
+          attempt: attempt.attempt,
+          effectKey: attempt.effectKey,
+          reasonCode: input.failureCode,
+        },
+        occurredAt: input.occurredAt,
+      },
+      {
+        id: input.eventIds.runOutcomeUnknown,
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        sequence: run.nextEventSequence + 1,
+        type: "run.outcome_unknown",
+        data: {
+          stepAttemptId: attempt.id,
+          reasonCode: input.failureCode,
+        },
+        occurredAt: input.occurredAt,
+      },
+    ];
+    const unknownRun = immutable(
+      clone({
+        ...run,
+        state: "outcome_unknown" as const,
+        failureCode: input.failureCode,
+        resumeAt: null,
+        nextEventSequence: run.nextEventSequence + events.length,
+        updatedAt: input.occurredAt,
+      }),
+    );
+    this.stepAttempts.set(attemptKey, unknownAttempt);
+    this.runs.set(key, unknownRun);
+    this.events.set(key, [
+      ...(this.events.get(key) ?? []),
+      ...events.map((event) => immutable(event)),
+    ]);
+    this.leases.set(
+      key,
+      immutable(clone({ ...lease, releasedAt: input.occurredAt })),
+    );
+    return {
+      kind: "settled",
+      run: clone(unknownRun),
+      attempt: clone(unknownAttempt),
+    };
+  }
+
+  async deriveRun(
+    input: Parameters<WorkflowRunRepository["deriveRun"]>[0],
+  ) {
+    const receiptKey = compound(
+      input.receipt.workspaceId,
+      input.receipt.principalId,
+      input.receipt.capability,
+      input.receipt.idempotencyKey,
+    );
+    const existing = this.receipts.get(receiptKey);
+    if (existing) {
+      if (existing.requestFingerprint !== input.receipt.requestFingerprint) {
+        return { kind: "conflict" as const };
+      }
+      const run = this.runs.get(compound(existing.workspaceId, existing.runId));
+      return run
+        ? { kind: "replayed" as const, run: clone(run), receipt: clone(existing) }
+        : { kind: "unavailable" as const };
+    }
+    const run = immutable(clone(input.run));
+    this.runs.set(compound(run.workspaceId, run.id), run);
+    this.events.set(
+      compound(run.workspaceId, run.id),
+      input.events.map((event) => immutable(clone(event))),
+    );
+    const receipt = immutable(
+      clone({
+        ...input.receipt,
+        result: workflowRunReceiptResult(
+          run,
+          input.receipt.initialEventCursor,
+        ),
+      }),
+    );
+    this.receipts.set(receiptKey, receipt);
+    this.outbox.set(
+      input.outboxIntent.id,
+      immutable(clone(input.outboxIntent)),
+    );
+    return {
+      kind: "created" as const,
+      run: clone(run),
+      receipt: clone(receipt),
+    };
+  }
+
+  async resumeRun(
+    input: Parameters<WorkflowRunRepository["resumeRun"]>[0],
+  ) {
+    const receiptKey = compound(
+      input.workspaceId,
+      input.principalId,
+      "workflow_runs.resume@1",
+      input.idempotencyKey,
+    );
+    const existing = this.receipts.get(receiptKey);
+    if (existing) {
+      if (existing.requestFingerprint !== input.requestFingerprint) {
+        return { kind: "conflict" as const };
+      }
+      const run = this.runs.get(compound(input.workspaceId, existing.runId));
+      return run
+        ? { kind: "replayed" as const, run: clone(run), receipt: clone(existing) }
+        : { kind: "unavailable" as const };
+    }
+    const key = compound(input.workspaceId, input.runId);
+    const run = this.runs.get(key);
+    const waitEvent = (this.events.get(key) ?? []).find(
+      (event) =>
+        event.sequence === input.waitEventSequence &&
+        event.type === "run.waiting",
+    );
+    if (
+      !run ||
+      run.workflowId !== input.workflowId ||
+      run.state !== "waiting" ||
+      run.nextEventSequence !== input.waitEventSequence + 1 ||
+      !waitEvent ||
+      (run.resumeAt !== null && run.resumeAt > input.resumedAt)
+    ) {
+      return { kind: "unavailable" as const };
+    }
+    const resumed = immutable(
+      clone({
+        ...run,
+        state: "running" as const,
+        resumeAt: null,
+        failureCode: null,
+        nextEventSequence: run.nextEventSequence + 1,
+        updatedAt: input.resumedAt,
+      }),
+    );
+    this.runs.set(key, resumed);
+    this.events.set(key, [
+      ...(this.events.get(key) ?? []),
+      immutable({
+        id: input.eventId,
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        sequence: run.nextEventSequence,
+        type: "run.resumed",
+        data: {},
+        occurredAt: input.resumedAt,
+      }),
+    ]);
+    const receipt = immutable(
+      clone({
+        ...input.receipt,
+        result: workflowRunReceiptResult(
+          resumed,
+          input.receipt.initialEventCursor,
+        ),
+      }),
+    );
+    this.receipts.set(receiptKey, receipt);
+    this.outbox.set(
+      input.outboxIntent.id,
+      immutable(clone(input.outboxIntent)),
+    );
+    return {
+      kind: "created" as const,
+      run: clone(resumed),
+      receipt: clone(receipt),
+    };
+  }
+
+  async reconcileStepAttempt(
+    input: Parameters<WorkflowRunRepository["reconcileStepAttempt"]>[0],
+  ) {
+    const receiptKey = compound(
+      input.workspaceId,
+      input.principalId,
+      "workflow_runs.reconcile@1",
+      input.receipt.idempotencyKey,
+    );
+    const existing = this.receipts.get(receiptKey);
+    if (existing) {
+      if (existing.requestFingerprint !== input.requestFingerprint) {
+        return { kind: "conflict" as const };
+      }
+      const replay = this.runs.get(compound(input.workspaceId, existing.runId));
+      return replay
+        ? { kind: "replayed" as const, run: clone(replay), receipt: clone(existing) }
+        : { kind: "unavailable" as const };
+    }
+    const key = compound(input.workspaceId, input.runId);
+    const run = this.runs.get(key);
+    const entry = [...this.stepAttempts.entries()].find(
+      ([, attempt]) =>
+        attempt.workspaceId === input.workspaceId &&
+        attempt.runId === input.runId &&
+        attempt.id === input.stepAttemptId,
+    );
+    if (
+      !run ||
+      run.workflowId !== input.workflowId ||
+      run.state !== "outcome_unknown" ||
+      !entry ||
+      entry[1].state !== "outcome_unknown"
+    ) {
+      return { kind: "unavailable" as const };
+    }
+    const [attemptKey, attempt] = entry;
+    const priorSucceededProviderOperationRef =
+      attempt.outcome?.kind === "outcome_unknown"
+        ? attempt.outcome.priorSucceededProviderOperationRef
+        : null;
+    if (
+      priorSucceededProviderOperationRef !== null &&
+      (input.resolution.kind !== "succeeded" ||
+        input.resolution.providerOperationRef !==
+          priorSucceededProviderOperationRef)
+    ) {
+      return { kind: "unavailable" as const };
+    }
+    let sequence = run.nextEventSequence;
+    const events: WorkflowRunEventRecord[] = [];
+    let nextAttempt: WorkflowStepAttemptRecord;
+    let nextRun: WorkflowRunRecord;
+    if (input.resolution.kind === "succeeded") {
+      for (const [index, [outputName, output]] of Object.entries(
+        input.resolution.outputs,
+      ).sort(([left], [right]) => compareCodeUnits(left, right)).entries()) {
+        events.push({
+          id: input.eventIds.generated[index]!,
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          sequence: sequence++,
+          type: "artifact.generated",
+          data: {
+            stepAttemptId: attempt.id,
+            stepId: attempt.stepId,
+            outputName,
+            artifactId: output.artifactId,
+            digest: output.digest,
+          },
+          occurredAt: input.occurredAt,
+        });
+      }
+      events.push(
+        {
+          id: input.eventIds.reconciled,
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          sequence: sequence++,
+          type: "step.attempt.reconciled",
+          data: { stepAttemptId: attempt.id, resolution: "succeeded" },
+          occurredAt: input.occurredAt,
+        },
+        {
+          id: input.eventIds.attemptCompleted!,
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          sequence: sequence++,
+          type: "step.attempt.completed",
+          data: {
+            stepAttemptId: attempt.id,
+            stepId: attempt.stepId,
+            attempt: attempt.attempt,
+            effectKey: attempt.effectKey,
+            outputArtifactIds: Object.values(
+              input.resolution.outputs,
+            ).map((output) => output.artifactId),
+          },
+          occurredAt: input.occurredAt,
+        },
+      );
+      const final = input.resolution.finalSnapshot !== null;
+      events.push({
+        id: final ? input.eventIds.runCompleted! : input.eventIds.runWaiting!,
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        sequence: sequence++,
+        type: final ? "run.completed" : "run.waiting",
+        data: final
+          ? { finalSnapshotDigest: input.resolution.finalSnapshotDigest }
+          : { reasonCode: "RECONCILED_NEXT_STEP", resumeAt: input.occurredAt.toISOString() },
+        occurredAt: input.occurredAt,
+      });
+      nextAttempt = immutable(clone({
+        ...attempt,
+        state: "completed" as const,
+        outputs: input.resolution.outputs,
+        providerOperationRef: input.resolution.providerOperationRef,
+        outcome: {
+          kind: "succeeded" as const,
+          providerOperationRef: input.resolution.providerOperationRef,
+        },
+        reconciliation: {
+          reference: input.resolution.providerOperationRef,
+          resolution: "succeeded" as const,
+          reconciledAt: input.occurredAt.toISOString(),
+        },
+        failureCode: null,
+        completedAt: input.occurredAt,
+      }));
+      nextRun = immutable(clone({
+        ...run,
+        state: final ? ("completed" as const) : ("waiting" as const),
+        output: input.resolution.finalSnapshot?.outputs ?? null,
+        finalSnapshot: input.resolution.finalSnapshot,
+        finalSnapshotDigest: input.resolution.finalSnapshotDigest,
+        failureCode: final ? null : "RECONCILED_NEXT_STEP",
+        resumeAt: final ? null : input.occurredAt,
+        completedAt: final ? input.occurredAt : null,
+        nextEventSequence: sequence,
+        updatedAt: input.occurredAt,
+      }));
+      if (input.resolution.outboxIntent) {
+        this.outbox.set(
+          input.resolution.outboxIntent.id,
+          immutable(clone(input.resolution.outboxIntent)),
+        );
+      }
+    } else {
+      events.push(
+        {
+          id: input.eventIds.reconciled,
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          sequence: sequence++,
+          type: "step.attempt.reconciled",
+          data: { stepAttemptId: attempt.id, resolution: "failed_known" },
+          occurredAt: input.occurredAt,
+        },
+        {
+          id: input.eventIds.attemptFailed!,
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          sequence: sequence++,
+          type: "step.attempt.failed",
+          data: {
+            stepAttemptId: attempt.id,
+            stepId: attempt.stepId,
+            attempt: attempt.attempt,
+            effectKey: attempt.effectKey,
+            reasonCode: input.resolution.failureCode,
+          },
+          occurredAt: input.occurredAt,
+        },
+      );
+      if (input.resolution.retryable) {
+        events.push(
+          {
+            id: input.eventIds.retryScheduled!,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: sequence++,
+            type: "step.retry.scheduled",
+            data: {
+              stepAttemptId: attempt.id,
+              stepId: attempt.stepId,
+              attempt: attempt.attempt,
+              nextAttempt: attempt.attempt + 1,
+              retryAt: input.resolution.retryAt!.toISOString(),
+              effectKey: attempt.effectKey,
+            },
+            occurredAt: input.occurredAt,
+          },
+          {
+            id: input.eventIds.runWaiting!,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sequence: sequence++,
+            type: "run.waiting",
+            data: {
+              reasonCode: input.resolution.failureCode,
+              resumeAt: input.resolution.retryAt!.toISOString(),
+            },
+            occurredAt: input.occurredAt,
+          },
+        );
+      } else {
+        events.push({
+          id: input.eventIds.runFailed!,
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          sequence: sequence++,
+          type: "run.failed",
+          data: {
+            stepAttemptId: attempt.id,
+            reasonCode: input.resolution.failureCode,
+          },
+          occurredAt: input.occurredAt,
+        });
+      }
+      nextAttempt = immutable(clone({
+        ...attempt,
+        state: "failed" as const,
+        providerOperationRef: input.resolution.providerOperationRef,
+        outcome: {
+          kind: "failed_known" as const,
+          failureCode: input.resolution.failureCode,
+          retryable: input.resolution.retryable,
+        },
+        reconciliation: {
+          reference: input.resolution.providerOperationRef ?? attempt.effectKey,
+          resolution: "failed_known" as const,
+          reconciledAt: input.occurredAt.toISOString(),
+        },
+        failureCode: input.resolution.failureCode,
+        completedAt: input.occurredAt,
+      }));
+      nextRun = immutable(clone({
+        ...run,
+        state: input.resolution.retryable
+          ? ("waiting" as const)
+          : ("failed" as const),
+        failureCode: input.resolution.failureCode,
+        resumeAt: input.resolution.retryAt,
+        completedAt: input.resolution.retryable
+          ? null
+          : input.occurredAt,
+        nextEventSequence: sequence,
+        updatedAt: input.occurredAt,
+      }));
+      if (input.resolution.outboxIntent) {
+        this.outbox.set(
+          input.resolution.outboxIntent.id,
+          immutable(clone(input.resolution.outboxIntent)),
+        );
+      }
+    }
+    this.stepAttempts.set(attemptKey, nextAttempt);
+    this.runs.set(key, nextRun);
+    this.events.set(key, [
+      ...(this.events.get(key) ?? []),
+      ...events.map((event) => immutable(event)),
+    ]);
+    const receipt = immutable(
+      clone({
+        ...input.receipt,
+        result: workflowRunReceiptResult(
+          nextRun,
+          input.receipt.initialEventCursor,
+        ),
+      }),
+    );
+    this.receipts.set(receiptKey, receipt);
+    return {
+      kind: "created" as const,
+      run: clone(nextRun),
+      receipt: clone(receipt),
     };
   }
 }

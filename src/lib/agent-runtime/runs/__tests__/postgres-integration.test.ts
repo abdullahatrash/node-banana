@@ -125,6 +125,8 @@ function startInput(
       output: null,
       finalSnapshot: null,
       finalSnapshotDigest: null,
+      derivation: null,
+      resumeAt: null,
       failureCode: null,
       acceptedAt: fixture.acceptedAt,
       startedAt: null,
@@ -143,17 +145,21 @@ function startInput(
     receipt: {
       workspaceId: fixture.workspaceId,
       principalId: fixture.principalId,
+      keyId: fixture.keyId,
+      authorizationEvidenceRef: fixture.evidenceRef,
       capability: "workflow_runs.start@1",
       idempotencyKey: `start-${suffix}`,
       requestFingerprint: digest("e"),
       runId,
       initialEventCursor: `cursor-${suffix}`,
+      result: null,
       createdAt: fixture.acceptedAt,
     },
     outboxIntent: {
       id: `outbox_${suffix}`,
       workspaceId: fixture.workspaceId,
       runId,
+      generation: 1,
       dedupeKey: `workflow-run:${fixture.workspaceId}:${runId}:v1`,
       state: "pending",
       deliveryToken: null,
@@ -374,6 +380,23 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
         });
         expect(reentrant).toMatchObject({
           kind: "acquired",
+          lease: {
+            fence: currentLease.lease.fence,
+            token: currentLease.lease.token,
+          },
+        });
+        await expect(
+          repository.renewLease({
+            workspaceId: fixture.workspaceId,
+            runId,
+            workerId: currentLease.lease.workerId,
+            token: currentLease.lease.token,
+            fence: currentLease.lease.fence,
+            now: fixture.databaseNow,
+            expiresAt: new Date(fixture.databaseNow.getTime() + 60_000),
+          }),
+        ).resolves.toMatchObject({
+          kind: "renewed",
           lease: {
             fence: currentLease.lease.fence,
             token: currentLease.lease.token,
@@ -802,6 +825,9 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
           model: "sha256",
           intentDigest,
           effectKey,
+          providerOperationRef: null,
+          outcome: null,
+          reconciliation: null,
           inputs: [{
             port: "text",
             kind: "text",
@@ -888,6 +914,7 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
           state: "completed" as const,
           effectKey,
           outputs: { textDigest: output },
+          providerOperationRef: `runtime:${effectKey}`,
         }],
         outputs: { textDigest: output },
       };
@@ -899,6 +926,7 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
         token: acquired.lease.token,
         fence: acquired.lease.fence,
         outputs: { textDigest: output },
+        providerOperationRef: `runtime:${effectKey}`,
         finalSnapshot,
         finalSnapshotDigest: canonicalDigest(finalSnapshot),
         completedAt: new Date(),
@@ -1000,6 +1028,9 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
           model: "sha256",
           intentDigest: digest("7"),
           effectKey,
+          providerOperationRef: null,
+          outcome: null,
+          reconciliation: null,
           inputs: [{
             port: "text",
             kind: "text",
@@ -1028,9 +1059,15 @@ describePostgres("DrizzleWorkflowRunRepository with PostgreSQL", () => {
         token: acquired.lease.token,
         fence: acquired.lease.fence,
         failureCode: "STEP_EXECUTION_FAILED",
+        providerOperationRef: null,
+        retryable: false,
+        retryAt: null,
+        retryOutboxIntent: null,
         failedAt: new Date(),
         eventIds: {
           attemptFailed: randomUUID(),
+          retryScheduled: null,
+          runWaiting: null,
           runFailed: randomUUID(),
         },
       };

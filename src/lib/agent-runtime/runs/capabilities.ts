@@ -20,6 +20,9 @@ import { WorkflowRunService } from "./service";
 export const WORKFLOW_RUN_CAPABILITY_IDENTITIES = {
   start: { name: "workflow_runs.start", version: 1 },
   startV2: { name: "workflow_runs.start", version: 2 },
+  retry: { name: "workflow_runs.retry", version: 1 },
+  reconcile: { name: "workflow_runs.reconcile", version: 1 },
+  resume: { name: "workflow_runs.resume", version: 1 },
   get: { name: "workflow_runs.get", version: 1 },
   events: { name: "workflow_run_events.list", version: 1 },
   stepAttempts: { name: "workflow_step_attempts.list", version: 1 },
@@ -74,7 +77,14 @@ const safeRunRefSchema: JsonSchema = {
     workflowRevisionId: { type: "string" },
     state: {
       type: "string",
-      enum: ["accepted", "running", "completed", "failed"],
+      enum: [
+        "accepted",
+        "running",
+        "waiting",
+        "outcome_unknown",
+        "completed",
+        "failed",
+      ],
     },
     startSnapshotDigest: {
       type: "string",
@@ -126,6 +136,24 @@ const acceptedSchema: JsonSchema = {
   },
 };
 
+const artifactReferenceSchema: JsonSchema = {
+  ...object,
+  required: [
+    "artifactId",
+    "digest",
+    "kind",
+    "mediaType",
+    "sizeBytes",
+  ],
+  properties: {
+    artifactId: { type: "string" },
+    digest: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
+    kind: { type: "string", enum: ["text", "image"] },
+    mediaType: { type: "string" },
+    sizeBytes: { type: "integer", minimum: 0 },
+  },
+};
+
 const runSchema: JsonSchema = {
   ...object,
   required: [
@@ -139,6 +167,8 @@ const runSchema: JsonSchema = {
     "output",
     "finalSnapshot",
     "finalSnapshotDigest",
+    "derivation",
+    "resumeAt",
     "failureCode",
     "acceptedAt",
     "startedAt",
@@ -185,10 +215,80 @@ const runSchema: JsonSchema = {
       type: ["string", "null"],
       pattern: "^sha256:[a-f0-9]{64}$",
     },
+    derivation: {
+      oneOf: [
+        { type: "null" },
+        {
+          ...object,
+          required: [
+            "kind",
+            "sourceRunId",
+            "rootRunId",
+            "sourceStartSnapshotDigest",
+            "retryFromStepId",
+            "reusedOutputs",
+          ],
+          properties: {
+            kind: { const: "manual_retry" },
+            sourceRunId: { type: "string" },
+            rootRunId: { type: "string" },
+            sourceStartSnapshotDigest: {
+              type: "string",
+              pattern: "^sha256:[a-f0-9]{64}$",
+            },
+            retryFromStepId: { type: "string" },
+            reusedOutputs: {
+              type: "array",
+              items: {
+                ...object,
+                required: [
+                  "stepId",
+                  "sourceRunId",
+                  "sourceStepAttemptId",
+                  "sourceAttempt",
+                  "sourceEffectKey",
+                  "sourceProviderOperationRef",
+                  "outputs",
+                ],
+                properties: {
+                  stepId: { type: "string" },
+                  sourceRunId: { type: "string" },
+                  sourceStepAttemptId: { type: "string" },
+                  sourceAttempt: { type: "integer", minimum: 1 },
+                  sourceEffectKey: { type: "string" },
+                  sourceProviderOperationRef: { type: "string" },
+                  outputs: {
+                    type: "object",
+                    additionalProperties: artifactReferenceSchema,
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+    },
+    resumeAt: { type: ["string", "null"], format: "date-time" },
     failureCode: { type: ["string", "null"] },
     startedAt: { type: ["string", "null"], format: "date-time" },
     completedAt: { type: ["string", "null"], format: "date-time" },
     updatedAt: { type: "string", format: "date-time" },
+  },
+};
+
+const recoverySchema: JsonSchema = {
+  ...object,
+  required: ["run", "inspect", "events"],
+  properties: {
+    run: runSchema,
+    inspect: continuationSchema(
+      "workflow_runs.get@1",
+      ["workflowId", "runId"],
+    ),
+    events: continuationSchema(
+      "workflow_run_events.list@1",
+      ["workflowId", "runId", "cursor"],
+    ),
   },
 };
 
@@ -203,10 +303,17 @@ const eventSchema: JsonSchema = {
       type: "string",
       enum: [
         "run.accepted",
+        "run.derived",
         "step.attempt.started",
         "artifact.generated",
         "step.attempt.completed",
         "step.attempt.failed",
+        "step.retry.scheduled",
+        "step.attempt.outcome_unknown",
+        "step.attempt.reconciled",
+        "run.waiting",
+        "run.resumed",
+        "run.outcome_unknown",
         "step.completed",
         "run.completed",
         "run.failed",
@@ -214,24 +321,6 @@ const eventSchema: JsonSchema = {
     },
     data: { type: "object" },
     occurredAt: { type: "string", format: "date-time" },
-  },
-};
-
-const artifactReferenceSchema: JsonSchema = {
-  ...object,
-  required: [
-    "artifactId",
-    "digest",
-    "kind",
-    "mediaType",
-    "sizeBytes",
-  ],
-  properties: {
-    artifactId: { type: "string" },
-    digest: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
-    kind: { type: "string", enum: ["text", "image"] },
-    mediaType: { type: "string" },
-    sizeBytes: { type: "integer", minimum: 0 },
   },
 };
 
@@ -247,9 +336,10 @@ const lineageSourceSchema: JsonSchema = {
     },
     {
       ...object,
-      required: ["kind", "stepAttemptId", "outputName"],
+      required: ["kind", "runId", "stepAttemptId", "outputName"],
       properties: {
         kind: { const: "step_output" },
+        runId: { type: "string" },
         stepAttemptId: { type: "string" },
         outputName: { type: "string" },
       },
@@ -296,6 +386,9 @@ const stepAttemptSchema: JsonSchema = {
     "effectKey",
     "inputs",
     "outputs",
+    "providerOperationRef",
+    "outcome",
+    "reconciliation",
     "failureCode",
     "startedAt",
     "completedAt",
@@ -308,7 +401,7 @@ const stepAttemptSchema: JsonSchema = {
     attempt: { type: "integer", minimum: 1 },
     state: {
       type: "string",
-      enum: ["running", "completed", "failed"],
+      enum: ["running", "outcome_unknown", "completed", "failed"],
     },
     operationIdentity: { type: "string" },
     operationContractDigest: {
@@ -333,6 +426,61 @@ const stepAttemptSchema: JsonSchema = {
         {
           type: "object",
           additionalProperties: artifactReferenceSchema,
+        },
+      ],
+    },
+    providerOperationRef: { type: ["string", "null"] },
+    outcome: {
+      oneOf: [
+        { type: "null" },
+        {
+          ...object,
+          required: ["kind", "providerOperationRef"],
+          properties: {
+            kind: { const: "succeeded" },
+            providerOperationRef: { type: "string" },
+          },
+        },
+        {
+          ...object,
+          required: ["kind", "failureCode", "retryable"],
+          properties: {
+            kind: { const: "failed_known" },
+            failureCode: { type: "string" },
+            retryable: { type: "boolean" },
+          },
+        },
+        {
+          ...object,
+          required: [
+            "kind",
+            "failureCode",
+            "priorSucceededProviderOperationRef",
+          ],
+          properties: {
+            kind: { const: "outcome_unknown" },
+            failureCode: { type: "string" },
+            priorSucceededProviderOperationRef: {
+              type: ["string", "null"],
+            },
+          },
+        },
+      ],
+    },
+    reconciliation: {
+      oneOf: [
+        { type: "null" },
+        {
+          ...object,
+          required: ["reference", "resolution", "reconciledAt"],
+          properties: {
+            reference: { type: "string" },
+            resolution: {
+              type: "string",
+              enum: ["succeeded", "failed_known"],
+            },
+            reconciledAt: { type: "string", format: "date-time" },
+          },
         },
       ],
     },
@@ -625,6 +773,122 @@ export function createWorkflowRunRegistrations(
         const principal = agent(context.securityContext);
         return domain(() =>
           service.get({ workspaceId: principal.workspaceId, ...input }),
+        );
+      },
+    }),
+    defineCapability({
+      identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.retry,
+      summary:
+        "Create a derived Workflow Run retry while preserving the failed source Run.",
+      lifecycle,
+      input: z
+        .object({
+          workflowId: id,
+          runId: id,
+          idempotencyKey,
+          inputArtifactIds: z.array(id).max(100),
+        })
+        .strict(),
+      outputSchema: recoverySchema,
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "durable-async",
+        reversibility: "conditional",
+        maySpendProviderBudget: false,
+      },
+      approval: { mode: "none" },
+      idempotency: { mode: "key-required" },
+      authorization: {
+        resources: [
+          { kind: "workflow", inputPath: "workflowId" },
+          { kind: "artifact", inputPath: "inputArtifactIds" },
+        ],
+      },
+      errors: [...COMMON_DISCOVERY_ERRORS, ...WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const principal = agent(context.securityContext);
+        return domain(() =>
+          service.retry({
+            workspaceId: principal.workspaceId,
+            principalId: principal.principalId,
+            keyId: principal.keyId,
+            authorizationEvidenceRef: authorizationEvidence(context),
+            ...input,
+          }),
+        );
+      },
+    }),
+    defineCapability({
+      identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.resume,
+      summary:
+        "Resume a known-safe waiting Workflow Run after its retry backoff.",
+      lifecycle,
+      input: resourceInput
+        .extend({
+          idempotencyKey,
+          waitEventSequence: z.number().int().positive(),
+        })
+        .strict(),
+      outputSchema: recoverySchema,
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "durable-async",
+        reversibility: "conditional",
+        maySpendProviderBudget: false,
+      },
+      approval: { mode: "none" },
+      idempotency: { mode: "key-required" },
+      authorization: {
+        resources: [{ kind: "workflow", inputPath: "workflowId" }],
+      },
+      errors: [...COMMON_DISCOVERY_ERRORS, ...WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const principal = agent(context.securityContext);
+        return domain(() =>
+          service.resume({
+            workspaceId: principal.workspaceId,
+            principalId: principal.principalId,
+            keyId: principal.keyId,
+            authorizationEvidenceRef: authorizationEvidence(context),
+            ...input,
+          }),
+        );
+      },
+    }),
+    defineCapability({
+      identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.reconcile,
+      summary:
+        "Resolve one unknown provider outcome through the snapshotted provider adapter.",
+      lifecycle,
+      input: resourceInput
+        .extend({ idempotencyKey, stepAttemptId: id })
+        .strict(),
+      outputSchema: recoverySchema,
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "durable-async",
+        reversibility: "conditional",
+        maySpendProviderBudget: false,
+      },
+      approval: { mode: "none" },
+      idempotency: { mode: "key-required" },
+      authorization: {
+        resources: [{ kind: "workflow", inputPath: "workflowId" }],
+      },
+      errors: [...COMMON_DISCOVERY_ERRORS, ...WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const principal = agent(context.securityContext);
+        return domain(() =>
+          service.reconcile({
+            workspaceId: principal.workspaceId,
+            principalId: principal.principalId,
+            keyId: principal.keyId,
+            authorizationEvidenceRef: authorizationEvidence(context),
+            ...input,
+          }),
         );
       },
     }),

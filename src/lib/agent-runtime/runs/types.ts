@@ -4,7 +4,13 @@ import type {
   ArtifactMetadata,
 } from "../artifacts/types";
 
-export type WorkflowRunState = "accepted" | "running" | "completed" | "failed";
+export type WorkflowRunState =
+  | "accepted"
+  | "running"
+  | "waiting"
+  | "outcome_unknown"
+  | "completed"
+  | "failed";
 
 export interface WorkflowRunStartSnapshot {
   schema: "workflow-run-start-snapshot/v1";
@@ -65,8 +71,26 @@ export interface WorkflowRunFinalSnapshot {
     state: "completed";
     effectKey: string;
     outputs: Record<string, WorkflowRunArtifactReference>;
+    providerOperationRef: string;
   }>;
   outputs: Record<string, WorkflowRunArtifactReference>;
+}
+
+export interface WorkflowRunDerivation {
+  kind: "manual_retry";
+  sourceRunId: string;
+  rootRunId: string;
+  sourceStartSnapshotDigest: string;
+  retryFromStepId: string;
+  reusedOutputs: Array<{
+    stepId: string;
+    sourceRunId: string;
+    sourceStepAttemptId: string;
+    sourceAttempt: number;
+    sourceEffectKey: string;
+    sourceProviderOperationRef: string;
+    outputs: Record<string, WorkflowRunArtifactReference>;
+  }>;
 }
 
 export interface WorkflowRunRecord {
@@ -81,6 +105,8 @@ export interface WorkflowRunRecord {
   output: Record<string, unknown> | null;
   finalSnapshot: WorkflowRunFinalSnapshot | null;
   finalSnapshotDigest: string | null;
+  derivation: WorkflowRunDerivation | null;
+  resumeAt: Date | null;
   failureCode: string | null;
   acceptedAt: Date;
   startedAt: Date | null;
@@ -88,7 +114,11 @@ export interface WorkflowRunRecord {
   updatedAt: Date;
 }
 
-export type WorkflowStepAttemptState = "running" | "completed" | "failed";
+export type WorkflowStepAttemptState =
+  | "running"
+  | "outcome_unknown"
+  | "completed"
+  | "failed";
 
 export interface WorkflowStepAttemptInput {
   port: string;
@@ -97,6 +127,7 @@ export interface WorkflowStepAttemptInput {
     | { kind: "workflow_input"; inputName: string }
     | {
         kind: "step_output";
+        runId: string;
         stepAttemptId: string;
         outputName: string;
       };
@@ -120,6 +151,28 @@ export interface WorkflowStepAttemptRecord {
   effectKey: string;
   inputs: WorkflowStepAttemptInput[];
   outputs: Record<string, WorkflowRunArtifactReference> | null;
+  providerOperationRef: string | null;
+  outcome:
+    | null
+    | {
+        kind: "succeeded";
+        providerOperationRef: string;
+      }
+    | {
+        kind: "failed_known";
+        failureCode: string;
+        retryable: boolean;
+      }
+    | {
+        kind: "outcome_unknown";
+        failureCode: string;
+        priorSucceededProviderOperationRef: string | null;
+      };
+  reconciliation: {
+    reference: string;
+    resolution: "succeeded" | "failed_known";
+    reconciledAt: string;
+  } | null;
   failureCode: string | null;
   startedAt: Date;
   completedAt: Date | null;
@@ -132,6 +185,7 @@ export interface WorkflowStepAttemptDto
   > {
   inputs: WorkflowStepAttemptInput[];
   outputs: Record<string, WorkflowRunArtifactReference> | null;
+  reconciliation: WorkflowStepAttemptRecord["reconciliation"];
   startedAt: string;
   completedAt: string | null;
 }
@@ -143,10 +197,17 @@ export interface WorkflowRunEventRecord {
   sequence: number;
   type:
     | "run.accepted"
+    | "run.derived"
     | "step.attempt.started"
     | "artifact.generated"
     | "step.attempt.completed"
     | "step.attempt.failed"
+    | "step.retry.scheduled"
+    | "step.attempt.outcome_unknown"
+    | "step.attempt.reconciled"
+    | "run.waiting"
+    | "run.resumed"
+    | "run.outcome_unknown"
     | "step.completed"
     | "run.completed"
     | "run.failed";
@@ -157,11 +218,19 @@ export interface WorkflowRunEventRecord {
 export interface WorkflowRunMutationReceiptRecord {
   workspaceId: string;
   principalId: string;
-  capability: "workflow_runs.start@1" | "workflow_runs.start@2";
+  keyId: string;
+  authorizationEvidenceRef: string;
+  capability:
+    | "workflow_runs.start@1"
+    | "workflow_runs.start@2"
+    | "workflow_runs.retry@1"
+    | "workflow_runs.reconcile@1"
+    | "workflow_runs.resume@1";
   idempotencyKey: string;
   requestFingerprint: string;
   runId: string;
   initialEventCursor: string;
+  result: Record<string, unknown> | null;
   createdAt: Date;
 }
 
@@ -169,6 +238,7 @@ export interface WorkflowRunOutboxIntentRecord {
   id: string;
   workspaceId: string;
   runId: string;
+  generation: number;
   dedupeKey: string;
   state: "pending" | "delivering" | "delivered";
   deliveryToken: string | null;
@@ -201,11 +271,78 @@ export interface WorkflowRunDto {
   output: Record<string, unknown> | null;
   finalSnapshot: WorkflowRunFinalSnapshot | null;
   finalSnapshotDigest: string | null;
+  derivation: WorkflowRunDerivation | null;
+  resumeAt: string | null;
   failureCode: string | null;
   acceptedAt: string;
   startedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
+}
+
+export interface WorkflowRunRecoveryDto {
+  run: WorkflowRunDto;
+  inspect: {
+    capability: "workflow_runs.get@1";
+    input: { workflowId: string; runId: string };
+  };
+  events: {
+    capability: "workflow_run_events.list@1";
+    input: { workflowId: string; runId: string; cursor: string };
+  };
+}
+
+export function workflowRunDto(run: WorkflowRunRecord): WorkflowRunDto {
+  return {
+    id: run.id,
+    workspaceId: run.workspaceId,
+    workflowId: run.workflowId,
+    workflowRevisionId: run.workflowRevisionId,
+    state: run.state,
+    startSnapshotDigest: run.startSnapshotDigest,
+    startSnapshot: structuredClone(run.startSnapshot),
+    output: structuredClone(run.output),
+    finalSnapshot: structuredClone(run.finalSnapshot),
+    finalSnapshotDigest: run.finalSnapshotDigest,
+    derivation: structuredClone(run.derivation),
+    resumeAt: run.resumeAt?.toISOString() ?? null,
+    failureCode: run.failureCode,
+    acceptedAt: run.acceptedAt.toISOString(),
+    startedAt: run.startedAt?.toISOString() ?? null,
+    completedAt: run.completedAt?.toISOString() ?? null,
+    updatedAt: run.updatedAt.toISOString(),
+  };
+}
+
+export function workflowRunRecoveryDto(
+  run: WorkflowRunRecord,
+  initialEventCursor: string,
+): WorkflowRunRecoveryDto {
+  return {
+    run: workflowRunDto(run),
+    inspect: {
+      capability: "workflow_runs.get@1",
+      input: { workflowId: run.workflowId, runId: run.id },
+    },
+    events: {
+      capability: "workflow_run_events.list@1",
+      input: {
+        workflowId: run.workflowId,
+        runId: run.id,
+        cursor: initialEventCursor,
+      },
+    },
+  };
+}
+
+export function workflowRunReceiptResult(
+  run: WorkflowRunRecord,
+  initialEventCursor: string,
+): Record<string, unknown> {
+  return workflowRunRecoveryDto(
+    run,
+    initialEventCursor,
+  ) as unknown as Record<string, unknown>;
 }
 
 export interface WorkflowRunAcceptedDto {
@@ -283,7 +420,26 @@ export type SettleWorkflowStepAttemptResult =
   | { kind: "stale_fence" }
   | { kind: "unavailable" };
 
+export type MutateWorkflowRunResult =
+  | {
+      kind: "created" | "replayed";
+      run: WorkflowRunRecord;
+      receipt: WorkflowRunMutationReceiptRecord;
+    }
+  | { kind: "conflict" }
+  | { kind: "stale_fence" }
+  | { kind: "unavailable" };
+
 export interface WorkflowRunRepository {
+  getMutationReceipt(input: {
+    workspaceId: string;
+    principalId: string;
+    capability: WorkflowRunMutationReceiptRecord["capability"];
+    idempotencyKey: string;
+  }): Promise<{
+    receipt: WorkflowRunMutationReceiptRecord;
+    run: WorkflowRunRecord;
+  } | null>;
   start(input: {
     run: WorkflowRunRecord;
     firstEvent: WorkflowRunEventRecord;
@@ -324,6 +480,18 @@ export interface WorkflowRunRepository {
     now: Date;
     expiresAt: Date;
   }): Promise<AcquireWorkflowRunLeaseResult>;
+  renewLease(input: {
+    workspaceId: string;
+    runId: string;
+    workerId: string;
+    token: string;
+    fence: bigint;
+    now: Date;
+    expiresAt: Date;
+  }): Promise<
+    | { kind: "renewed"; lease: WorkflowRunExecutionLeaseRecord }
+    | { kind: "stale_fence" | "unavailable" }
+  >;
   completeStep(input: {
     workspaceId: string;
     runId: string;
@@ -356,6 +524,16 @@ export interface WorkflowRunRepository {
     fence: bigint;
     eventId: string;
   }): Promise<PrepareWorkflowStepAttemptResult>;
+  recordStepAttemptProviderSuccess(input: {
+    workspaceId: string;
+    runId: string;
+    stepAttemptId: string;
+    workerId: string;
+    token: string;
+    fence: bigint;
+    providerOperationRef: string;
+    recordedAt: Date;
+  }): Promise<SettleWorkflowStepAttemptResult>;
   settleStepAttempt(input: {
     workspaceId: string;
     runId: string;
@@ -364,6 +542,7 @@ export interface WorkflowRunRepository {
     token: string;
     fence: bigint;
     outputs: Record<string, WorkflowRunArtifactReference>;
+    providerOperationRef: string;
     finalSnapshot: WorkflowRunFinalSnapshot | null;
     finalSnapshotDigest: string | null;
     completedAt: Date;
@@ -381,12 +560,93 @@ export interface WorkflowRunRepository {
     token: string;
     fence: bigint;
     failureCode: string;
+    providerOperationRef: string | null;
+    retryable: boolean;
+    retryAt: Date | null;
+    retryOutboxIntent: WorkflowRunOutboxIntentRecord | null;
     failedAt: Date;
     eventIds: {
       attemptFailed: string;
-      runFailed: string;
+      retryScheduled: string | null;
+      runWaiting: string | null;
+      runFailed: string | null;
     };
   }): Promise<SettleWorkflowStepAttemptResult>;
+  markStepAttemptOutcomeUnknown(input: {
+    workspaceId: string;
+    runId: string;
+    stepAttemptId: string;
+    workerId: string;
+    token: string;
+    fence: bigint;
+    failureCode: string;
+    providerOperationRef: string | null;
+    occurredAt: Date;
+    eventIds: {
+      attemptOutcomeUnknown: string;
+      runOutcomeUnknown: string;
+    };
+  }): Promise<SettleWorkflowStepAttemptResult>;
+  deriveRun(input: {
+    run: WorkflowRunRecord;
+    events: WorkflowRunEventRecord[];
+    receipt: WorkflowRunMutationReceiptRecord;
+    outboxIntent: WorkflowRunOutboxIntentRecord;
+  }): Promise<MutateWorkflowRunResult>;
+  resumeRun(input: {
+    workspaceId: string;
+    workflowId: string;
+    runId: string;
+    principalId: string;
+    keyId: string;
+    authorizationEvidenceRef: string;
+    waitEventSequence: number;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    receipt: WorkflowRunMutationReceiptRecord;
+    outboxIntent: WorkflowRunOutboxIntentRecord;
+    resumedAt: Date;
+    eventId: string;
+  }): Promise<MutateWorkflowRunResult>;
+  reconcileStepAttempt(input: {
+    workspaceId: string;
+    workflowId: string;
+    runId: string;
+    principalId: string;
+    keyId: string;
+    authorizationEvidenceRef: string;
+    stepAttemptId: string;
+    requestFingerprint: string;
+    receipt: WorkflowRunMutationReceiptRecord;
+    resolution:
+      | {
+          kind: "succeeded";
+          providerOperationRef: string;
+          outputs: Record<string, WorkflowRunArtifactReference>;
+          finalSnapshot: WorkflowRunFinalSnapshot | null;
+          finalSnapshotDigest: string | null;
+          outboxIntent: WorkflowRunOutboxIntentRecord | null;
+        }
+      | {
+          kind: "failed_known";
+          providerOperationRef: string | null;
+          failureCode: string;
+          retryable: boolean;
+          retryAt: Date | null;
+          outboxIntent: WorkflowRunOutboxIntentRecord | null;
+        };
+    occurredAt: Date;
+    eventIds: {
+      generated: string[];
+      reconciled: string;
+      attemptCompleted: string | null;
+      attemptFailed: string | null;
+      retryScheduled: string | null;
+      runCompleted: string | null;
+      runFailed: string | null;
+      runWaiting: string | null;
+    };
+  }): Promise<MutateWorkflowRunResult>;
 }
 
 export interface WorkflowRunRevisionReader {
@@ -433,40 +693,74 @@ export interface WorkflowStepExecutor {
   readonly provider: string;
   readonly providerOperation: string;
   readonly model: string;
-  execute(input: {
-    runId: string;
-    stepAttemptId: string;
-    effectKey: string;
-    intentDigest: string;
-    snapshot: WorkflowRunStartSnapshot;
-    step: ResolvedWorkflowDefinition["steps"][number];
-    inputs: Record<string, ResolvedWorkflowStepInput>;
-  }): Promise<
-    | {
-        kind: "legacy";
-        output: Record<string, unknown>;
-      }
-    | {
-        kind: "generated";
-        providerOperationRef: string;
-        outputs: Record<
-          string,
-          | {
-              kind: "text";
-              mediaType: string;
-              bytes: Uint8Array;
-            }
-          | {
-              kind: "image";
-              mediaType: string;
-              bytes: Uint8Array;
-              width: number;
-              height: number;
-            }
-        >;
-      }
-  >;
+  execute(input: WorkflowStepExecutionInput): Promise<WorkflowStepExecutionResult>;
+  reconcile?(
+    input: WorkflowStepReconciliationInput,
+  ): Promise<WorkflowStepProviderResult>;
 }
+
+export interface WorkflowStepExecutionInput {
+  runId: string;
+  stepAttemptId: string;
+  effectKey: string;
+  intentDigest: string;
+  snapshot: WorkflowRunStartSnapshot;
+  step: ResolvedWorkflowDefinition["steps"][number];
+  inputs: Record<string, ResolvedWorkflowStepInput>;
+}
+
+export interface WorkflowStepReconciliationInput {
+  runId: string;
+  stepAttemptId: string;
+  effectKey: string;
+  intentDigest: string;
+  providerOperationRef: string | null;
+  snapshot: WorkflowRunStartSnapshot;
+  step: ResolvedWorkflowDefinition["steps"][number];
+  inputs: Record<string, ResolvedWorkflowStepInput>;
+}
+
+export type WorkflowStepGeneratedOutput =
+  | {
+      kind: "text";
+      mediaType: string;
+      bytes: Uint8Array;
+    }
+  | {
+      kind: "image";
+      mediaType: string;
+      bytes: Uint8Array;
+      width: number;
+      height: number;
+    };
+
+export interface WorkflowStepGeneratedResult {
+  kind: "generated";
+  providerOperationRef: string;
+  outputs: Record<string, WorkflowStepGeneratedOutput>;
+}
+
+export interface WorkflowStepFailedKnownResult {
+  kind: "failed_known";
+  failureCode: string;
+  retryable: boolean;
+  providerOperationRef: string | null;
+}
+
+export interface WorkflowStepOutcomeUnknownResult {
+  kind: "outcome_unknown";
+  failureCode: string;
+  providerOperationRef: string | null;
+}
+
+export type WorkflowStepProviderResult =
+  | WorkflowStepGeneratedResult
+  | WorkflowStepFailedKnownResult
+  | WorkflowStepOutcomeUnknownResult;
+
+export type WorkflowStepExecutionResult =
+  | { kind: "legacy"; output: Record<string, unknown> }
+  | WorkflowStepProviderResult;
 
 export interface ResolvedWorkflowStepInput {
   kind: ArtifactKind;

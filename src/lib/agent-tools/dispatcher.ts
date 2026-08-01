@@ -297,10 +297,7 @@ function extractAuthorizationResources(
           : undefined;
     }
     const ids = Array.isArray(value) ? value : [value];
-    if (
-      ids.length === 0 ||
-      ids.some((id) => typeof id !== "string" || id.trim().length === 0)
-    ) {
+    if (ids.some((id) => typeof id !== "string" || id.trim().length === 0)) {
       valid = false;
       continue;
     }

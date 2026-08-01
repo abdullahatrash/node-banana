@@ -45,6 +45,7 @@ import {
 } from "../memory";
 import { WorkflowRunService } from "../service";
 import type {
+  WorkflowRunClock,
   WorkflowStepExecutor,
   WorkflowStepExecutorRegistry,
 } from "../types";
@@ -72,7 +73,9 @@ function runCursor() {
 
 async function setupGoldenRun(options: {
   executors?: WorkflowStepExecutorRegistry;
+  clock?: WorkflowRunClock;
 } = {}) {
+  const clock = options.clock ?? { now: () => new Date(NOW) };
   const slots = new InMemoryWorkflowCredentialSlotAdmission();
   slots.allow({
     workspaceId: WORKSPACE_ID,
@@ -106,7 +109,7 @@ async function setupGoldenRun(options: {
     artifactStore,
     new SharpArtifactMediaInspector(),
     artifactCursor(),
-    { now: () => new Date(NOW) },
+    clock,
   );
   artifactRepository.contents.set(
     `${WORKSPACE_ID}:${GOLDEN_IMAGE_FIXTURES.reference.digest}`,
@@ -149,16 +152,17 @@ async function setupGoldenRun(options: {
     definition: validation.normalizedDefinition,
     operationRegistryDigest: GOLDEN_WORKFLOW_OPERATION_REGISTRY.digest,
   });
+  const queue = new InMemoryWorkflowRunQueue();
   const service = new WorkflowRunService(
     repository,
     revisions,
-    new InMemoryWorkflowRunQueue(),
+    queue,
     options.executors ??
       createDeterministicWorkflowRunExecutorRegistry(
         GOLDEN_WORKFLOW_OPERATION_REGISTRY,
       ),
     runCursor(),
-    { now: () => new Date(NOW) },
+    clock,
     artifactService,
   );
   const authorizer: CapabilityAuthorizer = {
@@ -194,8 +198,11 @@ async function setupGoldenRun(options: {
     artifactRepository,
     artifactService,
     artifactStore,
+    clock,
     dispatcher,
+    queue,
     repository,
+    revisions,
     service,
   };
 }
@@ -475,7 +482,7 @@ describe("complete deterministic golden Workflow", () => {
           : base.get(identity, contractDigest);
       },
     };
-    const { repository, service } = await setupGoldenRun({
+    const { dispatcher, repository, service } = await setupGoldenRun({
       executors,
     });
     const accepted = await acceptGoldenRun(
@@ -545,13 +552,44 @@ describe("complete deterministic golden Workflow", () => {
     expect(replayEvents.items).toEqual(firstEvents.items);
   });
 
-  it("durably fails the active Attempt and Run when generated image storage fails", async () => {
+  it("resumes the same Attempt and Effect Key when generated image storage fails", async () => {
+    const base = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const imageDefinition =
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY.get("gemini.generate_image@1")!;
+    const imageBase = base.get(
+      imageDefinition.identity,
+      imageDefinition.contractDigest,
+    )!;
+    let providerExecutions = 0;
+    let providerReconciliations = 0;
+    const executors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) => {
+        if (identity !== imageDefinition.identity) {
+          return base.get(identity, contractDigest);
+        }
+        return {
+          provider: imageBase.provider,
+          providerOperation: imageBase.providerOperation,
+          model: imageBase.model,
+          execute: async (input) => {
+            providerExecutions += 1;
+            return imageBase.execute(input);
+          },
+          reconcile: async (input) => {
+            providerReconciliations += 1;
+            return imageBase.reconcile!(input);
+          },
+        };
+      },
+    };
     const {
       artifactRepository,
       artifactStore,
       repository,
       service,
-    } = await setupGoldenRun();
+    } = await setupGoldenRun({ executors });
     const accepted = await acceptGoldenRun(
       service,
       "golden-artifact-failure-0001",
@@ -564,23 +602,21 @@ describe("complete deterministic golden Workflow", () => {
     expect(afterCopy.state).toBe("running");
 
     artifactStore.failNextGeneratedWrite = true;
-    const failed = await service.executeOne({
-      workspaceId: WORKSPACE_ID,
-      runId: accepted.run.id,
-      workerId: "worker_storage_failure",
+    await expect(
+      service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: "worker_storage_failure",
+      }),
+    ).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
     });
-    expect(failed).toMatchObject({
-      state: "failed",
-      failureCode: "ARTIFACT_PERSISTENCE_FAILED",
-      output: null,
-      finalSnapshot: null,
-    });
-    const failedAttempts = await repository.listStepAttempts({
+    const interruptedAttempts = await repository.listStepAttempts({
       workspaceId: WORKSPACE_ID,
       runId: accepted.run.id,
     });
     expect(
-      failedAttempts?.map(({ stepId, state, failureCode }) => ({
+      interruptedAttempts?.map(({ stepId, state, failureCode }) => ({
         stepId,
         state,
         failureCode,
@@ -593,10 +629,19 @@ describe("complete deterministic golden Workflow", () => {
       },
       {
         stepId: "generate_hero",
-        state: "failed",
-        failureCode: "ARTIFACT_PERSISTENCE_FAILED",
+        state: "running",
+        failureCode: null,
       },
     ]);
+    expect(interruptedAttempts?.[1]).toMatchObject({
+      providerOperationRef:
+        GOLDEN_PROVIDER_RESULTS.generateHero.providerOperationRef,
+      outcome: {
+        kind: "succeeded",
+        providerOperationRef:
+          GOLDEN_PROVIDER_RESULTS.generateHero.providerOperationRef,
+      },
+    });
     const partialArtifactCount = artifactRepository.artifacts.size;
     const generatedOriginCount =
       artifactRepository.generatedOrigins.size;
@@ -619,28 +664,22 @@ describe("complete deterministic golden Workflow", () => {
       { sequence: 3, type: "artifact.generated" },
       { sequence: 4, type: "step.attempt.completed" },
       { sequence: 5, type: "step.attempt.started" },
-      { sequence: 6, type: "step.attempt.failed" },
-      { sequence: 7, type: "run.failed" },
     ]);
 
-    const replay = await service.executeOne({
+    const recovered = await service.executeOne({
       workspaceId: WORKSPACE_ID,
       runId: accepted.run.id,
-      workerId: "worker_storage_failure_replay",
+      workerId: "worker_storage_failure",
     });
-    expect(replay).toEqual(failed);
-    expect(
-      await repository.listStepAttempts({
-        workspaceId: WORKSPACE_ID,
-        runId: accepted.run.id,
-      }),
-    ).toEqual(failedAttempts);
-    expect(artifactRepository.artifacts.size).toBe(
-      partialArtifactCount,
-    );
-    expect(artifactRepository.generatedOrigins.size).toBe(
-      generatedOriginCount,
-    );
+    expect(recovered.state).toBe("completed");
+    expect(await repository.listStepAttempts({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    })).toHaveLength(2);
+    expect(artifactRepository.artifacts.size).toBe(partialArtifactCount + 1);
+    expect(artifactRepository.generatedOrigins.size).toBe(generatedOriginCount + 1);
+    expect(providerExecutions).toBe(1);
+    expect(providerReconciliations).toBe(1);
     expect(
       (await service.listEvents({
         workspaceId: WORKSPACE_ID,
@@ -648,7 +687,862 @@ describe("complete deterministic golden Workflow", () => {
         workflowId: WORKFLOW_ID,
         runId: accepted.run.id,
         cursor: accepted.events.input.cursor,
-      })).items,
-    ).toEqual(events.items);
+      })).items.map(({ type }) => type),
+    ).toEqual([
+      ...events.items.map(({ type }) => type),
+      "artifact.generated",
+      "step.attempt.completed",
+      "run.completed",
+    ]);
+  });
+
+  it("blocks a durable provider success after a fresh restart when reconciliation errors", async () => {
+    const base = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const imageDefinition =
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY.get("gemini.generate_image@1")!;
+    const imageBase = base.get(
+      imageDefinition.identity,
+      imageDefinition.contractDigest,
+    )!;
+    let providerExecutions = 0;
+    let providerReconciliations = 0;
+    let reconciliationMode:
+      | "throw"
+      | "failed_known"
+      | "different_success"
+      | "succeeded" = "throw";
+    const executors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) => {
+        if (identity !== imageDefinition.identity) {
+          return base.get(identity, contractDigest);
+        }
+        return {
+          provider: imageBase.provider,
+          providerOperation: imageBase.providerOperation,
+          model: imageBase.model,
+          execute: async (input) => {
+            providerExecutions += 1;
+            return imageBase.execute(input);
+          },
+          reconcile: async (input) => {
+            providerReconciliations += 1;
+            if (reconciliationMode === "throw") {
+              throw new Error("provider reconciliation transport unavailable");
+            }
+            if (reconciliationMode === "failed_known") {
+              return {
+                kind: "failed_known",
+                failureCode: "PROVIDER_REPORTED_FAILURE",
+                retryable: false,
+                providerOperationRef: input.providerOperationRef,
+              };
+            }
+            const result = await imageBase.reconcile!(input);
+            return reconciliationMode === "different_success" &&
+              result.kind === "generated"
+              ? {
+                  ...result,
+                  providerOperationRef: "provider:contradictory-success",
+                }
+              : result;
+          },
+        };
+      },
+    };
+    const {
+      artifactService,
+      artifactStore,
+      clock,
+      repository,
+      revisions,
+      service,
+    } = await setupGoldenRun({ executors });
+    const accepted = await acceptGoldenRun(
+      service,
+      "golden-artifact-reconcile-error-0001",
+    );
+    await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_reconcile_error_copy",
+    });
+    artifactStore.failNextGeneratedWrite = true;
+    await expect(
+      service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: "worker_reconcile_error_crash",
+      }),
+    ).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+    });
+
+    const restartedService = new WorkflowRunService(
+      repository,
+      revisions,
+      new InMemoryWorkflowRunQueue(),
+      executors,
+      runCursor(),
+      clock,
+      artifactService,
+    );
+    const blocked = await restartedService.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_reconcile_error_crash",
+    });
+    expect(blocked.state).toBe("outcome_unknown");
+    expect(providerExecutions).toBe(1);
+    expect(providerReconciliations).toBe(1);
+    const attempt = (
+      await repository.listStepAttempts({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+      })
+    )?.find((candidate) => candidate.stepId === "generate_hero");
+    expect(attempt).toMatchObject({
+      state: "outcome_unknown",
+      providerOperationRef:
+        GOLDEN_PROVIDER_RESULTS.generateHero.providerOperationRef,
+      outcome: {
+        kind: "outcome_unknown",
+        failureCode: "PROVIDER_RECONCILIATION_UNAVAILABLE",
+        priorSucceededProviderOperationRef:
+          GOLDEN_PROVIDER_RESULTS.generateHero.providerOperationRef,
+      },
+    });
+    reconciliationMode = "failed_known";
+    await expect(
+      restartedService.reconcile({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+        stepAttemptId: attempt!.id,
+        principalId: PRINCIPAL_ID,
+        keyId: "key_golden",
+        authorizationEvidenceRef: "trace_golden",
+        idempotencyKey: "durable-success-failed-contradiction-0001",
+      }),
+    ).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_RECONCILIATION_PENDING",
+    });
+    reconciliationMode = "different_success";
+    await expect(
+      restartedService.reconcile({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+        stepAttemptId: attempt!.id,
+        principalId: PRINCIPAL_ID,
+        keyId: "key_golden",
+        authorizationEvidenceRef: "trace_golden",
+        idempotencyKey: "durable-success-ref-contradiction-0001",
+      }),
+    ).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_RECONCILIATION_PENDING",
+    });
+    reconciliationMode = "succeeded";
+    const reconciled = await restartedService.reconcile({
+      workspaceId: WORKSPACE_ID,
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+      stepAttemptId: attempt!.id,
+      principalId: PRINCIPAL_ID,
+      keyId: "key_golden",
+      authorizationEvidenceRef: "trace_golden",
+      idempotencyKey: "durable-success-correct-reconciliation-0001",
+    });
+    expect(reconciled.run.state).toBe("completed");
+  });
+
+  it("reconciles an ambiguous launched Attempt after a fresh service restart without executing the provider again", async () => {
+    const firstBase = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const imageDefinition =
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY.get("gemini.generate_image@1")!;
+    const firstImage = firstBase.get(
+      imageDefinition.identity,
+      imageDefinition.contractDigest,
+    )!;
+    let providerExecutions = 0;
+    let providerReconciliations = 0;
+    let externalResult:
+      | Awaited<ReturnType<WorkflowStepExecutor["execute"]>>
+      | null = null;
+    let externalEffectKey: string | null = null;
+    let externalIntentDigest: string | null = null;
+    const firstExecutors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) => {
+        if (identity !== imageDefinition.identity) {
+          return firstBase.get(identity, contractDigest);
+        }
+        return {
+          provider: firstImage.provider,
+          providerOperation: firstImage.providerOperation,
+          model: firstImage.model,
+          execute: async (input) => {
+            providerExecutions += 1;
+            const result = await firstImage.execute(input);
+            externalResult = structuredClone(result);
+            externalEffectKey = input.effectKey;
+            externalIntentDigest = input.intentDigest;
+            return result;
+          },
+        };
+      },
+    };
+    const {
+      artifactService,
+      clock,
+      repository,
+      revisions,
+      service,
+    } = await setupGoldenRun({ executors: firstExecutors });
+    const accepted = await acceptGoldenRun(
+      service,
+      "golden-provider-checkpoint-crash-0001",
+    );
+    await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_checkpoint_copy",
+    });
+    const recordProviderSuccess =
+      repository.recordStepAttemptProviderSuccess.bind(repository);
+    repository.recordStepAttemptProviderSuccess = async () => ({
+      kind: "unavailable",
+    });
+    await expect(
+      service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: "worker_checkpoint_crash",
+      }),
+    ).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+    });
+    repository.recordStepAttemptProviderSuccess = recordProviderSuccess;
+    expect(
+      (
+        await repository.listStepAttempts({
+          workspaceId: WORKSPACE_ID,
+          runId: accepted.run.id,
+        })
+      )?.find((attempt) => attempt.stepId === "generate_hero"),
+    ).toMatchObject({
+      state: "running",
+      providerOperationRef: null,
+      outcome: null,
+    });
+
+    const restartBase = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const restartImage = restartBase.get(
+      imageDefinition.identity,
+      imageDefinition.contractDigest,
+    )!;
+    const restartExecutors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) => {
+        if (identity !== imageDefinition.identity) {
+          return restartBase.get(identity, contractDigest);
+        }
+        return {
+          provider: restartImage.provider,
+          providerOperation: restartImage.providerOperation,
+          model: restartImage.model,
+          execute: async () => {
+            providerExecutions += 1;
+            throw new Error("Ambiguous launched effects must not execute again.");
+          },
+          reconcile: async (input) => {
+            providerReconciliations += 1;
+            if (
+              !externalResult ||
+              externalResult.kind !== "generated" ||
+              input.effectKey !== externalEffectKey ||
+              input.intentDigest !== externalIntentDigest
+            ) {
+              return {
+                kind: "outcome_unknown",
+                failureCode: "PROVIDER_RESULT_NOT_YET_RECOVERABLE",
+                providerOperationRef: input.providerOperationRef,
+              };
+            }
+            return structuredClone(externalResult);
+          },
+        };
+      },
+    };
+    const restartedService = new WorkflowRunService(
+      repository,
+      revisions,
+      new InMemoryWorkflowRunQueue(),
+      restartExecutors,
+      runCursor(),
+      clock,
+      artifactService,
+    );
+    const recovered = await restartedService.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_checkpoint_crash",
+    });
+    expect(recovered.state).toBe("completed");
+    expect(providerExecutions).toBe(1);
+    expect(providerReconciliations).toBe(1);
+  });
+
+  it("blocks an ambiguous launched Attempt when fresh-restart reconciliation errors", async () => {
+    const firstBase = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const imageDefinition =
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY.get("gemini.generate_image@1")!;
+    const firstImage = firstBase.get(
+      imageDefinition.identity,
+      imageDefinition.contractDigest,
+    )!;
+    let providerExecutions = 0;
+    let providerReconciliations = 0;
+    const firstExecutors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) => {
+        if (identity !== imageDefinition.identity) {
+          return firstBase.get(identity, contractDigest);
+        }
+        return {
+          provider: firstImage.provider,
+          providerOperation: firstImage.providerOperation,
+          model: firstImage.model,
+          execute: async (input) => {
+            providerExecutions += 1;
+            return firstImage.execute(input);
+          },
+        };
+      },
+    };
+    const {
+      artifactService,
+      clock,
+      repository,
+      revisions,
+      service,
+    } = await setupGoldenRun({ executors: firstExecutors });
+    const accepted = await acceptGoldenRun(
+      service,
+      "golden-ambiguous-reconcile-error-0001",
+    );
+    await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_ambiguous_error_copy",
+    });
+    const recordProviderSuccess =
+      repository.recordStepAttemptProviderSuccess.bind(repository);
+    repository.recordStepAttemptProviderSuccess = async () => ({
+      kind: "unavailable",
+    });
+    await expect(
+      service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: "worker_ambiguous_error_launch",
+      }),
+    ).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+    });
+    repository.recordStepAttemptProviderSuccess = recordProviderSuccess;
+
+    const restartBase = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const restartImage = restartBase.get(
+      imageDefinition.identity,
+      imageDefinition.contractDigest,
+    )!;
+    const restartExecutors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) => {
+        if (identity !== imageDefinition.identity) {
+          return restartBase.get(identity, contractDigest);
+        }
+        return {
+          provider: restartImage.provider,
+          providerOperation: restartImage.providerOperation,
+          model: restartImage.model,
+          execute: async () => {
+            providerExecutions += 1;
+            throw new Error("Ambiguous launched effects must not execute again.");
+          },
+          reconcile: async () => {
+            providerReconciliations += 1;
+            throw new Error("provider reconciliation transport unavailable");
+          },
+        };
+      },
+    };
+    const restartedService = new WorkflowRunService(
+      repository,
+      revisions,
+      new InMemoryWorkflowRunQueue(),
+      restartExecutors,
+      runCursor(),
+      clock,
+      artifactService,
+    );
+    const blocked = await restartedService.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_ambiguous_error_launch",
+    });
+    expect(blocked.state).toBe("outcome_unknown");
+    expect(providerExecutions).toBe(1);
+    expect(providerReconciliations).toBe(1);
+    const attempt = (
+      await repository.listStepAttempts({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+      })
+    )?.find((candidate) => candidate.stepId === "generate_hero");
+    expect(attempt).toMatchObject({
+      state: "outcome_unknown",
+      providerOperationRef: null,
+      outcome: {
+        kind: "outcome_unknown",
+        failureCode: "PROVIDER_RECONCILIATION_UNAVAILABLE",
+        priorSucceededProviderOperationRef: null,
+      },
+    });
+  });
+
+  it("bounds automatic retries while retaining one Effect Key and ordered retry events", async () => {
+    const base = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const textDefinition =
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY.get("gemini.generate_text@1")!;
+    const textBase = base.get(
+      textDefinition.identity,
+      textDefinition.contractDigest,
+    )!;
+    const effectKeys: string[] = [];
+    let shouldFail = true;
+    const retryingText: WorkflowStepExecutor = {
+      provider: textBase.provider,
+      providerOperation: textBase.providerOperation,
+      model: textBase.model,
+      execute: async (input) => {
+        effectKeys.push(input.effectKey);
+        if (shouldFail) {
+          shouldFail = false;
+          return {
+            kind: "failed_known",
+            failureCode: "TRANSIENT_PROVIDER_FAILURE",
+            retryable: true,
+            providerOperationRef: "provider:retryable:1",
+          };
+        }
+        return textBase.execute(input);
+      },
+    };
+    const executors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) =>
+        identity === textDefinition.identity
+          ? retryingText
+          : base.get(identity, contractDigest),
+    };
+    let current = new Date(NOW);
+    const { dispatcher, repository, service } = await setupGoldenRun({
+      executors,
+      clock: { now: () => new Date(current) },
+    });
+    const accepted = await acceptGoldenRun(
+      service,
+      "automatic-retry-start-0001",
+    );
+    const waiting = await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_retry_1",
+    });
+    expect(waiting).toMatchObject({
+      state: "waiting",
+      failureCode: "TRANSIENT_PROVIDER_FAILURE",
+      resumeAt: new Date(NOW.getTime() + 1_000).toISOString(),
+    });
+    await expect(
+      service.executeOne({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+        workerId: "worker_too_early",
+      }),
+    ).rejects.toMatchObject({ code: "WORKFLOW_RUN_LEASE_BUSY" });
+    current = new Date(NOW.getTime() + 1_000);
+    const resumeInput = {
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+      waitEventSequence: 5,
+      idempotencyKey: "automatic-retry-resume-0001",
+    };
+    await expect(
+      service.resume({
+        workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
+        keyId: "key_golden",
+        authorizationEvidenceRef: "trace_golden",
+        ...resumeInput,
+        waitEventSequence: 4,
+        idempotencyKey: "automatic-retry-wrong-generation-0001",
+      }),
+    ).rejects.toMatchObject({ code: "WORKFLOW_RUN_NOT_RESUMABLE" });
+    const cliResume = await dispatchCliCapability(
+      "workflow_runs.resume@1",
+      resumeInput,
+      dispatcher,
+    );
+    expect(cliResume).toMatchObject({
+      type: "capability_result",
+      output: {
+        run: { state: "running" },
+        inspect: { capability: "workflow_runs.get@1" },
+        events: { capability: "workflow_run_events.list@1" },
+      },
+    });
+    await expect(
+      service.resume({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: "run_different",
+        principalId: PRINCIPAL_ID,
+        keyId: "key_golden",
+        authorizationEvidenceRef: "trace_golden",
+        waitEventSequence: resumeInput.waitEventSequence,
+        idempotencyKey: resumeInput.idempotencyKey,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    const recovered = await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_retry_2",
+    });
+    expect(recovered.state).toBe("running");
+    const attempts = await repository.listStepAttempts({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+    });
+    expect(attempts?.map(({ attempt, state, effectKey }) => ({
+      attempt,
+      state,
+      effectKey,
+    }))).toEqual([
+      { attempt: 1, state: "failed", effectKey: effectKeys[0] },
+      { attempt: 2, state: "completed", effectKey: effectKeys[0] },
+    ]);
+    expect(effectKeys).toEqual([effectKeys[0], effectKeys[0]]);
+    const events = await service.listEvents({
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+      cursor: accepted.events.input.cursor,
+    });
+    expect(events.items.map(({ type }) => type)).toEqual([
+      "run.accepted",
+      "step.attempt.started",
+      "step.attempt.failed",
+      "step.retry.scheduled",
+      "run.waiting",
+      "run.resumed",
+      "step.attempt.started",
+      "artifact.generated",
+      "step.attempt.completed",
+    ]);
+    current = new Date(current.getTime() + 1);
+    await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_retry_complete",
+    });
+    const mcpResume = await dispatchMcpCapability(
+      "workflow_runs.resume.v1",
+      resumeInput,
+      dispatcher,
+    );
+    expect(mcpResume).toEqual(cliResume);
+  });
+
+  it("blocks unknown outcomes until reconciliation and replays the public mutation exactly", async () => {
+    const base = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const textDefinition =
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY.get("gemini.generate_text@1")!;
+    const textBase = base.get(
+      textDefinition.identity,
+      textDefinition.contractDigest,
+    )!;
+    let executions = 0;
+    let reconciliations = 0;
+    const unknownText: WorkflowStepExecutor = {
+      provider: textBase.provider,
+      providerOperation: textBase.providerOperation,
+      model: textBase.model,
+      execute: async (input) => {
+        executions += 1;
+        return {
+          kind: "outcome_unknown",
+          failureCode: "PROVIDER_RESPONSE_LOST",
+          providerOperationRef: `provider:unknown:${input.effectKey}`,
+        };
+      },
+      reconcile: async (input) => {
+        reconciliations += 1;
+        const result = await textBase.execute(input);
+        if (result.kind === "legacy") {
+          throw new Error("Golden reconciliation cannot return a legacy result.");
+        }
+        return result;
+      },
+    };
+    const executors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) =>
+        identity === textDefinition.identity
+          ? unknownText
+          : base.get(identity, contractDigest),
+    };
+    const { dispatcher, repository, service } = await setupGoldenRun({
+      executors,
+    });
+    const accepted = await acceptGoldenRun(
+      service,
+      "unknown-outcome-start-0001",
+    );
+    const blocked = await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_unknown",
+    });
+    expect(blocked.state).toBe("outcome_unknown");
+    await expect(
+      service.resume({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+        principalId: PRINCIPAL_ID,
+        keyId: "key_golden",
+        authorizationEvidenceRef: "trace_golden",
+        waitEventSequence: 1,
+        idempotencyKey: "unknown-resume-0001",
+      }),
+    ).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_RECONCILIATION_REQUIRED",
+    });
+    const unknownAttempt = (
+      await repository.listStepAttempts({
+        workspaceId: WORKSPACE_ID,
+        runId: accepted.run.id,
+      })
+    )?.find((attempt) => attempt.state === "outcome_unknown");
+    expect(unknownAttempt).toBeDefined();
+    const reconcileInput = {
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+      stepAttemptId: unknownAttempt!.id,
+      idempotencyKey: "unknown-reconcile-0001",
+    };
+    await expect(
+      service.reconcile({
+        workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
+        keyId: "key_golden",
+        authorizationEvidenceRef: "trace_golden",
+        ...reconcileInput,
+        stepAttemptId: "attempt_wrong_generation",
+        idempotencyKey: "unknown-wrong-attempt-0001",
+      }),
+    ).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+    });
+    const cli = await dispatchCliCapability(
+      "workflow_runs.reconcile@1",
+      reconcileInput,
+      dispatcher,
+    );
+    expect(cli).toMatchObject({
+      type: "capability_result",
+      output: {
+        run: { state: "waiting" },
+        inspect: { capability: "workflow_runs.get@1" },
+        events: { capability: "workflow_run_events.list@1" },
+      },
+    });
+    expect(executions).toBe(1);
+    expect(reconciliations).toBe(1);
+    await expect(
+      service.reconcile({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: "run_different",
+        principalId: PRINCIPAL_ID,
+        keyId: "key_golden",
+        authorizationEvidenceRef: "trace_golden",
+        stepAttemptId: reconcileInput.stepAttemptId,
+        idempotencyKey: reconcileInput.idempotencyKey,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    const completed = await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_after_reconcile",
+    });
+    expect(completed.state).toBe("completed");
+    const mcp = await dispatchMcpCapability(
+      "workflow_runs.reconcile.v1",
+      reconcileInput,
+      dispatcher,
+    );
+    expect(mcp).toEqual(cli);
+  });
+
+  it("creates one linked derived Run for an exact manual retry and preserves the source byte-for-byte", async () => {
+    const base = createDeterministicWorkflowRunExecutorRegistry(
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY,
+    );
+    const imageDefinition =
+      GOLDEN_WORKFLOW_OPERATION_REGISTRY.get("gemini.generate_image@1")!;
+    const imageBase = base.get(
+      imageDefinition.identity,
+      imageDefinition.contractDigest,
+    )!;
+    const terminalImage: WorkflowStepExecutor = {
+      provider: imageBase.provider,
+      providerOperation: imageBase.providerOperation,
+      model: imageBase.model,
+      execute: async () => ({
+        kind: "failed_known",
+        failureCode: "PROVIDER_REJECTED",
+        retryable: false,
+        providerOperationRef: "provider:rejected:1",
+      }),
+    };
+    const executors: WorkflowStepExecutorRegistry = {
+      get: (identity, contractDigest) =>
+        identity === imageDefinition.identity
+          ? terminalImage
+          : base.get(identity, contractDigest),
+    };
+    const { dispatcher, service } = await setupGoldenRun({ executors });
+    const accepted = await acceptGoldenRun(
+      service,
+      "manual-retry-start-0001",
+    );
+    await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_source_copy",
+    });
+    const failed = await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: accepted.run.id,
+      workerId: "worker_source_image",
+    });
+    expect(failed.state).toBe("failed");
+    const sourceBefore = JSON.stringify(
+      await service.get({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: accepted.run.id,
+      }),
+    );
+    const retryInput = {
+      workflowId: WORKFLOW_ID,
+      runId: accepted.run.id,
+      idempotencyKey: "manual-retry-create-0001",
+      inputArtifactIds: [REFERENCE_ARTIFACT_ID],
+    };
+    const cli = await dispatchCliCapability(
+      "workflow_runs.retry@1",
+      retryInput,
+      dispatcher,
+    );
+    expect(cli).toMatchObject({
+      type: "capability_result",
+      output: {
+        run: {
+          state: "accepted",
+          derivation: {
+            kind: "manual_retry",
+            sourceRunId: accepted.run.id,
+            retryFromStepId: "generate_hero",
+            reusedOutputs: [{ stepId: "draft_copy" }],
+          },
+        },
+        inspect: { capability: "workflow_runs.get@1" },
+        events: { capability: "workflow_run_events.list@1" },
+      },
+    });
+    const derivedRunId = (cli as {
+      type: "capability_result";
+      output: { run: { id: string } };
+    }).output.run.id;
+    const derivedFailure = await service.executeOne({
+      workspaceId: WORKSPACE_ID,
+      runId: derivedRunId,
+      workerId: "worker_derived_image",
+    });
+    expect(derivedFailure).toMatchObject({
+      state: "failed",
+      derivation: {
+        sourceRunId: accepted.run.id,
+        retryFromStepId: "generate_hero",
+      },
+    });
+    const mcp = await dispatchMcpCapability(
+      "workflow_runs.retry.v1",
+      retryInput,
+      dispatcher,
+    );
+    expect(mcp).toEqual(cli);
+    const derivedAttempts = await service.listStepAttempts({
+      workspaceId: WORKSPACE_ID,
+      workflowId: WORKFLOW_ID,
+      runId: derivedRunId,
+    });
+    expect(derivedAttempts.items).toHaveLength(1);
+    expect(derivedAttempts.items[0]).toMatchObject({
+      stepId: "generate_hero",
+      inputs: [
+        {
+          source: {
+            kind: "step_output",
+            runId: accepted.run.id,
+          },
+        },
+        expect.any(Object),
+      ],
+    });
+    await expect(
+      service.retry({
+        workspaceId: WORKSPACE_ID,
+        workflowId: WORKFLOW_ID,
+        runId: "run_different",
+        principalId: PRINCIPAL_ID,
+        keyId: "key_golden",
+        authorizationEvidenceRef: "trace_golden",
+        idempotencyKey: retryInput.idempotencyKey,
+        inputArtifactIds: [REFERENCE_ARTIFACT_ID],
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(
+      JSON.stringify(
+        await service.get({
+          workspaceId: WORKSPACE_ID,
+          workflowId: WORKFLOW_ID,
+          runId: accepted.run.id,
+        }),
+      ),
+    ).toBe(sourceBefore);
   });
 });

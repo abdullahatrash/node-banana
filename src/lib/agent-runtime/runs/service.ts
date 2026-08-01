@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { WorkflowRunError } from "./errors";
 import { GOLDEN_WORKFLOW_DEFINITION_DIGEST } from "./fixtures/golden";
+import { workflowRunDto } from "./types";
 import type {
   WorkflowRunAcceptedDto,
   WorkflowRunArtifactPort,
@@ -12,6 +13,7 @@ import type {
   WorkflowRunExecutionLeaseRecord,
   WorkflowRunQueue,
   WorkflowRunRecord,
+  WorkflowRunRecoveryDto,
   WorkflowRunRepository,
   WorkflowRunRevisionReader,
   WorkflowRunStartSnapshot,
@@ -60,6 +62,28 @@ function stableKey(value: string): string {
   return trimmed;
 }
 
+function mutationReceiptResult(input: {
+  receipt: { runId: string; result: Record<string, unknown> | null };
+}): WorkflowRunRecoveryDto {
+  const result = input.receipt.result;
+  const run =
+    result?.run && typeof result.run === "object"
+      ? (result.run as Record<string, unknown>)
+      : null;
+  if (
+    !result ||
+    !run ||
+    run.id !== input.receipt.runId ||
+    typeof run.state !== "string"
+  ) {
+    throw new WorkflowRunError(
+      "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+      "The original mutation result is unavailable.",
+    );
+  }
+  return structuredClone(result) as unknown as WorkflowRunRecoveryDto;
+}
+
 function evidence(value: string, label: string): string {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > 200) {
@@ -93,26 +117,6 @@ function canonicalInputs(value: Record<string, unknown>): Record<string, unknown
 
 function bytesDigest(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-}
-
-export function workflowRunDto(run: WorkflowRunRecord): WorkflowRunDto {
-  return {
-    id: run.id,
-    workspaceId: run.workspaceId,
-    workflowId: run.workflowId,
-    workflowRevisionId: run.workflowRevisionId,
-    state: run.state,
-    startSnapshotDigest: run.startSnapshotDigest,
-    startSnapshot: structuredClone(run.startSnapshot),
-    output: structuredClone(run.output),
-    finalSnapshot: structuredClone(run.finalSnapshot),
-    finalSnapshotDigest: run.finalSnapshotDigest,
-    failureCode: run.failureCode,
-    acceptedAt: run.acceptedAt.toISOString(),
-    startedAt: run.startedAt?.toISOString() ?? null,
-    completedAt: run.completedAt?.toISOString() ?? null,
-    updatedAt: run.updatedAt.toISOString(),
-  };
 }
 
 function eventDto(event: {
@@ -415,6 +419,8 @@ export class WorkflowRunService {
       output: null,
       finalSnapshot: null,
       finalSnapshotDigest: null,
+      derivation: null,
+      resumeAt: null,
       failureCode: null,
       acceptedAt: now,
       startedAt: null,
@@ -444,19 +450,23 @@ export class WorkflowRunService {
         occurredAt: now,
       },
       receipt: {
-        workspaceId: input.workspaceId,
-        principalId,
-        capability,
+      workspaceId: input.workspaceId,
+      principalId,
+      keyId,
+      authorizationEvidenceRef: evidenceRef,
+      capability,
         idempotencyKey,
         requestFingerprint,
         runId,
         initialEventCursor,
+        result: null,
         createdAt: now,
       },
       outboxIntent: {
         id: randomUUID(),
         workspaceId: input.workspaceId,
         runId,
+        generation: 1,
         dedupeKey: `workflow-run:${input.workspaceId}:${runId}:v1`,
         state: "pending",
         deliveryToken: null,
@@ -469,7 +479,7 @@ export class WorkflowRunService {
     });
     if (result.kind === "conflict") {
       throw new WorkflowRunError(
-        "WORKFLOW_RUN_IDEMPOTENCY_CONFLICT",
+        "IDEMPOTENCY_CONFLICT",
         "The idempotency key is already bound to another Workflow Run.",
       );
     }
@@ -501,6 +511,800 @@ export class WorkflowRunService {
       );
     }
     return workflowRunDto(run);
+  }
+
+  async retry(input: {
+    workspaceId: string;
+    workflowId: string;
+    runId: string;
+    principalId: string;
+    keyId: string;
+    authorizationEvidenceRef: string;
+    idempotencyKey: string;
+    inputArtifactIds: string[];
+  }): Promise<WorkflowRunRecoveryDto> {
+    const workflowId = identifier(input.workflowId, "Workflow ID");
+    const sourceRunId = identifier(input.runId, "Workflow Run ID");
+    const principalId = evidence(input.principalId, "Principal");
+    const keyId = evidence(input.keyId, "Key");
+    const evidenceRef = evidence(
+      input.authorizationEvidenceRef,
+      "Authorization evidence",
+    );
+    const idempotencyKey = stableKey(input.idempotencyKey);
+    const declaredArtifactIds = [...input.inputArtifactIds]
+      .map((artifactId) => identifier(artifactId, "Input Artifact ID"))
+      .sort(compareCodeUnits);
+    const requestFingerprint = canonicalDigest({
+      workflowId,
+      sourceRunId,
+      inputArtifactIds: declaredArtifactIds,
+    });
+    const replay = await this.repository.getMutationReceipt({
+      workspaceId: input.workspaceId,
+      principalId,
+      capability: "workflow_runs.retry@1",
+      idempotencyKey,
+    });
+    if (replay) {
+      if (replay.receipt.requestFingerprint !== requestFingerprint) {
+        throw new WorkflowRunError(
+          "IDEMPOTENCY_CONFLICT",
+          "The idempotency key is already bound to another retry.",
+        );
+      }
+      return mutationReceiptResult(replay);
+    }
+    const source = await this.repository.get({
+      workspaceId: input.workspaceId,
+      workflowId,
+      runId: sourceRunId,
+    });
+    if (!source) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_UNAVAILABLE",
+        "The source Workflow Run is unavailable.",
+      );
+    }
+    if (source.state === "outcome_unknown") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_RECONCILIATION_REQUIRED",
+        "The source Workflow Run must be reconciled before retry.",
+      );
+    }
+    if (source.state !== "failed") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "Only a terminal failed Workflow Run can create a manual retry.",
+      );
+    }
+    const sourceArtifactIds = source.startSnapshot.artifactReferences
+      .map((reference) => reference.artifactId)
+      .sort(compareCodeUnits);
+    if (
+      canonicalDigest(declaredArtifactIds) !== canonicalDigest(sourceArtifactIds)
+    ) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_INVALID_INPUT",
+        "inputArtifactIds must exactly match the source Run snapshot.",
+      );
+    }
+    const attempts =
+      (await this.repository.listStepAttempts({
+        workspaceId: input.workspaceId,
+        runId: source.id,
+      })) ?? [];
+    const failed = attempts
+      .filter((attempt) => attempt.state === "failed")
+      .sort((left, right) => right.completedAt!.getTime() - left.completedAt!.getTime())[0];
+    const failedStepId =
+      failed?.stepId ??
+      (source.startSnapshot.definition.steps.length === 1
+        ? source.startSnapshot.definition.steps[0]?.id
+        : undefined);
+    if (!failedStepId) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "The source Run has no known failed Step Attempt.",
+      );
+    }
+    const failedIndex = source.startSnapshot.definition.steps.findIndex(
+      (step) => step.id === failedStepId,
+    );
+    const reusedOutputs = source.startSnapshot.definition.steps
+      .slice(0, failedIndex)
+      .map((step) => {
+        const completed = attempts
+          .filter(
+            (attempt) =>
+              attempt.stepId === step.id &&
+              attempt.state === "completed" &&
+              attempt.outputs &&
+              attempt.providerOperationRef,
+          )
+          .sort((left, right) => right.attempt - left.attempt)[0];
+        if (completed) {
+          return {
+            stepId: completed.stepId,
+            sourceRunId: source.id,
+            sourceStepAttemptId: completed.id,
+            sourceAttempt: completed.attempt,
+            sourceEffectKey: completed.effectKey,
+            sourceProviderOperationRef: completed.providerOperationRef!,
+            outputs: structuredClone(completed.outputs!),
+          };
+        }
+        const inherited = source.derivation?.reusedOutputs.find(
+          (reused) => reused.stepId === step.id,
+        );
+        return inherited ? structuredClone(inherited) : null;
+      })
+      .filter(
+        (
+          reused,
+        ): reused is NonNullable<typeof reused> => reused !== null,
+      );
+    const snapshot: WorkflowRunStartSnapshot = {
+      ...structuredClone(source.startSnapshot),
+      authorization: { principalId, keyId, evidenceRef },
+    };
+    const now = this.clock.now();
+    const runId = `run_${randomUUID().replaceAll("-", "")}`;
+    const derivation = {
+      kind: "manual_retry" as const,
+      sourceRunId: source.id,
+      rootRunId: source.derivation?.rootRunId ?? source.id,
+      sourceStartSnapshotDigest: source.startSnapshotDigest,
+      retryFromStepId: failedStepId,
+      reusedOutputs,
+    };
+    const run: WorkflowRunRecord = {
+      id: runId,
+      workspaceId: input.workspaceId,
+      workflowId,
+      workflowRevisionId: source.workflowRevisionId,
+      state: "accepted",
+      startSnapshotDigest: canonicalDigest(snapshot),
+      startSnapshot: snapshot,
+      nextEventSequence: 3,
+      output: null,
+      finalSnapshot: null,
+      finalSnapshotDigest: null,
+      derivation,
+      resumeAt: null,
+      failureCode: null,
+      acceptedAt: now,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: now,
+    };
+    const cursor = this.cursors.seal({
+      workspaceId: input.workspaceId,
+      principalId,
+      workflowId,
+      runId,
+      afterSequence: 0,
+    });
+    const receipt = {
+      workspaceId: input.workspaceId,
+      principalId,
+      keyId,
+      authorizationEvidenceRef: evidenceRef,
+      capability: "workflow_runs.retry@1" as const,
+      idempotencyKey,
+      requestFingerprint,
+      runId,
+      initialEventCursor: cursor,
+      result: null,
+      createdAt: now,
+    };
+    const result = await this.repository.deriveRun({
+      run,
+      events: [
+        {
+          id: randomUUID(),
+          workspaceId: input.workspaceId,
+          runId,
+          sequence: 1,
+          type: "run.accepted",
+          data: { startSnapshotDigest: run.startSnapshotDigest },
+          occurredAt: now,
+        },
+        {
+          id: randomUUID(),
+          workspaceId: input.workspaceId,
+          runId,
+          sequence: 2,
+          type: "run.derived",
+          data: {
+            kind: "manual_retry",
+            sourceRunId: source.id,
+            rootRunId: derivation.rootRunId,
+            retryFromStepId: failedStepId,
+          },
+          occurredAt: now,
+        },
+      ],
+      receipt,
+      outboxIntent: {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        runId,
+        generation: 1,
+        dedupeKey: `workflow-run:${input.workspaceId}:${runId}:v1`,
+        state: "pending",
+        deliveryToken: null,
+        deliveryAttempts: 0,
+        availableAt: now,
+        claimedAt: null,
+        deliveredAt: null,
+        createdAt: now,
+      },
+    });
+    if (result.kind === "conflict") {
+      throw new WorkflowRunError(
+        "IDEMPOTENCY_CONFLICT",
+        "The idempotency key is already bound to another retry.",
+      );
+    }
+    if (result.kind !== "created" && result.kind !== "replayed") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        "The derived Workflow Run could not be committed.",
+      );
+    }
+    return mutationReceiptResult(result);
+  }
+
+  async resume(input: {
+    workspaceId: string;
+    workflowId: string;
+    runId: string;
+    principalId: string;
+    keyId: string;
+    authorizationEvidenceRef: string;
+    waitEventSequence: number;
+    idempotencyKey: string;
+  }): Promise<WorkflowRunRecoveryDto> {
+    const workflowId = identifier(input.workflowId, "Workflow ID");
+    const runId = identifier(input.runId, "Workflow Run ID");
+    const principalId = evidence(input.principalId, "Principal");
+    const keyId = evidence(input.keyId, "Key");
+    const authorizationEvidenceRef = evidence(
+      input.authorizationEvidenceRef,
+      "Authorization evidence",
+    );
+    const waitEventSequence = input.waitEventSequence;
+    if (!Number.isInteger(waitEventSequence) || waitEventSequence < 1) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_INVALID_INPUT",
+        "A positive wait event sequence is required.",
+      );
+    }
+    const idempotencyKey = stableKey(input.idempotencyKey);
+    const requestFingerprint = canonicalDigest({
+      workflowId,
+      runId,
+      waitEventSequence,
+    });
+    const replay = await this.repository.getMutationReceipt({
+      workspaceId: input.workspaceId,
+      principalId,
+      capability: "workflow_runs.resume@1",
+      idempotencyKey,
+    });
+    if (replay) {
+      if (replay.receipt.requestFingerprint !== requestFingerprint) {
+        throw new WorkflowRunError(
+          "IDEMPOTENCY_CONFLICT",
+          "The idempotency key is already bound.",
+        );
+      }
+      return mutationReceiptResult(replay);
+    }
+    const run = await this.repository.get({
+      workspaceId: input.workspaceId,
+      workflowId,
+      runId,
+    });
+    if (!run) {
+      throw new WorkflowRunError("WORKFLOW_RUN_UNAVAILABLE", "The Workflow Run is unavailable.");
+    }
+    if (run.state === "outcome_unknown") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_RECONCILIATION_REQUIRED",
+        "Unknown provider outcomes cannot be resumed.",
+      );
+    }
+    if (run.state !== "waiting") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "The Workflow Run is not waiting for a known-safe retry.",
+      );
+    }
+    const now = this.clock.now();
+    if (run.resumeAt && run.resumeAt > now) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "The retry backoff has not elapsed.",
+      );
+    }
+    const generation = run.nextEventSequence;
+    const receipt = {
+      workspaceId: input.workspaceId,
+      principalId,
+      keyId,
+      authorizationEvidenceRef,
+      capability: "workflow_runs.resume@1" as const,
+      idempotencyKey,
+      requestFingerprint,
+      runId,
+      initialEventCursor: this.cursors.seal({
+        workspaceId: input.workspaceId,
+        principalId,
+        workflowId,
+        runId,
+        afterSequence: 0,
+      }),
+      result: null,
+      createdAt: now,
+    };
+    const result = await this.repository.resumeRun({
+      workspaceId: input.workspaceId,
+      workflowId,
+      runId,
+      principalId,
+      keyId,
+      authorizationEvidenceRef,
+      waitEventSequence,
+      idempotencyKey,
+      requestFingerprint,
+      receipt,
+      outboxIntent: {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        runId,
+        generation,
+        dedupeKey: `workflow-run:${input.workspaceId}:${runId}:v${generation}`,
+        state: "pending",
+        deliveryToken: null,
+        deliveryAttempts: 0,
+        availableAt: now,
+        claimedAt: null,
+        deliveredAt: null,
+        createdAt: now,
+      },
+      resumedAt: now,
+      eventId: randomUUID(),
+    });
+    if (result.kind === "conflict") {
+      throw new WorkflowRunError("IDEMPOTENCY_CONFLICT", "The idempotency key is already bound.");
+    }
+    if (result.kind !== "created" && result.kind !== "replayed") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "The Workflow Run could not be resumed safely.",
+      );
+    }
+    return mutationReceiptResult(result);
+  }
+
+  async reconcile(input: {
+    workspaceId: string;
+    workflowId: string;
+    runId: string;
+    principalId: string;
+    keyId: string;
+    authorizationEvidenceRef: string;
+    stepAttemptId: string;
+    idempotencyKey: string;
+  }): Promise<WorkflowRunRecoveryDto> {
+    const workflowId = identifier(input.workflowId, "Workflow ID");
+    const runId = identifier(input.runId, "Workflow Run ID");
+    const principalId = evidence(input.principalId, "Principal");
+    const keyId = evidence(input.keyId, "Key");
+    const authorizationEvidenceRef = evidence(
+      input.authorizationEvidenceRef,
+      "Authorization evidence",
+    );
+    const stepAttemptId = identifier(
+      input.stepAttemptId,
+      "Workflow Step Attempt ID",
+    );
+    const idempotencyKey = stableKey(input.idempotencyKey);
+    const requestFingerprint = canonicalDigest({
+      workflowId,
+      runId,
+      stepAttemptId,
+    });
+    const replay = await this.repository.getMutationReceipt({
+      workspaceId: input.workspaceId,
+      principalId,
+      capability: "workflow_runs.reconcile@1",
+      idempotencyKey,
+    });
+    if (replay) {
+      if (replay.receipt.requestFingerprint !== requestFingerprint) {
+        throw new WorkflowRunError(
+          "IDEMPOTENCY_CONFLICT",
+          "The idempotency key is already bound.",
+        );
+      }
+      return mutationReceiptResult(replay);
+    }
+    const run = await this.repository.get({
+      workspaceId: input.workspaceId,
+      workflowId,
+      runId,
+    });
+    if (!run) {
+      throw new WorkflowRunError("WORKFLOW_RUN_UNAVAILABLE", "The Workflow Run is unavailable.");
+    }
+    if (run.state !== "outcome_unknown") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_NOT_RESUMABLE",
+        "Only a Workflow Run with an unknown provider outcome can be reconciled.",
+      );
+    }
+    const attempts =
+      (await this.repository.listStepAttempts({
+        workspaceId: input.workspaceId,
+        runId,
+      })) ?? [];
+    const attempt = attempts.find(
+      (candidate) =>
+        candidate.id === stepAttemptId &&
+        candidate.state === "outcome_unknown",
+    );
+    if (!attempt) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        "The unknown Step Attempt is unavailable.",
+      );
+    }
+    const step = run.startSnapshot.definition.steps.find(
+      (candidate) => candidate.id === attempt.stepId,
+    )!;
+    const executor = this.executors.get(
+      step.operation.identity,
+      step.operation.contractDigest,
+    );
+    if (!executor?.reconcile) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_RECONCILIATION_PENDING",
+        "The provider adapter cannot yet reconcile this effect.",
+      );
+    }
+    const completedByStep = new Map([
+      ...(run.derivation?.reusedOutputs.map((reused) => [
+        reused.stepId,
+        {
+          id: reused.sourceStepAttemptId,
+          workspaceId: run.workspaceId,
+          runId: reused.sourceRunId,
+          stepId: reused.stepId,
+          attempt: reused.sourceAttempt,
+          state: "completed" as const,
+          operationIdentity:
+            run.startSnapshot.definition.steps.find(
+              (candidate) => candidate.id === reused.stepId,
+            )?.operation.identity ?? "",
+          operationContractDigest:
+            run.startSnapshot.definition.steps.find(
+              (candidate) => candidate.id === reused.stepId,
+            )?.operation.contractDigest ?? "",
+          provider: "derived",
+          providerOperation: "reused",
+          model: "reused",
+          intentDigest: canonicalDigest(reused.outputs),
+          effectKey: reused.sourceEffectKey,
+          inputs: [],
+          outputs: structuredClone(reused.outputs),
+          providerOperationRef: reused.sourceProviderOperationRef,
+          outcome: {
+            kind: "succeeded" as const,
+            providerOperationRef: reused.sourceProviderOperationRef,
+          },
+          reconciliation: null,
+          failureCode: null,
+          startedAt: run.acceptedAt,
+          completedAt: run.acceptedAt,
+        } satisfies WorkflowStepAttemptRecord,
+      ] as const) ?? []),
+      ...attempts
+        .filter(
+          (candidate) =>
+            candidate.state === "completed" && candidate.outputs,
+        )
+        .map((candidate) => [candidate.stepId, candidate] as const),
+    ]);
+    const { resolved, lineage } = await this.resolveStepInputs(
+      run,
+      step,
+      completedByStep,
+    );
+    const providerResult = await executor.reconcile({
+      runId,
+      stepAttemptId: attempt.id,
+      effectKey: attempt.effectKey,
+      intentDigest: attempt.intentDigest,
+      providerOperationRef: attempt.providerOperationRef,
+      snapshot: structuredClone(run.startSnapshot),
+      step: structuredClone(step),
+      inputs: structuredClone(resolved),
+    });
+    const priorSucceededProviderOperationRef =
+      attempt.outcome?.kind === "outcome_unknown"
+        ? attempt.outcome.priorSucceededProviderOperationRef
+        : null;
+    if (
+      priorSucceededProviderOperationRef !== null &&
+      (providerResult.kind !== "generated" ||
+        providerResult.providerOperationRef !==
+          priorSucceededProviderOperationRef)
+    ) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_RECONCILIATION_PENDING",
+        "Reconciliation cannot contradict durable provider success evidence.",
+      );
+    }
+    if (providerResult.kind === "outcome_unknown") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_RECONCILIATION_PENDING",
+        "The provider outcome is still unknown.",
+      );
+    }
+    const now = this.clock.now();
+    let resolution:
+      Parameters<WorkflowRunRepository["reconcileStepAttempt"]>[0]["resolution"];
+    if (providerResult.kind === "failed_known") {
+      const retryable =
+        providerResult.retryable &&
+        attempt.attempt < step.retry.maxAttempts;
+      const retryDelay = retryable
+        ? Math.min(
+            step.retry.backoff.maxMs,
+            Math.round(
+              step.retry.backoff.initialMs *
+                step.retry.backoff.multiplier **
+                  Math.max(0, attempt.attempt - 1),
+            ),
+          )
+        : 0;
+      const retryAt = retryable
+        ? new Date(now.getTime() + retryDelay)
+        : null;
+      const generation = run.nextEventSequence;
+      resolution = {
+        kind: "failed_known",
+        providerOperationRef: providerResult.providerOperationRef,
+        failureCode: providerResult.failureCode,
+        retryable,
+        retryAt,
+        outboxIntent: retryable
+          ? {
+              id: randomUUID(),
+              workspaceId: run.workspaceId,
+              runId,
+              generation,
+              dedupeKey: `workflow-run:${run.workspaceId}:${runId}:v${generation}`,
+              state: "pending",
+              deliveryToken: null,
+              deliveryAttempts: 0,
+              availableAt: retryAt!,
+              claimedAt: null,
+              deliveredAt: null,
+              createdAt: now,
+            }
+          : null,
+      };
+    } else {
+      if (!this.artifacts) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+          "Generated Artifact persistence is unavailable.",
+        );
+      }
+      const outputs: Record<string, import("./types").WorkflowRunArtifactReference> = {};
+      for (const [outputName, output] of Object.entries(providerResult.outputs).sort(
+        ([left], [right]) => compareCodeUnits(left, right),
+      )) {
+        const digest = bytesDigest(output.bytes);
+        const metadata = await this.artifacts.commitGenerated({
+          workspaceId: run.workspaceId,
+          creatorPrincipalId: run.startSnapshot.authorization.principalId,
+          effectKey: attempt.effectKey,
+          outputName,
+          content:
+            output.kind === "text"
+              ? {
+                  kind: "text",
+                  text: Buffer.from(output.bytes).toString("utf8"),
+                  mediaType: output.mediaType,
+                  digest,
+                  sizeBytes: output.bytes.byteLength,
+                }
+              : {
+                  kind: "image",
+                  bytes: output.bytes,
+                  mediaType: output.mediaType,
+                  digest,
+                  sizeBytes: output.bytes.byteLength,
+                  width: output.width,
+                  height: output.height,
+                },
+          origin: {
+            workflowId: run.workflowId,
+            workflowRevisionId: run.workflowRevisionId,
+            workflowRevision: run.startSnapshot.workflowRevision,
+            definitionDigest: run.startSnapshot.definitionDigest,
+            runId: run.id,
+            runStartSnapshotDigest: run.startSnapshotDigest,
+            stepAttemptId: attempt.id,
+            stepId: step.id,
+            attempt: attempt.attempt,
+            provider: executor.provider,
+            operationIdentity: step.operation.identity,
+            providerOperation: executor.providerOperation,
+            providerOperationRef: providerResult.providerOperationRef,
+            model: attempt.model,
+            intentDigest: attempt.intentDigest,
+          },
+          lineageInputs: lineage.map((item) => ({
+            port: item.port,
+            kind: item.kind,
+            source: item.source,
+            contentDigest: item.contentDigest,
+            sourceArtifactId: item.artifactId,
+          })),
+        });
+        outputs[outputName] = {
+          artifactId: metadata.id,
+          digest: metadata.digest,
+          kind: metadata.kind,
+          mediaType: metadata.mediaType,
+          sizeBytes: metadata.sizeBytes,
+        };
+      }
+      const completed = {
+        ...attempt,
+        state: "completed" as const,
+        outputs,
+        providerOperationRef: providerResult.providerOperationRef,
+      };
+      const completedAttempts = [
+        ...attempts.filter((candidate) => candidate.state === "completed"),
+        completed,
+      ].sort(
+        (left, right) =>
+          run.startSnapshot.definition.steps.findIndex((item) => item.id === left.stepId) -
+          run.startSnapshot.definition.steps.findIndex((item) => item.id === right.stepId),
+      );
+      const final =
+        completedAttempts.length === run.startSnapshot.definition.steps.length;
+      const finalSnapshot = final
+        ? {
+            schema: "workflow-run-final-snapshot/v1" as const,
+            runId,
+            startSnapshotDigest: run.startSnapshotDigest,
+            stepAttempts: completedAttempts.map((item) => ({
+              stepAttemptId: item.id,
+              stepId: item.stepId,
+              attempt: item.attempt,
+              state: "completed" as const,
+              effectKey: item.effectKey,
+              outputs: structuredClone(item.outputs ?? {}),
+              providerOperationRef: item.providerOperationRef!,
+            })),
+            outputs: Object.fromEntries(
+              Object.entries(run.startSnapshot.definition.outputs).map(([name, output]) => {
+                const source = completedAttempts.find(
+                  (item) => item.stepId === output.binding.step,
+                )?.outputs?.[output.binding.output];
+                if (!source) {
+                  throw new WorkflowRunError(
+                    "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+                    `Workflow output ${name} is unavailable.`,
+                  );
+                }
+                return [name, source];
+              }),
+            ),
+          }
+        : null;
+      const generation = run.nextEventSequence;
+      resolution = {
+        kind: "succeeded",
+        providerOperationRef: providerResult.providerOperationRef,
+        outputs,
+        finalSnapshot,
+        finalSnapshotDigest: finalSnapshot ? canonicalDigest(finalSnapshot) : null,
+        outboxIntent: finalSnapshot
+          ? null
+          : {
+              id: randomUUID(),
+              workspaceId: run.workspaceId,
+              runId,
+              generation,
+              dedupeKey: `workflow-run:${run.workspaceId}:${runId}:v${generation}`,
+              state: "pending",
+              deliveryToken: null,
+              deliveryAttempts: 0,
+              availableAt: now,
+              claimedAt: null,
+              deliveredAt: null,
+              createdAt: now,
+            },
+      };
+    }
+    const receipt = {
+      workspaceId: run.workspaceId,
+      principalId,
+      keyId,
+      authorizationEvidenceRef,
+      capability: "workflow_runs.reconcile@1" as const,
+      idempotencyKey,
+      requestFingerprint,
+      runId,
+      initialEventCursor: this.cursors.seal({
+        workspaceId: run.workspaceId,
+        principalId,
+        workflowId,
+        runId,
+        afterSequence: 0,
+      }),
+      result: null,
+      createdAt: now,
+    };
+    const result = await this.repository.reconcileStepAttempt({
+      workspaceId: run.workspaceId,
+      workflowId,
+      runId,
+      principalId,
+      keyId,
+      authorizationEvidenceRef,
+      stepAttemptId: attempt.id,
+      requestFingerprint,
+      receipt,
+      resolution,
+      occurredAt: now,
+      eventIds: {
+        generated:
+          resolution.kind === "succeeded"
+            ? Object.keys(resolution.outputs).map(() => randomUUID())
+            : [],
+        reconciled: randomUUID(),
+        attemptCompleted: resolution.kind === "succeeded" ? randomUUID() : null,
+        attemptFailed: resolution.kind === "failed_known" ? randomUUID() : null,
+        retryScheduled:
+          resolution.kind === "failed_known" && resolution.retryable
+            ? randomUUID()
+            : null,
+        runCompleted:
+          resolution.kind === "succeeded" && resolution.finalSnapshot
+            ? randomUUID()
+            : null,
+        runFailed:
+          resolution.kind === "failed_known" && !resolution.retryable
+            ? randomUUID()
+            : null,
+        runWaiting:
+          (resolution.kind === "succeeded" && !resolution.finalSnapshot) ||
+          (resolution.kind === "failed_known" && resolution.retryable)
+            ? randomUUID()
+            : null,
+      },
+    });
+    if (result.kind === "conflict") {
+      throw new WorkflowRunError("IDEMPOTENCY_CONFLICT", "The idempotency key is already bound.");
+    }
+    if (result.kind !== "created" && result.kind !== "replayed") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        "The reconciled outcome could not be committed.",
+      );
+    }
+    return mutationReceiptResult(result);
   }
 
   async listStepAttempts(input: {
@@ -566,6 +1370,10 @@ export class WorkflowRunService {
     });
     const belongsToRun = attempts?.some((attempt) =>
       Object.values(attempt.outputs ?? {}).some(
+        (output) => output.artifactId === artifactId,
+      ),
+    ) || run.derivation?.reusedOutputs.some((reused) =>
+      Object.values(reused.outputs).some(
         (output) => output.artifactId === artifactId,
       ),
     );
@@ -744,26 +1552,28 @@ export class WorkflowRunService {
       if (typeof text !== "string") {
         throw new Error("Deterministic text input is unavailable.");
       }
-      const execution = await executor.execute({
-        runId: run.id,
-        stepAttemptId: `legacy_${run.id}`,
-        effectKey: `workflow-effect:v1:${run.workspaceId}:${run.id}:${step.id}:1`,
-        intentDigest: canonicalDigest({ text }),
-        snapshot: structuredClone(run.startSnapshot),
-        step: structuredClone(step),
-        inputs: {
-          text: {
-            kind: "text",
-            contentDigest: bytesDigest(Buffer.from(text, "utf8")),
-            artifactId: null,
-            textContent: text,
-            mediaType: "text/plain; charset=utf-8",
-            sizeBytes: Buffer.byteLength(text, "utf8"),
-            width: null,
-            height: null,
+      const execution = await this.executeWithLeaseRenewal(lease, () =>
+        executor.execute({
+          runId: run.id,
+          stepAttemptId: `legacy_${run.id}`,
+          effectKey: `workflow-effect:v1:${run.workspaceId}:${run.id}:${step.id}:1`,
+          intentDigest: canonicalDigest({ text }),
+          snapshot: structuredClone(run.startSnapshot),
+          step: structuredClone(step),
+          inputs: {
+            text: {
+              kind: "text",
+              contentDigest: bytesDigest(Buffer.from(text, "utf8")),
+              artifactId: null,
+              textContent: text,
+              mediaType: "text/plain; charset=utf-8",
+              sizeBytes: Buffer.byteLength(text, "utf8"),
+              width: null,
+              height: null,
+            },
           },
-        },
-      });
+        }),
+      );
       if (execution.kind !== "legacy") {
         throw new Error("Legacy executor returned a generated result.");
       }
@@ -820,6 +1630,71 @@ export class WorkflowRunService {
     return workflowRunDto(completed.run);
   }
 
+  private async executeWithLeaseRenewal<T>(
+    lease: WorkflowRunExecutionLeaseRecord,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const leaseMs = Math.max(
+      1_000,
+      lease.expiresAt.getTime() - lease.acquiredAt.getTime(),
+    );
+    const initialRenewalAt = this.clock.now();
+    const initialRenewal = await this.repository.renewLease({
+      workspaceId: lease.workspaceId,
+      runId: lease.runId,
+      workerId: lease.workerId,
+      token: lease.token,
+      fence: lease.fence,
+      now: initialRenewalAt,
+      expiresAt: new Date(initialRenewalAt.getTime() + leaseMs),
+    });
+    if (initialRenewal.kind !== "renewed") {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_STALE_FENCE",
+        "The execution lease could not be renewed before provider contact.",
+      );
+    }
+    const intervalMs = Math.max(250, Math.min(10_000, Math.floor(leaseMs / 3)));
+    let renewal: Promise<void> | null = null;
+    let lost = false;
+    const timer = setInterval(() => {
+      if (renewal || lost) return;
+      renewal = (async () => {
+        const now = this.clock.now();
+        const result = await this.repository.renewLease({
+          workspaceId: lease.workspaceId,
+          runId: lease.runId,
+          workerId: lease.workerId,
+          token: lease.token,
+          fence: lease.fence,
+          now,
+          expiresAt: new Date(now.getTime() + leaseMs),
+        });
+        if (result.kind !== "renewed") lost = true;
+      })()
+        .catch(() => {
+          lost = true;
+        })
+        .finally(() => {
+          renewal = null;
+        });
+    }, intervalMs);
+    timer.unref?.();
+    try {
+      const result = await operation();
+      if (renewal) await renewal;
+      if (lost) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_STALE_FENCE",
+          "The execution lease could not be renewed.",
+        );
+      }
+      return result;
+    } finally {
+      clearInterval(timer);
+    }
+  }
+
   private async executeGoldenStep(
     run: WorkflowRunRecord,
     lease: WorkflowRunExecutionLeaseRecord,
@@ -835,8 +1710,47 @@ export class WorkflowRunService {
         workspaceId: run.workspaceId,
         runId: run.id,
       })) ?? [];
+    const reusedAttempts: WorkflowStepAttemptRecord[] =
+      run.derivation?.reusedOutputs.map((reused) => ({
+        id: reused.sourceStepAttemptId,
+        workspaceId: run.workspaceId,
+        runId: reused.sourceRunId,
+        stepId: reused.stepId,
+        attempt: reused.sourceAttempt,
+        state: "completed",
+        operationIdentity:
+          run.startSnapshot.definition.steps.find(
+            (candidate) => candidate.id === reused.stepId,
+          )?.operation.identity ?? "",
+        operationContractDigest:
+          run.startSnapshot.definition.steps.find(
+            (candidate) => candidate.id === reused.stepId,
+          )?.operation.contractDigest ?? "",
+        provider: "derived",
+        providerOperation: "reused",
+        model: "reused",
+        intentDigest: canonicalDigest(reused.outputs),
+        effectKey: reused.sourceEffectKey,
+        inputs: [],
+        outputs: structuredClone(reused.outputs),
+        providerOperationRef: reused.sourceProviderOperationRef,
+        outcome: {
+          kind: "succeeded",
+          providerOperationRef: reused.sourceProviderOperationRef,
+        },
+        reconciliation: null,
+        failureCode: null,
+        startedAt: run.acceptedAt,
+        completedAt: run.acceptedAt,
+      })) ?? [];
+    const completedAttempts = [
+      ...reusedAttempts,
+      ...attempts.filter(
+        (attempt) => attempt.state === "completed" && attempt.outputs,
+      ),
+    ];
     const completedByStep = new Map(
-      attempts
+      completedAttempts
         .filter(
           (attempt) => attempt.state === "completed" && attempt.outputs,
         )
@@ -883,10 +1797,17 @@ export class WorkflowRunService {
           ]),
       ),
     });
+    const previousForStep = attempts
+      .filter((attempt) => attempt.stepId === step.id)
+      .sort((left, right) => right.attempt - left.attempt)[0];
+    const attemptNumber =
+      previousForStep?.state === "failed"
+        ? previousForStep.attempt + 1
+        : previousForStep?.attempt ?? 1;
     const effectKey =
       `workflow-effect:v1:${run.workspaceId}:${run.id}:${step.id}:1`;
     const attemptId = `attempt_${createHash("sha256")
-      .update(effectKey, "utf8")
+      .update(`${effectKey}:${attemptNumber}`, "utf8")
       .digest("hex")
       .slice(0, 32)}`;
     const now = this.clock.now();
@@ -895,7 +1816,7 @@ export class WorkflowRunService {
       workspaceId: run.workspaceId,
       runId: run.id,
       stepId: step.id,
-      attempt: 1,
+      attempt: attemptNumber,
       state: "running",
       operationIdentity: step.operation.identity,
       operationContractDigest: step.operation.contractDigest,
@@ -906,6 +1827,9 @@ export class WorkflowRunService {
       effectKey,
       inputs: lineage,
       outputs: null,
+      providerOperationRef: null,
+      outcome: null,
+      reconciliation: null,
       failureCode: null,
       startedAt: now,
       completedAt: null,
@@ -935,30 +1859,130 @@ export class WorkflowRunService {
         "Workflow Step Attempt preparation could not be committed.",
       );
     }
+    const recoveringDurableSuccess =
+      prepared.attempt.outcome?.kind === "succeeded";
+    const recoveringAmbiguousLaunch =
+      prepared.kind === "replayed" &&
+      prepared.attempt.outcome === null;
     let execution: Awaited<ReturnType<typeof executor.execute>>;
     try {
-      execution = await executor.execute({
-        runId: run.id,
-        stepAttemptId: prepared.attempt.id,
-        effectKey: prepared.attempt.effectKey,
-        intentDigest: prepared.attempt.intentDigest,
-        snapshot: structuredClone(run.startSnapshot),
-        step: structuredClone(step),
-        inputs: structuredClone(resolved),
-      });
-      if (execution.kind !== "generated") {
-        throw new Error(
-          "The golden provider adapter returned an unsupported result.",
+      if (recoveringDurableSuccess || recoveringAmbiguousLaunch) {
+        if (!executor.reconcile) {
+          execution = {
+            kind: "outcome_unknown",
+            failureCode: "PROVIDER_EFFECT_RECONCILIATION_REQUIRED",
+            providerOperationRef: prepared.attempt.providerOperationRef,
+          };
+        } else {
+          execution = await this.executeWithLeaseRenewal(lease, () =>
+            executor.reconcile!({
+              runId: run.id,
+              stepAttemptId: prepared.attempt.id,
+              effectKey: prepared.attempt.effectKey,
+              intentDigest: prepared.attempt.intentDigest,
+              providerOperationRef: prepared.attempt.providerOperationRef,
+              snapshot: structuredClone(run.startSnapshot),
+              step: structuredClone(step),
+              inputs: structuredClone(resolved),
+            }),
+          );
+        }
+      } else {
+        execution = await this.executeWithLeaseRenewal(lease, () =>
+          executor.execute({
+            runId: run.id,
+            stepAttemptId: prepared.attempt.id,
+            effectKey: prepared.attempt.effectKey,
+            intentDigest: prepared.attempt.intentDigest,
+            snapshot: structuredClone(run.startSnapshot),
+            step: structuredClone(step),
+            inputs: structuredClone(resolved),
+          }),
         );
       }
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof WorkflowRunError &&
+        error.code === "WORKFLOW_RUN_STALE_FENCE"
+      ) {
+        throw error;
+      }
+      if (recoveringDurableSuccess || recoveringAmbiguousLaunch) {
+        return this.blockGoldenStepAttemptOutcomeUnknown({
+          run,
+          lease,
+          attempt: prepared.attempt,
+          failureCode: "PROVIDER_RECONCILIATION_UNAVAILABLE",
+          providerOperationRef: prepared.attempt.providerOperationRef,
+        });
+      }
       return this.failGoldenStepAttempt({
         run,
         lease,
         attempt: prepared.attempt,
         failureCode: PROVIDER_FAILURE_CODE,
+        providerOperationRef: null,
+        retryable: false,
       });
     }
+    if (recoveringDurableSuccess && execution.kind !== "generated") {
+      return this.blockGoldenStepAttemptOutcomeUnknown({
+        run,
+        lease,
+        attempt: prepared.attempt,
+        failureCode: "PROVIDER_SUCCESS_OUTPUTS_UNAVAILABLE",
+        providerOperationRef: prepared.attempt.providerOperationRef,
+      });
+    }
+    if (execution.kind === "failed_known") {
+      return this.failGoldenStepAttempt({
+        run,
+        lease,
+        attempt: prepared.attempt,
+        failureCode: execution.failureCode,
+        providerOperationRef: execution.providerOperationRef,
+        retryable: execution.retryable,
+      });
+    }
+    if (execution.kind === "outcome_unknown") {
+      return this.blockGoldenStepAttemptOutcomeUnknown({
+        run,
+        lease,
+        attempt: prepared.attempt,
+        failureCode: execution.failureCode,
+        providerOperationRef: execution.providerOperationRef,
+      });
+    }
+    if (execution.kind !== "generated") {
+      return this.failGoldenStepAttempt({
+        run,
+        lease,
+        attempt: prepared.attempt,
+        failureCode: PROVIDER_FAILURE_CODE,
+        providerOperationRef: null,
+        retryable: false,
+      });
+    }
+    const providerRecorded =
+      await this.repository.recordStepAttemptProviderSuccess({
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        stepAttemptId: prepared.attempt.id,
+        workerId: lease.workerId,
+        token: lease.token,
+        fence: lease.fence,
+        providerOperationRef: execution.providerOperationRef,
+        recordedAt: this.clock.now(),
+      });
+    if (providerRecorded.kind !== "settled") {
+      throw new WorkflowRunError(
+        providerRecorded.kind === "stale_fence"
+          ? "WORKFLOW_RUN_STALE_FENCE"
+          : "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        "Provider success evidence could not be committed.",
+      );
+    }
+    const durableAttempt = providerRecorded.attempt;
     const outputs: Record<string, import("./types").WorkflowRunArtifactReference> =
       {};
     try {
@@ -1016,15 +2040,15 @@ export class WorkflowRunService {
             definitionDigest: run.startSnapshot.definitionDigest,
             runId: run.id,
             runStartSnapshotDigest: run.startSnapshotDigest,
-            stepAttemptId: prepared.attempt.id,
+            stepAttemptId: durableAttempt.id,
             stepId: step.id,
-            attempt: prepared.attempt.attempt,
+            attempt: durableAttempt.attempt,
             provider: executor.provider,
             operationIdentity: step.operation.identity,
             providerOperation: executor.providerOperation,
             providerOperationRef: execution.providerOperationRef,
-            model: prepared.attempt.model,
-            intentDigest: prepared.attempt.intentDigest,
+            model: durableAttempt.model,
+            intentDigest: durableAttempt.intentDigest,
           },
           lineageInputs: lineage.map((lineageInput) => ({
             port: lineageInput.port,
@@ -1043,21 +2067,24 @@ export class WorkflowRunService {
         };
       }
     } catch {
-      return this.failGoldenStepAttempt({
-        run,
-        lease,
-        attempt: prepared.attempt,
-        failureCode: ARTIFACT_FAILURE_CODE,
-      });
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        `${ARTIFACT_FAILURE_CODE}: generated Artifact persistence can be resumed with the same Effect Key.`,
+      );
     }
     const completedAttempt: WorkflowStepAttemptRecord = {
-      ...prepared.attempt,
+      ...durableAttempt,
       state: "completed",
       outputs,
+      providerOperationRef: execution.providerOperationRef,
+      outcome: {
+        kind: "succeeded",
+        providerOperationRef: execution.providerOperationRef,
+      },
       completedAt: this.clock.now(),
     };
     const orderedAttempts = [
-      ...attempts.filter((attempt) => attempt.state === "completed"),
+      ...completedAttempts,
       completedAttempt,
     ].sort(
       (left, right) =>
@@ -1083,6 +2110,7 @@ export class WorkflowRunService {
             state: "completed" as const,
             effectKey: attempt.effectKey,
             outputs: structuredClone(attempt.outputs ?? {}),
+            providerOperationRef: attempt.providerOperationRef!,
           })),
           outputs: Object.fromEntries(
             Object.entries(run.startSnapshot.definition.outputs).map(
@@ -1108,11 +2136,12 @@ export class WorkflowRunService {
     const settled = await this.repository.settleStepAttempt({
       workspaceId: run.workspaceId,
       runId: run.id,
-      stepAttemptId: prepared.attempt.id,
+      stepAttemptId: durableAttempt.id,
       workerId: lease.workerId,
       token: lease.token,
       fence: lease.fence,
       outputs,
+      providerOperationRef: execution.providerOperationRef,
       finalSnapshot,
       finalSnapshotDigest: finalSnapshot
         ? canonicalDigest(finalSnapshot)
@@ -1144,7 +2173,30 @@ export class WorkflowRunService {
     lease: WorkflowRunExecutionLeaseRecord;
     attempt: WorkflowStepAttemptRecord;
     failureCode: string;
+    providerOperationRef: string | null;
+    retryable: boolean;
   }): Promise<WorkflowRunDto> {
+    const step = input.run.startSnapshot.definition.steps.find(
+      (candidate) => candidate.id === input.attempt.stepId,
+    )!;
+    const canRetry =
+      input.retryable &&
+      input.attempt.attempt < step.retry.maxAttempts;
+    const delay = canRetry
+      ? Math.min(
+          step.retry.backoff.maxMs,
+          Math.round(
+            step.retry.backoff.initialMs *
+              step.retry.backoff.multiplier **
+                Math.max(0, input.attempt.attempt - 1),
+          ),
+        )
+      : 0;
+    const failedAt = this.clock.now();
+    const retryAt = canRetry
+      ? new Date(failedAt.getTime() + delay)
+      : null;
+    const generation = input.run.nextEventSequence + 1;
     const failed = await this.repository.failStepAttempt({
       workspaceId: input.run.workspaceId,
       runId: input.run.id,
@@ -1153,10 +2205,31 @@ export class WorkflowRunService {
       token: input.lease.token,
       fence: input.lease.fence,
       failureCode: input.failureCode,
-      failedAt: this.clock.now(),
+      providerOperationRef: input.providerOperationRef,
+      retryable: input.retryable,
+      retryAt,
+      retryOutboxIntent: retryAt
+        ? {
+            id: randomUUID(),
+            workspaceId: input.run.workspaceId,
+            runId: input.run.id,
+            generation,
+            dedupeKey: `workflow-run:${input.run.workspaceId}:${input.run.id}:v${generation}`,
+            state: "pending",
+            deliveryToken: null,
+            deliveryAttempts: 0,
+            availableAt: retryAt,
+            claimedAt: null,
+            deliveredAt: null,
+            createdAt: failedAt,
+          }
+        : null,
+      failedAt,
       eventIds: {
         attemptFailed: randomUUID(),
-        runFailed: randomUUID(),
+        retryScheduled: retryAt ? randomUUID() : null,
+        runWaiting: retryAt ? randomUUID() : null,
+        runFailed: retryAt ? null : randomUUID(),
       },
     });
     if (failed.kind === "stale_fence") {
@@ -1172,6 +2245,40 @@ export class WorkflowRunService {
       );
     }
     return workflowRunDto(failed.run);
+  }
+
+  private async blockGoldenStepAttemptOutcomeUnknown(input: {
+    run: WorkflowRunRecord;
+    lease: WorkflowRunExecutionLeaseRecord;
+    attempt: WorkflowStepAttemptRecord;
+    failureCode: string;
+    providerOperationRef: string | null;
+  }): Promise<WorkflowRunDto> {
+    const blocked =
+      await this.repository.markStepAttemptOutcomeUnknown({
+        workspaceId: input.run.workspaceId,
+        runId: input.run.id,
+        stepAttemptId: input.attempt.id,
+        workerId: input.lease.workerId,
+        token: input.lease.token,
+        fence: input.lease.fence,
+        failureCode: input.failureCode,
+        providerOperationRef: input.providerOperationRef,
+        occurredAt: this.clock.now(),
+        eventIds: {
+          attemptOutcomeUnknown: randomUUID(),
+          runOutcomeUnknown: randomUUID(),
+        },
+      });
+    if (blocked.kind !== "settled") {
+      throw new WorkflowRunError(
+        blocked.kind === "stale_fence"
+          ? "WORKFLOW_RUN_STALE_FENCE"
+          : "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+        "Unknown provider outcome could not be committed.",
+      );
+    }
+    return workflowRunDto(blocked.run);
   }
 
   private async resolveStepInputs(
@@ -1233,6 +2340,7 @@ export class WorkflowRunService {
           previous?.outputs?.[binding.output]?.artifactId ?? null;
         source = {
           kind: "step_output",
+          runId: previous?.runId ?? run.id,
           stepAttemptId: previous?.id ?? "",
           outputName: binding.output,
         };

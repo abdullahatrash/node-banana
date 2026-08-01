@@ -119,6 +119,25 @@ class GoldenConformanceExecutor implements WorkflowStepExecutor {
     });
     return result;
   }
+
+  async reconcile(
+    input: Parameters<NonNullable<WorkflowStepExecutor["reconcile"]>>[0],
+  ): ReturnType<NonNullable<WorkflowStepExecutor["reconcile"]>> {
+    const existing = this.ledger.get(input.effectKey);
+    if (
+      !existing ||
+      existing.intentDigest !== input.intentDigest ||
+      existing.result.kind !== "generated" ||
+      existing.result.providerOperationRef !== input.providerOperationRef
+    ) {
+      return Promise.resolve({
+        kind: "outcome_unknown",
+        failureCode: "PROVIDER_RESULT_NOT_YET_RECOVERABLE",
+        providerOperationRef: input.providerOperationRef,
+      });
+    }
+    return Promise.resolve(structuredClone(existing.result));
+  }
 }
 
 export class WorkflowRunExecutorRegistry

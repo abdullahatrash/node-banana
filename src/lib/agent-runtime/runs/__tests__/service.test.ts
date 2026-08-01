@@ -198,6 +198,23 @@ describe("WorkflowRunService", () => {
     ]);
   });
 
+  it("replays relay ambiguity with the same dedupe identity", async () => {
+    const { queue, repository, service, start } = setup();
+    const accepted = await start();
+    repository.failNextMarkOutboxDelivered = true;
+    await expect(service.relayNext()).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_DELIVERY_UNAVAILABLE",
+    });
+    await expect(service.relayNext()).resolves.toEqual({
+      delivered: true,
+      runId: accepted.run.id,
+    });
+    expect(queue.scheduled.size).toBe(1);
+    expect([...queue.scheduled.keys()]).toEqual([
+      `workflow-run:workspace_1:${accepted.run.id}:v1`,
+    ]);
+  });
+
   it("advances accepted to completed under a fence with gap-free retained events", async () => {
     const { service, start } = setup();
     const accepted = await start();
@@ -267,6 +284,47 @@ describe("WorkflowRunService", () => {
         completedAt: new Date("2026-07-25T12:00:02.000Z"),
         stepEventId: "event_step_stale",
         runEventId: "event_run_stale",
+      }),
+    ).resolves.toEqual({ kind: "stale_fence" });
+  });
+
+  it("renews only the exact live lease owner and preserves its fence", async () => {
+    const { repository, start } = setup();
+    const accepted = await start();
+    const lease = await repository.acquireLease({
+      workspaceId: "workspace_1",
+      runId: accepted.run.id,
+      workerId: "worker_renew",
+      now: new Date("2026-07-25T12:00:00.000Z"),
+      expiresAt: new Date("2026-07-25T12:00:10.000Z"),
+    });
+    expect(lease.kind).toBe("acquired");
+    if (lease.kind !== "acquired") return;
+    const renewed = await repository.renewLease({
+      workspaceId: "workspace_1",
+      runId: accepted.run.id,
+      workerId: lease.lease.workerId,
+      token: lease.lease.token,
+      fence: lease.lease.fence,
+      now: new Date("2026-07-25T12:00:05.000Z"),
+      expiresAt: new Date("2026-07-25T12:00:35.000Z"),
+    });
+    expect(renewed).toMatchObject({
+      kind: "renewed",
+      lease: {
+        fence: lease.lease.fence,
+        expiresAt: new Date("2026-07-25T12:00:35.000Z"),
+      },
+    });
+    await expect(
+      repository.renewLease({
+        workspaceId: "workspace_1",
+        runId: accepted.run.id,
+        workerId: "worker_other",
+        token: lease.lease.token,
+        fence: lease.lease.fence,
+        now: new Date("2026-07-25T12:00:06.000Z"),
+        expiresAt: new Date("2026-07-25T12:00:36.000Z"),
       }),
     ).resolves.toEqual({ kind: "stale_fence" });
   });

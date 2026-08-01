@@ -4,9 +4,13 @@ import type { WorkflowRunQueue } from "./types";
 
 export class DurableWorkflowRunQueue implements WorkflowRunQueue {
   async schedule(input: Parameters<WorkflowRunQueue["schedule"]>[0]) {
-    const expected =
-      `workflow-run:${input.workspaceId}:${input.runId}:v1`;
-    if (input.dedupeKey !== expected) {
+    const prefix =
+      `workflow-run:${input.workspaceId}:${input.runId}:v`;
+    const generation = input.dedupeKey.slice(prefix.length);
+    if (
+      !input.dedupeKey.startsWith(prefix) ||
+      !/^[1-9][0-9]*$/.test(generation)
+    ) {
       throw new Error("Workflow Run dispatch identity is invalid.");
     }
 

@@ -11,7 +11,12 @@ export async function executeRuntimeWorkflowRun(
   let result: { runId: string; state: string } | undefined;
   for (let iteration = 1; iteration <= 64; iteration += 1) {
     result = await executeRuntimeWorkflowRunStep({ ...input, iteration });
-    if (result.state === "completed" || result.state === "failed") {
+    if (
+      result.state === "waiting" ||
+      result.state === "outcome_unknown" ||
+      result.state === "completed" ||
+      result.state === "failed"
+    ) {
       return result;
     }
   }

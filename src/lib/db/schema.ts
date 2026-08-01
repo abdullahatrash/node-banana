@@ -17,9 +17,11 @@ import { sql } from "drizzle-orm";
 import type { ResolvedWorkflowDefinition } from "@/lib/agent-runtime/workflows/types";
 import type {
   WorkflowRunArtifactReference,
+  WorkflowRunDerivation,
   WorkflowRunFinalSnapshot,
   WorkflowRunStartSnapshot,
   WorkflowStepAttemptInput,
+  WorkflowStepAttemptRecord,
 } from "@/lib/agent-runtime/runs/types";
 
 /**
@@ -1793,6 +1795,11 @@ export const workflowRuns = pgTable(
     output: jsonb("output").$type<Record<string, unknown>>(),
     finalSnapshot: jsonb("final_snapshot").$type<WorkflowRunFinalSnapshot>(),
     finalSnapshotDigest: text("final_snapshot_digest"),
+    sourceRunId: text("source_run_id"),
+    rootRunId: text("root_run_id"),
+    derivationDepth: integer("derivation_depth").default(0).notNull(),
+    derivation: jsonb("derivation").$type<WorkflowRunDerivation>(),
+    resumeAt: timestamp("resume_at", { withTimezone: true }),
     failureCode: text("failure_code"),
     principalId: text("principal_id").notNull(),
     keyId: text("key_id").notNull(),
@@ -1810,6 +1817,24 @@ export const workflowRuns = pgTable(
     workspaceWorkflowRunUnique: uniqueIndex(
       "workflow_runs_workspace_workflow_id_unique",
     ).on(table.workspaceId, table.workflowId, table.id),
+    workspaceSourceRunFk: foreignKey({
+      columns: [table.workspaceId, table.workflowId, table.sourceRunId],
+      foreignColumns: [
+        table.workspaceId,
+        table.workflowId,
+        table.id,
+      ],
+      name: "workflow_runs_workspace_source_run_fk",
+    }).onDelete("restrict"),
+    workspaceRootRunFk: foreignKey({
+      columns: [table.workspaceId, table.workflowId, table.rootRunId],
+      foreignColumns: [
+        table.workspaceId,
+        table.workflowId,
+        table.id,
+      ],
+      name: "workflow_runs_workspace_root_run_fk",
+    }).onDelete("restrict"),
     workspaceWorkflowFk: foreignKey({
       columns: [table.workspaceId, table.workflowId],
       foreignColumns: [contentWorkflows.workspaceId, contentWorkflows.id],
@@ -1866,7 +1891,7 @@ export const workflowRuns = pgTable(
     ),
     stateCheck: check(
       "workflow_runs_state_check",
-      sql`${table.state} in ('accepted', 'running', 'completed', 'failed')`,
+      sql`${table.state} in ('accepted', 'running', 'waiting', 'outcome_unknown', 'completed', 'failed')`,
     ),
     identityCheck: check(
       "workflow_runs_identity_check",
@@ -1899,6 +1924,28 @@ export const workflowRuns = pgTable(
       "workflow_runs_evidence_check",
       sql`length(${table.authorizationEvidenceRef}) between 1 and 200`,
     ),
+    derivationCheck: check(
+      "workflow_runs_derivation_check",
+      sql`(
+        ${table.sourceRunId} is null
+          and ${table.rootRunId} is null
+          and ${table.derivationDepth} = 0
+          and ${table.derivation} is null
+      ) or (
+        ${table.sourceRunId} is not null
+          and ${table.rootRunId} is not null
+          and ${table.derivationDepth} > 0
+          and ${table.derivationDepth} <= 100
+          and jsonb_typeof(${table.derivation}) = 'object'
+          and ${table.derivation}->>'kind' = 'manual_retry'
+          and ${table.derivation}->>'sourceRunId' = ${table.sourceRunId}
+          and ${table.derivation}->>'rootRunId' = ${table.rootRunId}
+          and ${table.derivation}->>'sourceStartSnapshotDigest' ~ '^sha256:[0-9a-f]{64}$'
+          and length(${table.derivation}->>'retryFromStepId') between 1 and 200
+          and jsonb_typeof(${table.derivation}->'reusedOutputs') = 'array'
+          and octet_length(${table.derivation}::text) <= 262144
+      )`,
+    ),
     finalSnapshotCheck: check(
       "workflow_runs_final_snapshot_check",
       sql`(
@@ -1927,6 +1974,7 @@ export const workflowRuns = pgTable(
           and ${table.output} is null
           and ${table.finalSnapshot} is null
           and ${table.finalSnapshotDigest} is null
+          and ${table.resumeAt} is null
           and ${table.failureCode} is null
       ) or (
         ${table.state} = 'running'
@@ -1935,12 +1983,32 @@ export const workflowRuns = pgTable(
           and ${table.output} is null
           and ${table.finalSnapshot} is null
           and ${table.finalSnapshotDigest} is null
+          and ${table.resumeAt} is null
           and ${table.failureCode} is null
+      ) or (
+        ${table.state} = 'waiting'
+          and ${table.startedAt} is not null
+          and ${table.completedAt} is null
+          and ${table.output} is null
+          and ${table.finalSnapshot} is null
+          and ${table.finalSnapshotDigest} is null
+          and ${table.resumeAt} is not null
+          and ${table.failureCode} is not null
+      ) or (
+        ${table.state} = 'outcome_unknown'
+          and ${table.startedAt} is not null
+          and ${table.completedAt} is null
+          and ${table.output} is null
+          and ${table.finalSnapshot} is null
+          and ${table.finalSnapshotDigest} is null
+          and ${table.resumeAt} is null
+          and ${table.failureCode} is not null
       ) or (
         ${table.state} = 'completed'
           and ${table.startedAt} is not null
           and ${table.completedAt} is not null
           and ${table.output} is not null
+          and ${table.resumeAt} is null
           and ${table.failureCode} is null
       ) or (
         ${table.state} = 'failed'
@@ -1949,6 +2017,7 @@ export const workflowRuns = pgTable(
           and ${table.output} is null
           and ${table.finalSnapshot} is null
           and ${table.finalSnapshotDigest} is null
+          and ${table.resumeAt} is null
           and ${table.failureCode} is not null
       )`,
     ),
@@ -1983,6 +2052,11 @@ export const workflowStepAttempts = pgTable(
     inputs: jsonb("inputs").$type<WorkflowStepAttemptInput[]>().notNull(),
     outputs: jsonb("outputs")
       .$type<Record<string, WorkflowRunArtifactReference>>(),
+    providerOperationRef: text("provider_operation_ref"),
+    outcome: jsonb("outcome")
+      .$type<WorkflowStepAttemptRecord["outcome"]>(),
+    reconciliation: jsonb("reconciliation")
+      .$type<WorkflowStepAttemptRecord["reconciliation"]>(),
     failureCode: text("failure_code"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -2002,8 +2076,8 @@ export const workflowStepAttempts = pgTable(
     workspaceRunStepAttemptUnique: uniqueIndex(
       "workflow_step_attempts_workspace_run_step_attempt_unique",
     ).on(table.workspaceId, table.runId, table.stepId, table.attempt),
-    workspaceEffectKeyUnique: uniqueIndex(
-      "workflow_step_attempts_workspace_effect_key_unique",
+    workspaceEffectKeyIdx: index(
+      "workflow_step_attempts_workspace_effect_key_idx",
     ).on(table.workspaceId, table.effectKey),
     workspaceRunStartedIdx: index(
       "workflow_step_attempts_workspace_run_started_idx",
@@ -2020,7 +2094,7 @@ export const workflowStepAttempts = pgTable(
     ),
     stateCheck: check(
       "workflow_step_attempts_state_check",
-      sql`${table.state} in ('running', 'completed', 'failed')`,
+      sql`${table.state} in ('running', 'outcome_unknown', 'completed', 'failed')`,
     ),
     operationIdentityCheck: check(
       "workflow_step_attempts_operation_identity_check",
@@ -2040,6 +2114,14 @@ export const workflowStepAttempts = pgTable(
         and length(${table.model}) between 1 and 200
         and length(${table.effectKey}) between 1 and 500`,
     ),
+    providerEvidenceCheck: check(
+      "workflow_step_attempts_provider_evidence_check",
+      sql`${table.providerOperationRef} is null or (
+        length(${table.providerOperationRef}) between 1 and 500
+        and ${table.providerOperationRef} = btrim(${table.providerOperationRef})
+        and ${table.providerOperationRef} !~ '[[:cntrl:]]'
+      )`,
+    ),
     payloadCheck: check(
       "workflow_step_attempts_payload_check",
       sql`jsonb_typeof(${table.inputs}) = 'array'
@@ -2050,6 +2132,20 @@ export const workflowStepAttempts = pgTable(
             jsonb_typeof(${table.outputs}) = 'object'
             and octet_length(${table.outputs}::text) <= 262144
           )
+        )
+        and (
+          ${table.outcome} is null
+          or (
+            jsonb_typeof(${table.outcome}) = 'object'
+            and octet_length(${table.outcome}::text) <= 4096
+          )
+        )
+        and (
+          ${table.reconciliation} is null
+          or (
+            jsonb_typeof(${table.reconciliation}) = 'object'
+            and octet_length(${table.reconciliation}::text) <= 4096
+          )
         )`,
     ),
     lifecycleCheck: check(
@@ -2057,20 +2153,53 @@ export const workflowStepAttempts = pgTable(
       sql`(
         ${table.state} = 'running'
           and ${table.outputs} is null
+          and (
+            (
+              ${table.providerOperationRef} is null
+              and ${table.outcome} is null
+            ) or (
+              ${table.providerOperationRef} is not null
+              and ${table.outcome}->>'kind' = 'succeeded'
+              and ${table.outcome}->>'providerOperationRef' = ${table.providerOperationRef}
+            )
+          )
+          and ${table.reconciliation} is null
           and ${table.failureCode} is null
           and ${table.completedAt} is null
       ) or (
         ${table.state} = 'completed'
           and ${table.outputs} is not null
+          and ${table.providerOperationRef} is not null
+          and ${table.outcome}->>'kind' = 'succeeded'
+          and ${table.outcome}->>'providerOperationRef' = ${table.providerOperationRef}
           and ${table.failureCode} is null
           and ${table.completedAt} is not null
           and ${table.completedAt} >= ${table.startedAt}
       ) or (
         ${table.state} = 'failed'
           and ${table.outputs} is null
+          and ${table.outcome}->>'kind' = 'failed_known'
           and ${table.failureCode} is not null
+          and ${table.outcome}->>'failureCode' = ${table.failureCode}
+          and jsonb_typeof(${table.outcome}->'retryable') = 'boolean'
           and ${table.completedAt} is not null
           and ${table.completedAt} >= ${table.startedAt}
+      ) or (
+        ${table.state} = 'outcome_unknown'
+          and ${table.outputs} is null
+          and ${table.outcome}->>'kind' = 'outcome_unknown'
+          and ${table.failureCode} is not null
+          and ${table.outcome}->>'failureCode' = ${table.failureCode}
+          and ${table.outcome} ? 'priorSucceededProviderOperationRef'
+          and jsonb_typeof(${table.outcome}->'priorSucceededProviderOperationRef') in ('string', 'null')
+          and (
+            ${table.outcome}->>'priorSucceededProviderOperationRef' is null
+            or (
+              ${table.providerOperationRef} is not null
+              and ${table.outcome}->>'priorSucceededProviderOperationRef' = ${table.providerOperationRef}
+            )
+          )
+          and ${table.completedAt} is null
       )`,
     ),
     failureCodeCheck: check(
@@ -2347,10 +2476,17 @@ export const workflowRunEvents = pgTable(
       "workflow_run_events_type_check",
       sql`${table.type} in (
         'run.accepted',
+        'run.derived',
         'step.attempt.started',
         'artifact.generated',
         'step.attempt.completed',
         'step.attempt.failed',
+        'step.retry.scheduled',
+        'step.attempt.outcome_unknown',
+        'step.attempt.reconciled',
+        'run.waiting',
+        'run.resumed',
+        'run.outcome_unknown',
         'step.completed',
         'run.completed',
         'run.failed'
@@ -2368,11 +2504,14 @@ export const workflowRunMutationReceipts = pgTable(
   {
     workspaceId: text("workspace_id").notNull(),
     principalId: text("principal_id").notNull(),
+    keyId: text("key_id").notNull(),
+    authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
     capability: text("capability").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     requestFingerprint: text("request_fingerprint").notNull(),
     runId: text("run_id").notNull(),
     initialEventCursor: text("initial_event_cursor").notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (table) => ({
@@ -2395,12 +2534,33 @@ export const workflowRunMutationReceipts = pgTable(
       foreignColumns: [workflowRuns.workspaceId, workflowRuns.id],
       name: "workflow_run_mutation_receipts_workspace_run_fk",
     }).onDelete("restrict"),
+    authorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.keyId,
+        table.authorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name: "workflow_run_mutation_receipts_authorization_evidence_fk",
+    }).onDelete("restrict"),
     workspaceCreatedIdx: index(
       "workflow_run_mutation_receipts_workspace_created_idx",
     ).on(table.workspaceId, table.createdAt),
     capabilityCheck: check(
       "workflow_run_mutation_receipts_capability_check",
-      sql`${table.capability} in ('workflow_runs.start@1', 'workflow_runs.start@2')`,
+      sql`${table.capability} in (
+        'workflow_runs.start@1',
+        'workflow_runs.start@2',
+        'workflow_runs.retry@1',
+        'workflow_runs.reconcile@1',
+        'workflow_runs.resume@1'
+      )`,
     ),
     idempotencyKeyCheck: check(
       "workflow_run_mutation_receipts_idempotency_key_check",
@@ -2410,9 +2570,38 @@ export const workflowRunMutationReceipts = pgTable(
       "workflow_run_mutation_receipts_fingerprint_check",
       sql`${table.requestFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
     ),
+    authorizationEvidenceCheck: check(
+      "workflow_run_mutation_receipts_authorization_evidence_check",
+      sql`length(${table.keyId}) between 1 and 200
+        and length(${table.authorizationEvidenceRef}) between 1 and 200`,
+    ),
     cursorCheck: check(
       "workflow_run_mutation_receipts_cursor_check",
       sql`length(${table.initialEventCursor}) between 1 and 2048`,
+    ),
+    resultCheck: check(
+      "workflow_run_mutation_receipts_result_check",
+      sql`(
+        ${table.capability} in (
+          'workflow_runs.start@1',
+          'workflow_runs.start@2'
+        )
+        and ${table.result} is null
+      ) or (
+        ${table.capability} in (
+          'workflow_runs.retry@1',
+          'workflow_runs.reconcile@1',
+          'workflow_runs.resume@1'
+        )
+        and jsonb_typeof(${table.result}) = 'object'
+        and ${table.result}->'run'->>'id' = ${table.runId}
+        and ${table.result}->'inspect'->>'capability' = 'workflow_runs.get@1'
+        and ${table.result}->'inspect'->'input'->>'runId' = ${table.runId}
+        and ${table.result}->'events'->>'capability' = 'workflow_run_events.list@1'
+        and ${table.result}->'events'->'input'->>'runId' = ${table.runId}
+        and ${table.result}->'events'->'input'->>'cursor' = ${table.initialEventCursor}
+        and octet_length(${table.result}::text) <= 2097152
+      )`,
     ),
   }),
 );
@@ -2423,6 +2612,7 @@ export const workflowRunOutboxIntents = pgTable(
     id: text("id").primaryKey(),
     workspaceId: text("workspace_id").notNull(),
     runId: text("run_id").notNull(),
+    generation: integer("generation").default(1).notNull(),
     dedupeKey: text("dedupe_key").notNull(),
     state: text("state").notNull(),
     deliveryToken: text("delivery_token"),
@@ -2433,9 +2623,9 @@ export const workflowRunOutboxIntents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (table) => ({
-    workspaceRunUnique: uniqueIndex(
-      "workflow_run_outbox_intents_workspace_run_unique",
-    ).on(table.workspaceId, table.runId),
+    workspaceRunGenerationUnique: uniqueIndex(
+      "workflow_run_outbox_intents_workspace_run_generation_unique",
+    ).on(table.workspaceId, table.runId, table.generation),
     dedupeKeyUnique: uniqueIndex(
       "workflow_run_outbox_intents_dedupe_key_unique",
     ).on(table.dedupeKey),
@@ -2456,7 +2646,7 @@ export const workflowRunOutboxIntents = pgTable(
     ),
     attemptsCheck: check(
       "workflow_run_outbox_intents_attempts_check",
-      sql`${table.deliveryAttempts} >= 0`,
+      sql`${table.deliveryAttempts} >= 0 and ${table.generation} > 0`,
     ),
     lifecycleCheck: check(
       "workflow_run_outbox_intents_lifecycle_check",

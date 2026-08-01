@@ -26,6 +26,13 @@ describe("DurableWorkflowRunQueue", () => {
       runId: "run_1",
     }]);
     expect(JSON.stringify(start.mock.calls)).not.toContain("internal-sdk-id");
+    await expect(
+      queue.schedule({
+        workspaceId: "workspace_1",
+        runId: "run_1",
+        dedupeKey: "workflow-run:workspace_1:run_1:v2",
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("rejects a mismatched dispatch identity before scheduling", async () => {
