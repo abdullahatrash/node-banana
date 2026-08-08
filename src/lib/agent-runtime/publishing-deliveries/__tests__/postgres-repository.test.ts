@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import {
   rehydratePublishingDelivery,
+  rehydratePublishingDeliveryCancellation,
   rehydratePublishingDeliveryEvent,
   rehydratePublishingDeliveryOutbox,
 } from "../postgres-repository";
+import { publishingDeliveryCancelAuthorizationContractDigest } from
+  "../authorization-contract";
 import { setupPublishingDeliveries } from "./fixtures";
 
 async function deliveryRow(punctuatedArtifacts = false) {
@@ -141,6 +144,68 @@ describe("Drizzle Publishing Delivery rehydration", () => {
       ...base,
       state: "claimed",
       deliveryToken: null,
+    })).toBeNull();
+  });
+
+  it("fails closed on noncanonical retained cancellation authority", () => {
+    const authorizationIssuedAt = new Date("2026-08-09T10:00:00.000Z");
+    const authorizationExpiresAt = new Date("2026-08-09T10:15:00.000Z");
+    const authorizedResources = {
+      channelIds: ["channel_1"],
+      artifactIds: ["artifact:text.v1"],
+    };
+    const authorizationEvidenceDigest = canonicalDigest({
+      schema: "publishing-delivery-cancellation-authority-evidence/v1",
+      workspaceId: "workspace_1",
+      actor: { kind: "agent", principalId: "principal_1", keyId: "key_1" },
+      capability: "publishing_deliveries.cancel@1",
+      contractDigest: publishingDeliveryCancelAuthorizationContractDigest(),
+      admissionEvidenceRef: "otr_cancel_1",
+      evidenceRef: "otr_cancel_1",
+      resources: authorizedResources,
+      humanGrants: [],
+      issuedAt: authorizationIssuedAt.toISOString(),
+      expiresAt: authorizationExpiresAt.toISOString(),
+    });
+    const row: Parameters<typeof rehydratePublishingDeliveryCancellation>[0] = {
+      workspaceId: "workspace_1",
+      id: "pdc_1",
+      deliveryId: "pdl_1",
+      actorKind: "agent",
+      actorId: "principal_1",
+      principalId: "principal_1",
+      keyId: "key_1",
+      userId: null,
+      capability: "publishing_deliveries.cancel@1",
+      authorizationSessionId:
+        `pdcas_${authorizationEvidenceDigest.slice("sha256:".length)}`,
+      authorizationContractDigest:
+        publishingDeliveryCancelAuthorizationContractDigest(),
+      authorizationAdmissionEvidenceRef: "otr_cancel_1",
+      authorizationEvidenceRef: "otr_cancel_1",
+      authorizationEvidenceDigest,
+      authorizedResources,
+      authorityGrants: [],
+      authorizationIssuedAt,
+      authorizationExpiresAt,
+      stateAtRequest: "scheduled",
+      outcome: "prevented",
+      externallyCompletedAtRequest: false,
+      externallyReversed: false,
+      requestedAt: new Date("2026-08-09T10:01:00.000Z"),
+    };
+    expect(rehydratePublishingDeliveryCancellation(row)).not.toBeNull();
+    expect(rehydratePublishingDeliveryCancellation({
+      ...row,
+      authorizationContractDigest: `sha256:${"f".repeat(64)}`,
+    })).toBeNull();
+    expect(rehydratePublishingDeliveryCancellation({
+      ...row,
+      authorizationEvidenceDigest: `sha256:${"e".repeat(64)}`,
+    })).toBeNull();
+    expect(rehydratePublishingDeliveryCancellation({
+      ...row,
+      authorizationSessionId: "pdcas_wrong",
     })).toBeNull();
   });
 });

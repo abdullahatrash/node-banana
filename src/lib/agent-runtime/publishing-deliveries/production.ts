@@ -9,6 +9,7 @@ import { PublishingDeliveryExecutionService } from "./execution";
 import { PublishingPlatformRegistry } from "./platform-registry";
 import {
   DrizzlePublishingDeliveryAuthorizationRepository,
+  DrizzlePublishingDeliveryCancellationAuthorizationRepository,
   DrizzlePublishingDeliveryRepository,
 } from "./postgres-repository";
 import { DurablePublishingDeliveryQueue } from "./queue";
@@ -18,6 +19,8 @@ export const PRODUCTION_PUBLISHING_DELIVERY_REPOSITORY =
   new DrizzlePublishingDeliveryRepository(getDb);
 export const PRODUCTION_PUBLISHING_DELIVERY_AUTHORIZATION =
   new DrizzlePublishingDeliveryAuthorizationRepository(getDb);
+export const PRODUCTION_PUBLISHING_DELIVERY_CANCELLATION_AUTHORIZATION =
+  new DrizzlePublishingDeliveryCancellationAuthorizationRepository(getDb);
 export const PRODUCTION_PUBLISHING_DELIVERY_CURSOR =
   new AesGcmPublishingDeliveryCursorCodec(
     publishingDeliveryCursorKeysFromEnvironment,
@@ -28,6 +31,8 @@ export const PRODUCTION_PUBLISHING_DELIVERY_SERVICE =
     PRODUCTION_PUBLISHING_APPROVAL_REVISIONS,
     PRODUCTION_PUBLISHING_APPROVAL_REVISIONS,
     PRODUCTION_PUBLISHING_DELIVERY_AUTHORIZATION,
+    undefined,
+    PRODUCTION_PUBLISHING_DELIVERY_CANCELLATION_AUTHORIZATION,
   );
 
 /**

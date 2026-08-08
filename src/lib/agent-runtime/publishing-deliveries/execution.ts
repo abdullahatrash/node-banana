@@ -233,6 +233,13 @@ export class PublishingDeliveryExecutionService {
       preparedAt: this.clock.now(),
     });
     if (prepared.kind !== "prepared" && prepared.kind !== "replayed") {
+      if (prepared.kind === "stale") {
+        const cancelled = await this.currentCancellationResult(
+          acquired.delivery.workspaceId,
+          acquired.delivery.id,
+        );
+        if (cancelled) return cancelled;
+      }
       return executionUnavailable(
         prepared.kind === "stale"
           ? "Publishing Delivery execution fence is stale."
@@ -240,20 +247,49 @@ export class PublishingDeliveryExecutionService {
       );
     }
 
-    const outcome = await this.withLeaseRenewal(
-      acquired.lease,
-      leaseMs,
-      () => this.contactPlatform(prepared.delivery, effect),
-    );
-    const occurredAt = this.clock.now();
-    const evidenceDigest = normalizedEvidenceDigest(outcome, acquired.lease.fence);
-    const common = {
+    // This fenced durable marker is the last local boundary before adapter
+    // contact. Cancellation that commits first makes the barrier fail closed;
+    // once it commits, cancellation cannot claim prevention without later
+    // terminal provider evidence.
+    const contact = await this.repository.beginEffectContact({
       workspaceId: prepared.delivery.workspaceId,
       deliveryId: prepared.delivery.id,
       workerId: acquired.lease.workerId,
       leaseToken: acquired.lease.leaseToken,
       fence: acquired.lease.fence,
       effectKey: prepared.delivery.effectKey,
+      intentDigest: effect.intentDigest,
+      startedAt: this.clock.now(),
+    });
+    if (contact.kind !== "started" && contact.kind !== "replayed") {
+      if (contact.kind === "cancelled" || contact.kind === "stale") {
+        const cancelled = await this.currentCancellationResult(
+          prepared.delivery.workspaceId,
+          prepared.delivery.id,
+        );
+        if (cancelled) return cancelled;
+      }
+      return executionUnavailable(
+        contact.kind === "unavailable"
+          ? "Publishing Delivery contact boundary could not be committed."
+          : "Publishing Delivery execution fence is stale.",
+      );
+    }
+
+    const outcome = await this.withLeaseRenewal(
+      acquired.lease,
+      leaseMs,
+      () => this.contactPlatform(contact.delivery, effect),
+    );
+    const occurredAt = this.clock.now();
+    const evidenceDigest = normalizedEvidenceDigest(outcome, acquired.lease.fence);
+    const common = {
+      workspaceId: contact.delivery.workspaceId,
+      deliveryId: contact.delivery.id,
+      workerId: acquired.lease.workerId,
+      leaseToken: acquired.lease.leaseToken,
+      fence: acquired.lease.fence,
+      effectKey: contact.delivery.effectKey,
       intentDigest: effect.intentDigest,
       occurredAt,
     };
@@ -282,7 +318,7 @@ export class PublishingDeliveryExecutionService {
                   retryAt,
                 },
                 retryOutboxIntent: followUpOutbox({
-                  delivery: prepared.delivery,
+                  delivery: contact.delivery,
                   availableAt: retryAt,
                 }),
               };
@@ -312,7 +348,7 @@ export class PublishingDeliveryExecutionService {
                       pollAt,
                     },
                     retryOutboxIntent: followUpOutbox({
-                      delivery: prepared.delivery,
+                      delivery: contact.delivery,
                       availableAt: pollAt,
                     }),
                   };
@@ -328,6 +364,13 @@ export class PublishingDeliveryExecutionService {
                 },
     );
     if (settlement.kind !== "settled" && settlement.kind !== "replayed") {
+      if (settlement.kind === "stale") {
+        const cancelled = await this.currentCancellationResult(
+          contact.delivery.workspaceId,
+          contact.delivery.id,
+        );
+        if (cancelled) return cancelled;
+      }
       return executionUnavailable(
         settlement.kind === "stale"
           ? "Publishing Delivery execution fence is stale."
@@ -338,6 +381,34 @@ export class PublishingDeliveryExecutionService {
       deliveryId: settlement.delivery.id,
       state: settlement.delivery.state,
       externallyCompleted: settlement.delivery.state === "succeeded",
+    };
+  }
+
+  private async currentCancellationResult(
+    workspaceId: string,
+    deliveryId: string,
+  ): Promise<{
+    deliveryId: string;
+    state: PublishingDeliveryRecord["state"];
+    externallyCompleted: boolean;
+  } | null> {
+    const delivery = await this.repository.getDelivery({
+      workspaceId,
+      deliveryId,
+    });
+    if (!delivery || delivery.desiredState !== "cancel") return null;
+    if (
+      delivery.state !== "cancelled" &&
+      delivery.state !== "succeeded" &&
+      delivery.state !== "failed" &&
+      delivery.state !== "outcome_unknown"
+    ) {
+      return null;
+    }
+    return {
+      deliveryId: delivery.id,
+      state: delivery.state,
+      externallyCompleted: delivery.state === "succeeded",
     };
   }
 
@@ -357,7 +428,7 @@ export class PublishingDeliveryExecutionService {
   }): Promise<{
     deliveryId: string;
     state: PublishingDeliveryRecord["state"];
-    externallyCompleted: false;
+    externallyCompleted: boolean;
   }> {
     const occurredAt = this.clock.now();
     const evidenceDigest = canonicalDigest({
@@ -387,6 +458,13 @@ export class PublishingDeliveryExecutionService {
         occurredAt,
       });
       if (failed.kind !== "settled" && failed.kind !== "replayed") {
+        if (failed.kind === "stale") {
+          const cancelled = await this.currentCancellationResult(
+            input.delivery.workspaceId,
+            input.delivery.id,
+          );
+          if (cancelled) return cancelled;
+        }
         return executionUnavailable(
           "Publishing Delivery pre-contact failure could not be committed.",
         );
@@ -432,6 +510,13 @@ export class PublishingDeliveryExecutionService {
       occurredAt,
     });
     if (settled.kind !== "settled" && settled.kind !== "replayed") {
+      if (settled.kind === "stale") {
+        const cancelled = await this.currentCancellationResult(
+          input.delivery.workspaceId,
+          input.delivery.id,
+        );
+        if (cancelled) return cancelled;
+      }
       return executionUnavailable(
         "Publishing Delivery pre-contact failure could not be committed.",
       );

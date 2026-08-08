@@ -3120,6 +3120,13 @@ export const runtimePublishingDeliveries = pgTable(
     dispatchStartedAt: timestamp("dispatch_started_at", {
       withTimezone: true,
     }),
+    /**
+     * Conservative durable boundary immediately before first provider contact.
+     * A cancellation committed before this value is set proves prevention.
+     */
+    effectContactStartedAt: timestamp("effect_contact_started_at", {
+      withTimezone: true,
+    }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
@@ -3214,10 +3221,10 @@ export const runtimePublishingDeliveries = pgTable(
     ),
     stateCheck: check(
       "runtime_publishing_deliveries_state_check",
-      sql`${table.desiredState} = 'publish'
+      sql`${table.desiredState} in ('publish','cancel')
         and ${table.state} in (
           'scheduled','dispatching','confirmation_pending',
-          'succeeded','failed','outcome_unknown'
+          'succeeded','failed','outcome_unknown','cancelled'
         )
         and ${table.nextEventSequence} >= 3
         and ${table.nextOutboxGeneration} >= 2`,
@@ -3236,18 +3243,22 @@ export const runtimePublishingDeliveries = pgTable(
     lifecycleCheck: check(
       "runtime_publishing_deliveries_lifecycle_check",
       sql`(${table.state} = 'scheduled'
+          and ${table.desiredState} = 'publish'
           and ${table.intentDigest} is null
           and ${table.providerOperationRef} is null
           and ${table.latestEffectEvidenceDigest} is null
           and ${table.failureCode} is null
           and ${table.dispatchStartedAt} is null
+          and ${table.effectContactStartedAt} is null
           and ${table.completedAt} is null)
         or (${table.state} = 'scheduled'
+          and ${table.desiredState} = 'publish'
           and ${table.intentDigest} is not null
           and ${table.providerOperationRef} is null
           and ${table.latestEffectEvidenceDigest} is not null
           and ${table.failureCode} is not null
           and ${table.dispatchStartedAt} is not null
+          and ${table.effectContactStartedAt} is not null
           and ${table.completedAt} is null)
         or (${table.state} = 'dispatching'
           and ${table.intentDigest} is not null
@@ -3261,6 +3272,7 @@ export const runtimePublishingDeliveries = pgTable(
           and ${table.latestEffectEvidenceDigest} is not null
           and ${table.failureCode} is null
           and ${table.dispatchStartedAt} is not null
+          and ${table.effectContactStartedAt} is not null
           and ${table.completedAt} is null)
         or (${table.state} = 'succeeded'
           and ${table.intentDigest} is not null
@@ -3268,12 +3280,14 @@ export const runtimePublishingDeliveries = pgTable(
           and ${table.latestEffectEvidenceDigest} is not null
           and ${table.failureCode} is null
           and ${table.dispatchStartedAt} is not null
+          and ${table.effectContactStartedAt} is not null
           and ${table.completedAt} is not null)
         or (${table.state} = 'failed'
           and ${table.intentDigest} is not null
           and ${table.latestEffectEvidenceDigest} is not null
           and ${table.failureCode} is not null
           and ${table.dispatchStartedAt} is not null
+          and ${table.effectContactStartedAt} is not null
           and ${table.completedAt} is not null)
         or (${table.state} = 'failed'
           and ${table.intentDigest} is null
@@ -3281,12 +3295,23 @@ export const runtimePublishingDeliveries = pgTable(
           and ${table.latestEffectEvidenceDigest} is not null
           and ${table.failureCode} is not null
           and ${table.dispatchStartedAt} is null
+          and ${table.effectContactStartedAt} is null
           and ${table.completedAt} is not null)
         or (${table.state} = 'outcome_unknown'
           and ${table.intentDigest} is not null
           and ${table.latestEffectEvidenceDigest} is not null
           and ${table.failureCode} is not null
           and ${table.dispatchStartedAt} is not null
+          and ${table.effectContactStartedAt} is not null
+          and ${table.completedAt} is not null)
+        or (${table.state} = 'cancelled'
+          and ${table.desiredState} = 'cancel'
+          and ${table.providerOperationRef} is null
+          and ${table.latestEffectEvidenceDigest} is null
+          and ${table.failureCode} is null
+          and ${table.effectContactStartedAt} is null
+          and ((${table.intentDigest} is null and ${table.dispatchStartedAt} is null)
+            or (${table.intentDigest} is not null and ${table.dispatchStartedAt} is not null))
           and ${table.completedAt} is not null)`,
     ),
     timeCheck: check(
@@ -3294,7 +3319,188 @@ export const runtimePublishingDeliveries = pgTable(
       sql`${table.scheduledAt} >= ${table.acceptedAt}
         and ${table.updatedAt} >= ${table.acceptedAt}
         and (${table.dispatchStartedAt} is null or ${table.dispatchStartedAt} >= ${table.acceptedAt})
+        and (${table.effectContactStartedAt} is null or (
+          ${table.dispatchStartedAt} is not null
+          and ${table.effectContactStartedAt} >= ${table.dispatchStartedAt}
+        ))
         and (${table.completedAt} is null or ${table.completedAt} >= ${table.dispatchStartedAt})`,
+    ),
+  }),
+);
+
+/**
+ * Immutable, intrinsic cancellation result for one stable Delivery. The row is
+ * also replay authority: later publication evidence must never rewrite the
+ * result that was truthful at cancellation time.
+ */
+export const runtimePublishingDeliveryCancellations = pgTable(
+  "runtime_publishing_delivery_cancellations",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    deliveryId: text("delivery_id").notNull(),
+    actorKind: text("actor_kind").notNull(),
+    actorId: text("actor_id").notNull(),
+    principalId: text("principal_id"),
+    keyId: text("key_id"),
+    userId: text("user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    capability: text("capability").notNull(),
+    authorizationSessionId: text("authorization_session_id").notNull(),
+    authorizationContractDigest: text(
+      "authorization_contract_digest",
+    ).notNull(),
+    authorizationAdmissionEvidenceRef: text(
+      "authorization_admission_evidence_ref",
+    ).notNull(),
+    authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
+    authorizationEvidenceDigest: text(
+      "authorization_evidence_digest",
+    ).notNull(),
+    authorizedResources: jsonb("authorized_resources")
+      .$type<{ channelIds: string[]; artifactIds: string[] }>()
+      .notNull(),
+    authorityGrants: jsonb("authority_grants")
+      .$type<Array<{ channelId: string; grantId: string }>>()
+      .notNull(),
+    authorizationIssuedAt: timestamp("authorization_issued_at", {
+      withTimezone: true,
+    }).notNull(),
+    authorizationExpiresAt: timestamp("authorization_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    stateAtRequest: text("state_at_request").notNull(),
+    outcome: text("outcome").notNull(),
+    externallyCompletedAtRequest: boolean(
+      "externally_completed_at_request",
+    ),
+    externallyReversed: boolean("externally_reversed").notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.deliveryId],
+      name: "runtime_publishing_delivery_cancellations_pk",
+    }),
+    identityUnique: uniqueIndex(
+      "runtime_publishing_delivery_cancellations_identity_unique",
+    ).on(table.workspaceId, table.id),
+    deliveryFk: foreignKey({
+      columns: [table.workspaceId, table.deliveryId],
+      foreignColumns: [
+        runtimePublishingDeliveries.workspaceId,
+        runtimePublishingDeliveries.id,
+      ],
+      name: "runtime_publishing_delivery_cancellations_delivery_fk",
+    }).onDelete("restrict"),
+    principalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_publishing_delivery_cancellations_principal_fk",
+    }).onDelete("restrict"),
+    keyFk: foreignKey({
+      columns: [table.principalId, table.keyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "runtime_publishing_delivery_cancellations_key_fk",
+    }).onDelete("restrict"),
+    agentAuthorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.keyId,
+        table.authorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name: "runtime_publishing_delivery_cancellations_agent_evidence_fk",
+    }).onDelete("restrict"),
+    actorIdx: index(
+      "runtime_publishing_delivery_cancellations_actor_idx",
+    ).on(table.workspaceId, table.actorKind, table.actorId, table.requestedAt),
+    principalIdx: index(
+      "runtime_publishing_delivery_cancellations_principal_idx",
+    ).on(table.workspaceId, table.principalId),
+    keyIdx: index(
+      "runtime_publishing_delivery_cancellations_key_idx",
+    ).on(table.principalId, table.keyId),
+    agentEvidenceIdx: index(
+      "runtime_publishing_delivery_cancellations_agent_evidence_idx",
+    ).on(
+      table.workspaceId,
+      table.principalId,
+      table.keyId,
+      table.authorizationEvidenceRef,
+    ),
+    userIdx: index(
+      "runtime_publishing_delivery_cancellations_user_idx",
+    ).on(table.userId),
+    requestedIdx: index(
+      "runtime_publishing_delivery_cancellations_requested_idx",
+    ).on(table.workspaceId, table.requestedAt, table.deliveryId),
+    identityCheck: check(
+      "runtime_publishing_delivery_cancellations_identity_check",
+      sql`${table.id} ~ '^pdc_[A-Za-z0-9_-]+$'
+        and length(${table.id}) between 1 and 200
+        and length(${table.authorizationSessionId}) between 1 and 200`,
+    ),
+    actorCheck: check(
+      "runtime_publishing_delivery_cancellations_actor_check",
+      sql`(${table.actorKind} = 'agent'
+          and ${table.actorId} = ${table.principalId}
+          and ${table.principalId} is not null
+          and ${table.keyId} is not null
+          and ${table.userId} is null
+          and jsonb_array_length(${table.authorityGrants}) = 0)
+        or (${table.actorKind} = 'human'
+          and ${table.actorId} = ${table.userId}
+          and ${table.userId} is not null
+          and ${table.principalId} is null
+          and ${table.keyId} is null
+          and jsonb_array_length(${table.authorityGrants}) = 1)`,
+    ),
+    authorizationCheck: check(
+      "runtime_publishing_delivery_cancellations_authorization_check",
+      sql`${table.capability} = 'publishing_deliveries.cancel@1'
+        and ${table.authorizationContractDigest} = 'sha256:cae0f4b46fca3c38dd014bf2c27b2b8f2a3555d24eb62da60c367e49f2e1554e'
+        and length(${table.authorizationAdmissionEvidenceRef}) between 1 and 200
+        and length(${table.authorizationEvidenceRef}) between 1 and 200
+        and ${table.authorizationEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and jsonb_typeof(${table.authorizedResources}) = 'object'
+        and ${table.authorizedResources} ?& array['channelIds','artifactIds']
+        and (${table.authorizedResources} - array['channelIds','artifactIds']) = '{}'::jsonb
+        and jsonb_typeof(${table.authorizedResources}->'channelIds') = 'array'
+        and jsonb_array_length(${table.authorizedResources}->'channelIds') between 1 and 50
+        and jsonb_typeof(${table.authorizedResources}->'artifactIds') = 'array'
+        and jsonb_array_length(${table.authorizedResources}->'artifactIds') between 1 and 200
+        and jsonb_typeof(${table.authorityGrants}) = 'array'
+        and jsonb_array_length(${table.authorityGrants}) between 0 and 50
+        and ${table.authorizationExpiresAt} > ${table.authorizationIssuedAt}
+        and ${table.requestedAt} >= ${table.authorizationIssuedAt}
+        and ${table.requestedAt} < ${table.authorizationExpiresAt}`,
+    ),
+    resultCheck: check(
+      "runtime_publishing_delivery_cancellations_result_check",
+      sql`${table.stateAtRequest} in (
+          'scheduled','dispatching','confirmation_pending','succeeded',
+          'failed','outcome_unknown','cancelled'
+        )
+        and ${table.outcome} in ('prevented','conditional','unknown','too_late')
+        and ${table.externallyReversed} = false
+        and ((${table.outcome} = 'prevented' and ${table.stateAtRequest} in ('scheduled','dispatching'))
+          or (${table.outcome} = 'conditional' and ${table.stateAtRequest} = 'confirmation_pending')
+          or (${table.outcome} = 'unknown' and ${table.stateAtRequest} in ('scheduled','dispatching','outcome_unknown'))
+          or (${table.outcome} = 'too_late' and ${table.stateAtRequest} in ('succeeded','failed')))
+        and ((${table.outcome} in ('unknown','conditional')
+            and ${table.externallyCompletedAtRequest} is null)
+          or (${table.outcome} = 'prevented'
+            and ${table.externallyCompletedAtRequest} = false)
+          or (${table.outcome} = 'too_late'
+            and ${table.externallyCompletedAtRequest} = (${table.stateAtRequest} = 'succeeded')))`,
     ),
   }),
 );
@@ -3338,7 +3544,8 @@ export const runtimePublishingDeliveryEvents = pgTable(
     typeCheck: check(
       "runtime_publishing_delivery_events_type_check",
       sql`${table.type} in (
-        'delivery.accepted','delivery.scheduled','effect.not_created','effect.prepared',
+        'delivery.accepted','delivery.scheduled','delivery.cancellation_requested',
+        'delivery.cancelled','effect.not_created','effect.prepared','effect.contact_started',
         'publication.confirmation_pending','publication.retry_scheduled',
         'publication.succeeded','publication.failed',
         'publication.outcome_unknown'

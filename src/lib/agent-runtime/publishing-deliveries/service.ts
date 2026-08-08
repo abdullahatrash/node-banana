@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import {
+  publishingDeliveryCancelAuthorizationContractDigest,
   publishingDeliveryReleaseAuthorizationContractDigest,
 } from "./authorization-contract";
 import { PublishingDeliveryServiceError } from "./errors";
@@ -10,6 +11,10 @@ import {
 } from "./keys";
 import type {
   PublishingDeliveryAuthorizationPort,
+  PublishingDeliveryCancellationActor,
+  PublishingDeliveryCancellationAuthorizationPort,
+  PublishingDeliveryCancellationAuthorizationSession,
+  PublishingDeliveryCancellationDto,
   PublishingDeliveryClock,
   PublishingDeliveryDurableAcceptance,
   PublishingDeliveryEvent,
@@ -35,6 +40,7 @@ import {
 } from "./validation";
 
 const systemClock: PublishingDeliveryClock = { now: () => new Date() };
+const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
 function id(prefix: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "")}`;
@@ -66,6 +72,74 @@ function authorizedManifests(channelValues: string[], artifactValues: string[]) 
 
 function eventId(deliveryId: string, sequence: number): string {
   return `pde_${deliveryId}_${sequence}`;
+}
+
+function sameActor(
+  left: PublishingDeliveryCancellationActor,
+  right: PublishingDeliveryCancellationActor,
+): boolean {
+  return canonicalDigest(left) === canonicalDigest(right);
+}
+
+function validCancellationAuthorization(input: {
+  session: PublishingDeliveryCancellationAuthorizationSession | null;
+  workspaceId: string;
+  actor: PublishingDeliveryCancellationActor;
+  contractDigest: string;
+  evidenceRef: string;
+  channelIds: string[];
+  artifactIds: string[];
+  now: Date;
+}): input is typeof input & {
+  session: PublishingDeliveryCancellationAuthorizationSession;
+} {
+  const { session } = input;
+  if (
+    !session ||
+    session.schema !== "publishing-delivery-cancellation-authorization-session/v1" ||
+    session.workspaceId !== input.workspaceId ||
+    session.capability !== "publishing_deliveries.cancel@1" ||
+    session.contractDigest !== input.contractDigest ||
+    session.admissionEvidenceRef !== input.evidenceRef ||
+    !/^[^\u0000-\u001f\u007f]{1,200}$/.test(session.evidenceRef) ||
+    !DIGEST.test(session.evidenceDigest) ||
+    !sameActor(session.actor, input.actor) ||
+    !sameExactSet(session.resources.channelIds, input.channelIds) ||
+    !sameExactSet(session.resources.artifactIds, input.artifactIds) ||
+    session.issuedAt >= session.expiresAt ||
+    session.expiresAt <= input.now
+  ) return false;
+  return session.actor.kind === "agent"
+    ? session.humanGrants.length === 0
+    : session.actor.kind === "human" &&
+        session.humanGrants.length === input.channelIds.length &&
+        new Set(session.humanGrants.map((grant) => grant.channelId)).size ===
+          input.channelIds.length &&
+        input.channelIds.every((channelId) =>
+          session.humanGrants.some((grant) => grant.channelId === channelId),
+        );
+}
+
+function cancellationDto(input: {
+  id: string;
+  deliveryId: string;
+  stateAtRequest: PublishingDeliveryCancellationDto["stateAtRequest"];
+  outcome: PublishingDeliveryCancellationDto["outcome"];
+  externallyCompletedAtRequest: boolean | null;
+  requestedAt: Date;
+}): PublishingDeliveryCancellationDto {
+  return {
+    schema: "publishing-delivery-cancellation/v1",
+    cancellationId: input.id,
+    deliveryId: input.deliveryId,
+    desiredState: "cancel",
+    stateAtRequest: input.stateAtRequest,
+    outcome: input.outcome,
+    externallyCompletedAtRequest: input.externallyCompletedAtRequest,
+    requestedAt: input.requestedAt.toISOString(),
+    durable: true,
+    externallyReversed: false,
+  };
 }
 
 function fail(kind: Exclude<
@@ -161,6 +235,8 @@ export class PublishingDeliveryService {
     private readonly validation: PublishingDeliveryValidationPort,
     private readonly authorization: PublishingDeliveryAuthorizationPort,
     private readonly clock: PublishingDeliveryClock = systemClock,
+    private readonly cancellationAuthorization?:
+      PublishingDeliveryCancellationAuthorizationPort,
   ) {}
 
   async release(input: {
@@ -349,6 +425,7 @@ export class PublishingDeliveryService {
         acceptedAt: now,
         scheduledAt: now,
         dispatchStartedAt: null,
+        effectContactStartedAt: null,
         completedAt: null,
         updatedAt: now,
       };
@@ -459,6 +536,152 @@ export class PublishingDeliveryService {
     });
     if (result.kind !== "created" && result.kind !== "replayed") fail(result.kind);
     return acceptance({ release: result.release });
+  }
+
+  async cancel(input: {
+    workspaceId: string;
+    actor: PublishingDeliveryCancellationActor;
+    deliveryId: string;
+    channelIds: string[];
+    artifactIds: string[];
+    authorizationEvidenceRef: string;
+    authorizationContractDigest: string;
+  }): Promise<PublishingDeliveryCancellationDto> {
+    const now = this.clock.now();
+    const deliveryId = publishingDeliveryIdentifier(input.deliveryId, "Delivery ID");
+    const actor: PublishingDeliveryCancellationActor = input.actor.kind === "agent"
+      ? {
+          kind: "agent",
+          principalId: publishingDeliveryIdentifier(input.actor.principalId, "Principal ID"),
+          keyId: publishingDeliveryIdentifier(input.actor.keyId, "Key ID"),
+        }
+      : {
+          kind: "human",
+          userId: publishingDeliveryIdentifier(input.actor.userId, "User ID"),
+        };
+    const manifests = authorizedManifests(input.channelIds, input.artifactIds);
+    const contractDigest = publishingDeliveryCancelAuthorizationContractDigest();
+    if (
+      input.authorizationContractDigest !== contractDigest ||
+      !/^[^\u0000-\u001f\u007f]{1,200}$/.test(input.authorizationEvidenceRef)
+    ) {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED",
+        "Exact current Publishing Delivery cancellation authority is required.",
+      );
+    }
+    const replay = await this.repository.getCancellation({
+      workspaceId: input.workspaceId,
+      deliveryId,
+      actor,
+    });
+    if (
+      replay &&
+      sameExactSet(manifests.channelIds, replay.authorizedResources.channelIds) &&
+      sameExactSet(manifests.artifactIds, replay.authorizedResources.artifactIds)
+    ) {
+      return cancellationDto({
+        id: replay.id,
+        deliveryId: replay.deliveryId,
+        stateAtRequest: replay.stateAtRequest,
+        outcome: replay.outcome,
+        externallyCompletedAtRequest: replay.externallyCompletedAtRequest,
+        requestedAt: replay.requestedAt,
+      });
+    }
+    const delivery = await this.repository.getDelivery({
+      workspaceId: input.workspaceId,
+      deliveryId,
+      authorizedChannelIds: manifests.channelIds,
+      authorizedArtifactIds: manifests.artifactIds,
+    });
+    if (!delivery) {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_NOT_FOUND",
+        "The Publishing Delivery is unavailable.",
+      );
+    }
+    if (
+      !sameExactSet(manifests.channelIds, [delivery.channelId]) ||
+      !sameExactSet(manifests.artifactIds, delivery.artifactIds)
+    ) {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED",
+        "Exact current Publishing Delivery cancellation authority is required.",
+      );
+    }
+    const session = await this.cancellationAuthorization?.checkCurrent({
+      workspaceId: input.workspaceId,
+      actor,
+      capability: "publishing_deliveries.cancel@1",
+      authorizationContractDigest: contractDigest,
+      authorizationEvidenceRef: input.authorizationEvidenceRef,
+      channelIds: manifests.channelIds,
+      artifactIds: manifests.artifactIds,
+      evaluatedAt: now,
+    }) ?? null;
+    if (!validCancellationAuthorization({
+      session,
+      workspaceId: input.workspaceId,
+      actor,
+      contractDigest,
+      evidenceRef: input.authorizationEvidenceRef,
+      channelIds: manifests.channelIds,
+      artifactIds: manifests.artifactIds,
+      now,
+    })) {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED",
+        "Exact current Publishing Delivery cancellation authority is required.",
+      );
+    }
+    if (!session) {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED",
+        "Exact current Publishing Delivery cancellation authority is required.",
+      );
+    }
+    const result = await this.repository.cancel({
+      workspaceId: input.workspaceId,
+      deliveryId,
+      cancellationId: id("pdc"),
+      actor,
+      authorizationSession: session,
+      requestedAt: now,
+    });
+    if (result.kind === "not_found") {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_NOT_FOUND",
+        "The Publishing Delivery is unavailable.",
+      );
+    }
+    if (result.kind === "authorization_stale") {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED",
+        "Exact current Publishing Delivery cancellation authority is required.",
+      );
+    }
+    if (result.kind === "unavailable") {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE",
+        "Durable Publishing Delivery cancellation could not be committed.",
+      );
+    }
+    if (result.kind !== "created" && result.kind !== "replayed") {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE",
+        "Durable Publishing Delivery cancellation could not be committed.",
+      );
+    }
+    return cancellationDto({
+      id: result.cancellation.id,
+      deliveryId: result.cancellation.deliveryId,
+      stateAtRequest: result.cancellation.stateAtRequest,
+      outcome: result.cancellation.outcome,
+      externallyCompletedAtRequest:
+        result.cancellation.externallyCompletedAtRequest,
+      requestedAt: result.cancellation.requestedAt,
+    });
   }
 
   async get(input: {

@@ -147,4 +147,180 @@ describe("PublishingDeliveryService", () => {
       ...resources,
     })).toHaveLength(2);
   });
+
+  it("intrinsically cancels before effect contact and replays one immutable result", async () => {
+    const setup = await setupPublishingDeliveries();
+    const accepted = await setup.service.release(setup.releaseInput());
+    const deliveryId = accepted.deliveries[0]!.id;
+    const input = setup.cancellationInput("agent", deliveryId);
+
+    const first = await setup.service.cancel(input);
+    const replay = await setup.service.cancel(input);
+
+    expect(replay).toEqual(first);
+    expect(first).toMatchObject({
+      schema: "publishing-delivery-cancellation/v1",
+      deliveryId,
+      desiredState: "cancel",
+      stateAtRequest: "scheduled",
+      outcome: "prevented",
+      externallyCompletedAtRequest: false,
+      durable: true,
+      externallyReversed: false,
+    });
+    expect(setup.repository.deliveries.get(`workspace_1\u0000${deliveryId}`)).toMatchObject({
+      desiredState: "cancel",
+      state: "cancelled",
+      effectContactStartedAt: null,
+    });
+    expect(setup.repository.cancellations.size).toBe(1);
+    expect(setup.repository.events.get(`workspace_1\u0000${deliveryId}`)?.map((event) => event.type)).toEqual([
+      "delivery.accepted",
+      "delivery.scheduled",
+      "delivery.cancellation_requested",
+      "delivery.cancelled",
+    ]);
+  });
+
+  it("requires exact resources and current explicit authority for Agent or Human cancellation", async () => {
+    const setup = await setupPublishingDeliveries();
+    const accepted = await setup.service.release(setup.releaseInput());
+    const deliveryId = accepted.deliveries[0]!.id;
+    await expect(setup.service.cancel({
+      ...setup.cancellationInput("agent", deliveryId),
+      artifactIds: [...setup.rawApproval.artifactIds, "artifact_unrelated"],
+    })).rejects.toMatchObject({ code: "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED" });
+    setup.setCancellationAuthorizationCurrent(false);
+    await expect(setup.service.cancel(
+      setup.cancellationInput("human", deliveryId),
+    )).rejects.toMatchObject({ code: "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED" });
+    setup.setCancellationAuthorizationCurrent(true);
+    expect(await setup.service.cancel(
+      setup.cancellationInput("human", deliveryId),
+    )).toMatchObject({ outcome: "prevented" });
+  });
+
+  it("returns conditional without claiming reversal after provider acceptance", async () => {
+    const setup = await setupPublishingDeliveries();
+    const accepted = await setup.service.release(setup.releaseInput());
+    const deliveryId = accepted.deliveries[0]!.id;
+    const deliveryKey = `workspace_1\u0000${deliveryId}`;
+    const delivery = setup.repository.deliveries.get(deliveryKey)!;
+    setup.repository.deliveries.set(deliveryKey, {
+      ...delivery,
+      state: "confirmation_pending",
+      intentDigest: `sha256:${"a".repeat(64)}`,
+      providerOperationRef: "linkedin_operation_1",
+      effectContactStartedAt: new Date("2026-08-08T12:01:05.000Z"),
+    });
+
+    const result = await setup.service.cancel(
+      setup.cancellationInput("agent", deliveryId),
+    );
+    expect(result).toMatchObject({
+      stateAtRequest: "confirmation_pending",
+      outcome: "conditional",
+      externallyCompletedAtRequest: null,
+      externallyReversed: false,
+    });
+    expect(setup.repository.deliveries.get(deliveryKey)).toMatchObject({
+      desiredState: "cancel",
+      state: "confirmation_pending",
+      providerOperationRef: "linkedin_operation_1",
+    });
+  });
+
+  it("terminalizes an abandoned contacted retry as unknown and never calls it prevented", async () => {
+    const setup = await setupPublishingDeliveries();
+    const accepted = await setup.service.release(setup.releaseInput());
+    const deliveryId = accepted.deliveries[0]!.id;
+    const deliveryKey = `workspace_1\u0000${deliveryId}`;
+    const delivery = setup.repository.deliveries.get(deliveryKey)!;
+    setup.repository.deliveries.set(deliveryKey, {
+      ...delivery,
+      state: "scheduled",
+      intentDigest: `sha256:${"a".repeat(64)}`,
+      effectContactStartedAt: new Date("2026-08-08T12:01:05.000Z"),
+      latestEffectEvidenceDigest: `sha256:${"b".repeat(64)}`,
+      failureCode: "PROVIDER_RETRYABLE",
+    });
+
+    const result = await setup.service.cancel(
+      setup.cancellationInput("agent", deliveryId),
+    );
+    expect(result).toMatchObject({
+      stateAtRequest: "scheduled",
+      outcome: "unknown",
+      externallyCompletedAtRequest: null,
+    });
+    expect(setup.repository.deliveries.get(deliveryKey)).toMatchObject({
+      desiredState: "cancel",
+      state: "outcome_unknown",
+      failureCode: "CANCELLED_AFTER_EFFECT_CONTACT",
+    });
+  });
+
+  it("replays the original cancellation for the same actor after authority changes", async () => {
+    const setup = await setupPublishingDeliveries();
+    const accepted = await setup.service.release(setup.releaseInput());
+    const deliveryId = accepted.deliveries[0]!.id;
+    const input = setup.cancellationInput("human", deliveryId);
+    const first = await setup.service.cancel(input);
+    setup.setCancellationAuthorizationCurrent(false);
+    setup.setNow("2026-08-08T14:00:00.000Z");
+    expect(await setup.service.cancel(input)).toEqual(first);
+  });
+
+  it("keeps an active contacted worker settle-capable while returning unknown", async () => {
+    const setup = await setupPublishingDeliveries();
+    const accepted = await setup.service.release(setup.releaseInput());
+    const deliveryId = accepted.deliveries[0]!.id;
+    const deliveryKey = `workspace_1\u0000${deliveryId}`;
+    const delivery = setup.repository.deliveries.get(deliveryKey)!;
+    setup.repository.deliveries.set(deliveryKey, {
+      ...delivery,
+      state: "dispatching",
+      intentDigest: `sha256:${"a".repeat(64)}`,
+      dispatchStartedAt: new Date("2026-08-08T12:01:01.000Z"),
+      effectContactStartedAt: new Date("2026-08-08T12:01:02.000Z"),
+    });
+    setup.repository.leases.set(deliveryKey, {
+      workspaceId: "workspace_1",
+      deliveryId,
+      workerId: "worker_1",
+      leaseToken: "lease_1",
+      fence: BigInt(1),
+      acquiredAt: new Date("2026-08-08T12:01:00.000Z"),
+      expiresAt: new Date("2026-08-08T12:02:00.000Z"),
+      renewedAt: new Date("2026-08-08T12:01:00.000Z"),
+      releasedAt: null,
+    });
+
+    const result = await setup.service.cancel(
+      setup.cancellationInput("agent", deliveryId),
+    );
+    expect(result).toMatchObject({ stateAtRequest: "dispatching", outcome: "unknown" });
+    expect(setup.repository.deliveries.get(deliveryKey)).toMatchObject({
+      desiredState: "cancel",
+      state: "dispatching",
+    });
+    expect(setup.repository.leases.get(deliveryKey)?.releasedAt).toBeNull();
+  });
+
+  it("leaves no partial cancellation evidence when the durable mutation fails", async () => {
+    const setup = await setupPublishingDeliveries();
+    const accepted = await setup.service.release(setup.releaseInput());
+    const deliveryId = accepted.deliveries[0]!.id;
+    const deliveryKey = `workspace_1\u0000${deliveryId}`;
+    setup.repository.failNextMutation = true;
+    await expect(setup.service.cancel(
+      setup.cancellationInput("agent", deliveryId),
+    )).rejects.toMatchObject({ code: "PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE" });
+    expect(setup.repository.cancellations.size).toBe(0);
+    expect(setup.repository.deliveries.get(deliveryKey)).toMatchObject({
+      desiredState: "publish",
+      state: "scheduled",
+    });
+    expect(setup.repository.events.get(deliveryKey)).toHaveLength(2);
+  });
 });

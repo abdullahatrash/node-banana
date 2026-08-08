@@ -1,11 +1,13 @@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import {
+  publishingDeliveryCancelAuthorizationContractDigest,
   publishingDeliveryReleaseAuthorizationContractDigest,
 } from "../authorization-contract";
 import { InMemoryPublishingDeliveryRepository } from "../memory";
 import { PublishingDeliveryService } from "../service";
 import type {
   PublishingDeliveryAuthorizationSession,
+  PublishingDeliveryCancellationAuthorizationSession,
   PublishingDeliveryRepository,
 } from "../types";
 import { setupPublishingApprovals } from "../../publishing-approvals/__tests__/fixtures";
@@ -65,9 +67,13 @@ export async function setupPublishingDeliveries(
   let now = new Date("2026-08-08T12:01:00.000Z");
   let authorizationCurrent = true;
   let validationCurrent = true;
+  let cancellationAuthorizationCurrent = true;
   repository.seedApproval(rawApproval);
   repository.setAuthorizationSessionVerifier(async () => authorizationCurrent);
   repository.setValidationSessionVerifier(async () => validationCurrent);
+  repository.setCancellationAuthorizationSessionVerifier(
+    async () => cancellationAuthorizationCurrent,
+  );
   const authorizationPort = {
     checkCurrent: async (input: {
       workspaceId: string;
@@ -102,12 +108,56 @@ export async function setupPublishingDeliveries(
     verifyCurrent: async (input: Parameters<typeof approvals.validationPort.verifyCurrent>[0]) =>
       validationCurrent ? approvals.validationPort.verifyCurrent(input) : null,
   };
+  const cancellationAuthorizationPort = {
+    checkCurrent: async (input: {
+      workspaceId: string;
+      actor: { kind: "agent"; principalId: string; keyId: string } | { kind: "human"; userId: string };
+      capability: "publishing_deliveries.cancel@1";
+      authorizationContractDigest: string;
+      authorizationEvidenceRef: string;
+      channelIds: string[];
+      artifactIds: string[];
+    }): Promise<PublishingDeliveryCancellationAuthorizationSession | null> =>
+      cancellationAuthorizationCurrent &&
+      (input.actor.kind === "agent" || input.actor.userId === "owner_1")
+        ? {
+            schema: "publishing-delivery-cancellation-authorization-session/v1",
+            id: "cancel_authorization_1",
+            workspaceId: input.workspaceId,
+            actor: structuredClone(input.actor),
+            capability: input.capability,
+            contractDigest: input.authorizationContractDigest,
+            admissionEvidenceRef: input.authorizationEvidenceRef,
+            evidenceRef: input.actor.kind === "agent"
+              ? input.authorizationEvidenceRef
+              : "explicit_human_channel_authority_1",
+            evidenceDigest: canonicalDigest({
+              actor: input.actor,
+              channelIds: input.channelIds,
+              artifactIds: input.artifactIds,
+            }),
+            resources: {
+              channelIds: [...input.channelIds],
+              artifactIds: [...input.artifactIds],
+            },
+            humanGrants: input.actor.kind === "human"
+              ? input.channelIds.map((channelId, index) => ({
+                  channelId,
+                  grantId: `cancel_grant_${index + 1}`,
+                }))
+              : [],
+            issuedAt: new Date(now.getTime() - 1_000),
+            expiresAt: new Date(now.getTime() + 60_000),
+          }
+        : null,
+  };
   const service = new PublishingDeliveryService(
     repository,
     approvals.revisionPort,
     validationPort,
     authorizationPort,
     { now: () => new Date(now) },
+    cancellationAuthorizationPort,
   );
   const releaseInput = () => ({
     workspaceId: "workspace_1",
@@ -127,10 +177,30 @@ export async function setupPublishingDeliveries(
     repository,
     service,
     authorizationPort,
+    cancellationAuthorizationPort,
     validationPort,
     releaseInput,
     setNow(value: string) { now = new Date(value); },
     setAuthorizationCurrent(value: boolean) { authorizationCurrent = value; },
     setValidationCurrent(value: boolean) { validationCurrent = value; },
+    setCancellationAuthorizationCurrent(value: boolean) {
+      cancellationAuthorizationCurrent = value;
+    },
+    cancellationInput(actor: "agent" | "human", deliveryId: string) {
+      return {
+        workspaceId: "workspace_1",
+        actor: actor === "agent"
+          ? { kind: "agent" as const, principalId: "principal_2", keyId: "key_2" }
+          : { kind: "human" as const, userId: "owner_1" },
+        deliveryId,
+        channelIds: [...rawApproval.channelIds],
+        artifactIds: [...rawApproval.artifactIds],
+        authorizationEvidenceRef: actor === "agent"
+          ? "cancel_agent_admission_1"
+          : "cancel_human_admission_1",
+        authorizationContractDigest:
+          publishingDeliveryCancelAuthorizationContractDigest(),
+      };
+    },
   } satisfies Record<string, unknown> & { repository: PublishingDeliveryRepository };
 }

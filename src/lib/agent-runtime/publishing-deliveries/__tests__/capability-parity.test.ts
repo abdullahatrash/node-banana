@@ -49,7 +49,29 @@ async function capabilitySetup(options: { punctuatedArtifacts?: boolean } = {}) 
         },
       }),
   };
-  return { ...setup, registry, agentDispatcher };
+  const humanDispatcher = {
+    dispatch: (invocation: Parameters<typeof dispatcher.dispatch>[0]) =>
+      dispatcher.dispatch(invocation, {
+        securityContext: {
+          kind: "human" as const,
+          workspaceId: "workspace_1",
+          userId: "owner_1",
+          role: "owner" as const,
+        },
+      }),
+  };
+  const memberDispatcher = {
+    dispatch: (invocation: Parameters<typeof dispatcher.dispatch>[0]) =>
+      dispatcher.dispatch(invocation, {
+        securityContext: {
+          kind: "human" as const,
+          workspaceId: "workspace_1",
+          userId: "member_1",
+          role: "member" as const,
+        },
+      }),
+  };
+  return { ...setup, registry, agentDispatcher, humanDispatcher, memberDispatcher };
 }
 
 function releaseInput(setup: Awaited<ReturnType<typeof setupPublishingDeliveries>>) {
@@ -63,6 +85,105 @@ function releaseInput(setup: Awaited<ReturnType<typeof setupPublishingDeliveries
 }
 
 describe("Publishing Delivery CLI/MCP parity", () => {
+  it("publishes intrinsic shared cancellation without claiming external reversal", async () => {
+    const setup = await capabilitySetup();
+    const registration = setup.registry.getRegistration(
+      PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.cancel,
+    )!;
+    expect(registration).toMatchObject({
+      audience: "shared",
+      effect: {
+        mutation: "runtime-state",
+        timing: "immediate",
+        reversibility: "conditional",
+        maySpendProviderBudget: false,
+      },
+      approval: { mode: "none" },
+      idempotency: { mode: "intrinsic" },
+      authorization: {
+        resources: [
+          { kind: "channel", inputPath: "channelIds" },
+          { kind: "artifact", inputPath: "artifactIds" },
+        ],
+      },
+    });
+    const released = await dispatchCliCapability(
+      "publishing_plan_revisions.release@1",
+      releaseInput(setup),
+      setup.agentDispatcher,
+    );
+    const deliveryId = (released as { output: { deliveries: Array<{ id: string }> } }).output.deliveries[0]!.id;
+    const input = {
+      deliveryId,
+      channelIds: setup.rawApproval.channelIds,
+      artifactIds: setup.rawApproval.artifactIds,
+    };
+    const cli = await dispatchCliCapability(
+      "publishing_deliveries.cancel@1",
+      input,
+      setup.agentDispatcher,
+    );
+    const mcp = await dispatchMcpCapability(
+      "publishing_deliveries.cancel.v1",
+      input,
+      setup.agentDispatcher,
+    );
+    expect(mcp).toEqual(cli);
+    expect(cli).toMatchObject({
+      type: "capability_result",
+      status: "completed",
+      output: {
+        desiredState: "cancel",
+        outcome: "prevented",
+        externallyCompletedAtRequest: false,
+        durable: true,
+        externallyReversed: false,
+      },
+    });
+    expect(() => z.fromJSONSchema(
+      setup.registry.getDefinition(PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.cancel)!.schemas.output as never,
+    ).parse((cli as { output: unknown }).output)).not.toThrow();
+  });
+
+  it("allows explicitly authorized Humans but rejects membership role alone", async () => {
+    const allowed = await capabilitySetup();
+    const released = await dispatchCliCapability(
+      "publishing_plan_revisions.release@1",
+      releaseInput(allowed),
+      allowed.agentDispatcher,
+    );
+    const deliveryId = (released as { output: { deliveries: Array<{ id: string }> } }).output.deliveries[0]!.id;
+    const input = {
+      deliveryId,
+      channelIds: allowed.rawApproval.channelIds,
+      artifactIds: allowed.rawApproval.artifactIds,
+    };
+    expect(await dispatchCliCapability(
+      "publishing_deliveries.cancel@1",
+      input,
+      allowed.humanDispatcher,
+    )).toMatchObject({
+      type: "capability_result",
+      output: { outcome: "prevented" },
+    });
+
+    const denied = await capabilitySetup();
+    const deniedRelease = await dispatchCliCapability(
+      "publishing_plan_revisions.release@1",
+      releaseInput(denied),
+      denied.agentDispatcher,
+    );
+    const deniedDeliveryId = (deniedRelease as { output: { deliveries: Array<{ id: string }> } }).output.deliveries[0]!.id;
+    expect(await dispatchCliCapability(
+      "publishing_deliveries.cancel@1",
+      { ...input, deliveryId: deniedDeliveryId },
+      denied.memberDispatcher,
+    )).toMatchObject({
+      type: "capability_error",
+      code: "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED",
+    });
+  });
+
   it("publishes exact release authorization and durable-async capability metadata", async () => {
     const setup = await capabilitySetup();
     const registration = setup.registry.getRegistration(

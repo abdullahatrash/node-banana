@@ -226,6 +226,8 @@ export function publishingDeliveryDto(
     acceptedAt: record.acceptedAt.toISOString(),
     scheduledAt: record.scheduledAt.toISOString(),
     dispatchStartedAt: record.dispatchStartedAt?.toISOString() ?? null,
+    effectContactStartedAt:
+      record.effectContactStartedAt?.toISOString() ?? null,
     completedAt: record.completedAt?.toISOString() ?? null,
     updatedAt: record.updatedAt.toISOString(),
     externallyCompleted: record.state === "succeeded",

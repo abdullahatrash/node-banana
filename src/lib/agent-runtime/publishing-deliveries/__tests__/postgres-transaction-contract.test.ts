@@ -14,7 +14,7 @@ describe("Publishing Delivery Postgres transaction contract", () => {
   it("validates follow-up outbox identity before the first settlement write", () => {
     const settlement = source.slice(source.indexOf("async settleEffect("));
     const validation = settlement.indexOf(
-      "input.retryOutboxIntent.generation !== delivery.nextOutboxGeneration",
+      "retryOutboxIntent.generation !== delivery.nextOutboxGeneration",
     );
     const firstWrite = settlement.indexOf(
       "await tx.insert(runtimePublishingDeliveryEvents)",

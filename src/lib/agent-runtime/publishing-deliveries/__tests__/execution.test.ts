@@ -91,6 +91,7 @@ function delivery(publishAt: Date): PublishingDeliveryRecord {
     acceptedAt: new Date("2026-08-09T12:00:00.000Z"),
     scheduledAt: new Date("2026-08-09T12:00:00.000Z"),
     dispatchStartedAt: null,
+    effectContactStartedAt: null,
     completedAt: null,
     updatedAt: new Date("2026-08-09T12:00:00.000Z"),
   };
@@ -293,6 +294,7 @@ describe("Publishing Delivery scheduler and fenced worker", () => {
       "delivery.accepted",
       "delivery.scheduled",
       "effect.prepared",
+      "effect.contact_started",
       "publication.confirmation_pending",
       "publication.succeeded",
     ]);
@@ -420,6 +422,7 @@ describe("Publishing Delivery scheduler and fenced worker", () => {
       "delivery.accepted",
       "delivery.scheduled",
       "effect.prepared",
+      "effect.contact_started",
       "publication.confirmation_pending",
       "publication.confirmation_pending",
     ]);
@@ -508,6 +511,7 @@ describe("Publishing Delivery scheduler and fenced worker", () => {
       "delivery.accepted",
       "delivery.scheduled",
       "effect.prepared",
+      "effect.contact_started",
       "publication.confirmation_pending",
       "publication.confirmation_pending",
       "publication.succeeded",
@@ -595,6 +599,20 @@ describe("Publishing Delivery scheduler and fenced worker", () => {
         durable.intentDigest = input.intentDigest;
         const retained = event(durable, "effect.prepared", input.preparedAt);
         if (kind === "prepared") {
+          eventTypes.push(retained.type);
+          durable.nextEventSequence += 1;
+        }
+        return {
+          kind,
+          delivery: structuredClone(durable),
+          event: retained,
+        };
+      }),
+      beginEffectContact: vi.fn(async (input: { startedAt: Date }) => {
+        const kind = durable.effectContactStartedAt ? "replayed" : "started";
+        const retained = event(durable, "effect.contact_started", input.startedAt);
+        if (kind === "started") {
+          durable.effectContactStartedAt = input.startedAt;
           eventTypes.push(retained.type);
           durable.nextEventSequence += 1;
         }
@@ -763,6 +781,7 @@ describe("Publishing Delivery scheduler and fenced worker", () => {
     expect(transport.observationCalls).toHaveLength(1);
     expect(eventTypes).toEqual([
       "effect.prepared",
+      "effect.contact_started",
       "publication.confirmation_pending",
       "publication.succeeded",
     ]);

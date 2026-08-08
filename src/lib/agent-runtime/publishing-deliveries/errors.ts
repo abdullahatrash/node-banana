@@ -8,6 +8,7 @@ export type PublishingDeliveryServiceErrorCode =
   | "PUBLISHING_DELIVERY_APPROVAL_CONSUMED"
   | "PUBLISHING_DELIVERY_STALE_REVISION"
   | "PUBLISHING_DELIVERY_AUTHORIZATION_STALE"
+  | "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED"
   | "PUBLISHING_DELIVERY_VALIDATION_STALE"
   | "PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE";
 
@@ -33,6 +34,7 @@ export const PUBLISHING_DELIVERY_ERROR_CATALOG: Record<
   PUBLISHING_DELIVERY_APPROVAL_CONSUMED: { category: "conflict", retryable: false },
   PUBLISHING_DELIVERY_STALE_REVISION: { category: "approval", retryable: false },
   PUBLISHING_DELIVERY_AUTHORIZATION_STALE: { category: "authorization", retryable: true },
+  PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED: { category: "authorization", retryable: false },
   PUBLISHING_DELIVERY_VALIDATION_STALE: { category: "approval", retryable: true },
   PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE: { category: "internal", retryable: true },
 };
@@ -45,6 +47,7 @@ export const PUBLISHING_DELIVERY_ERROR_CONTRACTS: CapabilityErrorContract[] = [
   ["PUBLISHING_DELIVERY_APPROVAL_CONSUMED", "conflict", false, "The Approval decision was already released."],
   ["PUBLISHING_DELIVERY_STALE_REVISION", "approval", false, "The approved Plan Revision is no longer current."],
   ["PUBLISHING_DELIVERY_AUTHORIZATION_STALE", "authorization", true, "Exact release authorization is missing or stale."],
+  ["PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED", "authorization", false, "Exact current cancellation authority is missing."],
   ["PUBLISHING_DELIVERY_VALIDATION_STALE", "approval", true, "Publish Validation is missing or stale."],
   ["PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE", "internal", true, "Durable release could not be committed."],
 ].map(([code, category, retryable, description]) => ({

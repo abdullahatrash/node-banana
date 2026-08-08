@@ -6,6 +6,8 @@ import type {
 } from "../publishing-approvals/types";
 import type {
   PublishingDeliveryAuthorizationSession,
+  PublishingDeliveryCancellationAuthorizationSession,
+  PublishingDeliveryCancellationRecord,
   PublishingDeliveryEvent,
   PublishingDeliveryExecutionLeaseRecord,
   PublishingDeliveryMutationReceiptRecord,
@@ -21,6 +23,10 @@ import {
   validPublishingDeliveryAuthorizationSession,
   validPublishingDeliveryValidationSession,
 } from "./validation";
+import {
+  normalizePublishingDeliverySettlement,
+  planPublishingDeliveryCancellation,
+} from "./cancellation-transition";
 
 function key(...values: string[]): string {
   return values.join("\u0000");
@@ -31,7 +37,7 @@ function clone<T>(value: T): T {
 }
 
 function terminal(state: PublishingDeliveryRecord["state"]): boolean {
-  return state === "succeeded" || state === "failed" || state === "outcome_unknown";
+  return state === "succeeded" || state === "failed" || state === "outcome_unknown" || state === "cancelled";
 }
 
 export class InMemoryPublishingDeliveryRepository
@@ -43,6 +49,7 @@ export class InMemoryPublishingDeliveryRepository
   readonly events = new Map<string, PublishingDeliveryEvent[]>();
   readonly outbox = new Map<string, PublishingDeliveryOutboxIntentRecord>();
   readonly receipts = new Map<string, PublishingDeliveryMutationReceiptRecord>();
+  readonly cancellations = new Map<string, PublishingDeliveryCancellationRecord>();
   readonly leases = new Map<string, PublishingDeliveryExecutionLeaseRecord>();
   private readonly fences = new Map<string, bigint>();
   private authorizationVerifier: (
@@ -50,6 +57,9 @@ export class InMemoryPublishingDeliveryRepository
   ) => Promise<boolean> = async () => false;
   private validationVerifier: (
     session: PublishingApprovalValidationSession,
+  ) => Promise<boolean> = async () => false;
+  private cancellationAuthorizationVerifier: (
+    session: PublishingDeliveryCancellationAuthorizationSession,
   ) => Promise<boolean> = async () => false;
   private tail: Promise<void> = Promise.resolve();
   failNextMutation = false;
@@ -68,6 +78,14 @@ export class InMemoryPublishingDeliveryRepository
     verifier: (session: PublishingApprovalValidationSession) => Promise<boolean>,
   ): void {
     this.validationVerifier = verifier;
+  }
+
+  setCancellationAuthorizationSessionVerifier(
+    verifier: (
+      session: PublishingDeliveryCancellationAuthorizationSession,
+    ) => Promise<boolean>,
+  ): void {
+    this.cancellationAuthorizationVerifier = verifier;
   }
 
   private async lock<T>(operation: () => Promise<T>): Promise<T> {
@@ -211,6 +229,7 @@ export class InMemoryPublishingDeliveryRepository
           delivery.intentDigest !== null ||
           delivery.providerOperationRef !== null ||
           delivery.latestEffectEvidenceDigest !== null
+          || delivery.effectContactStartedAt !== null
         ) return { kind: "unavailable" };
         const deliveryEvents = input.firstEvents
           .filter((event) => event.deliveryId === delivery.id)
@@ -316,6 +335,137 @@ export class InMemoryPublishingDeliveryRepository
       .map(clone);
   }
 
+  async getCancellation(
+    input: Parameters<PublishingDeliveryRepository["getCancellation"]>[0],
+  ) {
+    const value = this.cancellations.get(key(input.workspaceId, input.deliveryId));
+    return value && canonicalDigest(value.actor) === canonicalDigest(input.actor)
+      ? clone(value)
+      : null;
+  }
+
+  async cancel(input: Parameters<PublishingDeliveryRepository["cancel"]>[0]) {
+    return this.lock(async () => {
+      const deliveryKey = key(input.workspaceId, input.deliveryId);
+      const delivery = this.deliveries.get(deliveryKey);
+      if (!delivery) return { kind: "not_found" as const };
+      const prior = this.cancellations.get(deliveryKey);
+      if (prior) {
+        return {
+          kind: "replayed" as const,
+          cancellation: clone(prior),
+          delivery: clone(delivery),
+          events: [] as PublishingDeliveryEvent[],
+        };
+      }
+      const session = input.authorizationSession;
+      const actorMatches = canonicalDigest(session.actor) === canonicalDigest(input.actor);
+      const resourcesMatch =
+        canonicalDigest([...session.resources.channelIds].sort()) ===
+          canonicalDigest([delivery.channelId]) &&
+        canonicalDigest([...session.resources.artifactIds].sort()) ===
+          canonicalDigest([...delivery.artifactIds].sort());
+      const humanAuthorityValid = session.actor.kind === "agent"
+        ? session.humanGrants.length === 0
+        : session.humanGrants.length === session.resources.channelIds.length &&
+          session.resources.channelIds.every((channelId) =>
+            session.humanGrants.some((grant) => grant.channelId === channelId),
+          );
+      if (
+        session.schema !== "publishing-delivery-cancellation-authorization-session/v1" ||
+        session.workspaceId !== input.workspaceId ||
+        session.capability !== "publishing_deliveries.cancel@1" ||
+        !actorMatches || !resourcesMatch || !humanAuthorityValid ||
+        session.issuedAt > input.requestedAt || session.expiresAt <= input.requestedAt ||
+        !(await this.cancellationAuthorizationVerifier(clone(session)))
+      ) return { kind: "authorization_stale" as const };
+      if (this.failNextMutation) {
+        this.failNextMutation = false;
+        return { kind: "unavailable" as const };
+      }
+
+      const leaseKey = key(input.workspaceId, input.deliveryId);
+      const lease = this.leases.get(leaseKey);
+      const activeLease = lease && !lease.releasedAt &&
+        lease.expiresAt.getTime() > input.requestedAt.getTime();
+      const transition = planPublishingDeliveryCancellation({
+        delivery,
+        cancellationId: input.cancellationId,
+        requestedAt: input.requestedAt,
+        activeLease: Boolean(activeLease),
+      });
+      const cancellation: PublishingDeliveryCancellationRecord = {
+        schema: "publishing-delivery-cancellation-record/v1",
+        id: input.cancellationId,
+        workspaceId: input.workspaceId,
+        deliveryId: input.deliveryId,
+        actor: clone(input.actor),
+        capability: "publishing_deliveries.cancel@1",
+        authorizationContractDigest: session.contractDigest,
+        authorizationAdmissionEvidenceRef: session.admissionEvidenceRef,
+        authorizationEvidenceRef: session.evidenceRef,
+        authorizationEvidenceDigest: session.evidenceDigest,
+        authorizedResources: clone(session.resources),
+        authorityGrants: clone(session.humanGrants),
+        stateAtRequest: delivery.state,
+        outcome: transition.outcome,
+        externallyCompletedAtRequest: transition.externallyCompletedAtRequest,
+        requestedAt: input.requestedAt,
+      };
+      const requestEvent: PublishingDeliveryEvent = {
+        schema: "publishing-delivery-event/v1",
+        id: `pde_${delivery.id}_${delivery.nextEventSequence}`,
+        workspaceId: delivery.workspaceId,
+        deliveryId: delivery.id,
+        sequence: delivery.nextEventSequence,
+        type: "delivery.cancellation_requested",
+        evidence: {
+          cancellationId: cancellation.id,
+          actorKind: input.actor.kind,
+          effectDisposition: transition.effectDisposition,
+        },
+        occurredAt: input.requestedAt,
+      };
+      const newEvents: PublishingDeliveryEvent[] = [requestEvent];
+      if (transition.terminalEvent) {
+        newEvents.push({
+          schema: "publishing-delivery-event/v1",
+          id: `pde_${delivery.id}_${delivery.nextEventSequence + 1}`,
+          workspaceId: delivery.workspaceId,
+          deliveryId: delivery.id,
+          sequence: delivery.nextEventSequence + 1,
+          ...transition.terminalEvent,
+          occurredAt: input.requestedAt,
+        });
+      }
+      const updated: PublishingDeliveryRecord = {
+        ...delivery,
+        desiredState: "cancel",
+        state: transition.nextState,
+        failureCode: transition.failureCode,
+        latestEffectEvidenceDigest: transition.latestEffectEvidenceDigest,
+        nextEventSequence: delivery.nextEventSequence + newEvents.length,
+        completedAt: transition.completedAt,
+        updatedAt: input.requestedAt,
+      };
+      this.deliveries.set(deliveryKey, clone(updated));
+      this.events.set(deliveryKey, [
+        ...(this.events.get(deliveryKey) ?? []),
+        ...clone(newEvents),
+      ]);
+      this.cancellations.set(deliveryKey, clone(cancellation));
+      if (transition.releaseLease && lease && !lease.releasedAt) {
+        this.leases.set(leaseKey, { ...lease, releasedAt: input.requestedAt });
+      }
+      return {
+        kind: "created" as const,
+        cancellation: clone(cancellation),
+        delivery: clone(updated),
+        events: clone(newEvents),
+      };
+    });
+  }
+
   async claimOutbox(input: Parameters<PublishingDeliveryRepository["claimOutbox"]>[0]) {
     return this.lock(async () => {
       if (this.failNextMutation) { this.failNextMutation = false; return { kind: "unavailable" as const }; }
@@ -353,6 +503,57 @@ export class InMemoryPublishingDeliveryRepository
       const delivery = this.deliveries.get(key(input.workspaceId, input.deliveryId));
       if (!delivery) return { kind: "unavailable" as const };
       if (terminal(delivery.state)) return { kind: "terminal" as const };
+      const leaseKey = key(input.workspaceId, input.deliveryId);
+      const existing = this.leases.get(leaseKey);
+      if (existing && !existing.releasedAt && existing.expiresAt.getTime() > input.now.getTime()) return { kind: "busy" as const };
+      if (
+        delivery.desiredState === "cancel" &&
+        delivery.state !== "confirmation_pending"
+      ) {
+        if (delivery.effectContactStartedAt) {
+          const cancellation = this.cancellations.get(
+            key(input.workspaceId, input.deliveryId),
+          );
+          const evidenceDigest = canonicalDigest({
+            schema: "publishing-delivery-cancellation-unknown/v1",
+            cancellationId: cancellation?.id ?? null,
+            effectKey: delivery.effectKey,
+          });
+          const event: PublishingDeliveryEvent = {
+            schema: "publishing-delivery-event/v1",
+            id: `pde_${delivery.id}_${delivery.nextEventSequence}`,
+            workspaceId: delivery.workspaceId,
+            deliveryId: delivery.id,
+            sequence: delivery.nextEventSequence,
+            type: "publication.outcome_unknown",
+            evidence: {
+              effectKey: delivery.effectKey,
+              providerOperationRef: null,
+              evidenceDigest,
+              failureCode: "CANCELLED_AFTER_EFFECT_CONTACT",
+            },
+            occurredAt: input.now,
+          };
+          const updated: PublishingDeliveryRecord = {
+            ...delivery,
+            state: "outcome_unknown",
+            latestEffectEvidenceDigest: evidenceDigest,
+            failureCode: "CANCELLED_AFTER_EFFECT_CONTACT",
+            nextEventSequence: delivery.nextEventSequence + 1,
+            completedAt: input.now,
+            updatedAt: input.now,
+          };
+          this.deliveries.set(key(input.workspaceId, input.deliveryId), clone(updated));
+          this.events.set(key(input.workspaceId, input.deliveryId), [
+            ...(this.events.get(key(input.workspaceId, input.deliveryId)) ?? []),
+            clone(event),
+          ]);
+          if (existing && !existing.releasedAt) {
+            this.leases.set(leaseKey, { ...existing, releasedAt: input.now });
+          }
+        }
+        return { kind: "terminal" as const };
+      }
       const latestOutbox = [...this.outbox.values()]
         .filter((item) => item.workspaceId === input.workspaceId && item.deliveryId === input.deliveryId)
         .sort((left, right) => right.generation - left.generation)[0];
@@ -362,9 +563,6 @@ export class InMemoryPublishingDeliveryRepository
         (latestOutbox.state !== "claimed" && latestOutbox.state !== "delivered") ||
         latestOutbox.availableAt.getTime() > input.now.getTime()
       ) return { kind: "not_due" as const };
-      const leaseKey = key(input.workspaceId, input.deliveryId);
-      const existing = this.leases.get(leaseKey);
-      if (existing && !existing.releasedAt && existing.expiresAt.getTime() > input.now.getTime()) return { kind: "busy" as const };
       const fence = (this.fences.get(leaseKey) ?? BigInt(0)) + BigInt(1);
       const lease: PublishingDeliveryExecutionLeaseRecord = {
         workspaceId: input.workspaceId,
@@ -426,10 +624,62 @@ export class InMemoryPublishingDeliveryRepository
         if (delivery.state !== "scheduled") return { kind: "stale" as const };
       }
       const event: PublishingDeliveryEvent = { schema: "publishing-delivery-event/v1", id: `pde_${delivery.id}_${delivery.nextEventSequence}`, workspaceId: delivery.workspaceId, deliveryId: delivery.id, sequence: delivery.nextEventSequence, type: "effect.prepared", evidence: { effectKey: delivery.effectKey, intentDigest: input.intentDigest }, occurredAt: input.preparedAt };
-      const updated = { ...delivery, state: "dispatching" as const, intentDigest: input.intentDigest, providerOperationRef: null, latestEffectEvidenceDigest: null, failureCode: null, dispatchStartedAt: input.preparedAt, completedAt: null, nextEventSequence: delivery.nextEventSequence + 1, updatedAt: input.preparedAt };
+      const updated = { ...delivery, state: "dispatching" as const, intentDigest: input.intentDigest, providerOperationRef: null, latestEffectEvidenceDigest: null, failureCode: null, dispatchStartedAt: input.preparedAt, effectContactStartedAt: null, completedAt: null, nextEventSequence: delivery.nextEventSequence + 1, updatedAt: input.preparedAt };
       this.deliveries.set(deliveryKey, clone(updated));
       this.events.set(deliveryKey, [...(this.events.get(deliveryKey) ?? []), clone(event)]);
       return { kind: "prepared" as const, delivery: clone(updated), event: clone(event) };
+    });
+  }
+
+  async beginEffectContact(
+    input: Parameters<PublishingDeliveryRepository["beginEffectContact"]>[0],
+  ) {
+    return this.lock(async () => {
+      const deliveryKey = key(input.workspaceId, input.deliveryId);
+      const delivery = this.deliveries.get(deliveryKey);
+      if (!delivery) return { kind: "stale" as const };
+      if (
+        !this.activeLease({ ...input, at: input.startedAt }) ||
+        terminal(delivery.state) ||
+        delivery.effectKey !== input.effectKey ||
+        delivery.intentDigest !== input.intentDigest
+      ) return { kind: "stale" as const };
+      if (delivery.effectContactStartedAt) {
+        if (
+          delivery.state !== "dispatching" &&
+          !(delivery.state === "confirmation_pending" && delivery.providerOperationRef)
+        ) return { kind: "stale" as const };
+        const event = [...(this.events.get(deliveryKey) ?? [])].reverse().find(
+          (item) => item.type === "effect.contact_started" &&
+            item.evidence.intentDigest === input.intentDigest,
+        );
+        return event
+          ? { kind: "replayed" as const, delivery: clone(delivery), event: clone(event) }
+          : { kind: "unavailable" as const };
+      }
+      if (delivery.desiredState === "cancel" || delivery.state === "cancelled") {
+        return { kind: "cancelled" as const };
+      }
+      if (delivery.state !== "dispatching") return { kind: "stale" as const };
+      const event: PublishingDeliveryEvent = {
+        schema: "publishing-delivery-event/v1",
+        id: `pde_${delivery.id}_${delivery.nextEventSequence}`,
+        workspaceId: delivery.workspaceId,
+        deliveryId: delivery.id,
+        sequence: delivery.nextEventSequence,
+        type: "effect.contact_started",
+        evidence: { effectKey: delivery.effectKey, intentDigest: input.intentDigest },
+        occurredAt: input.startedAt,
+      };
+      const updated: PublishingDeliveryRecord = {
+        ...delivery,
+        effectContactStartedAt: input.startedAt,
+        nextEventSequence: delivery.nextEventSequence + 1,
+        updatedAt: input.startedAt,
+      };
+      this.deliveries.set(deliveryKey, clone(updated));
+      this.events.set(deliveryKey, [...(this.events.get(deliveryKey) ?? []), clone(event)]);
+      return { kind: "started" as const, delivery: clone(updated), event: clone(event) };
     });
   }
 
@@ -484,7 +734,12 @@ export class InMemoryPublishingDeliveryRepository
       const delivery = this.deliveries.get(deliveryKey);
       const exactLease = this.exactLease(input);
       if (!delivery || !exactLease || delivery.effectKey !== input.effectKey || delivery.intentDigest !== input.intentDigest) return { kind: "stale" as const };
-      const outcome = input.outcome;
+      const normalized = normalizePublishingDeliverySettlement({
+        desiredState: delivery.desiredState,
+        outcome: input.outcome,
+        retryOutboxIntent: input.retryOutboxIntent,
+      });
+      const { outcome } = normalized;
       const state = outcome.kind === "succeeded" ? "succeeded" as const : outcome.kind === "failed" ? "failed" as const : outcome.kind === "outcome_unknown" ? "outcome_unknown" as const : outcome.kind === "confirmation_pending" ? "confirmation_pending" as const : "scheduled" as const;
       if (exactLease.releasedAt !== null && delivery.latestEffectEvidenceDigest === outcome.evidenceDigest && delivery.state === state) {
         const replay = (this.events.get(deliveryKey) ?? []).at(-1);
@@ -494,7 +749,7 @@ export class InMemoryPublishingDeliveryRepository
       if (!lease) return { kind: "stale" as const };
       if (terminal(delivery.state)) return { kind: "stale" as const };
       const followUpRequired = outcome.kind === "retry_scheduled" || outcome.kind === "confirmation_pending";
-      const followUp = input.retryOutboxIntent;
+      const followUp = normalized.retryOutboxIntent;
       if (followUpRequired !== Boolean(followUp)) return { kind: "unavailable" as const };
       if (followUp && (followUp.workspaceId !== delivery.workspaceId || followUp.deliveryId !== delivery.id || followUp.state !== "pending" || followUp.generation !== delivery.nextOutboxGeneration || followUp.dedupeKey !== publishingDeliveryOutboxDedupeKey(delivery.workspaceId, delivery.id, delivery.nextOutboxGeneration) || followUp.availableAt.getTime() !== (outcome.kind === "retry_scheduled" ? outcome.retryAt.getTime() : outcome.kind === "confirmation_pending" ? outcome.pollAt.getTime() : -1))) return { kind: "unavailable" as const };
       const common = { schema: "publishing-delivery-event/v1" as const, id: `pde_${delivery.id}_${delivery.nextEventSequence}`, workspaceId: delivery.workspaceId, deliveryId: delivery.id, sequence: delivery.nextEventSequence, occurredAt: input.occurredAt };

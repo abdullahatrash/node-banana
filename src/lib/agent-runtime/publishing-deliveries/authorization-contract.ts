@@ -1,4 +1,5 @@
 import type { CapabilityRegistration } from "@/types/capabilities";
+import { authorizationContractDigestFor } from "@/lib/agent-tools/registry";
 import {
   PUBLISHING_APPROVAL_RELEASE_AUTHORIZATION,
   publishingApprovalReleaseAuthorizationContractDigest,
@@ -6,6 +7,7 @@ import {
 
 export const PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES = {
   release: { name: "publishing_plan_revisions.release", version: 1 },
+  cancel: { name: "publishing_deliveries.cancel", version: 1 },
   get: { name: "publishing_deliveries.get", version: 1 },
   list: { name: "publishing_deliveries.list", version: 1 },
   events: { name: "publishing_delivery_events.list", version: 1 },
@@ -28,6 +30,16 @@ export const PUBLISHING_DELIVERY_LIST_AUTHORIZATION =
 export const PUBLISHING_DELIVERY_EVENTS_AUTHORIZATION =
   PUBLISHING_DELIVERY_GET_AUTHORIZATION;
 
+export const PUBLISHING_DELIVERY_CANCEL_AUTHORIZATION =
+  PUBLISHING_DELIVERY_GET_AUTHORIZATION;
+
 export function publishingDeliveryReleaseAuthorizationContractDigest(): string {
   return publishingApprovalReleaseAuthorizationContractDigest();
+}
+
+export function publishingDeliveryCancelAuthorizationContractDigest(): string {
+  return authorizationContractDigestFor(
+    PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.cancel,
+    PUBLISHING_DELIVERY_CANCEL_AUTHORIZATION,
+  );
 }

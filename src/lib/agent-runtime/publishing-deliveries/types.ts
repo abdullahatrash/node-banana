@@ -15,11 +15,12 @@ export type PublishingDeliveryState =
   | "confirmation_pending"
   | "succeeded"
   | "failed"
-  | "outcome_unknown";
+  | "outcome_unknown"
+  | "cancelled";
 
 export type PublishingDeliveryTerminalState = Extract<
   PublishingDeliveryState,
-  "succeeded" | "failed" | "outcome_unknown"
+  "succeeded" | "failed" | "outcome_unknown" | "cancelled"
 >;
 
 export interface PublishingDeliveryTargetSnapshot {
@@ -71,7 +72,7 @@ export interface PublishingDeliveryRecord {
   targetSnapshot: PublishingDeliveryTargetSnapshot;
   targetSnapshotDigest: string;
   publishAt: Date;
-  desiredState: "publish";
+  desiredState: "publish" | "cancel";
   state: PublishingDeliveryState;
   /** Stable across dispatch retries and provider reconciliation. */
   effectKey: string;
@@ -86,6 +87,8 @@ export interface PublishingDeliveryRecord {
   acceptedAt: Date;
   scheduledAt: Date;
   dispatchStartedAt: Date | null;
+  /** Fenced boundary after which adapter contact may have happened. */
+  effectContactStartedAt: Date | null;
   completedAt: Date | null;
   updatedAt: Date;
 }
@@ -103,6 +106,48 @@ export type PublishingDeliveryEvent =
         approvalRequestId: string;
         approvalDecisionId: string;
         targetSnapshotDigest: string;
+      };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
+      type: "effect.contact_started";
+      evidence: { effectKey: string; intentDigest: string };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
+      type: "delivery.cancellation_requested";
+      evidence: {
+        cancellationId: string;
+        actorKind: "agent" | "human";
+        effectDisposition:
+          | "not_created"
+          | "contact_started"
+          | "provider_accepted"
+          | "terminal";
+      };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
+      type: "delivery.cancelled";
+      evidence: {
+        cancellationId: string;
+        effectKey: string;
+        effectDisposition: "not_created";
       };
       occurredAt: Date;
     }
@@ -270,6 +315,81 @@ export interface PublishingDeliveryAuthorizationPort {
   }): Promise<PublishingDeliveryAuthorizationSession | null>;
 }
 
+export type PublishingDeliveryCancellationActor =
+  | { kind: "agent"; principalId: string; keyId: string }
+  | { kind: "human"; userId: string };
+
+export interface PublishingDeliveryCancellationAuthorizationSession {
+  schema: "publishing-delivery-cancellation-authorization-session/v1";
+  id: string;
+  workspaceId: string;
+  actor: PublishingDeliveryCancellationActor;
+  capability: "publishing_deliveries.cancel@1";
+  contractDigest: string;
+  admissionEvidenceRef: string;
+  /** Agent admission evidence or explicit Human Channel-grant evidence. */
+  evidenceRef: string;
+  evidenceDigest: string;
+  resources: { channelIds: string[]; artifactIds: string[] };
+  /** Human authority is explicit and Channel-scoped; role is never authority. */
+  humanGrants: Array<{ channelId: string; grantId: string }>;
+  issuedAt: Date;
+  expiresAt: Date;
+}
+
+export interface PublishingDeliveryCancellationAuthorizationPort {
+  checkCurrent(input: {
+    workspaceId: string;
+    actor: PublishingDeliveryCancellationActor;
+    capability: "publishing_deliveries.cancel@1";
+    authorizationContractDigest: string;
+    authorizationEvidenceRef: string;
+    channelIds: string[];
+    artifactIds: string[];
+    evaluatedAt: Date;
+  }): Promise<PublishingDeliveryCancellationAuthorizationSession | null>;
+}
+
+export type PublishingDeliveryCancellationOutcome =
+  | "prevented"
+  | "conditional"
+  | "unknown"
+  | "too_late";
+
+/** Immutable, authority-retaining record behind intrinsic cancellation replay. */
+export interface PublishingDeliveryCancellationRecord {
+  schema: "publishing-delivery-cancellation-record/v1";
+  id: string;
+  workspaceId: string;
+  deliveryId: string;
+  actor: PublishingDeliveryCancellationActor;
+  capability: "publishing_deliveries.cancel@1";
+  authorizationContractDigest: string;
+  authorizationAdmissionEvidenceRef: string;
+  authorizationEvidenceRef: string;
+  authorizationEvidenceDigest: string;
+  authorizedResources: { channelIds: string[]; artifactIds: string[] };
+  authorityGrants: Array<{ channelId: string; grantId: string }>;
+  stateAtRequest: PublishingDeliveryState;
+  outcome: PublishingDeliveryCancellationOutcome;
+  /** Null when provider contact makes completion unknowable at request time. */
+  externallyCompletedAtRequest: boolean | null;
+  requestedAt: Date;
+}
+
+export interface PublishingDeliveryCancellationDto {
+  schema: "publishing-delivery-cancellation/v1";
+  cancellationId: string;
+  deliveryId: string;
+  desiredState: "cancel";
+  stateAtRequest: PublishingDeliveryState;
+  outcome: PublishingDeliveryCancellationOutcome;
+  externallyCompletedAtRequest: boolean | null;
+  requestedAt: string;
+  durable: true;
+  externallyReversed: false;
+}
+
 export interface PublishingDeliveryRevisionPort {
   getCurrentRevision(input: {
     workspaceId: string;
@@ -405,6 +525,28 @@ export interface PublishingDeliveryRepository {
     authorizedChannelIds?: string[];
     authorizedArtifactIds?: string[];
   }): Promise<PublishingDeliveryEvent[] | null>;
+  getCancellation(input: {
+    workspaceId: string;
+    deliveryId: string;
+    actor: PublishingDeliveryCancellationActor;
+  }): Promise<PublishingDeliveryCancellationRecord | null>;
+  /** Intrinsic Delivery-scoped cancellation; replay must return the first record. */
+  cancel(input: {
+    workspaceId: string;
+    deliveryId: string;
+    cancellationId: string;
+    actor: PublishingDeliveryCancellationActor;
+    authorizationSession: PublishingDeliveryCancellationAuthorizationSession;
+    requestedAt: Date;
+  }): Promise<
+    | {
+        kind: "created" | "replayed";
+        cancellation: PublishingDeliveryCancellationRecord;
+        delivery: PublishingDeliveryRecord;
+        events: PublishingDeliveryEvent[];
+      }
+    | { kind: "not_found" | "authorization_stale" | "unavailable" }
+  >;
 
   claimOutbox(input: {
     now: Date;
@@ -467,6 +609,24 @@ export interface PublishingDeliveryRepository {
         event: PublishingDeliveryEvent;
       }
     | { kind: "stale" | "unavailable" }
+  >;
+  /** Last fenced local barrier before any adapter call. */
+  beginEffectContact(input: {
+    workspaceId: string;
+    deliveryId: string;
+    workerId: string;
+    leaseToken: string;
+    fence: bigint;
+    effectKey: string;
+    intentDigest: string;
+    startedAt: Date;
+  }): Promise<
+    | {
+        kind: "started" | "replayed";
+        delivery: PublishingDeliveryRecord;
+        event: PublishingDeliveryEvent;
+      }
+    | { kind: "cancelled" | "stale" | "unavailable" }
   >;
   /** Fenced terminal proof that no complete intent or external effect existed. */
   failBeforeEffect(input: {
@@ -545,6 +705,7 @@ export interface PublishingDeliveryDto
     | "acceptedAt"
     | "scheduledAt"
     | "dispatchStartedAt"
+    | "effectContactStartedAt"
     | "completedAt"
     | "updatedAt"
   > {
@@ -552,6 +713,7 @@ export interface PublishingDeliveryDto
   acceptedAt: string;
   scheduledAt: string;
   dispatchStartedAt: string | null;
+  effectContactStartedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
   externallyCompleted: boolean;

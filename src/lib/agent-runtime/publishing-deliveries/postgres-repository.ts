@@ -19,15 +19,20 @@ import {
   agentAuthorizationDecisions,
   agentKeys,
   agentPrincipals,
+  agentSecurityEvents,
+  runtimePublishingApprovalAuthorityGrants,
+  runtimePublishingApprovalAuthorityRevocations,
   runtimePublishingApprovalConsumptions,
   runtimePublishingApprovalDecisions,
   runtimePublishingApprovalRequests,
   runtimePublishingDeliveries,
+  runtimePublishingDeliveryCancellations,
   runtimePublishingDeliveryEvents,
   runtimePublishingDeliveryExecutionLeases,
   runtimePublishingDeliveryOutboxIntents,
   runtimePublishingDeliveryReleaseReceipts,
   runtimePublishingDeliveryReleases,
+  workspaceMembers,
 } from "@/lib/db/schema";
 import {
   lockCurrentPublishingApprovalRevision,
@@ -37,6 +42,9 @@ import {
 import {
   publishingApprovalReleaseAuthorizationContractDigest,
 } from "../publishing-approvals/authorization-contract";
+import {
+  publishingDeliveryCancelAuthorizationContractDigest,
+} from "./authorization-contract";
 import type {
   PublishingApprovalRequestRecord,
 } from "../publishing-approvals/types";
@@ -49,6 +57,9 @@ import type {
   PublishingDeliveryAcceptedRef,
   PublishingDeliveryAuthorizationPort,
   PublishingDeliveryAuthorizationSession,
+  PublishingDeliveryCancellationAuthorizationPort,
+  PublishingDeliveryCancellationAuthorizationSession,
+  PublishingDeliveryCancellationRecord,
   PublishingDeliveryEvent,
   PublishingDeliveryExecutionLeaseRecord,
   PublishingDeliveryOutboxIntentRecord,
@@ -65,11 +76,16 @@ import {
   publishingDeliveryEffectKey,
   publishingDeliveryOutboxDedupeKey,
 } from "./keys";
+import {
+  normalizePublishingDeliverySettlement,
+  planPublishingDeliveryCancellation,
+} from "./cancellation-transition";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type ReleaseRow = typeof runtimePublishingDeliveryReleases.$inferSelect;
 type DeliveryRow = typeof runtimePublishingDeliveries.$inferSelect;
+type CancellationRow = typeof runtimePublishingDeliveryCancellations.$inferSelect;
 type EventRow = typeof runtimePublishingDeliveryEvents.$inferSelect;
 type OutboxRow = typeof runtimePublishingDeliveryOutboxIntents.$inferSelect;
 type LeaseRow = typeof runtimePublishingDeliveryExecutionLeases.$inferSelect;
@@ -77,6 +93,8 @@ type LeaseRow = typeof runtimePublishingDeliveryExecutionLeases.$inferSelect;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9_-]{1,200}$/;
 const RELEASE_AUTHORIZATION_TTL_MS = 15 * 60_000;
+const CANCELLATION_AGENT_AUTHORIZATION_TTL_MS = 15 * 60_000;
+const CANCELLATION_HUMAN_AUTHORIZATION_TTL_MS = 5 * 60_000;
 
 class PublishingDeliveryTransactionRollback extends Error {}
 
@@ -217,6 +235,8 @@ function validDeliveryLifecycle(row: DeliveryRow): boolean {
     !Number.isSafeInteger(row.nextOutboxGeneration) || row.nextOutboxGeneration < 2 ||
     row.scheduledAt < row.acceptedAt || row.updatedAt < row.acceptedAt ||
     (row.dispatchStartedAt !== null && row.dispatchStartedAt < row.acceptedAt) ||
+    (row.effectContactStartedAt !== null &&
+      (row.dispatchStartedAt === null || row.effectContactStartedAt < row.dispatchStartedAt)) ||
     (row.completedAt !== null && row.completedAt < row.acceptedAt) ||
     (row.providerOperationRef !== null && !safeRef(row.providerOperationRef)) ||
     (row.failureCode !== null && !/^[A-Z][A-Z0-9_]{0,79}$/.test(row.failureCode))) return false;
@@ -224,25 +244,37 @@ function validDeliveryLifecycle(row: DeliveryRow): boolean {
   const hasEvidence = row.latestEffectEvidenceDigest !== null;
   switch (row.state) {
     case "scheduled":
-      return row.providerOperationRef === null && row.completedAt === null &&
+      return row.desiredState === "publish" && row.providerOperationRef === null &&
+        row.completedAt === null &&
         ((!hasIntent && !hasEvidence && row.failureCode === null && row.dispatchStartedAt === null) ||
-          (hasIntent && hasEvidence && row.failureCode !== null && row.dispatchStartedAt !== null));
+          (hasIntent && hasEvidence && row.failureCode !== null &&
+            row.dispatchStartedAt !== null && row.effectContactStartedAt !== null));
     case "dispatching":
       return hasIntent && !hasEvidence && row.providerOperationRef === null &&
         row.failureCode === null && row.dispatchStartedAt !== null && row.completedAt === null;
     case "confirmation_pending":
       return hasIntent && hasEvidence && row.providerOperationRef !== null &&
-        row.failureCode === null && row.dispatchStartedAt !== null && row.completedAt === null;
+        row.failureCode === null && row.dispatchStartedAt !== null &&
+        row.effectContactStartedAt !== null && row.completedAt === null;
     case "succeeded":
       return hasIntent && hasEvidence && row.providerOperationRef !== null &&
-        row.failureCode === null && row.dispatchStartedAt !== null && row.completedAt !== null;
+        row.failureCode === null && row.dispatchStartedAt !== null &&
+        row.effectContactStartedAt !== null && row.completedAt !== null;
     case "failed":
       return hasEvidence && row.failureCode !== null && row.completedAt !== null &&
-        ((hasIntent && row.dispatchStartedAt !== null) ||
-          (!hasIntent && row.providerOperationRef === null && row.dispatchStartedAt === null));
+        ((hasIntent && row.dispatchStartedAt !== null && row.effectContactStartedAt !== null) ||
+          (!hasIntent && row.providerOperationRef === null && row.dispatchStartedAt === null &&
+            row.effectContactStartedAt === null));
     case "outcome_unknown":
       return hasIntent && hasEvidence && row.providerOperationRef === null &&
-        row.failureCode !== null && row.dispatchStartedAt !== null && row.completedAt !== null;
+        row.failureCode !== null && row.dispatchStartedAt !== null &&
+        row.effectContactStartedAt !== null && row.completedAt !== null;
+    case "cancelled":
+      return row.desiredState === "cancel" && !hasEvidence && row.failureCode === null &&
+        row.providerOperationRef === null && row.effectContactStartedAt === null &&
+        row.completedAt !== null &&
+        ((!hasIntent && row.dispatchStartedAt === null) ||
+          (hasIntent && row.dispatchStartedAt !== null));
     default:
       return false;
   }
@@ -261,9 +293,9 @@ export function rehydratePublishingDelivery(row: DeliveryRow): PublishingDeliver
     row.targetSnapshot.target.channelId !== row.channelId ||
     row.targetSnapshot.validation.targetId !== row.targetId ||
     row.targetSnapshot.validation.channel.id !== row.channelId ||
-    row.desiredState !== "publish" || ![
+    !["publish", "cancel"].includes(row.desiredState) || ![
       "scheduled", "dispatching", "confirmation_pending", "succeeded", "failed",
-      "outcome_unknown",
+      "outcome_unknown", "cancelled",
     ].includes(row.state) ||
     row.effectKey !== publishingDeliveryEffectKey(row.workspaceId, row.id) ||
     (row.intentDigest !== null && !DIGEST.test(row.intentDigest)) ||
@@ -286,7 +318,7 @@ export function rehydratePublishingDelivery(row: DeliveryRow): PublishingDeliver
     targetSnapshot: structuredClone(row.targetSnapshot),
     targetSnapshotDigest: row.targetSnapshotDigest,
     publishAt: row.publishAt,
-    desiredState: "publish",
+    desiredState: row.desiredState as PublishingDeliveryRecord["desiredState"],
     state: row.state as PublishingDeliveryRecord["state"],
     effectKey: row.effectKey,
     intentDigest: row.intentDigest,
@@ -298,6 +330,7 @@ export function rehydratePublishingDelivery(row: DeliveryRow): PublishingDeliver
     acceptedAt: row.acceptedAt,
     scheduledAt: row.scheduledAt,
     dispatchStartedAt: row.dispatchStartedAt,
+    effectContactStartedAt: row.effectContactStartedAt,
     completedAt: row.completedAt,
     updatedAt: row.updatedAt,
   };
@@ -413,10 +446,32 @@ export function rehydratePublishingDeliveryEvent(row: EventRow): PublishingDeliv
         failureCode: evidence.failureCode,
       } };
     case "effect.prepared":
+    case "effect.contact_started":
       if (!exactKeys(evidence, ["effectKey", "intentDigest"]) || !safeRef(evidence.effectKey) ||
         typeof evidence.intentDigest !== "string" || !DIGEST.test(evidence.intentDigest)) return null;
       return { ...base, type: row.type, evidence: {
         effectKey: evidence.effectKey, intentDigest: evidence.intentDigest,
+      } };
+    case "delivery.cancellation_requested":
+      if (!exactKeys(evidence, ["cancellationId", "actorKind", "effectDisposition"]) ||
+        typeof evidence.cancellationId !== "string" || !ID.test(evidence.cancellationId) ||
+        (evidence.actorKind !== "agent" && evidence.actorKind !== "human") ||
+        !["not_created", "contact_started", "provider_accepted", "terminal"]
+          .includes(String(evidence.effectDisposition))) return null;
+      return { ...base, type: row.type, evidence: {
+        cancellationId: evidence.cancellationId,
+        actorKind: evidence.actorKind,
+        effectDisposition: evidence.effectDisposition as
+          | "not_created" | "contact_started" | "provider_accepted" | "terminal",
+      } };
+    case "delivery.cancelled":
+      if (!exactKeys(evidence, ["cancellationId", "effectKey", "effectDisposition"]) ||
+        typeof evidence.cancellationId !== "string" || !ID.test(evidence.cancellationId) ||
+        !safeRef(evidence.effectKey) || evidence.effectDisposition !== "not_created") return null;
+      return { ...base, type: row.type, evidence: {
+        cancellationId: evidence.cancellationId,
+        effectKey: evidence.effectKey,
+        effectDisposition: "not_created",
       } };
     case "publication.confirmation_pending":
       if (!exactKeys(evidence, [
@@ -505,6 +560,117 @@ export function rehydratePublishingDeliveryLease(row: LeaseRow): PublishingDeliv
     row.expiresAt <= row.acquiredAt || row.renewedAt < row.acquiredAt ||
     (row.releasedAt !== null && row.releasedAt < row.acquiredAt)) return null;
   return { ...row };
+}
+
+export function rehydratePublishingDeliveryCancellation(
+  row: CancellationRow,
+): PublishingDeliveryCancellationRecord | null {
+  const resources = safeResources(row.authorizedResources);
+  const grants = Array.isArray(row.authorityGrants)
+    ? row.authorityGrants.map((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value) ||
+          Object.keys(value).sort().join(",") !== "channelId,grantId") return null;
+        const binding = value as Record<string, unknown>;
+        return typeof binding.channelId === "string" && ID.test(binding.channelId) &&
+          typeof binding.grantId === "string" && ID.test(binding.grantId)
+          ? { channelId: binding.channelId, grantId: binding.grantId }
+          : null;
+      })
+    : [];
+  const state = row.stateAtRequest as PublishingDeliveryRecord["state"];
+  if (!resources || !ID.test(row.id) || !ID.test(row.workspaceId) ||
+    !ID.test(row.deliveryId) || !ID.test(row.actorId) ||
+    row.capability !== "publishing_deliveries.cancel@1" ||
+    row.authorizationContractDigest !==
+      publishingDeliveryCancelAuthorizationContractDigest() ||
+    !safeRef(row.authorizationAdmissionEvidenceRef, 200) ||
+    !safeRef(row.authorizationEvidenceRef, 200) ||
+    !DIGEST.test(row.authorizationEvidenceDigest) ||
+    grants.some((grant) => !grant) || new Set(
+      grants.map((grant) => grant?.grantId),
+    ).size !== grants.length ||
+    row.authorizationIssuedAt >= row.authorizationExpiresAt ||
+    row.requestedAt < row.authorizationIssuedAt ||
+    row.requestedAt >= row.authorizationExpiresAt ||
+    !["scheduled", "dispatching", "confirmation_pending", "succeeded", "failed",
+      "outcome_unknown", "cancelled"].includes(state) ||
+    !["prevented", "conditional", "unknown", "too_late"].includes(row.outcome) ||
+    row.externallyReversed !== false ||
+    row.externallyCompletedAtRequest !== (
+      row.outcome === "unknown" || row.outcome === "conditional"
+        ? null
+        : state === "succeeded"
+    ) ||
+    (row.outcome === "prevented" && state !== "scheduled" && state !== "dispatching") ||
+    (row.outcome === "conditional" && state !== "confirmation_pending") ||
+    (row.outcome === "unknown" && state !== "scheduled" &&
+      state !== "dispatching" && state !== "outcome_unknown") ||
+    (row.outcome === "too_late" && state !== "succeeded" && state !== "failed")) return null;
+  const authorityGrants = grants as Array<{ channelId: string; grantId: string }>;
+  const actor = row.actorKind === "agent" && row.principalId === row.actorId &&
+      row.keyId && ID.test(row.keyId) && row.userId === null && authorityGrants.length === 0
+    ? { kind: "agent" as const, principalId: row.actorId, keyId: row.keyId }
+    : row.actorKind === "human" && row.userId === row.actorId &&
+        row.principalId === null && row.keyId === null && authorityGrants.length === 1 &&
+        resources.channelIds.length === 1 &&
+        authorityGrants[0]?.channelId === resources.channelIds[0]
+      ? { kind: "human" as const, userId: row.actorId }
+      : null;
+  if (!actor) return null;
+  const ttlMs = actor.kind === "agent"
+    ? CANCELLATION_AGENT_AUTHORIZATION_TTL_MS
+    : CANCELLATION_HUMAN_AUTHORIZATION_TTL_MS;
+  if (row.authorizationExpiresAt.getTime() - row.authorizationIssuedAt.getTime() > ttlMs) {
+    return null;
+  }
+  if (actor.kind === "agent") {
+    if (row.authorizationEvidenceRef !== row.authorizationAdmissionEvidenceRef) return null;
+  } else {
+    const evidenceSeed = canonicalDigest({
+      schema: "publishing-delivery-cancellation-human-grant-evidence/v1",
+      workspaceId: row.workspaceId,
+      actor,
+      resources,
+      humanGrants: authorityGrants,
+      issuedAt: row.authorizationIssuedAt.toISOString(),
+      expiresAt: row.authorizationExpiresAt.toISOString(),
+    });
+    if (row.authorizationEvidenceRef !==
+      `pdcae_${evidenceSeed.slice("sha256:".length)}`) return null;
+  }
+  const expectedEvidenceDigest = cancellationAuthorityDigest({
+    workspaceId: row.workspaceId,
+    actor,
+    capability: "publishing_deliveries.cancel@1",
+    contractDigest: row.authorizationContractDigest,
+    admissionEvidenceRef: row.authorizationAdmissionEvidenceRef,
+    evidenceRef: row.authorizationEvidenceRef,
+    resources,
+    humanGrants: authorityGrants,
+    issuedAt: row.authorizationIssuedAt,
+    expiresAt: row.authorizationExpiresAt,
+  });
+  if (row.authorizationEvidenceDigest !== expectedEvidenceDigest ||
+    row.authorizationSessionId !==
+      `pdcas_${expectedEvidenceDigest.slice("sha256:".length)}`) return null;
+  return {
+    schema: "publishing-delivery-cancellation-record/v1",
+    id: row.id,
+    workspaceId: row.workspaceId,
+    deliveryId: row.deliveryId,
+    actor,
+    capability: "publishing_deliveries.cancel@1",
+    authorizationContractDigest: row.authorizationContractDigest,
+    authorizationAdmissionEvidenceRef: row.authorizationAdmissionEvidenceRef,
+    authorizationEvidenceRef: row.authorizationEvidenceRef,
+    authorizationEvidenceDigest: row.authorizationEvidenceDigest,
+    authorizedResources: resources,
+    authorityGrants,
+    stateAtRequest: state,
+    outcome: row.outcome as PublishingDeliveryCancellationRecord["outcome"],
+    externallyCompletedAtRequest: row.externallyCompletedAtRequest,
+    requestedAt: row.requestedAt,
+  };
 }
 
 function exactDeliveryRows(input: {
@@ -638,6 +804,164 @@ async function lockReleaseAuthorization(
     sameSet(session.resources.artifactIds, approval.artifactIds);
 }
 
+function cancellationAuthorityDigest(input: {
+  workspaceId: string;
+  actor: PublishingDeliveryCancellationAuthorizationSession["actor"];
+  capability: "publishing_deliveries.cancel@1";
+  contractDigest: string;
+  admissionEvidenceRef: string;
+  evidenceRef: string;
+  resources: { channelIds: string[]; artifactIds: string[] };
+  humanGrants: Array<{ channelId: string; grantId: string }>;
+  issuedAt: Date;
+  expiresAt: Date;
+}): string {
+  return canonicalDigest({
+    schema: "publishing-delivery-cancellation-authority-evidence/v1",
+    workspaceId: input.workspaceId,
+    actor: input.actor,
+    capability: input.capability,
+    contractDigest: input.contractDigest,
+    admissionEvidenceRef: input.admissionEvidenceRef,
+    evidenceRef: input.evidenceRef,
+    resources: input.resources,
+    humanGrants: input.humanGrants,
+    issuedAt: input.issuedAt.toISOString(),
+    expiresAt: input.expiresAt.toISOString(),
+  });
+}
+
+function validCancellationSessionShape(input: {
+  session: PublishingDeliveryCancellationAuthorizationSession;
+  workspaceId: string;
+  channelId: string;
+  artifactIds: string[];
+  at: Date;
+}): boolean {
+  const { session } = input;
+  return session.schema ===
+      "publishing-delivery-cancellation-authorization-session/v1" &&
+    session.workspaceId === input.workspaceId &&
+    session.capability === "publishing_deliveries.cancel@1" &&
+    session.contractDigest === publishingDeliveryCancelAuthorizationContractDigest() &&
+    safeRef(session.admissionEvidenceRef, 200) && safeRef(session.evidenceRef, 200) &&
+    DIGEST.test(session.evidenceDigest) && session.issuedAt <= input.at &&
+    session.expiresAt > input.at &&
+    sameOrder(session.resources.channelIds, [input.channelId]) &&
+    sameSet(session.resources.artifactIds, input.artifactIds) &&
+    cancellationAuthorityDigest(session) === session.evidenceDigest &&
+    (session.actor.kind === "agent"
+      ? session.humanGrants.length === 0
+      : session.humanGrants.length === 1 &&
+        session.humanGrants[0]?.channelId === input.channelId);
+}
+
+async function lockCancellationAuthorization(
+  tx: Tx,
+  session: PublishingDeliveryCancellationAuthorizationSession,
+  delivery: PublishingDeliveryRecord,
+  at: Date,
+): Promise<boolean> {
+  if (!validCancellationSessionShape({
+    session,
+    workspaceId: delivery.workspaceId,
+    channelId: delivery.channelId,
+    artifactIds: delivery.artifactIds,
+    at,
+  })) return false;
+  if (session.actor.kind === "agent") {
+    const rows = await tx.select({
+      decision: agentAuthorizationDecisions,
+      principalStatus: agentPrincipals.status,
+      principalRevokedAt: agentPrincipals.revokedAt,
+      keyRevokedAt: agentKeys.revokedAt,
+      keyExpiresAt: agentKeys.expiresAt,
+    }).from(agentAuthorizationDecisions).innerJoin(agentPrincipals, and(
+      eq(agentPrincipals.workspaceId, agentAuthorizationDecisions.workspaceId),
+      eq(agentPrincipals.id, agentAuthorizationDecisions.principalId),
+    )).innerJoin(agentKeys, and(
+      eq(agentKeys.principalId, agentAuthorizationDecisions.principalId),
+      eq(agentKeys.id, agentAuthorizationDecisions.keyId),
+    )).where(and(
+      eq(agentAuthorizationDecisions.workspaceId, session.workspaceId),
+      eq(agentAuthorizationDecisions.principalId, session.actor.principalId),
+      eq(agentAuthorizationDecisions.keyId, session.actor.keyId),
+      eq(agentAuthorizationDecisions.operatorTraceRef, session.evidenceRef),
+      eq(agentAuthorizationDecisions.capabilityName, "publishing_deliveries.cancel"),
+      eq(agentAuthorizationDecisions.capabilityVersion, 1),
+      eq(agentAuthorizationDecisions.authorizationContractDigest, session.contractDigest),
+      eq(agentAuthorizationDecisions.outcome, "allowed"),
+    )).limit(1).for("share");
+    const row = rows[0];
+    if (!row || row.principalStatus !== "active" || row.principalRevokedAt ||
+      row.keyRevokedAt || (row.keyExpiresAt && row.keyExpiresAt <= at) ||
+      row.decision.createdAt.getTime() !== session.issuedAt.getTime() ||
+      session.expiresAt.getTime() !== Math.min(
+        session.issuedAt.getTime() + CANCELLATION_AGENT_AUTHORIZATION_TTL_MS,
+        row.keyExpiresAt?.getTime() ?? Number.POSITIVE_INFINITY,
+      )) return false;
+    const channelIds = row.decision.resources.filter((item) => item.kind === "channel")
+      .map((item) => item.id);
+    const artifactIds = row.decision.resources.filter((item) => item.kind === "artifact")
+      .map((item) => item.id);
+    return row.decision.resources.length === channelIds.length + artifactIds.length &&
+      sameOrder(channelIds, [delivery.channelId]) && sameSet(artifactIds, delivery.artifactIds);
+  }
+  const admissionRows = await tx.select({
+    id: agentSecurityEvents.id,
+    reason: agentSecurityEvents.reason,
+    resourceKinds: agentSecurityEvents.resourceKinds,
+  })
+    .from(agentSecurityEvents).where(and(
+      eq(agentSecurityEvents.workspaceId, session.workspaceId),
+      eq(agentSecurityEvents.actorUserId, session.actor.userId),
+      eq(agentSecurityEvents.eventType, "authorization.allowed"),
+      eq(agentSecurityEvents.capabilityName, "publishing_deliveries.cancel"),
+      eq(agentSecurityEvents.capabilityVersion, 1),
+      eq(agentSecurityEvents.changeRef, session.admissionEvidenceRef),
+    )).limit(1).for("share");
+  if (!admissionRows[0] || admissionRows[0].reason !== "allowed" ||
+    !sameSet(admissionRows[0].resourceKinds, ["channel", "artifact"])) return false;
+  const grantIds = session.humanGrants.map((grant) => grant.grantId);
+  const grants = await tx.select({
+    grant: runtimePublishingApprovalAuthorityGrants,
+    memberRole: workspaceMembers.role,
+  }).from(runtimePublishingApprovalAuthorityGrants).innerJoin(workspaceMembers, and(
+    eq(workspaceMembers.workspaceId, runtimePublishingApprovalAuthorityGrants.workspaceId),
+    eq(workspaceMembers.userId, runtimePublishingApprovalAuthorityGrants.userId),
+  )).where(and(
+    eq(runtimePublishingApprovalAuthorityGrants.workspaceId, session.workspaceId),
+    eq(runtimePublishingApprovalAuthorityGrants.userId, session.actor.userId),
+    inArray(runtimePublishingApprovalAuthorityGrants.id, grantIds),
+  )).orderBy(asc(runtimePublishingApprovalAuthorityGrants.id)).for("update");
+  if (grants.length !== grantIds.length || grants.some(({ grant, memberRole }) =>
+    (memberRole !== "owner" && memberRole !== "admin") || grant.action !== "publish" ||
+    grant.channelId !== delivery.channelId || grant.issuedAt > at ||
+    (grant.expiresAt !== null && grant.expiresAt <= at))) return false;
+  const exactExpiry = Math.min(
+    session.issuedAt.getTime() + CANCELLATION_HUMAN_AUTHORIZATION_TTL_MS,
+    ...grants.map(({ grant }) =>
+      grant.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY),
+  );
+  const evidenceSeed = canonicalDigest({
+    schema: "publishing-delivery-cancellation-human-grant-evidence/v1",
+    workspaceId: session.workspaceId,
+    actor: session.actor,
+    resources: session.resources,
+    humanGrants: session.humanGrants,
+    issuedAt: session.issuedAt.toISOString(),
+    expiresAt: session.expiresAt.toISOString(),
+  });
+  if (session.expiresAt.getTime() !== exactExpiry ||
+    session.evidenceRef !== `pdcae_${evidenceSeed.slice("sha256:".length)}`) return false;
+  const revoked = await tx.select({ id: runtimePublishingApprovalAuthorityRevocations.grantId })
+    .from(runtimePublishingApprovalAuthorityRevocations).where(and(
+      eq(runtimePublishingApprovalAuthorityRevocations.workspaceId, session.workspaceId),
+      inArray(runtimePublishingApprovalAuthorityRevocations.grantId, grantIds),
+    ));
+  return revoked.length === 0;
+}
+
 async function storedRelease(
   db: Db | Tx,
   input: { workspaceId: string; releaseId: string; consumingPrincipalId?: string },
@@ -738,6 +1062,166 @@ export class DrizzlePublishingDeliveryAuthorizationRepository
         resources: exactResources,
         issuedAt: row.decision.createdAt,
         expiresAt,
+      };
+    } catch {
+      return null;
+    }
+  }
+}
+
+export class DrizzlePublishingDeliveryCancellationAuthorizationRepository
+  implements PublishingDeliveryCancellationAuthorizationPort {
+  constructor(private readonly database: () => Db) {}
+
+  async checkCurrent(
+    input: Parameters<PublishingDeliveryCancellationAuthorizationPort["checkCurrent"]>[0],
+  ): Promise<PublishingDeliveryCancellationAuthorizationSession | null> {
+    try {
+      if (input.capability !== "publishing_deliveries.cancel@1" ||
+        input.authorizationContractDigest !==
+          publishingDeliveryCancelAuthorizationContractDigest() ||
+        !safeRef(input.authorizationEvidenceRef, 200) ||
+        !safeIds(input.channelIds, 50) || input.channelIds.length !== 1 ||
+        !safeArtifactIds(input.artifactIds, 51)) return null;
+      const database = this.database();
+      if (input.actor.kind === "agent") {
+        const rows = await database.select({
+          decision: agentAuthorizationDecisions,
+          principalStatus: agentPrincipals.status,
+          principalRevokedAt: agentPrincipals.revokedAt,
+          keyRevokedAt: agentKeys.revokedAt,
+          keyExpiresAt: agentKeys.expiresAt,
+          databaseNow: sql<unknown>`clock_timestamp()`,
+        }).from(agentAuthorizationDecisions).innerJoin(agentPrincipals, and(
+          eq(agentPrincipals.workspaceId, agentAuthorizationDecisions.workspaceId),
+          eq(agentPrincipals.id, agentAuthorizationDecisions.principalId),
+        )).innerJoin(agentKeys, and(
+          eq(agentKeys.principalId, agentAuthorizationDecisions.principalId),
+          eq(agentKeys.id, agentAuthorizationDecisions.keyId),
+        )).where(and(
+          eq(agentAuthorizationDecisions.workspaceId, input.workspaceId),
+          eq(agentAuthorizationDecisions.principalId, input.actor.principalId),
+          eq(agentAuthorizationDecisions.keyId, input.actor.keyId),
+          eq(agentAuthorizationDecisions.operatorTraceRef, input.authorizationEvidenceRef),
+          eq(agentAuthorizationDecisions.capabilityName, "publishing_deliveries.cancel"),
+          eq(agentAuthorizationDecisions.capabilityVersion, 1),
+          eq(agentAuthorizationDecisions.authorizationContractDigest,
+            input.authorizationContractDigest),
+          eq(agentAuthorizationDecisions.outcome, "allowed"),
+        )).limit(1);
+        const row = rows[0];
+        const issuedAt = row?.decision.createdAt;
+        const now = row ? dbDate(row.databaseNow) : null;
+        if (!row || !issuedAt || !now || row.principalStatus !== "active" ||
+          row.principalRevokedAt || row.keyRevokedAt ||
+          (row.keyExpiresAt && row.keyExpiresAt <= now)) return null;
+        const channelIds = row.decision.resources.filter((item) => item.kind === "channel")
+          .map((item) => item.id);
+        const artifactIds = row.decision.resources.filter((item) => item.kind === "artifact")
+          .map((item) => item.id);
+        if (row.decision.resources.length !== channelIds.length + artifactIds.length ||
+          !sameSet(channelIds, input.channelIds) || !sameSet(artifactIds, input.artifactIds)) {
+          return null;
+        }
+        const expiresAt = new Date(Math.min(
+          issuedAt.getTime() + CANCELLATION_AGENT_AUTHORIZATION_TTL_MS,
+          row.keyExpiresAt?.getTime() ?? Number.POSITIVE_INFINITY,
+        ));
+        if (expiresAt <= now) return null;
+        const sessionBase = {
+          workspaceId: input.workspaceId,
+          actor: input.actor,
+          capability: "publishing_deliveries.cancel@1" as const,
+          contractDigest: input.authorizationContractDigest,
+          admissionEvidenceRef: input.authorizationEvidenceRef,
+          evidenceRef: row.decision.operatorTraceRef,
+          resources: { channelIds: [...input.channelIds], artifactIds: [...input.artifactIds] },
+          humanGrants: [],
+          issuedAt,
+          expiresAt,
+        };
+        const evidenceDigest = cancellationAuthorityDigest(sessionBase);
+        return {
+          schema: "publishing-delivery-cancellation-authorization-session/v1",
+          id: `pdcas_${evidenceDigest.slice("sha256:".length)}`,
+          ...sessionBase,
+          evidenceDigest,
+        };
+      }
+      const admissionRows = await database.select({
+        event: agentSecurityEvents,
+      }).from(agentSecurityEvents).where(and(
+        eq(agentSecurityEvents.workspaceId, input.workspaceId),
+        eq(agentSecurityEvents.actorUserId, input.actor.userId),
+        eq(agentSecurityEvents.eventType, "authorization.allowed"),
+        eq(agentSecurityEvents.capabilityName, "publishing_deliveries.cancel"),
+        eq(agentSecurityEvents.capabilityVersion, 1),
+        eq(agentSecurityEvents.changeRef, input.authorizationEvidenceRef),
+      )).limit(1);
+      if (!admissionRows[0] ||
+        !sameSet(admissionRows[0].event.resourceKinds, ["channel", "artifact"])) return null;
+      const rows = await database.select({
+        grant: runtimePublishingApprovalAuthorityGrants,
+        revocationId: runtimePublishingApprovalAuthorityRevocations.grantId,
+        memberRole: workspaceMembers.role,
+        databaseNow: sql<unknown>`clock_timestamp()`,
+      }).from(runtimePublishingApprovalAuthorityGrants).innerJoin(workspaceMembers, and(
+        eq(workspaceMembers.workspaceId, runtimePublishingApprovalAuthorityGrants.workspaceId),
+        eq(workspaceMembers.userId, runtimePublishingApprovalAuthorityGrants.userId),
+      )).leftJoin(runtimePublishingApprovalAuthorityRevocations, and(
+        eq(runtimePublishingApprovalAuthorityRevocations.workspaceId,
+          runtimePublishingApprovalAuthorityGrants.workspaceId),
+        eq(runtimePublishingApprovalAuthorityRevocations.grantId,
+          runtimePublishingApprovalAuthorityGrants.id),
+      )).where(and(
+        eq(runtimePublishingApprovalAuthorityGrants.workspaceId, input.workspaceId),
+        eq(runtimePublishingApprovalAuthorityGrants.userId, input.actor.userId),
+        eq(runtimePublishingApprovalAuthorityGrants.action, "publish"),
+        eq(runtimePublishingApprovalAuthorityGrants.channelId, input.channelIds[0]!),
+        isNull(runtimePublishingApprovalAuthorityRevocations.grantId),
+      )).orderBy(
+        desc(runtimePublishingApprovalAuthorityGrants.issuedAt),
+        desc(runtimePublishingApprovalAuthorityGrants.id),
+      );
+      const now = rows[0] ? dbDate(rows[0].databaseNow) : null;
+      const row = now ? rows.find(({ grant, memberRole, revocationId }) =>
+        !revocationId && (memberRole === "owner" || memberRole === "admin") &&
+        grant.issuedAt <= now && (!grant.expiresAt || grant.expiresAt > now)) : null;
+      if (!row || !now) return null;
+      const issuedAt = now;
+      const expiresAt = new Date(Math.min(
+        issuedAt.getTime() + CANCELLATION_HUMAN_AUTHORIZATION_TTL_MS,
+        row.grant.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY,
+      ));
+      const humanGrants = [{ channelId: row.grant.channelId, grantId: row.grant.id }];
+      const resources = { channelIds: [...input.channelIds], artifactIds: [...input.artifactIds] };
+      const evidenceSeed = canonicalDigest({
+        schema: "publishing-delivery-cancellation-human-grant-evidence/v1",
+        workspaceId: input.workspaceId,
+        actor: input.actor,
+        resources,
+        humanGrants,
+        issuedAt: issuedAt.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+      });
+      const sessionBase = {
+        workspaceId: input.workspaceId,
+        actor: input.actor,
+        capability: "publishing_deliveries.cancel@1" as const,
+        contractDigest: input.authorizationContractDigest,
+        admissionEvidenceRef: input.authorizationEvidenceRef,
+        evidenceRef: `pdcae_${evidenceSeed.slice("sha256:".length)}`,
+        resources,
+        humanGrants,
+        issuedAt,
+        expiresAt,
+      };
+      const evidenceDigest = cancellationAuthorityDigest(sessionBase);
+      return {
+        schema: "publishing-delivery-cancellation-authorization-session/v1",
+        id: `pdcas_${evidenceDigest.slice("sha256:".length)}`,
+        ...sessionBase,
+        evidenceDigest,
       };
     } catch {
       return null;
@@ -1057,6 +1541,223 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
       : null;
   }
 
+  async getCancellation(
+    input: Parameters<PublishingDeliveryRepository["getCancellation"]>[0],
+  ) {
+    try {
+      const rows = await this.database().select()
+        .from(runtimePublishingDeliveryCancellations).where(and(
+          eq(runtimePublishingDeliveryCancellations.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveryCancellations.deliveryId, input.deliveryId),
+        )).limit(1);
+      const record = rows[0]
+        ? rehydratePublishingDeliveryCancellation(rows[0])
+        : null;
+      return record && canonicalDigest(record.actor) === canonicalDigest(input.actor)
+        ? record
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async cancel(input: Parameters<PublishingDeliveryRepository["cancel"]>[0]) {
+    try {
+      return await this.database().transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(
+          ${`publishing-delivery-cancel:${input.workspaceId}:${input.deliveryId}`}, 0
+        ))`);
+        const priorRows = await tx.select().from(runtimePublishingDeliveryCancellations)
+          .where(and(
+            eq(runtimePublishingDeliveryCancellations.workspaceId, input.workspaceId),
+            eq(runtimePublishingDeliveryCancellations.deliveryId, input.deliveryId),
+          )).limit(1).for("update");
+        if (priorRows[0]) {
+          const cancellation = rehydratePublishingDeliveryCancellation(priorRows[0]);
+          const deliveryRows = await tx.select().from(runtimePublishingDeliveries).where(and(
+            eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
+            eq(runtimePublishingDeliveries.id, input.deliveryId),
+          )).limit(1).for("update");
+          const delivery = deliveryRows[0]
+            ? rehydratePublishingDelivery(deliveryRows[0])
+            : null;
+          if (!cancellation || !delivery) throw new PublishingDeliveryTransactionRollback();
+          if (canonicalDigest(cancellation.actor) !== canonicalDigest(input.actor)) {
+            const now = await databaseNow(tx);
+            if (!now ||
+              canonicalDigest(input.authorizationSession.actor) !==
+                canonicalDigest(input.actor) ||
+              !(await lockCancellationAuthorization(
+                tx,
+                input.authorizationSession,
+                delivery,
+                now,
+              ))) return { kind: "authorization_stale" as const };
+          }
+          return {
+            kind: "replayed" as const,
+            cancellation,
+            delivery,
+            events: [] as PublishingDeliveryEvent[],
+          };
+        }
+        const deliveryRows = await tx.select().from(runtimePublishingDeliveries).where(and(
+          eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveries.id, input.deliveryId),
+        )).limit(1).for("update");
+        const delivery = deliveryRows[0]
+          ? rehydratePublishingDelivery(deliveryRows[0])
+          : null;
+        if (!delivery) return { kind: "not_found" as const };
+        const now = await databaseNow(tx);
+        if (!now) return { kind: "unavailable" as const };
+        if (canonicalDigest(input.authorizationSession.actor) !== canonicalDigest(input.actor) ||
+          input.cancellationId.length > 200 || !/^pdc_[A-Za-z0-9_-]+$/.test(input.cancellationId) ||
+          !(await lockCancellationAuthorization(
+            tx,
+            input.authorizationSession,
+            delivery,
+            now,
+          ))) return { kind: "authorization_stale" as const };
+
+        const leaseRows = await tx.select().from(runtimePublishingDeliveryExecutionLeases)
+          .where(and(
+            eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
+            eq(runtimePublishingDeliveryExecutionLeases.deliveryId, input.deliveryId),
+          )).limit(1).for("update");
+        const lease = leaseRows[0];
+        const activeLease = Boolean(
+          lease && lease.releasedAt === null && lease.expiresAt > now,
+        );
+        if (delivery.state === "cancelled") {
+          throw new PublishingDeliveryTransactionRollback();
+        }
+        const transition = planPublishingDeliveryCancellation({
+          delivery,
+          cancellationId: input.cancellationId,
+          requestedAt: now,
+          activeLease,
+        });
+        const cancellation: PublishingDeliveryCancellationRecord = {
+          schema: "publishing-delivery-cancellation-record/v1",
+          id: input.cancellationId,
+          workspaceId: input.workspaceId,
+          deliveryId: input.deliveryId,
+          actor: structuredClone(input.actor),
+          capability: "publishing_deliveries.cancel@1",
+          authorizationContractDigest: input.authorizationSession.contractDigest,
+          authorizationAdmissionEvidenceRef:
+            input.authorizationSession.admissionEvidenceRef,
+          authorizationEvidenceRef: input.authorizationSession.evidenceRef,
+          authorizationEvidenceDigest: input.authorizationSession.evidenceDigest,
+          authorizedResources: structuredClone(input.authorizationSession.resources),
+          authorityGrants: structuredClone(input.authorizationSession.humanGrants),
+          stateAtRequest: delivery.state,
+          outcome: transition.outcome,
+          externallyCompletedAtRequest: transition.externallyCompletedAtRequest,
+          requestedAt: now,
+        };
+        const requestEvent: PublishingDeliveryEvent = {
+          schema: "publishing-delivery-event/v1",
+          id: `pde_${randomUUID().replaceAll("-", "")}`,
+          workspaceId: input.workspaceId,
+          deliveryId: input.deliveryId,
+          sequence: delivery.nextEventSequence,
+          type: "delivery.cancellation_requested",
+          evidence: {
+            cancellationId: cancellation.id,
+            actorKind: input.actor.kind,
+            effectDisposition: transition.effectDisposition,
+          },
+          occurredAt: now,
+        };
+        const events: PublishingDeliveryEvent[] = [requestEvent];
+        if (transition.terminalEvent) {
+          events.push({
+            schema: "publishing-delivery-event/v1",
+            id: `pde_${randomUUID().replaceAll("-", "")}`,
+            workspaceId: input.workspaceId,
+            deliveryId: input.deliveryId,
+            sequence: delivery.nextEventSequence + 1,
+            ...transition.terminalEvent,
+            occurredAt: now,
+          });
+        }
+        await tx.insert(runtimePublishingDeliveryEvents).values(events.map((event) => ({
+          workspaceId: event.workspaceId,
+          id: event.id,
+          deliveryId: event.deliveryId,
+          sequence: event.sequence,
+          type: event.type,
+          evidence: event.evidence,
+          occurredAt: event.occurredAt,
+        })));
+        const updatedRows = await tx.update(runtimePublishingDeliveries).set({
+          desiredState: "cancel",
+          state: transition.nextState,
+          latestEffectEvidenceDigest: transition.latestEffectEvidenceDigest,
+          failureCode: transition.failureCode,
+          completedAt: transition.completedAt,
+          nextEventSequence: delivery.nextEventSequence + events.length,
+          updatedAt: now,
+        }).where(and(
+          eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveries.id, input.deliveryId),
+        )).returning();
+        if (transition.releaseLease && lease && lease.releasedAt === null) {
+          await tx.update(runtimePublishingDeliveryExecutionLeases).set({ releasedAt: now })
+            .where(and(
+              eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
+              eq(runtimePublishingDeliveryExecutionLeases.deliveryId, input.deliveryId),
+              eq(runtimePublishingDeliveryExecutionLeases.fence, lease.fence),
+              isNull(runtimePublishingDeliveryExecutionLeases.releasedAt),
+            ));
+        }
+        await tx.insert(runtimePublishingDeliveryCancellations).values({
+          workspaceId: cancellation.workspaceId,
+          id: cancellation.id,
+          deliveryId: cancellation.deliveryId,
+          actorKind: cancellation.actor.kind,
+          actorId: cancellation.actor.kind === "agent"
+            ? cancellation.actor.principalId
+            : cancellation.actor.userId,
+          principalId: cancellation.actor.kind === "agent"
+            ? cancellation.actor.principalId
+            : null,
+          keyId: cancellation.actor.kind === "agent" ? cancellation.actor.keyId : null,
+          userId: cancellation.actor.kind === "human" ? cancellation.actor.userId : null,
+          capability: cancellation.capability,
+          authorizationSessionId: input.authorizationSession.id,
+          authorizationContractDigest: cancellation.authorizationContractDigest,
+          authorizationAdmissionEvidenceRef:
+            cancellation.authorizationAdmissionEvidenceRef,
+          authorizationEvidenceRef: cancellation.authorizationEvidenceRef,
+          authorizationEvidenceDigest: cancellation.authorizationEvidenceDigest,
+          authorizedResources: cancellation.authorizedResources,
+          authorityGrants: cancellation.authorityGrants,
+          authorizationIssuedAt: input.authorizationSession.issuedAt,
+          authorizationExpiresAt: input.authorizationSession.expiresAt,
+          stateAtRequest: cancellation.stateAtRequest,
+          outcome: cancellation.outcome,
+          externallyCompletedAtRequest: cancellation.externallyCompletedAtRequest,
+          externallyReversed: false,
+          requestedAt: cancellation.requestedAt,
+        });
+        const updated = requireWrittenRecord(
+          updatedRows[0] ? rehydratePublishingDelivery(updatedRows[0]) : null,
+        );
+        return {
+          kind: "created" as const,
+          cancellation,
+          delivery: updated,
+          events,
+        };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
   async claimOutbox(input: Parameters<PublishingDeliveryRepository["claimOutbox"]>[0]) {
     try {
       return await this.database().transaction(async (tx) => {
@@ -1135,19 +1836,11 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
         )).limit(1).for("update");
         const delivery = deliveryRows[0] ? rehydratePublishingDelivery(deliveryRows[0]) : null;
         if (!delivery) return { kind: "unavailable" as const };
-        if (["succeeded", "failed", "outcome_unknown"].includes(delivery.state)) {
+        if (["succeeded", "failed", "outcome_unknown", "cancelled"].includes(delivery.state)) {
           return { kind: "terminal" as const };
         }
         const now = await databaseNow(tx);
         if (!now) return { kind: "unavailable" as const };
-        const outbox = await tx.select().from(runtimePublishingDeliveryOutboxIntents).where(and(
-          eq(runtimePublishingDeliveryOutboxIntents.workspaceId, input.workspaceId),
-          eq(runtimePublishingDeliveryOutboxIntents.deliveryId, input.deliveryId),
-        )).orderBy(desc(runtimePublishingDeliveryOutboxIntents.generation)).limit(1).for("update");
-        if (!outbox[0] || outbox[0].availableAt > now ||
-          (outbox[0].state !== "claimed" && outbox[0].state !== "delivered") ||
-          outbox[0].generation !== delivery.nextOutboxGeneration - 1 ||
-          delivery.publishAt > now) return { kind: "not_due" as const };
         const existingRows = await tx.select().from(runtimePublishingDeliveryExecutionLeases)
           .where(and(
             eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
@@ -1157,6 +1850,78 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
         if (current && current.releasedAt === null && current.expiresAt > now) {
           return { kind: "busy" as const };
         }
+        if (delivery.desiredState === "cancel" &&
+          (delivery.state === "scheduled" || delivery.state === "dispatching") &&
+          delivery.effectContactStartedAt !== null && delivery.providerOperationRef === null) {
+          const cancellationRows = await tx.select()
+            .from(runtimePublishingDeliveryCancellations).where(and(
+              eq(runtimePublishingDeliveryCancellations.workspaceId, input.workspaceId),
+              eq(runtimePublishingDeliveryCancellations.deliveryId, input.deliveryId),
+            )).limit(1);
+          const cancellation = cancellationRows[0]
+            ? rehydratePublishingDeliveryCancellation(cancellationRows[0])
+            : null;
+          if (!cancellation) throw new PublishingDeliveryTransactionRollback();
+          const evidenceDigest = canonicalDigest({
+            schema: "publishing-delivery-cancellation-unknown/v1",
+            cancellationId: cancellation.id,
+            effectKey: delivery.effectKey,
+          });
+          const event: PublishingDeliveryEvent = {
+            schema: "publishing-delivery-event/v1",
+            id: `pde_${randomUUID().replaceAll("-", "")}`,
+            workspaceId: input.workspaceId,
+            deliveryId: input.deliveryId,
+            sequence: delivery.nextEventSequence,
+            type: "publication.outcome_unknown",
+            evidence: {
+              effectKey: delivery.effectKey,
+              providerOperationRef: null,
+              evidenceDigest,
+              failureCode: "CANCELLED_AFTER_EFFECT_CONTACT",
+            },
+            occurredAt: now,
+          };
+          await tx.insert(runtimePublishingDeliveryEvents).values({
+            workspaceId: event.workspaceId,
+            id: event.id,
+            deliveryId: event.deliveryId,
+            sequence: event.sequence,
+            type: event.type,
+            evidence: event.evidence,
+            occurredAt: event.occurredAt,
+          });
+          await tx.update(runtimePublishingDeliveries).set({
+            state: "outcome_unknown",
+            latestEffectEvidenceDigest: evidenceDigest,
+            failureCode: "CANCELLED_AFTER_EFFECT_CONTACT",
+            completedAt: now,
+            nextEventSequence: delivery.nextEventSequence + 1,
+            updatedAt: now,
+          }).where(and(
+            eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
+            eq(runtimePublishingDeliveries.id, input.deliveryId),
+          ));
+          if (current && current.releasedAt === null) {
+            await tx.update(runtimePublishingDeliveryExecutionLeases).set({ releasedAt: now })
+              .where(and(
+                eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
+                eq(runtimePublishingDeliveryExecutionLeases.deliveryId, input.deliveryId),
+                eq(runtimePublishingDeliveryExecutionLeases.fence, current.fence),
+              ));
+          }
+          return { kind: "terminal" as const };
+        }
+        if (delivery.desiredState === "cancel" &&
+          delivery.state !== "confirmation_pending") return { kind: "terminal" as const };
+        const outbox = await tx.select().from(runtimePublishingDeliveryOutboxIntents).where(and(
+          eq(runtimePublishingDeliveryOutboxIntents.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveryOutboxIntents.deliveryId, input.deliveryId),
+        )).orderBy(desc(runtimePublishingDeliveryOutboxIntents.generation)).limit(1).for("update");
+        if (!outbox[0] || outbox[0].availableAt > now ||
+          (outbox[0].state !== "claimed" && outbox[0].state !== "delivered") ||
+          outbox[0].generation !== delivery.nextOutboxGeneration - 1 ||
+          delivery.publishAt > now) return { kind: "not_due" as const };
         const leaseToken = randomUUID();
         const expiresAt = new Date(now.getTime() + Math.max(1, input.expiresAt.getTime() - input.now.getTime()));
         const values = {
@@ -1191,6 +1956,19 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
       return await this.database().transaction(async (tx) => {
         const now = await databaseNow(tx);
         if (!now) return null;
+        const deliveryRows = await tx.select().from(runtimePublishingDeliveries).where(and(
+          eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveries.id, input.deliveryId),
+        )).limit(1).for("update");
+        const delivery = deliveryRows[0]
+          ? rehydratePublishingDelivery(deliveryRows[0])
+          : null;
+        if (!delivery || ["succeeded", "failed", "outcome_unknown", "cancelled"]
+          .includes(delivery.state) ||
+          (delivery.desiredState === "cancel" &&
+            !((delivery.state === "dispatching" &&
+              delivery.effectContactStartedAt !== null) ||
+              delivery.state === "confirmation_pending"))) return null;
         const expiresAt = new Date(now.getTime() + Math.max(1, input.expiresAt.getTime() - input.now.getTime()));
         const rows = await tx.update(runtimePublishingDeliveryExecutionLeases).set({
           expiresAt, renewedAt: now,
@@ -1216,15 +1994,6 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
       return await this.database().transaction(async (tx) => {
         const now = await databaseNow(tx);
         if (!now) return { kind: "unavailable" as const };
-        const leaseRows = await tx.select().from(runtimePublishingDeliveryExecutionLeases).where(and(
-          eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
-          eq(runtimePublishingDeliveryExecutionLeases.deliveryId, input.deliveryId),
-        )).limit(1).for("update");
-        const lease = leaseRows[0];
-        if (!lease || lease.workerId !== input.workerId || lease.leaseToken !== input.leaseToken ||
-          lease.fence !== input.fence || lease.releasedAt || lease.expiresAt <= now) {
-          return { kind: "stale" as const };
-        }
         const rows = await tx.select().from(runtimePublishingDeliveries).where(and(
           eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
           eq(runtimePublishingDeliveries.id, input.deliveryId),
@@ -1232,6 +2001,17 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
         const delivery = rows[0] ? rehydratePublishingDelivery(rows[0]) : null;
         if (!delivery || delivery.effectKey !== input.effectKey ||
           (delivery.intentDigest && delivery.intentDigest !== input.intentDigest)) {
+          return { kind: "stale" as const };
+        }
+        if (delivery.desiredState === "cancel" &&
+          delivery.state !== "confirmation_pending") return { kind: "stale" as const };
+        const leaseRows = await tx.select().from(runtimePublishingDeliveryExecutionLeases).where(and(
+          eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveryExecutionLeases.deliveryId, input.deliveryId),
+        )).limit(1).for("update");
+        const lease = leaseRows[0];
+        if (!lease || lease.workerId !== input.workerId || lease.leaseToken !== input.leaseToken ||
+          lease.fence !== input.fence || lease.releasedAt || lease.expiresAt <= now) {
           return { kind: "stale" as const };
         }
         if ((delivery.state === "dispatching" || delivery.state === "confirmation_pending") &&
@@ -1266,6 +2046,7 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
           latestEffectEvidenceDigest: null,
           failureCode: null,
           dispatchStartedAt: delivery.dispatchStartedAt ?? now,
+          effectContactStartedAt: null,
           completedAt: null,
           nextEventSequence: delivery.nextEventSequence + 1,
           updatedAt: now,
@@ -1277,6 +2058,132 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
           updated[0] ? rehydratePublishingDelivery(updated[0]) : null,
         );
         return { kind: "prepared" as const, delivery: record, event };
+      });
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  }
+
+  async beginEffectContact(
+    input: Parameters<PublishingDeliveryRepository["beginEffectContact"]>[0],
+  ) {
+    try {
+      return await this.database().transaction(async (tx) => {
+        const now = await databaseNow(tx);
+        if (!now) return { kind: "unavailable" as const };
+        const deliveryRows = await tx.select().from(runtimePublishingDeliveries).where(and(
+          eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveries.id, input.deliveryId),
+        )).limit(1).for("update");
+        const delivery = deliveryRows[0]
+          ? rehydratePublishingDelivery(deliveryRows[0])
+          : null;
+        if (!delivery || delivery.effectKey !== input.effectKey ||
+          delivery.intentDigest !== input.intentDigest) return { kind: "stale" as const };
+        if (delivery.desiredState === "cancel" &&
+          delivery.state !== "confirmation_pending") return { kind: "cancelled" as const };
+        const leaseRows = await tx.select().from(runtimePublishingDeliveryExecutionLeases)
+          .where(and(
+            eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
+            eq(runtimePublishingDeliveryExecutionLeases.deliveryId, input.deliveryId),
+          )).limit(1).for("update");
+        const lease = leaseRows[0];
+        if (!lease || lease.workerId !== input.workerId ||
+          lease.leaseToken !== input.leaseToken || lease.fence !== input.fence ||
+          lease.releasedAt || lease.expiresAt <= now) return { kind: "stale" as const };
+        if (delivery.effectContactStartedAt !== null) {
+          const eventRows = await tx.select().from(runtimePublishingDeliveryEvents)
+            .where(and(
+              eq(runtimePublishingDeliveryEvents.workspaceId, input.workspaceId),
+              eq(runtimePublishingDeliveryEvents.deliveryId, input.deliveryId),
+              eq(runtimePublishingDeliveryEvents.type, "effect.contact_started"),
+            )).orderBy(desc(runtimePublishingDeliveryEvents.sequence)).limit(1);
+          const event = eventRows[0]
+            ? rehydratePublishingDeliveryEvent(eventRows[0])
+            : null;
+          if (event) {
+            return event.type === "effect.contact_started" &&
+              event.evidence.effectKey === input.effectKey &&
+              event.evidence.intentDigest === input.intentDigest
+              ? { kind: "replayed" as const, delivery, event }
+              : { kind: "unavailable" as const };
+          }
+          // #167 rows were conservatively backfilled with a contact timestamp
+          // before contact events existed. Retain one ordered marker before any
+          // resumed launch/observation instead of stranding the Delivery.
+          if (delivery.state !== "dispatching" &&
+            delivery.state !== "confirmation_pending") {
+            return { kind: "stale" as const };
+          }
+          const legacyEvent: PublishingDeliveryEvent = {
+            schema: "publishing-delivery-event/v1",
+            id: `pde_${randomUUID().replaceAll("-", "")}`,
+            workspaceId: input.workspaceId,
+            deliveryId: input.deliveryId,
+            sequence: delivery.nextEventSequence,
+            type: "effect.contact_started",
+            evidence: { effectKey: input.effectKey, intentDigest: input.intentDigest },
+            occurredAt: now,
+          };
+          await tx.insert(runtimePublishingDeliveryEvents).values({
+            workspaceId: legacyEvent.workspaceId,
+            id: legacyEvent.id,
+            deliveryId: legacyEvent.deliveryId,
+            sequence: legacyEvent.sequence,
+            type: legacyEvent.type,
+            evidence: legacyEvent.evidence,
+            occurredAt: legacyEvent.occurredAt,
+          });
+          const reconciledRows = await tx.update(runtimePublishingDeliveries).set({
+            nextEventSequence: delivery.nextEventSequence + 1,
+            updatedAt: now,
+          }).where(and(
+            eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
+            eq(runtimePublishingDeliveries.id, input.deliveryId),
+          )).returning();
+          const reconciled = requireWrittenRecord(
+            reconciledRows[0]
+              ? rehydratePublishingDelivery(reconciledRows[0])
+              : null,
+          );
+          return { kind: "started" as const, delivery: reconciled, event: legacyEvent };
+        }
+        if (delivery.desiredState !== "publish" || delivery.state !== "dispatching") {
+          return delivery.desiredState === "cancel"
+            ? { kind: "cancelled" as const }
+            : { kind: "stale" as const };
+        }
+        const event: PublishingDeliveryEvent = {
+          schema: "publishing-delivery-event/v1",
+          id: `pde_${randomUUID().replaceAll("-", "")}`,
+          workspaceId: input.workspaceId,
+          deliveryId: input.deliveryId,
+          sequence: delivery.nextEventSequence,
+          type: "effect.contact_started",
+          evidence: { effectKey: input.effectKey, intentDigest: input.intentDigest },
+          occurredAt: now,
+        };
+        await tx.insert(runtimePublishingDeliveryEvents).values({
+          workspaceId: event.workspaceId,
+          id: event.id,
+          deliveryId: event.deliveryId,
+          sequence: event.sequence,
+          type: event.type,
+          evidence: event.evidence,
+          occurredAt: event.occurredAt,
+        });
+        const updatedRows = await tx.update(runtimePublishingDeliveries).set({
+          effectContactStartedAt: now,
+          nextEventSequence: delivery.nextEventSequence + 1,
+          updatedAt: now,
+        }).where(and(
+          eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveries.id, input.deliveryId),
+        )).returning();
+        const updated = requireWrittenRecord(
+          updatedRows[0] ? rehydratePublishingDelivery(updatedRows[0]) : null,
+        );
+        return { kind: "started" as const, delivery: updated, event };
       });
     } catch {
       return { kind: "unavailable" as const };
@@ -1298,15 +2205,6 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
       return await this.database().transaction(async (tx) => {
         const now = await databaseNow(tx);
         if (!now) return { kind: "unavailable" as const };
-        const leaseRows = await tx.select().from(runtimePublishingDeliveryExecutionLeases).where(and(
-          eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
-          eq(runtimePublishingDeliveryExecutionLeases.deliveryId, input.deliveryId),
-        )).limit(1).for("update");
-        const lease = leaseRows[0];
-        if (!lease || lease.workerId !== input.workerId || lease.leaseToken !== input.leaseToken ||
-          lease.fence !== input.fence || lease.releasedAt || lease.expiresAt <= now) {
-          return { kind: "stale" as const };
-        }
         const rows = await tx.select().from(runtimePublishingDeliveries).where(and(
           eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
           eq(runtimePublishingDeliveries.id, input.deliveryId),
@@ -1315,6 +2213,15 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
         if (!delivery || delivery.state !== "scheduled" || delivery.intentDigest !== null ||
           delivery.effectKey !== input.effectKey || !DIGEST.test(input.evidenceDigest) ||
           !/^[A-Z][A-Z0-9_]{0,79}$/.test(input.failureCode)) {
+          return { kind: "stale" as const };
+        }
+        const leaseRows = await tx.select().from(runtimePublishingDeliveryExecutionLeases).where(and(
+          eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveryExecutionLeases.deliveryId, input.deliveryId),
+        )).limit(1).for("update");
+        const lease = leaseRows[0];
+        if (!lease || lease.workerId !== input.workerId || lease.leaseToken !== input.leaseToken ||
+          lease.fence !== input.fence || lease.releasedAt || lease.expiresAt <= now) {
           return { kind: "stale" as const };
         }
         const event: PublishingDeliveryEvent = {
@@ -1370,6 +2277,19 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
       return await this.database().transaction(async (tx) => {
         const now = await databaseNow(tx);
         if (!now) return { kind: "unavailable" as const };
+        const rows = await tx.select().from(runtimePublishingDeliveries).where(and(
+          eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
+          eq(runtimePublishingDeliveries.id, input.deliveryId),
+        )).limit(1).for("update");
+        const delivery = rows[0] ? rehydratePublishingDelivery(rows[0]) : null;
+        if (!delivery || delivery.effectKey !== input.effectKey ||
+          delivery.intentDigest !== input.intentDigest) return { kind: "stale" as const };
+        const normalized = normalizePublishingDeliverySettlement({
+          desiredState: delivery.desiredState,
+          outcome: input.outcome,
+          retryOutboxIntent: input.retryOutboxIntent,
+        });
+        const { outcome, retryOutboxIntent } = normalized;
         const leaseRows = await tx.select().from(runtimePublishingDeliveryExecutionLeases).where(and(
           eq(runtimePublishingDeliveryExecutionLeases.workspaceId, input.workspaceId),
           eq(runtimePublishingDeliveryExecutionLeases.deliveryId, input.deliveryId),
@@ -1379,22 +2299,15 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
           lease.fence !== input.fence) {
           return { kind: "stale" as const };
         }
-        const rows = await tx.select().from(runtimePublishingDeliveries).where(and(
-          eq(runtimePublishingDeliveries.workspaceId, input.workspaceId),
-          eq(runtimePublishingDeliveries.id, input.deliveryId),
-        )).limit(1).for("update");
-        const delivery = rows[0] ? rehydratePublishingDelivery(rows[0]) : null;
-        if (!delivery || delivery.effectKey !== input.effectKey ||
-          delivery.intentDigest !== input.intentDigest) return { kind: "stale" as const };
         if (lease.releasedAt) {
-          if (delivery.latestEffectEvidenceDigest !== input.outcome.evidenceDigest) {
+          if (delivery.latestEffectEvidenceDigest !== outcome.evidenceDigest) {
             return { kind: "stale" as const };
           }
-          const replayType = input.outcome.kind === "retry_scheduled"
+          const replayType = outcome.kind === "retry_scheduled"
             ? "publication.retry_scheduled"
-            : input.outcome.kind === "confirmation_pending"
+            : outcome.kind === "confirmation_pending"
               ? "publication.confirmation_pending"
-              : `publication.${input.outcome.kind}`;
+              : `publication.${outcome.kind}`;
           const events = await tx.select().from(runtimePublishingDeliveryEvents).where(and(
             eq(runtimePublishingDeliveryEvents.workspaceId, input.workspaceId),
             eq(runtimePublishingDeliveryEvents.deliveryId, input.deliveryId),
@@ -1402,7 +2315,7 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
           const event = events[0] ? rehydratePublishingDeliveryEvent(events[0]) : null;
           return event && event.type === replayType &&
             "evidenceDigest" in event.evidence &&
-            event.evidence.evidenceDigest === input.outcome.evidenceDigest
+            event.evidence.evidenceDigest === outcome.evidenceDigest
             ? { kind: "replayed" as const, delivery, event }
             : { kind: "stale" as const };
         }
@@ -1410,57 +2323,57 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
         if (delivery.state !== "dispatching" && delivery.state !== "confirmation_pending") {
           return { kind: "stale" as const };
         }
-        const needsFollowUp = input.outcome.kind === "retry_scheduled" ||
-          input.outcome.kind === "confirmation_pending";
-        if (needsFollowUp !== Boolean(input.retryOutboxIntent)) return { kind: "stale" as const };
-        const nextState = input.outcome.kind === "retry_scheduled" ? "scheduled" :
-          input.outcome.kind === "confirmation_pending" ? "confirmation_pending" :
-          input.outcome.kind;
-        const eventType = input.outcome.kind === "retry_scheduled"
+        const needsFollowUp = outcome.kind === "retry_scheduled" ||
+          outcome.kind === "confirmation_pending";
+        if (needsFollowUp !== Boolean(retryOutboxIntent)) return { kind: "stale" as const };
+        const nextState = outcome.kind === "retry_scheduled" ? "scheduled" :
+          outcome.kind === "confirmation_pending" ? "confirmation_pending" :
+          outcome.kind;
+        const eventType = outcome.kind === "retry_scheduled"
           ? "publication.retry_scheduled" :
-          input.outcome.kind === "confirmation_pending"
+          outcome.kind === "confirmation_pending"
             ? "publication.confirmation_pending"
-            : `publication.${input.outcome.kind}` as const;
-        if (input.retryOutboxIntent) {
-          const expectedAt = input.outcome.kind === "retry_scheduled"
-            ? input.outcome.retryAt
-            : input.outcome.kind === "confirmation_pending" ? input.outcome.pollAt : null;
+            : `publication.${outcome.kind}` as const;
+        if (retryOutboxIntent) {
+          const expectedAt = outcome.kind === "retry_scheduled"
+            ? outcome.retryAt
+            : outcome.kind === "confirmation_pending" ? outcome.pollAt : null;
           const prior = await tx.select({ generation: runtimePublishingDeliveryOutboxIntents.generation })
             .from(runtimePublishingDeliveryOutboxIntents).where(and(
               eq(runtimePublishingDeliveryOutboxIntents.workspaceId, input.workspaceId),
               eq(runtimePublishingDeliveryOutboxIntents.deliveryId, input.deliveryId),
             )).orderBy(desc(runtimePublishingDeliveryOutboxIntents.generation)).limit(1).for("share");
-          if (!expectedAt || input.retryOutboxIntent.workspaceId !== input.workspaceId ||
-            input.retryOutboxIntent.deliveryId !== input.deliveryId ||
-            input.retryOutboxIntent.generation !== delivery.nextOutboxGeneration ||
+          if (!expectedAt || retryOutboxIntent.workspaceId !== input.workspaceId ||
+            retryOutboxIntent.deliveryId !== input.deliveryId ||
+            retryOutboxIntent.generation !== delivery.nextOutboxGeneration ||
             (prior[0]?.generation ?? 0) + 1 !== delivery.nextOutboxGeneration ||
-            input.retryOutboxIntent.dedupeKey !== publishingDeliveryOutboxDedupeKey(
+            retryOutboxIntent.dedupeKey !== publishingDeliveryOutboxDedupeKey(
               input.workspaceId,
               input.deliveryId,
               delivery.nextOutboxGeneration,
             ) ||
-            input.retryOutboxIntent.state !== "pending" ||
-            input.retryOutboxIntent.availableAt.getTime() !== expectedAt.getTime() ||
-            input.retryOutboxIntent.deliveryToken || input.retryOutboxIntent.claimedAt ||
-            input.retryOutboxIntent.deliveredAt || input.retryOutboxIntent.deliveryAttempts !== 0) {
+            retryOutboxIntent.state !== "pending" ||
+            retryOutboxIntent.availableAt.getTime() !== expectedAt.getTime() ||
+            retryOutboxIntent.deliveryToken || retryOutboxIntent.claimedAt ||
+            retryOutboxIntent.deliveredAt || retryOutboxIntent.deliveryAttempts !== 0) {
             return { kind: "stale" as const };
           }
         }
-        const evidence = input.outcome.kind === "retry_scheduled" ? {
+        const evidence = outcome.kind === "retry_scheduled" ? {
           effectKey: input.effectKey,
-          evidenceDigest: input.outcome.evidenceDigest,
-          failureCode: input.outcome.failureCode,
-          retryAt: input.outcome.retryAt.toISOString(),
-        } : input.outcome.kind === "confirmation_pending" ? {
+          evidenceDigest: outcome.evidenceDigest,
+          failureCode: outcome.failureCode,
+          retryAt: outcome.retryAt.toISOString(),
+        } : outcome.kind === "confirmation_pending" ? {
           effectKey: input.effectKey,
-          providerOperationRef: input.outcome.providerOperationRef,
-          evidenceDigest: input.outcome.evidenceDigest,
-          pollAt: input.outcome.pollAt.toISOString(),
+          providerOperationRef: outcome.providerOperationRef,
+          evidenceDigest: outcome.evidenceDigest,
+          pollAt: outcome.pollAt.toISOString(),
         } : {
           effectKey: input.effectKey,
-          providerOperationRef: input.outcome.providerOperationRef,
-          evidenceDigest: input.outcome.evidenceDigest,
-          failureCode: input.outcome.kind === "succeeded" ? null : input.outcome.failureCode,
+          providerOperationRef: outcome.providerOperationRef,
+          evidenceDigest: outcome.evidenceDigest,
+          failureCode: outcome.kind === "succeeded" ? null : outcome.failureCode,
         };
         const event = {
           schema: "publishing-delivery-event/v1" as const,
@@ -1477,22 +2390,22 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
           sequence: event.sequence, type: event.type, evidence: event.evidence,
           occurredAt: now,
         });
-        if (input.retryOutboxIntent) {
-          await tx.insert(runtimePublishingDeliveryOutboxIntents).values(input.retryOutboxIntent);
+        if (retryOutboxIntent) {
+          await tx.insert(runtimePublishingDeliveryOutboxIntents).values(retryOutboxIntent);
         }
         const completed = ["succeeded", "failed", "outcome_unknown"].includes(nextState);
         const updated = await tx.update(runtimePublishingDeliveries).set({
           state: nextState,
-          providerOperationRef: input.outcome.kind === "confirmation_pending" ||
-            input.outcome.kind === "succeeded" || input.outcome.kind === "failed"
-              ? input.outcome.providerOperationRef
+          providerOperationRef: outcome.kind === "confirmation_pending" ||
+            outcome.kind === "succeeded" || outcome.kind === "failed"
+              ? outcome.providerOperationRef
               : null,
-          latestEffectEvidenceDigest: input.outcome.evidenceDigest,
-          failureCode: input.outcome.kind === "succeeded" ||
-            input.outcome.kind === "confirmation_pending" ? null : input.outcome.failureCode,
+          latestEffectEvidenceDigest: outcome.evidenceDigest,
+          failureCode: outcome.kind === "succeeded" ||
+            outcome.kind === "confirmation_pending" ? null : outcome.failureCode,
           completedAt: completed ? now : null,
           nextEventSequence: delivery.nextEventSequence + 1,
-          nextOutboxGeneration: input.retryOutboxIntent
+          nextOutboxGeneration: retryOutboxIntent
             ? delivery.nextOutboxGeneration + 1
             : delivery.nextOutboxGeneration,
           updatedAt: now,

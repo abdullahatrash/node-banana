@@ -14,11 +14,13 @@ import { z } from "zod";
 import { ARTIFACT_ID_PATTERN } from "../artifacts/validation";
 import {
   PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES,
+  PUBLISHING_DELIVERY_CANCEL_AUTHORIZATION,
   PUBLISHING_DELIVERY_EVENTS_AUTHORIZATION,
   PUBLISHING_DELIVERY_GET_AUTHORIZATION,
   PUBLISHING_DELIVERY_LIST_AUTHORIZATION,
   PUBLISHING_DELIVERY_RELEASE_AUTHORIZATION,
   publishingDeliveryReleaseAuthorizationContractDigest,
+  publishingDeliveryCancelAuthorizationContractDigest,
 } from "./authorization-contract";
 import { InvalidPublishingDeliveryCursorError } from "./cursor";
 import {
@@ -28,11 +30,17 @@ import {
 } from "./errors";
 import { PublishingDeliveryService } from "./service";
 import { PUBLISHING_DELIVERY_EFFECT_KEY_PATTERN } from "./keys";
-import type { PublishingDeliveryCursorCodec, PublishingDeliveryState } from "./types";
+import type {
+  PublishingDeliveryCancellationActor,
+  PublishingDeliveryCursorCodec,
+  PublishingDeliveryState,
+} from "./types";
 
 export {
   PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES,
   PUBLISHING_DELIVERY_RELEASE_AUTHORIZATION,
+  PUBLISHING_DELIVERY_CANCEL_AUTHORIZATION,
+  publishingDeliveryCancelAuthorizationContractDigest,
   publishingDeliveryReleaseAuthorizationContractDigest,
 } from "./authorization-contract";
 
@@ -45,6 +53,13 @@ const releaseEffect = {
   mutation: "runtime-state",
   visibility: "private",
   timing: "durable-async",
+  reversibility: "conditional",
+  maySpendProviderBudget: false,
+} as const;
+const cancelEffect = {
+  mutation: "runtime-state",
+  visibility: "private",
+  timing: "immediate",
   reversibility: "conditional",
   maySpendProviderBudget: false,
 } as const;
@@ -61,6 +76,7 @@ const states = z.enum([
   "succeeded",
   "failed",
   "outcome_unknown",
+  "cancelled",
 ]);
 const resources = {
   channelIds: z.array(id).min(1).max(50),
@@ -86,6 +102,18 @@ const durableAcceptance = z.object({
   acceptedAt: iso,
   durable: z.literal(true),
   externallyCompleted: z.literal(false),
+}).strict();
+const cancellation = z.object({
+  schema: z.literal("publishing-delivery-cancellation/v1"),
+  cancellationId: id,
+  deliveryId: id,
+  desiredState: z.literal("cancel"),
+  stateAtRequest: states,
+  outcome: z.enum(["prevented", "conditional", "unknown", "too_late"]),
+  externallyCompletedAtRequest: z.boolean().nullable(),
+  requestedAt: iso,
+  durable: z.literal(true),
+  externallyReversed: z.literal(false),
 }).strict();
 const normalizedTarget = z.object({
   targetId: id,
@@ -143,7 +171,7 @@ const delivery = z.object({
   targetSnapshot,
   targetSnapshotDigest: digest,
   publishAt: iso,
-  desiredState: z.literal("publish"),
+  desiredState: z.enum(["publish", "cancel"]),
   state: states,
   effectKey,
   intentDigest: digest.nullable(),
@@ -155,6 +183,7 @@ const delivery = z.object({
   acceptedAt: iso,
   scheduledAt: iso,
   dispatchStartedAt: iso.nullable(),
+  effectContactStartedAt: iso.nullable(),
   completedAt: iso.nullable(),
   updatedAt: iso,
   externallyCompleted: z.boolean(),
@@ -177,6 +206,9 @@ const retainedEvent = z.discriminatedUnion("type", [
   z.object({ ...eventBase, type: z.literal("delivery.accepted"), evidence: z.object({ releaseId: id, approvalRequestId: id, approvalDecisionId: id, targetSnapshotDigest: digest }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("delivery.scheduled"), evidence: z.object({ publishAt: iso }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("effect.prepared"), evidence: z.object({ effectKey, intentDigest: digest }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("effect.contact_started"), evidence: z.object({ effectKey, intentDigest: digest }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("delivery.cancellation_requested"), evidence: z.object({ cancellationId: id, actorKind: z.enum(["agent", "human"]), effectDisposition: z.enum(["not_created", "contact_started", "provider_accepted", "terminal"]) }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("delivery.cancelled"), evidence: z.object({ cancellationId: id, effectKey, effectDisposition: z.literal("not_created") }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("effect.not_created"), evidence: z.object({ ...effectEvidence, failureCode }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("publication.retry_scheduled"), evidence: z.object({ ...effectEvidence, failureCode, retryAt: iso }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("publication.confirmation_pending"), evidence: z.object({ ...effectEvidence, providerOperationRef: z.string().min(1).max(500), pollAt: iso }).strict() }).strict(),
@@ -205,6 +237,31 @@ function agent(context: ResolvedSecurityContext | undefined) {
   return context;
 }
 
+function cancellationActor(
+  context: ResolvedSecurityContext | undefined,
+): { workspaceId: string; actor: PublishingDeliveryCancellationActor } {
+  if (!context) {
+    throw new CapabilityFailure({
+      code: "CAPABILITY_NOT_AUTHORIZED",
+      category: "authorization",
+      message: "Publishing Delivery cancellation is not authorized.",
+    });
+  }
+  return context.kind === "agent"
+    ? {
+        workspaceId: context.workspaceId,
+        actor: {
+          kind: "agent",
+          principalId: context.principalId,
+          keyId: context.keyId,
+        },
+      }
+    : {
+        workspaceId: context.workspaceId,
+        actor: { kind: "human", userId: context.userId },
+      };
+}
+
 function authorizationEvidence(context: {
   authorizationAdmission?: { operatorTraceRef?: string };
 }): string {
@@ -215,6 +272,20 @@ function authorizationEvidence(context: {
       category: "internal",
       message: "Release authorization evidence is unavailable.",
       retryable: true,
+    });
+  }
+  return value;
+}
+
+function cancellationAdmissionEvidence(context: {
+  authorizationAdmission?: { operatorTraceRef?: string };
+}): string {
+  const value = context.authorizationAdmission?.operatorTraceRef?.trim();
+  if (!value) {
+    throw new CapabilityFailure({
+      code: "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED",
+      category: "authorization",
+      message: "Cancellation authorization evidence is unavailable.",
     });
   }
   return value;
@@ -290,6 +361,30 @@ export function createPublishingDeliveryRegistrations(
           keyId: principal.keyId,
           authorizationEvidenceRef: authorizationEvidence(context),
           authorizationContractDigest: publishingDeliveryReleaseAuthorizationContractDigest(),
+        }));
+      },
+    }),
+    defineCapability({
+      identity: PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.cancel,
+      audience: "shared",
+      summary: "Durably request cancellation of one future Publishing Delivery without claiming external reversal.",
+      lifecycle,
+      input: z.object({ deliveryId: id, ...resources }).strict(),
+      outputSchema: schema(cancellation),
+      effect: cancelEffect,
+      approval: { mode: "none" },
+      idempotency: { mode: "intrinsic" },
+      authorization: PUBLISHING_DELIVERY_CANCEL_AUTHORIZATION,
+      errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_DELIVERY_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const caller = cancellationActor(context.securityContext);
+        return domain(() => service.cancel({
+          ...input,
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
+          authorizationEvidenceRef: cancellationAdmissionEvidence(context),
+          authorizationContractDigest:
+            publishingDeliveryCancelAuthorizationContractDigest(),
         }));
       },
     }),
