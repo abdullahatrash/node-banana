@@ -66,6 +66,12 @@ import {
   PRODUCTION_PUBLISHING_APPROVAL_CURSOR,
   PRODUCTION_PUBLISHING_APPROVAL_SERVICE,
 } from "./publishing-approvals/production";
+import { createPublishingDeliveryRegistrations } from
+  "./publishing-deliveries/capabilities";
+import {
+  PRODUCTION_PUBLISHING_DELIVERY_CURSOR,
+  PRODUCTION_PUBLISHING_DELIVERY_SERVICE,
+} from "./publishing-deliveries/production";
 
 export const PRODUCTION_CAPABILITY_AUTHORIZER =
   new CompositeCapabilityAuthorizer(
@@ -104,6 +110,10 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
   ...createPublishingApprovalRegistrations(
     PRODUCTION_PUBLISHING_APPROVAL_SERVICE,
     PRODUCTION_PUBLISHING_APPROVAL_CURSOR,
+  ),
+  ...createPublishingDeliveryRegistrations(
+    PRODUCTION_PUBLISHING_DELIVERY_SERVICE,
+    PRODUCTION_PUBLISHING_DELIVERY_CURSOR,
   ),
 ]);
 

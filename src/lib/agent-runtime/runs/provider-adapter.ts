@@ -497,7 +497,10 @@ export function validateProviderAdapterContract<I, O>(
         launchSafety: z
           .object({
             mode: z.enum(["native_effect_key", "durable_at_most_once"]),
-            guard: z.literal("workflow-step-attempt/v1"),
+            guard: z.enum([
+              "workflow-step-attempt/v1",
+              "publishing-delivery/v1",
+            ]),
             replay: z.enum(["provider_deduplicated", "never_launch"]),
           })
           .strict(),

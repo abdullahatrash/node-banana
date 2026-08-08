@@ -115,7 +115,7 @@ describe("Postgres Publishing Approval repository contract", () => {
 
   it("replays receipts before mutable state and creates each receipt once", () => {
     const create = source.slice(source.indexOf("async createRequest("), source.indexOf("\n  getRequest("));
-    expect(create.indexOf("lockReceipt(tx, input.receipt)")).toBeLessThan(create.indexOf("lockCurrentRevision(tx, request)"));
+    expect(create.indexOf("lockReceipt(tx, input.receipt)")).toBeLessThan(create.indexOf("lockCurrentPublishingApprovalRevision(tx, request)"));
     expect(create.match(/tx\.insert\(runtimePublishingApprovalMutationReceipts\)/g)).toHaveLength(1);
     expect(create).toContain("safeIds(request.targetIds, 50)");
     expect(create).toContain("safeArtifactIds(request.artifactIds, true)");
@@ -131,14 +131,14 @@ describe("Postgres Publishing Approval repository contract", () => {
 
   it("revalidates Channel, Artifact, schedule, and policy evidence after later locks", () => {
     const create = source.slice(source.indexOf("async createRequest("), source.indexOf("\n  getRequest("));
-    expect(create.match(/verifyCurrentEvidence\(/g)).toHaveLength(2);
+    expect(create.match(/verifyCurrentPublishingPlanEvidence\(/g)).toHaveLength(2);
     expect(create.indexOf("verifyRequestAuthorization(tx, request, finalNow)")).toBeLessThan(
-      create.lastIndexOf("verifyCurrentEvidence("),
+      create.lastIndexOf("verifyCurrentPublishingPlanEvidence("),
     );
     const decide = source.slice(source.indexOf("async decide("), source.indexOf("\n  async consume("));
-    expect(decide.match(/verifyCurrentEvidence\(/g)).toHaveLength(2);
+    expect(decide.match(/verifyCurrentPublishingPlanEvidence\(/g)).toHaveLength(2);
     expect(decide.indexOf("lockCurrentAuthority(tx, input.authoritySession, request, evidenceNow)")).toBeLessThan(
-      decide.lastIndexOf("verifyCurrentEvidence("),
+      decide.lastIndexOf("verifyCurrentPublishingPlanEvidence("),
     );
     expect(source).toContain("channel.tokenExpiresAt <= finalNow");
     expect(source).toContain("new Date(target.timing.publishAt) <= finalNow");

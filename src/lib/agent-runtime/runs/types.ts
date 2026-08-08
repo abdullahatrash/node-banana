@@ -125,7 +125,7 @@ export type WorkflowRunStartSnapshot =
 
 export interface WorkflowProviderLaunchSafety {
   mode: "native_effect_key" | "durable_at_most_once";
-  guard: "workflow-step-attempt/v1";
+  guard: "workflow-step-attempt/v1" | "publishing-delivery/v1";
   replay: "provider_deduplicated" | "never_launch";
 }
 

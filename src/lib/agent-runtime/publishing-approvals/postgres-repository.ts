@@ -391,7 +391,7 @@ async function lockReceipt(
     : { kind: "conflict" };
 }
 
-async function selectRequest(
+export async function selectPublishingApprovalRequest(
   db: Db | Tx,
   input: { workspaceId: string; approvalRequestId: string; requestingPrincipalId?: string },
 ): Promise<PublishingApprovalRequestRecord | null> {
@@ -433,7 +433,7 @@ function validationSessionMatches(
     session.issuedAt <= session.expiresAt;
 }
 
-async function lockCurrentRevision(
+export async function lockCurrentPublishingApprovalRevision(
   tx: Tx,
   request: PublishingApprovalRequestRecord,
 ): Promise<PublishingPlanRevisionRecord | null> {
@@ -472,12 +472,23 @@ async function lockCurrentRevision(
     : null;
 }
 
-async function verifyCurrentEvidence(
+export async function verifyCurrentPublishingPlanEvidence(
   tx: Tx,
   revision: PublishingPlanRevisionRecord,
   validationExpiresAt: Date,
+  targetIds?: string[],
 ): Promise<Date | null> {
   const evidence = revision.validationEvidence;
+  const selectedTargetIds = targetIds ? new Set(targetIds) : null;
+  const targets = selectedTargetIds
+    ? revision.definition.targets.filter((target) => selectedTargetIds.has(target.targetId))
+    : revision.definition.targets;
+  if (selectedTargetIds && targets.length !== selectedTargetIds.size) return null;
+  const artifactIds = [...new Set(targets.flatMap((target) => [
+    target.contentArtifactId,
+    ...target.mediaArtifactIds,
+  ]))].sort();
+  const channelIds = [...new Set(targets.map((target) => target.channelId))].sort();
   const initialClock = await tx.select({ databaseNow: sql<unknown>`statement_timestamp()` })
     .from(runtimePublishingPlanRevisions)
     .where(and(eq(runtimePublishingPlanRevisions.workspaceId, revision.workspaceId), eq(runtimePublishingPlanRevisions.id, revision.id)))
@@ -491,16 +502,16 @@ async function verifyCurrentEvidence(
       eq(artifactContents.digest, artifacts.contentDigest),
     )).where(and(
       eq(artifacts.workspaceId, revision.workspaceId),
-      inArray(artifacts.id, [...revision.definition.artifactIds].sort()),
+      inArray(artifacts.id, artifactIds),
     )).orderBy(asc(artifacts.id)).for("share");
-  if (artifactRows.length !== revision.definition.artifactIds.length) return null;
+  if (artifactRows.length !== artifactIds.length) return null;
   const artifactById = new Map(artifactRows.map((row) => [row.artifact.id, row] as const));
 
   const channels = await tx.select().from(socialAccounts).where(and(
-    eq(socialAccounts.workspaceId, revision.workspaceId),
-    inArray(socialAccounts.id, [...revision.definition.channelIds].sort()),
-  )).orderBy(asc(socialAccounts.id)).for("share");
-  if (channels.length !== revision.definition.channelIds.length) return null;
+      eq(socialAccounts.workspaceId, revision.workspaceId),
+      inArray(socialAccounts.id, channelIds),
+    )).orderBy(asc(socialAccounts.id)).for("share");
+  if (channels.length !== channelIds.length) return null;
   const channelById = new Map(channels.map((row) => [row.id, row] as const));
 
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`runtime-budget-spend:${revision.workspaceId}`}, 0))`);
@@ -521,8 +532,9 @@ async function verifyCurrentEvidence(
   ) return null;
 
   const capabilityVersion = publishingPlanLinkedInCapabilityVersion();
-  for (const [targetIndex, target] of revision.definition.targets.entries()) {
-    const targetEvidence = evidence.targets[targetIndex];
+  for (const target of targets) {
+    const targetEvidence = evidence.targets.find((candidate) =>
+      candidate.targetId === target.targetId);
     const account = channelById.get(target.channelId);
     const authorKind = account ? readLinkedInAuthorKind(account.additionalSettings) : null;
     if (
@@ -585,7 +597,7 @@ async function verifyCurrentEvidence(
       channel.tokenExpiresAt <= finalNow &&
       !channel.refreshTokenEncrypted,
     ) &&
-    !revision.definition.targets.some((target) =>
+    !targets.some((target) =>
       target.timing.kind === "scheduled" &&
       new Date(target.timing.publishAt) <= finalNow,
     )
@@ -754,20 +766,20 @@ export class DrizzlePublishingApprovalRepository
         const receipt = await lockReceipt(tx, input.receipt);
         if (receipt.kind === "conflict") return { kind: "conflict" as const };
         if (receipt.kind === "replayed") {
-          const replay = await selectRequest(tx, { workspaceId: request.workspaceId, approvalRequestId: receipt.approvalRequestId, requestingPrincipalId: request.requestingPrincipalId });
+          const replay = await selectPublishingApprovalRequest(tx, { workspaceId: request.workspaceId, approvalRequestId: receipt.approvalRequestId, requestingPrincipalId: request.requestingPrincipalId });
           return replay ? { kind: "replayed" as const, request: replay } : { kind: "unavailable" as const };
         }
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${approvalLock(request.workspaceId, request.id)}, 0))`);
-        const revision = await lockCurrentRevision(tx, request);
+        const revision = await lockCurrentPublishingApprovalRevision(tx, request);
         if (!revision) return { kind: "stale_revision" as const };
-        const finalNow = await verifyCurrentEvidence(tx, revision, input.validationSession.expiresAt);
+        const finalNow = await verifyCurrentPublishingPlanEvidence(tx, revision, input.validationSession.expiresAt);
         if (!finalNow || finalNow >= request.decisionPolicy.expiresAt ||
           finalNow < input.validationSession.issuedAt) return { kind: "stale_validation" as const };
         if (!await verifyRequestAuthorization(tx, request, finalNow)) return { kind: "unavailable" as const };
         // Authorization rows are locked after the initial evidence check and may
         // have waited. Re-run concrete evidence checks so Channel tokens and
         // scheduled times cannot become stale while those locks are acquired.
-        const authorizationNow = await verifyCurrentEvidence(
+        const authorizationNow = await verifyCurrentPublishingPlanEvidence(
           tx,
           revision,
           input.validationSession.expiresAt,
@@ -813,7 +825,7 @@ export class DrizzlePublishingApprovalRepository
   }
 
   getRequest(input: Parameters<PublishingApprovalRepository["getRequest"]>[0]) {
-    return selectRequest(this.database(), input);
+    return selectPublishingApprovalRequest(this.database(), input);
   }
 
   async listRequests(input: Parameters<PublishingApprovalRepository["listRequests"]>[0]) {
@@ -868,11 +880,11 @@ export class DrizzlePublishingApprovalRepository
         const receipt = await lockReceipt(tx, input.receipt);
         if (receipt.kind === "conflict") return { kind: "conflict" as const };
         if (receipt.kind === "replayed") {
-          const replay = await selectRequest(tx, { workspaceId: input.decision.workspaceId, approvalRequestId: receipt.approvalRequestId });
+          const replay = await selectPublishingApprovalRequest(tx, { workspaceId: input.decision.workspaceId, approvalRequestId: receipt.approvalRequestId });
           return replay ? { kind: "replayed" as const, request: replay } : { kind: "unavailable" as const };
         }
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${approvalLock(input.decision.workspaceId, input.decision.approvalRequestId)}, 0))`);
-        const request = await selectRequest(tx, { workspaceId: input.decision.workspaceId, approvalRequestId: input.decision.approvalRequestId });
+        const request = await selectPublishingApprovalRequest(tx, { workspaceId: input.decision.workspaceId, approvalRequestId: input.decision.approvalRequestId });
         if (!request) return { kind: "unavailable" as const };
         if (publishingApprovalInspectionDigest(request) !== input.expectedInspectionDigest) return { kind: "stale_view" as const };
         if (request.decision) return { kind: "final" as const };
@@ -882,14 +894,14 @@ export class DrizzlePublishingApprovalRepository
         const databaseNow = initialClock[0] ? postgresDate(initialClock[0].databaseNow) : null;
         if (!databaseNow || databaseNow >= request.decisionPolicy.expiresAt) return { kind: "expired" as const };
         if (!validationSessionMatches(request, input.validationSession)) return { kind: "stale_validation" as const };
-        const revision = await lockCurrentRevision(tx, request);
+        const revision = await lockCurrentPublishingApprovalRevision(tx, request);
         if (!revision) return { kind: "stale_revision" as const };
-        const evidenceNow = await verifyCurrentEvidence(tx, revision, input.validationSession.expiresAt);
+        const evidenceNow = await verifyCurrentPublishingPlanEvidence(tx, revision, input.validationSession.expiresAt);
         if (!evidenceNow || evidenceNow < input.validationSession.issuedAt) return { kind: "stale_validation" as const };
         if (!await lockCurrentAuthority(tx, input.authoritySession, request, evidenceNow)) return { kind: "authority_stale" as const };
         // Authority locks can wait after the first evidence read. Revalidate all
         // concrete evidence with a fresh DB clock before persisting the decision.
-        const finalNow = await verifyCurrentEvidence(
+        const finalNow = await verifyCurrentPublishingPlanEvidence(
           tx,
           revision,
           input.validationSession.expiresAt,
@@ -926,7 +938,7 @@ export class DrizzlePublishingApprovalRepository
             eq(runtimePublishingApprovalConsumptions.decisionId, consumption.decisionId),
           )).limit(1).for("update");
         if (prior[0]) return "already_consumed" as const;
-        const request = await selectRequest(tx, { workspaceId: consumption.workspaceId, approvalRequestId: consumption.approvalRequestId });
+        const request = await selectPublishingApprovalRequest(tx, { workspaceId: consumption.workspaceId, approvalRequestId: consumption.approvalRequestId });
         if (!request?.decision || request.decision.decision !== "approved" ||
           request.decision.id !== consumption.decisionId || request.consumption ||
           consumption.capability !== "publishing_plan_revisions.release@1" ||
@@ -1027,7 +1039,7 @@ export class DrizzlePublishingApprovalRevisionRepository
         if (!sameOrder(orderedTargetIds, input.targetIds)) return null;
         const binding = publishingApprovalValidationBinding({ revision, targetIds: orderedTargetIds });
         const expiresAt = new Date(binding.expiresAt);
-        const issuedAt = await verifyCurrentEvidence(tx, revision, expiresAt);
+        const issuedAt = await verifyCurrentPublishingPlanEvidence(tx, revision, expiresAt);
         if (!issuedAt || issuedAt < input.evaluatedAt || issuedAt >= expiresAt) return null;
         const evidenceDigest = canonicalDigest({
           schema: "publishing-approval-validation-session/v1",

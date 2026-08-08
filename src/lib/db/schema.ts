@@ -68,6 +68,11 @@ import type {
   NormalizedPublishingPlanDefinition,
   PublishingPlanSuccessfulValidationEvidence,
 } from "@/lib/agent-runtime/publishing-plans/types";
+import type {
+  PublishingDeliveryAcceptedRef,
+  PublishingDeliveryEvent,
+  PublishingDeliveryTargetSnapshot,
+} from "@/lib/agent-runtime/publishing-deliveries/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -2747,6 +2752,14 @@ export const runtimePublishingApprovalConsumptions = pgTable(
     decisionUnique: uniqueIndex(
       "runtime_publishing_approval_consumptions_decision_unique",
     ).on(table.workspaceId, table.decisionId),
+    releaseIdentityUnique: uniqueIndex(
+      "runtime_publishing_approval_consumptions_release_identity_unique",
+    ).on(
+      table.workspaceId,
+      table.approvalRequestId,
+      table.decisionId,
+      table.id,
+    ),
     requestFk: foreignKey({
       columns: [table.workspaceId, table.approvalRequestId],
       foreignColumns: [
@@ -2830,6 +2843,621 @@ export const runtimePublishingApprovalConsumptions = pgTable(
         and ${table.authorizationExpiresAt} > ${table.authorizationIssuedAt}
         and ${table.consumedAt} >= ${table.authorizationIssuedAt}
         and ${table.consumedAt} < ${table.authorizationExpiresAt}`,
+    ),
+  }),
+);
+
+/**
+ * One immutable release consumes one exact approved decision. The accepted
+ * Delivery projection is retained here so an idempotent replay never derives
+ * acceptance from mutable Delivery state.
+ */
+export const runtimePublishingDeliveryReleases = pgTable(
+  "runtime_publishing_delivery_releases",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    planId: text("plan_id").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    planRevision: integer("plan_revision").notNull(),
+    planRevisionDigest: text("plan_revision_digest").notNull(),
+    approvalRequestId: text("approval_request_id").notNull(),
+    approvalDecisionId: text("approval_decision_id").notNull(),
+    approvalConsumptionId: text("approval_consumption_id").notNull(),
+    consumingPrincipalId: text("consuming_principal_id").notNull(),
+    consumingKeyId: text("consuming_key_id").notNull(),
+    capability: text("capability").notNull(),
+    authorizationContractDigest: text(
+      "authorization_contract_digest",
+    ).notNull(),
+    authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
+    authorizedResources: jsonb("authorized_resources")
+      .$type<{ channelIds: string[]; artifactIds: string[] }>()
+      .notNull(),
+    authorizationIssuedAt: timestamp("authorization_issued_at", {
+      withTimezone: true,
+    }).notNull(),
+    authorizationExpiresAt: timestamp("authorization_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    validationSessionId: text("validation_session_id").notNull(),
+    validationEvidenceDigest: text("validation_evidence_digest").notNull(),
+    validationCurrentStateDigest: text(
+      "validation_current_state_digest",
+    ).notNull(),
+    acceptedDeliveries: jsonb("accepted_deliveries")
+      .$type<PublishingDeliveryAcceptedRef[]>()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "runtime_publishing_delivery_releases_pk",
+    }),
+    decisionUnique: uniqueIndex(
+      "runtime_publishing_delivery_releases_decision_unique",
+    ).on(table.workspaceId, table.approvalDecisionId),
+    exactIdentityUnique: uniqueIndex(
+      "runtime_publishing_delivery_releases_exact_identity_unique",
+    ).on(
+      table.workspaceId,
+      table.id,
+      table.planId,
+      table.planRevisionId,
+      table.planRevision,
+      table.planRevisionDigest,
+      table.validationEvidenceDigest,
+      table.approvalRequestId,
+      table.approvalDecisionId,
+    ),
+    revisionFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.planId,
+        table.planRevisionId,
+        table.planRevision,
+        table.planRevisionDigest,
+        table.validationEvidenceDigest,
+      ],
+      foreignColumns: [
+        runtimePublishingPlanRevisions.workspaceId,
+        runtimePublishingPlanRevisions.planId,
+        runtimePublishingPlanRevisions.id,
+        runtimePublishingPlanRevisions.revision,
+        runtimePublishingPlanRevisions.definitionDigest,
+        runtimePublishingPlanRevisions.validationEvidenceDigest,
+      ],
+      name: "runtime_publishing_delivery_releases_revision_fk",
+    }).onDelete("restrict"),
+    approvalFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.approvalRequestId,
+        table.approvalDecisionId,
+      ],
+      foreignColumns: [
+        runtimePublishingApprovalDecisions.workspaceId,
+        runtimePublishingApprovalDecisions.requestId,
+        runtimePublishingApprovalDecisions.id,
+      ],
+      name: "runtime_publishing_delivery_releases_approval_fk",
+    }).onDelete("restrict"),
+    consumptionFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.approvalRequestId,
+        table.approvalDecisionId,
+        table.approvalConsumptionId,
+      ],
+      foreignColumns: [
+        runtimePublishingApprovalConsumptions.workspaceId,
+        runtimePublishingApprovalConsumptions.approvalRequestId,
+        runtimePublishingApprovalConsumptions.decisionId,
+        runtimePublishingApprovalConsumptions.id,
+      ],
+      name: "runtime_publishing_delivery_releases_consumption_fk",
+    }).onDelete("restrict"),
+    principalFk: foreignKey({
+      columns: [table.workspaceId, table.consumingPrincipalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_publishing_delivery_releases_principal_fk",
+    }).onDelete("restrict"),
+    keyFk: foreignKey({
+      columns: [table.consumingPrincipalId, table.consumingKeyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "runtime_publishing_delivery_releases_key_fk",
+    }).onDelete("restrict"),
+    authorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.consumingPrincipalId,
+        table.consumingKeyId,
+        table.authorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name: "runtime_publishing_delivery_releases_authorization_evidence_fk",
+    }).onDelete("restrict"),
+    principalCreatedIdx: index(
+      "runtime_publishing_delivery_releases_principal_created_idx",
+    ).on(table.workspaceId, table.consumingPrincipalId, table.createdAt, table.id),
+    revisionIdx: index(
+      "runtime_publishing_delivery_releases_revision_idx",
+    ).on(table.workspaceId, table.planRevisionId, table.createdAt, table.id),
+    consumptionIdx: index(
+      "runtime_publishing_delivery_releases_consumption_idx",
+    ).on(
+      table.workspaceId,
+      table.approvalRequestId,
+      table.approvalDecisionId,
+      table.approvalConsumptionId,
+    ),
+    identityCheck: check(
+      "runtime_publishing_delivery_releases_identity_check",
+      sql`${table.id} ~ '^pdr_[A-Za-z0-9_-]+$'
+        and length(${table.id}) between 1 and 200
+        and ${table.planRevision} > 0`,
+    ),
+    authorizationCheck: check(
+      "runtime_publishing_delivery_releases_authorization_check",
+      sql`${table.capability} = 'publishing_plan_revisions.release@1'
+        and ${table.authorizationContractDigest} = 'sha256:487fcf4d881ef927ada89e11c1851b402bf414c1083c8d6618644d503aa1e80e'
+        and length(${table.authorizationEvidenceRef}) between 1 and 200
+        and jsonb_typeof(${table.authorizedResources}) = 'object'
+        and ${table.authorizedResources} ?& array['channelIds','artifactIds']
+        and (${table.authorizedResources} - array['channelIds','artifactIds']) = '{}'::jsonb
+        and jsonb_typeof(${table.authorizedResources}->'channelIds') = 'array'
+        and jsonb_array_length(${table.authorizedResources}->'channelIds') between 1 and 50
+        and jsonb_typeof(${table.authorizedResources}->'artifactIds') = 'array'
+        and jsonb_array_length(${table.authorizedResources}->'artifactIds') between 1 and 200
+        and ${table.authorizationExpiresAt} > ${table.authorizationIssuedAt}
+        and ${table.createdAt} >= ${table.authorizationIssuedAt}
+        and ${table.createdAt} < ${table.authorizationExpiresAt}`,
+    ),
+    validationCheck: check(
+      "runtime_publishing_delivery_releases_validation_check",
+      sql`${table.planRevisionDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationCurrentStateDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationSessionId} ~ '^pavs_[A-Za-z0-9_-]+$'
+        and jsonb_typeof(${table.acceptedDeliveries}) = 'array'
+        and jsonb_array_length(${table.acceptedDeliveries}) between 1 and 50
+        and octet_length(${table.acceptedDeliveries}::text) <= 262144`,
+    ),
+  }),
+);
+
+/** Scoped release replay authority. The immutable Release owns the result. */
+export const runtimePublishingDeliveryReleaseReceipts = pgTable(
+  "runtime_publishing_delivery_release_receipts",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    principalId: text("principal_id").notNull(),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    releaseId: text("release_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.capability,
+        table.idempotencyKey,
+      ],
+      name: "runtime_publishing_delivery_release_receipts_pk",
+    }),
+    releaseFk: foreignKey({
+      columns: [table.workspaceId, table.releaseId],
+      foreignColumns: [
+        runtimePublishingDeliveryReleases.workspaceId,
+        runtimePublishingDeliveryReleases.id,
+      ],
+      name: "runtime_publishing_delivery_release_receipts_release_fk",
+    }).onDelete("restrict"),
+    principalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_publishing_delivery_release_receipts_principal_fk",
+    }).onDelete("restrict"),
+    releaseUnique: uniqueIndex(
+      "runtime_publishing_delivery_release_receipts_release_unique",
+    ).on(table.workspaceId, table.releaseId),
+    createdIdx: index(
+      "runtime_publishing_delivery_release_receipts_created_idx",
+    ).on(table.workspaceId, table.createdAt, table.releaseId),
+    contractCheck: check(
+      "runtime_publishing_delivery_release_receipts_contract_check",
+      sql`${table.capability} = 'publishing_plan_revisions.release@1'
+        and length(${table.idempotencyKey}) between 8 and 200
+        and ${table.idempotencyKey} ~ '^[!-~]+$'
+        and ${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+  }),
+);
+
+/** Stable per-target delivery with immutable intent identity and mutable state. */
+export const runtimePublishingDeliveries = pgTable(
+  "runtime_publishing_deliveries",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    releaseId: text("release_id").notNull(),
+    planId: text("plan_id").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    planRevision: integer("plan_revision").notNull(),
+    planRevisionDigest: text("plan_revision_digest").notNull(),
+    validationEvidenceDigest: text("validation_evidence_digest").notNull(),
+    approvalRequestId: text("approval_request_id").notNull(),
+    approvalDecisionId: text("approval_decision_id").notNull(),
+    targetOrdinal: integer("target_ordinal").notNull(),
+    targetId: text("target_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    artifactIds: jsonb("artifact_ids").$type<string[]>().notNull(),
+    targetSnapshot: jsonb("target_snapshot")
+      .$type<PublishingDeliveryTargetSnapshot>()
+      .notNull(),
+    targetSnapshotDigest: text("target_snapshot_digest").notNull(),
+    publishAt: timestamp("publish_at", { withTimezone: true }).notNull(),
+    desiredState: text("desired_state").notNull(),
+    state: text("state").notNull(),
+    effectKey: text("effect_key").notNull(),
+    intentDigest: text("intent_digest"),
+    providerOperationRef: text("provider_operation_ref"),
+    latestEffectEvidenceDigest: text("latest_effect_evidence_digest"),
+    failureCode: text("failure_code"),
+    nextEventSequence: integer("next_event_sequence").notNull(),
+    nextOutboxGeneration: integer("next_outbox_generation").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    dispatchStartedAt: timestamp("dispatch_started_at", {
+      withTimezone: true,
+    }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "runtime_publishing_deliveries_pk",
+    }),
+    releaseTargetUnique: uniqueIndex(
+      "runtime_publishing_deliveries_release_target_unique",
+    ).on(table.workspaceId, table.releaseId, table.targetId),
+    releaseOrdinalUnique: uniqueIndex(
+      "runtime_publishing_deliveries_release_ordinal_unique",
+    ).on(table.workspaceId, table.releaseId, table.targetOrdinal),
+    effectKeyUnique: uniqueIndex(
+      "runtime_publishing_deliveries_effect_key_unique",
+    ).on(table.workspaceId, table.effectKey),
+    releaseFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.releaseId,
+        table.planId,
+        table.planRevisionId,
+        table.planRevision,
+        table.planRevisionDigest,
+        table.validationEvidenceDigest,
+        table.approvalRequestId,
+        table.approvalDecisionId,
+      ],
+      foreignColumns: [
+        runtimePublishingDeliveryReleases.workspaceId,
+        runtimePublishingDeliveryReleases.id,
+        runtimePublishingDeliveryReleases.planId,
+        runtimePublishingDeliveryReleases.planRevisionId,
+        runtimePublishingDeliveryReleases.planRevision,
+        runtimePublishingDeliveryReleases.planRevisionDigest,
+        runtimePublishingDeliveryReleases.validationEvidenceDigest,
+        runtimePublishingDeliveryReleases.approvalRequestId,
+        runtimePublishingDeliveryReleases.approvalDecisionId,
+      ],
+      name: "runtime_publishing_deliveries_release_fk",
+    }).onDelete("restrict"),
+    releaseIdx: index("runtime_publishing_deliveries_release_idx").on(
+      table.workspaceId,
+      table.releaseId,
+      table.acceptedAt,
+      table.id,
+    ),
+    workspaceAcceptedIdx: index(
+      "runtime_publishing_deliveries_workspace_accepted_idx",
+    ).on(table.workspaceId, table.acceptedAt, table.id),
+    revisionAcceptedIdx: index(
+      "runtime_publishing_deliveries_revision_accepted_idx",
+    ).on(table.workspaceId, table.planRevisionId, table.acceptedAt, table.id),
+    stateDueIdx: index("runtime_publishing_deliveries_state_due_idx").on(
+      table.state,
+      table.publishAt,
+      table.updatedAt,
+      table.id,
+    ),
+    channelIdx: index("runtime_publishing_deliveries_channel_idx").on(
+      table.workspaceId,
+      table.channelId,
+      table.acceptedAt,
+      table.id,
+    ),
+    identityCheck: check(
+      "runtime_publishing_deliveries_identity_check",
+      sql`${table.id} ~ '^pdl_[A-Za-z0-9_-]+$'
+        and length(${table.id}) between 1 and 200
+        and length(${table.targetId}) between 1 and 200
+        and length(${table.channelId}) between 1 and 200
+        and ${table.targetOrdinal} >= 0
+        and ${table.planRevision} > 0
+        and ${table.planRevisionDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.targetSnapshotDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and length(${table.effectKey}) between 1 and 500
+        and ${table.effectKey} = btrim(${table.effectKey})
+        and ${table.effectKey} !~ '[[:cntrl:]]'`,
+    ),
+    snapshotCheck: check(
+      "runtime_publishing_deliveries_snapshot_check",
+      sql`jsonb_typeof(${table.artifactIds}) = 'array'
+        and jsonb_array_length(${table.artifactIds}) between 1 and 51
+        and jsonb_typeof(${table.targetSnapshot}) = 'object'
+        and ${table.targetSnapshot}->>'schema' = 'publishing-delivery-target-snapshot/v1'
+        and ${table.targetSnapshot}->'target'->>'targetId' = ${table.targetId}
+        and ${table.targetSnapshot}->'target'->>'channelId' = ${table.channelId}
+        and ${table.targetSnapshot}->>'targetDigest' ~ '^sha256:[a-f0-9]{64}$'
+        and octet_length(${table.targetSnapshot}::text) <= 262144`,
+    ),
+    stateCheck: check(
+      "runtime_publishing_deliveries_state_check",
+      sql`${table.desiredState} = 'publish'
+        and ${table.state} in (
+          'scheduled','dispatching','confirmation_pending',
+          'succeeded','failed','outcome_unknown'
+        )
+        and ${table.nextEventSequence} >= 3
+        and ${table.nextOutboxGeneration} >= 2`,
+    ),
+    evidenceCheck: check(
+      "runtime_publishing_deliveries_evidence_check",
+      sql`(${table.intentDigest} is null or ${table.intentDigest} ~ '^sha256:[a-f0-9]{64}$')
+        and (${table.latestEffectEvidenceDigest} is null or ${table.latestEffectEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$')
+        and (${table.providerOperationRef} is null or (
+          length(${table.providerOperationRef}) between 1 and 500
+          and ${table.providerOperationRef} = btrim(${table.providerOperationRef})
+          and ${table.providerOperationRef} !~ '[[:cntrl:]]'
+        ))
+        and (${table.failureCode} is null or ${table.failureCode} ~ '^[A-Z][A-Z0-9_]{0,79}$')`,
+    ),
+    lifecycleCheck: check(
+      "runtime_publishing_deliveries_lifecycle_check",
+      sql`(${table.state} = 'scheduled'
+          and ${table.intentDigest} is null
+          and ${table.providerOperationRef} is null
+          and ${table.latestEffectEvidenceDigest} is null
+          and ${table.failureCode} is null
+          and ${table.dispatchStartedAt} is null
+          and ${table.completedAt} is null)
+        or (${table.state} = 'scheduled'
+          and ${table.intentDigest} is not null
+          and ${table.providerOperationRef} is null
+          and ${table.latestEffectEvidenceDigest} is not null
+          and ${table.failureCode} is not null
+          and ${table.dispatchStartedAt} is not null
+          and ${table.completedAt} is null)
+        or (${table.state} = 'dispatching'
+          and ${table.intentDigest} is not null
+          and ${table.latestEffectEvidenceDigest} is null
+          and ${table.failureCode} is null
+          and ${table.dispatchStartedAt} is not null
+          and ${table.completedAt} is null)
+        or (${table.state} = 'confirmation_pending'
+          and ${table.intentDigest} is not null
+          and ${table.providerOperationRef} is not null
+          and ${table.latestEffectEvidenceDigest} is not null
+          and ${table.failureCode} is null
+          and ${table.dispatchStartedAt} is not null
+          and ${table.completedAt} is null)
+        or (${table.state} = 'succeeded'
+          and ${table.intentDigest} is not null
+          and ${table.providerOperationRef} is not null
+          and ${table.latestEffectEvidenceDigest} is not null
+          and ${table.failureCode} is null
+          and ${table.dispatchStartedAt} is not null
+          and ${table.completedAt} is not null)
+        or (${table.state} = 'failed'
+          and ${table.intentDigest} is not null
+          and ${table.latestEffectEvidenceDigest} is not null
+          and ${table.failureCode} is not null
+          and ${table.dispatchStartedAt} is not null
+          and ${table.completedAt} is not null)
+        or (${table.state} = 'failed'
+          and ${table.intentDigest} is null
+          and ${table.providerOperationRef} is null
+          and ${table.latestEffectEvidenceDigest} is not null
+          and ${table.failureCode} is not null
+          and ${table.dispatchStartedAt} is null
+          and ${table.completedAt} is not null)
+        or (${table.state} = 'outcome_unknown'
+          and ${table.intentDigest} is not null
+          and ${table.latestEffectEvidenceDigest} is not null
+          and ${table.failureCode} is not null
+          and ${table.dispatchStartedAt} is not null
+          and ${table.completedAt} is not null)`,
+    ),
+    timeCheck: check(
+      "runtime_publishing_deliveries_time_check",
+      sql`${table.scheduledAt} >= ${table.acceptedAt}
+        and ${table.updatedAt} >= ${table.acceptedAt}
+        and (${table.dispatchStartedAt} is null or ${table.dispatchStartedAt} >= ${table.acceptedAt})
+        and (${table.completedAt} is null or ${table.completedAt} >= ${table.dispatchStartedAt})`,
+    ),
+  }),
+);
+
+export const runtimePublishingDeliveryEvents = pgTable(
+  "runtime_publishing_delivery_events",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    deliveryId: text("delivery_id").notNull(),
+    sequence: integer("sequence").notNull(),
+    type: text("type").notNull(),
+    evidence: jsonb("evidence")
+      .$type<PublishingDeliveryEvent["evidence"]>()
+      .notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "runtime_publishing_delivery_events_pk",
+    }),
+    deliverySequenceUnique: uniqueIndex(
+      "runtime_publishing_delivery_events_delivery_sequence_unique",
+    ).on(table.workspaceId, table.deliveryId, table.sequence),
+    deliveryFk: foreignKey({
+      columns: [table.workspaceId, table.deliveryId],
+      foreignColumns: [
+        runtimePublishingDeliveries.workspaceId,
+        runtimePublishingDeliveries.id,
+      ],
+      name: "runtime_publishing_delivery_events_delivery_fk",
+    }).onDelete("restrict"),
+    deliverySequenceIdx: index(
+      "runtime_publishing_delivery_events_delivery_sequence_idx",
+    ).on(table.workspaceId, table.deliveryId, table.sequence),
+    sequenceCheck: check(
+      "runtime_publishing_delivery_events_sequence_check",
+      sql`${table.sequence} > 0`,
+    ),
+    typeCheck: check(
+      "runtime_publishing_delivery_events_type_check",
+      sql`${table.type} in (
+        'delivery.accepted','delivery.scheduled','effect.not_created','effect.prepared',
+        'publication.confirmation_pending','publication.retry_scheduled',
+        'publication.succeeded','publication.failed',
+        'publication.outcome_unknown'
+      )`,
+    ),
+    evidenceCheck: check(
+      "runtime_publishing_delivery_events_evidence_check",
+      sql`jsonb_typeof(${table.evidence}) = 'object'
+        and octet_length(${table.evidence}::text) <= 65536`,
+    ),
+  }),
+);
+
+export const runtimePublishingDeliveryOutboxIntents = pgTable(
+  "runtime_publishing_delivery_outbox_intents",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    deliveryId: text("delivery_id").notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    generation: integer("generation").notNull(),
+    state: text("state").notNull(),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
+    deliveryToken: text("delivery_token"),
+    deliveryAttempts: integer("delivery_attempts").notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  },
+  (table) => ({
+    deliveryGenerationUnique: uniqueIndex(
+      "runtime_publishing_delivery_outbox_delivery_generation_unique",
+    ).on(table.workspaceId, table.deliveryId, table.generation),
+    dedupeKeyUnique: uniqueIndex(
+      "runtime_publishing_delivery_outbox_dedupe_key_unique",
+    ).on(table.dedupeKey),
+    deliveryFk: foreignKey({
+      columns: [table.workspaceId, table.deliveryId],
+      foreignColumns: [
+        runtimePublishingDeliveries.workspaceId,
+        runtimePublishingDeliveries.id,
+      ],
+      name: "runtime_publishing_delivery_outbox_delivery_fk",
+    }).onDelete("restrict"),
+    claimIdx: index("runtime_publishing_delivery_outbox_claim_idx").on(
+      table.state,
+      table.availableAt,
+      table.deliveryId,
+      table.generation,
+      table.id,
+    ),
+    identityCheck: check(
+      "runtime_publishing_delivery_outbox_identity_check",
+      sql`length(${table.id}) between 1 and 200
+        and length(${table.dedupeKey}) between 1 and 500
+        and ${table.generation} > 0
+        and ${table.deliveryAttempts} >= 0`,
+    ),
+    stateCheck: check(
+      "runtime_publishing_delivery_outbox_state_check",
+      sql`${table.state} in ('pending','claimed','delivered')`,
+    ),
+    lifecycleCheck: check(
+      "runtime_publishing_delivery_outbox_lifecycle_check",
+      sql`(${table.state} = 'pending'
+          and ${table.deliveryToken} is null
+          and ${table.claimedAt} is null
+          and ${table.deliveredAt} is null)
+        or (${table.state} = 'claimed'
+          and ${table.deliveryToken} is not null
+          and ${table.claimedAt} is not null
+          and ${table.deliveredAt} is null)
+        or (${table.state} = 'delivered'
+          and ${table.deliveryToken} is null
+          and ${table.claimedAt} is not null
+          and ${table.deliveredAt} is not null)`,
+    ),
+  }),
+);
+
+export const runtimePublishingDeliveryExecutionLeases = pgTable(
+  "runtime_publishing_delivery_execution_leases",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    deliveryId: text("delivery_id").notNull(),
+    workerId: text("worker_id").notNull(),
+    leaseToken: text("lease_token").notNull(),
+    fence: bigint("fence", { mode: "bigint" }).notNull(),
+    acquiredAt: timestamp("acquired_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    renewedAt: timestamp("renewed_at", { withTimezone: true }).notNull(),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.deliveryId],
+      name: "runtime_publishing_delivery_execution_leases_pk",
+    }),
+    deliveryFk: foreignKey({
+      columns: [table.workspaceId, table.deliveryId],
+      foreignColumns: [
+        runtimePublishingDeliveries.workspaceId,
+        runtimePublishingDeliveries.id,
+      ],
+      name: "runtime_publishing_delivery_execution_leases_delivery_fk",
+    }).onDelete("restrict"),
+    expiryIdx: index(
+      "runtime_publishing_delivery_execution_leases_expiry_idx",
+    ).on(table.expiresAt, table.workspaceId, table.deliveryId),
+    identityCheck: check(
+      "runtime_publishing_delivery_execution_leases_identity_check",
+      sql`${table.fence} > 0
+        and length(${table.workerId}) between 1 and 200
+        and length(${table.leaseToken}) between 1 and 200`,
+    ),
+    timeCheck: check(
+      "runtime_publishing_delivery_execution_leases_time_check",
+      sql`${table.expiresAt} > ${table.acquiredAt}
+        and ${table.renewedAt} >= ${table.acquiredAt}
+        and (${table.releasedAt} is null or ${table.releasedAt} >= ${table.acquiredAt})`,
     ),
   }),
 );
