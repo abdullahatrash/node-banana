@@ -56,6 +56,11 @@ import { recordOperationalTrace } from "./observability/production";
 import { createObservabilityRegistrations } from "./observability/capabilities";
 import { getObservabilityService } from "./observability/production";
 import { getSupportBundleApplication } from "./observability/support-bundles-production";
+import { createPublishingPlanRegistrations } from "./publishing-plans/capabilities";
+import {
+  PRODUCTION_PUBLISHING_PLAN_CURSOR,
+  PRODUCTION_PUBLISHING_PLAN_SERVICE,
+} from "./publishing-plans/production";
 
 export const PRODUCTION_CAPABILITY_AUTHORIZER =
   new CompositeCapabilityAuthorizer(
@@ -86,6 +91,10 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
   ...createObservabilityRegistrations(
     getObservabilityService(),
     getSupportBundleApplication(),
+  ),
+  ...createPublishingPlanRegistrations(
+    PRODUCTION_PUBLISHING_PLAN_SERVICE,
+    PRODUCTION_PUBLISHING_PLAN_CURSOR,
   ),
 ]);
 

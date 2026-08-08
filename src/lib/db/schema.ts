@@ -64,6 +64,10 @@ import type {
 } from "@/lib/agent-runtime/observability/types";
 import type { SupportBundleBindIntent } from "@/lib/agent-runtime/observability/support-bundles";
 import type { ContractEvidenceVersionRecord } from "@/lib/agent-runtime/contract-evidence/types";
+import type {
+  NormalizedPublishingPlanDefinition,
+  PublishingPlanSuccessfulValidationEvidence,
+} from "@/lib/agent-runtime/publishing-plans/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -1753,6 +1757,396 @@ export const workflowRevisionMutationReceipts = pgTable(
     resourceIdCheck: check(
       "workflow_revision_mutation_receipts_resource_id_check",
       sql`length(${table.resourceId}) between 1 and 200 and ${table.resourceId} ~ '^[a-zA-Z0-9_-]+$'`,
+    ),
+  }),
+);
+
+/**
+ * Publishing Plan identities are mutable allocation heads. Their revisions
+ * retain the complete normalized target set and point-in-time validation
+ * evidence as one immutable record so historical inspection never depends on
+ * mutable Channel or Artifact rows.
+ */
+export const runtimePublishingPlans = pgTable(
+  "runtime_publishing_plans",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    currentRevision: integer("current_revision").default(0).notNull(),
+    createdByPrincipalId: text("created_by_principal_id").notNull(),
+    createdByKeyId: text("created_by_key_id").notNull(),
+    creationAuthorizationEvidenceRef: text(
+      "creation_authorization_evidence_ref",
+    ).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "runtime_publishing_plans_pk",
+    }),
+    workspaceCreatorFk: foreignKey({
+      columns: [table.workspaceId, table.createdByPrincipalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_publishing_plans_workspace_creator_fk",
+    }).onDelete("restrict"),
+    creatorKeyFk: foreignKey({
+      columns: [table.createdByPrincipalId, table.createdByKeyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "runtime_publishing_plans_creator_key_fk",
+    }).onDelete("restrict"),
+    creationAuthorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.createdByPrincipalId,
+        table.createdByKeyId,
+        table.creationAuthorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name: "runtime_publishing_plans_creation_authorization_evidence_fk",
+    }).onDelete("restrict"),
+    workspaceUpdatedIdx: index(
+      "runtime_publishing_plans_workspace_updated_idx",
+    ).on(
+      table.workspaceId.asc(),
+      table.updatedAt.desc(),
+      table.id.desc(),
+    ),
+    workspaceCreatorIdx: index(
+      "runtime_publishing_plans_workspace_creator_idx",
+    ).on(table.workspaceId, table.createdByPrincipalId),
+    creatorKeyIdx: index("runtime_publishing_plans_creator_key_idx").on(
+      table.createdByPrincipalId,
+      table.createdByKeyId,
+    ),
+    creationAuthorizationEvidenceIdx: index(
+      "runtime_publishing_plans_creation_authorization_evidence_idx",
+    ).on(
+      table.workspaceId,
+      table.createdByPrincipalId,
+      table.createdByKeyId,
+      table.creationAuthorizationEvidenceRef,
+    ),
+    revisionCheck: check(
+      "runtime_publishing_plans_current_revision_check",
+      sql`${table.currentRevision} >= 0`,
+    ),
+    identityCheck: check(
+      "runtime_publishing_plans_identity_check",
+      sql`length(${table.id}) between 1 and 200 and ${table.id} ~ '^[A-Za-z0-9_-]+$'`,
+    ),
+    evidenceCheck: check(
+      "runtime_publishing_plans_evidence_check",
+      sql`length(${table.createdByKeyId}) between 1 and 200
+        and length(${table.creationAuthorizationEvidenceRef}) between 1 and 200`,
+    ),
+  }),
+);
+
+export const runtimePublishingPlanRevisions = pgTable(
+  "runtime_publishing_plan_revisions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    planId: text("plan_id").notNull(),
+    revision: integer("revision").notNull(),
+    definitionDigest: text("definition_digest").notNull(),
+    definition: jsonb("definition")
+      .$type<NormalizedPublishingPlanDefinition>()
+      .notNull(),
+    validationEvidenceDigest: text("validation_evidence_digest").notNull(),
+    validationEvidence: jsonb("validation_evidence")
+      .$type<PublishingPlanSuccessfulValidationEvidence>()
+      .notNull(),
+    authorPrincipalId: text("author_principal_id").notNull(),
+    authorKeyId: text("author_key_id").notNull(),
+    creationAuthorizationEvidenceRef: text(
+      "creation_authorization_evidence_ref",
+    ).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "runtime_publishing_plan_revisions_pk",
+    }),
+    planRevisionUnique: uniqueIndex(
+      "runtime_publishing_plan_revisions_workspace_plan_revision_unique",
+    ).on(table.workspaceId, table.planId, table.revision),
+    workspacePlanIdUnique: uniqueIndex(
+      "runtime_publishing_plan_revisions_workspace_plan_id_unique",
+    ).on(table.workspaceId, table.planId, table.id),
+    workspacePlanFk: foreignKey({
+      columns: [table.workspaceId, table.planId],
+      foreignColumns: [runtimePublishingPlans.workspaceId, runtimePublishingPlans.id],
+      name: "runtime_publishing_plan_revisions_workspace_plan_fk",
+    }).onDelete("restrict"),
+    workspaceAuthorFk: foreignKey({
+      columns: [table.workspaceId, table.authorPrincipalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_publishing_plan_revisions_workspace_author_fk",
+    }).onDelete("restrict"),
+    authorKeyFk: foreignKey({
+      columns: [table.authorPrincipalId, table.authorKeyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "runtime_publishing_plan_revisions_author_key_fk",
+    }).onDelete("restrict"),
+    creationAuthorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.authorPrincipalId,
+        table.authorKeyId,
+        table.creationAuthorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name:
+        "runtime_publishing_plan_revisions_creation_authorization_evidence_fk",
+    }).onDelete("restrict"),
+    workspaceCreatedIdx: index(
+      "runtime_publishing_plan_revisions_workspace_created_idx",
+    ).on(
+      table.workspaceId.asc(),
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    workspacePlanCreatedIdx: index(
+      "runtime_publishing_plan_revisions_workspace_plan_created_idx",
+    ).on(
+      table.workspaceId.asc(),
+      table.planId.asc(),
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    workspaceAuthorIdx: index(
+      "runtime_publishing_plan_revisions_workspace_author_idx",
+    ).on(table.workspaceId, table.authorPrincipalId),
+    authorKeyIdx: index(
+      "runtime_publishing_plan_revisions_author_key_idx",
+    ).on(table.authorPrincipalId, table.authorKeyId),
+    creationAuthorizationEvidenceIdx: index(
+      "runtime_publishing_plan_revisions_creation_authorization_evidence_idx",
+    ).on(
+      table.workspaceId,
+      table.authorPrincipalId,
+      table.authorKeyId,
+      table.creationAuthorizationEvidenceRef,
+    ),
+    revisionCheck: check(
+      "runtime_publishing_plan_revisions_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+    identityCheck: check(
+      "runtime_publishing_plan_revisions_identity_check",
+      sql`length(${table.id}) between 1 and 200
+        and ${table.id} ~ '^[A-Za-z0-9_-]+$'
+        and length(${table.planId}) between 1 and 200
+        and ${table.planId} ~ '^[A-Za-z0-9_-]+$'`,
+    ),
+    digestCheck: check(
+      "runtime_publishing_plan_revisions_digest_check",
+      sql`${table.definitionDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+    definitionCheck: check(
+      "runtime_publishing_plan_revisions_definition_check",
+      sql`jsonb_typeof(${table.definition}) = 'object'
+        and ${table.definition} ?& array['schema','planId','channelIds','artifactIds','targets']
+        and (${table.definition} - array['schema','planId','channelIds','artifactIds','targets']) = '{}'::jsonb
+        and ${table.definition}->>'schema' = 'publishing-plan-revision-definition/v1'
+        and ${table.definition}->>'planId' = ${table.planId}
+        and jsonb_typeof(${table.definition}->'channelIds') = 'array'
+        and jsonb_array_length(${table.definition}->'channelIds') between 1 and 50
+        and jsonb_typeof(${table.definition}->'artifactIds') = 'array'
+        and jsonb_array_length(${table.definition}->'artifactIds') between 1 and 200
+        and jsonb_typeof(${table.definition}->'targets') = 'array'
+        and jsonb_array_length(${table.definition}->'targets') between 1 and 50
+        and octet_length(${table.definition}::text) <= 2097152`,
+    ),
+    validationEvidenceCheck: check(
+      "runtime_publishing_plan_revisions_validation_evidence_check",
+      sql`jsonb_typeof(${table.validationEvidence}) = 'object'
+        and ${table.validationEvidence} ?& array['schema','submittedDraftDigest','definitionDigest','currentStateDigest','evaluatedAt','context','runtimePolicy','targets','authorizesExecution']
+        and (${table.validationEvidence} - array['schema','submittedDraftDigest','definitionDigest','currentStateDigest','evaluatedAt','context','runtimePolicy','targets','authorizesExecution']) = '{}'::jsonb
+        and ${table.validationEvidence}->>'schema' = 'publishing-plan-validation-evidence/v1'
+        and ${table.validationEvidence}->>'submittedDraftDigest' ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationEvidence}->>'definitionDigest' = ${table.definitionDigest}
+        and ${table.validationEvidence}->>'currentStateDigest' ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationEvidence}->'authorizesExecution' = 'false'::jsonb
+        and jsonb_typeof(${table.validationEvidence}->'context') = 'object'
+        and (${table.validationEvidence}->'context') ?& array['contextId','contextDigest','issuedAt','expiresAt','capability','keyId','authorizationEvidenceRef','authorizationContractDigest','resources']
+        and ((${table.validationEvidence}->'context') - array['contextId','contextDigest','issuedAt','expiresAt','capability','keyId','authorizationEvidenceRef','authorizationContractDigest','resources']) = '{}'::jsonb
+        and ${table.validationEvidence}->'context'->>'contextDigest' ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationEvidence}->'context'->>'authorizationContractDigest' = 'sha256:542668629b3974c08f2262f4a23c6a8ca495b30361129d2e1c3677934d5a8378'
+        and ${table.validationEvidence}->'context'->>'capability' = 'publishing_plan_revisions.create@1'
+        and ${table.validationEvidence}->'context'->>'keyId' = ${table.authorKeyId}
+        and ${table.validationEvidence}->'context'->>'authorizationEvidenceRef' = ${table.creationAuthorizationEvidenceRef}
+        and jsonb_typeof(${table.validationEvidence}->'context'->'resources') = 'object'
+        and (${table.validationEvidence}->'context'->'resources') ?& array['channelIds','artifactIds']
+        and ((${table.validationEvidence}->'context'->'resources') - array['channelIds','artifactIds']) = '{}'::jsonb
+        and jsonb_typeof(${table.validationEvidence}->'context'->'resources'->'channelIds') = 'array'
+        and jsonb_typeof(${table.validationEvidence}->'context'->'resources'->'artifactIds') = 'array'
+        and (${table.validationEvidence}->'context'->>'expiresAt')::timestamptz > (${table.validationEvidence}->'context'->>'issuedAt')::timestamptz
+        and (${table.validationEvidence}->>'evaluatedAt')::timestamptz >= (${table.validationEvidence}->'context'->>'issuedAt')::timestamptz
+        and (${table.validationEvidence}->>'evaluatedAt')::timestamptz < (${table.validationEvidence}->'context'->>'expiresAt')::timestamptz
+        and jsonb_typeof(${table.validationEvidence}->'runtimePolicy') = 'object'
+        and (${table.validationEvidence}->'runtimePolicy') ?& array['identity','contractDigest']
+        and ((${table.validationEvidence}->'runtimePolicy') - array['identity','contractDigest']) = '{}'::jsonb
+        and ${table.validationEvidence}->'runtimePolicy'->>'contractDigest' ~ '^sha256:[a-f0-9]{64}$'
+        and jsonb_typeof(${table.validationEvidence}->'targets') = 'array'
+        and jsonb_array_length(${table.validationEvidence}->'targets') = jsonb_array_length(${table.definition}->'targets')
+        and octet_length(${table.validationEvidence}::text) <= 2097152`,
+    ),
+    evidenceCheck: check(
+      "runtime_publishing_plan_revisions_authorization_evidence_check",
+      sql`length(${table.authorKeyId}) between 1 and 200
+        and length(${table.creationAuthorizationEvidenceRef}) between 1 and 200`,
+    ),
+  }),
+);
+
+export const runtimePublishingPlanMutationReceipts = pgTable(
+  "runtime_publishing_plan_mutation_receipts",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    keyId: text("key_id").notNull(),
+    authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    planId: text("plan_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    validationSessionId: text("validation_session_id").notNull(),
+    validationSubmittedDraftDigest: text(
+      "validation_submitted_draft_digest",
+    ).notNull(),
+    validationDefinitionDigest: text(
+      "validation_definition_digest",
+    ).notNull(),
+    validationCurrentStateDigest: text(
+      "validation_current_state_digest",
+    ).notNull(),
+    validationIssuedAt: timestamp("validation_issued_at", {
+      withTimezone: true,
+    }).notNull(),
+    validationExpiresAt: timestamp("validation_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.capability,
+        table.idempotencyKey,
+      ],
+      name: "runtime_publishing_plan_mutation_receipts_pk",
+    }),
+    workspacePrincipalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_publishing_plan_mutation_receipts_workspace_principal_fk",
+    }).onDelete("restrict"),
+    keyFk: foreignKey({
+      columns: [table.principalId, table.keyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "runtime_publishing_plan_mutation_receipts_key_fk",
+    }).onDelete("restrict"),
+    authorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.keyId,
+        table.authorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name: "runtime_publishing_plan_mutation_receipts_authorization_evidence_fk",
+    }).onDelete("restrict"),
+    revisionFk: foreignKey({
+      columns: [table.workspaceId, table.planId, table.revisionId],
+      foreignColumns: [
+        runtimePublishingPlanRevisions.workspaceId,
+        runtimePublishingPlanRevisions.planId,
+        runtimePublishingPlanRevisions.id,
+      ],
+      name: "runtime_publishing_plan_mutation_receipts_revision_fk",
+    }).onDelete("restrict"),
+    keyIdx: index("runtime_publishing_plan_mutation_receipts_key_idx").on(
+      table.principalId,
+      table.keyId,
+    ),
+    authorizationEvidenceIdx: index(
+      "runtime_publishing_plan_mutation_receipts_authorization_evidence_idx",
+    ).on(
+      table.workspaceId,
+      table.principalId,
+      table.keyId,
+      table.authorizationEvidenceRef,
+    ),
+    revisionIdx: index(
+      "runtime_publishing_plan_mutation_receipts_revision_idx",
+    ).on(table.workspaceId, table.planId, table.revisionId),
+    validationSessionUnique: uniqueIndex(
+      "runtime_publishing_plan_mutation_receipts_validation_session_unique",
+    ).on(table.workspaceId, table.validationSessionId),
+    workspaceCreatedIdx: index(
+      "runtime_publishing_plan_mutation_receipts_workspace_created_idx",
+    ).on(table.workspaceId, table.createdAt, table.idempotencyKey),
+    capabilityCheck: check(
+      "runtime_publishing_plan_mutation_receipts_capability_check",
+      sql`${table.capability} = 'publishing_plan_revisions.create@1'`,
+    ),
+    idempotencyKeyCheck: check(
+      "runtime_publishing_plan_mutation_receipts_idempotency_key_check",
+      sql`length(${table.idempotencyKey}) between 8 and 200 and ${table.idempotencyKey} ~ '^[!-~]+$'`,
+    ),
+    fingerprintCheck: check(
+      "runtime_publishing_plan_mutation_receipts_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+    validationSessionCheck: check(
+      "runtime_publishing_plan_mutation_receipts_validation_session_check",
+      sql`length(${table.validationSessionId}) between 1 and 200
+        and ${table.validationSessionId} ~ '^ppvs_[A-Za-z0-9_-]+$'
+        and ${table.validationSubmittedDraftDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationDefinitionDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationCurrentStateDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationExpiresAt} > ${table.validationIssuedAt}`,
+    ),
+    evidenceCheck: check(
+      "runtime_publishing_plan_mutation_receipts_evidence_check",
+      sql`length(${table.keyId}) between 1 and 200
+        and length(${table.authorizationEvidenceRef}) between 1 and 200`,
     ),
   }),
 );

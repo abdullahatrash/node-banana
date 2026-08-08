@@ -345,6 +345,13 @@ describe("/api/social/accounts/callback POST", () => {
     });
     expect(mockEncryptToken).toHaveBeenCalledWith("access_tok");
     expect(mockEncryptToken).toHaveBeenCalledWith("refresh_tok");
+    expect(mockUpsertSocialAccount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalSettings: {
+          "nodeBanana.runtime.linkedinAuthorKind": "person",
+        },
+      }),
+    );
   });
 
   it("returns selectionSessionId for page-selection providers", async () => {
@@ -416,12 +423,12 @@ describe("/api/social/accounts/select-page POST", () => {
     expect(data.error).toContain("selectionSessionId");
   });
 
-  it("uses selection session to complete page connect without raw client tokens", async () => {
+  it("records a selected LinkedIn page as an organization without raw client tokens", async () => {
     authorized();
     const selectionSession = {
       id: "sosel_1",
       workspaceId: "ws_1",
-      platform: "facebook",
+      platform: "linkedin",
       accessTokenEncrypted: "enc_access",
       refreshTokenEncrypted: "enc_refresh",
       accessTokenSecret: null,
@@ -439,7 +446,7 @@ describe("/api/social/accounts/select-page POST", () => {
     mockEncryptToken.mockImplementation((t: string) => `enc_${t}`);
     mockUpsertSocialAccount.mockResolvedValue({
       id: "sacct_1",
-      platform: "facebook",
+      platform: "linkedin",
       displayName: "Page One",
       accessTokenEncrypted: "enc_page_token_1",
       refreshTokenEncrypted: "enc_refresh",
@@ -451,7 +458,7 @@ describe("/api/social/accounts/select-page POST", () => {
       createRequest("http://localhost:3000/api/social/accounts/select-page", {
         method: "POST",
         body: JSON.stringify({
-          platform: "facebook",
+          platform: "linkedin",
           pageId: "pg_1",
           selectionSessionId: "sosel_1",
         }),
@@ -464,13 +471,20 @@ describe("/api/social/accounts/select-page POST", () => {
     expect(mockGetOAuthSelectionSession).toHaveBeenCalledWith({
       selectionSessionId: "sosel_1",
       workspaceId: "ws_1",
-      platform: "facebook",
+      platform: "linkedin",
     });
     expect(mockConsumeOAuthSelectionSession).toHaveBeenCalledWith({
       selectionSessionId: "sosel_1",
       workspaceId: "ws_1",
-      platform: "facebook",
+      platform: "linkedin",
     });
+    expect(mockUpsertSocialAccount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalSettings: {
+          "nodeBanana.runtime.linkedinAuthorKind": "organization",
+        },
+      }),
+    );
   });
 });
 
