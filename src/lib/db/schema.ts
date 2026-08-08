@@ -1890,6 +1890,16 @@ export const runtimePublishingPlanRevisions = pgTable(
     workspacePlanIdUnique: uniqueIndex(
       "runtime_publishing_plan_revisions_workspace_plan_id_unique",
     ).on(table.workspaceId, table.planId, table.id),
+    approvalIdentityUnique: uniqueIndex(
+      "runtime_publishing_plan_revisions_approval_identity_unique",
+    ).on(
+      table.workspaceId,
+      table.planId,
+      table.id,
+      table.revision,
+      table.definitionDigest,
+      table.validationEvidenceDigest,
+    ),
     workspacePlanFk: foreignKey({
       columns: [table.workspaceId, table.planId],
       foreignColumns: [runtimePublishingPlans.workspaceId, runtimePublishingPlans.id],
@@ -2147,6 +2157,679 @@ export const runtimePublishingPlanMutationReceipts = pgTable(
       "runtime_publishing_plan_mutation_receipts_evidence_check",
       sql`length(${table.keyId}) between 1 and 200
         and length(${table.authorizationEvidenceRef}) between 1 and 200`,
+    ),
+  }),
+);
+
+/**
+ * Human publishing authority is explicit, Channel-scoped, and append-only.
+ * Workspace roles may administer grants, but never satisfy an Approval check.
+ * Revocation is recorded separately so the original grant remains immutable.
+ */
+export const runtimePublishingApprovalAuthorityGrants = pgTable(
+  "runtime_publishing_approval_authority_grants",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    subjectRoleAtIssue: text("subject_role_at_issue").notNull(),
+    channelId: text("channel_id").notNull(),
+    action: text("action").notNull(),
+    issuedByUserId: text("issued_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "runtime_publishing_approval_authority_grants_pk",
+    }),
+    subjectScopeIdx: index(
+      "runtime_publishing_approval_authority_grants_subject_scope_idx",
+    ).on(
+      table.workspaceId,
+      table.userId,
+      table.action,
+      table.channelId,
+      table.expiresAt,
+      table.id,
+    ),
+    subjectUserIdx: index(
+      "runtime_publishing_approval_authority_grants_subject_user_idx",
+    ).on(table.userId),
+    issuerIdx: index(
+      "runtime_publishing_approval_authority_grants_issuer_idx",
+    ).on(table.issuedByUserId),
+    channelIdx: index(
+      "runtime_publishing_approval_authority_grants_channel_idx",
+    ).on(table.workspaceId, table.channelId),
+    identityCheck: check(
+      "runtime_publishing_approval_authority_grants_identity_check",
+      sql`length(${table.id}) between 1 and 200
+        and ${table.id} ~ '^paag_[A-Za-z0-9_-]+$'`,
+    ),
+    actionCheck: check(
+      "runtime_publishing_approval_authority_grants_action_check",
+      sql`${table.action} = 'publish'
+        and ${table.subjectRoleAtIssue} in ('owner','admin')`,
+    ),
+    expiryCheck: check(
+      "runtime_publishing_approval_authority_grants_expiry_check",
+      sql`${table.expiresAt} is null or ${table.expiresAt} > ${table.issuedAt}`,
+    ),
+  }),
+);
+
+export const runtimePublishingApprovalAuthorityRevocations = pgTable(
+  "runtime_publishing_approval_authority_revocations",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    grantId: text("grant_id").notNull(),
+    revokedByUserId: text("revoked_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.grantId],
+      name: "runtime_publishing_approval_authority_revocations_pk",
+    }),
+    grantFk: foreignKey({
+      columns: [table.workspaceId, table.grantId],
+      foreignColumns: [
+        runtimePublishingApprovalAuthorityGrants.workspaceId,
+        runtimePublishingApprovalAuthorityGrants.id,
+      ],
+      name: "runtime_publishing_approval_authority_revocations_grant_fk",
+    }).onDelete("restrict"),
+    revokerIdx: index(
+      "runtime_publishing_approval_authority_revocations_revoker_idx",
+    ).on(table.revokedByUserId),
+  }),
+);
+
+export const runtimePublishingApprovalAuthorityMutationReceipts = pgTable(
+  "runtime_publishing_approval_authority_mutation_receipts",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    grantId: text("grant_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [
+        table.workspaceId,
+        table.actorUserId,
+        table.capability,
+        table.idempotencyKey,
+      ],
+      name: "runtime_publishing_approval_authority_mutation_receipts_pk",
+    }),
+    grantFk: foreignKey({
+      columns: [table.workspaceId, table.grantId],
+      foreignColumns: [
+        runtimePublishingApprovalAuthorityGrants.workspaceId,
+        runtimePublishingApprovalAuthorityGrants.id,
+      ],
+      name: "runtime_publishing_approval_authority_mutation_receipts_grant_fk",
+    }).onDelete("restrict"),
+    actorIdx: index(
+      "runtime_publishing_approval_authority_mutation_receipts_actor_idx",
+    ).on(table.actorUserId),
+    grantIdx: index(
+      "runtime_publishing_approval_authority_mutation_receipts_grant_idx",
+    ).on(table.workspaceId, table.grantId),
+    capabilityCheck: check(
+      "runtime_publishing_approval_authority_mutation_receipts_capability_check",
+      sql`${table.capability} in (
+        'publishing_approval_authority.issue@1',
+        'publishing_approval_authority.revoke@1'
+      )`,
+    ),
+    idempotencyCheck: check(
+      "runtime_publishing_approval_authority_mutation_receipts_idempotency_check",
+      sql`length(${table.idempotencyKey}) between 8 and 200
+        and ${table.idempotencyKey} ~ '^[!-~]+$'
+        and ${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+  }),
+);
+
+/**
+ * An Approval request is an immutable envelope around one exact Plan Revision,
+ * action, target set, validation snapshot, and requesting Agent authorization.
+ * Its visible state is projected from expiry and the optional final decision.
+ */
+export const runtimePublishingApprovalRequests = pgTable(
+  "runtime_publishing_approval_requests",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    planId: text("plan_id").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    planRevision: integer("plan_revision").notNull(),
+    planRevisionDigest: text("plan_revision_digest").notNull(),
+    action: text("action").notNull(),
+    targetIds: jsonb("target_ids").$type<string[]>().notNull(),
+    targetSetDigest: text("target_set_digest").notNull(),
+    channelIds: jsonb("channel_ids").$type<string[]>().notNull(),
+    artifactIds: jsonb("artifact_ids").$type<string[]>().notNull(),
+    requestingPrincipalId: text("requesting_principal_id").notNull(),
+    requestingKeyId: text("requesting_key_id").notNull(),
+    requestAuthorizationCapability: text(
+      "request_authorization_capability",
+    ).notNull(),
+    requestAuthorizationContractDigest: text(
+      "request_authorization_contract_digest",
+    ).notNull(),
+    requestAuthorizationEvidenceRef: text(
+      "request_authorization_evidence_ref",
+    ).notNull(),
+    validationEvidenceDigest: text("validation_evidence_digest").notNull(),
+    validationCurrentStateDigest: text(
+      "validation_current_state_digest",
+    ).notNull(),
+    validationContextId: text("validation_context_id").notNull(),
+    validationContextDigest: text("validation_context_digest").notNull(),
+    validationEvaluatedAt: timestamp("validation_evaluated_at", {
+      withTimezone: true,
+    }).notNull(),
+    validationExpiresAt: timestamp("validation_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    validationRuntimePolicyIdentity: text(
+      "validation_runtime_policy_identity",
+    ).notNull(),
+    validationRuntimePolicyContractDigest: text(
+      "validation_runtime_policy_contract_digest",
+    ).notNull(),
+    decisionPolicyMode: text("decision_policy_mode").notNull(),
+    decisionPolicyExpiresAt: timestamp("decision_policy_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    authorizesExecution: boolean("authorizes_execution")
+      .default(false)
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "runtime_publishing_approval_requests_pk",
+    }),
+    revisionFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.planId,
+        table.planRevisionId,
+        table.planRevision,
+        table.planRevisionDigest,
+        table.validationEvidenceDigest,
+      ],
+      foreignColumns: [
+        runtimePublishingPlanRevisions.workspaceId,
+        runtimePublishingPlanRevisions.planId,
+        runtimePublishingPlanRevisions.id,
+        runtimePublishingPlanRevisions.revision,
+        runtimePublishingPlanRevisions.definitionDigest,
+        runtimePublishingPlanRevisions.validationEvidenceDigest,
+      ],
+      name: "runtime_publishing_approval_requests_revision_fk",
+    }).onDelete("restrict"),
+    requesterFk: foreignKey({
+      columns: [table.workspaceId, table.requestingPrincipalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_publishing_approval_requests_requester_fk",
+    }).onDelete("restrict"),
+    requesterKeyFk: foreignKey({
+      columns: [table.requestingPrincipalId, table.requestingKeyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "runtime_publishing_approval_requests_requester_key_fk",
+    }).onDelete("restrict"),
+    requestAuthorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.requestingPrincipalId,
+        table.requestingKeyId,
+        table.requestAuthorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name: "runtime_publishing_approval_requests_authorization_evidence_fk",
+    }).onDelete("restrict"),
+    revisionIdx: index(
+      "runtime_publishing_approval_requests_revision_idx",
+    ).on(
+      table.workspaceId,
+      table.planId,
+      table.planRevisionId,
+      table.planRevision,
+      table.planRevisionDigest,
+      table.validationEvidenceDigest,
+    ),
+    requesterIdx: index(
+      "runtime_publishing_approval_requests_requester_idx",
+    ).on(table.workspaceId, table.requestingPrincipalId),
+    requesterKeyIdx: index(
+      "runtime_publishing_approval_requests_requester_key_idx",
+    ).on(table.requestingPrincipalId, table.requestingKeyId),
+    authorizationEvidenceIdx: index(
+      "runtime_publishing_approval_requests_authorization_evidence_idx",
+    ).on(
+      table.workspaceId,
+      table.requestingPrincipalId,
+      table.requestingKeyId,
+      table.requestAuthorizationEvidenceRef,
+    ),
+    workspaceCreatedIdx: index(
+      "runtime_publishing_approval_requests_workspace_created_idx",
+    ).on(table.workspaceId, table.createdAt.desc(), table.id.desc()),
+    workspaceStateExpiryIdx: index(
+      "runtime_publishing_approval_requests_workspace_expiry_idx",
+    ).on(table.workspaceId, table.decisionPolicyExpiresAt, table.id),
+    identityCheck: check(
+      "runtime_publishing_approval_requests_identity_check",
+      sql`length(${table.id}) between 1 and 200
+        and ${table.id} ~ '^par_[A-Za-z0-9_-]+$'
+        and ${table.planRevision} > 0`,
+    ),
+    actionCheck: check(
+      "runtime_publishing_approval_requests_action_check",
+      sql`${table.action} = 'publish'`,
+    ),
+    digestCheck: check(
+      "runtime_publishing_approval_requests_digest_check",
+      sql`${table.planRevisionDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.targetSetDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.requestAuthorizationContractDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationCurrentStateDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationContextDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.validationRuntimePolicyContractDigest} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+    targetSetCheck: check(
+      "runtime_publishing_approval_requests_target_set_check",
+      sql`jsonb_typeof(${table.targetIds}) = 'array'
+        and jsonb_array_length(${table.targetIds}) between 1 and 50
+        and octet_length(${table.targetIds}::text) <= 16384
+        and jsonb_typeof(${table.channelIds}) = 'array'
+        and jsonb_array_length(${table.channelIds}) between 1 and 50
+        and octet_length(${table.channelIds}::text) <= 16384
+        and jsonb_typeof(${table.artifactIds}) = 'array'
+        and jsonb_array_length(${table.artifactIds}) between 1 and 200
+        and octet_length(${table.artifactIds}::text) <= 65536`,
+    ),
+    validationCheck: check(
+      "runtime_publishing_approval_requests_validation_check",
+      sql`length(${table.validationContextId}) between 1 and 200
+        and ${table.validationRuntimePolicyIdentity} = 'publishing-runtime-policy/default@1'
+        and ${table.validationRuntimePolicyContractDigest} = 'sha256:c372d0a34f6b1ca086ef4cad760db2bbffab1ac5c668fede7f256106305b7cf1'
+        and ${table.validationExpiresAt} > ${table.validationEvaluatedAt}`,
+    ),
+    requestAuthorizationCheck: check(
+      "runtime_publishing_approval_requests_request_authorization_check",
+      sql`${table.requestAuthorizationCapability} = 'publishing_approvals.request@1'
+        and ${table.requestAuthorizationContractDigest} = 'sha256:9d46d813238045c0ba3924966834418c9f508741890f3aa81c5a494227e42892'
+        and length(${table.requestAuthorizationEvidenceRef}) between 1 and 200`,
+    ),
+    decisionPolicyCheck: check(
+      "runtime_publishing_approval_requests_decision_policy_check",
+      sql`${table.decisionPolicyMode} = 'expires_at'
+        and ${table.decisionPolicyExpiresAt} > ${table.createdAt}
+        and ${table.decisionPolicyExpiresAt} <= ${table.validationExpiresAt}`,
+    ),
+    noExecutionAuthorityCheck: check(
+      "runtime_publishing_approval_requests_no_execution_authority_check",
+      sql`${table.authorizesExecution} = false`,
+    ),
+  }),
+);
+
+export const runtimePublishingApprovalDecisions = pgTable(
+  "runtime_publishing_approval_decisions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    requestId: text("request_id").notNull(),
+    outcome: text("outcome").notNull(),
+    decidedByUserId: text("decided_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    authorityEvidenceRef: text("authority_evidence_ref").notNull(),
+    authorityEvidenceDigest: text("authority_evidence_digest").notNull(),
+    authorityGrants: jsonb("authority_grants")
+      .$type<Array<{ channelId: string; grantId: string }>>()
+      .notNull(),
+    inspectionDigest: text("inspection_digest").notNull(),
+    authorizesExecution: boolean("authorizes_execution")
+      .default(false)
+      .notNull(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "runtime_publishing_approval_decisions_pk",
+    }),
+    requestUnique: uniqueIndex(
+      "runtime_publishing_approval_decisions_request_unique",
+    ).on(table.workspaceId, table.requestId),
+    requestDecisionIdentityUnique: uniqueIndex(
+      "runtime_publishing_approval_decisions_request_identity_unique",
+    ).on(table.workspaceId, table.requestId, table.id),
+    requestFk: foreignKey({
+      columns: [table.workspaceId, table.requestId],
+      foreignColumns: [
+        runtimePublishingApprovalRequests.workspaceId,
+        runtimePublishingApprovalRequests.id,
+      ],
+      name: "runtime_publishing_approval_decisions_request_fk",
+    }).onDelete("restrict"),
+    deciderIdx: index(
+      "runtime_publishing_approval_decisions_decider_idx",
+    ).on(table.decidedByUserId),
+    workspaceDecidedIdx: index(
+      "runtime_publishing_approval_decisions_workspace_decided_idx",
+    ).on(table.workspaceId, table.decidedAt.desc(), table.id.desc()),
+    identityCheck: check(
+      "runtime_publishing_approval_decisions_identity_check",
+      sql`length(${table.id}) between 1 and 200
+        and ${table.id} ~ '^pad_[A-Za-z0-9_-]+$'
+        and length(${table.authorityEvidenceRef}) between 1 and 200`,
+    ),
+    outcomeCheck: check(
+      "runtime_publishing_approval_decisions_outcome_check",
+      sql`${table.outcome} in ('approved','denied')`,
+    ),
+    authorityCheck: check(
+      "runtime_publishing_approval_decisions_authority_check",
+      sql`${table.authorityEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and ${table.inspectionDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and jsonb_typeof(${table.authorityGrants}) = 'array'
+        and jsonb_array_length(${table.authorityGrants}) between 1 and 50
+        and octet_length(${table.authorityGrants}::text) <= 16384`,
+    ),
+    noExecutionAuthorityCheck: check(
+      "runtime_publishing_approval_decisions_no_execution_authority_check",
+      sql`${table.authorizesExecution} = false`,
+    ),
+  }),
+);
+
+export const runtimePublishingApprovalMutationReceipts = pgTable(
+  "runtime_publishing_approval_mutation_receipts",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    actorKind: text("actor_kind").notNull(),
+    actorId: text("actor_id").notNull(),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    principalId: text("principal_id"),
+    keyId: text("key_id"),
+    authorizationEvidenceRef: text("authorization_evidence_ref"),
+    userId: text("user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    approvalRequestId: text("approval_request_id").notNull(),
+    decisionId: text("decision_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [
+        table.workspaceId,
+        table.actorKind,
+        table.actorId,
+        table.capability,
+        table.idempotencyKey,
+      ],
+      name: "runtime_publishing_approval_mutation_receipts_pk",
+    }),
+    principalFk: foreignKey({
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_publishing_approval_mutation_receipts_principal_fk",
+    }).onDelete("restrict"),
+    keyFk: foreignKey({
+      columns: [table.principalId, table.keyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "runtime_publishing_approval_mutation_receipts_key_fk",
+    }).onDelete("restrict"),
+    authorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.principalId,
+        table.keyId,
+        table.authorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name: "runtime_publishing_approval_mutation_receipts_authorization_evidence_fk",
+    }).onDelete("restrict"),
+    approvalRequestFk: foreignKey({
+      columns: [table.workspaceId, table.approvalRequestId],
+      foreignColumns: [
+        runtimePublishingApprovalRequests.workspaceId,
+        runtimePublishingApprovalRequests.id,
+      ],
+      name: "runtime_publishing_approval_mutation_receipts_request_fk",
+    }).onDelete("restrict"),
+    decisionFk: foreignKey({
+      columns: [table.workspaceId, table.approvalRequestId, table.decisionId],
+      foreignColumns: [
+        runtimePublishingApprovalDecisions.workspaceId,
+        runtimePublishingApprovalDecisions.requestId,
+        runtimePublishingApprovalDecisions.id,
+      ],
+      name: "runtime_publishing_approval_mutation_receipts_decision_fk",
+    }).onDelete("restrict"),
+    principalIdx: index(
+      "runtime_publishing_approval_mutation_receipts_principal_idx",
+    ).on(table.workspaceId, table.principalId),
+    keyIdx: index("runtime_publishing_approval_mutation_receipts_key_idx").on(
+      table.principalId,
+      table.keyId,
+    ),
+    authorizationEvidenceIdx: index(
+      "runtime_publishing_approval_mutation_receipts_authorization_evidence_idx",
+    ).on(
+      table.workspaceId,
+      table.principalId,
+      table.keyId,
+      table.authorizationEvidenceRef,
+    ),
+    userIdx: index("runtime_publishing_approval_mutation_receipts_user_idx").on(
+      table.userId,
+    ),
+    requestIdx: index(
+      "runtime_publishing_approval_mutation_receipts_request_idx",
+    ).on(table.workspaceId, table.approvalRequestId),
+    decisionIdx: index(
+      "runtime_publishing_approval_mutation_receipts_decision_idx",
+    ).on(table.workspaceId, table.approvalRequestId, table.decisionId),
+    actorCheck: check(
+      "runtime_publishing_approval_mutation_receipts_actor_check",
+      sql`(${table.actorKind} = 'agent'
+          and ${table.actorId} = ${table.principalId}
+          and ${table.principalId} is not null
+          and ${table.keyId} is not null
+          and ${table.authorizationEvidenceRef} is not null
+          and ${table.userId} is null)
+        or (${table.actorKind} = 'human'
+          and ${table.actorId} = ${table.userId}
+          and ${table.userId} is not null
+          and ${table.principalId} is null
+          and ${table.keyId} is null
+          and ${table.authorizationEvidenceRef} is null)`,
+    ),
+    capabilityCheck: check(
+      "runtime_publishing_approval_mutation_receipts_capability_check",
+      sql`${table.capability} in (
+          'publishing_approvals.request@1',
+          'publishing_approvals.decide@1'
+        )`,
+    ),
+    idempotencyKeyCheck: check(
+      "runtime_publishing_approval_mutation_receipts_idempotency_key_check",
+      sql`length(${table.idempotencyKey}) between 8 and 200
+        and ${table.idempotencyKey} ~ '^[!-~]+$'`,
+    ),
+    digestCheck: check(
+      "runtime_publishing_approval_mutation_receipts_digest_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+    resultCheck: check(
+      "runtime_publishing_approval_mutation_receipts_result_check",
+      sql`length(${table.approvalRequestId}) between 1 and 200
+        and (${table.decisionId} is null or length(${table.decisionId}) between 1 and 200)
+        and ((${table.capability} = 'publishing_approvals.request@1' and ${table.decisionId} is null)
+          or (${table.capability} = 'publishing_approvals.decide@1' and ${table.decisionId} is not null))`,
+    ),
+  }),
+);
+
+/**
+ * Approval consumption is separate from the human decision. The independent
+ * release authorization is retained and one decision can be consumed once.
+ */
+export const runtimePublishingApprovalConsumptions = pgTable(
+  "runtime_publishing_approval_consumptions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    approvalRequestId: text("approval_request_id").notNull(),
+    decisionId: text("decision_id").notNull(),
+    consumingPrincipalId: text("consuming_principal_id").notNull(),
+    consumingKeyId: text("consuming_key_id").notNull(),
+    capability: text("capability").notNull(),
+    authorizationContractDigest: text(
+      "authorization_contract_digest",
+    ).notNull(),
+    authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
+    authorizedResources: jsonb("authorized_resources")
+      .$type<{ channelIds: string[]; artifactIds: string[] }>()
+      .notNull(),
+    authorizationIssuedAt: timestamp("authorization_issued_at", {
+      withTimezone: true,
+    }).notNull(),
+    authorizationExpiresAt: timestamp("authorization_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "runtime_publishing_approval_consumptions_pk",
+    }),
+    decisionUnique: uniqueIndex(
+      "runtime_publishing_approval_consumptions_decision_unique",
+    ).on(table.workspaceId, table.decisionId),
+    requestFk: foreignKey({
+      columns: [table.workspaceId, table.approvalRequestId],
+      foreignColumns: [
+        runtimePublishingApprovalRequests.workspaceId,
+        runtimePublishingApprovalRequests.id,
+      ],
+      name: "runtime_publishing_approval_consumptions_request_fk",
+    }).onDelete("restrict"),
+    decisionFk: foreignKey({
+      columns: [table.workspaceId, table.approvalRequestId, table.decisionId],
+      foreignColumns: [
+        runtimePublishingApprovalDecisions.workspaceId,
+        runtimePublishingApprovalDecisions.requestId,
+        runtimePublishingApprovalDecisions.id,
+      ],
+      name: "runtime_publishing_approval_consumptions_decision_fk",
+    }).onDelete("restrict"),
+    principalFk: foreignKey({
+      columns: [table.workspaceId, table.consumingPrincipalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+      name: "runtime_publishing_approval_consumptions_principal_fk",
+    }).onDelete("restrict"),
+    keyFk: foreignKey({
+      columns: [table.consumingPrincipalId, table.consumingKeyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+      name: "runtime_publishing_approval_consumptions_key_fk",
+    }).onDelete("restrict"),
+    authorizationEvidenceFk: foreignKey({
+      columns: [
+        table.workspaceId,
+        table.consumingPrincipalId,
+        table.consumingKeyId,
+        table.authorizationEvidenceRef,
+      ],
+      foreignColumns: [
+        agentAuthorizationDecisions.workspaceId,
+        agentAuthorizationDecisions.principalId,
+        agentAuthorizationDecisions.keyId,
+        agentAuthorizationDecisions.operatorTraceRef,
+      ],
+      name: "runtime_publishing_approval_consumptions_authorization_evidence_fk",
+    }).onDelete("restrict"),
+    requestIdx: index(
+      "runtime_publishing_approval_consumptions_request_idx",
+    ).on(table.workspaceId, table.approvalRequestId),
+    decisionBindingIdx: index(
+      "runtime_publishing_approval_consumptions_decision_binding_idx",
+    ).on(table.workspaceId, table.approvalRequestId, table.decisionId),
+    principalIdx: index(
+      "runtime_publishing_approval_consumptions_principal_idx",
+    ).on(table.workspaceId, table.consumingPrincipalId),
+    keyIdx: index("runtime_publishing_approval_consumptions_key_idx").on(
+      table.consumingPrincipalId,
+      table.consumingKeyId,
+    ),
+    authorizationEvidenceIdx: index(
+      "runtime_publishing_approval_consumptions_authorization_evidence_idx",
+    ).on(
+      table.workspaceId,
+      table.consumingPrincipalId,
+      table.consumingKeyId,
+      table.authorizationEvidenceRef,
+    ),
+    identityCheck: check(
+      "runtime_publishing_approval_consumptions_identity_check",
+      sql`length(${table.id}) between 1 and 200
+        and ${table.id} ~ '^pac_[A-Za-z0-9_-]+$'`,
+    ),
+    authorizationCheck: check(
+      "runtime_publishing_approval_consumptions_authorization_check",
+      sql`${table.capability} = 'publishing_plan_revisions.release@1'
+        and ${table.authorizationContractDigest} = 'sha256:487fcf4d881ef927ada89e11c1851b402bf414c1083c8d6618644d503aa1e80e'
+        and length(${table.authorizationEvidenceRef}) between 1 and 200
+        and jsonb_typeof(${table.authorizedResources}) = 'object'
+        and ${table.authorizedResources} ?& array['channelIds','artifactIds']
+        and (${table.authorizedResources} - array['channelIds','artifactIds']) = '{}'::jsonb
+        and jsonb_typeof(${table.authorizedResources}->'channelIds') = 'array'
+        and jsonb_array_length(${table.authorizedResources}->'channelIds') between 1 and 50
+        and jsonb_typeof(${table.authorizedResources}->'artifactIds') = 'array'
+        and jsonb_array_length(${table.authorizedResources}->'artifactIds') between 1 and 200
+        and ${table.authorizationExpiresAt} > ${table.authorizationIssuedAt}
+        and ${table.consumedAt} >= ${table.authorizationIssuedAt}
+        and ${table.consumedAt} < ${table.authorizationExpiresAt}`,
     ),
   }),
 );

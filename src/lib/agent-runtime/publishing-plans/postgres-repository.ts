@@ -858,7 +858,7 @@ async function lockReceipt(
     : { kind: "conflict" };
 }
 
-function mapRevision(
+export function rehydratePublishingPlanRevision(
   row: typeof runtimePublishingPlanRevisions.$inferSelect,
 ): PublishingPlanRevisionRecord | null {
   if (
@@ -906,7 +906,7 @@ async function findRevision(
       ),
     )
     .limit(1);
-  return rows[0] ? mapRevision(rows[0]) : null;
+  return rows[0] ? rehydratePublishingPlanRevision(rows[0]) : null;
 }
 
 export class DrizzlePublishingPlanRepository
@@ -1160,7 +1160,7 @@ export class DrizzlePublishingPlanRepository
       )
       .limit(input.limit);
     return rows.flatMap((row) => {
-      const revision = mapRevision(row);
+      const revision = rehydratePublishingPlanRevision(row);
       return revision ? [revision] : [];
     });
   }

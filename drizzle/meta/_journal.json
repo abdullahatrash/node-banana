@@ -330,6 +330,13 @@
       "when": 1786219150637,
       "tag": "0046_runtime_publishing_plans",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786223295096,
+      "tag": "0047_runtime_publishing_approvals",
+      "breakpoints": true
     }
   ]
 }
