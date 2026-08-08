@@ -53,6 +53,14 @@ describe("Publishing Approval CLI/MCP parity", () => {
       { kind: "artifact", inputPath: "artifactIds" },
     ]);
     expect((setup.registry.getDefinition(PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES.request)!.schemas.input as { additionalProperties?: boolean }).additionalProperties).toBe(false);
+    expect(
+      setup.registry
+        .getDefinition(PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES.decide)!
+        .errors.map((error) => error.code),
+    ).toEqual(expect.arrayContaining([
+      "HUMAN_CAPABILITY_NOT_AUTHORIZED",
+      "IDEMPOTENCY_KEY_REQUIRED",
+    ]));
     const tools = await listMcpCapabilityTools(setup.agentDispatcher);
     expect(tools.some((tool) => tool.name === "publishing_approvals.request.v1")).toBe(true);
   });

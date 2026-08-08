@@ -1,7 +1,7 @@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { CapabilityFailure } from "@/lib/agent-tools/errors";
 import { COMMON_DISCOVERY_ERRORS, QUERY_EFFECT, defineCapability } from "@/lib/agent-tools/registry";
-import type { CapabilityRegistration, JsonSchema, ResolvedSecurityContext } from "@/types/capabilities";
+import type { CapabilityErrorContract, CapabilityRegistration, JsonSchema, ResolvedSecurityContext } from "@/types/capabilities";
 import { z } from "zod";
 import { ARTIFACT_ID_PATTERN } from "../artifacts/validation";
 import {
@@ -161,6 +161,23 @@ function filterDigest(filters: { status?: string; planRevisionId?: string; chann
   return canonicalDigest({ schema: "publishing-approval-list-filter/v1", status: filters.status ?? null, planRevisionId: filters.planRevisionId ?? null, channelIds: [...filters.channelIds].sort(), artifactIds: [...filters.artifactIds].sort() });
 }
 
+const humanErrors: CapabilityErrorContract[] = [
+  ...COMMON_DISCOVERY_ERRORS,
+  {
+    code: "HUMAN_CAPABILITY_NOT_AUTHORIZED",
+    category: "authorization",
+    retryable: false,
+    description: "An authenticated Workspace owner or admin is required.",
+  },
+  {
+    code: "IDEMPOTENCY_KEY_REQUIRED",
+    category: "validation",
+    retryable: false,
+    description: "A transport Idempotency-Key is required for this mutation.",
+  },
+  ...PUBLISHING_APPROVAL_ERROR_CONTRACTS,
+];
+
 export function createPublishingApprovalRegistrations(
   service: PublishingApprovalService,
   cursorCodec?: PublishingApprovalCursorCodec,
@@ -217,7 +234,7 @@ export function createPublishingApprovalRegistrations(
       audience: "human", summary: "Approve or deny one exact inspected Publishing Approval request with explicit current Channel authority.", lifecycle,
       input: z.object({ approvalRequestId: id, expectedInspectionDigest: digest, decision: z.enum(["approved", "denied"]) }).strict(),
       outputSchema: schema(approval), effect: mutationEffect, approval: { mode: "manages-approval" }, idempotency: { mode: "key-required" }, authorization: { resources: [] },
-      errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_APPROVAL_ERROR_CONTRACTS],
+      errors: humanErrors,
       handler: (input, context) => { const human = humanMutation(context.securityContext); return domain(() => service.decide({ ...input, workspaceId: human.workspaceId, userId: human.userId, idempotencyKey: human.idempotencyKey })); },
     }),
   ];
