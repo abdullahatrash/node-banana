@@ -424,7 +424,7 @@ describe("QuotaService", () => {
   });
 
   it("releases run concurrency without erasing consumed admission capacity", async () => {
-    const repository = new InMemoryQuotaRepository();
+    const repository = new InMemoryQuotaRepository(() => new Date(now));
     const service = new QuotaService(repository);
     await service.createPolicyRevision(policy({
       kind: "admission",
@@ -444,8 +444,10 @@ describe("QuotaService", () => {
       boundary: "run_admission",
       claims: [{ dimension: "runtime.run_admissions@1", unit: "count", amount: "1" }],
     };
-    await service.commitClaim(await service.planClaim(admission));
-    await service.commitClaim(await service.planClaim(claim("run_mixed")));
+    await expect(service.commitClaim(await service.planClaim(admission)))
+      .resolves.toMatchObject({ kind: "created" });
+    await expect(service.commitClaim(await service.planClaim(claim("run_mixed"))))
+      .resolves.toMatchObject({ kind: "created" });
     const terminal = await service.planTransition({
       workspaceId: "workspace_1",
       transitionId: "run_mixed:terminal",
@@ -463,7 +465,7 @@ describe("QuotaService", () => {
   });
 
   it("reconciles known usage below its ceiling and releases the unused reservation", async () => {
-    const repository = new InMemoryQuotaRepository();
+    const repository = new InMemoryQuotaRepository(() => new Date(now));
     const service = new QuotaService(repository);
     await service.createPolicyRevision(policy({
       kind: "usage",
@@ -517,10 +519,11 @@ describe("QuotaService", () => {
   });
 
   it("settles exact-ceiling usage without release or overage", async () => {
-    const service = new QuotaService(new InMemoryQuotaRepository());
+    const service = new QuotaService(new InMemoryQuotaRepository(() => new Date(now)));
     await service.createPolicyRevision(usagePolicy());
     const input = usageClaim("usage_exact");
-    await service.commitClaim(await service.planClaim(input));
+    await expect(service.commitClaim(await service.planClaim(input)))
+      .resolves.toMatchObject({ kind: "created" });
     const plan = await service.planUsageReconciliation({
       workspaceId: "workspace_1",
       reconciliationId: "usage_exact:actual:v1",
@@ -592,10 +595,11 @@ describe("QuotaService", () => {
   });
 
   it("preserves usage overage as canonical capacity instead of rejecting evidence", async () => {
-    const service = new QuotaService(new InMemoryQuotaRepository());
+    const service = new QuotaService(new InMemoryQuotaRepository(() => new Date(now)));
     await service.createPolicyRevision(usagePolicy());
     const input = usageClaim("usage_overage");
-    await service.commitClaim(await service.planClaim(input));
+    await expect(service.commitClaim(await service.planClaim(input)))
+      .resolves.toMatchObject({ kind: "created" });
     const plan = await service.planUsageReconciliation({
       workspaceId: "workspace_1",
       reconciliationId: "usage_overage:actual:v1",
@@ -621,10 +625,11 @@ describe("QuotaService", () => {
   });
 
   it("retains unknown usage holds and preserves reconciliation replay/conflict", async () => {
-    const service = new QuotaService(new InMemoryQuotaRepository());
+    const service = new QuotaService(new InMemoryQuotaRepository(() => new Date(now)));
     await service.createPolicyRevision(usagePolicy());
     const input = usageClaim("usage_unknown");
-    await service.commitClaim(await service.planClaim(input));
+    await expect(service.commitClaim(await service.planClaim(input)))
+      .resolves.toMatchObject({ kind: "created" });
     const reconciliationInput = {
       workspaceId: "workspace_1",
       reconciliationId: "usage_unknown:actual:v1",
@@ -652,7 +657,7 @@ describe("QuotaService", () => {
   });
 
   it("atomically reconciles the Workspace and Agent reservation pair", async () => {
-    const service = new QuotaService(new InMemoryQuotaRepository());
+    const service = new QuotaService(new InMemoryQuotaRepository(() => new Date(now)));
     await service.createPolicyRevision(usagePolicy());
     await service.createPolicyRevision(usagePolicy({
       principalId: "principal_1",
@@ -702,11 +707,12 @@ describe("QuotaService", () => {
   });
 
   it("reserves Usage Settlement mutation exclusively for typed reconciliation", async () => {
-    const repository = new InMemoryQuotaRepository();
+    const repository = new InMemoryQuotaRepository(() => new Date(now));
     const service = new QuotaService(repository);
     await service.createPolicyRevision(usagePolicy());
     const input = usageClaim("usage_typed_only");
-    await service.commitClaim(await service.planClaim(input));
+    await expect(service.commitClaim(await service.planClaim(input)))
+      .resolves.toMatchObject({ kind: "created" });
     const transitionInput = {
       workspaceId: "workspace_1",
       transitionId: "usage_typed_only:generic-settle:v1",
