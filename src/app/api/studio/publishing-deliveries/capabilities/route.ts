@@ -9,14 +9,34 @@ import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 const id = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
 const artifactId = z.string().min(1).max(200).regex(ARTIFACT_ID_PATTERN);
-const invocation = z.object({
-  capability: z.literal("publishing_deliveries.cancel@1"),
-  input: z.object({
-    deliveryId: id,
-    channelIds: z.array(id).min(1).max(50),
-    artifactIds: z.array(artifactId).min(1).max(200),
+const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const resources = {
+  deliveryId: id,
+  channelIds: z.array(id).min(1).max(50),
+  artifactIds: z.array(artifactId).min(1).max(200),
+};
+const invocation = z.discriminatedUnion("capability", [
+  z.object({
+    capability: z.literal("publishing_deliveries.cancel@1"),
+    input: z.object(resources).strict(),
   }).strict(),
-}).strict();
+  z.object({
+    capability: z.literal("publishing_deliveries.retry@1"),
+    input: z.object({
+      ...resources,
+      approvalRequestId: id,
+      expectedFailureEvidenceDigest: digest,
+      idempotencyKey: z.string().min(8).max(200).regex(/^[!-~]+$/),
+    }).strict(),
+  }).strict(),
+  z.object({
+    capability: z.literal("publishing_deliveries.reconcile@1"),
+    input: z.object({
+      ...resources,
+      expectedUnknownEvidenceDigest: digest,
+    }).strict(),
+  }).strict(),
+]);
 
 function responseStatus(category: string): number {
   if (category === "authorization") return 403;
@@ -40,14 +60,14 @@ export const POST = withStudioAuth<undefined>(
       body = await request.json();
     } catch {
       return noStoreJson(
-        { success: false, error: "Invalid Publishing Delivery cancellation." },
+        { success: false, error: "Invalid Publishing Delivery command." },
         { status: 400 },
       );
     }
     const parsed = invocation.safeParse(body);
     if (!parsed.success) {
       return noStoreJson(
-        { success: false, error: "Invalid Publishing Delivery cancellation." },
+        { success: false, error: "Invalid Publishing Delivery command." },
         { status: 400 },
       );
     }

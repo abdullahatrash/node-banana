@@ -113,6 +113,7 @@ const approval = {
   targetIds: ["target_1"],
   channelIds: ["channel_1"],
   artifactIds: ["image_1", "text_1"],
+  retrySource: null,
   requestingPrincipalId: "principal_1",
   requestingKeyId: "key_1",
   requestAuthorization: {

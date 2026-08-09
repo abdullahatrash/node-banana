@@ -23,6 +23,10 @@ const memorySource = readFileSync(
   ),
   "utf8",
 );
+const schemaSource = readFileSync(resolve(process.cwd(), "src/lib/db/schema.ts"), "utf8");
+const recoveryMigration = readFileSync(resolve(
+  process.cwd(), "drizzle/0050_runtime_publishing_delivery_recovery.sql",
+), "utf8");
 
 function method(name: string, next: string): string {
   return source.slice(source.indexOf(`async ${name}(`), source.indexOf(`async ${next}(`));
@@ -52,12 +56,17 @@ describe("Publishing Delivery cancellation Postgres transaction contract", () =>
   it("never persists a retry or relaunch after cancellation wins", () => {
     const settlement = source.slice(source.indexOf("async settleEffect("));
     const normalization = settlement.indexOf("normalizePublishingDeliverySettlement");
-    const normalizedIntent = settlement.indexOf("const { outcome, retryOutboxIntent }");
+    const normalizedOutcome = settlement.indexOf("normalized.outcome");
+    const normalizedIntent = settlement.indexOf(
+      "normalized.retryOutboxIntent",
+      normalizedOutcome,
+    );
     const outboxInsert = settlement.indexOf(
       "await tx.insert(runtimePublishingDeliveryOutboxIntents)",
     );
     expect(normalization).toBeGreaterThan(0);
-    expect(normalizedIntent).toBeGreaterThan(normalization);
+    expect(normalizedOutcome).toBeGreaterThan(normalization);
+    expect(normalizedIntent).toBeGreaterThan(normalizedOutcome);
     expect(outboxInsert).toBeGreaterThan(normalizedIntent);
     expect(transitionSource).toContain('failureCode: "CANCELLED_AFTER_EFFECT_CONTACT"');
     expect(settlement).toContain("if (retryOutboxIntent)");
@@ -67,7 +76,7 @@ describe("Publishing Delivery cancellation Postgres transaction contract", () =>
   it("terminalizes expired contacted cancellation without granting a restart lease", () => {
     const acquire = method("acquireLease", "renewLease");
     const cancellation = acquire.indexOf('delivery.desiredState === "cancel"');
-    const unknownWrite = acquire.indexOf('state: "outcome_unknown"');
+    const unknownWrite = acquire.indexOf('state: "outcome_unknown"', cancellation);
     const leaseGrant = acquire.indexOf("const leaseToken = randomUUID()");
     expect(cancellation).toBeGreaterThan(0);
     expect(unknownWrite).toBeGreaterThan(cancellation);
@@ -86,5 +95,19 @@ describe("Publishing Delivery cancellation Postgres transaction contract", () =>
     expect(lock).toContain("publishing-delivery-cancellation-human-grant-evidence/v1");
     expect(lock).toContain("runtimePublishingApprovalAuthorityRevocations");
     expect(lock).toContain('.for("update")');
+  });
+
+  it("cancels a blocked Delivery as prevented and clears its readiness blocker", () => {
+    const cancellation = method("cancel", "getRetry");
+    for (const marker of [
+      "readinessBlockCode: transition.clearReadinessBlock",
+      "readinessEvidenceDigest: transition.clearReadinessBlock",
+      "readinessBlockedAt: transition.clearReadinessBlock",
+      "readinessRetryAt: transition.clearReadinessBlock",
+      "readinessBlockCount: transition.clearReadinessBlock",
+    ]) expect(cancellation).toContain(marker);
+    for (const contract of [schemaSource, recoveryMigration]) {
+      expect(contract).toContain("'scheduled','blocked','dispatching'");
+    }
   });
 });

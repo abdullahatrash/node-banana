@@ -28,6 +28,9 @@ import {
   runtimePublishingApprovalDecisions,
   runtimePublishingApprovalMutationReceipts,
   runtimePublishingApprovalRequests,
+  runtimePublishingApprovalRetrySources,
+  runtimePublishingDeliveryRetryApprovalConsumptions,
+  runtimePublishingDeliveries,
   runtimePublishingPlanRevisions,
   runtimePublishingPlans,
   runtimeSpendControls,
@@ -280,6 +283,11 @@ function requestRecord(input: {
     !DIGEST.test(row.validationCurrentStateDigest) ||
     !DIGEST.test(row.validationContextDigest) ||
     !DIGEST.test(row.validationRuntimePolicyContractDigest) ||
+    ((row.retrySourceDeliveryId === null) !==
+      (row.retrySourceEvidenceDigest === null)) ||
+    (row.retrySourceDeliveryId !== null && !ID.test(row.retrySourceDeliveryId)) ||
+    (row.retrySourceEvidenceDigest !== null &&
+      !DIGEST.test(row.retrySourceEvidenceDigest)) ||
     row.validationRuntimePolicyIdentity !== PUBLISHING_PLAN_RUNTIME_POLICY_IDENTITY ||
     row.validationRuntimePolicyContractDigest !== publishingPlanRuntimePolicyContractDigest() ||
     row.decisionPolicyMode !== "expires_at" ||
@@ -305,6 +313,10 @@ function requestRecord(input: {
     targetIds,
     channelIds,
     artifactIds,
+    retrySource: row.retrySourceDeliveryId === null ? null : {
+      deliveryId: row.retrySourceDeliveryId,
+      evidenceDigest: row.retrySourceEvidenceDigest!,
+    },
     requestingPrincipalId: row.requestingPrincipalId,
     requestingKeyId: row.requestingKeyId,
     requestAuthorization: {
@@ -442,6 +454,19 @@ export async function lockCurrentPublishingApprovalRevision(
     eq(runtimePublishingPlans.id, request.planId),
   )).limit(1).for("share");
   if (heads[0]?.currentRevision !== request.planRevision) return null;
+  return lockRetainedPublishingApprovalRevision(tx, request);
+}
+
+/**
+ * Locks the exact revision sealed into a consumed Approval. Unlike admission-time
+ * validation this deliberately does not require the Plan to still point at that
+ * revision: a later Plan edit cannot rewrite or revoke an already accepted
+ * Delivery.
+ */
+export async function lockRetainedPublishingApprovalRevision(
+  tx: Tx,
+  request: PublishingApprovalRequestRecord,
+): Promise<PublishingPlanRevisionRecord | null> {
   const revisions = await tx.select().from(runtimePublishingPlanRevisions).where(and(
     eq(runtimePublishingPlanRevisions.workspaceId, request.workspaceId),
     eq(runtimePublishingPlanRevisions.planId, request.planId),
@@ -477,6 +502,7 @@ export async function verifyCurrentPublishingPlanEvidence(
   revision: PublishingPlanRevisionRecord,
   validationExpiresAt: Date,
   targetIds?: string[],
+  options?: { allowDuePublishAt?: boolean },
 ): Promise<Date | null> {
   const evidence = revision.validationEvidence;
   const selectedTargetIds = targetIds ? new Set(targetIds) : null;
@@ -597,10 +623,10 @@ export async function verifyCurrentPublishingPlanEvidence(
       channel.tokenExpiresAt <= finalNow &&
       !channel.refreshTokenEncrypted,
     ) &&
-    !targets.some((target) =>
+    (options?.allowDuePublishAt === true || !targets.some((target) =>
       target.timing.kind === "scheduled" &&
       new Date(target.timing.publishAt) <= finalNow,
-    )
+    ))
     ? finalNow
     : null;
 }
@@ -640,6 +666,36 @@ async function verifyRequestAuthorization(
   const artifactsAllowed = row.decision.resources.filter((r) => r.kind === "artifact").map((r) => r.id);
   return unique(channels) && unique(artifactsAllowed) &&
     sameSet(channels, request.channelIds) && sameSet(artifactsAllowed, request.artifactIds);
+}
+
+async function lockCurrentApprovalRetrySource(
+  tx: Tx,
+  request: PublishingApprovalRequestRecord,
+): Promise<boolean> {
+  if (!request.retrySource) return true;
+  const sources = await tx.select().from(runtimePublishingDeliveries).where(and(
+    eq(runtimePublishingDeliveries.workspaceId, request.workspaceId),
+    eq(runtimePublishingDeliveries.id, request.retrySource.deliveryId),
+  )).limit(1).for("share");
+  const source = sources[0];
+  const normalizedFailure = source && (
+    (source.state === "failed_transient" && source.failureClass === "transient" &&
+      source.failureRetryable === true) ||
+    (source.state === "failed_terminal" && source.failureClass === "terminal" &&
+      source.failureRetryable === false)
+  );
+  return Boolean(source && source.desiredState === "publish" && normalizedFailure &&
+    (source.failureEffectDisposition === "not_created" ||
+      source.failureEffectDisposition === "provider_failed_known") &&
+    source.latestEffectEvidenceDigest === request.retrySource.evidenceDigest &&
+    source.requestingPrincipalId === request.requestingPrincipalId &&
+    source.planId === request.planId &&
+    source.planRevisionId === request.planRevisionId &&
+    source.planRevision === request.planRevision &&
+    source.planRevisionDigest === request.planRevisionDigest &&
+    sameOrder(request.targetIds, [source.targetId]) &&
+    sameOrder(request.channelIds, [source.channelId]) &&
+    sameSet(request.artifactIds, source.artifactIds));
 }
 
 function authorityEvidence(input: {
@@ -772,7 +828,13 @@ export class DrizzlePublishingApprovalRepository
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${approvalLock(request.workspaceId, request.id)}, 0))`);
         const revision = await lockCurrentPublishingApprovalRevision(tx, request);
         if (!revision) return { kind: "stale_revision" as const };
-        const finalNow = await verifyCurrentPublishingPlanEvidence(tx, revision, input.validationSession.expiresAt);
+        if (!await lockCurrentApprovalRetrySource(tx, request)) {
+          return { kind: "stale_validation" as const };
+        }
+        const finalNow = await verifyCurrentPublishingPlanEvidence(
+          tx, revision, input.validationSession.expiresAt, undefined,
+          { allowDuePublishAt: request.retrySource !== null },
+        );
         if (!finalNow || finalNow >= request.decisionPolicy.expiresAt ||
           finalNow < input.validationSession.issuedAt) return { kind: "stale_validation" as const };
         if (!await verifyRequestAuthorization(tx, request, finalNow)) return { kind: "unavailable" as const };
@@ -783,18 +845,23 @@ export class DrizzlePublishingApprovalRepository
           tx,
           revision,
           input.validationSession.expiresAt,
+          undefined,
+          { allowDuePublishAt: request.retrySource !== null },
         );
         if (!authorizationNow || authorizationNow >= request.decisionPolicy.expiresAt ||
           authorizationNow >= input.validationSession.expiresAt ||
           authorizationNow < input.validationSession.issuedAt ||
-          revision.definition.targets.some((target) =>
+          (request.retrySource === null && revision.definition.targets.some((target) =>
             target.timing.kind === "scheduled" &&
             new Date(target.timing.publishAt) <= authorizationNow,
-          )) {
+          ))) {
           return { kind: "stale_validation" as const };
         }
         if (!await verifyRequestAuthorization(tx, request, authorizationNow)) {
           return { kind: "unavailable" as const };
+        }
+        if (!await lockCurrentApprovalRetrySource(tx, request)) {
+          return { kind: "stale_validation" as const };
         }
         await tx.insert(runtimePublishingApprovalRequests).values({
           workspaceId: request.workspaceId, id: request.id, planId: request.planId,
@@ -802,6 +869,8 @@ export class DrizzlePublishingApprovalRepository
           planRevisionDigest: request.planRevisionDigest, action: request.action,
           targetIds: request.targetIds, targetSetDigest: canonicalDigest(request.targetIds),
           channelIds: request.channelIds, artifactIds: request.artifactIds,
+          retrySourceDeliveryId: request.retrySource?.deliveryId ?? null,
+          retrySourceEvidenceDigest: request.retrySource?.evidenceDigest ?? null,
           requestingPrincipalId: request.requestingPrincipalId, requestingKeyId: request.requestingKeyId,
           requestAuthorizationCapability: request.requestAuthorization.capability,
           requestAuthorizationContractDigest: request.requestAuthorization.contractDigest,
@@ -818,6 +887,15 @@ export class DrizzlePublishingApprovalRepository
           decisionPolicyExpiresAt: request.decisionPolicy.expiresAt,
           authorizesExecution: false, createdAt: request.createdAt,
         });
+        if (request.retrySource) {
+          await tx.insert(runtimePublishingApprovalRetrySources).values({
+            workspaceId: request.workspaceId,
+            approvalRequestId: request.id,
+            sourceDeliveryId: request.retrySource.deliveryId,
+            sourceEvidenceDigest: request.retrySource.evidenceDigest,
+            createdAt: authorizationNow,
+          });
+        }
         await tx.insert(runtimePublishingApprovalMutationReceipts).values(receiptValues(input.receipt, request));
         return { kind: "created" as const, request: structuredClone(request) };
       });
@@ -896,7 +974,13 @@ export class DrizzlePublishingApprovalRepository
         if (!validationSessionMatches(request, input.validationSession)) return { kind: "stale_validation" as const };
         const revision = await lockCurrentPublishingApprovalRevision(tx, request);
         if (!revision) return { kind: "stale_revision" as const };
-        const evidenceNow = await verifyCurrentPublishingPlanEvidence(tx, revision, input.validationSession.expiresAt);
+        if (!await lockCurrentApprovalRetrySource(tx, request)) {
+          return { kind: "stale_validation" as const };
+        }
+        const evidenceNow = await verifyCurrentPublishingPlanEvidence(
+          tx, revision, input.validationSession.expiresAt, undefined,
+          { allowDuePublishAt: request.retrySource !== null },
+        );
         if (!evidenceNow || evidenceNow < input.validationSession.issuedAt) return { kind: "stale_validation" as const };
         if (!await lockCurrentAuthority(tx, input.authoritySession, request, evidenceNow)) return { kind: "authority_stale" as const };
         // Authority locks can wait after the first evidence read. Revalidate all
@@ -905,11 +989,16 @@ export class DrizzlePublishingApprovalRepository
           tx,
           revision,
           input.validationSession.expiresAt,
+          undefined,
+          { allowDuePublishAt: request.retrySource !== null },
         );
         if (!finalNow || finalNow >= request.decisionPolicy.expiresAt) return { kind: "expired" as const };
         if (finalNow >= input.validationSession.expiresAt) return { kind: "stale_validation" as const };
         if (finalNow >= input.authoritySession.expiresAt ||
           !await lockCurrentAuthority(tx, input.authoritySession, request, finalNow)) return { kind: "authority_stale" as const };
+        if (!await lockCurrentApprovalRetrySource(tx, request)) {
+          return { kind: "stale_validation" as const };
+        }
         const decision: PublishingApprovalDecisionRecord = { ...input.decision, decidedAt: finalNow };
         await tx.insert(runtimePublishingApprovalDecisions).values({
           workspaceId: decision.workspaceId, id: decision.id,
@@ -937,7 +1026,15 @@ export class DrizzlePublishingApprovalRepository
             eq(runtimePublishingApprovalConsumptions.workspaceId, consumption.workspaceId),
             eq(runtimePublishingApprovalConsumptions.decisionId, consumption.decisionId),
           )).limit(1).for("update");
-        if (prior[0]) return "already_consumed" as const;
+        const retryPrior = await tx.select({
+          id: runtimePublishingDeliveryRetryApprovalConsumptions.id,
+        }).from(runtimePublishingDeliveryRetryApprovalConsumptions).where(and(
+          eq(runtimePublishingDeliveryRetryApprovalConsumptions.workspaceId,
+            consumption.workspaceId),
+          eq(runtimePublishingDeliveryRetryApprovalConsumptions.approvalDecisionId,
+            consumption.decisionId),
+        )).limit(1).for("update");
+        if (prior[0] || retryPrior[0]) return "already_consumed" as const;
         const request = await selectPublishingApprovalRequest(tx, { workspaceId: consumption.workspaceId, approvalRequestId: consumption.approvalRequestId });
         if (!request?.decision || request.decision.decision !== "approved" ||
           request.decision.id !== consumption.decisionId || request.consumption ||
@@ -1039,7 +1136,13 @@ export class DrizzlePublishingApprovalRevisionRepository
         if (!sameOrder(orderedTargetIds, input.targetIds)) return null;
         const binding = publishingApprovalValidationBinding({ revision, targetIds: orderedTargetIds });
         const expiresAt = new Date(binding.expiresAt);
-        const issuedAt = await verifyCurrentPublishingPlanEvidence(tx, revision, expiresAt);
+        const issuedAt = await verifyCurrentPublishingPlanEvidence(
+          tx,
+          revision,
+          expiresAt,
+          undefined,
+          { allowDuePublishAt: input.mode === "retry_due" },
+        );
         if (!issuedAt || issuedAt < input.evaluatedAt || issuedAt >= expiresAt) return null;
         const evidenceDigest = canonicalDigest({
           schema: "publishing-approval-validation-session/v1",

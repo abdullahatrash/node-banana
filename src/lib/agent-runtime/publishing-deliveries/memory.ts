@@ -10,16 +10,25 @@ import type {
   PublishingDeliveryCancellationRecord,
   PublishingDeliveryEvent,
   PublishingDeliveryExecutionLeaseRecord,
+  PublishingDeliveryEffectIdentityRecord,
   PublishingDeliveryMutationReceiptRecord,
   PublishingDeliveryOutboxIntentRecord,
   PublishingDeliveryRecord,
+  PublishingDeliveryReconciliationProjection,
+  PublishingDeliveryReconciliationRequestRecord,
+  PublishingDeliveryReconciliationResultRecord,
+  PublishingDeliveryRecoveryAuthorizationSession,
   PublishingDeliveryReleaseRecord,
   PublishingDeliveryReleaseResult,
   PublishingDeliveryRepository,
+  PublishingDeliveryRetryApprovalConsumptionRecord,
+  PublishingDeliveryRetryMutationReceiptRecord,
+  PublishingDeliveryRetryRecord,
 } from "./types";
 import { publishingDeliveryOutboxDedupeKey } from "./keys";
 import {
   publishingDeliveryAcceptedRef,
+  publishingDeliveryReconciliationExhausted,
   validPublishingDeliveryAuthorizationSession,
   validPublishingDeliveryValidationSession,
 } from "./validation";
@@ -37,7 +46,9 @@ function clone<T>(value: T): T {
 }
 
 function terminal(state: PublishingDeliveryRecord["state"]): boolean {
-  return state === "succeeded" || state === "failed" || state === "outcome_unknown" || state === "cancelled";
+  return state === "succeeded" || state === "failed_transient" ||
+    state === "failed_terminal" || state === "outcome_unknown" ||
+    state === "cancelled";
 }
 
 export class InMemoryPublishingDeliveryRepository
@@ -50,6 +61,11 @@ export class InMemoryPublishingDeliveryRepository
   readonly outbox = new Map<string, PublishingDeliveryOutboxIntentRecord>();
   readonly receipts = new Map<string, PublishingDeliveryMutationReceiptRecord>();
   readonly cancellations = new Map<string, PublishingDeliveryCancellationRecord>();
+  readonly effectIdentities = new Map<string, PublishingDeliveryEffectIdentityRecord>();
+  readonly retries = new Map<string, PublishingDeliveryRetryRecord>();
+  readonly retryMutationReceipts = new Map<string, PublishingDeliveryRetryMutationReceiptRecord>();
+  readonly retryApprovalConsumptions = new Map<string, PublishingDeliveryRetryApprovalConsumptionRecord>();
+  readonly reconciliations = new Map<string, PublishingDeliveryReconciliationProjection>();
   readonly leases = new Map<string, PublishingDeliveryExecutionLeaseRecord>();
   private readonly fences = new Map<string, bigint>();
   private authorizationVerifier: (
@@ -60,6 +76,9 @@ export class InMemoryPublishingDeliveryRepository
   ) => Promise<boolean> = async () => false;
   private cancellationAuthorizationVerifier: (
     session: PublishingDeliveryCancellationAuthorizationSession,
+  ) => Promise<boolean> = async () => false;
+  private recoveryAuthorizationVerifier: (
+    session: PublishingDeliveryRecoveryAuthorizationSession,
   ) => Promise<boolean> = async () => false;
   private tail: Promise<void> = Promise.resolve();
   failNextMutation = false;
@@ -88,6 +107,14 @@ export class InMemoryPublishingDeliveryRepository
     this.cancellationAuthorizationVerifier = verifier;
   }
 
+  setRecoveryAuthorizationSessionVerifier(
+    verifier: (
+      session: PublishingDeliveryRecoveryAuthorizationSession,
+    ) => Promise<boolean>,
+  ): void {
+    this.recoveryAuthorizationVerifier = verifier;
+  }
+
   private async lock<T>(operation: () => Promise<T>): Promise<T> {
     const prior = this.tail;
     let release!: () => void;
@@ -99,6 +126,21 @@ export class InMemoryPublishingDeliveryRepository
     } finally {
       release();
     }
+  }
+
+  private originRelease(delivery: PublishingDeliveryRecord): PublishingDeliveryReleaseRecord | null {
+    const visited = new Set<string>();
+    let current: PublishingDeliveryRecord | undefined = delivery;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.releaseId) {
+        return this.releases.get(key(current.workspaceId, current.releaseId)) ?? null;
+      }
+      current = current.sourceDeliveryId
+        ? this.deliveries.get(key(current.workspaceId, current.sourceDeliveryId))
+        : undefined;
+    }
+    return null;
   }
 
   async readReleaseReceipt(
@@ -159,12 +201,15 @@ export class InMemoryPublishingDeliveryRepository
         !storedApproval ||
         !storedApproval.decision ||
         storedApproval.decision.decision !== "approved" ||
+        storedApproval.retrySource !== null ||
         storedApproval.decision.id !== input.release.approvalDecisionId ||
         storedApproval.requestingPrincipalId !== input.release.consumingPrincipalId ||
         storedApproval.planRevisionId !== input.release.planRevisionId ||
         storedApproval.planRevisionDigest !== input.release.planRevisionDigest
       ) return { kind: "approval_invalid" };
-      if (storedApproval.consumption) return { kind: "approval_consumed" };
+      if (storedApproval.consumption || this.retryApprovalConsumptions.has(
+        key(storedApproval.workspaceId, storedApproval.id),
+      )) return { kind: "approval_consumed" };
       if (
         input.revision.id !== storedApproval.planRevisionId ||
         input.revision.revision !== storedApproval.planRevision ||
@@ -223,12 +268,20 @@ export class InMemoryPublishingDeliveryRepository
       for (const delivery of input.deliveries) {
         if (
           delivery.releaseId !== input.release.id ||
+          delivery.sourceDeliveryId !== null ||
+          delivery.retryId !== null ||
           delivery.state !== "scheduled" ||
           delivery.nextEventSequence !== 3 ||
           delivery.nextOutboxGeneration !== 2 ||
+          delivery.effectGeneration !== 1 ||
           delivery.intentDigest !== null ||
+          delivery.providerAdapterContractDigest !== null ||
+          delivery.nextEffectAttempt !== 1 ||
           delivery.providerOperationRef !== null ||
-          delivery.latestEffectEvidenceDigest !== null
+          delivery.latestEffectEvidenceDigest !== null ||
+          delivery.failureClass !== null ||
+          delivery.failureRetryable !== null ||
+          delivery.failureEffectDisposition !== null
           || delivery.effectContactStartedAt !== null
         ) return { kind: "unavailable" };
         const deliveryEvents = input.firstEvents
@@ -238,6 +291,8 @@ export class InMemoryPublishingDeliveryRepository
         if (
           deliveryEvents.length !== 2 ||
           deliveryEvents[0]?.type !== "delivery.accepted" ||
+          deliveryEvents[0].evidence.origin !== "release" ||
+          deliveryEvents[0].evidence.releaseId !== input.release.id ||
           deliveryEvents[1]?.type !== "delivery.scheduled" ||
           !outbox ||
           outbox.state !== "pending" ||
@@ -259,6 +314,23 @@ export class InMemoryPublishingDeliveryRepository
       this.releases.set(key(input.release.workspaceId, input.release.id), clone(input.release));
       for (const item of validated.values()) {
         this.deliveries.set(key(item.delivery.workspaceId, item.delivery.id), item.delivery);
+        this.effectIdentities.set(
+          key(item.delivery.workspaceId, item.delivery.id, "1"),
+          {
+            schema: "publishing-delivery-effect-identity/v1",
+            workspaceId: item.delivery.workspaceId,
+            deliveryId: item.delivery.id,
+            generation: 1,
+            effectKey: item.delivery.effectKey,
+            intentDigest: null,
+            providerAdapterContractDigest: null,
+            parentEffectKey: null,
+            parentGeneration: null,
+            derivation: "release",
+            sourceEvidenceDigest: null,
+            createdAt: item.delivery.acceptedAt,
+          },
+        );
         this.events.set(key(item.delivery.workspaceId, item.delivery.id), item.events);
         this.outbox.set(item.outbox.id, item.outbox);
       }
@@ -292,7 +364,7 @@ export class InMemoryPublishingDeliveryRepository
   async getDelivery(input: Parameters<PublishingDeliveryRepository["getDelivery"]>[0]) {
     const delivery = this.deliveries.get(key(input.workspaceId, input.deliveryId));
     if (!delivery) return null;
-    const release = this.releases.get(key(delivery.workspaceId, delivery.releaseId));
+    const release = this.originRelease(delivery);
     if (
       !release ||
       (input.consumingPrincipalId && release.consumingPrincipalId !== input.consumingPrincipalId) ||
@@ -306,7 +378,7 @@ export class InMemoryPublishingDeliveryRepository
     return [...this.deliveries.values()]
       .filter((item) => item.workspaceId === input.workspaceId)
       .filter((item) => {
-        const release = this.releases.get(key(item.workspaceId, item.releaseId));
+        const release = this.originRelease(item);
         return !input.filters.consumingPrincipalId || release?.consumingPrincipalId === input.filters.consumingPrincipalId;
       })
       .filter((item) => !input.filters.planRevisionId || item.planRevisionId === input.filters.planRevisionId)
@@ -443,7 +515,31 @@ export class InMemoryPublishingDeliveryRepository
         desiredState: "cancel",
         state: transition.nextState,
         failureCode: transition.failureCode,
+        failureClass: transition.nextState === "outcome_unknown"
+          ? null
+          : delivery.failureClass,
+        failureRetryable: transition.nextState === "outcome_unknown"
+          ? null
+          : delivery.failureRetryable,
+        failureEffectDisposition: transition.nextState === "outcome_unknown"
+          ? "ambiguous"
+          : delivery.failureEffectDisposition,
         latestEffectEvidenceDigest: transition.latestEffectEvidenceDigest,
+        readinessBlockCode: transition.clearReadinessBlock
+          ? null
+          : delivery.readinessBlockCode,
+        readinessEvidenceDigest: transition.clearReadinessBlock
+          ? null
+          : delivery.readinessEvidenceDigest,
+        readinessBlockedAt: transition.clearReadinessBlock
+          ? null
+          : delivery.readinessBlockedAt,
+        readinessRetryAt: transition.clearReadinessBlock
+          ? null
+          : delivery.readinessRetryAt,
+        readinessBlockCount: transition.clearReadinessBlock
+          ? 0
+          : delivery.readinessBlockCount,
         nextEventSequence: delivery.nextEventSequence + newEvents.length,
         completedAt: transition.completedAt,
         updatedAt: input.requestedAt,
@@ -462,6 +558,326 @@ export class InMemoryPublishingDeliveryRepository
         cancellation: clone(cancellation),
         delivery: clone(updated),
         events: clone(newEvents),
+      };
+    });
+  }
+
+  async getRetry(input: Parameters<PublishingDeliveryRepository["getRetry"]>[0]) {
+    const value = this.retries.get(
+      key(input.workspaceId, input.sourceDeliveryId, input.sourceEvidenceDigest),
+    );
+    return value && canonicalDigest(value.actor) === canonicalDigest(input.actor)
+      ? clone(value)
+      : null;
+  }
+
+  async getRetryMutationReceipt(
+    input: Parameters<PublishingDeliveryRepository["getRetryMutationReceipt"]>[0],
+  ) {
+    const value = this.retryMutationReceipts.get(key(
+      input.workspaceId,
+      input.actorKind,
+      input.actorId,
+      input.capability,
+      input.idempotencyKey,
+    ));
+    return value ? clone(value) : null;
+  }
+
+  async retryKnownFailure(
+    input: Parameters<PublishingDeliveryRepository["retryKnownFailure"]>[0],
+  ) {
+    return this.lock(async () => {
+      const receiptKey = key(
+        input.mutationReceipt.workspaceId,
+        input.mutationReceipt.actorKind,
+        input.mutationReceipt.actorId,
+        input.mutationReceipt.capability,
+        input.mutationReceipt.idempotencyKey,
+      );
+      const priorReceipt = this.retryMutationReceipts.get(receiptKey);
+      if (priorReceipt) {
+        if (priorReceipt.requestFingerprint !== input.mutationReceipt.requestFingerprint) {
+          return { kind: "retry_conflict" as const };
+        }
+        const priorRetry = this.retries.get(key(
+          priorReceipt.workspaceId,
+          priorReceipt.sourceDeliveryId,
+          input.retry.sourceEvidenceDigest,
+        ));
+        const accepted = this.deliveries.get(key(
+          priorReceipt.workspaceId,
+          priorReceipt.deliveryId,
+        ));
+        const events = accepted
+          ? this.events.get(key(accepted.workspaceId, accepted.id)) ?? []
+          : [];
+        return priorRetry && priorRetry.id === priorReceipt.retryId && accepted
+          ? { kind: "replayed" as const, retry: clone(priorRetry), delivery: clone(accepted), events: clone(events) }
+          : { kind: "unavailable" as const };
+      }
+      const retryKey = key(
+        input.retry.workspaceId,
+        input.retry.sourceDeliveryId,
+        input.retry.sourceEvidenceDigest,
+      );
+      const prior = this.retries.get(retryKey);
+      const sourceKey = key(input.retry.workspaceId, input.retry.sourceDeliveryId);
+      const source = this.deliveries.get(sourceKey);
+      if (prior) {
+        return { kind: "retry_conflict" as const };
+      }
+      if (!source) return { kind: "not_found" as const };
+      if (
+        source.desiredState !== "publish" ||
+        !((source.state === "failed_transient" && source.failureClass === "transient" &&
+          source.failureRetryable === true) ||
+          (source.state === "failed_terminal" && source.failureClass === "terminal" &&
+            source.failureRetryable === false)) ||
+        source.latestEffectEvidenceDigest !== input.retry.sourceEvidenceDigest ||
+        source.effectKey !== input.retry.sourceEffectKey ||
+        source.effectGeneration !== input.retry.sourceEffectGeneration ||
+        source.intentDigest !== input.retry.sourceIntentDigest ||
+        source.providerAdapterContractDigest !==
+          input.retry.sourceProviderAdapterContractDigest ||
+        source.failureEffectDisposition !== input.retry.sourceEffectDisposition ||
+        source.failureClass !== input.retry.sourceFailureClass
+      ) return { kind: "not_retryable" as const };
+      const storedApproval = this.approvals.get(
+        key(input.approval.workspaceId, input.approval.id),
+      );
+      if (
+        !storedApproval || !storedApproval.decision ||
+        storedApproval.decision.decision !== "approved" ||
+        storedApproval.decision.id !== input.retry.approvalDecisionId ||
+        storedApproval.id !== input.retry.approvalRequestId ||
+        storedApproval.planRevisionId !== source.planRevisionId ||
+        storedApproval.planRevisionDigest !== source.planRevisionDigest ||
+        storedApproval.retrySource?.deliveryId !== source.id ||
+        storedApproval.retrySource.evidenceDigest !== input.retry.sourceEvidenceDigest ||
+        canonicalDigest([...storedApproval.targetIds].sort()) !==
+          canonicalDigest([source.targetId]) ||
+        canonicalDigest([...storedApproval.channelIds].sort()) !==
+          canonicalDigest([source.channelId]) ||
+        canonicalDigest([...storedApproval.artifactIds].sort()) !==
+          canonicalDigest([...source.artifactIds].sort())
+      ) return { kind: "approval_invalid" as const };
+      if (
+        storedApproval.consumption ||
+        this.retryApprovalConsumptions.has(
+          key(storedApproval.workspaceId, storedApproval.id),
+        )
+      ) return { kind: "approval_consumed" as const };
+      if (
+        input.revision.id !== source.planRevisionId ||
+        input.revision.revision !== source.planRevision ||
+        input.revision.definitionDigest !== source.planRevisionDigest
+      ) return { kind: "stale_revision" as const };
+      const session = input.authorizationSession;
+      const humanAuthorityValid = session.actor.kind === "agent"
+        ? session.humanGrants.length === 0
+        : session.humanGrants.length === 1 &&
+          session.humanGrants[0]?.channelId === source.channelId;
+      if (
+        session.schema !== "publishing-delivery-recovery-authorization-session/v1" ||
+        session.capability !== "publishing_deliveries.retry@1" ||
+        session.workspaceId !== source.workspaceId ||
+        canonicalDigest(session.actor) !== canonicalDigest(input.retry.actor) ||
+        canonicalDigest([...session.resources.channelIds].sort()) !==
+          canonicalDigest([source.channelId]) ||
+        canonicalDigest([...session.resources.artifactIds].sort()) !==
+          canonicalDigest([...source.artifactIds].sort()) ||
+        !humanAuthorityValid ||
+        session.expiresAt <= input.retry.requestedAt ||
+        !(await this.recoveryAuthorizationVerifier(clone(session)))
+      ) return { kind: "authorization_stale" as const };
+      if (
+        !(await this.validationVerifier(clone(input.validationSession))) ||
+        input.validationSession.expiresAt <= input.retry.requestedAt
+      ) return { kind: "validation_stale" as const };
+      if (this.failNextMutation) {
+        this.failNextMutation = false;
+        return { kind: "unavailable" as const };
+      }
+      if (
+        canonicalDigest(input.sourceDelivery) !== canonicalDigest(source) ||
+        input.delivery.id !== input.retry.deliveryId ||
+        input.delivery.sourceDeliveryId !== source.id ||
+        input.delivery.retryId !== input.retry.id ||
+        input.delivery.releaseId !== null ||
+        input.delivery.state !== "scheduled" ||
+        input.delivery.effectGeneration !== 1 ||
+        input.delivery.intentDigest !== source.intentDigest ||
+        input.delivery.providerAdapterContractDigest !==
+          source.providerAdapterContractDigest ||
+        input.approvalConsumption.sourceDeliveryId !== source.id ||
+        input.approvalConsumption.deliveryId !== input.delivery.id ||
+        input.approvalConsumption.approvalRequestId !== input.retry.approvalRequestId ||
+        input.approvalConsumption.approvalDecisionId !== input.retry.approvalDecisionId ||
+        input.delivery.nextEventSequence !== 4 ||
+        input.effectIdentity.deliveryId !== input.delivery.id ||
+        input.effectIdentity.generation !== 1 ||
+        input.effectIdentity.effectKey !== input.delivery.effectKey ||
+        input.effectIdentity.intentDigest !== source.intentDigest ||
+        input.effectIdentity.providerAdapterContractDigest !==
+          source.providerAdapterContractDigest ||
+        input.effectIdentity.derivation !== "manual_retry" ||
+        input.effectIdentity.sourceEvidenceDigest !== input.retry.sourceEvidenceDigest ||
+        input.events.length !== 3 ||
+        input.events.some((event, index) => event.deliveryId !== input.delivery.id ||
+          event.sequence !== index + 1) ||
+        input.events[1]?.type !== "delivery.retry_requested" ||
+        input.events[0]?.type !== "delivery.accepted" ||
+        input.events[0].evidence.origin !== "retry" ||
+        input.events[0].evidence.sourceDeliveryId !== source.id ||
+        input.events[0].evidence.retryId !== input.retry.id ||
+        input.events[1].evidence.retryId !== input.retry.id ||
+        input.events[1].evidence.sourceDeliveryId !== source.id ||
+        input.outboxIntent.purpose !== "publish" ||
+        input.outboxIntent.deliveryId !== input.delivery.id ||
+        input.outboxIntent.generation !== 1 ||
+        input.outboxIntent.state !== "pending" ||
+        input.mutationReceipt.workspaceId !== source.workspaceId ||
+        input.mutationReceipt.capability !== "publishing_deliveries.retry@1" ||
+        input.mutationReceipt.retryId !== input.retry.id ||
+        input.mutationReceipt.sourceDeliveryId !== source.id ||
+        input.mutationReceipt.deliveryId !== input.delivery.id
+      ) return { kind: "unavailable" as const };
+      const acceptedKey = key(input.delivery.workspaceId, input.delivery.id);
+      if (this.deliveries.has(acceptedKey)) return { kind: "unavailable" as const };
+      this.deliveries.set(acceptedKey, clone(input.delivery));
+      this.events.set(acceptedKey, clone(input.events));
+      this.outbox.set(input.outboxIntent.id, clone(input.outboxIntent));
+      this.retries.set(retryKey, clone(input.retry));
+      this.retryMutationReceipts.set(receiptKey, clone(input.mutationReceipt));
+      this.retryApprovalConsumptions.set(
+        key(input.approvalConsumption.workspaceId, input.approvalConsumption.approvalRequestId),
+        clone(input.approvalConsumption),
+      );
+      this.effectIdentities.set(
+        key(input.effectIdentity.workspaceId, input.effectIdentity.deliveryId,
+          String(input.effectIdentity.generation)),
+        clone(input.effectIdentity),
+      );
+      return {
+        kind: "created" as const,
+        retry: clone(input.retry),
+        delivery: clone(input.delivery),
+        events: clone(input.events),
+      };
+    });
+  }
+
+  async getReconciliation(
+    input: Parameters<PublishingDeliveryRepository["getReconciliation"]>[0],
+  ) {
+    const value = this.reconciliations.get(
+      key(input.workspaceId, input.deliveryId, input.sourceEvidenceDigest),
+    );
+    return value && canonicalDigest(value.request.actor) === canonicalDigest(input.actor)
+      ? clone(value)
+      : null;
+  }
+
+  async requestReconciliation(
+    input: Parameters<PublishingDeliveryRepository["requestReconciliation"]>[0],
+  ) {
+    return this.lock(async () => {
+      const requestKey = key(
+        input.reconciliation.workspaceId,
+        input.reconciliation.deliveryId,
+        input.reconciliation.sourceEvidenceDigest,
+      );
+      const prior = this.reconciliations.get(requestKey);
+      const deliveryKey = key(
+        input.reconciliation.workspaceId,
+        input.reconciliation.deliveryId,
+      );
+      const delivery = this.deliveries.get(deliveryKey);
+      if (prior) {
+        if (!delivery) return { kind: "unavailable" as const };
+        if (canonicalDigest(prior.request.actor) !==
+          canonicalDigest(input.reconciliation.actor)) {
+          return { kind: "reconciliation_conflict" as const };
+        }
+        const event = (this.events.get(deliveryKey) ?? []).find(
+          (item) => item.type === "delivery.reconciliation_requested" &&
+            item.evidence.reconciliationId === prior.request.id,
+        );
+        return event
+          ? {
+              kind: "replayed" as const,
+              reconciliation: clone(prior.request),
+              delivery: clone(delivery),
+              event: clone(event),
+            }
+          : { kind: "unavailable" as const };
+      }
+      if (!delivery) return { kind: "not_found" as const };
+      if (
+        delivery.state !== "outcome_unknown" ||
+        publishingDeliveryReconciliationExhausted(delivery) ||
+        delivery.failureEffectDisposition !== "ambiguous" ||
+        delivery.latestEffectEvidenceDigest !== input.reconciliation.sourceEvidenceDigest ||
+        delivery.effectKey !== input.reconciliation.sourceEffectKey ||
+        delivery.effectGeneration !== input.reconciliation.sourceEffectGeneration ||
+        delivery.intentDigest !== input.reconciliation.sourceIntentDigest ||
+        delivery.providerAdapterContractDigest !==
+          input.reconciliation.sourceProviderAdapterContractDigest ||
+        delivery.providerOperationRef !== input.reconciliation.sourceProviderOperationRef
+      ) return { kind: "not_reconcilable" as const };
+      const session = input.authorizationSession;
+      const humanAuthorityValid = session.actor.kind === "agent"
+        ? session.humanGrants.length === 0
+        : session.humanGrants.length === 1 &&
+          session.humanGrants[0]?.channelId === delivery.channelId;
+      if (
+        session.schema !== "publishing-delivery-recovery-authorization-session/v1" ||
+        session.capability !== "publishing_deliveries.reconcile@1" ||
+        session.workspaceId !== delivery.workspaceId ||
+        canonicalDigest(session.actor) !== canonicalDigest(input.reconciliation.actor) ||
+        canonicalDigest([...session.resources.channelIds].sort()) !==
+          canonicalDigest([delivery.channelId]) ||
+        canonicalDigest([...session.resources.artifactIds].sort()) !==
+          canonicalDigest([...delivery.artifactIds].sort()) ||
+        !humanAuthorityValid ||
+        session.expiresAt <= input.reconciliation.requestedAt ||
+        !(await this.recoveryAuthorizationVerifier(clone(session)))
+      ) return { kind: "authorization_stale" as const };
+      if (
+        input.event.type !== "delivery.reconciliation_requested" ||
+        input.event.sequence !== delivery.nextEventSequence ||
+        input.event.evidence.reconciliationId !== input.reconciliation.id ||
+        input.outboxIntent.purpose !== "reconcile" ||
+        input.outboxIntent.deliveryId !== delivery.id ||
+        input.outboxIntent.generation !== delivery.nextOutboxGeneration ||
+        input.outboxIntent.state !== "pending"
+      ) return { kind: "unavailable" as const };
+      if (this.failNextMutation) {
+        this.failNextMutation = false;
+        return { kind: "unavailable" as const };
+      }
+      const updated: PublishingDeliveryRecord = {
+        ...delivery,
+        nextEventSequence: delivery.nextEventSequence + 1,
+        nextOutboxGeneration: delivery.nextOutboxGeneration + 1,
+        updatedAt: input.reconciliation.requestedAt,
+      };
+      this.deliveries.set(deliveryKey, clone(updated));
+      this.events.set(deliveryKey, [
+        ...(this.events.get(deliveryKey) ?? []),
+        clone(input.event),
+      ]);
+      this.outbox.set(input.outboxIntent.id, clone(input.outboxIntent));
+      this.reconciliations.set(requestKey, {
+        request: clone(input.reconciliation),
+        result: null,
+      });
+      return {
+        kind: "created" as const,
+        reconciliation: clone(input.reconciliation),
+        delivery: clone(updated),
+        event: clone(input.event),
       };
     });
   }
@@ -539,6 +955,9 @@ export class InMemoryPublishingDeliveryRepository
             state: "outcome_unknown",
             latestEffectEvidenceDigest: evidenceDigest,
             failureCode: "CANCELLED_AFTER_EFFECT_CONTACT",
+            failureClass: null,
+            failureRetryable: null,
+            failureEffectDisposition: "ambiguous",
             nextEventSequence: delivery.nextEventSequence + 1,
             completedAt: input.now,
             updatedAt: input.now,
@@ -581,6 +1000,73 @@ export class InMemoryPublishingDeliveryRepository
     });
   }
 
+  async acquireReconciliationLease(
+    input: Parameters<PublishingDeliveryRepository["acquireReconciliationLease"]>[0],
+  ) {
+    return this.lock(async () => {
+      const deliveryKey = key(input.workspaceId, input.deliveryId);
+      const delivery = this.deliveries.get(deliveryKey);
+      if (!delivery) return { kind: "unavailable" as const };
+      if (publishingDeliveryReconciliationExhausted(delivery)) {
+        return { kind: "terminal" as const };
+      }
+      const projection = [...this.reconciliations.values()]
+        .filter((value) =>
+          value.request.workspaceId === input.workspaceId &&
+          value.request.deliveryId === input.deliveryId &&
+          value.result === null,
+        )
+        .sort((left, right) =>
+          right.request.requestedAt.getTime() - left.request.requestedAt.getTime(),
+        )[0];
+      if (!projection) return { kind: "terminal" as const };
+      if (
+        delivery.state !== "outcome_unknown" ||
+        delivery.latestEffectEvidenceDigest !== projection.request.sourceEvidenceDigest ||
+        delivery.effectKey !== projection.request.sourceEffectKey ||
+        delivery.effectGeneration !== projection.request.sourceEffectGeneration ||
+        delivery.intentDigest !== projection.request.sourceIntentDigest ||
+        delivery.providerAdapterContractDigest !==
+          projection.request.sourceProviderAdapterContractDigest
+      ) return { kind: "terminal" as const };
+      const outbox = [...this.outbox.values()]
+        .filter((item) =>
+          item.workspaceId === input.workspaceId &&
+          item.deliveryId === input.deliveryId &&
+          item.purpose === "reconcile" &&
+          (item.state === "claimed" || item.state === "delivered"),
+        )
+        .sort((left, right) => right.generation - left.generation)[0];
+      if (!outbox || outbox.availableAt > input.now) {
+        return { kind: "not_due" as const };
+      }
+      const leaseKey = key(input.workspaceId, input.deliveryId);
+      const existing = this.leases.get(leaseKey);
+      if (existing && !existing.releasedAt &&
+        existing.expiresAt > input.now) return { kind: "busy" as const };
+      const fence = (this.fences.get(leaseKey) ?? BigInt(0)) + BigInt(1);
+      const lease: PublishingDeliveryExecutionLeaseRecord = {
+        workspaceId: input.workspaceId,
+        deliveryId: input.deliveryId,
+        workerId: input.workerId,
+        leaseToken: randomUUID(),
+        fence,
+        acquiredAt: input.now,
+        expiresAt: input.expiresAt,
+        renewedAt: input.now,
+        releasedAt: null,
+      };
+      this.fences.set(leaseKey, fence);
+      this.leases.set(leaseKey, clone(lease));
+      return {
+        kind: "acquired" as const,
+        delivery: clone(delivery),
+        reconciliation: clone(projection.request),
+        lease: clone(lease),
+      };
+    });
+  }
+
   async renewLease(input: Parameters<PublishingDeliveryRepository["renewLease"]>[0]) {
     return this.lock(async () => {
       const leaseKey = key(input.workspaceId, input.deliveryId);
@@ -612,8 +1098,11 @@ export class InMemoryPublishingDeliveryRepository
       const delivery = this.deliveries.get(deliveryKey);
       if (!delivery || !this.activeLease({ ...input, at: input.preparedAt }) || terminal(delivery.state) || delivery.effectKey !== input.effectKey) return { kind: "stale" as const };
       if (delivery.intentDigest) {
-        if (delivery.intentDigest !== input.intentDigest) return { kind: "stale" as const };
-        if (delivery.state === "dispatching") {
+        if (
+          delivery.intentDigest !== input.intentDigest ||
+          delivery.providerAdapterContractDigest !== input.providerAdapterContractDigest
+        ) return { kind: "stale" as const };
+        if (delivery.state === "dispatching" || delivery.state === "blocked") {
           const event = [...(this.events.get(deliveryKey) ?? [])].reverse().find((item) => item.type === "effect.prepared" && item.evidence.intentDigest === input.intentDigest);
           return event ? { kind: "replayed" as const, delivery: clone(delivery), event: clone(event) } : { kind: "unavailable" as const };
         }
@@ -623,8 +1112,16 @@ export class InMemoryPublishingDeliveryRepository
         }
         if (delivery.state !== "scheduled") return { kind: "stale" as const };
       }
-      const event: PublishingDeliveryEvent = { schema: "publishing-delivery-event/v1", id: `pde_${delivery.id}_${delivery.nextEventSequence}`, workspaceId: delivery.workspaceId, deliveryId: delivery.id, sequence: delivery.nextEventSequence, type: "effect.prepared", evidence: { effectKey: delivery.effectKey, intentDigest: input.intentDigest }, occurredAt: input.preparedAt };
-      const updated = { ...delivery, state: "dispatching" as const, intentDigest: input.intentDigest, providerOperationRef: null, latestEffectEvidenceDigest: null, failureCode: null, dispatchStartedAt: input.preparedAt, effectContactStartedAt: null, completedAt: null, nextEventSequence: delivery.nextEventSequence + 1, updatedAt: input.preparedAt };
+      const event: PublishingDeliveryEvent = { schema: "publishing-delivery-event/v1", id: `pde_${delivery.id}_${delivery.nextEventSequence}`, workspaceId: delivery.workspaceId, deliveryId: delivery.id, sequence: delivery.nextEventSequence, type: "effect.prepared", evidence: { effectKey: delivery.effectKey, effectGeneration: delivery.effectGeneration, intentDigest: input.intentDigest, providerAdapterContractDigest: input.providerAdapterContractDigest }, occurredAt: input.preparedAt };
+      const updated = { ...delivery, state: "dispatching" as const, intentDigest: input.intentDigest, providerAdapterContractDigest: input.providerAdapterContractDigest, providerOperationRef: null, latestEffectEvidenceDigest: null, failureCode: null, failureClass: null, failureRetryable: null, failureEffectDisposition: null, dispatchStartedAt: input.preparedAt, effectContactStartedAt: null, completedAt: null, nextEventSequence: delivery.nextEventSequence + 1, updatedAt: input.preparedAt };
+      const identityKey = key(delivery.workspaceId, delivery.id, String(delivery.effectGeneration));
+      const identity = this.effectIdentities.get(identityKey);
+      if (!identity) return { kind: "unavailable" as const };
+      this.effectIdentities.set(identityKey, {
+        ...identity,
+        intentDigest: input.intentDigest,
+        providerAdapterContractDigest: input.providerAdapterContractDigest,
+      });
       this.deliveries.set(deliveryKey, clone(updated));
       this.events.set(deliveryKey, [...(this.events.get(deliveryKey) ?? []), clone(event)]);
       return { kind: "prepared" as const, delivery: clone(updated), event: clone(event) };
@@ -644,6 +1141,19 @@ export class InMemoryPublishingDeliveryRepository
         delivery.effectKey !== input.effectKey ||
         delivery.intentDigest !== input.intentDigest
       ) return { kind: "stale" as const };
+      const readiness = input.readinessSession;
+      if (
+        readiness.schema !== "publishing-delivery-execution-readiness/v1" ||
+        readiness.workspaceId !== input.workspaceId ||
+        readiness.deliveryId !== input.deliveryId ||
+        readiness.effectKey !== input.effectKey ||
+        readiness.effectGeneration !== delivery.effectGeneration ||
+        readiness.intentDigest !== input.intentDigest ||
+        readiness.providerAdapterContractDigest !== input.providerAdapterContractDigest ||
+        readiness.mode !== "launch" ||
+        readiness.evaluatedAt > input.startedAt ||
+        readiness.expiresAt <= input.startedAt
+      ) return { kind: "blocked" as const, failureCode: "VALIDATION_STALE" as const, evidenceDigest: readiness.evidenceDigest };
       if (delivery.effectContactStartedAt) {
         if (
           delivery.state !== "dispatching" &&
@@ -660,26 +1170,144 @@ export class InMemoryPublishingDeliveryRepository
       if (delivery.desiredState === "cancel" || delivery.state === "cancelled") {
         return { kind: "cancelled" as const };
       }
-      if (delivery.state !== "dispatching") return { kind: "stale" as const };
+      if (delivery.state !== "dispatching" && delivery.state !== "blocked") {
+        return { kind: "stale" as const };
+      }
+      const resumedEvent: PublishingDeliveryEvent | null =
+        delivery.state === "blocked" && delivery.readinessBlockCode &&
+          delivery.readinessEvidenceDigest
+          ? {
+              schema: "publishing-delivery-event/v1",
+              id: `pde_${delivery.id}_${delivery.nextEventSequence}`,
+              workspaceId: delivery.workspaceId,
+              deliveryId: delivery.id,
+              sequence: delivery.nextEventSequence,
+              type: "delivery.resumed",
+              evidence: {
+                priorFailureCode: delivery.readinessBlockCode,
+                priorEvidenceDigest: delivery.readinessEvidenceDigest,
+                readinessEvidenceDigest: readiness.evidenceDigest,
+              },
+              occurredAt: input.startedAt,
+            }
+          : null;
+      const contactSequence = delivery.nextEventSequence + (resumedEvent ? 1 : 0);
+      const event: PublishingDeliveryEvent = {
+        schema: "publishing-delivery-event/v1",
+        id: `pde_${delivery.id}_${contactSequence}`,
+        workspaceId: delivery.workspaceId,
+        deliveryId: delivery.id,
+        sequence: contactSequence,
+        type: "effect.contact_started",
+        evidence: { effectKey: delivery.effectKey, effectGeneration: delivery.effectGeneration, intentDigest: input.intentDigest, providerAdapterContractDigest: input.providerAdapterContractDigest, readinessEvidenceDigest: readiness.evidenceDigest },
+        occurredAt: input.startedAt,
+      };
+      const updated: PublishingDeliveryRecord = {
+        ...delivery,
+        state: "dispatching",
+        readinessBlockCode: null,
+        readinessEvidenceDigest: null,
+        readinessBlockedAt: null,
+        readinessRetryAt: null,
+        readinessBlockCount: 0,
+        effectContactStartedAt: input.startedAt,
+        nextEventSequence: contactSequence + 1,
+        updatedAt: input.startedAt,
+      };
+      this.deliveries.set(deliveryKey, clone(updated));
+      this.events.set(deliveryKey, [
+        ...(this.events.get(deliveryKey) ?? []),
+        ...(resumedEvent ? [clone(resumedEvent)] : []),
+        clone(event),
+      ]);
+      return { kind: "started" as const, delivery: clone(updated), event: clone(event) };
+    });
+  }
+
+  async blockForReadiness(
+    input: Parameters<PublishingDeliveryRepository["blockForReadiness"]>[0],
+  ) {
+    return this.lock(async () => {
+      const deliveryKey = key(input.workspaceId, input.deliveryId);
+      const delivery = this.deliveries.get(deliveryKey);
+      const exactLease = this.exactLease(input);
+      if (
+        !delivery || !exactLease || delivery.effectKey !== input.effectKey ||
+        delivery.effectContactStartedAt !== null ||
+        delivery.providerOperationRef !== null
+      ) return { kind: "stale" as const };
+      if (
+        exactLease.releasedAt !== null && delivery.state === "blocked" &&
+        delivery.readinessBlockCode === input.failureCode &&
+        delivery.readinessEvidenceDigest === input.evidenceDigest &&
+        delivery.readinessBlockedAt?.getTime() === input.blockedAt.getTime() &&
+        delivery.readinessRetryAt?.getTime() === input.retryAt.getTime()
+      ) {
+        const replay = [...(this.events.get(deliveryKey) ?? [])].reverse().find(
+          (item) => item.type === "delivery.blocked" &&
+            item.occurredAt.getTime() === input.blockedAt.getTime(),
+        );
+        return replay
+          ? { kind: "replayed" as const, delivery: clone(delivery), event: clone(replay) }
+          : { kind: "unavailable" as const };
+      }
+      const lease = this.activeLease({ ...input, at: input.blockedAt });
+      if (!lease || terminal(delivery.state) ||
+        (delivery.state !== "dispatching" && delivery.state !== "blocked")) {
+        return { kind: "stale" as const };
+      }
+      const outbox = input.outboxIntent;
+      if (
+        outbox.workspaceId !== delivery.workspaceId ||
+        outbox.deliveryId !== delivery.id || outbox.purpose !== "publish" ||
+        outbox.state !== "pending" ||
+        outbox.generation !== delivery.nextOutboxGeneration ||
+        outbox.dedupeKey !== publishingDeliveryOutboxDedupeKey(
+          delivery.workspaceId,
+          delivery.id,
+          delivery.nextOutboxGeneration,
+        ) || outbox.availableAt.getTime() !== input.retryAt.getTime() ||
+        this.outbox.has(outbox.id)
+      ) return { kind: "unavailable" as const };
+      const blockCount = delivery.readinessBlockCount + 1;
       const event: PublishingDeliveryEvent = {
         schema: "publishing-delivery-event/v1",
         id: `pde_${delivery.id}_${delivery.nextEventSequence}`,
         workspaceId: delivery.workspaceId,
         deliveryId: delivery.id,
         sequence: delivery.nextEventSequence,
-        type: "effect.contact_started",
-        evidence: { effectKey: delivery.effectKey, intentDigest: input.intentDigest },
-        occurredAt: input.startedAt,
+        type: "delivery.blocked",
+        evidence: {
+          failureCode: input.failureCode,
+          evidenceDigest: input.evidenceDigest,
+          retryAt: input.retryAt.toISOString(),
+          blockCount,
+        },
+        occurredAt: input.blockedAt,
       };
       const updated: PublishingDeliveryRecord = {
         ...delivery,
-        effectContactStartedAt: input.startedAt,
+        state: "blocked",
+        readinessBlockCode: input.failureCode,
+        readinessEvidenceDigest: input.evidenceDigest,
+        readinessBlockedAt: input.blockedAt,
+        readinessRetryAt: input.retryAt,
+        readinessBlockCount: blockCount,
         nextEventSequence: delivery.nextEventSequence + 1,
-        updatedAt: input.startedAt,
+        nextOutboxGeneration: delivery.nextOutboxGeneration + 1,
+        updatedAt: input.blockedAt,
       };
       this.deliveries.set(deliveryKey, clone(updated));
-      this.events.set(deliveryKey, [...(this.events.get(deliveryKey) ?? []), clone(event)]);
-      return { kind: "started" as const, delivery: clone(updated), event: clone(event) };
+      this.events.set(deliveryKey, [
+        ...(this.events.get(deliveryKey) ?? []),
+        clone(event),
+      ]);
+      this.outbox.set(outbox.id, clone(outbox));
+      this.leases.set(key(input.workspaceId, input.deliveryId), {
+        ...lease,
+        releasedAt: input.blockedAt,
+      });
+      return { kind: "blocked" as const, delivery: clone(updated), event: clone(event) };
     });
   }
 
@@ -688,8 +1316,18 @@ export class InMemoryPublishingDeliveryRepository
       const deliveryKey = key(input.workspaceId, input.deliveryId);
       const delivery = this.deliveries.get(deliveryKey);
       const exactLease = this.exactLease(input);
-      if (!delivery || !exactLease || delivery.effectKey !== input.effectKey || delivery.intentDigest !== null) return { kind: "stale" as const };
-      if (exactLease.releasedAt !== null && delivery.state === "failed" && delivery.latestEffectEvidenceDigest === input.evidenceDigest && delivery.failureCode === input.failureCode) {
+      if (
+        !delivery || !exactLease || delivery.effectKey !== input.effectKey ||
+        delivery.effectContactStartedAt !== null ||
+        delivery.providerOperationRef !== null
+      ) return { kind: "stale" as const };
+      if (exactLease.releasedAt !== null &&
+        (delivery.state === "failed_transient" || delivery.state === "failed_terminal") &&
+        delivery.latestEffectEvidenceDigest === input.evidenceDigest &&
+        delivery.failureCode === input.failureCode &&
+        delivery.failureClass === input.failureClass &&
+        delivery.failureRetryable === input.retryable &&
+        delivery.failureEffectDisposition === input.effectDisposition) {
         const replay = [...(this.events.get(deliveryKey) ?? [])].reverse().find((item) => item.type === "effect.not_created" && item.evidence.evidenceDigest === input.evidenceDigest);
         return replay ? { kind: "replayed" as const, delivery: clone(delivery), event: clone(replay) } : { kind: "unavailable" as const };
       }
@@ -705,18 +1343,28 @@ export class InMemoryPublishingDeliveryRepository
         type: "effect.not_created",
         evidence: {
           effectKey: delivery.effectKey,
+          effectGeneration: delivery.effectGeneration,
           evidenceDigest: input.evidenceDigest,
           failureCode: input.failureCode,
+          failureClass: input.failureClass,
+          retryable: input.retryable,
+          effectDisposition: "not_created",
         },
         occurredAt: input.occurredAt,
       };
       const updated: PublishingDeliveryRecord = {
         ...delivery,
-        state: "failed",
-        intentDigest: null,
+        state: input.failureClass === "transient"
+          ? "failed_transient"
+          : "failed_terminal",
+        intentDigest: delivery.intentDigest,
         providerOperationRef: null,
         latestEffectEvidenceDigest: input.evidenceDigest,
         failureCode: input.failureCode,
+        failureClass: input.failureClass,
+        failureRetryable: input.retryable,
+        failureEffectDisposition: "not_created",
+        nextEffectAttempt: Math.min(9, delivery.nextEffectAttempt + 1),
         nextEventSequence: delivery.nextEventSequence + 1,
         completedAt: input.occurredAt,
         updatedAt: input.occurredAt,
@@ -740,7 +1388,17 @@ export class InMemoryPublishingDeliveryRepository
         retryOutboxIntent: input.retryOutboxIntent,
       });
       const { outcome } = normalized;
-      const state = outcome.kind === "succeeded" ? "succeeded" as const : outcome.kind === "failed" ? "failed" as const : outcome.kind === "outcome_unknown" ? "outcome_unknown" as const : outcome.kind === "confirmation_pending" ? "confirmation_pending" as const : "scheduled" as const;
+      const state = outcome.kind === "succeeded"
+        ? "succeeded" as const
+        : outcome.kind === "failed"
+          ? outcome.failureClass === "transient"
+            ? "failed_transient" as const
+            : "failed_terminal" as const
+          : outcome.kind === "outcome_unknown"
+            ? "outcome_unknown" as const
+            : outcome.kind === "confirmation_pending"
+              ? "confirmation_pending" as const
+              : "scheduled" as const;
       if (exactLease.releasedAt !== null && delivery.latestEffectEvidenceDigest === outcome.evidenceDigest && delivery.state === state) {
         const replay = (this.events.get(deliveryKey) ?? []).at(-1);
         return replay ? { kind: "replayed" as const, delivery: clone(delivery), event: clone(replay) } : { kind: "unavailable" as const };
@@ -758,16 +1416,27 @@ export class InMemoryPublishingDeliveryRepository
         : outcome.kind === "confirmation_pending"
           ? { ...common, type: "publication.confirmation_pending", evidence: { effectKey: delivery.effectKey, providerOperationRef: outcome.providerOperationRef, evidenceDigest: outcome.evidenceDigest, pollAt: outcome.pollAt.toISOString() } }
           : outcome.kind === "outcome_unknown"
-            ? { ...common, type: "publication.outcome_unknown", evidence: { effectKey: delivery.effectKey, providerOperationRef: null, evidenceDigest: outcome.evidenceDigest, failureCode: outcome.failureCode } }
+            ? { ...common, type: "publication.outcome_unknown", evidence: { effectKey: delivery.effectKey, providerOperationRef: outcome.providerOperationRef, evidenceDigest: outcome.evidenceDigest, failureCode: outcome.failureCode } }
             : outcome.kind === "succeeded"
               ? { ...common, type: "publication.succeeded", evidence: { effectKey: delivery.effectKey, providerOperationRef: outcome.providerOperationRef, evidenceDigest: outcome.evidenceDigest, failureCode: null } }
-              : { ...common, type: "publication.failed", evidence: { effectKey: delivery.effectKey, providerOperationRef: outcome.providerOperationRef, evidenceDigest: outcome.evidenceDigest, failureCode: outcome.failureCode } };
+              : outcome.failureClass === "transient"
+                ? { ...common, type: "publication.failed_transient", evidence: { effectKey: delivery.effectKey, effectGeneration: delivery.effectGeneration, providerOperationRef: outcome.providerOperationRef, evidenceDigest: outcome.evidenceDigest, failureCode: outcome.failureCode, failureClass: "transient", retryable: true, effectDisposition: outcome.effectDisposition } }
+                : { ...common, type: "publication.failed_terminal", evidence: { effectKey: delivery.effectKey, effectGeneration: delivery.effectGeneration, providerOperationRef: outcome.providerOperationRef, evidenceDigest: outcome.evidenceDigest, failureCode: outcome.failureCode, failureClass: "terminal", retryable: false, effectDisposition: outcome.effectDisposition } };
       const updated: PublishingDeliveryRecord = {
         ...delivery,
         state,
-        providerOperationRef: outcome.kind === "confirmation_pending" || outcome.kind === "succeeded" || outcome.kind === "failed" ? outcome.providerOperationRef : null,
+        providerOperationRef: outcome.kind === "confirmation_pending" || outcome.kind === "succeeded" || outcome.kind === "failed" || outcome.kind === "outcome_unknown" ? outcome.providerOperationRef : null,
         latestEffectEvidenceDigest: outcome.evidenceDigest,
         failureCode: outcome.kind === "failed" || outcome.kind === "outcome_unknown" || outcome.kind === "retry_scheduled" ? outcome.failureCode : null,
+        failureClass: outcome.kind === "failed" ? outcome.failureClass : null,
+        failureRetryable: outcome.kind === "failed" ? outcome.retryable : null,
+        failureEffectDisposition: outcome.kind === "failed"
+          ? outcome.effectDisposition
+          : outcome.kind === "outcome_unknown" ? "ambiguous" : null,
+        nextEffectAttempt: outcome.kind === "confirmation_pending" ||
+          outcome.kind === "outcome_unknown"
+          ? Math.min(9, delivery.nextEffectAttempt + 1)
+          : delivery.nextEffectAttempt,
         nextEventSequence: delivery.nextEventSequence + 1,
         nextOutboxGeneration: delivery.nextOutboxGeneration + (followUp ? 1 : 0),
         completedAt: terminal(state) ? input.occurredAt : null,
@@ -778,6 +1447,169 @@ export class InMemoryPublishingDeliveryRepository
       this.leases.set(key(input.workspaceId, input.deliveryId), { ...lease, releasedAt: input.occurredAt });
       if (followUp) this.outbox.set(followUp.id, clone(followUp));
       return { kind: "settled" as const, delivery: clone(updated), event: clone(event) };
+    });
+  }
+
+  async settleReconciliation(
+    input: Parameters<PublishingDeliveryRepository["settleReconciliation"]>[0],
+  ) {
+    return this.lock(async () => {
+      const deliveryKey = key(input.workspaceId, input.deliveryId);
+      const delivery = this.deliveries.get(deliveryKey);
+      const projectionKey = [...this.reconciliations.entries()].find(([, value]) =>
+        value.request.id === input.reconciliationId &&
+        value.request.workspaceId === input.workspaceId &&
+        value.request.deliveryId === input.deliveryId,
+      )?.[0];
+      const projection = projectionKey
+        ? this.reconciliations.get(projectionKey)
+        : null;
+      if (!delivery || !projection || !projectionKey) {
+        return { kind: "stale" as const };
+      }
+      if (projection.result) {
+        const normalizedExhaustionReplay =
+          projection.result.resolution.kind === "operator_required" &&
+          projection.result.resolution.failureCode ===
+            "RECONCILIATION_ATTEMPTS_EXHAUSTED" &&
+          input.resolution.kind === "still_unknown" &&
+          projection.result.resolution.providerOperationRef ===
+            input.resolution.providerOperationRef;
+        if (!normalizedExhaustionReplay &&
+          projection.result.resolution.evidenceDigest !==
+            input.resolution.evidenceDigest) return { kind: "stale" as const };
+        const retainedEvent = (this.events.get(deliveryKey) ?? []).find(
+          (item) => item.type === "delivery.reconciled" &&
+            item.evidence.reconciliationId === input.reconciliationId &&
+            item.evidence.evidenceDigest ===
+              projection.result!.resolution.evidenceDigest,
+        );
+        return retainedEvent
+          ? {
+              kind: "replayed" as const,
+              delivery: clone(delivery),
+              reconciliation: clone(projection.request),
+              result: clone(projection.result),
+              event: clone(retainedEvent),
+            }
+          : { kind: "unavailable" as const };
+      }
+      const lease = this.activeLease({ ...input, at: input.occurredAt });
+      if (
+        !lease ||
+        delivery.state !== "outcome_unknown" ||
+        delivery.latestEffectEvidenceDigest !== input.sourceEvidenceDigest ||
+        delivery.effectKey !== input.effectKey ||
+        delivery.effectGeneration !== input.effectGeneration ||
+        delivery.intentDigest !== input.intentDigest ||
+        delivery.providerAdapterContractDigest !== input.providerAdapterContractDigest ||
+        projection.request.sourceEvidenceDigest !== input.sourceEvidenceDigest ||
+        projection.request.sourceEffectKey !== input.effectKey ||
+        input.event.type !== "delivery.reconciled" ||
+        input.event.sequence !== delivery.nextEventSequence ||
+        input.event.evidence.reconciliationId !== input.reconciliationId ||
+        input.event.evidence.sourceEvidenceDigest !== input.sourceEvidenceDigest ||
+        input.event.evidence.evidenceDigest !== input.resolution.evidenceDigest
+      ) return { kind: "stale" as const };
+      if (delivery.nextEffectAttempt > 8) return { kind: "stale" as const };
+      const reconciliationExhausted =
+        delivery.nextEffectAttempt >= 8 &&
+        input.resolution.kind === "still_unknown";
+      const exhaustedEvidenceDigest = reconciliationExhausted
+        ? canonicalDigest({
+            schema: "publishing-delivery-reconciliation-exhausted/v1",
+            deliveryId: delivery.id,
+            reconciliationId: input.reconciliationId,
+            effectKey: input.effectKey,
+            effectGeneration: input.effectGeneration,
+            sourceEvidenceDigest: input.sourceEvidenceDigest,
+            providerOperationRef: input.resolution.providerOperationRef,
+            effectAttempt: delivery.nextEffectAttempt,
+          })
+        : null;
+      const resolution = reconciliationExhausted
+        ? {
+            kind: "operator_required" as const,
+            providerOperationRef: input.resolution.providerOperationRef,
+            evidenceDigest: exhaustedEvidenceDigest!,
+            failureCode: "RECONCILIATION_ATTEMPTS_EXHAUSTED",
+          }
+        : input.resolution;
+      const event: PublishingDeliveryEvent = reconciliationExhausted &&
+          input.event.type === "delivery.reconciled"
+        ? {
+            ...input.event,
+            evidence: {
+              ...input.event.evidence,
+              evidenceDigest: exhaustedEvidenceDigest!,
+              resolution: "operator_required",
+              providerOperationRef: input.resolution.providerOperationRef,
+              failureCode: "RECONCILIATION_ATTEMPTS_EXHAUSTED",
+              retryable: null,
+            },
+          }
+        : input.event;
+      const result: PublishingDeliveryReconciliationResultRecord = {
+        schema: "publishing-delivery-reconciliation-result/v1",
+        id: `pdrr_${input.reconciliationId}`,
+        workspaceId: input.workspaceId,
+        deliveryId: input.deliveryId,
+        reconciliationId: input.reconciliationId,
+        sourceEvidenceDigest: input.sourceEvidenceDigest,
+        effectKey: input.effectKey,
+        effectGeneration: input.effectGeneration,
+        resolution: clone(resolution),
+        completedAt: input.occurredAt,
+      };
+      const nextState = resolution.kind === "succeeded"
+        ? "succeeded" as const
+        : resolution.kind === "failed_known"
+          ? resolution.failureClass === "transient"
+            ? "failed_transient" as const
+            : "failed_terminal" as const
+          : "outcome_unknown" as const;
+      const updated: PublishingDeliveryRecord = {
+        ...delivery,
+        state: nextState,
+        providerOperationRef: resolution.providerOperationRef,
+        latestEffectEvidenceDigest: resolution.evidenceDigest,
+        failureCode: resolution.kind === "succeeded"
+          ? null
+          : resolution.failureCode,
+        failureClass: resolution.kind === "failed_known"
+          ? resolution.failureClass
+          : null,
+        failureRetryable: resolution.kind === "failed_known"
+          ? resolution.retryable
+          : null,
+        failureEffectDisposition: resolution.kind === "failed_known"
+          ? resolution.effectDisposition
+          : resolution.kind === "succeeded" ? null : "ambiguous",
+        nextEffectAttempt: Math.min(9, delivery.nextEffectAttempt + 1),
+        nextEventSequence: delivery.nextEventSequence + 1,
+        completedAt: input.occurredAt,
+        updatedAt: input.occurredAt,
+      };
+      this.deliveries.set(deliveryKey, clone(updated));
+      this.events.set(deliveryKey, [
+        ...(this.events.get(deliveryKey) ?? []),
+        clone(event),
+      ]);
+      this.leases.set(key(input.workspaceId, input.deliveryId), {
+        ...lease,
+        releasedAt: input.occurredAt,
+      });
+      this.reconciliations.set(projectionKey, {
+        request: clone(projection.request),
+        result: clone(result),
+      });
+      return {
+        kind: "settled" as const,
+        delivery: clone(updated),
+        reconciliation: clone(projection.request),
+        result: clone(result),
+        event: clone(event),
+      };
     });
   }
 }

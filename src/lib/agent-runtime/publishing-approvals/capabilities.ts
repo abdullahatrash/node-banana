@@ -84,6 +84,7 @@ const approval = z.object({
   targetIds: z.array(id).min(1).max(50),
   channelIds: z.array(id).min(1).max(50),
   artifactIds: z.array(artifactId).min(1).max(200),
+  retrySource: z.object({ deliveryId: id, evidenceDigest: digest }).strict().nullable(),
   requestingPrincipalId: id,
   requestingKeyId: id,
   requestAuthorization: z.object({
@@ -105,6 +106,7 @@ const agentDecision = z.object({ approvalRef: id, decision: z.enum(["approved", 
 const agentApproval = z.object({
   id, workspaceId: id, planId: id, planRevisionId: id, planRevision: z.number().int().min(1), planRevisionDigest: digest,
   action: z.literal("publish"), targetIds: z.array(id).min(1).max(50), channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200),
+  retrySource: z.object({ deliveryId: id, evidenceDigest: digest }).strict().nullable(),
   validation, decisionPolicy: z.object({ mode: z.literal("expires_at"), expiresAt: iso }).strict(),
   status: z.enum(["pending", "approved", "denied", "consumed", "expired"]), decision: agentDecision.nullable(),
   consumption: z.object({ consumed: z.literal(true), consumedAt: iso }).strict().nullable(), createdAt: iso, authorizesExecution: z.literal(false),
@@ -191,7 +193,8 @@ export function createPublishingApprovalRegistrations(
       input: z.object({
         idempotencyKey: z.string().min(8).max(200), revisionId: id,
         action: z.literal("publish"), targetIds: z.array(id).min(1).max(50),
-        channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200), expiresAt: iso,
+        channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200),
+        retrySource: z.object({ deliveryId: id, evidenceDigest: digest }).strict().optional(), expiresAt: iso,
       }).strict(),
       outputSchema: schema(agentApproval), effect: mutationEffect,
       approval: { mode: "manages-approval" }, idempotency: { mode: "key-required" },

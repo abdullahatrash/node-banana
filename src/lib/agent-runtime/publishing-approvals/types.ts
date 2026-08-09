@@ -93,6 +93,8 @@ export interface PublishingApprovalRequestRecord {
   targetIds: string[];
   channelIds: string[];
   artifactIds: string[];
+  /** Exact manual-retry recovery claim; null for an initial release Approval. */
+  retrySource: { deliveryId: string; evidenceDigest: string } | null;
   requestingPrincipalId: string;
   requestingKeyId: string;
   requestAuthorization: {
@@ -108,6 +110,25 @@ export interface PublishingApprovalRequestRecord {
   consumption: PublishingApprovalConsumptionRecord | null;
   /** Transport acceptance never represents a human decision. */
   authorizesExecution: false;
+}
+
+/** Authoritative terminal Delivery projection used atomically when creating retry Approval. */
+export interface PublishingApprovalRetrySourceRecord {
+  workspaceId: string;
+  deliveryId: string;
+  evidenceDigest: string;
+  desiredState: "publish";
+  state: "failed_transient" | "failed_terminal";
+  failureClass: "transient" | "terminal";
+  retryable: boolean;
+  planId: string;
+  planRevisionId: string;
+  planRevision: number;
+  planRevisionDigest: string;
+  targetId: string;
+  channelId: string;
+  artifactIds: string[];
+  requestingPrincipalId: string;
 }
 
 export interface PublishingApprovalDto
@@ -140,6 +161,7 @@ export interface PublishingApprovalAgentDto {
   targetIds: string[];
   channelIds: string[];
   artifactIds: string[];
+  retrySource: { deliveryId: string; evidenceDigest: string } | null;
   validation: PublishingApprovalValidationBinding;
   decisionPolicy: { mode: "expires_at"; expiresAt: string };
   status: PublishingApprovalStatus;
@@ -270,6 +292,8 @@ export interface PublishingApprovalValidationPort {
     revision: PublishingPlanRevisionRecord;
     targetIds: string[];
     evaluatedAt: Date;
+    /** Delivery recovery revalidates all evidence while allowing already-due timing. */
+    mode?: "release" | "retry_due";
   }): Promise<PublishingApprovalValidationSession | null>;
 }
 

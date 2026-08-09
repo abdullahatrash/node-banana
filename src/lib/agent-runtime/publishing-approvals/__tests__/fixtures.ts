@@ -27,6 +27,7 @@ export async function setupPublishingApprovals() {
   let now = new Date("2026-08-08T12:00:00.000Z");
   let validationCurrent = true;
   let authorityCurrent = true;
+  const validationModes: Array<"release" | "retry_due"> = [];
   const repository = new InMemoryPublishingApprovalRepository();
   const revisionPort = {
     getRevision: async ({ workspaceId, revisionId }: { workspaceId: string; revisionId: string }) => {
@@ -40,8 +41,9 @@ export async function setupPublishingApprovals() {
     },
   };
   const validationPort = {
-    verifyCurrent: async ({ workspaceId, revision: value, targetIds }: { workspaceId: string; revision: typeof revision; targetIds: string[] }): Promise<PublishingApprovalValidationSession | null> =>
-      validationCurrent
+    verifyCurrent: async ({ workspaceId, revision: value, targetIds, mode = "release" }: { workspaceId: string; revision: typeof revision; targetIds: string[]; mode?: "release" | "retry_due" }): Promise<PublishingApprovalValidationSession | null> => {
+      validationModes.push(mode);
+      return validationCurrent
         ? {
             schema: "publishing-approval-validation-session/v1",
             id: "approval_validation_1",
@@ -53,7 +55,8 @@ export async function setupPublishingApprovals() {
             issuedAt: new Date(now),
             expiresAt: new Date("2026-08-08T13:00:00.000Z"),
           }
-        : null,
+        : null;
+    },
   };
   const authorityPort = {
     checkCurrent: async ({ workspaceId, userId, action, channelIds }: { workspaceId: string; userId: string; action: "publish"; channelIds: string[] }): Promise<PublishingApprovalAuthoritySession | null> =>
@@ -159,7 +162,7 @@ export async function setupPublishingApprovals() {
   });
   return {
     plans, revision, repository, revisionPort, validationPort, authorityPort, service,
-    requestInput,
+    requestInput, validationModes,
     setNow(value: string) { now = new Date(value); },
     setValidationCurrent(value: boolean) { validationCurrent = value; },
     setAuthorityCurrent(value: boolean) { authorityCurrent = value; },

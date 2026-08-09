@@ -5,13 +5,44 @@ import {
   PublishingPlatformRegistry,
   type PublishingPlatformInvocationBoundary,
 } from "../platform-registry";
-import type { PublishingDeliveryRecord } from "../types";
+import type {
+  PublishingDeliveryExecutionReadinessPort,
+  PublishingDeliveryRecord,
+} from "../types";
 import { setupPublishingDeliveries } from "./fixtures";
 
 const intentDigest = canonicalDigest({
   schema: "cancellation-execution-intent/v1",
   content: "retained",
 });
+const providerContract = {
+  providerContractDigest: `sha256:${"8".repeat(64)}`,
+  launchSafety: {
+    mode: "native_effect_key" as const,
+    guard: "publishing-delivery/v1" as const,
+    replay: "provider_deduplicated" as const,
+  },
+  observation: "provider_operation_ref" as const,
+};
+const readyExecution: PublishingDeliveryExecutionReadinessPort = {
+  checkCurrent: async (input) => ({
+    kind: "ready",
+    session: {
+      schema: "publishing-delivery-execution-readiness/v1",
+      id: "readiness_cancellation",
+      ...input,
+      mode: "launch",
+      authorizationEvidenceDigest: canonicalDigest("authorization"),
+      approvalEvidenceDigest: canonicalDigest("approval"),
+      channelEvidenceDigest: canonicalDigest("channel"),
+      credentialEvidenceDigest: canonicalDigest("credential"),
+      validationEvidenceDigest: canonicalDigest("validation"),
+      evidenceDigest: canonicalDigest("readiness"),
+      evaluatedAt: input.evaluatedAt,
+      expiresAt: new Date(input.evaluatedAt.getTime() + 30_000),
+    },
+  }),
+};
 
 const providerEvidence = (
   effectDisposition: "not_created" | "accepted" | "terminal_failed" | "unknown",
@@ -43,6 +74,8 @@ function boundary(input: {
       await input.prepare?.();
       return {
         intentDigest,
+        ...providerContract,
+        ensureContactReady: async () => undefined,
         launch: input.launch,
         observe: input.observe ?? input.launch,
       };
@@ -72,10 +105,38 @@ function execution(input: Awaited<ReturnType<typeof released>>, platform: Publis
     { schedule: vi.fn(async () => undefined) },
     new PublishingPlatformRegistry().register("linkedin", platform),
     { now: input.now },
+    readyExecution,
   );
 }
 
 describe("Publishing Delivery cancellation execution races", () => {
+  it("clears retained readiness blocker evidence when cancelling a blocked Delivery", async () => {
+    const input = await released();
+    const storageKey = `workspace_1\u0000${input.deliveryId}`;
+    const delivery = input.setup.repository.deliveries.get(storageKey)!;
+    input.setup.repository.deliveries.set(storageKey, {
+      ...delivery,
+      state: "blocked",
+      readinessBlockCode: "CHANNEL_UNAVAILABLE",
+      readinessEvidenceDigest: canonicalDigest("blocked-channel"),
+      readinessBlockedAt: input.now(),
+      readinessRetryAt: new Date(input.now().getTime() + 5_000),
+      readinessBlockCount: 3,
+    });
+
+    await expect(input.cancel()).resolves.toMatchObject({
+      outcome: "prevented",
+    });
+    expect(input.setup.repository.deliveries.get(storageKey)).toMatchObject({
+      state: "cancelled",
+      readinessBlockCode: null,
+      readinessEvidenceDigest: null,
+      readinessBlockedAt: null,
+      readinessRetryAt: null,
+      readinessBlockCount: 0,
+    });
+  });
+
   it("prevents a stale claimed dispatch before contact and stays cancelled after restart", async () => {
     const input = await released();
     const claimed = await input.setup.repository.claimOutbox({
@@ -249,7 +310,7 @@ describe("Publishing Delivery cancellation execution races", () => {
     });
     finishContact.resolve();
     await expect(running).resolves.toMatchObject({
-      state: "outcome_unknown",
+      state: "failed_transient",
       externallyCompleted: false,
     });
     input.setNow(new Date(input.now().getTime() + 2_000));
@@ -257,11 +318,11 @@ describe("Publishing Delivery cancellation execution races", () => {
     await expect(worker.executeOne({
       workspaceId: "workspace_1", deliveryId: input.deliveryId,
       workerId: "retry_suppressed_restart",
-    })).resolves.toMatchObject({ state: "outcome_unknown" });
+    })).resolves.toMatchObject({ state: "failed_transient" });
     expect(launch).toHaveBeenCalledTimes(1);
   });
 
-  it("cancels an already-scheduled semantic retry as unknown and never relaunches", async () => {
+  it("requires explicit retry after a known transient failure and never relaunches", async () => {
     const input = await released();
     const launch = vi.fn(async () => ({
       kind: "failed_known" as const,
@@ -276,10 +337,10 @@ describe("Publishing Delivery cancellation execution races", () => {
     await expect(worker.executeOne({
       workspaceId: "workspace_1", deliveryId: input.deliveryId,
       workerId: "scheduled_retry_worker",
-    })).resolves.toMatchObject({ state: "scheduled" });
+    })).resolves.toMatchObject({ state: "failed_transient" });
     await expect(input.cancel()).resolves.toMatchObject({
-      outcome: "unknown",
-      stateAtRequest: "scheduled",
+      outcome: "too_late",
+      stateAtRequest: "failed_transient",
       externallyReversed: false,
     });
     input.setNow(new Date(input.now().getTime() + 1_000));
@@ -287,7 +348,7 @@ describe("Publishing Delivery cancellation execution races", () => {
     await expect(worker.executeOne({
       workspaceId: "workspace_1", deliveryId: input.deliveryId,
       workerId: "scheduled_retry_cancelled_restart",
-    })).resolves.toMatchObject({ state: "outcome_unknown" });
+    })).resolves.toMatchObject({ state: "failed_transient" });
     expect(launch).toHaveBeenCalledTimes(1);
   });
 
@@ -310,14 +371,29 @@ describe("Publishing Delivery cancellation execution races", () => {
       workspaceId: "workspace_1", deliveryId: input.deliveryId,
       workerId: lease.lease.workerId, leaseToken: lease.lease.leaseToken,
       fence: lease.lease.fence, effectKey: lease.delivery.effectKey,
-      intentDigest, preparedAt: input.now(),
+      intentDigest,
+      providerAdapterContractDigest: providerContract.providerContractDigest,
+      preparedAt: input.now(),
     });
     expect(prepared.kind).toBe("prepared");
+    const readiness = await readyExecution.checkCurrent({
+      workspaceId: "workspace_1",
+      deliveryId: input.deliveryId,
+      effectKey: lease.delivery.effectKey,
+      effectGeneration: lease.delivery.effectGeneration,
+      intentDigest,
+      providerAdapterContractDigest: providerContract.providerContractDigest,
+      evaluatedAt: input.now(),
+    });
+    if (readiness.kind !== "ready") throw new TypeError("Expected readiness");
     const began = await input.setup.repository.beginEffectContact({
       workspaceId: "workspace_1", deliveryId: input.deliveryId,
       workerId: lease.lease.workerId, leaseToken: lease.lease.leaseToken,
       fence: lease.lease.fence, effectKey: lease.delivery.effectKey,
-      intentDigest, startedAt: input.now(),
+      intentDigest,
+      providerAdapterContractDigest: providerContract.providerContractDigest,
+      readinessSession: readiness.session,
+      startedAt: input.now(),
     });
     expect(began.kind).toBe("started");
     await expect(input.cancel()).resolves.toMatchObject({ outcome: "unknown" });

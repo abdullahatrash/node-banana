@@ -22,6 +22,7 @@ async function deliveryRow(punctuatedArtifacts = false) {
     ...delivery,
     targetOrdinal: 0,
     validationEvidenceDigest: fixture.rawApproval.validation.evidenceDigest,
+    confirmationAttempts: 0,
   };
 }
 
@@ -110,7 +111,9 @@ describe("Drizzle Publishing Delivery rehydration", () => {
       type: "effect.prepared",
       evidence: {
         effectKey: "publishing-effect:v1:workspace_1:pdl_1",
+        effectGeneration: 1,
         intentDigest: `sha256:${"a".repeat(64)}`,
+        providerAdapterContractDigest: `sha256:${"b".repeat(64)}`,
       },
       occurredAt: new Date("2026-08-08T12:00:00.000Z"),
     } as const;
@@ -121,6 +124,33 @@ describe("Drizzle Publishing Delivery rehydration", () => {
     } as unknown as Parameters<typeof rehydratePublishingDeliveryEvent>[0])).toBeNull();
   });
 
+  it("rehydrates the retry-child event evidence contract", () => {
+    const event = {
+      workspaceId: "workspace_1",
+      id: "pde_retry_2",
+      deliveryId: "pdl_retry_1",
+      sequence: 2,
+      type: "delivery.retry_requested",
+      evidence: {
+        retryId: "pdrt_retry_1",
+        sourceDeliveryId: "pdl_source_1",
+        approvalRequestId: "par_1",
+        approvalDecisionId: "pad_1",
+        sourceEffectKey: "publishing-effect:v1:workspace_1:pdl_source_1",
+        sourceEffectGeneration: 1,
+        sourceEvidenceDigest: `sha256:${"c".repeat(64)}`,
+        deliveryId: "pdl_retry_1",
+        effectKey: "publishing-effect:v1:workspace_1:pdl_retry_1",
+      },
+      occurredAt: new Date("2026-08-08T12:00:00.000Z"),
+    } as const;
+    expect(rehydratePublishingDeliveryEvent(event)).not.toBeNull();
+    expect(rehydratePublishingDeliveryEvent({
+      ...event,
+      evidence: { ...event.evidence, disposition: "derived_effect" },
+    } as unknown as Parameters<typeof rehydratePublishingDeliveryEvent>[0])).toBeNull();
+  });
+
   it("rejects malformed outbox lifecycle and noncanonical generations", () => {
     const base = {
       id: "pdo_1",
@@ -128,6 +158,7 @@ describe("Drizzle Publishing Delivery rehydration", () => {
       deliveryId: "pdl_1",
       dedupeKey: "publishing-delivery:workspace_1:pdl_1:v1",
       generation: 1,
+      purpose: "publish",
       state: "pending",
       availableAt: new Date("2026-08-08T12:00:00.000Z"),
       deliveryToken: null,

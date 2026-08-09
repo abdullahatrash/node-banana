@@ -213,6 +213,7 @@ export function publishingApprovalInspectionDigest(
     targetIds: request.targetIds,
     channelIds: request.channelIds,
     artifactIds: request.artifactIds,
+    retrySource: request.retrySource,
     requestingPrincipalId: request.requestingPrincipalId,
     requestAuthorization: request.requestAuthorization,
     validation: request.validation,

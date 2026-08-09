@@ -30,6 +30,7 @@ export interface PublishingDeliveryCancellationTransitionPlan {
   failureCode: string | null;
   terminalEvent: CancellationTerminalEventPlan | null;
   releaseLease: boolean;
+  clearReadinessBlock: boolean;
 }
 
 /**
@@ -44,7 +45,8 @@ export function planPublishingDeliveryCancellation(input: {
 }): PublishingDeliveryCancellationTransitionPlan {
   const { delivery } = input;
   const cancellableState =
-    delivery.state === "scheduled" || delivery.state === "dispatching";
+    delivery.state === "scheduled" || delivery.state === "dispatching" ||
+    delivery.state === "blocked";
   const beforeContact = cancellableState && delivery.effectContactStartedAt === null;
   const contactedNonterminal =
     cancellableState && delivery.effectContactStartedAt !== null;
@@ -60,7 +62,9 @@ export function planPublishingDeliveryCancellation(input: {
     ? "not_created" as const
     : delivery.state === "confirmation_pending"
       ? "provider_accepted" as const
-      : delivery.state === "succeeded" || delivery.state === "failed" ||
+      : delivery.state === "succeeded" ||
+          delivery.state === "failed_transient" ||
+          delivery.state === "failed_terminal" ||
           delivery.state === "outcome_unknown" || delivery.state === "cancelled"
         ? "terminal" as const
         : "contact_started" as const;
@@ -83,6 +87,7 @@ export function planPublishingDeliveryCancellation(input: {
         },
       },
       releaseLease: true,
+      clearReadinessBlock: delivery.state === "blocked",
     };
   }
 
@@ -110,6 +115,7 @@ export function planPublishingDeliveryCancellation(input: {
         },
       },
       releaseLease: true,
+      clearReadinessBlock: false,
     };
   }
 
@@ -126,6 +132,7 @@ export function planPublishingDeliveryCancellation(input: {
     failureCode: delivery.failureCode,
     terminalEvent: null,
     releaseLease: delivery.state === "outcome_unknown",
+    clearReadinessBlock: false,
   };
 }
 

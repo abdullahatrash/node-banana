@@ -6,6 +6,7 @@ import type {
   PublishingApprovalMutationReceiptRecord,
   PublishingApprovalRepository,
   PublishingApprovalRequestRecord,
+  PublishingApprovalRetrySourceRecord,
   PublishingApprovalValidationSession,
 } from "./types";
 import { publishingApprovalInspectionDigest } from "./validation";
@@ -23,10 +24,15 @@ export class InMemoryPublishingApprovalRepository
 {
   readonly requests = new Map<string, PublishingApprovalRequestRecord>();
   readonly receipts = new Map<string, PublishingApprovalMutationReceiptRecord>();
+  readonly retrySources = new Map<string, PublishingApprovalRetrySourceRecord>();
   private validationVerifier: (session: PublishingApprovalValidationSession) => Promise<boolean> = async () => false;
   private authorityVerifier: (session: PublishingApprovalAuthoritySession) => Promise<boolean> = async () => false;
   private tail: Promise<void> = Promise.resolve();
   failNextMutation = false;
+
+  seedRetrySource(source: PublishingApprovalRetrySourceRecord): void {
+    this.retrySources.set(key(source.workspaceId, source.deliveryId), clone(source));
+  }
 
   setValidationSessionVerifier(verifier: (session: PublishingApprovalValidationSession) => Promise<boolean>): void {
     this.validationVerifier = verifier;
@@ -81,6 +87,30 @@ export class InMemoryPublishingApprovalRepository
         input.validationSession.expiresAt.getTime() <= input.request.createdAt.getTime() ||
         !(await this.validationVerifier(clone(input.validationSession)))
       ) return { kind: "stale_validation" };
+      if (input.request.retrySource) {
+        const source = this.retrySources.get(key(
+          input.request.workspaceId,
+          input.request.retrySource.deliveryId,
+        ));
+        if (
+          !source ||
+          source.evidenceDigest !== input.request.retrySource.evidenceDigest ||
+          source.desiredState !== "publish" ||
+          !((source.state === "failed_transient" &&
+            source.failureClass === "transient" && source.retryable) ||
+            (source.state === "failed_terminal" &&
+              source.failureClass === "terminal" && !source.retryable)) ||
+          source.planId !== input.request.planId ||
+          source.planRevisionId !== input.request.planRevisionId ||
+          source.planRevision !== input.request.planRevision ||
+          source.planRevisionDigest !== input.request.planRevisionDigest ||
+          source.requestingPrincipalId !== input.request.requestingPrincipalId ||
+          canonicalDigest([source.targetId]) !== canonicalDigest(input.request.targetIds) ||
+          canonicalDigest([source.channelId]) !== canonicalDigest(input.request.channelIds) ||
+          canonicalDigest([...source.artifactIds].sort()) !==
+            canonicalDigest([...input.request.artifactIds].sort())
+        ) return { kind: "stale_validation" };
+      }
       const requestKey = key(input.request.workspaceId, input.request.id);
       if (this.requests.has(requestKey)) return { kind: "conflict" };
       this.requests.set(requestKey, clone(input.request));

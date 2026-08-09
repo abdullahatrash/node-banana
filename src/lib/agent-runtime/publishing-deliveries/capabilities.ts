@@ -15,12 +15,16 @@ import { ARTIFACT_ID_PATTERN } from "../artifacts/validation";
 import {
   PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES,
   PUBLISHING_DELIVERY_CANCEL_AUTHORIZATION,
+  PUBLISHING_DELIVERY_RECONCILE_AUTHORIZATION,
   PUBLISHING_DELIVERY_EVENTS_AUTHORIZATION,
   PUBLISHING_DELIVERY_GET_AUTHORIZATION,
   PUBLISHING_DELIVERY_LIST_AUTHORIZATION,
   PUBLISHING_DELIVERY_RELEASE_AUTHORIZATION,
+  PUBLISHING_DELIVERY_RETRY_AUTHORIZATION,
   publishingDeliveryReleaseAuthorizationContractDigest,
   publishingDeliveryCancelAuthorizationContractDigest,
+  publishingDeliveryReconcileAuthorizationContractDigest,
+  publishingDeliveryRetryAuthorizationContractDigest,
 } from "./authorization-contract";
 import { InvalidPublishingDeliveryCursorError } from "./cursor";
 import {
@@ -40,7 +44,11 @@ export {
   PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES,
   PUBLISHING_DELIVERY_RELEASE_AUTHORIZATION,
   PUBLISHING_DELIVERY_CANCEL_AUTHORIZATION,
+  PUBLISHING_DELIVERY_RETRY_AUTHORIZATION,
+  PUBLISHING_DELIVERY_RECONCILE_AUTHORIZATION,
   publishingDeliveryCancelAuthorizationContractDigest,
+  publishingDeliveryRetryAuthorizationContractDigest,
+  publishingDeliveryReconcileAuthorizationContractDigest,
   publishingDeliveryReleaseAuthorizationContractDigest,
 } from "./authorization-contract";
 
@@ -63,6 +71,20 @@ const cancelEffect = {
   reversibility: "conditional",
   maySpendProviderBudget: false,
 } as const;
+const retryEffect = {
+  mutation: "external-system",
+  visibility: "publicly-visible",
+  timing: "durable-async",
+  reversibility: "irreversible",
+  maySpendProviderBudget: true,
+} as const;
+const reconcileEffect = {
+  mutation: "runtime-state",
+  visibility: "private",
+  timing: "durable-async",
+  reversibility: "conditional",
+  maySpendProviderBudget: false,
+} as const;
 const id = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
 const artifactId = z.string().min(1).max(200).regex(ARTIFACT_ID_PATTERN);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -72,9 +94,11 @@ const failureCode = z.string().min(1).max(80).regex(/^[A-Z][A-Z0-9_]*$/);
 const states = z.enum([
   "scheduled",
   "dispatching",
+  "blocked",
   "confirmation_pending",
   "succeeded",
-  "failed",
+  "failed_transient",
+  "failed_terminal",
   "outcome_unknown",
   "cancelled",
 ]);
@@ -114,6 +138,36 @@ const cancellation = z.object({
   requestedAt: iso,
   durable: z.literal(true),
   externallyReversed: z.literal(false),
+}).strict();
+const retryAcceptance = z.object({
+  schema: z.literal("publishing-delivery-retry/v1"),
+  retryId: id,
+  sourceDeliveryId: id,
+  sourceEvidenceDigest: digest,
+  delivery: acceptedRef,
+  requestedAt: iso,
+  durable: z.literal(true),
+  externallyCompleted: z.literal(false),
+}).strict();
+const reconciliationAcceptance = z.object({
+  schema: z.literal("publishing-delivery-reconciliation/v1"),
+  reconciliationId: id,
+  deliveryId: id,
+  sourceEvidenceDigest: digest,
+  effectKey,
+  effectGeneration: z.number().int().min(1),
+  status: z.enum(["queued", "completed"]),
+  resolution: z.enum([
+    "succeeded",
+    "failed_transient",
+    "failed_terminal",
+    "still_unknown",
+    "operator_required",
+  ]).nullable(),
+  requestedAt: iso,
+  completedAt: iso.nullable(),
+  durable: z.literal(true),
+  externallyCompleted: z.boolean().nullable(),
 }).strict();
 const normalizedTarget = z.object({
   targetId: id,
@@ -158,13 +212,17 @@ const targetSnapshot = z.object({
 const delivery = z.object({
   id,
   workspaceId: id,
-  releaseId: id,
+  releaseId: id.nullable(),
+  sourceDeliveryId: id.nullable(),
+  retryId: id.nullable(),
   planId: id,
   planRevisionId: id,
   planRevision: z.number().int().min(1),
   planRevisionDigest: digest,
   approvalRequestId: id,
   approvalDecisionId: id,
+  requestingPrincipalId: id,
+  requestingKeyId: id,
   targetId: id,
   channelId: id,
   artifactIds: z.array(artifactId).min(1).max(51),
@@ -174,10 +232,31 @@ const delivery = z.object({
   desiredState: z.enum(["publish", "cancel"]),
   state: states,
   effectKey,
+  effectGeneration: z.number().int().min(1),
   intentDigest: digest.nullable(),
+  providerAdapterContractDigest: digest.nullable(),
   providerOperationRef: z.string().min(1).max(500).nullable(),
+  nextEffectAttempt: z.number().int().min(1),
   latestEffectEvidenceDigest: digest.nullable(),
   failureCode: failureCode.nullable(),
+  failureClass: z.enum(["transient", "terminal"]).nullable(),
+  failureRetryable: z.boolean().nullable(),
+  failureEffectDisposition: z.enum([
+    "not_created",
+    "provider_failed_known",
+    "ambiguous",
+  ]).nullable(),
+  readinessBlockCode: z.enum([
+    "CHANNEL_UNAVAILABLE",
+    "CREDENTIAL_UNAVAILABLE",
+    "EXECUTION_AUTHORIZATION_REVOKED",
+    "APPROVAL_NO_LONGER_VALID",
+    "VALIDATION_STALE",
+  ]).nullable(),
+  readinessEvidenceDigest: digest.nullable(),
+  readinessBlockedAt: iso.nullable(),
+  readinessRetryAt: iso.nullable(),
+  readinessBlockCount: z.number().int().nonnegative(),
   nextEventSequence: z.number().int().min(1),
   nextOutboxGeneration: z.number().int().min(2),
   acceptedAt: iso,
@@ -186,8 +265,11 @@ const delivery = z.object({
   effectContactStartedAt: iso.nullable(),
   completedAt: iso.nullable(),
   updatedAt: iso,
-  externallyCompleted: z.boolean(),
-}).strict();
+  externallyCompleted: z.boolean().nullable(),
+}).strict().refine((value) =>
+  (value.releaseId !== null && value.sourceDeliveryId === null && value.retryId === null) ||
+  (value.releaseId === null && value.sourceDeliveryId !== null && value.retryId !== null),
+{ message: "Publishing Delivery origin must be exactly release or retry." });
 const deliveryPage = z.object({
   schema: z.literal("publishing-delivery-page/v1"),
   items: z.array(delivery).max(100),
@@ -203,18 +285,28 @@ const eventBase = {
 };
 const effectEvidence = { effectKey, evidenceDigest: digest };
 const retainedEvent = z.discriminatedUnion("type", [
-  z.object({ ...eventBase, type: z.literal("delivery.accepted"), evidence: z.object({ releaseId: id, approvalRequestId: id, approvalDecisionId: id, targetSnapshotDigest: digest }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("delivery.blocked"), evidence: z.object({ failureCode: z.enum(["CHANNEL_UNAVAILABLE", "CREDENTIAL_UNAVAILABLE", "EXECUTION_AUTHORIZATION_REVOKED", "APPROVAL_NO_LONGER_VALID", "VALIDATION_STALE"]), evidenceDigest: digest, retryAt: iso, blockCount: z.number().int().min(1) }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("delivery.resumed"), evidence: z.object({ priorFailureCode: z.enum(["CHANNEL_UNAVAILABLE", "CREDENTIAL_UNAVAILABLE", "EXECUTION_AUTHORIZATION_REVOKED", "APPROVAL_NO_LONGER_VALID", "VALIDATION_STALE"]), priorEvidenceDigest: digest, readinessEvidenceDigest: digest }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("delivery.accepted"), evidence: z.discriminatedUnion("origin", [
+    z.object({ origin: z.literal("release"), releaseId: id, sourceDeliveryId: z.null(), retryId: z.null(), approvalRequestId: id, approvalDecisionId: id, targetSnapshotDigest: digest }).strict(),
+    z.object({ origin: z.literal("retry"), releaseId: z.null(), sourceDeliveryId: id, retryId: id, approvalRequestId: id, approvalDecisionId: id, targetSnapshotDigest: digest }).strict(),
+  ]) }).strict(),
   z.object({ ...eventBase, type: z.literal("delivery.scheduled"), evidence: z.object({ publishAt: iso }).strict() }).strict(),
-  z.object({ ...eventBase, type: z.literal("effect.prepared"), evidence: z.object({ effectKey, intentDigest: digest }).strict() }).strict(),
-  z.object({ ...eventBase, type: z.literal("effect.contact_started"), evidence: z.object({ effectKey, intentDigest: digest }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("effect.prepared"), evidence: z.object({ effectKey, effectGeneration: z.number().int().min(1), intentDigest: digest, providerAdapterContractDigest: digest }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("effect.contact_started"), evidence: z.object({ effectKey, effectGeneration: z.number().int().min(1), intentDigest: digest, providerAdapterContractDigest: digest, readinessEvidenceDigest: digest }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("delivery.cancellation_requested"), evidence: z.object({ cancellationId: id, actorKind: z.enum(["agent", "human"]), effectDisposition: z.enum(["not_created", "contact_started", "provider_accepted", "terminal"]) }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("delivery.cancelled"), evidence: z.object({ cancellationId: id, effectKey, effectDisposition: z.literal("not_created") }).strict() }).strict(),
-  z.object({ ...eventBase, type: z.literal("effect.not_created"), evidence: z.object({ ...effectEvidence, failureCode }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("effect.not_created"), evidence: z.object({ ...effectEvidence, effectGeneration: z.number().int().min(1), failureCode, failureClass: z.enum(["transient", "terminal"]), retryable: z.boolean(), effectDisposition: z.literal("not_created") }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("publication.retry_scheduled"), evidence: z.object({ ...effectEvidence, failureCode, retryAt: iso }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("publication.confirmation_pending"), evidence: z.object({ ...effectEvidence, providerOperationRef: z.string().min(1).max(500), pollAt: iso }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("publication.succeeded"), evidence: z.object({ ...effectEvidence, providerOperationRef: z.string().min(1).max(500), failureCode: z.null() }).strict() }).strict(),
   z.object({ ...eventBase, type: z.literal("publication.failed"), evidence: z.object({ ...effectEvidence, providerOperationRef: z.string().min(1).max(500).nullable(), failureCode }).strict() }).strict(),
-  z.object({ ...eventBase, type: z.literal("publication.outcome_unknown"), evidence: z.object({ ...effectEvidence, providerOperationRef: z.null(), failureCode }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("publication.failed_transient"), evidence: z.object({ ...effectEvidence, effectGeneration: z.number().int().min(1), providerOperationRef: z.string().min(1).max(500).nullable(), failureCode, failureClass: z.literal("transient"), retryable: z.literal(true), effectDisposition: z.enum(["not_created", "provider_failed_known"]) }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("publication.failed_terminal"), evidence: z.object({ ...effectEvidence, effectGeneration: z.number().int().min(1), providerOperationRef: z.string().min(1).max(500).nullable(), failureCode, failureClass: z.literal("terminal"), retryable: z.literal(false), effectDisposition: z.enum(["not_created", "provider_failed_known"]) }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("publication.outcome_unknown"), evidence: z.object({ ...effectEvidence, providerOperationRef: z.string().min(1).max(500).nullable(), failureCode }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("delivery.retry_requested"), evidence: z.object({ retryId: id, sourceDeliveryId: id, approvalRequestId: id, approvalDecisionId: id, sourceEffectKey: effectKey, sourceEffectGeneration: z.number().int().min(1), sourceEvidenceDigest: digest, deliveryId: id, effectKey }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("delivery.reconciliation_requested"), evidence: z.object({ reconciliationId: id, effectKey, effectGeneration: z.number().int().min(1), sourceEvidenceDigest: digest }).strict() }).strict(),
+  z.object({ ...eventBase, type: z.literal("delivery.reconciled"), evidence: z.object({ reconciliationId: id, effectKey, effectGeneration: z.number().int().min(1), sourceEvidenceDigest: digest, evidenceDigest: digest, resolution: z.enum(["succeeded", "failed_transient", "failed_terminal", "still_unknown", "operator_required"]), providerOperationRef: z.string().min(1).max(500).nullable(), failureCode: failureCode.nullable(), retryable: z.boolean().nullable() }).strict() }).strict(),
 ]);
 const eventPage = z.object({
   schema: z.literal("publishing-delivery-event-page/v1"),
@@ -237,7 +329,7 @@ function agent(context: ResolvedSecurityContext | undefined) {
   return context;
 }
 
-function cancellationActor(
+function recoveryActor(
   context: ResolvedSecurityContext | undefined,
 ): { workspaceId: string; actor: PublishingDeliveryCancellationActor } {
   if (!context) {
@@ -286,6 +378,20 @@ function cancellationAdmissionEvidence(context: {
       code: "PUBLISHING_DELIVERY_CANCELLATION_NOT_AUTHORIZED",
       category: "authorization",
       message: "Cancellation authorization evidence is unavailable.",
+    });
+  }
+  return value;
+}
+
+function recoveryAdmissionEvidence(context: {
+  authorizationAdmission?: { operatorTraceRef?: string };
+}): string {
+  const value = context.authorizationAdmission?.operatorTraceRef?.trim();
+  if (!value) {
+    throw new CapabilityFailure({
+      code: "PUBLISHING_DELIVERY_RECOVERY_NOT_AUTHORIZED",
+      category: "authorization",
+      message: "Publishing Delivery recovery authorization evidence is unavailable.",
     });
   }
   return value;
@@ -377,7 +483,7 @@ export function createPublishingDeliveryRegistrations(
       authorization: PUBLISHING_DELIVERY_CANCEL_AUTHORIZATION,
       errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_DELIVERY_ERROR_CONTRACTS],
       handler: (input, context) => {
-        const caller = cancellationActor(context.securityContext);
+        const caller = recoveryActor(context.securityContext);
         return domain(() => service.cancel({
           ...input,
           workspaceId: caller.workspaceId,
@@ -385,6 +491,64 @@ export function createPublishingDeliveryRegistrations(
           authorizationEvidenceRef: cancellationAdmissionEvidence(context),
           authorizationContractDigest:
             publishingDeliveryCancelAuthorizationContractDigest(),
+        }));
+      },
+    }),
+    defineCapability({
+      identity: PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.retry,
+      audience: "shared",
+      summary: "Create one derived Delivery for a provider-proven known failure under a fresh exact Approval.",
+      lifecycle,
+      input: z.object({
+        deliveryId: id,
+        approvalRequestId: id,
+        expectedFailureEvidenceDigest: digest,
+        idempotencyKey: z.string().min(8).max(200).regex(/^[!-~]+$/),
+        ...resources,
+      }).strict(),
+      outputSchema: schema(retryAcceptance),
+      effect: retryEffect,
+      approval: { mode: "required-before-effect" },
+      idempotency: { mode: "key-required" },
+      authorization: PUBLISHING_DELIVERY_RETRY_AUTHORIZATION,
+      errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_DELIVERY_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const caller = recoveryActor(context.securityContext);
+        return domain(() => service.retry({
+          ...input,
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
+          authorizationEvidenceRef: recoveryAdmissionEvidence(context),
+          authorizationContractDigest:
+            publishingDeliveryRetryAuthorizationContractDigest(),
+        }));
+      },
+    }),
+    defineCapability({
+      identity: PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.reconcile,
+      audience: "shared",
+      summary: "Observe one exact ambiguous Publishing Delivery effect without launching another public effect.",
+      lifecycle,
+      input: z.object({
+        deliveryId: id,
+        expectedUnknownEvidenceDigest: digest,
+        ...resources,
+      }).strict(),
+      outputSchema: schema(reconciliationAcceptance),
+      effect: reconcileEffect,
+      approval: { mode: "none" },
+      idempotency: { mode: "intrinsic" },
+      authorization: PUBLISHING_DELIVERY_RECONCILE_AUTHORIZATION,
+      errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_DELIVERY_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const caller = recoveryActor(context.securityContext);
+        return domain(() => service.reconcile({
+          ...input,
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
+          authorizationEvidenceRef: recoveryAdmissionEvidence(context),
+          authorizationContractDigest:
+            publishingDeliveryReconcileAuthorizationContractDigest(),
         }));
       },
     }),

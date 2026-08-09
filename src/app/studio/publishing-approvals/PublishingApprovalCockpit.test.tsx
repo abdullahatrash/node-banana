@@ -21,6 +21,7 @@ function approval(status: PublishingApprovalDto["status"] = "pending") {
     targetIds: ["target_1"],
     channelIds: ["channel_1"],
     artifactIds: ["artifact_text_1"],
+    retrySource: null,
     requestingPrincipalId: "principal_agent_1",
     requestingKeyId: "key_1",
     requestAuthorization: {

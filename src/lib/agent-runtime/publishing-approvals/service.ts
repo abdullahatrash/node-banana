@@ -92,6 +92,7 @@ export function publishingApprovalAgentDto(
     targetIds: [...request.targetIds],
     channelIds: [...request.channelIds],
     artifactIds: [...request.artifactIds],
+    retrySource: structuredClone(request.retrySource),
     validation: structuredClone(request.validation),
     decisionPolicy: {
       mode: "expires_at",
@@ -128,6 +129,7 @@ export function publishingApprovalAgentDtoFromDto(
     targetIds: [...request.targetIds],
     channelIds: [...request.channelIds],
     artifactIds: [...request.artifactIds],
+    retrySource: structuredClone(request.retrySource),
     validation: structuredClone(request.validation),
     decisionPolicy: structuredClone(request.decisionPolicy),
     status: request.status,
@@ -266,6 +268,7 @@ export class PublishingApprovalService {
     targetIds: string[];
     channelIds: string[];
     artifactIds: string[];
+    retrySource?: { deliveryId: string; evidenceDigest: string };
     expiresAt: string;
   }): Promise<PublishingApprovalDto> {
     const now = this.clock.now();
@@ -278,6 +281,15 @@ export class PublishingApprovalService {
     const principalId = approvalIdentifier(input.principalId, "Requesting Principal");
     const keyId = approvalIdentifier(input.keyId, "Requesting key");
     const revisionId = approvalIdentifier(input.revisionId, "Plan Revision ID");
+    const retrySource = input.retrySource
+      ? {
+          deliveryId: approvalIdentifier(input.retrySource.deliveryId, "Retry source Delivery ID"),
+          evidenceDigest: approvalDigest(
+            input.retrySource.evidenceDigest,
+            "Retry source evidence digest",
+          ),
+        }
+      : null;
     const key = approvalIdempotencyKey(input.idempotencyKey);
     const authorizationEvidenceRef = approvalEvidenceRef(input.requestAuthorizationEvidenceRef, "Request authorization evidence");
     const authorizationContractDigest = approvalDigest(input.requestAuthorizationContractDigest, "Request authorization contract digest");
@@ -302,6 +314,7 @@ export class PublishingApprovalService {
       ...selection,
       expiresAt: expiresAt.toISOString(),
       authorizationContractDigest,
+      retrySource,
     });
     const prior = await this.repository.readMutationReceipt({
       workspaceId: input.workspaceId,
@@ -334,6 +347,7 @@ export class PublishingApprovalService {
       revision,
       targetIds: selection.targetIds,
       evaluatedAt: now,
+      mode: retrySource ? "retry_due" : "release",
     });
     if (
       !session ||
@@ -349,6 +363,7 @@ export class PublishingApprovalService {
       planRevisionDigest: revision.definitionDigest,
       action: "publish",
       ...selection,
+      retrySource,
       requestingPrincipalId: principalId,
       requestingKeyId: keyId,
       requestAuthorization: {
@@ -432,6 +447,7 @@ export class PublishingApprovalService {
       revision,
       targetIds: request.targetIds,
       evaluatedAt: now,
+      mode: request.retrySource ? "retry_due" : "release",
     });
     if (
       !validationSession ||
@@ -572,7 +588,13 @@ export class PublishingApprovalService {
     const humanUserId = approvalIdentifier(input.userId, "Human user");
     const authority = await this.authority.checkCurrent({ workspaceId: input.workspaceId, userId: humanUserId, action: request.action, channelIds: request.channelIds, evaluatedAt: now });
     const validation = currentRevision
-      ? await this.validation.verifyCurrent({ workspaceId: input.workspaceId, revision, targetIds: request.targetIds, evaluatedAt: now })
+      ? await this.validation.verifyCurrent({
+          workspaceId: input.workspaceId,
+          revision,
+          targetIds: request.targetIds,
+          evaluatedAt: now,
+          mode: request.retrySource ? "retry_due" : "release",
+        })
       : null;
     const grants = new Map(authority?.grants.map((grant) => [grant.channelId, grant.grantId]) ?? []);
     const blockerCodes: PublishingApprovalPresentation["decisionEligibility"]["blockerCodes"] = [];

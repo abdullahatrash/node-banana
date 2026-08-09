@@ -12,6 +12,7 @@ export class DurablePublishingDeliveryQueue
       `publishing-delivery:${input.workspaceId}:${input.deliveryId}:v`;
     const generation = input.dedupeKey.slice(prefix.length);
     if (
+      (input.purpose !== "publish" && input.purpose !== "reconcile") ||
       !input.dedupeKey.startsWith(prefix) ||
       !/^[1-9][0-9]*$/.test(generation) ||
       input.dedupeKey !== publishingDeliveryOutboxDedupeKey(
@@ -26,6 +27,7 @@ export class DurablePublishingDeliveryQueue
       {
         workspaceId: input.workspaceId,
         deliveryId: input.deliveryId,
+        purpose: input.purpose,
       },
     ]);
   }

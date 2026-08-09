@@ -42,6 +42,8 @@ function validRequestRow() {
     targetSetDigest: canonicalDigest(targetIds),
     channelIds: ["channel_1"],
     artifactIds: ["artifact:image.v1", "artifact:text.v1"],
+    retrySourceDeliveryId: null,
+    retrySourceEvidenceDigest: null,
     requestingPrincipalId: "principal_1",
     requestingKeyId: "key_1",
     requestAuthorizationCapability: "publishing_approvals.request@1",

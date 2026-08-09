@@ -39,6 +39,7 @@ describe("Publishing Delivery cancellation transition planner", () => {
   it.each([
     ["scheduled", false],
     ["dispatching", true],
+    ["blocked", false],
   ] as const)("prevents %s before provider contact", (state, activeLease) => {
     const plan = planPublishingDeliveryCancellation({
       delivery: delivery(state),
@@ -54,6 +55,7 @@ describe("Publishing Delivery cancellation transition planner", () => {
       nextState: "cancelled",
       completedAt: requestedAt,
       releaseLease: true,
+      clearReadinessBlock: state === "blocked",
       terminalEvent: { type: "delivery.cancelled" },
     });
   });
@@ -107,7 +109,7 @@ describe("Publishing Delivery cancellation transition planner", () => {
   it.each([
     ["confirmation_pending", "conditional", null, "provider_accepted", false],
     ["succeeded", "too_late", true, "terminal", false],
-    ["failed", "too_late", false, "terminal", false],
+    ["failed_terminal", "too_late", false, "terminal", false],
     ["outcome_unknown", "unknown", null, "terminal", true],
   ] as const)(
     "preserves %s without claiming reversal",

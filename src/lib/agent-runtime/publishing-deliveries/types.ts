@@ -11,17 +11,29 @@ import type {
 
 export type PublishingDeliveryState =
   | "scheduled"
+  | "blocked"
   | "dispatching"
   | "confirmation_pending"
   | "succeeded"
-  | "failed"
+  | "failed_transient"
+  | "failed_terminal"
   | "outcome_unknown"
   | "cancelled";
 
 export type PublishingDeliveryTerminalState = Extract<
   PublishingDeliveryState,
-  "succeeded" | "failed" | "outcome_unknown" | "cancelled"
+  | "succeeded"
+  | "failed_transient"
+  | "failed_terminal"
+  | "outcome_unknown"
+  | "cancelled"
 >;
+
+export type PublishingDeliveryFailureClass = "transient" | "terminal";
+export type PublishingDeliveryFailureEffectDisposition =
+  | "not_created"
+  | "provider_failed_known"
+  | "ambiguous";
 
 export interface PublishingDeliveryTargetSnapshot {
   schema: "publishing-delivery-target-snapshot/v1";
@@ -59,13 +71,20 @@ export interface PublishingDeliveryReleaseRecord {
 export interface PublishingDeliveryRecord {
   id: string;
   workspaceId: string;
-  releaseId: string;
+  /** Derived manual retries are new Deliveries; their terminal source is immutable. */
+  sourceDeliveryId: string | null;
+  retryId: string | null;
+  /** Exactly one origin is present: releaseId, or sourceDeliveryId + retryId. */
+  releaseId: string | null;
   planId: string;
   planRevisionId: string;
   planRevision: number;
   planRevisionDigest: string;
   approvalRequestId: string;
   approvalDecisionId: string;
+  /** Immutable principal/key accountable for the Approval that accepted this Delivery. */
+  requestingPrincipalId: string;
+  requestingKeyId: string;
   targetId: string;
   channelId: string;
   artifactIds: string[];
@@ -76,11 +95,26 @@ export interface PublishingDeliveryRecord {
   state: PublishingDeliveryState;
   /** Stable across dispatch retries and provider reconciliation. */
   effectKey: string;
+  /** Active immutable effect-identity generation; release starts at one. */
+  effectGeneration: number;
   /** Set durably before the first adapter contact; immutable afterwards. */
   intentDigest: string | null;
+  /** Exact adapter operation contract used for launch and later observation. */
+  providerAdapterContractDigest: string | null;
+  /** One-based next provider-contact attempt within the active effect identity. */
+  nextEffectAttempt: number;
   providerOperationRef: string | null;
   latestEffectEvidenceDigest: string | null;
   failureCode: string | null;
+  /** Normalized provider/pre-contact truth; never inferred from failureCode. */
+  failureClass: PublishingDeliveryFailureClass | null;
+  failureRetryable: boolean | null;
+  failureEffectDisposition: PublishingDeliveryFailureEffectDisposition | null;
+  readinessBlockCode: PublishingDeliveryExecutionReadinessFailureCode | null;
+  readinessEvidenceDigest: string | null;
+  readinessBlockedAt: Date | null;
+  readinessRetryAt: Date | null;
+  readinessBlockCount: number;
   nextEventSequence: number;
   /** Independent from event sequence; v1 is the release outbox intent. */
   nextOutboxGeneration: number;
@@ -100,12 +134,12 @@ export type PublishingDeliveryEvent =
       workspaceId: string;
       deliveryId: string;
       sequence: number;
-      type: "delivery.accepted";
+      type: "delivery.blocked";
       evidence: {
-        releaseId: string;
-        approvalRequestId: string;
-        approvalDecisionId: string;
-        targetSnapshotDigest: string;
+        failureCode: PublishingDeliveryExecutionReadinessFailureCode;
+        evidenceDigest: string;
+        retryAt: string;
+        blockCount: number;
       };
       occurredAt: Date;
     }
@@ -115,8 +149,56 @@ export type PublishingDeliveryEvent =
       workspaceId: string;
       deliveryId: string;
       sequence: number;
+      type: "delivery.resumed";
+      evidence: {
+        priorFailureCode: PublishingDeliveryExecutionReadinessFailureCode;
+        priorEvidenceDigest: string;
+        readinessEvidenceDigest: string;
+      };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
+      type: "delivery.accepted";
+      evidence:
+        | {
+            origin: "release";
+            releaseId: string;
+            sourceDeliveryId: null;
+            retryId: null;
+            approvalRequestId: string;
+            approvalDecisionId: string;
+            targetSnapshotDigest: string;
+          }
+        | {
+            origin: "retry";
+            releaseId: null;
+            sourceDeliveryId: string;
+            retryId: string;
+            approvalRequestId: string;
+            approvalDecisionId: string;
+            targetSnapshotDigest: string;
+          };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
       type: "effect.contact_started";
-      evidence: { effectKey: string; intentDigest: string };
+      evidence: {
+        effectKey: string;
+        effectGeneration: number;
+        intentDigest: string;
+        providerAdapterContractDigest: string;
+        readinessEvidenceDigest: string;
+      };
       occurredAt: Date;
     }
   | {
@@ -160,8 +242,12 @@ export type PublishingDeliveryEvent =
       type: "effect.not_created";
       evidence: {
         effectKey: string;
+        effectGeneration: number;
         evidenceDigest: string;
         failureCode: string;
+        failureClass: PublishingDeliveryFailureClass;
+        retryable: boolean;
+        effectDisposition: "not_created";
       };
       occurredAt: Date;
     }
@@ -212,7 +298,12 @@ export type PublishingDeliveryEvent =
       deliveryId: string;
       sequence: number;
       type: "effect.prepared";
-      evidence: { effectKey: string; intentDigest: string };
+      evidence: {
+        effectKey: string;
+        effectGeneration: number;
+        intentDigest: string;
+        providerAdapterContractDigest: string;
+      };
       occurredAt: Date;
     }
   | {
@@ -251,12 +342,110 @@ export type PublishingDeliveryEvent =
       workspaceId: string;
       deliveryId: string;
       sequence: number;
+      type: "publication.failed_transient";
+      evidence: {
+        effectKey: string;
+        effectGeneration: number;
+        providerOperationRef: string | null;
+        evidenceDigest: string;
+        failureCode: string;
+        failureClass: "transient";
+        retryable: true;
+        effectDisposition: "not_created" | "provider_failed_known";
+      };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
+      type: "publication.failed_terminal";
+      evidence: {
+        effectKey: string;
+        effectGeneration: number;
+        providerOperationRef: string | null;
+        evidenceDigest: string;
+        failureCode: string;
+        failureClass: "terminal";
+        retryable: false;
+        effectDisposition: "not_created" | "provider_failed_known";
+      };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
       type: "publication.outcome_unknown";
       evidence: {
         effectKey: string;
-        providerOperationRef: null;
+        providerOperationRef: string | null;
         evidenceDigest: string;
         failureCode: string;
+      };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
+      type: "delivery.retry_requested";
+      evidence: {
+        retryId: string;
+        sourceDeliveryId: string;
+        approvalRequestId: string;
+        approvalDecisionId: string;
+        sourceEffectKey: string;
+        sourceEffectGeneration: number;
+        sourceEvidenceDigest: string;
+        deliveryId: string;
+        effectKey: string;
+      };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
+      type: "delivery.reconciliation_requested";
+      evidence: {
+        reconciliationId: string;
+        effectKey: string;
+        effectGeneration: number;
+        sourceEvidenceDigest: string;
+      };
+      occurredAt: Date;
+    }
+  | {
+      schema: "publishing-delivery-event/v1";
+      id: string;
+      workspaceId: string;
+      deliveryId: string;
+      sequence: number;
+      type: "delivery.reconciled";
+      evidence: {
+        reconciliationId: string;
+        effectKey: string;
+        effectGeneration: number;
+        sourceEvidenceDigest: string;
+        evidenceDigest: string;
+        resolution:
+          | "succeeded"
+          | "failed_transient"
+          | "failed_terminal"
+          | "still_unknown"
+          | "operator_required";
+        providerOperationRef: string | null;
+        failureCode: string | null;
+        retryable: boolean | null;
       };
       occurredAt: Date;
     };
@@ -265,6 +454,7 @@ export interface PublishingDeliveryOutboxIntentRecord {
   id: string;
   workspaceId: string;
   deliveryId: string;
+  purpose: "publish" | "reconcile";
   dedupeKey: string;
   generation: number;
   state: "pending" | "claimed" | "delivered";
@@ -273,6 +463,253 @@ export interface PublishingDeliveryOutboxIntentRecord {
   deliveryAttempts: number;
   claimedAt: Date | null;
   deliveredAt: Date | null;
+}
+
+export interface PublishingDeliveryEffectIdentityRecord {
+  schema: "publishing-delivery-effect-identity/v1";
+  workspaceId: string;
+  deliveryId: string;
+  generation: number;
+  effectKey: string;
+  intentDigest: string | null;
+  providerAdapterContractDigest: string | null;
+  parentEffectKey: string | null;
+  parentGeneration: number | null;
+  derivation: "release" | "manual_retry";
+  sourceEvidenceDigest: string | null;
+  createdAt: Date;
+}
+
+export type PublishingDeliveryRecoveryActor =
+  PublishingDeliveryCancellationActor;
+
+export type PublishingDeliveryRecoveryCapability =
+  | "publishing_deliveries.retry@1"
+  | "publishing_deliveries.reconcile@1";
+
+export interface PublishingDeliveryRecoveryAuthorizationSession {
+  schema: "publishing-delivery-recovery-authorization-session/v1";
+  id: string;
+  workspaceId: string;
+  actor: PublishingDeliveryRecoveryActor;
+  capability: PublishingDeliveryRecoveryCapability;
+  contractDigest: string;
+  admissionEvidenceRef: string;
+  evidenceRef: string;
+  evidenceDigest: string;
+  resources: { channelIds: string[]; artifactIds: string[] };
+  humanGrants: Array<{ channelId: string; grantId: string }>;
+  issuedAt: Date;
+  expiresAt: Date;
+}
+
+export interface PublishingDeliveryRecoveryAuthorizationPort {
+  checkCurrent(input: {
+    workspaceId: string;
+    actor: PublishingDeliveryRecoveryActor;
+    capability: PublishingDeliveryRecoveryCapability;
+    authorizationContractDigest: string;
+    authorizationEvidenceRef: string;
+    channelIds: string[];
+    artifactIds: string[];
+    evaluatedAt: Date;
+  }): Promise<PublishingDeliveryRecoveryAuthorizationSession | null>;
+}
+
+export type PublishingDeliveryExecutionReadinessFailureCode =
+  | "EXECUTION_AUTHORIZATION_REVOKED"
+  | "APPROVAL_NO_LONGER_VALID"
+  | "CHANNEL_UNAVAILABLE"
+  | "CREDENTIAL_UNAVAILABLE"
+  | "VALIDATION_STALE";
+
+export interface PublishingDeliveryExecutionReadinessSession {
+  schema: "publishing-delivery-execution-readiness/v1";
+  id: string;
+  workspaceId: string;
+  deliveryId: string;
+  effectKey: string;
+  effectGeneration: number;
+  intentDigest: string;
+  providerAdapterContractDigest: string;
+  mode: "launch";
+  authorizationEvidenceDigest: string;
+  approvalEvidenceDigest: string;
+  channelEvidenceDigest: string;
+  credentialEvidenceDigest: string;
+  validationEvidenceDigest: string;
+  evidenceDigest: string;
+  evaluatedAt: Date;
+  expiresAt: Date;
+}
+
+export interface PublishingDeliveryExecutionReadinessPort {
+  checkCurrent(input: {
+    workspaceId: string;
+    deliveryId: string;
+    effectKey: string;
+    effectGeneration: number;
+    intentDigest: string;
+    providerAdapterContractDigest: string;
+    evaluatedAt: Date;
+  }): Promise<
+    | { kind: "ready"; session: PublishingDeliveryExecutionReadinessSession }
+    | {
+        kind: "blocked";
+        failureCode: PublishingDeliveryExecutionReadinessFailureCode;
+        evidenceDigest: string;
+      }
+    | { kind: "unavailable" }
+  >;
+}
+
+export interface PublishingDeliveryRetryRecord {
+  schema: "publishing-delivery-retry-record/v1";
+  id: string;
+  workspaceId: string;
+  sourceDeliveryId: string;
+  /** The newly accepted Delivery created by this manual retry. */
+  deliveryId: string;
+  actor: PublishingDeliveryRecoveryActor;
+  sourceEffectKey: string;
+  sourceEffectGeneration: number;
+  sourceIntentDigest: string | null;
+  sourceProviderAdapterContractDigest: string | null;
+  sourceEvidenceDigest: string;
+  sourceFailureClass: PublishingDeliveryFailureClass;
+  sourceEffectDisposition: "not_created" | "provider_failed_known";
+  approvalRequestId: string;
+  approvalDecisionId: string;
+  authorization: PublishingDeliveryRecoveryAuthorizationSession;
+  requestedAt: Date;
+}
+
+export interface PublishingDeliveryRetryMutationReceiptRecord {
+  schema: "publishing-delivery-retry-mutation-receipt/v1";
+  workspaceId: string;
+  actorKind: "agent" | "human";
+  actorId: string;
+  capability: "publishing_deliveries.retry@1";
+  idempotencyKey: string;
+  requestFingerprint: string;
+  retryId: string;
+  sourceDeliveryId: string;
+  deliveryId: string;
+  createdAt: Date;
+}
+
+/** Retry-specific Approval claim retaining both the requester and Human/Agent initiator. */
+export interface PublishingDeliveryRetryApprovalConsumptionRecord {
+  schema: "publishing-delivery-retry-approval-consumption/v1";
+  id: string;
+  workspaceId: string;
+  approvalRequestId: string;
+  approvalDecisionId: string;
+  sourceDeliveryId: string;
+  deliveryId: string;
+  sourceEvidenceDigest: string;
+  requestingPrincipalId: string;
+  requestingKeyId: string;
+  actor: PublishingDeliveryRecoveryActor;
+  capability: "publishing_deliveries.retry@1";
+  authorizationContractDigest: string;
+  authorizationEvidenceRef: string;
+  authorizedResources: { channelIds: string[]; artifactIds: string[] };
+  consumedAt: Date;
+}
+
+export interface PublishingDeliveryRetryDto {
+  schema: "publishing-delivery-retry/v1";
+  retryId: string;
+  sourceDeliveryId: string;
+  sourceEvidenceDigest: string;
+  delivery: PublishingDeliveryAcceptedRef;
+  requestedAt: string;
+  durable: true;
+  externallyCompleted: false;
+}
+
+export type PublishingDeliveryReconciliationResolution =
+  | {
+      kind: "succeeded";
+      providerOperationRef: string;
+      evidenceDigest: string;
+    }
+  | {
+      kind: "failed_known";
+      providerOperationRef: string | null;
+      evidenceDigest: string;
+      failureCode: string;
+      failureClass: PublishingDeliveryFailureClass;
+      retryable: boolean;
+      effectDisposition: "not_created" | "provider_failed_known";
+    }
+  | {
+      kind: "still_unknown";
+      providerOperationRef: string | null;
+      evidenceDigest: string;
+      failureCode: string;
+    }
+  | {
+      kind: "operator_required";
+      providerOperationRef: string | null;
+      evidenceDigest: string;
+      failureCode: string;
+    };
+
+export interface PublishingDeliveryReconciliationRequestRecord {
+  schema: "publishing-delivery-reconciliation-request/v1";
+  id: string;
+  workspaceId: string;
+  deliveryId: string;
+  actor: PublishingDeliveryRecoveryActor;
+  sourceEffectKey: string;
+  sourceEffectGeneration: number;
+  sourceIntentDigest: string;
+  sourceProviderAdapterContractDigest: string;
+  sourceProviderOperationRef: string | null;
+  sourceEvidenceDigest: string;
+  authorization: PublishingDeliveryRecoveryAuthorizationSession;
+  requestedAt: Date;
+}
+
+export interface PublishingDeliveryReconciliationResultRecord {
+  schema: "publishing-delivery-reconciliation-result/v1";
+  id: string;
+  workspaceId: string;
+  deliveryId: string;
+  reconciliationId: string;
+  sourceEvidenceDigest: string;
+  effectKey: string;
+  effectGeneration: number;
+  resolution: PublishingDeliveryReconciliationResolution;
+  completedAt: Date;
+}
+
+export interface PublishingDeliveryReconciliationProjection {
+  request: PublishingDeliveryReconciliationRequestRecord;
+  result: PublishingDeliveryReconciliationResultRecord | null;
+}
+
+export interface PublishingDeliveryReconciliationDto {
+  schema: "publishing-delivery-reconciliation/v1";
+  reconciliationId: string;
+  deliveryId: string;
+  sourceEvidenceDigest: string;
+  effectKey: string;
+  effectGeneration: number;
+  status: "queued" | "completed";
+  resolution:
+    | "succeeded"
+    | "failed_transient"
+    | "failed_terminal"
+    | "still_unknown"
+    | "operator_required"
+    | null;
+  requestedAt: string;
+  completedAt: string | null;
+  durable: true;
+  externallyCompleted: boolean | null;
 }
 
 export interface PublishingDeliveryExecutionLeaseRecord {
@@ -403,6 +840,7 @@ export interface PublishingDeliveryValidationPort {
     revision: PublishingPlanRevisionRecord;
     targetIds: string[];
     evaluatedAt: Date;
+    mode: "release" | "retry_due";
   }): Promise<PublishingApprovalValidationSession | null>;
 }
 
@@ -548,6 +986,82 @@ export interface PublishingDeliveryRepository {
     | { kind: "not_found" | "authorization_stale" | "unavailable" }
   >;
 
+  getRetry(input: {
+    workspaceId: string;
+    sourceDeliveryId: string;
+    sourceEvidenceDigest: string;
+    actor: PublishingDeliveryRecoveryActor;
+  }): Promise<PublishingDeliveryRetryRecord | null>;
+  getRetryMutationReceipt(input: {
+    workspaceId: string;
+    actorKind: "agent" | "human";
+    actorId: string;
+    capability: "publishing_deliveries.retry@1";
+    idempotencyKey: string;
+  }): Promise<PublishingDeliveryRetryMutationReceiptRecord | null>;
+  /** Safe retry is governed by normalized retained effect evidence, never codes. */
+  retryKnownFailure(input: {
+    retry: PublishingDeliveryRetryRecord;
+    sourceDelivery: PublishingDeliveryRecord;
+    /** Fresh accepted Delivery; the source is never updated or appended to. */
+    delivery: PublishingDeliveryRecord;
+    approval: PublishingApprovalRequestRecord;
+    approvalConsumption: PublishingDeliveryRetryApprovalConsumptionRecord;
+    mutationReceipt: PublishingDeliveryRetryMutationReceiptRecord;
+    revision: PublishingPlanRevisionRecord;
+    validationSession: PublishingApprovalValidationSession;
+    authorizationSession: PublishingDeliveryRecoveryAuthorizationSession;
+    effectIdentity: PublishingDeliveryEffectIdentityRecord;
+    events: PublishingDeliveryEvent[];
+    outboxIntent: PublishingDeliveryOutboxIntentRecord;
+  }): Promise<
+    | {
+        kind: "created" | "replayed";
+        retry: PublishingDeliveryRetryRecord;
+        delivery: PublishingDeliveryRecord;
+        events: PublishingDeliveryEvent[];
+      }
+    | {
+        kind:
+          | "not_found"
+          | "not_retryable"
+          | "retry_conflict"
+          | "approval_invalid"
+          | "approval_consumed"
+          | "stale_revision"
+          | "authorization_stale"
+          | "validation_stale"
+          | "unavailable";
+      }
+  >;
+  getReconciliation(input: {
+    workspaceId: string;
+    deliveryId: string;
+    sourceEvidenceDigest: string;
+    actor: PublishingDeliveryRecoveryActor;
+  }): Promise<PublishingDeliveryReconciliationProjection | null>;
+  requestReconciliation(input: {
+    reconciliation: PublishingDeliveryReconciliationRequestRecord;
+    authorizationSession: PublishingDeliveryRecoveryAuthorizationSession;
+    event: PublishingDeliveryEvent;
+    outboxIntent: PublishingDeliveryOutboxIntentRecord;
+  }): Promise<
+    | {
+        kind: "created" | "replayed";
+        reconciliation: PublishingDeliveryReconciliationRequestRecord;
+        delivery: PublishingDeliveryRecord;
+        event: PublishingDeliveryEvent;
+      }
+    | {
+        kind:
+          | "not_found"
+          | "not_reconcilable"
+          | "reconciliation_conflict"
+          | "authorization_stale"
+          | "unavailable";
+      }
+  >;
+
   claimOutbox(input: {
     now: Date;
     claimExpiresBefore: Date;
@@ -601,6 +1115,7 @@ export interface PublishingDeliveryRepository {
     fence: bigint;
     effectKey: string;
     intentDigest: string;
+    providerAdapterContractDigest: string;
     preparedAt: Date;
   }): Promise<
     | {
@@ -619,12 +1134,19 @@ export interface PublishingDeliveryRepository {
     fence: bigint;
     effectKey: string;
     intentDigest: string;
+    providerAdapterContractDigest: string;
+    readinessSession: PublishingDeliveryExecutionReadinessSession;
     startedAt: Date;
   }): Promise<
     | {
         kind: "started" | "replayed";
         delivery: PublishingDeliveryRecord;
         event: PublishingDeliveryEvent;
+      }
+    | {
+        kind: "blocked";
+        failureCode: PublishingDeliveryExecutionReadinessFailureCode;
+        evidenceDigest: string;
       }
     | { kind: "cancelled" | "stale" | "unavailable" }
   >;
@@ -638,10 +1160,34 @@ export interface PublishingDeliveryRepository {
     effectKey: string;
     evidenceDigest: string;
     failureCode: string;
+    failureClass: PublishingDeliveryFailureClass;
+    retryable: boolean;
+    effectDisposition: "not_created";
     occurredAt: Date;
   }): Promise<
     | {
         kind: "settled" | "replayed";
+        delivery: PublishingDeliveryRecord;
+        event: PublishingDeliveryEvent;
+      }
+    | { kind: "stale" | "unavailable" }
+  >;
+  /** Nonterminal immediate-readiness drift; schedules a bounded same-Delivery recheck. */
+  blockForReadiness(input: {
+    workspaceId: string;
+    deliveryId: string;
+    workerId: string;
+    leaseToken: string;
+    fence: bigint;
+    effectKey: string;
+    failureCode: PublishingDeliveryExecutionReadinessFailureCode;
+    evidenceDigest: string;
+    retryAt: Date;
+    blockedAt: Date;
+    outboxIntent: PublishingDeliveryOutboxIntentRecord;
+  }): Promise<
+    | {
+        kind: "blocked" | "replayed";
         delivery: PublishingDeliveryRecord;
         event: PublishingDeliveryEvent;
       }
@@ -666,6 +1212,9 @@ export interface PublishingDeliveryRepository {
           providerOperationRef: string | null;
           evidenceDigest: string;
           failureCode: string;
+          failureClass: PublishingDeliveryFailureClass;
+          retryable: boolean;
+          effectDisposition: "not_created" | "provider_failed_known";
         }
       | {
           kind: "retry_scheduled";
@@ -682,7 +1231,7 @@ export interface PublishingDeliveryRepository {
       | {
           /** Terminal ambiguity only when the adapter cannot safely observe. */
           kind: "outcome_unknown";
-          providerOperationRef: null;
+          providerOperationRef: string | null;
           evidenceDigest: string;
           failureCode: string;
         };
@@ -692,6 +1241,46 @@ export interface PublishingDeliveryRepository {
     | {
         kind: "settled" | "replayed";
         delivery: PublishingDeliveryRecord;
+        event: PublishingDeliveryEvent;
+      }
+    | { kind: "stale" | "unavailable" }
+  >;
+  acquireReconciliationLease(input: {
+    workspaceId: string;
+    deliveryId: string;
+    workerId: string;
+    now: Date;
+    expiresAt: Date;
+  }): Promise<
+    | {
+        kind: "acquired";
+        delivery: PublishingDeliveryRecord;
+        reconciliation: PublishingDeliveryReconciliationRequestRecord;
+        lease: PublishingDeliveryExecutionLeaseRecord;
+      }
+    | { kind: "not_due" | "busy" | "terminal" | "unavailable" }
+  >;
+  settleReconciliation(input: {
+    workspaceId: string;
+    deliveryId: string;
+    reconciliationId: string;
+    workerId: string;
+    leaseToken: string;
+    fence: bigint;
+    effectKey: string;
+    effectGeneration: number;
+    intentDigest: string;
+    providerAdapterContractDigest: string;
+    sourceEvidenceDigest: string;
+    resolution: PublishingDeliveryReconciliationResolution;
+    event: PublishingDeliveryEvent;
+    occurredAt: Date;
+  }): Promise<
+    | {
+        kind: "settled" | "replayed";
+        delivery: PublishingDeliveryRecord;
+        reconciliation: PublishingDeliveryReconciliationRequestRecord;
+        result: PublishingDeliveryReconciliationResultRecord;
         event: PublishingDeliveryEvent;
       }
     | { kind: "stale" | "unavailable" }
@@ -706,6 +1295,8 @@ export interface PublishingDeliveryDto
     | "scheduledAt"
     | "dispatchStartedAt"
     | "effectContactStartedAt"
+    | "readinessBlockedAt"
+    | "readinessRetryAt"
     | "completedAt"
     | "updatedAt"
   > {
@@ -714,9 +1305,11 @@ export interface PublishingDeliveryDto
   scheduledAt: string;
   dispatchStartedAt: string | null;
   effectContactStartedAt: string | null;
+  readinessBlockedAt: string | null;
+  readinessRetryAt: string | null;
   completedAt: string | null;
   updatedAt: string;
-  externallyCompleted: boolean;
+  externallyCompleted: boolean | null;
 }
 
 export interface PublishingDeliveryEventDto

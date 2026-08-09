@@ -27,6 +27,15 @@ export const PUBLISHING_DELIVERY_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 export const PUBLISHING_DELIVERY_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 export { PUBLISHING_DELIVERY_EFFECT_KEY_PATTERN } from "./keys";
 
+/** Exhaustion is retained terminal operator-required truth, despite outcome_unknown state. */
+export function publishingDeliveryReconciliationExhausted(
+  delivery: Pick<PublishingDeliveryRecord, "state" | "failureCode" | "nextEffectAttempt">,
+): boolean {
+  return delivery.state === "outcome_unknown" &&
+    delivery.failureCode === "RECONCILIATION_ATTEMPTS_EXHAUSTED" &&
+    delivery.nextEffectAttempt >= 9;
+}
+
 export function publishingDeliveryIdentifier(value: string, label: string): string {
   const result = value.trim();
   if (!PUBLISHING_DELIVERY_ID_PATTERN.test(result)) {
@@ -228,9 +237,17 @@ export function publishingDeliveryDto(
     dispatchStartedAt: record.dispatchStartedAt?.toISOString() ?? null,
     effectContactStartedAt:
       record.effectContactStartedAt?.toISOString() ?? null,
+    readinessBlockedAt: record.readinessBlockedAt?.toISOString() ?? null,
+    readinessRetryAt: record.readinessRetryAt?.toISOString() ?? null,
     completedAt: record.completedAt?.toISOString() ?? null,
     updatedAt: record.updatedAt.toISOString(),
-    externallyCompleted: record.state === "succeeded",
+    externallyCompleted:
+      record.state === "succeeded"
+        ? true
+        : record.state === "outcome_unknown" ||
+            record.state === "confirmation_pending"
+          ? null
+          : false,
   };
 }
 

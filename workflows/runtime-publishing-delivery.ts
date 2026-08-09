@@ -1,6 +1,7 @@
 export interface RuntimePublishingDeliveryInput {
   workspaceId: string;
   deliveryId: string;
+  purpose: "publish" | "reconcile";
 }
 
 export async function executeRuntimePublishingDelivery(
@@ -8,7 +9,7 @@ export async function executeRuntimePublishingDelivery(
 ): Promise<{
   deliveryId: string;
   state: string;
-  externallyCompleted: boolean;
+  externallyCompleted: boolean | null;
 }> {
   "use workflow";
 

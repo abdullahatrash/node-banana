@@ -85,6 +85,74 @@ function releaseInput(setup: Awaited<ReturnType<typeof setupPublishingDeliveries
 }
 
 describe("Publishing Delivery CLI/MCP parity", () => {
+  it("publishes shared intrinsic retry and observe-only reconciliation contracts", async () => {
+    const setup = await capabilitySetup();
+    expect(setup.registry.getRegistration(
+      PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.retry,
+    )).toMatchObject({
+      audience: "shared",
+      effect: {
+        mutation: "external-system",
+        visibility: "publicly-visible",
+        timing: "durable-async",
+        maySpendProviderBudget: true,
+      },
+      approval: { mode: "required-before-effect" },
+      idempotency: { mode: "key-required" },
+    });
+    expect(setup.registry.getRegistration(
+      PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.reconcile,
+    )).toMatchObject({
+      audience: "shared",
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "durable-async",
+        maySpendProviderBudget: false,
+      },
+      approval: { mode: "none" },
+      idempotency: { mode: "intrinsic" },
+    });
+  });
+
+  it("uses recovery-specific authorization errors when durable admission evidence is absent", async () => {
+    const setup = await capabilitySetup();
+    const context = {
+      registry: setup.registry,
+      securityContext: {
+        kind: "human" as const,
+        workspaceId: "workspace_1",
+        userId: "owner_1",
+        role: "owner" as const,
+      },
+    };
+    const resources = {
+      deliveryId: "delivery_1",
+      channelIds: setup.rawApproval.channelIds,
+      artifactIds: setup.rawApproval.artifactIds,
+    };
+    await expect(setup.registry.getRegistration(
+      PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.retry,
+    )!.handler({
+      ...resources,
+      approvalRequestId: "approval_retry_1",
+      expectedFailureEvidenceDigest: `sha256:${"d".repeat(64)}`,
+      idempotencyKey: "retry-delivery-1",
+    }, context)).rejects.toMatchObject({
+      code: "PUBLISHING_DELIVERY_RECOVERY_NOT_AUTHORIZED",
+      message: "Publishing Delivery recovery authorization evidence is unavailable.",
+    });
+    await expect(setup.registry.getRegistration(
+      PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.reconcile,
+    )!.handler({
+      ...resources,
+      expectedUnknownEvidenceDigest: `sha256:${"e".repeat(64)}`,
+    }, context)).rejects.toMatchObject({
+      code: "PUBLISHING_DELIVERY_RECOVERY_NOT_AUTHORIZED",
+    });
+  });
+
+
   it("publishes intrinsic shared cancellation without claiming external reversal", async () => {
     const setup = await capabilitySetup();
     const registration = setup.registry.getRegistration(

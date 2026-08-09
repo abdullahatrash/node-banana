@@ -1,7 +1,9 @@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import {
   publishingDeliveryCancelAuthorizationContractDigest,
+  publishingDeliveryReconcileAuthorizationContractDigest,
   publishingDeliveryReleaseAuthorizationContractDigest,
+  publishingDeliveryRetryAuthorizationContractDigest,
 } from "../authorization-contract";
 import { InMemoryPublishingDeliveryRepository } from "../memory";
 import { PublishingDeliveryService } from "../service";
@@ -9,6 +11,7 @@ import type {
   PublishingDeliveryAuthorizationSession,
   PublishingDeliveryCancellationAuthorizationSession,
   PublishingDeliveryRepository,
+  PublishingDeliveryRecoveryAuthorizationSession,
 } from "../types";
 import { setupPublishingApprovals } from "../../publishing-approvals/__tests__/fixtures";
 import { publishingApprovalValidationBinding } from "../../publishing-approvals/validation";
@@ -68,11 +71,15 @@ export async function setupPublishingDeliveries(
   let authorizationCurrent = true;
   let validationCurrent = true;
   let cancellationAuthorizationCurrent = true;
+  let recoveryAuthorizationCurrent = true;
   repository.seedApproval(rawApproval);
   repository.setAuthorizationSessionVerifier(async () => authorizationCurrent);
   repository.setValidationSessionVerifier(async () => validationCurrent);
   repository.setCancellationAuthorizationSessionVerifier(
     async () => cancellationAuthorizationCurrent,
+  );
+  repository.setRecoveryAuthorizationSessionVerifier(
+    async () => recoveryAuthorizationCurrent,
   );
   const authorizationPort = {
     checkCurrent: async (input: {
@@ -151,6 +158,50 @@ export async function setupPublishingDeliveries(
           }
         : null,
   };
+  const recoveryAuthorizationPort = {
+    checkCurrent: async (input: {
+      workspaceId: string;
+      actor: { kind: "agent"; principalId: string; keyId: string } | { kind: "human"; userId: string };
+      capability: "publishing_deliveries.retry@1" | "publishing_deliveries.reconcile@1";
+      authorizationContractDigest: string;
+      authorizationEvidenceRef: string;
+      channelIds: string[];
+      artifactIds: string[];
+    }): Promise<PublishingDeliveryRecoveryAuthorizationSession | null> =>
+      recoveryAuthorizationCurrent &&
+      (input.actor.kind === "agent" || input.actor.userId === "owner_1")
+        ? {
+            schema: "publishing-delivery-recovery-authorization-session/v1",
+            id: `recovery_authorization_${input.capability.includes("retry") ? "retry" : "reconcile"}`,
+            workspaceId: input.workspaceId,
+            actor: structuredClone(input.actor),
+            capability: input.capability,
+            contractDigest: input.authorizationContractDigest,
+            admissionEvidenceRef: input.authorizationEvidenceRef,
+            evidenceRef: input.actor.kind === "agent"
+              ? input.authorizationEvidenceRef
+              : "explicit_human_recovery_authority_1",
+            evidenceDigest: canonicalDigest({
+              actor: input.actor,
+              capability: input.capability,
+              channelIds: input.channelIds,
+              artifactIds: input.artifactIds,
+            }),
+            resources: {
+              channelIds: [...input.channelIds],
+              artifactIds: [...input.artifactIds],
+            },
+            humanGrants: input.actor.kind === "human"
+              ? input.channelIds.map((channelId, index) => ({
+                  channelId,
+                  grantId: `recovery_grant_${index + 1}`,
+                }))
+              : [],
+            issuedAt: new Date(now.getTime() - 1_000),
+            expiresAt: new Date(now.getTime() + 60_000),
+          }
+        : null,
+  };
   const service = new PublishingDeliveryService(
     repository,
     approvals.revisionPort,
@@ -158,6 +209,7 @@ export async function setupPublishingDeliveries(
     authorizationPort,
     { now: () => new Date(now) },
     cancellationAuthorizationPort,
+    recoveryAuthorizationPort,
   );
   const releaseInput = () => ({
     workspaceId: "workspace_1",
@@ -178,6 +230,7 @@ export async function setupPublishingDeliveries(
     service,
     authorizationPort,
     cancellationAuthorizationPort,
+    recoveryAuthorizationPort,
     validationPort,
     releaseInput,
     setNow(value: string) { now = new Date(value); },
@@ -185,6 +238,9 @@ export async function setupPublishingDeliveries(
     setValidationCurrent(value: boolean) { validationCurrent = value; },
     setCancellationAuthorizationCurrent(value: boolean) {
       cancellationAuthorizationCurrent = value;
+    },
+    setRecoveryAuthorizationCurrent(value: boolean) {
+      recoveryAuthorizationCurrent = value;
     },
     cancellationInput(actor: "agent" | "human", deliveryId: string) {
       return {
@@ -201,6 +257,38 @@ export async function setupPublishingDeliveries(
         authorizationContractDigest:
           publishingDeliveryCancelAuthorizationContractDigest(),
       };
+    },
+    recoveryInput(
+      capability: "retry" | "reconcile",
+      actor: "agent" | "human",
+      deliveryId: string,
+      evidenceDigest: string,
+    ) {
+      const common = {
+        workspaceId: "workspace_1",
+        actor: actor === "agent"
+          ? { kind: "agent" as const, principalId: "principal_2", keyId: "key_2" }
+          : { kind: "human" as const, userId: "owner_1" },
+        deliveryId,
+        channelIds: [...rawApproval.channelIds],
+        artifactIds: [...rawApproval.artifactIds],
+        authorizationEvidenceRef: `recovery_${capability}_${actor}_admission_1`,
+      };
+      return capability === "retry"
+        ? {
+            ...common,
+            approvalRequestId: "approval_retry_1",
+            expectedFailureEvidenceDigest: evidenceDigest,
+            idempotencyKey: `retry-${deliveryId}`,
+            authorizationContractDigest:
+              publishingDeliveryRetryAuthorizationContractDigest(),
+          }
+        : {
+            ...common,
+            expectedUnknownEvidenceDigest: evidenceDigest,
+            authorizationContractDigest:
+              publishingDeliveryReconcileAuthorizationContractDigest(),
+          };
     },
   } satisfies Record<string, unknown> & { repository: PublishingDeliveryRepository };
 }

@@ -4,6 +4,8 @@ import { InMemoryPublishingDeliveryRepository } from "../memory";
 import type { PublishingDeliveryRepository } from "../types";
 import { setupPublishingDeliveries } from "./fixtures";
 
+const adapterContractDigest = canonicalDigest({ adapter: "linkedin-test-v1" });
+
 class CapturingUnavailableRepository extends InMemoryPublishingDeliveryRepository {
   captured: Parameters<PublishingDeliveryRepository["release"]>[0] | null = null;
 
@@ -73,6 +75,7 @@ describe("InMemoryPublishingDeliveryRepository", () => {
       fence: acquired.lease.fence,
       effectKey: acquired.delivery.effectKey,
       intentDigest,
+      providerAdapterContractDigest: adapterContractDigest,
       preparedAt: now,
     });
     expect(prepared.kind).toBe("prepared");
@@ -96,6 +99,7 @@ describe("InMemoryPublishingDeliveryRepository", () => {
         id: "outbox_retry_1",
         workspaceId: "workspace_1",
         deliveryId,
+        purpose: "publish",
         dedupeKey: `publishing-delivery:workspace_1:${deliveryId}:v2`,
         generation: 2,
         state: "pending",
@@ -109,7 +113,11 @@ describe("InMemoryPublishingDeliveryRepository", () => {
     });
     expect(retry).toMatchObject({
       kind: "settled",
-      delivery: { state: "scheduled", failureCode: "LINKEDIN_TEMPORARY" },
+      delivery: {
+        state: "scheduled",
+        failureCode: "LINKEDIN_TEMPORARY",
+        nextEffectAttempt: 1,
+      },
     });
 
     expect(await setup.repository.acquireLease({
@@ -148,6 +156,7 @@ describe("InMemoryPublishingDeliveryRepository", () => {
       fence: reacquired.lease.fence,
       effectKey: reacquired.delivery.effectKey,
       intentDigest,
+      providerAdapterContractDigest: adapterContractDigest,
       preparedAt: retryAt,
     });
     expect(reprepared).toMatchObject({
@@ -184,11 +193,19 @@ describe("InMemoryPublishingDeliveryRepository", () => {
       effectKey: acquired.delivery.effectKey,
       evidenceDigest,
       failureCode: "PLATFORM_ADAPTER_UNAVAILABLE",
+      failureClass: "transient",
+      retryable: true,
+      effectDisposition: "not_created",
       occurredAt: now,
     });
     expect(failed).toMatchObject({
       kind: "settled",
-      delivery: { state: "failed", intentDigest: null, providerOperationRef: null },
+      delivery: {
+        state: "failed_transient",
+        intentDigest: null,
+        providerOperationRef: null,
+        nextEffectAttempt: 2,
+      },
       event: { type: "effect.not_created" },
     });
     expect((setup.repository.events.get(`workspace_1\u0000${deliveryId}`) ?? []).some((event) => event.type === "effect.prepared")).toBe(false);
@@ -220,6 +237,7 @@ describe("InMemoryPublishingDeliveryRepository", () => {
       workspaceId: "workspace_1", deliveryId, workerId: firstLease.lease.workerId,
       leaseToken: firstLease.lease.leaseToken, fence: firstLease.lease.fence,
       effectKey: firstLease.delivery.effectKey, intentDigest, preparedAt: firstAt,
+      providerAdapterContractDigest: adapterContractDigest,
     });
     const evidenceDigest = canonicalDigest({ pending: true });
     const secondAt = new Date(firstAt.getTime() + 1_000);
@@ -230,13 +248,17 @@ describe("InMemoryPublishingDeliveryRepository", () => {
       outcome: { kind: "confirmation_pending", providerOperationRef: "linkedin_effect_1", evidenceDigest, pollAt: secondAt },
       retryOutboxIntent: {
         id: "poll_outbox_2", workspaceId: "workspace_1", deliveryId,
+        purpose: "publish",
         dedupeKey: `publishing-delivery:workspace_1:${deliveryId}:v2`, generation: 2,
         state: "pending", availableAt: secondAt, deliveryToken: null,
         deliveryAttempts: 0, claimedAt: null, deliveredAt: null,
       },
       occurredAt: firstAt,
     });
-    expect(firstPending.kind).toBe("settled");
+    expect(firstPending).toMatchObject({
+      kind: "settled",
+      delivery: { nextEffectAttempt: 2 },
+    });
     const secondClaim = await setup.repository.claimOutbox({
       now: secondAt,
       claimExpiresBefore: new Date(secondAt.getTime() - 30_000),
@@ -257,6 +279,7 @@ describe("InMemoryPublishingDeliveryRepository", () => {
       workspaceId: "workspace_1", deliveryId, workerId: secondLease.lease.workerId,
       leaseToken: secondLease.lease.leaseToken, fence: secondLease.lease.fence,
       effectKey: secondLease.delivery.effectKey, intentDigest, preparedAt: secondAt,
+      providerAdapterContractDigest: adapterContractDigest,
     });
     const thirdAt = new Date(secondAt.getTime() + 1_000);
     const secondPending = await setup.repository.settleEffect({
@@ -266,6 +289,7 @@ describe("InMemoryPublishingDeliveryRepository", () => {
       outcome: { kind: "confirmation_pending", providerOperationRef: "linkedin_effect_1", evidenceDigest, pollAt: thirdAt },
       retryOutboxIntent: {
         id: "poll_outbox_3", workspaceId: "workspace_1", deliveryId,
+        purpose: "publish",
         dedupeKey: `publishing-delivery:workspace_1:${deliveryId}:v3`, generation: 3,
         state: "pending", availableAt: thirdAt, deliveryToken: null,
         deliveryAttempts: 0, claimedAt: null, deliveredAt: null,
@@ -274,7 +298,11 @@ describe("InMemoryPublishingDeliveryRepository", () => {
     });
     expect(secondPending).toMatchObject({
       kind: "settled",
-      delivery: { state: "confirmation_pending", nextOutboxGeneration: 4 },
+      delivery: {
+        state: "confirmation_pending",
+        nextEffectAttempt: 3,
+        nextOutboxGeneration: 4,
+      },
     });
     expect(setup.repository.outbox.get("poll_outbox_3")).toMatchObject({
       generation: 3,

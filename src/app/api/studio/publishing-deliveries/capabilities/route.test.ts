@@ -43,7 +43,7 @@ const input = {
   artifactIds: ["artifact:text.v1", "artifact:image.v1"],
 };
 
-describe("Studio Publishing Delivery cancellation capability", () => {
+describe("Studio Publishing Delivery command capabilities", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthorize.mockResolvedValue({
@@ -131,6 +131,125 @@ describe("Studio Publishing Delivery cancellation capability", () => {
     });
   });
 
+  it.each([
+    {
+      capability: "publishing_deliveries.retry@1" as const,
+      input: {
+        ...input,
+        approvalRequestId: "approval_retry_1",
+        expectedFailureEvidenceDigest: `sha256:${"d".repeat(64)}`,
+        idempotencyKey: "retry-delivery-1",
+      },
+      name: "publishing_deliveries.retry",
+      output: {
+        schema: "publishing-delivery-retry/v1",
+        retryId: "retry_1",
+        sourceDeliveryId: "delivery_1",
+        sourceEvidenceDigest: `sha256:${"d".repeat(64)}`,
+        delivery: {
+          id: "delivery_retry_1",
+          targetId: "target_1",
+          channelId: "channel_1",
+          publishAt: "2026-08-09T00:00:00.000Z",
+          state: "scheduled",
+          effectKey: "publishing-effect:v1:workspace_1:delivery_retry_1",
+          acceptedAt: "2026-08-09T00:00:00.000Z",
+          scheduledAt: "2026-08-09T00:00:00.000Z",
+          externallyCompleted: false,
+        },
+        requestedAt: "2026-08-09T00:00:00.000Z",
+        durable: true,
+        externallyCompleted: false,
+      },
+    },
+    {
+      capability: "publishing_deliveries.reconcile@1" as const,
+      input: {
+        ...input,
+        expectedUnknownEvidenceDigest: `sha256:${"e".repeat(64)}`,
+      },
+      name: "publishing_deliveries.reconcile",
+      output: {
+        schema: "publishing-delivery-reconciliation/v1",
+        reconciliationId: "reconciliation_1",
+        deliveryId: "delivery_1",
+        sourceEvidenceDigest: `sha256:${"e".repeat(64)}`,
+        effectKey: "publishing-effect:v1:workspace_1:delivery_1",
+        effectGeneration: 1,
+        status: "queued",
+        resolution: null,
+        requestedAt: "2026-08-09T00:00:00.000Z",
+        completedAt: null,
+        durable: true,
+        externallyCompleted: null,
+      },
+    },
+  ])("dispatches shared Human $capability through the closed route", async (value) => {
+    mockDispatch.mockResolvedValueOnce({
+      type: "capability_result",
+      capability: { name: value.name, version: 1 },
+      requestDigest: `sha256:${"f".repeat(64)}`,
+      status: "accepted",
+      output: value.output,
+      warnings: [],
+    });
+    const response = await POST(request({
+      capability: value.capability,
+      input: value.input,
+    }), undefined);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      capability: value.capability,
+      result: value.output,
+    });
+    expect(mockDispatch).toHaveBeenCalledWith(
+      { capability: value.capability, input: value.input },
+      {
+        securityContext: {
+          kind: "human",
+          workspaceId: "workspace_1",
+          userId: "owner_1",
+          role: "owner",
+        },
+      },
+    );
+  });
+
+  it("surfaces recovery authority denial for a Studio member without role escalation", async () => {
+    mockAuthorize.mockResolvedValueOnce({
+      authorized: true,
+      workspaceId: "workspace_1",
+      userId: "member_1",
+      role: "member",
+    });
+    mockDispatch.mockResolvedValueOnce({
+      type: "capability_error",
+      capability: { name: "publishing_deliveries.reconcile", version: 1 },
+      requestDigest: `sha256:${"b".repeat(64)}`,
+      code: "PUBLISHING_DELIVERY_RECOVERY_NOT_AUTHORIZED",
+      category: "authorization",
+      message: "Exact current recovery authority is required.",
+      retryable: false,
+      operatorTraceRef: "trace_recovery_1",
+    });
+    const recoveryInput = {
+      ...input,
+      expectedUnknownEvidenceDigest: `sha256:${"e".repeat(64)}`,
+    };
+    const response = await POST(request({
+      capability: "publishing_deliveries.reconcile@1",
+      input: recoveryInput,
+    }), undefined);
+    expect(response.status).toBe(403);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    await expect(response.json()).resolves.toMatchObject({
+      code: "PUBLISHING_DELIVERY_RECOVERY_NOT_AUTHORIZED",
+      operatorTraceRef: "trace_recovery_1",
+    });
+  });
+
   it("requires explicit Workspace selection and same-origin mutation", async () => {
     const workspace = await POST(request(
       { capability: "publishing_deliveries.cancel@1", input },
@@ -159,6 +278,24 @@ describe("Studio Publishing Delivery cancellation capability", () => {
       input: { ...input, channelIds: [] },
     }), undefined);
     expect(malformed.status).toBe(400);
+    const retryWithoutKey = await POST(request({
+      capability: "publishing_deliveries.retry@1",
+      input: {
+        ...input,
+        approvalRequestId: "approval_retry_1",
+        expectedFailureEvidenceDigest: `sha256:${"d".repeat(64)}`,
+      },
+    }), undefined);
+    expect(retryWithoutKey.status).toBe(400);
+    const crossCommandFields = await POST(request({
+      capability: "publishing_deliveries.reconcile@1",
+      input: {
+        ...input,
+        expectedFailureEvidenceDigest: `sha256:${"d".repeat(64)}`,
+        idempotencyKey: "retry-delivery-1",
+      },
+    }), undefined);
+    expect(crossCommandFields.status).toBe(400);
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 
