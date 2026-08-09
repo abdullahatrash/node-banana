@@ -16,7 +16,11 @@ import {
 } from "./errors";
 import { PublishingApprovalService } from "./service";
 import { publishingApprovalAgentDtoFromDto } from "./service";
-import type { PublishingApprovalCursorCodec } from "./types";
+import type {
+  PublishingApprovalAgentDto,
+  PublishingApprovalCursorCodec,
+  PublishingApprovalDto,
+} from "./types";
 import { InvalidPublishingApprovalCursorError } from "./cursor";
 import { PUBLISHING_PLAN_RUNTIME_POLICY_IDENTITY, publishingPlanRuntimePolicyContractDigest } from "../publishing-plans/production-digests";
 
@@ -34,6 +38,10 @@ const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const iso = z.string().datetime({ offset: true });
 const evidenceRef = z.string().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/);
 const resources = z.object({ channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200) }).strict();
+const inspectionResources = {
+  channelIds: z.array(id).max(50).default([]),
+  artifactIds: z.array(artifactId).max(200).default([]),
+};
 const validation = z.object({
   evidenceDigest: digest,
   currentStateDigest: digest,
@@ -111,6 +119,13 @@ const agentApproval = z.object({
   status: z.enum(["pending", "approved", "denied", "consumed", "expired"]), decision: agentDecision.nullable(),
   consumption: z.object({ consumed: z.literal(true), consumedAt: iso }).strict().nullable(), createdAt: iso, authorizesExecution: z.literal(false),
 }).strict();
+const sharedApproval = z.discriminatedUnion("projection", [
+  z.object({ projection: z.literal("human"), approval }).strict(),
+  z.object({ projection: z.literal("agent"), approval: agentApproval }).strict(),
+]);
+type SharedApprovalProjection =
+  | { projection: "human"; approval: PublishingApprovalDto }
+  | { projection: "agent"; approval: PublishingApprovalAgentDto };
 const page = z.object({ schema: z.literal("publishing-approval-page/v1"), items: z.array(agentApproval).max(100), nextCursor: z.string().min(1).max(2048).nullable() }).strict();
 
 function schema(value: z.ZodType): JsonSchema {
@@ -120,6 +135,13 @@ function schema(value: z.ZodType): JsonSchema {
 function agent(context: ResolvedSecurityContext | undefined) {
   if (!context || context.kind !== "agent") {
     throw new CapabilityFailure({ code: "CAPABILITY_NOT_AUTHORIZED", category: "authorization", message: "Only an authenticated Agent Principal may request Publishing Approval." });
+  }
+  return context;
+}
+
+function sharedReader(context: ResolvedSecurityContext | undefined) {
+  if (!context) {
+    throw new CapabilityFailure({ code: "CAPABILITY_NOT_AUTHORIZED", category: "authorization", message: "Publishing Approval observation is not authorized." });
   }
   return context;
 }
@@ -207,11 +229,57 @@ export function createPublishingApprovalRegistrations(
     }),
     defineCapability({
       identity: PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES.get,
-      audience: "agent", summary: "Observe one requester-scoped redacted durable Publishing Approval request and decision.", lifecycle,
+      audience: "agent", summary: "Observe one requester-scoped redacted durable Publishing Approval request and decision.", lifecycle: { ...lifecycle, recommended: false },
       input: z.object({ approvalRequestId: id, channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200) }).strict(), outputSchema: schema(agentApproval), effect: QUERY_EFFECT,
       approval: { mode: "none" }, idempotency: { mode: "retry-safe" }, authorization: PUBLISHING_APPROVAL_REQUEST_AUTHORIZATION,
       errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_APPROVAL_ERROR_CONTRACTS],
       handler: (input, context) => { const principal = agent(context.securityContext); const admitted = admittedResources(context, input); return domain(() => service.getAgent({ workspaceId: principal.workspaceId, approvalRequestId: input.approvalRequestId, viewer: { principalId: principal.principalId, authorizedChannelIds: admitted.channelIds, authorizedArtifactIds: admitted.artifactIds } })); },
+    }),
+    defineCapability({
+      identity: PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES.getV2,
+      audience: "shared",
+      summary: "Observe one requester-redacted Approval as its Agent or full durable Approval evidence as an authorized Workspace human.",
+      lifecycle,
+      input: z.object({ approvalRequestId: id, ...inspectionResources }).strict(),
+      outputSchema: schema(sharedApproval),
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: PUBLISHING_APPROVAL_REQUEST_AUTHORIZATION,
+      errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_APPROVAL_ERROR_CONTRACTS],
+      handler: async (input, context): Promise<SharedApprovalProjection> => {
+        const caller = sharedReader(context.securityContext);
+        if (caller.kind === "human") {
+          return domain(async () => ({
+            projection: "human" as const,
+            approval: await service.get({
+            workspaceId: caller.workspaceId,
+            approvalRequestId: input.approvalRequestId,
+            viewer: { kind: "human", userId: caller.userId },
+            }),
+          }));
+        }
+        if (input.channelIds.length === 0 || input.artifactIds.length === 0) {
+          throw new CapabilityFailure({
+            code: "PUBLISHING_APPROVAL_INVALID_INPUT",
+            category: "validation",
+            message: "Agent Approval observation requires exact Channel and Artifact manifests.",
+          });
+        }
+        const admitted = admittedResources(context, input);
+        return domain(async () => ({
+          projection: "agent" as const,
+          approval: await service.getAgent({
+            workspaceId: caller.workspaceId,
+            approvalRequestId: input.approvalRequestId,
+            viewer: {
+              principalId: caller.principalId,
+              authorizedChannelIds: admitted.channelIds,
+              authorizedArtifactIds: admitted.artifactIds,
+            },
+          }),
+        }));
+      },
     }),
     defineCapability({
       identity: PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES.list,

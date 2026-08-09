@@ -105,6 +105,7 @@ export class InMemoryBudgetRepository
     revision: number;
     reason: string;
     actorUserId: string;
+    authorizationEvidenceRef: string | null;
     recordedAt: Date;
   }>();
   readonly spendControlEvents: Array<{
@@ -113,6 +114,7 @@ export class InMemoryBudgetRepository
     revision: number;
     reason: string;
     actorUserId: string;
+    authorizationEvidenceRef: string | null;
     recordedAt: Date;
   }> = [];
   private admissionTail: Promise<void> = Promise.resolve();
@@ -162,6 +164,18 @@ export class InMemoryBudgetRepository
       ? Promise.resolve(operation(token!))
       : this.memoryCoordinator.runExclusive((activeToken) =>
           Promise.resolve(operation(activeToken)));
+  }
+
+  readBudgetStatusSnapshot<T>(
+    read: (reader: Pick<BudgetRepository<MemoryTransactionToken>,
+      "getEffectivePolicies" | "getCommittedAmount" | "listReservations"
+    >) => Promise<T>,
+  ): Promise<T> {
+    return this.withAuthority(undefined, (token) => read({
+      getEffectivePolicies: (input) => this.getEffectivePolicies(input, token),
+      getCommittedAmount: (input) => this.getCommittedAmount(input, token),
+      listReservations: (input) => this.listReservations(input, token),
+    }));
   }
 
   async seedGrant(
@@ -385,11 +399,30 @@ export class InMemoryBudgetRepository
     return this.withAuthority(token, () => this.suspensions.get(workspaceId)?.suspended ?? false);
   }
 
+  async getSpendControlEvidence(
+    workspaceId: string,
+    token?: MemoryTransactionToken,
+  ) {
+    return this.withAuthority(token, () => {
+      const current = this.suspensions.get(workspaceId);
+      if (!current) return null;
+      return copy({
+        workspaceId,
+        ...current,
+        policyEventId: `budget_event_${canonicalDigest({
+          kind: "spend-control",
+          value: { workspaceId, revision: current.revision },
+        }).slice(7, 39)}`,
+      });
+    });
+  }
+
   async setSpendSuspended(input: {
     workspaceId: string;
     suspended: boolean;
     reason: string;
     actorUserId: string;
+    authorizationEvidenceRef?: string;
     recordedAt: Date;
   }, token?: MemoryTransactionToken) {
     return this.withAuthority(token, () => this.setSpendSuspendedUnlocked(input));
@@ -400,6 +433,7 @@ export class InMemoryBudgetRepository
     suspended: boolean;
     reason: string;
     actorUserId: string;
+    authorizationEvidenceRef?: string;
     recordedAt: Date;
   }) {
     const previous = this.admissionTail;
@@ -414,16 +448,33 @@ export class InMemoryBudgetRepository
       if (
         current?.suspended === input.suspended &&
         current.reason === input.reason &&
-        current.actorUserId === input.actorUserId
+        current.actorUserId === input.actorUserId &&
+        (input.authorizationEvidenceRef === undefined ||
+          current.authorizationEvidenceRef !== null)
       ) {
-        return;
+        return copy({
+          workspaceId: input.workspaceId,
+          ...current,
+          policyEventId: `budget_event_${canonicalDigest({
+            kind: "spend-control",
+            value: { workspaceId: input.workspaceId, revision: current.revision },
+          }).slice(7, 39)}`,
+        });
       }
       const command = copy({
         ...input,
+        authorizationEvidenceRef: input.authorizationEvidenceRef ?? null,
         revision: (current?.revision ?? 0) + 1,
       });
       this.suspensions.set(input.workspaceId, command);
       this.spendControlEvents.push(copy(command));
+      return copy({
+        ...command,
+        policyEventId: `budget_event_${canonicalDigest({
+          kind: "spend-control",
+          value: { workspaceId: input.workspaceId, revision: command.revision },
+        }).slice(7, 39)}`,
+      });
     } finally {
       release();
     }

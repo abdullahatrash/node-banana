@@ -4,6 +4,7 @@ import type { getDb } from "@/lib/db";
 import { appendContractEvidenceVersion } from "../contract-evidence/postgres-repository";
 import { projectBudgetReservationContractEvidence } from "../contract-evidence/projectors";
 import {
+  agentSecurityEvents,
   credentialSlots,
   credentialSpendEvents,
   credentialSpendGrants,
@@ -206,6 +207,21 @@ function selectedOverrides(items: WorkspacePricingOverride[]): WorkspacePricingO
 export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
   constructor(private readonly database: () => Db) {}
 
+  readBudgetStatusSnapshot<T>(
+    read: (reader: Pick<BudgetRepository<Tx>,
+      "getEffectivePolicies" | "getCommittedAmount" | "listReservations"
+    >) => Promise<T>,
+  ): Promise<T> {
+    return this.database().transaction(async (tx) => {
+      await tx.execute(sql`set transaction isolation level repeatable read read only`);
+      return read({
+        getEffectivePolicies: (input) => this.getEffectivePolicies(input, tx),
+        getCommittedAmount: (input) => this.getCommittedAmount(input, tx),
+        listReservations: (input) => this.listReservations(input, tx),
+      });
+    });
+  }
+
   async getAdminReceipt(input: {
     workspaceId: string;
     kind: "policy_revision" | "pricing_override";
@@ -271,8 +287,8 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
       : null;
   }
 
-  async getEffectivePolicies(input: { workspaceId: string; principalId: string }) {
-    const rows = await this.database().select({ policy: runtimeBudgetPolicies, revision: runtimeBudgetPolicyRevisions })
+  async getEffectivePolicies(input: { workspaceId: string; principalId: string }, transaction?: Tx) {
+    const rows = await (transaction ?? this.database()).select({ policy: runtimeBudgetPolicies, revision: runtimeBudgetPolicyRevisions })
       .from(runtimeBudgetPolicies)
       .innerJoin(runtimeBudgetPolicyRevisions, and(
         eq(runtimeBudgetPolicyRevisions.workspaceId, runtimeBudgetPolicies.workspaceId),
@@ -377,12 +393,13 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
     }).catch(() => "conflict" as const);
   }
 
-  async getCommittedAmount(input: { workspaceId: string; policyRevisionId: string; periodStartsAt: Date; periodEndsAt: Date | null }) {
-    const [revision] = await this.database().select({ policyId: runtimeBudgetPolicyRevisions.policyId }).from(runtimeBudgetPolicyRevisions)
+  async getCommittedAmount(input: { workspaceId: string; policyRevisionId: string; periodStartsAt: Date; periodEndsAt: Date | null }, transaction?: Tx) {
+    const database = transaction ?? this.database();
+    const [revision] = await database.select({ policyId: runtimeBudgetPolicyRevisions.policyId }).from(runtimeBudgetPolicyRevisions)
       .where(and(eq(runtimeBudgetPolicyRevisions.workspaceId, input.workspaceId), eq(runtimeBudgetPolicyRevisions.id, input.policyRevisionId))).limit(1);
     if (!revision) return "0";
     const endPredicate = input.periodEndsAt === null ? isNull(runtimeBudgetPeriods.endsAt) : eq(runtimeBudgetPeriods.endsAt, input.periodEndsAt);
-    const [row] = await this.database().select({ committed: sql<string>`coalesce(sum(case when ${runtimeBudgetReservations.state} in ('held', 'outcome_unknown', 'held_unknown_cost') then ${runtimeBudgetReservations.settledAmount}::numeric + ${runtimeBudgetReservations.heldAmount}::numeric else ${runtimeBudgetReservations.settledAmount}::numeric end), 0)::text` })
+    const [row] = await database.select({ committed: sql<string>`coalesce(sum(case when ${runtimeBudgetReservations.state} in ('held', 'outcome_unknown', 'held_unknown_cost') then ${runtimeBudgetReservations.settledAmount}::numeric + ${runtimeBudgetReservations.heldAmount}::numeric else ${runtimeBudgetReservations.settledAmount}::numeric end), 0)::text` })
       .from(runtimeBudgetReservations).innerJoin(runtimeBudgetPeriods, and(eq(runtimeBudgetPeriods.workspaceId, runtimeBudgetReservations.workspaceId), eq(runtimeBudgetPeriods.id, runtimeBudgetReservations.periodId)))
       .where(and(eq(runtimeBudgetReservations.workspaceId, input.workspaceId), eq(runtimeBudgetPeriods.policyId, revision.policyId), eq(runtimeBudgetPeriods.startsAt, input.periodStartsAt), endPredicate));
     return canonicalDecimal(row?.committed ?? "0");
@@ -458,18 +475,103 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
     return row?.suspended ?? false;
   }
 
-  async setSpendSuspended(input: { workspaceId: string; suspended: boolean; reason: string; actorUserId: string; recordedAt: Date }) {
-    await this.database().transaction(async (tx) => {
+  async getSpendControlEvidence(workspaceId: string) {
+    const [row] = await this.database()
+      .select({ control: runtimeSpendControls, event: runtimeSpendControlEvents })
+      .from(runtimeSpendControls)
+      .leftJoin(
+        runtimeSpendControlEvents,
+        and(
+          eq(runtimeSpendControlEvents.workspaceId, runtimeSpendControls.workspaceId),
+          eq(runtimeSpendControlEvents.revision, runtimeSpendControls.revision),
+        ),
+      )
+      .where(eq(runtimeSpendControls.workspaceId, workspaceId))
+      .limit(1);
+    if (!row) return null;
+    if (!row.event) {
+      throw new Error("Spend-control durable policy event is unavailable.");
+    }
+    if (
+      row.control.suspended !== row.event.suspended ||
+      row.control.authorizationEvidenceRef !== row.event.authorizationEvidenceRef ||
+      row.control.reason !== row.event.reason ||
+      row.control.updatedByUserId !== row.event.actorUserId ||
+      row.control.updatedAt.getTime() !== row.event.recordedAt.getTime()
+    ) {
+      throw new Error("Spend-control projection does not match its durable policy event.");
+    }
+    return {
+      workspaceId: row.control.workspaceId,
+      suspended: row.control.suspended,
+      revision: row.control.revision,
+      reason: row.control.reason,
+      actorUserId: row.control.updatedByUserId,
+      authorizationEvidenceRef: row.control.authorizationEvidenceRef,
+      recordedAt: row.control.updatedAt,
+      policyEventId: row.event.id,
+    };
+  }
+
+  async setSpendSuspended(input: { workspaceId: string; suspended: boolean; reason: string; actorUserId: string; authorizationEvidenceRef?: string; recordedAt: Date }) {
+    return this.database().transaction(async (tx) => {
       await lockWorkspaceSpendGate(tx, input.workspaceId);
+      if (input.authorizationEvidenceRef) {
+        const capabilityName = input.suspended
+          ? "spend_controls.suspend"
+          : "spend_controls.resume";
+        const [admission] = await tx.select({ id: agentSecurityEvents.id })
+          .from(agentSecurityEvents)
+          .where(and(
+            eq(agentSecurityEvents.workspaceId, input.workspaceId),
+            eq(agentSecurityEvents.actorUserId, input.actorUserId),
+            eq(agentSecurityEvents.eventType, "authorization.allowed"),
+            eq(agentSecurityEvents.capabilityName, capabilityName),
+            eq(agentSecurityEvents.capabilityVersion, 2),
+            eq(agentSecurityEvents.changeRef, input.authorizationEvidenceRef),
+          ))
+          .limit(1);
+        if (!admission) {
+          throw new Error("Spend-control authorization evidence is unavailable.");
+        }
+      }
       const [current] = await tx.select().from(runtimeSpendControls).where(eq(runtimeSpendControls.workspaceId, input.workspaceId)).for("update").limit(1);
       if (
         current?.suspended === input.suspended &&
         current.reason === input.reason &&
-        current.updatedByUserId === input.actorUserId
-      ) return;
+        current.updatedByUserId === input.actorUserId &&
+        (input.authorizationEvidenceRef === undefined ||
+          current.authorizationEvidenceRef !== null)
+      ) {
+        return {
+          workspaceId: current.workspaceId,
+          suspended: current.suspended,
+          revision: current.revision,
+          reason: current.reason,
+          actorUserId: current.updatedByUserId,
+          authorizationEvidenceRef: current.authorizationEvidenceRef,
+          recordedAt: current.updatedAt,
+          policyEventId: eventId("spend-control", {
+            workspaceId: current.workspaceId,
+            revision: current.revision,
+          }),
+        };
+      }
       const revision = (current?.revision ?? 0) + 1;
-      await tx.insert(runtimeSpendControls).values({ workspaceId: input.workspaceId, suspended: input.suspended, revision, reason: input.reason, updatedByUserId: input.actorUserId, updatedAt: input.recordedAt }).onConflictDoUpdate({ target: runtimeSpendControls.workspaceId, set: { suspended: input.suspended, revision, reason: input.reason, updatedByUserId: input.actorUserId, updatedAt: input.recordedAt } });
-      await tx.insert(runtimeSpendControlEvents).values({ id: eventId("spend-control", { workspaceId: input.workspaceId, revision }), workspaceId: input.workspaceId, revision, suspended: input.suspended, reason: input.reason, actorUserId: input.actorUserId, recordedAt: input.recordedAt });
+      const policyEventId = eventId("spend-control", { workspaceId: input.workspaceId, revision });
+      const authorizationEvidenceRef = input.authorizationEvidenceRef ?? null;
+      await tx.insert(runtimeSpendControls).values({ workspaceId: input.workspaceId, suspended: input.suspended, revision, reason: input.reason, updatedByUserId: input.actorUserId, authorizationEvidenceRef, updatedAt: input.recordedAt }).onConflictDoUpdate({ target: runtimeSpendControls.workspaceId, set: { suspended: input.suspended, revision, reason: input.reason, updatedByUserId: input.actorUserId, authorizationEvidenceRef, updatedAt: input.recordedAt } });
+      await tx.insert(runtimeSpendControlEvents).values({ id: policyEventId, workspaceId: input.workspaceId, revision, suspended: input.suspended, reason: input.reason, actorUserId: input.actorUserId, authorizationEvidenceRef, recordedAt: input.recordedAt });
+      return {
+        workspaceId: input.workspaceId,
+        suspended: input.suspended,
+        revision,
+        reason: input.reason,
+        actorUserId: input.actorUserId,
+        authorizationEvidenceRef,
+        recordedAt: input.recordedAt,
+        policyEventId,
+      };
     });
   }
 
@@ -847,11 +949,11 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
     return transaction ? execute(transaction) : this.database().transaction(execute);
   }
 
-  async listReservations(input: { workspaceId: string; runId?: string; principalId?: string }) {
+  async listReservations(input: { workspaceId: string; runId?: string; principalId?: string }, transaction?: Tx) {
     const predicates = [eq(runtimeBudgetReservations.workspaceId, input.workspaceId)];
     if (input.runId) predicates.push(eq(runtimeBudgetReservations.runId, input.runId));
     if (input.principalId) predicates.push(eq(runtimeBudgetReservations.admittedPrincipalId, input.principalId));
-    return (await this.database().select().from(runtimeBudgetReservations).where(and(...predicates)).orderBy(asc(runtimeBudgetReservations.createdAt), asc(runtimeBudgetReservations.id))).map(reservationFrom);
+    return (await (transaction ?? this.database()).select().from(runtimeBudgetReservations).where(and(...predicates)).orderBy(asc(runtimeBudgetReservations.createdAt), asc(runtimeBudgetReservations.id))).map(reservationFrom);
   }
 }
 

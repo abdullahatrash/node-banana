@@ -21,6 +21,7 @@ import type {
 
 export const BUDGET_CAPABILITY_IDENTITIES = {
   effectivePoliciesGet: { name: "budget_policies.get_effective", version: 1 },
+  statusGet: { name: "budget_status.get", version: 1 },
   reservationsList: { name: "budget_reservations.list", version: 1 },
   policiesList: { name: "budget_policies.list", version: 1 },
   policyRevisionCreate: {
@@ -31,8 +32,11 @@ export const BUDGET_CAPABILITY_IDENTITIES = {
   pricingOverrideCreate: { name: "pricing_overrides.create", version: 1 },
   pricingOverrideRevoke: { name: "pricing_overrides.revoke", version: 1 },
   spendControlGet: { name: "spend_controls.get", version: 1 },
+  spendControlGetV2: { name: "spend_controls.get", version: 2 },
   spendControlSuspend: { name: "spend_controls.suspend", version: 1 },
+  spendControlSuspendV2: { name: "spend_controls.suspend", version: 2 },
   spendControlResume: { name: "spend_controls.resume", version: 1 },
+  spendControlResumeV2: { name: "spend_controls.resume", version: 2 },
 } as const;
 
 type BudgetCapabilityName =
@@ -295,6 +299,47 @@ const effectivePolicyListSchema = strictObject(
   },
 );
 
+const budgetStatusSchema = strictObject(
+  ["schema", "workspaceId", "principalId", "evaluatedAt", "items"],
+  {
+    schema: { const: "budget-status/v1" },
+    workspaceId: { type: "string" },
+    principalId: { type: "string" },
+    evaluatedAt: dateTime,
+    items: {
+      type: "array",
+      maxItems: 2,
+      items: strictObject(
+        [
+          "scope", "policyId", "policyRevisionId", "currency", "period",
+          "warningThreshold", "hardLimit", "committed", "available",
+          "warningState", "certainty", "unknownReservationCount",
+        ],
+        {
+          scope: { type: "string", enum: ["workspace", "principal"] },
+          policyId: { type: "string" },
+          policyRevisionId: { type: "string" },
+          currency: { type: "string", pattern: "^[A-Z]{3}$" },
+          period: periodWindowSchema,
+          warningThreshold: decimalSchema,
+          hardLimit: decimalSchema,
+          committed: decimalSchema,
+          available: decimalSchema,
+          warningState: {
+            type: "string",
+            enum: ["below_warning", "warning", "hard_limit_reached"],
+          },
+          certainty: {
+            type: "string",
+            enum: ["known", "contains_unknown_cost"],
+          },
+          unknownReservationCount: { type: "integer", minimum: 0 },
+        },
+      ),
+    },
+  },
+);
+
 const policyListSchema = strictObject(
   ["schema", "items"],
   {
@@ -373,6 +418,42 @@ const spendControlSchema = strictObject(
   },
 );
 
+const spendControlEvidenceSchema = strictObject(
+  [
+    "schema", "workspaceId", "suspended", "revision", "reason",
+    "actorUserId", "recordedAt", "policyEventId", "authorizationEvidenceRef",
+  ],
+  {
+    schema: { const: "workspace-spend-control/v2" },
+    workspaceId: { type: "string" },
+    suspended: { type: "boolean" },
+    revision: { type: "integer", minimum: 0 },
+    reason: nullableString,
+    actorUserId: nullableString,
+    recordedAt: { oneOf: [dateTime, { type: "null" }] },
+    policyEventId: nullableString,
+    authorizationEvidenceRef: nullableString,
+  },
+);
+
+const spendControlMutationEvidenceSchema = strictObject(
+  [
+    "schema", "workspaceId", "suspended", "revision", "reason",
+    "actorUserId", "recordedAt", "policyEventId", "authorizationEvidenceRef",
+  ],
+  {
+    schema: { const: "workspace-spend-control/v2" },
+    workspaceId: { type: "string" },
+    suspended: { type: "boolean" },
+    revision: { type: "integer", minimum: 1 },
+    reason: { type: "string", minLength: 1, maxLength: 500 },
+    actorUserId: { type: "string", minLength: 1 },
+    recordedAt: dateTime,
+    policyEventId: { type: "string", minLength: 1 },
+    authorizationEvidenceRef: { type: "string", minLength: 1, maxLength: 200 },
+  },
+);
+
 const humanErrors: CapabilityErrorContract[] = [
   ...COMMON_DISCOVERY_ERRORS,
   {
@@ -418,6 +499,16 @@ const sharedErrors: CapabilityErrorContract[] = [
   humanErrors.find((error) => error.code === "BUDGET_INVALID_INPUT")!,
 ];
 
+const spendControlReadErrors: CapabilityErrorContract[] = [
+  ...COMMON_DISCOVERY_ERRORS,
+  {
+    code: "BUDGET_UNAVAILABLE",
+    category: "internal",
+    retryable: true,
+    description: "Durable Emergency Spend Suspension evidence is unavailable or inconsistent.",
+  },
+];
+
 function reader(context: ResolvedSecurityContext | undefined) {
   if (!context) {
     throw new CapabilityFailure({
@@ -456,7 +547,25 @@ function mutationAdministrator(context: ResolvedSecurityContext | undefined) {
   return actor as typeof actor & { idempotencyKey: string };
 }
 
-async function domain<T>(operation: () => Promise<T>): Promise<T> {
+function spendControlAuthorizationEvidence(context: {
+  authorizationAdmission?: { operatorTraceRef?: string };
+}): string {
+  const value = context.authorizationAdmission?.operatorTraceRef?.trim();
+  if (!value || value.length > 200) {
+    throw new CapabilityFailure({
+      code: "BUDGET_UNAVAILABLE",
+      category: "internal",
+      message: "Emergency Spend Suspension authorization evidence is unavailable.",
+      retryable: true,
+    });
+  }
+  return value;
+}
+
+async function domain<T>(
+  operation: () => Promise<T>,
+  options: { unavailableIsInternal?: boolean } = {},
+): Promise<T> {
   try {
     return await operation();
   } catch (error) {
@@ -466,10 +575,13 @@ async function domain<T>(operation: () => Promise<T>): Promise<T> {
       category:
         error.code === "BUDGET_INVALID_INPUT"
           ? "validation"
-          : error.code === "BUDGET_UNAVAILABLE"
+          : error.code === "BUDGET_UNAVAILABLE" && !options.unavailableIsInternal
             ? "not_found"
-            : "conflict",
+            : error.code === "BUDGET_UNAVAILABLE"
+              ? "internal"
+              : "conflict",
       message: error.message,
+      retryable: error.code === "BUDGET_UNAVAILABLE" && options.unavailableIsInternal,
     });
   }
 }
@@ -592,6 +704,55 @@ export function createBudgetRegistrations(
           items: items.map(({ policy, revision }) => ({
             policy: policyDto(policy),
             revision: revisionDto(revision, false),
+          })),
+        };
+      },
+    }),
+    sharedRegistration({
+      identity: BUDGET_CAPABILITY_IDENTITIES.statusGet,
+      summary: "Read canonical current Budget warning and uncertainty status without deriving totals in a client.",
+      lifecycle,
+      input: z.object({ principalId: safeId.optional() }).strict(),
+      outputSchema: budgetStatusSchema,
+      handler: async (input, context) => {
+        const caller = reader(context.securityContext);
+        const principalId = caller.kind === "agent"
+          ? caller.principalId
+          : input.principalId;
+        if (
+          caller.kind === "agent" &&
+          input.principalId &&
+          input.principalId !== caller.principalId
+        ) {
+          throw new CapabilityFailure({
+            code: "CAPABILITY_NOT_AUTHORIZED",
+            category: "authorization",
+            message: "Budget status is not authorized.",
+          });
+        }
+        if (!principalId) {
+          throw new CapabilityFailure({
+            code: "BUDGET_INVALID_INPUT",
+            category: "validation",
+            message: "principalId is required for a human Budget status read.",
+          });
+        }
+        const status = await domain(() => service.getCurrentStatus({
+          workspaceId: caller.workspaceId,
+          principalId,
+          at: now(),
+        }));
+        return {
+          schema: "budget-status/v1" as const,
+          ...status,
+          evaluatedAt: status.evaluatedAt.toISOString(),
+          items: status.items.map((item) => ({
+            ...item,
+            period: {
+              ...item.period,
+              startsAt: item.period.startsAt.toISOString(),
+              endsAt: item.period.endsAt?.toISOString() ?? null,
+            },
           })),
         };
       },
@@ -788,7 +949,7 @@ export function createBudgetRegistrations(
     humanRegistration({
       identity: BUDGET_CAPABILITY_IDENTITIES.spendControlGet,
       summary: "Read the Workspace Emergency Spend Suspension state.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: z.object({}).strict(),
       outputSchema: spendControlSchema,
       effect: QUERY_EFFECT,
@@ -809,7 +970,7 @@ export function createBudgetRegistrations(
         summary: suspended
           ? "Suspend new and not-yet-started Workspace provider spend."
           : "Resume Workspace provider spend after an emergency suspension.",
-        lifecycle,
+        lifecycle: { ...lifecycle, recommended: false },
         input: z.object({ reason: z.string().trim().min(1).max(500) }).strict(),
         outputSchema: spendControlSchema,
         effect: mutationEffect,
@@ -829,6 +990,80 @@ export function createBudgetRegistrations(
             schema: "workspace-spend-control/v1" as const,
             workspaceId: actor.workspaceId,
             suspended,
+          };
+        },
+      }),
+    ),
+    defineCapability({
+      identity: BUDGET_CAPABILITY_IDENTITIES.spendControlGetV2,
+      audience: "shared",
+      summary: "Read durable Workspace Emergency Spend Suspension policy and security evidence.",
+      lifecycle,
+      input: z.object({}).strict(),
+      outputSchema: spendControlEvidenceSchema,
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: { resources: [] },
+      errors: spendControlReadErrors,
+      handler: async (_input, context) => {
+        const actor = reader(context.securityContext);
+        const evidence = await domain(
+          () => service.getSpendControlEvidence(actor.workspaceId),
+          { unavailableIsInternal: true },
+        );
+        return evidence
+          ? {
+              schema: "workspace-spend-control/v2" as const,
+              ...evidence,
+              actorUserId: actor.kind === "human" ? evidence.actorUserId : null,
+              recordedAt: evidence.recordedAt.toISOString(),
+              authorizationEvidenceRef: actor.kind === "human"
+                ? evidence.authorizationEvidenceRef
+                : null,
+            }
+          : {
+              schema: "workspace-spend-control/v2" as const,
+              workspaceId: actor.workspaceId,
+              suspended: false,
+              revision: 0,
+              reason: null,
+              actorUserId: null,
+              recordedAt: null,
+              policyEventId: null,
+              authorizationEvidenceRef: null,
+            };
+      },
+    }),
+    ...([true, false] as const).map((suspended) =>
+      humanRegistration({
+        identity: suspended
+          ? BUDGET_CAPABILITY_IDENTITIES.spendControlSuspendV2
+          : BUDGET_CAPABILITY_IDENTITIES.spendControlResumeV2,
+        summary: suspended
+          ? "Suspend future Workspace provider spend and return exact durable policy/security evidence."
+          : "Remove Emergency Spend Suspension and return exact durable policy/security evidence.",
+        lifecycle,
+        input: z.object({ reason: z.string().trim().min(1).max(500) }).strict(),
+        outputSchema: spendControlMutationEvidenceSchema,
+        effect: mutationEffect,
+        idempotency: { mode: "intrinsic" },
+        handler: async (input, context) => {
+          const actor = administrator(context.securityContext);
+          const evidence = await domain(() =>
+            service.setSpendSuspendedWithEvidence({
+              workspaceId: actor.workspaceId,
+              suspended,
+              reason: input.reason,
+              actorUserId: actor.userId,
+              authorizationEvidenceRef: spendControlAuthorizationEvidence(context),
+              recordedAt: now(),
+            }),
+          );
+          return {
+            schema: "workspace-spend-control/v2" as const,
+            ...evidence,
+            recordedAt: evidence.recordedAt.toISOString(),
           };
         },
       }),

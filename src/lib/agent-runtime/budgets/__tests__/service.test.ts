@@ -125,6 +125,101 @@ describe("budget calendar periods", () => {
 });
 
 describe("BudgetService", () => {
+  it("routes every Budget Status read through the repository snapshot seam", async () => {
+    const { repository } = await configured();
+    let snapshotReads = 0;
+    const directStatusMethods = new Set([
+      "getEffectivePolicies",
+      "getCommittedAmount",
+      "listReservations",
+    ]);
+    const guardedRepository = new Proxy(repository, {
+      get(target, property, receiver) {
+        if (property === "readBudgetStatusSnapshot") {
+          return async <T>(
+            read: Parameters<typeof target.readBudgetStatusSnapshot<T>>[0],
+          ) => {
+            snapshotReads += 1;
+            return target.readBudgetStatusSnapshot(read);
+          };
+        }
+        if (typeof property === "string" && directStatusMethods.has(property)) {
+          return () => {
+            throw new Error(`Status bypassed snapshot through ${property}.`);
+          };
+        }
+        const value = Reflect.get(target, property, receiver) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const service = new BudgetService(guardedRepository);
+    await expect(service.getCurrentStatus({
+      workspaceId: "workspace_1",
+      principalId: "principal_1",
+      at: now,
+    })).resolves.toMatchObject({ items: [{ scope: "workspace" }] });
+    expect(snapshotReads).toBe(1);
+  });
+
+  it("holds one coherent Budget Status snapshot across a concurrent policy revision", async () => {
+    const { repository, service } = await configured();
+    const before = await service.getCurrentStatus({
+      workspaceId: "workspace_1",
+      principalId: "principal_1",
+      at: now,
+    });
+    const originalGetCommittedAmount = repository.getCommittedAmount.bind(repository);
+    let reachedRead!: () => void;
+    const readReached = new Promise<void>((resolve) => {
+      reachedRead = resolve;
+    });
+    let releaseRead!: () => void;
+    const readRelease = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let blocked = true;
+    repository.getCommittedAmount = async (...args) => {
+      if (blocked) {
+        blocked = false;
+        reachedRead();
+        await readRelease;
+      }
+      return originalGetCommittedAmount(...args);
+    };
+
+    const statusPromise = service.getCurrentStatus({
+      workspaceId: "workspace_1",
+      principalId: "principal_1",
+      at: now,
+    });
+    await readReached;
+    let revisionCompleted = false;
+    const revisionPromise = service.createPolicyRevision({
+      workspaceId: "workspace_1",
+      principalId: null,
+      currency: "USD",
+      period: "calendar_day",
+      timezone: "America/New_York",
+      warningThreshold: "7",
+      hardLimit: "9",
+      unknownPriceTreatment: "deny",
+      unknownPriceAllowance: null,
+      actorUserId: "user_1",
+      idempotencyKey: "concurrent-status-policy",
+      recordedAt: new Date(now.getTime() + 1_000),
+    }).then((value) => {
+      revisionCompleted = true;
+      return value;
+    });
+    await Promise.resolve();
+    expect(revisionCompleted).toBe(false);
+    releaseRead();
+
+    const [status, revision] = await Promise.all([statusPromise, revisionPromise]);
+    expect(status.items[0]?.policyRevisionId).toBe(before.items[0]?.policyRevisionId);
+    expect(revision.revision.id).not.toBe(status.items[0]?.policyRevisionId);
+  });
+
   it("returns persisted resources on idempotent administration retries", async () => {
     const { service } = await configured();
     const request = {
@@ -1038,5 +1133,28 @@ describe("BudgetService", () => {
 
     expect(repository.suspensions.get("workspace_1")?.revision).toBe(3);
     expect(repository.spendControlEvents).toHaveLength(3);
+
+    const evidenced = await service.setSpendSuspendedWithEvidence({
+      ...command,
+      reason: "provider incident expanded",
+      actorUserId: "user_2",
+      authorizationEvidenceRef: "trace_spend_control_v2",
+      recordedAt: new Date("2026-03-08T06:34:00.000Z"),
+    });
+    expect(evidenced).toMatchObject({
+      revision: 4,
+      authorizationEvidenceRef: "trace_spend_control_v2",
+    });
+    expect(repository.spendControlEvents).toHaveLength(4);
+
+    const replayedWithFreshAdmission = await service.setSpendSuspendedWithEvidence({
+      ...command,
+      reason: "provider incident expanded",
+      actorUserId: "user_2",
+      authorizationEvidenceRef: "trace_spend_control_v2_retry",
+      recordedAt: new Date("2026-03-08T06:35:00.000Z"),
+    });
+    expect(replayedWithFreshAdmission).toEqual(evidenced);
+    expect(repository.spendControlEvents).toHaveLength(4);
   });
 });

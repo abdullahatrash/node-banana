@@ -2868,21 +2868,19 @@ export class DrizzlePublishingDeliveryRepository implements PublishingDeliveryRe
   async getCancellation(
     input: Parameters<PublishingDeliveryRepository["getCancellation"]>[0],
   ) {
-    try {
-      const rows = await this.database().select()
-        .from(runtimePublishingDeliveryCancellations).where(and(
-          eq(runtimePublishingDeliveryCancellations.workspaceId, input.workspaceId),
-          eq(runtimePublishingDeliveryCancellations.deliveryId, input.deliveryId),
-        )).limit(1);
-      const record = rows[0]
-        ? rehydratePublishingDeliveryCancellation(rows[0])
-        : null;
-      return record && canonicalDigest(record.actor) === canonicalDigest(input.actor)
-        ? record
-        : null;
-    } catch {
-      return null;
+    const rows = await this.database().select()
+      .from(runtimePublishingDeliveryCancellations).where(and(
+        eq(runtimePublishingDeliveryCancellations.workspaceId, input.workspaceId),
+        eq(runtimePublishingDeliveryCancellations.deliveryId, input.deliveryId),
+      )).limit(1);
+    if (!rows[0]) return null;
+    const record = rehydratePublishingDeliveryCancellation(rows[0]);
+    if (!record) {
+      throw new Error("Publishing Delivery Cancellation evidence is malformed.");
     }
+    return !input.actor || canonicalDigest(record.actor) === canonicalDigest(input.actor)
+      ? record
+      : null;
   }
 
   async cancel(input: Parameters<PublishingDeliveryRepository["cancel"]>[0]) {

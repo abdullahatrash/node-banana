@@ -106,6 +106,10 @@ const resources = {
   channelIds: z.array(id).min(1).max(50),
   artifactIds: z.array(artifactId).min(1).max(200),
 };
+const inspectionResources = {
+  channelIds: z.array(id).max(50).default([]),
+  artifactIds: z.array(artifactId).max(200).default([]),
+};
 const acceptedRef = z.object({
   id,
   targetId: id,
@@ -270,6 +274,11 @@ const delivery = z.object({
   (value.releaseId !== null && value.sourceDeliveryId === null && value.retryId === null) ||
   (value.releaseId === null && value.sourceDeliveryId !== null && value.retryId !== null),
 { message: "Publishing Delivery origin must be exactly release or retry." });
+const deliveryInspection = z.object({
+  schema: z.literal("publishing-delivery-inspection/v2"),
+  delivery,
+  cancellation: cancellation.nullable(),
+}).strict();
 const deliveryPage = z.object({
   schema: z.literal("publishing-delivery-page/v1"),
   items: z.array(delivery).max(100),
@@ -351,6 +360,33 @@ function recoveryActor(
     : {
         workspaceId: context.workspaceId,
         actor: { kind: "human", userId: context.userId },
+      };
+}
+
+function inspectionCaller(
+  context: ResolvedSecurityContext | undefined,
+): {
+  workspaceId: string;
+  actor: { kind: "agent"; principalId: string } | { kind: "human"; userId: string };
+  cursorActorId: string;
+} {
+  if (!context) {
+    throw new CapabilityFailure({
+      code: "CAPABILITY_NOT_AUTHORIZED",
+      category: "authorization",
+      message: "Publishing Delivery inspection is not authorized.",
+    });
+  }
+  return context.kind === "agent"
+    ? {
+        workspaceId: context.workspaceId,
+        actor: { kind: "agent", principalId: context.principalId },
+        cursorActorId: context.principalId,
+      }
+    : {
+        workspaceId: context.workspaceId,
+        actor: { kind: "human", userId: context.userId },
+        cursorActorId: `human:${context.userId}`,
       };
 }
 
@@ -556,7 +592,7 @@ export function createPublishingDeliveryRegistrations(
       identity: PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.get,
       audience: "agent",
       summary: "Inspect one requester-scoped Publishing Delivery and its current external-completion state.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: z.object({ deliveryId: id, ...resources }).strict(),
       outputSchema: schema(delivery),
       effect: QUERY_EFFECT,
@@ -579,7 +615,7 @@ export function createPublishingDeliveryRegistrations(
       identity: PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.list,
       audience: "agent",
       summary: "List requester-scoped Publishing Deliveries with a sealed cursor.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: z.object({
         ...resources,
         planRevisionId: id.optional(),
@@ -632,7 +668,7 @@ export function createPublishingDeliveryRegistrations(
       identity: PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.events,
       audience: "agent",
       summary: "List retained scheduling and terminal evidence for one requester-scoped Publishing Delivery.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: z.object({
         deliveryId: id,
         ...resources,
@@ -650,6 +686,119 @@ export function createPublishingDeliveryRegistrations(
         const values = await domain(() => service.listEvents({
           workspaceId: principal.workspaceId,
           principalId: principal.principalId,
+          deliveryId: input.deliveryId,
+          authorizedChannelIds: input.channelIds,
+          authorizedArtifactIds: input.artifactIds,
+          afterSequence: input.afterSequence,
+          limit: input.limit + 1,
+        }));
+        const items = values.slice(0, input.limit);
+        return {
+          schema: "publishing-delivery-event-page/v1" as const,
+          items,
+          nextAfterSequence: values.length > input.limit ? items.at(-1)!.sequence : null,
+        };
+      },
+    }),
+    defineCapability({
+      identity: PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.getV2,
+      audience: "shared",
+      summary: "Inspect one Publishing Delivery as its Agent requester or an authorized Workspace human.",
+      lifecycle,
+      input: z.object({ deliveryId: id, ...inspectionResources }).strict(),
+      outputSchema: schema(deliveryInspection),
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: PUBLISHING_DELIVERY_GET_AUTHORIZATION,
+      errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_DELIVERY_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const caller = inspectionCaller(context.securityContext);
+        return domain(() => service.inspect({
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
+          deliveryId: input.deliveryId,
+          authorizedChannelIds: input.channelIds,
+          authorizedArtifactIds: input.artifactIds,
+        }));
+      },
+    }),
+    defineCapability({
+      identity: PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.listV2,
+      audience: "shared",
+      summary: "List Publishing Deliveries for an Agent requester or authorized Workspace human using an actor-bound cursor.",
+      lifecycle,
+      input: z.object({
+        ...inspectionResources,
+        planRevisionId: id.optional(),
+        state: states.optional(),
+        targetId: id.optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+        cursor: z.string().min(1).max(2_048).optional(),
+      }).strict(),
+      outputSchema: schema(deliveryPage),
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: PUBLISHING_DELIVERY_LIST_AUTHORIZATION,
+      errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_DELIVERY_ERROR_CONTRACTS],
+      handler: async (input, context) => {
+        const caller = inspectionCaller(context.securityContext);
+        const filters = {
+          ...(input.planRevisionId ? { planRevisionId: input.planRevisionId } : {}),
+          ...(input.state ? { state: input.state } : {}),
+          ...(input.targetId ? { targetId: input.targetId } : {}),
+        };
+        const digestValue = filterDigest({ ...input, ...filters });
+        if (input.cursor && !cursorCodec) {
+          throw new CapabilityFailure({ code: "PUBLISHING_DELIVERY_INVALID_INPUT", category: "validation", message: "Publishing Delivery cursor is invalid or unavailable." });
+        }
+        const requestedCursor = input.cursor;
+        const before = requestedCursor
+          ? await domain(async () => cursorCodec!.open({ cursor: requestedCursor, workspaceId: caller.workspaceId, principalId: caller.cursorActorId, filterDigest: digestValue }))
+          : undefined;
+        const values = await domain(() => service.list({
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
+          filters,
+          authorizedChannelIds: input.channelIds,
+          authorizedArtifactIds: input.artifactIds,
+          before,
+          limit: input.limit + 1,
+        }));
+        const items = values.slice(0, input.limit);
+        const last = items.at(-1);
+        return {
+          schema: "publishing-delivery-page/v1" as const,
+          items,
+          nextCursor: values.length > input.limit && last && cursorCodec
+            ? cursorCodec.seal({ workspaceId: caller.workspaceId, principalId: caller.cursorActorId, filterDigest: digestValue, position: { acceptedAt: new Date(last.acceptedAt), id: last.id } })
+            : null,
+        };
+      },
+    }),
+    defineCapability({
+      identity: PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES.eventsV2,
+      audience: "shared",
+      summary: "List retained Delivery evidence for an Agent requester or authorized Workspace human.",
+      lifecycle,
+      input: z.object({
+        deliveryId: id,
+        ...inspectionResources,
+        afterSequence: z.number().int().min(0).default(0),
+        limit: z.number().int().min(1).max(100).default(50),
+      }).strict(),
+      outputSchema: schema(eventPage),
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: PUBLISHING_DELIVERY_EVENTS_AUTHORIZATION,
+      errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_DELIVERY_ERROR_CONTRACTS],
+      handler: async (input, context) => {
+        const caller = inspectionCaller(context.securityContext);
+        const values = await domain(() => service.listEvents({
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
           deliveryId: input.deliveryId,
           authorizedChannelIds: input.channelIds,
           authorizedArtifactIds: input.artifactIds,

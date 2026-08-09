@@ -76,6 +76,7 @@ describe("production Capability Registry", () => {
       "budget_policies.list@1",
       "budget_policy_revisions.create@1",
       "budget_reservations.list@1",
+      "budget_status.get@1",
       "capabilities.get@1",
       "capabilities.list@1",
       "cost_valuations.get@1",
@@ -102,16 +103,21 @@ describe("production Capability Registry", () => {
       "pricing_overrides.revoke@1",
       "publishing_approvals.decide@1",
       "publishing_approvals.get@1",
+      "publishing_approvals.get@2",
       "publishing_approvals.list@1",
       "publishing_approvals.request@1",
       "publishing_deliveries.cancel@1",
       "publishing_deliveries.get@1",
+      "publishing_deliveries.get@2",
       "publishing_deliveries.list@1",
+      "publishing_deliveries.list@2",
       "publishing_deliveries.reconcile@1",
       "publishing_deliveries.retry@1",
       "publishing_delivery_events.list@1",
+      "publishing_delivery_events.list@2",
       "publishing_plan_revisions.create@1",
       "publishing_plan_revisions.get@1",
+      "publishing_plan_revisions.get@2",
       "publishing_plan_revisions.list@1",
       "publishing_plan_revisions.release@1",
       "publishing_plan_revisions.validate@1",
@@ -122,8 +128,11 @@ describe("production Capability Registry", () => {
       "quota_waits.list@1",
       "quota_waits.resume@1",
       "spend_controls.get@1",
+      "spend_controls.get@2",
       "spend_controls.resume@1",
+      "spend_controls.resume@2",
       "spend_controls.suspend@1",
+      "spend_controls.suspend@2",
       "support_bundle_audit.list@1",
       "support_bundles.create@1",
       "support_bundles.get@1",
@@ -174,10 +183,30 @@ describe("production Capability Registry", () => {
           "workflow_runs.start@1",
           "workflow_step_attempts.list@1",
           "workflow_versions.get@1",
+          "publishing_approvals.get@1",
+          "publishing_deliveries.get@1",
+          "publishing_deliveries.list@1",
+          "publishing_delivery_events.list@1",
+          "publishing_plan_revisions.get@1",
+          "spend_controls.get@1",
+          "spend_controls.resume@1",
+          "spend_controls.suspend@1",
         ].includes(formatCapabilityIdentity(definition.identity)),
       });
       expect(definition.schemas.input).toMatchObject({ type: "object" });
-      expect(definition.schemas.output).toMatchObject({ type: "object" });
+      const outputSchema = definition.schemas.output as {
+        type?: string;
+        additionalProperties?: boolean;
+        oneOf?: Array<{ type?: string; additionalProperties?: boolean }>;
+      };
+      const outputBranches = outputSchema.oneOf ?? [outputSchema];
+      expect(outputBranches.length).toBeGreaterThan(0);
+      for (const branch of outputBranches) {
+        expect(branch).toMatchObject({
+          type: "object",
+          additionalProperties: false,
+        });
+      }
       if (
         (definition.audience === "agent" || definition.audience === "shared") &&
         definition.effect.mutation === "none"
@@ -255,6 +284,7 @@ describe("production Capability Registry", () => {
       "budget_policies.list.v1",
       "budget_policy_revisions.create.v1",
       "budget_reservations.list.v1",
+      "budget_status.get.v1",
       "capabilities.get.v1",
       "capabilities.list.v1",
       "cost_valuations.get.v1",
@@ -281,16 +311,21 @@ describe("production Capability Registry", () => {
       "pricing_overrides.revoke.v1",
       "publishing_approvals.decide.v1",
       "publishing_approvals.get.v1",
+      "publishing_approvals.get.v2",
       "publishing_approvals.list.v1",
       "publishing_approvals.request.v1",
       "publishing_deliveries.cancel.v1",
       "publishing_deliveries.get.v1",
+      "publishing_deliveries.get.v2",
       "publishing_deliveries.list.v1",
+      "publishing_deliveries.list.v2",
       "publishing_deliveries.reconcile.v1",
       "publishing_deliveries.retry.v1",
       "publishing_delivery_events.list.v1",
+      "publishing_delivery_events.list.v2",
       "publishing_plan_revisions.create.v1",
       "publishing_plan_revisions.get.v1",
+      "publishing_plan_revisions.get.v2",
       "publishing_plan_revisions.list.v1",
       "publishing_plan_revisions.release.v1",
       "publishing_plan_revisions.validate.v1",
@@ -301,8 +336,11 @@ describe("production Capability Registry", () => {
       "quota_waits.list.v1",
       "quota_waits.resume.v1",
       "spend_controls.get.v1",
+      "spend_controls.get.v2",
       "spend_controls.resume.v1",
+      "spend_controls.resume.v2",
       "spend_controls.suspend.v1",
+      "spend_controls.suspend.v2",
       "support_bundle_audit.list.v1",
       "support_bundles.create.v1",
       "support_bundles.get.v1",

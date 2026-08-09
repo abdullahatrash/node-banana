@@ -21,7 +21,7 @@ import { POST } from "./route";
 
 function request(
   body: unknown,
-  options: { workspaceId?: string; origin?: string } = {},
+  options: { workspaceId?: string; origin?: string; idempotencyKey?: string } = {},
 ) {
   return new NextRequest(
     "http://localhost/api/studio/publishing-deliveries/capabilities",
@@ -31,6 +31,9 @@ function request(
         "content-type": "application/json",
         "x-workspace-id": options.workspaceId ?? "workspace_1",
         origin: options.origin ?? "http://localhost",
+        ...(options.idempotencyKey
+          ? { "idempotency-key": options.idempotencyKey }
+          : {}),
       },
       body: JSON.stringify(body),
     },
@@ -264,6 +267,84 @@ describe("Studio Publishing Delivery command capabilities", () => {
     ), undefined);
     expect(crossOrigin.status).toBe(403);
     expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("admits read capabilities for members without mutation origin checks", async () => {
+    mockAuthorize.mockResolvedValueOnce({
+      authorized: true,
+      workspaceId: "workspace_1",
+      userId: "member_1",
+      role: "member",
+    });
+    mockDispatch.mockResolvedValueOnce({
+      type: "capability_result",
+      capability: { name: "publishing_deliveries.get", version: 2 },
+      requestDigest: `sha256:${"a".repeat(64)}`,
+      status: "completed",
+      output: {
+        schema: "publishing-delivery-inspection/v2",
+        delivery: { id: "delivery_1" },
+        cancellation: null,
+      },
+      warnings: [],
+    });
+    const response = await POST(request({
+      capability: "publishing_deliveries.get@2",
+      input: { deliveryId: "delivery_1" },
+    }, { origin: "https://read-only.example" }), undefined);
+    expect(response.status).toBe(200);
+    expect(mockAuthorize).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "read" }),
+    );
+    expect(mockDispatch).toHaveBeenCalledWith(
+      {
+        capability: "publishing_deliveries.get@2",
+        input: { deliveryId: "delivery_1" },
+      },
+      {
+        securityContext: {
+          kind: "human",
+          workspaceId: "workspace_1",
+          userId: "member_1",
+          role: "member",
+        },
+      },
+    );
+  });
+
+  it("requires and forwards the Quota Wait resume idempotency header", async () => {
+    const missing = await POST(request({
+      capability: "quota_waits.resume@1",
+      input: { waitId: "wait_1" },
+    }), undefined);
+    expect(missing.status).toBe(400);
+    expect(mockDispatch).not.toHaveBeenCalled();
+
+    mockDispatch.mockResolvedValueOnce({
+      type: "capability_result",
+      capability: { name: "quota_waits.resume", version: 1 },
+      requestDigest: `sha256:${"a".repeat(64)}`,
+      status: "completed",
+      output: { schema: "quota-wait/v1", id: "wait_1", state: "resumed" },
+      warnings: [],
+    });
+    const response = await POST(request({
+      capability: "quota_waits.resume@1",
+      input: { waitId: "wait_1" },
+    }, { idempotencyKey: "resume-wait-1" }), undefined);
+    expect(response.status).toBe(200);
+    expect(mockDispatch).toHaveBeenCalledWith(
+      {
+        capability: "quota_waits.resume@1",
+        input: { waitId: "wait_1" },
+      },
+      {
+        securityContext: expect.objectContaining({
+          idempotencyKey: "resume-wait-1",
+        }),
+      },
+    );
   });
 
   it("rejects unrelated capabilities and malformed exact resources", async () => {

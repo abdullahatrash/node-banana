@@ -97,6 +97,16 @@ describe("Publishing Delivery cancellation Postgres transaction contract", () =>
     expect(lock).toContain('.for("update")');
   });
 
+  it("distinguishes absent Cancellation evidence from storage or malformed-row failure", () => {
+    const read = method("getCancellation", "cancel");
+    expect(read).toContain("if (!rows[0]) return null");
+    expect(read).toContain("if (!record)");
+    expect(read).toContain(
+      'throw new Error("Publishing Delivery Cancellation evidence is malformed.")',
+    );
+    expect(read).not.toContain("catch");
+  });
+
   it("cancels a blocked Delivery as prevented and clears its readiness blocker", () => {
     const cancellation = method("cancel", "getRetry");
     for (const marker of [

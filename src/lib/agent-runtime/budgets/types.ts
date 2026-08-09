@@ -257,6 +257,11 @@ export interface CreatePricingOverrideInput {
 }
 
 export interface BudgetRepository<Transaction = unknown> {
+  readBudgetStatusSnapshot<T>(
+    read: (reader: Pick<BudgetRepository<Transaction>,
+      "getEffectivePolicies" | "getCommittedAmount" | "listReservations"
+    >) => Promise<T>,
+  ): Promise<T>;
   getAdminReceipt(input: {
     workspaceId: string;
     kind: "policy_revision" | "pricing_override";
@@ -310,13 +315,17 @@ export interface BudgetRepository<Transaction = unknown> {
     credentialProfileIds: string[];
   }): Promise<CredentialSpendGrantEvidence[]>;
   isSpendSuspended(workspaceId: string): Promise<boolean>;
+  getSpendControlEvidence(
+    workspaceId: string,
+  ): Promise<WorkspaceSpendControlEvidence | null>;
   setSpendSuspended(input: {
     workspaceId: string;
     suspended: boolean;
     reason: string;
     actorUserId: string;
+    authorizationEvidenceRef?: string;
     recordedAt: Date;
-  }): Promise<void>;
+  }): Promise<WorkspaceSpendControlEvidence>;
   commitAdmission(
     plan: BudgetAdmissionPlan,
     transaction?: Transaction,
@@ -334,6 +343,17 @@ export interface BudgetRepository<Transaction = unknown> {
     runId?: string;
     principalId?: string;
   }): Promise<BudgetReservation[]>;
+}
+
+export interface WorkspaceSpendControlEvidence {
+  workspaceId: string;
+  suspended: boolean;
+  revision: number;
+  reason: string;
+  actorUserId: string;
+  recordedAt: Date;
+  policyEventId: string;
+  authorizationEvidenceRef: string | null;
 }
 
 export interface BudgetCommitWriter<Transaction = unknown> {

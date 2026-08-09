@@ -19,7 +19,7 @@ const NOW = new Date("2026-08-01T12:00:00.000Z");
 async function setup() {
   const repository = new InMemoryBudgetRepository();
   const service = new BudgetService(repository);
-  await service.createPolicyRevision({
+  const workspacePolicy = await service.createPolicyRevision({
     workspaceId: "workspace_1",
     principalId: null,
     currency: "USD",
@@ -103,7 +103,7 @@ async function setup() {
     dispatch: (invocation: Parameters<typeof dispatcher.dispatch>[0]) =>
       dispatcher.dispatch(invocation, { securityContext }),
   });
-  return { repository, registry, service, port };
+  return { repository, registry, service, workspacePolicy, port };
 }
 
 const agent = {
@@ -134,17 +134,36 @@ describe("Budget capability transport parity", () => {
       { identity: "budget_policies.list@1", audience: "human" },
       { identity: "budget_policy_revisions.create@1", audience: "human" },
       { identity: "budget_reservations.list@1", audience: "shared" },
+      { identity: "budget_status.get@1", audience: "shared" },
       { identity: "pricing_overrides.create@1", audience: "human" },
       { identity: "pricing_overrides.list@1", audience: "human" },
       { identity: "pricing_overrides.revoke@1", audience: "human" },
       { identity: "spend_controls.get@1", audience: "human" },
+      { identity: "spend_controls.get@2", audience: "shared" },
       { identity: "spend_controls.resume@1", audience: "human" },
+      { identity: "spend_controls.resume@2", audience: "human" },
       { identity: "spend_controls.suspend@1", audience: "human" },
+      { identity: "spend_controls.suspend@2", audience: "human" },
     ]);
     expect(BUDGET_CAPABILITY_IDENTITIES.effectivePoliciesGet).toEqual({
       name: "budget_policies.get_effective",
       version: 1,
     });
+    expect(registry.getDefinition(
+      BUDGET_CAPABILITY_IDENTITIES.spendControlGetV2,
+    )?.errors).toEqual([
+      expect.objectContaining({ code: "CAPABILITY_IDENTITY_INVALID" }),
+      expect.objectContaining({ code: "CAPABILITY_NOT_FOUND" }),
+      expect.objectContaining({ code: "CAPABILITY_VERSION_RETIRED" }),
+      expect.objectContaining({ code: "VALIDATION_FAILED" }),
+      expect.objectContaining({ code: "INTERNAL_ERROR" }),
+      {
+        code: "BUDGET_UNAVAILABLE",
+        category: "internal",
+        retryable: true,
+        description: "Durable Emergency Spend Suspension evidence is unavailable or inconsistent.",
+      },
+    ]);
   });
 
   it("returns the same redacted effective policies through CLI and MCP", async () => {
@@ -363,6 +382,186 @@ describe("Budget capability transport parity", () => {
     expect(denied).toMatchObject({
       type: "capability_error",
       code: "CAPABILITY_NOT_AUTHORIZED",
+    });
+  });
+
+  it("reports Workspace unknown cost across principals and policy revisions", async () => {
+    const { port, repository, service, workspacePolicy } = await setup();
+    repository.reservations.set("reservation_workspace_unknown", {
+      ...structuredClone(repository.reservations.get("reservation_1")!),
+      id: "reservation_workspace_unknown",
+      principalId: null,
+      admittedPrincipalId: "principal_2",
+      runId: "run_workspace_unknown",
+      policyId: workspacePolicy.policy.id,
+      policyRevisionId: workspacePolicy.revision.id,
+      scope: "workspace",
+      state: "held_unknown_cost",
+    });
+    const replacement = await service.createPolicyRevision({
+      workspaceId: "workspace_1",
+      principalId: null,
+      currency: "USD",
+      period: "calendar_month",
+      timezone: "Europe/Athens",
+      warningThreshold: "3",
+      hardLimit: "5",
+      unknownPriceTreatment: "deny",
+      unknownPriceAllowance: null,
+      actorUserId: "owner_1",
+      idempotencyKey: "replace-workspace-policy",
+      recordedAt: new Date("2026-08-01T11:45:00.000Z"),
+    });
+
+    const result = await dispatchCliCapability(
+      "budget_status.get@1",
+      {},
+      port(agent),
+    );
+    expect(result).toMatchObject({
+      type: "capability_result",
+      output: {
+        schema: "budget-status/v1",
+        workspaceId: "workspace_1",
+        principalId: "principal_1",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            scope: "workspace",
+            policyId: workspacePolicy.policy.id,
+            policyRevisionId: replacement.revision.id,
+            committed: "4.5",
+            available: "0.5",
+            warningState: "warning",
+            certainty: "contains_unknown_cost",
+            unknownReservationCount: 1,
+          }),
+        ]),
+      },
+    });
+
+    const foreign = await dispatchCliCapability(
+      "budget_status.get@1",
+      { principalId: "principal_2" },
+      port(agent),
+    );
+    expect(foreign).toMatchObject({
+      type: "capability_error",
+      code: "CAPABILITY_NOT_AUTHORIZED",
+    });
+  });
+
+  it("returns exact spend-control evidence, upgrades legacy evidence, and redacts Agents", async () => {
+    const { port, repository, service } = await setup();
+    const legacy = await dispatchCliCapability(
+      "spend_controls.suspend@1",
+      { reason: "Provider incident" },
+      port(owner()),
+    );
+    expect(legacy).toMatchObject({
+      type: "capability_result",
+      output: { schema: "workspace-spend-control/v1", suspended: true },
+    });
+
+    const upgraded = await dispatchCliCapability(
+      "spend_controls.suspend@2",
+      { reason: "Provider incident" },
+      port(owner()),
+    );
+    expect(upgraded).toMatchObject({
+      type: "capability_result",
+      output: {
+        schema: "workspace-spend-control/v2",
+        suspended: true,
+        revision: 2,
+        reason: "Provider incident",
+        actorUserId: "owner_1",
+        authorizationEvidenceRef: "trace_budget_test",
+        policyEventId: expect.stringMatching(/^budget_event_/),
+      },
+    });
+    const replayed = await dispatchMcpCapability(
+      "spend_controls.suspend.v2",
+      { reason: "Provider incident" },
+      port(owner()),
+    );
+    expect(replayed).toEqual(upgraded);
+
+    const member = {
+      kind: "human" as const,
+      workspaceId: "workspace_1",
+      userId: "member_1",
+      role: "member" as const,
+    };
+    const memberRead = await dispatchCliCapability(
+      "spend_controls.get@2",
+      {},
+      port(member),
+    );
+    expect(memberRead).toMatchObject({
+      type: "capability_result",
+      output: {
+        revision: 2,
+        authorizationEvidenceRef: "trace_budget_test",
+      },
+    });
+    const agentRead = await dispatchCliCapability(
+      "spend_controls.get@2",
+      {},
+      port(agent),
+    );
+    expect(agentRead).toMatchObject({
+      type: "capability_result",
+      output: {
+        suspended: true,
+        actorUserId: null,
+        authorizationEvidenceRef: null,
+      },
+    });
+    const denied = await dispatchCliCapability(
+      "spend_controls.resume@2",
+      { reason: "Member cannot resume" },
+      port(member),
+    );
+    expect(denied).toMatchObject({
+      type: "capability_error",
+      code: "CAPABILITY_NOT_AUTHORIZED",
+    });
+
+    const [first, second] = await Promise.all([
+      service.setSpendSuspendedWithEvidence({
+        workspaceId: "workspace_1",
+        suspended: false,
+        reason: "Recovered A",
+        actorUserId: "owner_1",
+        authorizationEvidenceRef: "trace_concurrent_a",
+        recordedAt: new Date("2026-08-01T12:01:00.000Z"),
+      }),
+      service.setSpendSuspendedWithEvidence({
+        workspaceId: "workspace_1",
+        suspended: false,
+        reason: "Recovered B",
+        actorUserId: "owner_1",
+        authorizationEvidenceRef: "trace_concurrent_b",
+        recordedAt: new Date("2026-08-01T12:02:00.000Z"),
+      }),
+    ]);
+    expect(first).toMatchObject({ reason: "Recovered A", authorizationEvidenceRef: "trace_concurrent_a" });
+    expect(second).toMatchObject({ reason: "Recovered B", authorizationEvidenceRef: "trace_concurrent_b" });
+    expect(first.revision).not.toBe(second.revision);
+
+    repository.getSpendControlEvidence = async () => {
+      throw new Error("corrupt durable evidence");
+    };
+    const unavailable = await dispatchCliCapability(
+      "spend_controls.get@2",
+      {},
+      port(member),
+    );
+    expect(unavailable).toMatchObject({
+      type: "capability_error",
+      code: "BUDGET_UNAVAILABLE",
+      category: "internal",
+      retryable: true,
     });
   });
 

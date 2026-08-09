@@ -19,12 +19,19 @@ import {
   PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES,
 } from "../capabilities";
 import { setupPublishingDeliveries } from "./fixtures";
+import { AesGcmPublishingDeliveryCursorCodec } from "../cursor";
 
 async function capabilitySetup(options: { punctuatedArtifacts?: boolean } = {}) {
   const setup = await setupPublishingDeliveries(undefined, options);
   const registry = createCapabilityRegistry([
     ...createDiscoveryRegistrations(),
-    ...createPublishingDeliveryRegistrations(setup.service),
+    ...createPublishingDeliveryRegistrations(
+      setup.service,
+      new AesGcmPublishingDeliveryCursorCodec(() => ({
+        active: { id: "test", key: Buffer.alloc(32, 7) },
+        all: [{ id: "test", key: Buffer.alloc(32, 7) }],
+      })),
+    ),
   ]);
   const authorizer: CapabilityAuthorizer = {
     authorize: async (request: CapabilityAuthorizationRequest) => ({
@@ -71,7 +78,49 @@ async function capabilitySetup(options: { punctuatedArtifacts?: boolean } = {}) 
         },
       }),
   };
-  return { ...setup, registry, agentDispatcher, humanDispatcher, memberDispatcher };
+  const otherHumanDispatcher = {
+    dispatch: (invocation: Parameters<typeof dispatcher.dispatch>[0]) =>
+      dispatcher.dispatch(invocation, {
+        securityContext: {
+          kind: "human" as const,
+          workspaceId: "workspace_1",
+          userId: "owner_2",
+          role: "owner" as const,
+        },
+      }),
+  };
+  const foreignAgentDispatcher = {
+    dispatch: (invocation: Parameters<typeof dispatcher.dispatch>[0]) =>
+      dispatcher.dispatch(invocation, {
+        securityContext: {
+          kind: "agent" as const,
+          workspaceId: "workspace_1",
+          principalId: "principal_2",
+          keyId: "key_2",
+        },
+      }),
+  };
+  const foreignWorkspaceHumanDispatcher = {
+    dispatch: (invocation: Parameters<typeof dispatcher.dispatch>[0]) =>
+      dispatcher.dispatch(invocation, {
+        securityContext: {
+          kind: "human" as const,
+          workspaceId: "workspace_2",
+          userId: "owner_1",
+          role: "owner" as const,
+        },
+      }),
+  };
+  return {
+    ...setup,
+    registry,
+    agentDispatcher,
+    humanDispatcher,
+    memberDispatcher,
+    otherHumanDispatcher,
+    foreignAgentDispatcher,
+    foreignWorkspaceHumanDispatcher,
+  };
 }
 
 function releaseInput(setup: Awaited<ReturnType<typeof setupPublishingDeliveries>>) {
@@ -402,5 +451,186 @@ describe("Publishing Delivery CLI/MCP parity", () => {
       output: { state: "succeeded", externallyCompleted: true },
     });
     expect(() => parser.parse((terminal as { output: unknown }).output)).not.toThrow();
+  });
+
+  it("shares @2 inspection with Workspace humans while preserving Agent ownership, cursors, and cancellation truth", async () => {
+    const setup = await capabilitySetup();
+    const released = await dispatchCliCapability(
+      "publishing_plan_revisions.release@1",
+      releaseInput(setup),
+      setup.agentDispatcher,
+    );
+    const deliveryId = (released as { output: { deliveries: Array<{ id: string }> } })
+      .output.deliveries[0]!.id;
+    const resources = {
+      channelIds: setup.rawApproval.channelIds,
+      artifactIds: setup.rawApproval.artifactIds,
+    };
+
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.get@2",
+      { deliveryId },
+      setup.humanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: {
+        schema: "publishing-delivery-inspection/v2",
+        delivery: { id: deliveryId },
+        cancellation: null,
+      },
+    });
+    await expect(dispatchCliCapability(
+      "publishing_delivery_events.list@2",
+      { deliveryId, limit: 1 },
+      setup.humanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { items: [{ sequence: 1 }], nextAfterSequence: 1 },
+    });
+    await expect(dispatchCliCapability(
+      "publishing_delivery_events.list@2",
+      { deliveryId, afterSequence: 1 },
+      setup.humanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { items: [{ sequence: 2 }] },
+    });
+
+    const original = setup.repository.deliveries.get(`workspace_1\u0000${deliveryId}`)!;
+    const secondId = "delivery_human_cursor_2";
+    setup.repository.deliveries.set(`workspace_1\u0000${secondId}`, {
+      ...structuredClone(original),
+      id: secondId,
+      effectKey: `publishing-effect:v1:workspace_1:${secondId}`,
+      acceptedAt: new Date(original.acceptedAt.getTime() - 1_000),
+      scheduledAt: new Date(original.scheduledAt.getTime() - 1_000),
+      updatedAt: new Date(original.updatedAt.getTime() - 1_000),
+    });
+    const firstList = await dispatchCliCapability(
+      "publishing_deliveries.list@2",
+      { limit: 1 },
+      setup.humanDispatcher,
+    );
+    expect(firstList).toMatchObject({
+      type: "capability_result",
+      output: { items: [{ id: deliveryId }] },
+    });
+    const cursor = (firstList as { output: { nextCursor: string } }).output.nextCursor;
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.list@2",
+      { limit: 1, cursor },
+      setup.humanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { items: [{ id: secondId }] },
+    });
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.list@2",
+      { limit: 1, cursor },
+      setup.otherHumanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "PUBLISHING_DELIVERY_INVALID_INPUT",
+    });
+
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.get@2",
+      { deliveryId, ...resources },
+      setup.agentDispatcher,
+    )).resolves.toMatchObject({ type: "capability_result" });
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.list@2",
+      { ...resources, limit: 10 },
+      setup.agentDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { items: expect.arrayContaining([expect.objectContaining({ id: deliveryId })]) },
+    });
+    await expect(dispatchCliCapability(
+      "publishing_delivery_events.list@2",
+      { deliveryId, ...resources, limit: 10 },
+      setup.agentDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { items: [{ sequence: 1 }, { sequence: 2 }] },
+    });
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.get@2",
+      { deliveryId, ...resources },
+      setup.foreignAgentDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "PUBLISHING_DELIVERY_NOT_FOUND",
+    });
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.list@2",
+      { ...resources, limit: 10 },
+      setup.foreignAgentDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { items: [] },
+    });
+    await expect(dispatchCliCapability(
+      "publishing_delivery_events.list@2",
+      { deliveryId, ...resources, limit: 10 },
+      setup.foreignAgentDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "PUBLISHING_DELIVERY_NOT_FOUND",
+    });
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.get@2",
+      { deliveryId },
+      setup.foreignWorkspaceHumanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "PUBLISHING_DELIVERY_NOT_FOUND",
+    });
+
+    await dispatchCliCapability(
+      "publishing_deliveries.cancel@1",
+      { deliveryId, ...resources },
+      setup.humanDispatcher,
+    );
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.get@2",
+      { deliveryId },
+      setup.humanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: {
+        cancellation: {
+          stateAtRequest: "scheduled",
+          outcome: "prevented",
+          externallyCompletedAtRequest: false,
+          durable: true,
+          externallyReversed: false,
+        },
+      },
+    });
+
+    setup.repository.getCancellation = async () => {
+      throw new Error("cancellation query failed");
+    };
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.get@2",
+      { deliveryId },
+      setup.humanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE",
+      category: "internal",
+      retryable: true,
+    });
+    await expect(dispatchCliCapability(
+      "publishing_deliveries.cancel@1",
+      { deliveryId, ...resources },
+      setup.humanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE",
+      category: "internal",
+      retryable: true,
+    });
   });
 });

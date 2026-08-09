@@ -1,4 +1,5 @@
 import type { PublishingPlanRevisionRecord } from "../publishing-plans/types";
+import type { PUBLISHING_PLAN_RUNTIME_POLICY_IDENTITY } from "../publishing-plans/production-digests";
 
 export type PublishingApprovalAction = "publish";
 export type PublishingApprovalDecision = "approved" | "denied";
@@ -16,7 +17,7 @@ export interface PublishingApprovalValidationBinding {
   contextDigest: string;
   evaluatedAt: string;
   expiresAt: string;
-  runtimePolicyIdentity: string;
+  runtimePolicyIdentity: typeof PUBLISHING_PLAN_RUNTIME_POLICY_IDENTITY;
   runtimePolicyContractDigest: string;
 }
 

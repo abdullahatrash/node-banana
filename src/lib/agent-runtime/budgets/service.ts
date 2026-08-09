@@ -16,6 +16,7 @@ import type {
   CreatePricingOverrideInput,
   RunAdmissionPreview,
   RunStepExposure,
+  WorkspaceSpendControlEvidence,
   WorkspacePricingOverride,
 } from "./types";
 
@@ -369,6 +370,68 @@ export class BudgetService {
     });
   }
 
+  async getCurrentStatus(input: {
+    workspaceId: string;
+    principalId: string;
+    at: Date;
+  }) {
+    const workspaceId = cleanId(input.workspaceId, "Workspace ID");
+    const principalId = cleanId(input.principalId, "Principal ID");
+    if (Number.isNaN(input.at.getTime())) {
+      throw new BudgetServiceError("BUDGET_INVALID_INPUT", "Budget status time is invalid.");
+    }
+    return this.repository.readBudgetStatusSnapshot(async (snapshot) => {
+      const policies = await snapshot.getEffectivePolicies({
+        workspaceId,
+        principalId,
+      });
+      const reservations = await snapshot.listReservations({ workspaceId });
+      const items = await Promise.all(policies.map(async ({ policy, revision }) => {
+        const period = budgetPeriodWindow(policy.period, policy.timezone, input.at);
+        const committed = await snapshot.getCommittedAmount({
+          workspaceId,
+          policyRevisionId: revision.id,
+          periodStartsAt: period.startsAt,
+          periodEndsAt: period.endsAt,
+        });
+        const applicableReservations = reservations.filter((reservation) =>
+          reservation.policyId === policy.id &&
+          (policy.scope === "workspace" ||
+            reservation.admittedPrincipalId === principalId) &&
+          reservation.period.startsAt.getTime() === period.startsAt.getTime() &&
+          (reservation.period.endsAt?.getTime() ?? null) ===
+            (period.endsAt?.getTime() ?? null));
+        const unknownReservationCount = applicableReservations.filter(
+          (reservation) =>
+            reservation.state === "outcome_unknown" ||
+            reservation.state === "held_unknown_cost",
+        ).length;
+        const warningState = compareDecimals(committed, revision.hardLimit) >= 0
+          ? "hard_limit_reached" as const
+          : compareDecimals(committed, revision.warningThreshold) >= 0
+            ? "warning" as const
+            : "below_warning" as const;
+        return {
+          scope: policy.scope,
+          policyId: policy.id,
+          policyRevisionId: revision.id,
+          currency: policy.currency,
+          period,
+          warningThreshold: revision.warningThreshold,
+          hardLimit: revision.hardLimit,
+          committed,
+          available: subtractDecimals(revision.hardLimit, committed),
+          warningState,
+          certainty: unknownReservationCount > 0
+            ? "contains_unknown_cost" as const
+            : "known" as const,
+          unknownReservationCount,
+        };
+      }));
+      return { workspaceId, principalId, evaluatedAt: new Date(input.at), items };
+    });
+  }
+
   listPricingOverrides(workspaceId: string) {
     return this.repository.listPricingOverrides(cleanId(workspaceId, "Workspace ID"));
   }
@@ -396,20 +459,54 @@ export class BudgetService {
     });
   }
 
-  async setSpendSuspended(input: { workspaceId: string; suspended: boolean; reason: string; actorUserId: string; recordedAt: Date }) {
+  async setSpendSuspended(input: { workspaceId: string; suspended: boolean; reason: string; actorUserId: string; authorizationEvidenceRef?: string; recordedAt: Date }) {
     const reason = input.reason.trim();
     if (!reason || reason.length > 500) throw new BudgetServiceError("BUDGET_INVALID_INPUT", "Spend-control reason is invalid.");
-    await this.repository.setSpendSuspended({
+    const authorizationEvidenceRef = input.authorizationEvidenceRef === undefined
+      ? undefined
+      : cleanId(input.authorizationEvidenceRef, "Authorization evidence reference");
+    if (authorizationEvidenceRef && authorizationEvidenceRef.length > 200) {
+      throw new BudgetServiceError("BUDGET_INVALID_INPUT", "Authorization evidence reference is invalid.");
+    }
+    return this.repository.setSpendSuspended({
       ...input,
       workspaceId: cleanId(input.workspaceId, "Workspace ID"),
       actorUserId: cleanId(input.actorUserId, "Actor User ID"),
+      ...(authorizationEvidenceRef ? { authorizationEvidenceRef } : {}),
       reason,
     });
+  }
+
+  async setSpendSuspendedWithEvidence(input: {
+    workspaceId: string;
+    suspended: boolean;
+    reason: string;
+    actorUserId: string;
+    authorizationEvidenceRef: string;
+    recordedAt: Date;
+  }): Promise<WorkspaceSpendControlEvidence> {
+    const evidence = await this.setSpendSuspended(input);
+    if (!evidence.authorizationEvidenceRef) {
+      throw new BudgetServiceError("BUDGET_UNAVAILABLE", "Spend-control authorization evidence was not persisted.");
+    }
+    return evidence as WorkspaceSpendControlEvidence & { authorizationEvidenceRef: string };
   }
 
   async getSpendControl(workspaceId: string): Promise<{ workspaceId: string; suspended: boolean }> {
     const normalized = cleanId(workspaceId, "Workspace ID");
     return { workspaceId: normalized, suspended: await this.repository.isSpendSuspended(normalized) };
+  }
+
+  async getSpendControlEvidence(workspaceId: string) {
+    const normalized = cleanId(workspaceId, "Workspace ID");
+    try {
+      return await this.repository.getSpendControlEvidence(normalized);
+    } catch {
+      throw new BudgetServiceError(
+        "BUDGET_UNAVAILABLE",
+        "Durable Emergency Spend Suspension evidence is unavailable.",
+      );
+    }
   }
 
   async previewRun(raw: BudgetAdmissionInput): Promise<RunAdmissionPreview> {

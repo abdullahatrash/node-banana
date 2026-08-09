@@ -6,6 +6,10 @@ const migration = readFileSync(
   resolve(process.cwd(), "drizzle/0043_runtime_budget_authority.sql"),
   "utf8",
 );
+const spendEvidenceMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0051_runtime_spend_control_evidence.sql"),
+  "utf8",
+);
 
 describe("Budget authority migration contract", () => {
   it("creates normalized policy, admission, reservation, pricing, and spend-control tables", () => {
@@ -74,5 +78,21 @@ describe("Budget authority migration contract", () => {
     expect(migration).toContain('"grant_amount_cents" >= 0');
     expect(migration).toContain('"reserved_cents" >= 0');
     expect(migration).toContain("effect_not_created");
+  });
+
+  it("adds bounded nullable authorization evidence for legacy spend controls", () => {
+    expect(spendEvidenceMigration).toContain(
+      'ALTER TABLE "runtime_spend_control_events" ADD COLUMN "authorization_evidence_ref" text',
+    );
+    expect(spendEvidenceMigration).toContain(
+      'ALTER TABLE "runtime_spend_controls" ADD COLUMN "authorization_evidence_ref" text',
+    );
+    expect(spendEvidenceMigration).toContain(
+      "runtime_spend_control_events_authorization_evidence_ref_check",
+    );
+    expect(spendEvidenceMigration).toContain(
+      "runtime_spend_controls_authorization_evidence_ref_check",
+    );
+    expect(spendEvidenceMigration.match(/between 1 and 200/g)).toHaveLength(2);
   });
 });

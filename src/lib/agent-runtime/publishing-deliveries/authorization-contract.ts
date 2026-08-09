@@ -11,8 +11,11 @@ export const PUBLISHING_DELIVERY_CAPABILITY_IDENTITIES = {
   retry: { name: "publishing_deliveries.retry", version: 1 },
   reconcile: { name: "publishing_deliveries.reconcile", version: 1 },
   get: { name: "publishing_deliveries.get", version: 1 },
+  getV2: { name: "publishing_deliveries.get", version: 2 },
   list: { name: "publishing_deliveries.list", version: 1 },
+  listV2: { name: "publishing_deliveries.list", version: 2 },
   events: { name: "publishing_delivery_events.list", version: 1 },
+  eventsV2: { name: "publishing_delivery_events.list", version: 2 },
 } as const;
 
 /** Caller manifests authorize, but never select or retarget, approved targets. */

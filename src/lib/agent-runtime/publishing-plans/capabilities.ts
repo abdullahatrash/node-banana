@@ -299,6 +299,17 @@ function agent(
   return context;
 }
 
+function sharedReader(context: ResolvedSecurityContext | undefined) {
+  if (!context) {
+    throw new CapabilityFailure({
+      code: "CAPABILITY_NOT_AUTHORIZED",
+      category: "authorization",
+      message: "Publishing Plan observation is not authorized.",
+    });
+  }
+  return context;
+}
+
 function effectiveResources(context: {
   authorizationAdmission?: { effectiveResources?: unknown };
 }) {
@@ -435,7 +446,7 @@ export function createPublishingPlanRegistrations(
       identity: PUBLISHING_PLAN_CAPABILITY_IDENTITIES.get,
       audience: "agent",
       summary: "Read one immutable Publishing Plan Revision and safe evidence.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: z.object({ revisionId: id }).strict(),
       outputSchema: schema(revision),
       effect: QUERY_EFFECT,
@@ -447,6 +458,25 @@ export function createPublishingPlanRegistrations(
         const principal = agent(context.securityContext);
         return domain(() =>
           service.getRevision(principal.workspaceId, input.revisionId),
+        );
+      },
+    }),
+    defineCapability({
+      identity: PUBLISHING_PLAN_CAPABILITY_IDENTITIES.getV2,
+      audience: "shared",
+      summary: "Read one immutable Publishing Plan Revision as an authorized Agent or Workspace human.",
+      lifecycle,
+      input: z.object({ revisionId: id }).strict(),
+      outputSchema: schema(revision),
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: { resources: [] },
+      errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_PLAN_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const caller = sharedReader(context.securityContext);
+        return domain(() =>
+          service.getRevision(caller.workspaceId, input.revisionId),
         );
       },
     }),

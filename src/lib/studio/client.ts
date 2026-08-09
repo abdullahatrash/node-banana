@@ -16,6 +16,16 @@ import type { BudgetReservation } from "@/lib/agent-runtime/budgets/types";
 import type { QuotaReservation, QuotaWait } from "@/lib/agent-runtime/quotas/types";
 import type { CostValuation, UsageRecord, UsageSource, UsageUnit } from "@/lib/agent-runtime/usage/types";
 import type { DiagnosticTrace } from "@/lib/agent-runtime/observability/types";
+import type {
+  PublishingDeliveryCancellationDto,
+  PublishingDeliveryDto,
+  PublishingDeliveryEventDto,
+  PublishingDeliveryReconciliationDto,
+} from "@/lib/agent-runtime/publishing-deliveries/types";
+import type { PublishingPlanRevisionDto } from "@/lib/agent-runtime/publishing-plans/types";
+import type { PublishingApprovalDto } from "@/lib/agent-runtime/publishing-approvals/types";
+import type { BudgetPolicy, BudgetPolicyRevision } from "@/lib/agent-runtime/budgets/types";
+import type { EffectiveQuotaCapacity } from "@/lib/agent-runtime/quotas/types";
 
 export type QuotaApplicationCapabilityIdentity =
   | QuotaCapabilityIdentity
@@ -101,7 +111,7 @@ function mergeHeaders(init?: RequestInit, requireWorkspace = true): Headers {
 async function fetchApi(
   input: RequestInfo,
   init?: RequestInit,
-  options?: { requireWorkspace?: boolean },
+  options?: { requireWorkspace?: boolean; preserveForbiddenMessage?: boolean },
 ): Promise<JsonRecord> {
   const requireWorkspace = options?.requireWorkspace ?? true;
   const activeWorkspaceId = getActiveWorkspaceId();
@@ -149,10 +159,10 @@ async function fetchApi(
 
   if (!response.ok || !success) {
     const message = readApiError(record);
-    throw new StudioApiError(response.status, getFriendlyStatusMessage(
-      response.status,
-      message,
-    ), {
+    throw new StudioApiError(response.status,
+      response.status === 403 && options?.preserveForbiddenMessage
+        ? message
+        : getFriendlyStatusMessage(response.status, message), {
       code: asString(record.code),
       operatorTraceRef: asString(record.operatorTraceRef),
     });
@@ -175,7 +185,7 @@ export type RunInspectionCapabilityIdentity =
   | "quota_waits.list@1"
   | "diagnostic_traces.get@1";
 
-type PublicJson<T> = T extends Date
+export type PublicJson<T> = T extends Date
   ? string
   : T extends readonly (infer Item)[]
     ? PublicJson<Item>[]
@@ -272,6 +282,192 @@ export async function invokeRunInspectionApplicationCapability<
     );
   }
   return result as RunInspectionResultMap[Capability];
+}
+
+export type DeliveryOperationsCapabilityIdentity =
+  | "publishing_deliveries.get@2"
+  | "publishing_deliveries.list@2"
+  | "publishing_delivery_events.list@2"
+  | "publishing_plan_revisions.get@2"
+  | "publishing_approvals.get@2"
+  | "publishing_deliveries.cancel@1"
+  | "publishing_deliveries.reconcile@1"
+  | "budget_policies.get_effective@1"
+  | "budget_reservations.list@1"
+  | "budget_status.get@1"
+  | "quota_policies.get_effective@1"
+  | "quota_reservations.list@1"
+  | "quota_waits.list@1"
+  | "quota_waits.resume@1"
+  | "spend_controls.get@2"
+  | "spend_controls.suspend@2"
+  | "spend_controls.resume@2";
+
+interface DeliveryResourceManifest {
+  deliveryId: string;
+  channelIds: string[];
+  artifactIds: string[];
+}
+
+export interface DeliveryOperationsInputMap {
+  "publishing_deliveries.get@2": {
+    deliveryId: string;
+    channelIds?: string[];
+    artifactIds?: string[];
+  };
+  "publishing_deliveries.list@2": {
+    channelIds?: string[];
+    artifactIds?: string[];
+    planRevisionId?: string;
+    state?: PublishingDeliveryDto["state"];
+    targetId?: string;
+    limit?: number;
+    cursor?: string;
+  };
+  "publishing_delivery_events.list@2": {
+    deliveryId: string;
+    channelIds?: string[];
+    artifactIds?: string[];
+    afterSequence?: number;
+    limit?: number;
+  };
+  "publishing_plan_revisions.get@2": { revisionId: string };
+  "publishing_approvals.get@2": { approvalRequestId: string };
+  "publishing_deliveries.cancel@1": DeliveryResourceManifest;
+  "publishing_deliveries.reconcile@1": DeliveryResourceManifest & {
+    expectedUnknownEvidenceDigest: string;
+  };
+  "budget_policies.get_effective@1": { principalId: string };
+  "budget_reservations.list@1": { principalId?: string };
+  "budget_status.get@1": { principalId: string };
+  "quota_policies.get_effective@1": { principalId: string };
+  "quota_reservations.list@1": { principalId?: string; limit?: number };
+  "quota_waits.list@1": {
+    principalId?: string;
+    state?: "waiting" | "resumed" | "cancelled";
+    limit?: number;
+  };
+  "quota_waits.resume@1": { waitId: string };
+  "spend_controls.get@2": Record<string, never>;
+  "spend_controls.suspend@2": { reason: string };
+  "spend_controls.resume@2": { reason: string };
+}
+
+export interface WorkspaceSpendControlEvidenceDto {
+  schema: "workspace-spend-control/v2";
+  workspaceId: string;
+  suspended: boolean;
+  revision: number;
+  reason: string | null;
+  actorUserId: string | null;
+  recordedAt: string | null;
+  policyEventId: string | null;
+  authorizationEvidenceRef: string | null;
+}
+
+export interface DeliveryOperationsResultMap {
+  "publishing_deliveries.get@2": {
+    schema: "publishing-delivery-inspection/v2";
+    delivery: PublishingDeliveryDto;
+    cancellation: PublishingDeliveryCancellationDto | null;
+  };
+  "publishing_deliveries.list@2": {
+    schema: "publishing-delivery-page/v1";
+    items: PublishingDeliveryDto[];
+    nextCursor: string | null;
+  };
+  "publishing_delivery_events.list@2": {
+    schema: "publishing-delivery-event-page/v1";
+    items: PublishingDeliveryEventDto[];
+    nextAfterSequence: number | null;
+  };
+  "publishing_plan_revisions.get@2": PublishingPlanRevisionDto;
+  "publishing_approvals.get@2": {
+    projection: "human";
+    approval: PublicJson<PublishingApprovalDto>;
+  };
+  "publishing_deliveries.cancel@1": PublishingDeliveryCancellationDto;
+  "publishing_deliveries.reconcile@1": PublishingDeliveryReconciliationDto;
+  "budget_policies.get_effective@1": {
+    schema: "effective-budget-policy-list/v1";
+    items: Array<{
+      policy: PublicJson<BudgetPolicy>;
+      revision: PublicJson<Omit<BudgetPolicyRevision, "createdByUserId">>;
+    }>;
+  };
+  "budget_reservations.list@1": {
+    schema: "budget-reservation-list/v1";
+    items: PublicJson<BudgetReservation>[];
+  };
+  "budget_status.get@1": {
+    schema: "budget-status/v1";
+    workspaceId: string;
+    principalId: string;
+    evaluatedAt: string;
+    items: Array<{
+      scope: "workspace" | "principal";
+      policyId: string;
+      policyRevisionId: string;
+      currency: string;
+      period: {
+        kind: "calendar_day" | "calendar_week" | "calendar_month" | "lifetime";
+        timezone: string;
+        startsAt: string;
+        endsAt: string | null;
+      };
+      warningThreshold: string;
+      hardLimit: string;
+      committed: string;
+      available: string;
+      warningState: "below_warning" | "warning" | "hard_limit_reached";
+      certainty: "known" | "contains_unknown_cost";
+      unknownReservationCount: number;
+    }>;
+  };
+  "quota_policies.get_effective@1": {
+    schema: "effective-quota-capacity-list/v1";
+    items: PublicJson<EffectiveQuotaCapacity>[];
+  };
+  "quota_reservations.list@1": {
+    schema: "quota-reservation-list/v1";
+    items: PublicJson<QuotaReservation>[];
+  };
+  "quota_waits.list@1": {
+    schema: "quota-wait-list/v1";
+    items: PublicJson<QuotaWait>[];
+  };
+  "quota_waits.resume@1": { wait: PublicJson<QuotaWait> };
+  "spend_controls.get@2": WorkspaceSpendControlEvidenceDto;
+  "spend_controls.suspend@2": WorkspaceSpendControlEvidenceDto;
+  "spend_controls.resume@2": WorkspaceSpendControlEvidenceDto;
+}
+
+export async function invokeDeliveryOperationsApplicationCapability<
+  Capability extends DeliveryOperationsCapabilityIdentity,
+>(
+  capability: Capability,
+  input: DeliveryOperationsInputMap[Capability],
+  options: { idempotencyKey?: string } = {},
+): Promise<DeliveryOperationsResultMap[Capability]> {
+  const response = await fetchApi("/api/studio/publishing-deliveries/capabilities", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  }, { preserveForbiddenMessage: true });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for Delivery operations capability ${capability}.`,
+    );
+  }
+  return result as DeliveryOperationsResultMap[Capability];
 }
 
 export async function invokeCredentialApplicationCapability(

@@ -5,6 +5,7 @@ export const PUBLISHING_PLAN_CAPABILITY_IDENTITIES = {
   validate: { name: "publishing_plan_revisions.validate", version: 1 },
   create: { name: "publishing_plan_revisions.create", version: 1 },
   get: { name: "publishing_plan_revisions.get", version: 1 },
+  getV2: { name: "publishing_plan_revisions.get", version: 2 },
   list: { name: "publishing_plan_revisions.list", version: 1 },
 } as const;
 

@@ -17,6 +17,7 @@ import type {
   PublishingDeliveryCancellationAuthorizationPort,
   PublishingDeliveryCancellationAuthorizationSession,
   PublishingDeliveryCancellationDto,
+  PublishingDeliveryCancellationRecord,
   PublishingDeliveryClock,
   PublishingDeliveryDurableAcceptance,
   PublishingDeliveryEvent,
@@ -78,6 +79,54 @@ function authorizedManifests(channelValues: string[], artifactValues: string[]) 
     );
   }
   return { channelIds, artifactIds };
+}
+
+export type PublishingDeliveryInspectionActor =
+  | { kind: "agent"; principalId: string }
+  | { kind: "human"; userId: string };
+
+type PublishingDeliveryInspectionInput =
+  | {
+      actor: PublishingDeliveryInspectionActor;
+      principalId?: never;
+      authorizedChannelIds: string[];
+      authorizedArtifactIds: string[];
+    }
+  | {
+      actor?: never;
+      principalId: string;
+      authorizedChannelIds: string[];
+      authorizedArtifactIds: string[];
+    };
+
+function inspectionScope(input: PublishingDeliveryInspectionInput): {
+  consumingPrincipalId?: string;
+  authorizedChannelIds?: string[];
+  authorizedArtifactIds?: string[];
+} {
+  if (input.actor?.kind === "human") {
+    publishingDeliveryIdentifier(input.actor.userId, "Human user ID");
+    return {};
+  }
+  const rawPrincipalId = input.actor?.kind === "agent"
+    ? input.actor.principalId
+    : input.principalId;
+  if (!rawPrincipalId) {
+    throw new PublishingDeliveryServiceError(
+      "PUBLISHING_DELIVERY_INVALID_INPUT",
+      "Publishing Delivery inspection actor is invalid.",
+    );
+  }
+  const principalId = publishingDeliveryIdentifier(rawPrincipalId, "Principal ID");
+  const manifests = authorizedManifests(
+    input.authorizedChannelIds,
+    input.authorizedArtifactIds,
+  );
+  return {
+    consumingPrincipalId: principalId,
+    authorizedChannelIds: manifests.channelIds,
+    authorizedArtifactIds: manifests.artifactIds,
+  };
 }
 
 function eventId(deliveryId: string, sequence: number): string {
@@ -682,11 +731,19 @@ export class PublishingDeliveryService {
         "Exact current Publishing Delivery cancellation authority is required.",
       );
     }
-    const replay = await this.repository.getCancellation({
-      workspaceId: input.workspaceId,
-      deliveryId,
-      actor,
-    });
+    let replay: PublishingDeliveryCancellationRecord | null;
+    try {
+      replay = await this.repository.getCancellation({
+        workspaceId: input.workspaceId,
+        deliveryId,
+        actor,
+      });
+    } catch {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE",
+        "Publishing Delivery Cancellation evidence is unavailable.",
+      );
+    }
     if (
       replay &&
       sameExactSet(manifests.channelIds, replay.authorizedResources.channelIds) &&
@@ -1512,23 +1569,15 @@ export class PublishingDeliveryService {
     );
   }
 
-  async get(input: {
+  async get(input: PublishingDeliveryInspectionInput & {
     workspaceId: string;
-    principalId: string;
     deliveryId: string;
-    authorizedChannelIds: string[];
-    authorizedArtifactIds: string[];
   }) {
-    const manifests = authorizedManifests(
-      input.authorizedChannelIds,
-      input.authorizedArtifactIds,
-    );
+    const scope = inspectionScope(input);
     const delivery = await this.repository.getDelivery({
       workspaceId: input.workspaceId,
       deliveryId: publishingDeliveryIdentifier(input.deliveryId, "Delivery ID"),
-      consumingPrincipalId: publishingDeliveryIdentifier(input.principalId, "Principal ID"),
-      authorizedChannelIds: manifests.channelIds,
-      authorizedArtifactIds: manifests.artifactIds,
+      ...scope,
     });
     if (!delivery) {
       throw new PublishingDeliveryServiceError(
@@ -1539,12 +1588,41 @@ export class PublishingDeliveryService {
     return publishingDeliveryDto(delivery);
   }
 
-  async list(input: {
+  async inspect(input: PublishingDeliveryInspectionInput & {
     workspaceId: string;
-    principalId: string;
+    deliveryId: string;
+  }) {
+    let delivery = await this.get(input);
+    let cancellation: PublishingDeliveryCancellationRecord | null;
+    try {
+      cancellation = await this.repository.getCancellation({
+        workspaceId: input.workspaceId,
+        deliveryId: delivery.id,
+      });
+    } catch {
+      throw new PublishingDeliveryServiceError(
+        "PUBLISHING_DELIVERY_PERSISTENCE_UNAVAILABLE",
+        "Publishing Delivery Cancellation evidence is unavailable.",
+      );
+    }
+    if (cancellation) {
+      // Cancellation is immutable and commits with the Delivery transition.
+      // Re-read after observing it so a racing cancellation cannot pair its
+      // truth with the pre-cancellation Delivery projection.
+      delivery = await this.get(input);
+    }
+    return {
+      schema: "publishing-delivery-inspection/v2" as const,
+      delivery,
+      cancellation: cancellation
+        ? cancellationDto(cancellation)
+        : null,
+    };
+  }
+
+  async list(input: PublishingDeliveryInspectionInput & {
+    workspaceId: string;
     filters: PublishingDeliveryListFilters;
-    authorizedChannelIds: string[];
-    authorizedArtifactIds: string[];
     before?: PublishingDeliveryListPosition;
     limit: number;
   }) {
@@ -1554,18 +1632,13 @@ export class PublishingDeliveryService {
         "Publishing Delivery list limit is invalid.",
       );
     }
-    const manifests = authorizedManifests(
-      input.authorizedChannelIds,
-      input.authorizedArtifactIds,
-    );
+    const scope = inspectionScope(input);
     return (
       await this.repository.listDeliveries({
         workspaceId: input.workspaceId,
         filters: {
           ...input.filters,
-          consumingPrincipalId: publishingDeliveryIdentifier(input.principalId, "Principal ID"),
-          authorizedChannelIds: manifests.channelIds,
-          authorizedArtifactIds: manifests.artifactIds,
+          ...scope,
         },
         before: input.before,
         limit: input.limit,
@@ -1573,12 +1646,9 @@ export class PublishingDeliveryService {
     ).map(publishingDeliveryDto);
   }
 
-  async listEvents(input: {
+  async listEvents(input: PublishingDeliveryInspectionInput & {
     workspaceId: string;
-    principalId: string;
     deliveryId: string;
-    authorizedChannelIds: string[];
-    authorizedArtifactIds: string[];
     afterSequence: number;
     limit: number;
   }): Promise<PublishingDeliveryEventDto[]> {
@@ -1594,16 +1664,11 @@ export class PublishingDeliveryService {
         "Publishing Delivery event position is invalid.",
       );
     }
-    const manifests = authorizedManifests(
-      input.authorizedChannelIds,
-      input.authorizedArtifactIds,
-    );
+    const scope = inspectionScope(input);
     const events = await this.repository.listEvents({
       workspaceId: input.workspaceId,
       deliveryId: publishingDeliveryIdentifier(input.deliveryId, "Delivery ID"),
-      consumingPrincipalId: publishingDeliveryIdentifier(input.principalId, "Principal ID"),
-      authorizedChannelIds: manifests.channelIds,
-      authorizedArtifactIds: manifests.artifactIds,
+      ...scope,
       afterSequence: input.afterSequence,
       limit: input.limit,
     });

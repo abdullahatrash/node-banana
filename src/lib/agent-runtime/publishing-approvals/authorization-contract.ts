@@ -4,6 +4,7 @@ import type { CapabilityRegistration } from "@/types/capabilities";
 export const PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES = {
   request: { name: "publishing_approvals.request", version: 1 },
   get: { name: "publishing_approvals.get", version: 1 },
+  getV2: { name: "publishing_approvals.get", version: 2 },
   list: { name: "publishing_approvals.list", version: 1 },
   decide: { name: "publishing_approvals.decide", version: 1 },
   release: { name: "publishing_plan_revisions.release", version: 1 },

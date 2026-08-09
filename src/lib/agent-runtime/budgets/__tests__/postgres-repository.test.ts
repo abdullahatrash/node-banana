@@ -11,6 +11,17 @@ const source = readFileSync(
 );
 
 describe("Postgres Budget repository contract", () => {
+  it("reads canonical Budget Status inside one repeatable-read snapshot", () => {
+    const snapshot = source.slice(
+      source.indexOf("readBudgetStatusSnapshot<T>("),
+      source.indexOf("async getAdminReceipt("),
+    );
+    expect(snapshot).toContain("set transaction isolation level repeatable read read only");
+    expect(snapshot).toContain("this.getEffectivePolicies(input, tx)");
+    expect(snapshot).toContain("this.getCommittedAmount(input, tx)");
+    expect(snapshot).toContain("this.listReservations(input, tx)");
+  });
+
   it("serializes admission capacity on stable period rows in deterministic order", () => {
     const admission = source.slice(
       source.indexOf("async commitAdmission("),
@@ -101,9 +112,30 @@ describe("Postgres Budget repository contract", () => {
     expect(suspension).toContain("current?.suspended === input.suspended");
     expect(suspension).toContain("current.reason === input.reason");
     expect(suspension).toContain("current.updatedByUserId === input.actorUserId");
+    expect(suspension).toContain(
+      "input.authorizationEvidenceRef === undefined ||",
+    );
+    expect(suspension).toContain(
+      "current.authorizationEvidenceRef !== null",
+    );
+    expect(suspension).toContain("agentSecurityEvents");
+    expect(suspension).toContain('eq(agentSecurityEvents.eventType, "authorization.allowed")');
+    expect(suspension).toContain('eq(agentSecurityEvents.capabilityVersion, 2)');
+    expect(suspension).toContain("eq(agentSecurityEvents.changeRef, input.authorizationEvidenceRef)");
     expect(suspension.indexOf("current?.suspended === input.suspended")).toBeLessThan(
       suspension.indexOf("const revision = (current?.revision ?? 0) + 1"),
     );
+  });
+
+  it("never reports a spend-control projection without matching durable event truth", () => {
+    const read = source.slice(
+      source.indexOf("async getSpendControlEvidence("),
+      source.indexOf("async setSpendSuspended("),
+    );
+    expect(read).toContain(".leftJoin(");
+    expect(read).toContain('throw new Error("Spend-control durable policy event is unavailable.")');
+    expect(read).toContain("row.control.suspended !== row.event.suspended");
+    expect(read).toContain("row.control.authorizationEvidenceRef !== row.event.authorizationEvidenceRef");
   });
 
   it("uses one global bounded-grant projection and excludes runtime-backed legacy receipts", () => {

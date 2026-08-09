@@ -1,0 +1,4 @@
+ALTER TABLE "runtime_spend_control_events" ADD COLUMN "authorization_evidence_ref" text;--> statement-breakpoint
+ALTER TABLE "runtime_spend_controls" ADD COLUMN "authorization_evidence_ref" text;--> statement-breakpoint
+ALTER TABLE "runtime_spend_control_events" ADD CONSTRAINT "runtime_spend_control_events_authorization_evidence_ref_check" CHECK ("runtime_spend_control_events"."authorization_evidence_ref" is null or length("runtime_spend_control_events"."authorization_evidence_ref") between 1 and 200);--> statement-breakpoint
+ALTER TABLE "runtime_spend_controls" ADD CONSTRAINT "runtime_spend_controls_authorization_evidence_ref_check" CHECK ("runtime_spend_controls"."authorization_evidence_ref" is null or length("runtime_spend_controls"."authorization_evidence_ref") between 1 and 200);

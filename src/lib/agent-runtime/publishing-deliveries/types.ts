@@ -966,7 +966,7 @@ export interface PublishingDeliveryRepository {
   getCancellation(input: {
     workspaceId: string;
     deliveryId: string;
-    actor: PublishingDeliveryCancellationActor;
+    actor?: PublishingDeliveryCancellationActor;
   }): Promise<PublishingDeliveryCancellationRecord | null>;
   /** Intrinsic Delivery-scoped cancellation; replay must return the first record. */
   cancel(input: {

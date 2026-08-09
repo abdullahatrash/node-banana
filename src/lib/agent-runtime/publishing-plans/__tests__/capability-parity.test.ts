@@ -60,7 +60,18 @@ function capabilitySetup() {
         },
       }),
   };
-  return { ...setup, dispatcher: bound, registry };
+  const human = {
+    dispatch: (invocation: Parameters<typeof dispatcher.dispatch>[0]) =>
+      dispatcher.dispatch(invocation, {
+        securityContext: {
+          kind: "human" as const,
+          workspaceId: "workspace_1",
+          userId: "member_1",
+          role: "member" as const,
+        },
+      }),
+  };
+  return { ...setup, dispatcher: bound, humanDispatcher: human, registry };
 }
 
 function blockers(response: unknown): string[] {
@@ -134,6 +145,35 @@ describe("Publishing Plan CLI/MCP parity", () => {
       (cli as { output: { validationEvidence: { authorizesExecution: boolean } } })
         .output.validationEvidence.authorizesExecution,
     ).toBe(false);
+  });
+
+  it("shares immutable @2 Revision reads with Agents and Workspace humans", async () => {
+    const setup = capabilitySetup();
+    const created = await dispatchCliCapability(
+      "publishing_plan_revisions.create@1",
+      {
+        idempotencyKey: "publishing-plan-shared-read",
+        draft: publishingPlanDraft(),
+      },
+      setup.dispatcher,
+    );
+    const revisionId = (created as { output: { id: string } }).output.id;
+    await expect(dispatchCliCapability(
+      "publishing_plan_revisions.get@2",
+      { revisionId },
+      setup.dispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { id: revisionId },
+    });
+    await expect(dispatchCliCapability(
+      "publishing_plan_revisions.get@2",
+      { revisionId },
+      setup.humanDispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { id: revisionId },
+    });
   });
 
   it("keeps inaccessible Channel, missing media, invalid settings, and expired context blockers equal", async () => {

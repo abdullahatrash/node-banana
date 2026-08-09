@@ -7497,17 +7497,21 @@ export const runtimeWorkspacePricingOverrideRevisions = pgTable(
 
 export const runtimeSpendControls = pgTable(
   "runtime_spend_controls",
-  { workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "restrict" }), suspended: boolean("suspended").notNull(), revision: integer("revision").notNull(), reason: text("reason").notNull(), updatedByUserId: text("updated_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull() },
-  (table) => ({ revisionCheck: check("runtime_spend_controls_revision_check", sql`${table.revision} > 0 and length(${table.reason}) between 1 and 500`) }),
+  { workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "restrict" }), suspended: boolean("suspended").notNull(), revision: integer("revision").notNull(), reason: text("reason").notNull(), updatedByUserId: text("updated_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), authorizationEvidenceRef: text("authorization_evidence_ref"), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull() },
+  (table) => ({
+    revisionCheck: check("runtime_spend_controls_revision_check", sql`${table.revision} > 0 and length(${table.reason}) between 1 and 500`),
+    authorizationEvidenceRefCheck: check("runtime_spend_controls_authorization_evidence_ref_check", sql`${table.authorizationEvidenceRef} is null or length(${table.authorizationEvidenceRef}) between 1 and 200`),
+  }),
 );
 
 export const runtimeSpendControlEvents = pgTable(
   "runtime_spend_control_events",
-  { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), revision: integer("revision").notNull(), suspended: boolean("suspended").notNull(), reason: text("reason").notNull(), actorUserId: text("actor_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull() },
+  { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), revision: integer("revision").notNull(), suspended: boolean("suspended").notNull(), reason: text("reason").notNull(), actorUserId: text("actor_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), authorizationEvidenceRef: text("authorization_evidence_ref"), recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull() },
   (table) => ({
     workspaceRevisionUnique: uniqueIndex("runtime_spend_control_events_workspace_revision_unique").on(table.workspaceId, table.revision),
     workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_spend_control_events_workspace_fk" }).onDelete("restrict"),
     valueCheck: check("runtime_spend_control_events_value_check", sql`${table.revision} > 0 and length(${table.reason}) between 1 and 500`),
+    authorizationEvidenceRefCheck: check("runtime_spend_control_events_authorization_evidence_ref_check", sql`${table.authorizationEvidenceRef} is null or length(${table.authorizationEvidenceRef}) between 1 and 200`),
   }),
 );
 

@@ -411,7 +411,7 @@ export class InMemoryPublishingDeliveryRepository
     input: Parameters<PublishingDeliveryRepository["getCancellation"]>[0],
   ) {
     const value = this.cancellations.get(key(input.workspaceId, input.deliveryId));
-    return value && canonicalDigest(value.actor) === canonicalDigest(input.actor)
+    return value && (!input.actor || canonicalDigest(value.actor) === canonicalDigest(input.actor))
       ? clone(value)
       : null;
   }

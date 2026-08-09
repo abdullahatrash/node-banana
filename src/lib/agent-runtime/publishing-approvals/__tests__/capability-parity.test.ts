@@ -29,7 +29,11 @@ async function capabilitySetup() {
     dispatch: (invocation: Parameters<typeof dispatcher.dispatch>[0]) =>
       dispatcher.dispatch(invocation, { securityContext: { kind: "agent" as const, workspaceId: "workspace_1", principalId: "principal_1", keyId: "key_1" } }),
   };
-  return { ...setup, registry, dispatcher, agentDispatcher };
+  const humanDispatcher = {
+    dispatch: (invocation: Parameters<typeof dispatcher.dispatch>[0]) =>
+      dispatcher.dispatch(invocation, { securityContext: { kind: "human" as const, workspaceId: "workspace_1", userId: "owner_1", role: "owner" as const } }),
+  };
+  return { ...setup, registry, dispatcher, agentDispatcher, humanDispatcher };
 }
 
 function requestInput(revisionId: string) {
@@ -90,6 +94,58 @@ describe("Publishing Approval CLI/MCP parity", () => {
     expect(serialized).not.toContain("grant_channel_linkedin");
     expect(serialized).not.toContain("approval_authority_evidence_1");
     expect(() => z.fromJSONSchema(setup.registry.getDefinition(PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES.get)!.schemas.output as never).parse((response as { output: unknown }).output)).not.toThrow();
+  });
+
+  it("returns discriminated redacted Agent and full Human @2 Approval projections", async () => {
+    const setup = await capabilitySetup();
+    const full = await setup.service.request({
+      ...setup.requestInput(),
+      idempotencyKey: "approval-shared-v2",
+    });
+    await setup.service.decide({
+      workspaceId: "workspace_1",
+      userId: "owner_1",
+      idempotencyKey: "approval-shared-v2-decision",
+      approvalRequestId: full.id,
+      expectedInspectionDigest: full.inspectionDigest,
+      decision: "approved",
+    });
+    const manifests = {
+      channelIds: ["channel_linkedin"],
+      artifactIds: ["artifact_text", "artifact_image"],
+    };
+    const agent = await dispatchCliCapability(
+      "publishing_approvals.get@2",
+      { approvalRequestId: full.id, ...manifests },
+      setup.agentDispatcher,
+    );
+    expect(agent).toMatchObject({
+      type: "capability_result",
+      output: { projection: "agent", approval: { id: full.id } },
+    });
+    expect(JSON.stringify(agent)).not.toContain("owner_1");
+    expect(JSON.stringify(agent)).not.toContain("authorityEvidenceRef");
+    const human = await dispatchCliCapability(
+      "publishing_approvals.get@2",
+      { approvalRequestId: full.id },
+      setup.humanDispatcher,
+    );
+    expect(human).toMatchObject({
+      type: "capability_result",
+      output: {
+        projection: "human",
+        approval: {
+          id: full.id,
+          decision: { decidedByUserId: "owner_1" },
+        },
+      },
+    });
+    const parser = z.fromJSONSchema(
+      setup.registry.getDefinition(PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES.getV2)!
+        .schemas.output as never,
+    );
+    expect(() => parser.parse((agent as { output: unknown }).output)).not.toThrow();
+    expect(() => parser.parse((human as { output: unknown }).output)).not.toThrow();
   });
 
   it("proves an Agent cannot decide through CLI or MCP even with allowed transport admission", async () => {
