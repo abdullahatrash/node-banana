@@ -81,6 +81,17 @@ function setup(options: {
           },
         }),
     },
+    dispatchHuman: (invocation: Parameters<typeof dispatcher.dispatch>[0], options?: {
+      workspaceId?: string;
+      userId?: string;
+    }) => dispatcher.dispatch(invocation, {
+      securityContext: {
+        kind: "human",
+        workspaceId: options?.workspaceId ?? "workspace_1",
+        userId: options?.userId ?? "user_1",
+        role: "member",
+      },
+    }),
     registry,
   };
 }
@@ -281,6 +292,59 @@ describe("Workflow capability CLI/MCP parity", () => {
       registry.getRegistration(WORKFLOW_CAPABILITY_IDENTITIES.get)
         ?.authorization.resources,
     ).toEqual([{ kind: "workflow", inputPath: "workflowId" }]);
+    expect(
+      registry.getRegistration(WORKFLOW_CAPABILITY_IDENTITIES.getV2),
+    ).toMatchObject({
+      audience: "shared",
+      authorization: {
+        resources: [{ kind: "workflow", inputPath: "workflowId" }],
+      },
+    });
+  });
+
+  it("lets an admitted Human inspect an exact immutable Revision through v2 only", async () => {
+    const { dispatcher, dispatchHuman } = setup();
+    const created = await dispatchCliCapability(
+      "workflows.create@1",
+      { idempotencyKey: "create-workflow-human-read" },
+      dispatcher,
+    );
+    expect(created.type).toBe("capability_result");
+    const workflowId = (created as { output: { id: string } }).output.id;
+    const published = await dispatchCliCapability(
+      "workflow_versions.create@1",
+      {
+        idempotencyKey: "publish-workflow-human-read",
+        draft: { ...structuredClone(fixture), workflowId },
+      },
+      dispatcher,
+    );
+    expect(published.type).toBe("capability_result");
+    const revisionId = (published as { output: { id: string } }).output.id;
+
+    const visible = await dispatchHuman({
+      capability: "workflow_versions.get@2",
+      input: { workflowId, revisionId },
+    });
+    expect(visible).toMatchObject({
+      type: "capability_result",
+      capability: { name: "workflow_versions.get", version: 2 },
+      output: { id: revisionId, workflowId },
+    });
+    await expect(dispatchHuman({
+      capability: "workflow_versions.get@1",
+      input: { workflowId, revisionId },
+    })).resolves.toMatchObject({
+      type: "capability_error",
+      code: "CAPABILITY_NOT_AUTHORIZED",
+    });
+    await expect(dispatchHuman({
+      capability: "workflow_versions.get@2",
+      input: { workflowId, revisionId },
+    }, { workspaceId: "workspace_2", userId: "user_2" })).resolves.toMatchObject({
+      type: "capability_error",
+      code: "WORKFLOW_UNAVAILABLE",
+    });
   });
 
   it("publishes the complete typed draft contract through capability and MCP discovery", async () => {

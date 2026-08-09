@@ -30,11 +30,18 @@ export const WORKFLOW_CAPABILITY_IDENTITIES = {
   validate: { name: "workflow_versions.validate", version: 1 },
   create: { name: "workflow_versions.create", version: 1 },
   get: { name: "workflow_versions.get", version: 1 },
+  getV2: { name: "workflow_versions.get", version: 2 },
 } as const;
 
 const lifecycle = {
   status: "active",
   introducedAt: "2026-07-25T00:00:00.000Z",
+  recommended: true,
+} as const;
+
+const inspectionLifecycle = {
+  status: "active",
+  introducedAt: "2026-08-09T00:00:00.000Z",
   recommended: true,
 } as const;
 
@@ -208,6 +215,19 @@ function agent(
       code: "CAPABILITY_NOT_AUTHORIZED",
       category: "authorization",
       message: "Workflow capability is not authorized.",
+    });
+  }
+  return context;
+}
+
+function sharedReader(
+  context: ResolvedSecurityContext | undefined,
+): ResolvedSecurityContext {
+  if (!context) {
+    throw new CapabilityFailure({
+      code: "CAPABILITY_NOT_AUTHORIZED",
+      category: "authorization",
+      message: "Workflow Revision inspection is not authorized.",
     });
   }
   return context;
@@ -410,7 +430,7 @@ export function createWorkflowRegistrations(
     defineCapability({
       identity: WORKFLOW_CAPABILITY_IDENTITIES.get,
       summary: "Inspect one immutable Content Workflow Revision.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: z.object({ workflowId: id, revisionId: id }).strict(),
       outputSchema: revisionSchema,
       effect: QUERY_EFFECT,
@@ -425,6 +445,31 @@ export function createWorkflowRegistrations(
         return domain(() =>
           service.getRevision({
             workspaceId: principal.workspaceId,
+            ...input,
+          }),
+        );
+      },
+    }),
+    defineCapability({
+      identity: WORKFLOW_CAPABILITY_IDENTITIES.getV2,
+      audience: "shared",
+      summary:
+        "Inspect one immutable Content Workflow Revision as an authorized Agent or current Workspace member.",
+      lifecycle: inspectionLifecycle,
+      input: z.object({ workflowId: id, revisionId: id }).strict(),
+      outputSchema: revisionSchema,
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: {
+        resources: [{ kind: "workflow", inputPath: "workflowId" }],
+      },
+      errors: [...COMMON_DISCOVERY_ERRORS, ...WORKFLOW_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const reader = sharedReader(context.securityContext);
+        return domain(() =>
+          service.getRevision({
+            workspaceId: reader.workspaceId,
             ...input,
           }),
         );

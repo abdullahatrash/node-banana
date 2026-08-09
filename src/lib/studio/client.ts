@@ -5,6 +5,17 @@ import type { UsageCapabilityIdentity } from "@/lib/agent-runtime/usage/capabili
 import type { BudgetHumanCapabilityIdentity } from "@/lib/agent-runtime/budgets/capabilities";
 import type { QuotaCapabilityIdentity } from "@/lib/agent-runtime/quotas/capabilities";
 import type { ObservabilityCapabilityIdentity } from "@/lib/agent-runtime/observability/capabilities";
+import type {
+  WorkflowRunDto,
+  WorkflowRunEventDto,
+  WorkflowStepAttemptDto,
+} from "@/lib/agent-runtime/runs/types";
+import type { ArtifactMetadata } from "@/lib/agent-runtime/artifacts/types";
+import type { WorkflowRevisionDto } from "@/lib/agent-runtime/workflows/types";
+import type { BudgetReservation } from "@/lib/agent-runtime/budgets/types";
+import type { QuotaReservation, QuotaWait } from "@/lib/agent-runtime/quotas/types";
+import type { CostValuation, UsageRecord, UsageSource, UsageUnit } from "@/lib/agent-runtime/usage/types";
+import type { DiagnosticTrace } from "@/lib/agent-runtime/observability/types";
 
 export type QuotaApplicationCapabilityIdentity =
   | QuotaCapabilityIdentity
@@ -16,11 +27,19 @@ const ACTIVE_WORKSPACE_STORAGE_KEY = "node-banana-active-workspace-id";
 
 export class StudioApiError extends Error {
   status: number;
+  code: string | null;
+  operatorTraceRef: string | null;
 
-  constructor(status: number, message: string) {
+  constructor(
+    status: number,
+    message: string,
+    options: { code?: string | null; operatorTraceRef?: string | null } = {},
+  ) {
     super(message);
     this.name = "StudioApiError";
     this.status = status;
+    this.code = options.code ?? null;
+    this.operatorTraceRef = options.operatorTraceRef ?? null;
   }
 }
 
@@ -130,13 +149,129 @@ async function fetchApi(
 
   if (!response.ok || !success) {
     const message = readApiError(record);
-    throw new StudioApiError(
+    throw new StudioApiError(response.status, getFriendlyStatusMessage(
       response.status,
-      getFriendlyStatusMessage(response.status, message),
-    );
+      message,
+    ), {
+      code: asString(record.code),
+      operatorTraceRef: asString(record.operatorTraceRef),
+    });
   }
 
   return record;
+}
+
+export type RunInspectionCapabilityIdentity =
+  | "workflow_runs.get@2"
+  | "workflow_run_events.list@2"
+  | "workflow_step_attempts.list@2"
+  | "workflow_run_artifacts.get@2"
+  | "workflow_versions.get@2"
+  | "usage_records.list@1"
+  | "cost_valuations.list@1"
+  | "usage_summaries.get@1"
+  | "budget_reservations.list@1"
+  | "quota_reservations.list@1"
+  | "quota_waits.list@1"
+  | "diagnostic_traces.get@1";
+
+type PublicJson<T> = T extends Date
+  ? string
+  : T extends readonly (infer Item)[]
+    ? PublicJson<Item>[]
+    : T extends object
+      ? { [Key in keyof T]: PublicJson<T[Key]> }
+      : T;
+
+export interface UsageSummaryDto {
+  schema: "usage-summary/v1";
+  quantityTotals: Array<{
+    dimension: string;
+    unit: UsageUnit;
+    source: UsageSource;
+    quantity: string | null;
+    unknownCount: number;
+  }>;
+  costSubtotals: Array<{ currency: string; amount: string; knownCount: number }>;
+  unknownValuationCount: number;
+  complete: boolean;
+}
+
+export type DiagnosticTraceDto = PublicJson<Omit<DiagnosticTrace, "workspaceId">>;
+
+export interface RunInspectionInputMap {
+  "workflow_runs.get@2": { workflowId: string; runId: string };
+  "workflow_run_events.list@2": { workflowId: string; runId: string; cursor?: string };
+  "workflow_step_attempts.list@2": { workflowId: string; runId: string };
+  "workflow_run_artifacts.get@2": { workflowId: string; runId: string; artifactId: string };
+  "workflow_versions.get@2": { workflowId: string; revisionId: string };
+  "usage_records.list@1": { runId: string; limit: number; cursor?: string };
+  "cost_valuations.list@1": { runId: string; limit: number; cursor?: string };
+  "usage_summaries.get@1": { runId: string };
+  "budget_reservations.list@1": { runId: string };
+  "quota_reservations.list@1": { runId: string; limit: number };
+  "quota_waits.list@1": { runId: string; limit: number };
+  "diagnostic_traces.get@1": { operatorTraceRef: string; operatorGrantId: string };
+}
+
+export interface RunInspectionResultMap {
+  "workflow_runs.get@2": WorkflowRunDto;
+  "workflow_run_events.list@2": {
+    items: WorkflowRunEventDto[];
+    nextCursor: string;
+  };
+  "workflow_step_attempts.list@2": { items: WorkflowStepAttemptDto[] };
+  "workflow_run_artifacts.get@2": {
+    artifact: ArtifactMetadata;
+    textContent: string | null;
+  };
+  "workflow_versions.get@2": WorkflowRevisionDto;
+  "usage_records.list@1": {
+    schema: "usage-record-page/v1";
+    items: PublicJson<UsageRecord>[];
+    nextCursor: string | null;
+  };
+  "cost_valuations.list@1": {
+    schema: "cost-valuation-page/v1";
+    items: PublicJson<CostValuation>[];
+    nextCursor: string | null;
+  };
+  "usage_summaries.get@1": UsageSummaryDto;
+  "budget_reservations.list@1": {
+    schema: "budget-reservation-list/v1";
+    items: PublicJson<BudgetReservation>[];
+  };
+  "quota_reservations.list@1": {
+    schema: "quota-reservation-list/v1";
+    items: PublicJson<QuotaReservation>[];
+  };
+  "quota_waits.list@1": {
+    schema: "quota-wait-list/v1";
+    items: PublicJson<QuotaWait>[];
+  };
+  "diagnostic_traces.get@1": DiagnosticTraceDto;
+}
+
+export async function invokeRunInspectionApplicationCapability<
+  Capability extends RunInspectionCapabilityIdentity,
+>(
+  capability: Capability,
+  input: RunInspectionInputMap[Capability],
+): Promise<RunInspectionResultMap[Capability]> {
+  const response = await fetchApi("/api/studio/runs/capabilities", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for Run inspection capability ${capability}.`,
+    );
+  }
+  return result as RunInspectionResultMap[Capability];
 }
 
 export async function invokeCredentialApplicationCapability(

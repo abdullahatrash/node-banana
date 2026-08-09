@@ -26,9 +26,13 @@ export const WORKFLOW_RUN_CAPABILITY_IDENTITIES = {
   reconcile: { name: "workflow_runs.reconcile", version: 1 },
   resume: { name: "workflow_runs.resume", version: 1 },
   get: { name: "workflow_runs.get", version: 1 },
+  getV2: { name: "workflow_runs.get", version: 2 },
   events: { name: "workflow_run_events.list", version: 1 },
+  eventsV2: { name: "workflow_run_events.list", version: 2 },
   stepAttempts: { name: "workflow_step_attempts.list", version: 1 },
+  stepAttemptsV2: { name: "workflow_step_attempts.list", version: 2 },
   runArtifact: { name: "workflow_run_artifacts.get", version: 1 },
+  runArtifactV2: { name: "workflow_run_artifacts.get", version: 2 },
 } as const;
 
 const lifecycle = {
@@ -39,6 +43,10 @@ const lifecycle = {
 const legacyLifecycle = {
   ...lifecycle,
   recommended: false,
+} as const;
+const inspectionLifecycle = {
+  ...lifecycle,
+  introducedAt: "2026-08-09T00:00:00.000Z",
 } as const;
 
 const object = {
@@ -1154,6 +1162,27 @@ const generatedArtifactSchema: JsonSchema = {
   },
 };
 
+const importedRunArtifactOriginSchema: JsonSchema = {
+  ...object,
+  required: ["kind", "importedAt"],
+  properties: {
+    kind: { const: "imported" },
+    importedAt: { type: "string", format: "date-time" },
+  },
+};
+const generatedRunArtifactOriginSchema = (
+  generatedArtifactSchema.properties as Record<string, JsonSchema>
+).origin;
+const runArtifactV2Schema: JsonSchema = {
+  ...generatedArtifactSchema,
+  properties: {
+    ...(generatedArtifactSchema.properties ?? {}),
+    origin: {
+      oneOf: [importedRunArtifactOriginSchema, generatedRunArtifactOriginSchema],
+    },
+  },
+};
+
 function agent(
   context: ResolvedSecurityContext | undefined,
 ): Extract<ResolvedSecurityContext, { kind: "agent" }> {
@@ -1165,6 +1194,30 @@ function agent(
     });
   }
   return context;
+}
+
+function inspectionCaller(context: ResolvedSecurityContext | undefined): {
+  workspaceId: string;
+  actor:
+    | { kind: "agent"; principalId: string }
+    | { kind: "human"; viewerId: string };
+} {
+  if (!context) {
+    throw new CapabilityFailure({
+      code: "CAPABILITY_NOT_AUTHORIZED",
+      category: "authorization",
+      message: "Workflow Run capability is not authorized.",
+    });
+  }
+  return context.kind === "agent"
+    ? {
+        workspaceId: context.workspaceId,
+        actor: { kind: "agent", principalId: context.principalId },
+      }
+    : {
+        workspaceId: context.workspaceId,
+        actor: { kind: "human", viewerId: context.userId },
+      };
 }
 
 function authorizationEvidence(context: {
@@ -1367,7 +1420,7 @@ export function createWorkflowRunRegistrations(
     defineCapability({
       identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.get,
       summary: "Inspect the canonical current state of one Workflow Run.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: resourceInput,
       outputSchema: runSchema,
       effect: QUERY_EFFECT,
@@ -1382,7 +1435,7 @@ export function createWorkflowRunRegistrations(
         return domain(() =>
           service.get({
             workspaceId: principal.workspaceId,
-            principalId: principal.principalId,
+            actor: { kind: "agent", principalId: principal.principalId },
             ...input,
           }),
         );
@@ -1508,7 +1561,7 @@ export function createWorkflowRunRegistrations(
       identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.events,
       summary:
         "Read retained gap-free Workflow Run events from an authenticated cursor.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: resourceInput.extend({ cursor }).strict(),
       outputSchema: {
         ...object,
@@ -1530,7 +1583,7 @@ export function createWorkflowRunRegistrations(
         return domain(() =>
           service.listEvents({
             workspaceId: principal.workspaceId,
-            principalId: principal.principalId,
+            actor: { kind: "agent", principalId: principal.principalId },
             ...input,
           }),
         );
@@ -1540,7 +1593,7 @@ export function createWorkflowRunRegistrations(
       identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.stepAttempts,
       summary:
         "List inspectable Step Attempts for one authorized Workflow Run.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: resourceInput,
       outputSchema: {
         ...object,
@@ -1564,7 +1617,7 @@ export function createWorkflowRunRegistrations(
         return domain(() =>
           service.listStepAttempts({
             workspaceId: principal.workspaceId,
-            principalId: principal.principalId,
+            actor: { kind: "agent", principalId: principal.principalId },
             ...input,
           }),
         );
@@ -1574,7 +1627,7 @@ export function createWorkflowRunRegistrations(
       identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.runArtifact,
       summary:
         "Inspect one generated Artifact proven to belong to an authorized Workflow Run.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: resourceInput.extend({ artifactId: id }).strict(),
       outputSchema: {
         ...object,
@@ -1602,10 +1655,120 @@ export function createWorkflowRunRegistrations(
         return domain(() =>
           service.getRunArtifact({
             workspaceId: principal.workspaceId,
-            principalId: principal.principalId,
+            actor: { kind: "agent", principalId: principal.principalId },
             ...input,
           }),
         );
+      },
+    }),
+    defineCapability({
+      identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.getV2,
+      audience: "shared",
+      summary: "Inspect one canonical Workflow Run as its requester or an authorized Workspace human.",
+      lifecycle: inspectionLifecycle,
+      input: resourceInput,
+      outputSchema: runSchema,
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: {
+        resources: [{ kind: "workflow", inputPath: "workflowId" }],
+      },
+      errors: [...COMMON_DISCOVERY_ERRORS, ...WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const caller = inspectionCaller(context.securityContext);
+        return domain(() => service.get({
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
+          ...input,
+        }));
+      },
+    }),
+    defineCapability({
+      identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.eventsV2,
+      audience: "shared",
+      summary: "Bootstrap or continue retained gap-free Workflow Run events for an authorized observer.",
+      lifecycle: inspectionLifecycle,
+      input: resourceInput.extend({ cursor: cursor.optional() }).strict(),
+      outputSchema: {
+        ...object,
+        required: ["items", "nextCursor"],
+        properties: {
+          items: { type: "array", items: eventSchema },
+          nextCursor: { type: "string" },
+        },
+      },
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: {
+        resources: [{ kind: "workflow", inputPath: "workflowId" }],
+      },
+      errors: [...COMMON_DISCOVERY_ERRORS, ...WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const caller = inspectionCaller(context.securityContext);
+        return domain(() => service.listEvents({
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
+          ...input,
+        }));
+      },
+    }),
+    defineCapability({
+      identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.stepAttemptsV2,
+      audience: "shared",
+      summary: "List canonical Step Attempts for a requester or authorized Workspace human.",
+      lifecycle: inspectionLifecycle,
+      input: resourceInput,
+      outputSchema: {
+        ...object,
+        required: ["items"],
+        properties: { items: { type: "array", items: stepAttemptSchema } },
+      },
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: {
+        resources: [{ kind: "workflow", inputPath: "workflowId" }],
+      },
+      errors: [...COMMON_DISCOVERY_ERRORS, ...WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const caller = inspectionCaller(context.securityContext);
+        return domain(() => service.listStepAttempts({
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
+          ...input,
+        }));
+      },
+    }),
+    defineCapability({
+      identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.runArtifactV2,
+      audience: "shared",
+      summary: "Inspect a Run-generated/reused Artifact as its Agent creator, or a Run input/output Artifact as an authorized Workspace human.",
+      lifecycle: inspectionLifecycle,
+      input: resourceInput.extend({ artifactId: id }).strict(),
+      outputSchema: {
+        ...object,
+        required: ["artifact", "textContent"],
+        properties: {
+          artifact: runArtifactV2Schema,
+          textContent: { type: ["string", "null"] },
+        },
+      },
+      effect: QUERY_EFFECT,
+      approval: { mode: "none" },
+      idempotency: { mode: "retry-safe" },
+      authorization: {
+        resources: [{ kind: "workflow", inputPath: "workflowId" }],
+      },
+      errors: [...COMMON_DISCOVERY_ERRORS, ...WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS],
+      handler: (input, context) => {
+        const caller = inspectionCaller(context.securityContext);
+        return domain(() => service.getRunArtifact({
+          workspaceId: caller.workspaceId,
+          actor: caller.actor,
+          ...input,
+        }));
       },
     }),
   ];

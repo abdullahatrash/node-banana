@@ -12,6 +12,7 @@ import type {
   CapabilityAuthorizationRequest,
   CapabilityAuthorizer,
 } from "@/types/agentAuthorization";
+import type { ResolvedSecurityContext } from "@/types/capabilities";
 import type { ArtifactMetadata } from "../../artifacts/types";
 import type { ResolvedWorkflowDefinition } from "../../workflows/types";
 import { GOLDEN_WORKFLOW_OPERATION_REGISTRY } from "../../workflows";
@@ -233,19 +234,19 @@ function setup() {
     ...createWorkflowRunRegistrations(service),
   ]);
   const canonical = new CapabilityDispatcher(registry, authorizer);
-  const dispatcher = {
+  const port = (securityContext: ResolvedSecurityContext) => ({
     dispatch: (invocation: Parameters<typeof canonical.dispatch>[0]) =>
-      canonical.dispatch(invocation, {
-        securityContext: {
-          kind: "agent",
-          workspaceId: WORKSPACE_ID,
-          principalId: PRINCIPAL_ID,
-          keyId: "key_1",
-        },
-      }),
-  };
+      canonical.dispatch(invocation, { securityContext }),
+  });
+  const dispatcher = port({
+    kind: "agent",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    keyId: "key_1",
+  });
   return {
     dispatcher,
+    port,
     registry,
     repository,
     requests,
@@ -482,5 +483,164 @@ describe("Workflow Run v2 public surface parity", () => {
         [{ kind: "workflow", id: WORKFLOW_ID }],
         [{ kind: "workflow", id: WORKFLOW_ID }],
       ]);
+  });
+
+  it("keeps @2 Human inspection broad enough for inputs while Agent inspection stays creator-bound and output-only", async () => {
+    const value = setup();
+    const started = await dispatchCliCapability(
+      "workflow_runs.start@2",
+      startInput(),
+      value.dispatcher,
+    );
+    if (started.type !== "capability_result") {
+      throw new Error("Workflow Run acceptance expected.");
+    }
+    const runId = (started.output as { run: { id: string } }).run.id;
+    const resource = { workflowId: WORKFLOW_ID, runId };
+    const human = value.port({
+      kind: "human",
+      workspaceId: WORKSPACE_ID,
+      userId: "operator_1",
+      role: "member",
+    });
+
+    await expect(dispatchCliCapability(
+      "workflow_runs.get@2",
+      resource,
+      human,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { id: runId },
+    });
+    await expect(dispatchCliCapability(
+      "workflow_step_attempts.list@2",
+      resource,
+      human,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { items: [] },
+    });
+    const firstPage = await dispatchCliCapability(
+      "workflow_run_events.list@2",
+      resource,
+      human,
+    );
+    expect(firstPage).toMatchObject({
+      type: "capability_result",
+      output: { items: [{ sequence: 1 }] },
+    });
+    if (firstPage.type !== "capability_result") {
+      throw new Error("Human event bootstrap expected.");
+    }
+    const cursor = (firstPage.output as { nextCursor: string }).nextCursor;
+    await expect(dispatchCliCapability(
+      "workflow_run_events.list@2",
+      { ...resource, cursor },
+      human,
+    )).resolves.toMatchObject({ type: "capability_result" });
+    await expect(dispatchCliCapability(
+      "workflow_run_artifacts.get@2",
+      { ...resource, artifactId: REFERENCE_ARTIFACT_ID },
+      human,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { artifact: { id: REFERENCE_ARTIFACT_ID, origin: { kind: "imported" } } },
+    });
+
+    const generatedAttempt: WorkflowStepAttemptRecord = {
+      id: "attempt_copy_human_1",
+      workspaceId: WORKSPACE_ID,
+      runId,
+      stepId: "draft_copy",
+      attempt: 1,
+      state: "completed",
+      operationIdentity: GOLDEN_OPERATION_CONTRACTS.draftCopy.identity,
+      operationContractDigest: GOLDEN_OPERATION_CONTRACTS.draftCopy.contractDigest,
+      provider: "conformance",
+      providerOperation: "generate_text",
+      model: "golden-v1",
+      intentDigest: `sha256:${"3".repeat(64)}`,
+      effectKey: `workflow-effect:v1:${WORKSPACE_ID}:${runId}:draft_copy:1`,
+      inputs: [],
+      outputs: {
+        text: {
+          artifactId: GENERATED_ARTIFACT_ID,
+          digest: GOLDEN_TEXT_BYTES.linkedInCopy.digest,
+          kind: "text",
+          mediaType: GOLDEN_TEXT_BYTES.linkedInCopy.mediaType,
+          sizeBytes: GOLDEN_TEXT_BYTES.linkedInCopy.sizeBytes,
+        },
+      },
+      providerOperationRef: "provider_ref_1",
+      outcome: { kind: "succeeded", providerOperationRef: "provider_ref_1" },
+      providerMetadata: null,
+      reconciliation: null,
+      failureCode: null,
+      startedAt: NOW,
+      completedAt: NOW,
+    };
+    value.repository.stepAttempts.set(generatedAttempt.id, generatedAttempt);
+    value.setGenerated(generatedCopy(runId));
+    await expect(dispatchCliCapability(
+      "workflow_run_artifacts.get@2",
+      { ...resource, artifactId: GENERATED_ARTIFACT_ID },
+      human,
+    )).resolves.toMatchObject({
+      type: "capability_result",
+      output: { artifact: { id: GENERATED_ARTIFACT_ID, origin: { kind: "generated" } } },
+    });
+
+    const otherHuman = value.port({
+      kind: "human",
+      workspaceId: WORKSPACE_ID,
+      userId: "operator_2",
+      role: "member",
+    });
+    await expect(dispatchCliCapability(
+      "workflow_run_events.list@2",
+      { ...resource, cursor },
+      otherHuman,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "WORKFLOW_RUN_INVALID_INPUT",
+    });
+
+    const otherAgent = value.port({
+      kind: "agent",
+      workspaceId: WORKSPACE_ID,
+      principalId: "principal_2",
+      keyId: "key_2",
+    });
+    await expect(dispatchCliCapability(
+      "workflow_runs.get@2",
+      resource,
+      otherAgent,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "WORKFLOW_RUN_UNAVAILABLE",
+    });
+    await expect(dispatchCliCapability(
+      "workflow_run_artifacts.get@2",
+      { ...resource, artifactId: REFERENCE_ARTIFACT_ID },
+      value.dispatcher,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "WORKFLOW_RUN_UNAVAILABLE",
+    });
+
+    const foreignWorkspaceHuman = value.port({
+      kind: "human",
+      workspaceId: "workspace_2",
+      userId: "operator_1",
+      role: "member",
+    });
+    await expect(dispatchCliCapability(
+      "workflow_runs.get@2",
+      resource,
+      foreignWorkspaceHuman,
+    )).resolves.toMatchObject({
+      type: "capability_error",
+      code: "WORKFLOW_RUN_UNAVAILABLE",
+    });
   });
 });

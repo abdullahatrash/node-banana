@@ -320,8 +320,11 @@ describe("Workflow Run capability parity", () => {
         .sort(),
     ).toEqual([
       "workflow_run_artifacts.get@1",
+      "workflow_run_artifacts.get@2",
       "workflow_run_events.list@1",
+      "workflow_run_events.list@2",
       "workflow_runs.get@1",
+      "workflow_runs.get@2",
       "workflow_runs.preview@1",
       "workflow_runs.reconcile@1",
       "workflow_runs.resume@1",
@@ -329,6 +332,7 @@ describe("Workflow Run capability parity", () => {
       "workflow_runs.start@1",
       "workflow_runs.start@2",
       "workflow_step_attempts.list@1",
+      "workflow_step_attempts.list@2",
     ]);
     const started = await dispatchCliCapability(
       "workflow_runs.start@1",

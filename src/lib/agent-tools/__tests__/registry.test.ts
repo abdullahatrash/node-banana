@@ -139,8 +139,11 @@ describe("production Capability Registry", () => {
       "workflow_operations.get@1",
       "workflow_operations.list@1",
       "workflow_run_artifacts.get@1",
+      "workflow_run_artifacts.get@2",
       "workflow_run_events.list@1",
+      "workflow_run_events.list@2",
       "workflow_runs.get@1",
+      "workflow_runs.get@2",
       "workflow_runs.preview@1",
       "workflow_runs.reconcile@1",
       "workflow_runs.resume@1",
@@ -148,8 +151,10 @@ describe("production Capability Registry", () => {
       "workflow_runs.start@1",
       "workflow_runs.start@2",
       "workflow_step_attempts.list@1",
+      "workflow_step_attempts.list@2",
       "workflow_versions.create@1",
       "workflow_versions.get@1",
+      "workflow_versions.get@2",
       "workflow_versions.validate@1",
       "workflows.create@1",
     ]);
@@ -162,9 +167,14 @@ describe("production Capability Registry", () => {
       );
       expect(definition.lifecycle).toMatchObject({
         status: "active",
-        recommended:
-          formatCapabilityIdentity(definition.identity) !==
+        recommended: ![
+          "workflow_run_artifacts.get@1",
+          "workflow_run_events.list@1",
+          "workflow_runs.get@1",
           "workflow_runs.start@1",
+          "workflow_step_attempts.list@1",
+          "workflow_versions.get@1",
+        ].includes(formatCapabilityIdentity(definition.identity)),
       });
       expect(definition.schemas.input).toMatchObject({ type: "object" });
       expect(definition.schemas.output).toMatchObject({ type: "object" });
@@ -308,8 +318,11 @@ describe("production Capability Registry", () => {
       "workflow_operations.get.v1",
       "workflow_operations.list.v1",
       "workflow_run_artifacts.get.v1",
+      "workflow_run_artifacts.get.v2",
       "workflow_run_events.list.v1",
+      "workflow_run_events.list.v2",
       "workflow_runs.get.v1",
+      "workflow_runs.get.v2",
       "workflow_runs.preview.v1",
       "workflow_runs.reconcile.v1",
       "workflow_runs.resume.v1",
@@ -317,8 +330,10 @@ describe("production Capability Registry", () => {
       "workflow_runs.start.v1",
       "workflow_runs.start.v2",
       "workflow_step_attempts.list.v1",
+      "workflow_step_attempts.list.v2",
       "workflow_versions.create.v1",
       "workflow_versions.get.v1",
+      "workflow_versions.get.v2",
       "workflow_versions.validate.v1",
       "workflows.create.v1",
     ]);

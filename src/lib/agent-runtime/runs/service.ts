@@ -539,6 +539,37 @@ function requireRunPrincipal(
   }
 }
 
+export type WorkflowRunInspectionActor =
+  | { kind: "agent"; principalId: string }
+  | { kind: "human"; viewerId: string };
+
+type WorkflowRunInspectionActorInput =
+  | { actor: WorkflowRunInspectionActor; principalId?: never }
+  | { actor?: never; principalId: string };
+
+function inspectionActor(input: WorkflowRunInspectionActorInput): {
+  cursorPrincipalId: string;
+  enforceCreatorOwnership: boolean;
+  mayReadInputArtifacts: boolean;
+} {
+  if (!input.actor || input.actor.kind === "agent") {
+    const principalId = evidence(
+      input.actor ? input.actor.principalId : input.principalId,
+      "Principal",
+    );
+    return {
+      cursorPrincipalId: principalId,
+      enforceCreatorOwnership: true,
+      mayReadInputArtifacts: false,
+    };
+  }
+  return {
+    cursorPrincipalId: `human:${evidence(input.actor.viewerId, "Viewer")}`,
+    enforceCreatorOwnership: false,
+    mayReadInputArtifacts: true,
+  };
+}
+
 export class WorkflowRunService {
   constructor(
     private readonly repository: WorkflowRunRepository,
@@ -1274,9 +1305,8 @@ export class WorkflowRunService {
     return acceptance(result.run, result.receipt.initialEventCursor);
   }
 
-  async get(input: {
+  async get(input: WorkflowRunInspectionActorInput & {
     workspaceId: string;
-    principalId: string;
     workflowId: string;
     runId: string;
   }): Promise<WorkflowRunDto> {
@@ -1293,7 +1323,10 @@ export class WorkflowRunService {
         "The Workflow Run is unavailable.",
       );
     }
-    requireRunPrincipal(run, evidence(input.principalId, "Principal"));
+    const viewer = inspectionActor(input);
+    if (viewer.enforceCreatorOwnership) {
+      requireRunPrincipal(run, viewer.cursorPrincipalId);
+    }
     return workflowRunDto(run);
   }
 
@@ -2487,9 +2520,8 @@ export class WorkflowRunService {
     return mutationReceiptResult(result);
   }
 
-  async listStepAttempts(input: {
+  async listStepAttempts(input: WorkflowRunInspectionActorInput & {
     workspaceId: string;
-    principalId: string;
     workflowId: string;
     runId: string;
   }): Promise<{ items: WorkflowStepAttemptDto[] }> {
@@ -2506,7 +2538,10 @@ export class WorkflowRunService {
         "The Workflow Run is unavailable.",
       );
     }
-    requireRunPrincipal(run, evidence(input.principalId, "Principal"));
+    const viewer = inspectionActor(input);
+    if (viewer.enforceCreatorOwnership) {
+      requireRunPrincipal(run, viewer.cursorPrincipalId);
+    }
     const attempts = await this.repository.listStepAttempts({
       workspaceId: input.workspaceId,
       runId,
@@ -2520,9 +2555,8 @@ export class WorkflowRunService {
     return { items: attempts.map(attemptDto) };
   }
 
-  async getRunArtifact(input: {
+  async getRunArtifact(input: WorkflowRunInspectionActorInput & {
     workspaceId: string;
-    principalId: string;
     workflowId: string;
     runId: string;
     artifactId: string;
@@ -2547,12 +2581,18 @@ export class WorkflowRunService {
         "The Workflow Run is unavailable.",
       );
     }
-    requireRunPrincipal(run, evidence(input.principalId, "Principal"));
+    const viewer = inspectionActor(input);
+    if (viewer.enforceCreatorOwnership) {
+      requireRunPrincipal(run, viewer.cursorPrincipalId);
+    }
     const attempts = await this.repository.listStepAttempts({
       workspaceId: input.workspaceId,
       runId,
     });
-    const belongsToRun = attempts?.some((attempt) =>
+    const belongsToRun = (viewer.mayReadInputArtifacts &&
+      run.startSnapshot.artifactReferences.some(
+        (reference) => reference.artifactId === artifactId,
+      )) || attempts?.some((attempt) =>
       Object.values(attempt.outputs ?? {}).some(
         (output) => output.artifactId === artifactId,
       ),
@@ -2580,16 +2620,15 @@ export class WorkflowRunService {
     }
   }
 
-  async listEvents(input: {
+  async listEvents(input: WorkflowRunInspectionActorInput & {
     workspaceId: string;
-    principalId: string;
     workflowId: string;
     runId: string;
-    cursor: string;
+    cursor?: string;
   }): Promise<{ items: WorkflowRunEventDto[]; nextCursor: string }> {
     const workflowId = identifier(input.workflowId, "Workflow ID");
     const runId = identifier(input.runId, "Workflow Run ID");
-    const principalId = evidence(input.principalId, "Principal");
+    const viewer = inspectionActor(input);
     const run = await this.repository.get({
       workspaceId: input.workspaceId,
       workflowId,
@@ -2601,16 +2640,22 @@ export class WorkflowRunService {
         "The Workflow Run is unavailable.",
       );
     }
-    requireRunPrincipal(run, principalId);
+    if (viewer.enforceCreatorOwnership) {
+      requireRunPrincipal(run, viewer.cursorPrincipalId);
+    }
     let afterSequence: number;
     try {
+      if (!input.cursor) {
+        afterSequence = 0;
+      } else {
       afterSequence = this.cursors.open({
         cursor: input.cursor,
         workspaceId: input.workspaceId,
-        principalId,
+        principalId: viewer.cursorPrincipalId,
         workflowId,
         runId,
       });
+      }
     } catch {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_INVALID_INPUT",
@@ -2636,7 +2681,7 @@ export class WorkflowRunService {
       items: events.map(eventDto),
       nextCursor: this.cursors.seal({
         workspaceId: input.workspaceId,
-        principalId,
+        principalId: viewer.cursorPrincipalId,
         workflowId,
         runId,
         afterSequence: lastSequence,
