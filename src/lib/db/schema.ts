@@ -595,6 +595,42 @@ export const brandAnalysisRuns = pgTable(
   }),
 );
 
+/** Transactional dispatch intent prevents a committed analysis run from being lost. */
+export const onboardingAnalysisDispatchIntents = pgTable(
+  "onboarding_analysis_dispatch_intents",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => brandAnalysisRuns.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    status: text("status").default("pending").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    lastErrorCode: text("last_error_code"),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceStatusIdx: index(
+      "onboarding_analysis_dispatch_workspace_status_idx",
+    ).on(table.workspaceId, table.status, table.createdAt),
+    statusCheck: check(
+      "onboarding_analysis_dispatch_status_check",
+      sql`${table.status} in ('pending', 'dispatched')`,
+    ),
+    attemptsCheck: check(
+      "onboarding_analysis_dispatch_attempts_check",
+      sql`${table.attempts} >= 0`,
+    ),
+  }),
+);
+
 /** Immutable, versioned Brand Profile revisions. */
 export const brandProfiles = pgTable(
   "brand_profiles",

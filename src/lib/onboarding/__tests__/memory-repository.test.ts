@@ -224,6 +224,10 @@ describe("InMemoryOnboardingRepository", () => {
     expect(result.kind).toBe("committed");
     expect(await repository.getBrandSource("ws_1", "source_1")).not.toBeNull();
     expect(await repository.getAnalysisRun("ws_1", "run_1")).not.toBeNull();
+    expect(await repository.getAnalysisDispatchIntent("ws_1", "run_1")).toMatchObject({
+      status: "pending",
+      attempts: 0,
+    });
   });
 
   it("validates stored documents again on read", async () => {

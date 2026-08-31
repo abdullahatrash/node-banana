@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import {
   brandAnalysisRuns,
@@ -6,6 +6,7 @@ import {
   brandSources,
   member,
   onboardingActivationArtifacts,
+  onboardingAnalysisDispatchIntents,
   onboardingCommandReceipts,
   onboardingSessions,
   organization,
@@ -25,6 +26,8 @@ import {
 } from "./schemas";
 import type {
   ActivationArtifactRecord,
+  AnalysisDispatchIntentRecord,
+  AnalysisGenerationContext,
   AnalysisRunTransition,
   BrandAnalysisRunRecord,
   BrandProfileRecord,
@@ -44,6 +47,7 @@ type SourceRow = typeof brandSources.$inferSelect;
 type AnalysisRunRow = typeof brandAnalysisRuns.$inferSelect;
 type ProfileRow = typeof brandProfiles.$inferSelect;
 type ActivationArtifactRow = typeof onboardingActivationArtifacts.$inferSelect;
+type DispatchIntentRow = typeof onboardingAnalysisDispatchIntents.$inferSelect;
 
 function sessionRecord(row: SessionRow): OnboardingSessionRecord {
   return {
@@ -59,6 +63,13 @@ function sourceRecord(row: SourceRow): BrandSourceRecord {
 
 function analysisRunRecord(row: AnalysisRunRow): BrandAnalysisRunRecord {
   return row;
+}
+
+function dispatchIntentRecord(row: DispatchIntentRow): AnalysisDispatchIntentRecord {
+  return {
+    ...row,
+    status: row.status === "dispatched" ? "dispatched" : "pending",
+  };
 }
 
 function profileRecord(row: ProfileRow): BrandProfileRecord {
@@ -376,6 +387,14 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
       }
       if (input.analysisRun) {
         await tx.insert(brandAnalysisRuns).values(input.analysisRun);
+        await tx.insert(onboardingAnalysisDispatchIntents).values({
+          runId: input.analysisRun.id,
+          workspaceId: input.analysisRun.workspaceId,
+          status: "pending",
+          attempts: 0,
+          createdAt: now,
+          updatedAt: now,
+        });
       }
       if (input.activateProfileId) {
         if (!workspaceId) return { kind: "conflict" };
@@ -503,6 +522,14 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
   }
 
   async transitionAnalysisRun(input: AnalysisRunTransition) {
+    const predicates = [
+      eq(brandAnalysisRuns.id, input.runId),
+      eq(brandAnalysisRuns.workspaceId, input.workspaceId),
+      inArray(brandAnalysisRuns.status, input.expectedStatuses),
+    ];
+    if (input.expectedStages?.length) {
+      predicates.push(inArray(brandAnalysisRuns.stage, input.expectedStages));
+    }
     const [row] = await this.db
       .update(brandAnalysisRuns)
       .set({
@@ -514,15 +541,86 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
         finishedAt: input.finishedAt,
         updatedAt: input.updatedAt,
       })
-      .where(
-        and(
-          eq(brandAnalysisRuns.id, input.runId),
-          eq(brandAnalysisRuns.workspaceId, input.workspaceId),
-          inArray(brandAnalysisRuns.status, input.expectedStatuses),
-        ),
-      )
+      .where(and(...predicates))
       .returning();
     return row ? analysisRunRecord(row) : null;
+  }
+
+  async getAnalysisGenerationContext(
+    workspaceId: string,
+    runId: string,
+  ): Promise<AnalysisGenerationContext | null> {
+    const [row] = await this.db
+      .select({
+        run: brandAnalysisRuns,
+        source: brandSources,
+        answers: onboardingSessions.answers,
+        contentLanguage: onboardingSessions.contentLanguage,
+      })
+      .from(brandAnalysisRuns)
+      .innerJoin(
+        brandSources,
+        and(
+          eq(brandSources.id, brandAnalysisRuns.sourceId),
+          eq(brandSources.workspaceId, brandAnalysisRuns.workspaceId),
+        ),
+      )
+      .innerJoin(
+        onboardingSessions,
+        eq(onboardingSessions.workspaceId, brandAnalysisRuns.workspaceId),
+      )
+      .where(
+        and(
+          eq(brandAnalysisRuns.workspaceId, workspaceId),
+          eq(brandAnalysisRuns.id, runId),
+        ),
+      )
+      .limit(1);
+    if (!row) return null;
+    return {
+      run: analysisRunRecord(row.run),
+      source: sourceRecord(row.source),
+      answers: onboardingAnswersV1Schema.parse(row.answers),
+      contentLanguage: contentLanguageSchema.parse(row.contentLanguage),
+    };
+  }
+
+  async getDraftProfileByRun(workspaceId: string, runId: string) {
+    const [row] = await this.db
+      .select()
+      .from(brandProfiles)
+      .where(
+        and(
+          eq(brandProfiles.workspaceId, workspaceId),
+          eq(brandProfiles.generatedFromRunId, runId),
+        ),
+      )
+      .limit(1);
+    return row ? profileRecord(row) : null;
+  }
+
+  async getActivationArtifactByProfile(workspaceId: string, profileId: string) {
+    const [row] = await this.db
+      .select()
+      .from(onboardingActivationArtifacts)
+      .where(
+        and(
+          eq(onboardingActivationArtifacts.workspaceId, workspaceId),
+          eq(onboardingActivationArtifacts.brandProfileId, profileId),
+        ),
+      )
+      .limit(1);
+    return row ? activationArtifactRecord(row) : null;
+  }
+
+  async getNextBrandProfileRevision(workspaceId: string) {
+    const [row] = await this.db
+      .select({ revision: brandProfiles.revision })
+      .from(brandProfiles)
+      .where(eq(brandProfiles.workspaceId, workspaceId))
+      .orderBy(desc(brandProfiles.revision))
+      .limit(1);
+    return (row?.revision ?? 0) + 1;
   }
 
   async createDraftProfile(input: BrandProfileRecord) {
@@ -567,5 +665,45 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
       .limit(1);
     if (!existing) throw new Error("Failed to persist activation artifact.");
     return activationArtifactRecord(existing);
+  }
+
+  async getAnalysisDispatchIntent(workspaceId: string, runId: string) {
+    const [row] = await this.db
+      .select()
+      .from(onboardingAnalysisDispatchIntents)
+      .where(
+        and(
+          eq(onboardingAnalysisDispatchIntents.workspaceId, workspaceId),
+          eq(onboardingAnalysisDispatchIntents.runId, runId),
+        ),
+      )
+      .limit(1);
+    return row ? dispatchIntentRecord(row) : null;
+  }
+
+  async recordAnalysisDispatch(input: {
+    workspaceId: string;
+    runId: string;
+    succeeded: boolean;
+    errorCode?: string | null;
+    now: Date;
+  }) {
+    const [row] = await this.db
+      .update(onboardingAnalysisDispatchIntents)
+      .set({
+        status: input.succeeded ? "dispatched" : "pending",
+        attempts: sql`${onboardingAnalysisDispatchIntents.attempts} + 1`,
+        lastErrorCode: input.succeeded ? null : input.errorCode ?? "DISPATCH_FAILED",
+        dispatchedAt: input.succeeded ? input.now : null,
+        updatedAt: input.now,
+      })
+      .where(
+        and(
+          eq(onboardingAnalysisDispatchIntents.workspaceId, input.workspaceId),
+          eq(onboardingAnalysisDispatchIntents.runId, input.runId),
+        ),
+      )
+      .returning();
+    return row ? dispatchIntentRecord(row) : null;
   }
 }

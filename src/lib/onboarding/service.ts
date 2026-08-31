@@ -159,6 +159,42 @@ export class DefaultOnboardingService {
     private readonly ids: OnboardingIdGenerator = randomIdGenerator,
   ) {}
 
+  private async scheduleAnalysis(input: { workspaceId: string; runId: string }) {
+    const intent = await this.repository.getAnalysisDispatchIntent(
+      input.workspaceId,
+      input.runId,
+    );
+    if (!intent) {
+      throw new OnboardingError(
+        "ONBOARDING_COMMAND_INVALID",
+        "The Brand Analysis dispatch intent is missing.",
+        500,
+      );
+    }
+    if (intent.status === "dispatched") return;
+
+    try {
+      await this.queue.schedule(input);
+      await this.repository.recordAnalysisDispatch({
+        ...input,
+        succeeded: true,
+        now: this.clock.now(),
+      });
+    } catch {
+      await this.repository.recordAnalysisDispatch({
+        ...input,
+        succeeded: false,
+        errorCode: "WORKFLOW_DISPATCH_FAILED",
+        now: this.clock.now(),
+      });
+      throw new OnboardingError(
+        "ONBOARDING_COMMAND_INVALID",
+        "Workspace preparation could not be queued. Retry the request safely.",
+        503,
+      );
+    }
+  }
+
   async getSnapshot(input: { userId: string }): Promise<OnboardingSnapshot> {
     let aggregate = await this.repository.readAggregate(input.userId);
     if (!aggregate) {
@@ -213,7 +249,7 @@ export class DefaultOnboardingService {
         aggregate.session.workspaceId &&
         aggregate.analysis?.status === "queued"
       ) {
-        await this.queue.schedule({
+        await this.scheduleAnalysis({
           workspaceId: aggregate.session.workspaceId,
           runId: aggregate.analysis.id,
         });
@@ -387,7 +423,7 @@ export class DefaultOnboardingService {
       updated.session.workspaceId &&
       updated.analysis?.status === "queued"
     ) {
-      await this.queue.schedule({
+      await this.scheduleAnalysis({
         workspaceId: updated.session.workspaceId,
         runId: updated.analysis.id,
       });

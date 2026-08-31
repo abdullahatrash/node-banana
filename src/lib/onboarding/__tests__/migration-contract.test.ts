@@ -6,6 +6,10 @@ const migration = readFileSync(
   resolve(process.cwd(), "drizzle/0053_fearless_lightspeed.sql"),
   "utf8",
 );
+const dispatchMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0054_first_betty_ross.sql"),
+  "utf8",
+);
 
 describe("onboarding persistence migration", () => {
   it("creates the onboarding and Brand Profile authority", () => {
@@ -22,6 +26,17 @@ describe("onboarding persistence migration", () => {
     }
     expect(migration).toContain(
       'ALTER TABLE "workspace_settings" ADD COLUMN "default_content_language"',
+    );
+  });
+
+  it("commits a constrained and recoverable workflow dispatch intent", () => {
+    expect(dispatchMigration).toContain(
+      'CREATE TABLE "onboarding_analysis_dispatch_intents"',
+    );
+    expect(dispatchMigration).toContain("onboarding_analysis_dispatch_status_check");
+    expect(dispatchMigration).toContain("onboarding_analysis_dispatch_attempts_check");
+    expect(dispatchMigration).toContain(
+      "onboarding_analysis_dispatch_workspace_status_idx",
     );
   });
 
@@ -65,4 +80,3 @@ describe("onboarding persistence migration", () => {
     }
   });
 });
-

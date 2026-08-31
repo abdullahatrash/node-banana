@@ -6,6 +6,8 @@ import {
 } from "./schemas";
 import type {
   ActivationArtifactRecord,
+  AnalysisDispatchIntentRecord,
+  AnalysisGenerationContext,
   AnalysisRunTransition,
   BrandAnalysisRunRecord,
   BrandProfileRecord,
@@ -38,6 +40,7 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
   readonly runs = new Map<string, BrandAnalysisRunRecord>();
   readonly profiles = new Map<string, BrandProfileRecord>();
   readonly artifacts = new Map<string, ActivationArtifactRecord>();
+  readonly dispatchIntents = new Map<string, AnalysisDispatchIntentRecord>();
   readonly receipts = new Map<string, MemoryReceipt>();
   readonly userLocales = new Map<string, "ar" | "en">();
   readonly workspaceLanguages = new Map<string, string>();
@@ -159,7 +162,19 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
         this.workspaceLanguages.set(input.workspace.id, input.workspace.contentLanguage);
       }
       if (input.source) this.sources.set(input.source.id, clone(input.source));
-      if (input.analysisRun) this.runs.set(input.analysisRun.id, clone(input.analysisRun));
+      if (input.analysisRun) {
+        this.runs.set(input.analysisRun.id, clone(input.analysisRun));
+        this.dispatchIntents.set(input.analysisRun.id, {
+          runId: input.analysisRun.id,
+          workspaceId: input.analysisRun.workspaceId,
+          status: "pending",
+          attempts: 0,
+          lastErrorCode: null,
+          dispatchedAt: null,
+          createdAt: input.analysisRun.createdAt,
+          updatedAt: input.analysisRun.updatedAt,
+        });
+      }
       if (input.activateProfileId) {
         const profile = this.profiles.get(input.activateProfileId);
         if (!profile || profile.workspaceId !== current.workspaceId || profile.status !== "draft") {
@@ -217,9 +232,11 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
     return this.lock(async () => {
       const run = this.runs.get(input.runId);
       if (
-        !run ||
-        run.workspaceId !== input.workspaceId ||
-        !input.expectedStatuses.includes(run.status)
+      !run ||
+      run.workspaceId !== input.workspaceId ||
+        !input.expectedStatuses.includes(run.status) ||
+        (input.expectedStages !== undefined &&
+          !input.expectedStages.includes(run.stage))
       ) {
         return null;
       }
@@ -236,6 +253,49 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
       this.runs.set(run.id, updated);
       return clone(updated);
     });
+  }
+
+  async getAnalysisGenerationContext(
+    workspaceId: string,
+    runId: string,
+  ): Promise<AnalysisGenerationContext | null> {
+    const run = this.runs.get(runId);
+    const source = run ? this.sources.get(run.sourceId) : null;
+    const session = [...this.sessions.values()].find(
+      (candidate) => candidate.workspaceId === workspaceId,
+    );
+    if (!run || run.workspaceId !== workspaceId || !source || !session) return null;
+    return {
+      run: clone(run),
+      source: clone(source),
+      answers: onboardingAnswersV1Schema.parse(clone(session.answers)),
+      contentLanguage: contentLanguageSchema.parse(session.contentLanguage),
+    };
+  }
+
+  async getDraftProfileByRun(workspaceId: string, runId: string) {
+    const profile = [...this.profiles.values()].find(
+      (candidate) =>
+        candidate.workspaceId === workspaceId &&
+        candidate.generatedFromRunId === runId,
+    );
+    return profile ? clone(profile) : null;
+  }
+
+  async getActivationArtifactByProfile(workspaceId: string, profileId: string) {
+    const artifact = [...this.artifacts.values()].find(
+      (candidate) =>
+        candidate.workspaceId === workspaceId &&
+        candidate.brandProfileId === profileId,
+    );
+    return artifact ? clone(artifact) : null;
+  }
+
+  async getNextBrandProfileRevision(workspaceId: string) {
+    const revisions = [...this.profiles.values()]
+      .filter((profile) => profile.workspaceId === workspaceId)
+      .map((profile) => profile.revision);
+    return Math.max(0, ...revisions) + 1;
   }
 
   async createDraftProfile(input: BrandProfileRecord) {
@@ -263,6 +323,34 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
       record.artifact = activationArtifactV1Schema.parse(record.artifact);
       this.artifacts.set(record.id, record);
       return clone(record);
+    });
+  }
+
+  async getAnalysisDispatchIntent(workspaceId: string, runId: string) {
+    const intent = this.dispatchIntents.get(runId);
+    return intent?.workspaceId === workspaceId ? clone(intent) : null;
+  }
+
+  async recordAnalysisDispatch(input: {
+    workspaceId: string;
+    runId: string;
+    succeeded: boolean;
+    errorCode?: string | null;
+    now: Date;
+  }) {
+    return this.lock(async () => {
+      const intent = this.dispatchIntents.get(input.runId);
+      if (!intent || intent.workspaceId !== input.workspaceId) return null;
+      const updated: AnalysisDispatchIntentRecord = {
+        ...intent,
+        status: input.succeeded ? "dispatched" : "pending",
+        attempts: intent.attempts + 1,
+        lastErrorCode: input.succeeded ? null : input.errorCode ?? "DISPATCH_FAILED",
+        dispatchedAt: input.succeeded ? input.now : null,
+        updatedAt: input.now,
+      };
+      this.dispatchIntents.set(updated.runId, updated);
+      return clone(updated);
     });
   }
 }

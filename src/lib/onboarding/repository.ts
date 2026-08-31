@@ -80,6 +80,24 @@ export interface ActivationArtifactRecord {
   createdAt: Date;
 }
 
+export interface AnalysisDispatchIntentRecord {
+  runId: string;
+  workspaceId: string;
+  status: "pending" | "dispatched";
+  attempts: number;
+  lastErrorCode: string | null;
+  dispatchedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AnalysisGenerationContext {
+  run: BrandAnalysisRunRecord;
+  source: BrandSourceRecord;
+  answers: OnboardingAnswersV1;
+  contentLanguage: string;
+}
+
 export interface OnboardingAggregate {
   session: OnboardingSessionRecord;
   interfaceLocale: InterfaceLocale;
@@ -149,6 +167,7 @@ export interface AnalysisRunTransition {
   runId: string;
   workspaceId: string;
   expectedStatuses: BrandAnalysisStatus[];
+  expectedStages?: BrandAnalysisStage[];
   status: BrandAnalysisStatus;
   stage: BrandAnalysisStage;
   errorCode?: string | null;
@@ -177,6 +196,30 @@ export interface OnboardingRepository {
   updateSourceExtraction(input: SourceExtractionUpdate): Promise<BrandSourceRecord | null>;
   getAnalysisRun(workspaceId: string, runId: string): Promise<BrandAnalysisRunRecord | null>;
   transitionAnalysisRun(input: AnalysisRunTransition): Promise<BrandAnalysisRunRecord | null>;
+  getAnalysisGenerationContext(
+    workspaceId: string,
+    runId: string,
+  ): Promise<AnalysisGenerationContext | null>;
+  getDraftProfileByRun(
+    workspaceId: string,
+    runId: string,
+  ): Promise<BrandProfileRecord | null>;
+  getActivationArtifactByProfile(
+    workspaceId: string,
+    profileId: string,
+  ): Promise<ActivationArtifactRecord | null>;
+  getNextBrandProfileRevision(workspaceId: string): Promise<number>;
   createDraftProfile(input: BrandProfileRecord): Promise<BrandProfileRecord>;
   createActivationArtifact(input: ActivationArtifactRecord): Promise<ActivationArtifactRecord>;
+  getAnalysisDispatchIntent(
+    workspaceId: string,
+    runId: string,
+  ): Promise<AnalysisDispatchIntentRecord | null>;
+  recordAnalysisDispatch(input: {
+    workspaceId: string;
+    runId: string;
+    succeeded: boolean;
+    errorCode?: string | null;
+    now: Date;
+  }): Promise<AnalysisDispatchIntentRecord | null>;
 }
