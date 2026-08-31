@@ -1,9 +1,7 @@
 /**
  * Simple Studio Store
  *
- * Lightweight Zustand store for the form-based Simple Studio mode.
- * Completely independent from workflowStore — no dependency on
- * nodes, edges, React Flow, or the workflow execution pipeline.
+ * Lightweight Zustand store for the form-based content studio.
  */
 
 import { create } from "zustand";

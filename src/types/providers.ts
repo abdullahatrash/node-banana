@@ -14,7 +14,7 @@ export interface SelectedModelPricing {
   amount: number;
 }
 
-// Selected model for image/video generation nodes
+// Selected model for image/video generation requests
 export interface SelectedModel {
   provider: ProviderType;
   modelId: string;

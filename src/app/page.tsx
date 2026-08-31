@@ -19,14 +19,14 @@ export default async function HomePage() {
               Tasmeemai
             </h2>
             <p className="text-lg text-neutral-400 max-w-md">
-              Node-based AI image generation workflow editor
+              Arabic-first content creation and publishing for MENA brands
             </p>
             <div className="flex items-center gap-3">
               <Link
-                href="/studio"
+                href="/simple-studio/images"
                 className="inline-flex items-center justify-center rounded-md bg-neutral-100 text-neutral-900 px-5 py-2.5 text-sm font-medium hover:bg-neutral-200 transition-colors"
               >
-                Open Studio
+                Open Content Studio
               </Link>
               {!session?.user && (
                 <Link

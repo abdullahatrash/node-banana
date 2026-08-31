@@ -6,15 +6,9 @@
  */
 
 // Domain re-exports
-export * from "./annotation";
-export * from "./nodes";
 export * from "./providers";
 export * from "./models";
-export * from "./workflow";
 export * from "./api";
-export * from "./quickstart";
-export * from "./chat";
-export * from "./canvas";
 export * from "./capabilities";
 export * from "./agentAuth";
 export * from "./agentAuthorization";

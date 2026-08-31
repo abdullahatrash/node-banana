@@ -19,8 +19,6 @@ const typedDomainErrorGuards = new Map<string, RegExp>([
   ["credentials/route.ts", /error instanceof CredentialVaultError/],
   ["credentials/[profileId]/reprovision/route.ts", /error instanceof CredentialVaultError/],
   ["credentials/[profileId]/rotate/route.ts", /error instanceof CredentialVaultError/],
-  ["projects/route.ts", /error instanceof InvalidWorkflowCredentialSlotsError/],
-  ["projects/[projectId]/route.ts", /error instanceof InvalidWorkflowCredentialSlotsError/],
 ]);
 
 describe("Studio error response allowlist", () => {

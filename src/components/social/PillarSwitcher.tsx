@@ -5,10 +5,10 @@ import Link from "next/link";
 import { ChannelsIcon, ChevronDownIcon } from "./icons";
 
 const PILLARS = [
-  { id: "studio", label: "AI Studio", href: "/studio" },
+  { id: "studio", label: "Content Studio", href: "/simple-studio/images" },
   { id: "editor", label: "Video Editor", href: "/editor/projects" },
   { id: "social", label: "Social Hub", href: "/social" },
-  { id: "analytics", label: "Analytics", href: "/analytics" },
+  { id: "analytics", label: "Analytics", href: "/social/analytics" },
 ] as const;
 
 interface PillarSwitcherProps {

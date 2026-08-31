@@ -16,7 +16,6 @@ import {
   workspaceStorageLimits,
   workspaces,
 } from "@/lib/db/schema";
-import { statusForProjectResave } from "./project-lifecycle";
 
 type AssetUploadState = "pending" | "ready" | "failed";
 
@@ -434,92 +433,6 @@ export async function ensurePersonalWorkspaceForUser(input: {
   throw new Error("Failed to provision personal workspace for user.");
 }
 
-interface UpsertProjectInput {
-  workspaceId: string;
-  userId: string;
-  projectId?: string;
-  name: string;
-  description?: string | null;
-  workflowJson?: Record<string, unknown> | null;
-  sourceDirectoryPath?: string | null;
-}
-
-export async function upsertProject(input: UpsertProjectInput) {
-  const db = getDb();
-  const now = new Date();
-
-  await ensureWorkspaceUser(input.workspaceId, input.userId);
-
-  const projectSlugBase = slugify(input.name) || "project";
-  const resolvedProjectId = input.projectId || `proj_${randomUUID()}`;
-
-  if (input.projectId) {
-    const [updated] = await db
-      .update(projects)
-      .set({
-        name: input.name,
-        description: input.description || null,
-        workflowJson: input.workflowJson || null,
-        status: statusForProjectResave(input.workflowJson),
-        sourceDirectoryPath: input.sourceDirectoryPath || null,
-        updatedAt: now,
-        lastOpenedAt: now,
-        deletedAt: null,
-      })
-      .where(
-        and(
-          eq(projects.id, input.projectId),
-          eq(projects.workspaceId, input.workspaceId),
-        ),
-      )
-      .returning();
-
-    if (updated) {
-      return updated;
-    }
-    // No existing row matched — fall through to INSERT with the provided ID
-  }
-
-  const candidateSlug = `${projectSlugBase}-${timestampSuffix()}`;
-
-  const [created] = await db
-    .insert(projects)
-    .values({
-      id: resolvedProjectId,
-      workspaceId: input.workspaceId,
-      name: input.name,
-      slug: candidateSlug,
-      description: input.description || null,
-      workflowJson: input.workflowJson || null,
-      sourceDirectoryPath: input.sourceDirectoryPath || null,
-      createdByUserId: input.userId,
-      createdAt: now,
-      updatedAt: now,
-      lastOpenedAt: now,
-    })
-    .returning();
-
-  return created;
-}
-
-export async function listProjects(workspaceId: string) {
-  const db = getDb();
-  return db
-    .select()
-    .from(projects)
-    .where(and(eq(projects.workspaceId, workspaceId), isNull(projects.deletedAt)))
-    .orderBy(desc(projects.updatedAt));
-}
-
-export async function countProjects(workspaceId: string): Promise<number> {
-  const db = getDb();
-  const [result] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(projects)
-    .where(and(eq(projects.workspaceId, workspaceId), isNull(projects.deletedAt)));
-  return result?.count ?? 0;
-}
-
 export async function getProject(workspaceId: string, projectId: string) {
   const db = getDb();
   const [project] = await db
@@ -533,29 +446,6 @@ export async function getProject(workspaceId: string, projectId: string) {
       ),
     );
   return project ?? null;
-}
-
-export async function softDeleteProject(workspaceId: string, projectId: string) {
-  const db = getDb();
-  const now = new Date();
-
-  const [deleted] = await db
-    .update(projects)
-    .set({
-      deletedAt: now,
-      status: "archived",
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(projects.workspaceId, workspaceId),
-        eq(projects.id, projectId),
-        isNull(projects.deletedAt),
-      ),
-    )
-    .returning();
-
-  return deleted ?? null;
 }
 
 interface FinalizeAssetUploadInput {

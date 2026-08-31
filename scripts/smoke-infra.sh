@@ -72,10 +72,6 @@ assert_success() {
   echo "[OK] ${label}"
 }
 
-urlencode() {
-  node -e 'process.stdout.write(encodeURIComponent(process.argv[1]));' "$1"
-}
-
 echo "> Infra smoke check"
 echo "  Base URL: $BASE_URL"
 echo "  Email: $SMOKE_EMAIL"
@@ -138,51 +134,12 @@ fi
 echo "[OK] selected workspace: $workspace_id"
 
 run_id="$(date +%s)"
-project_name="infra-smoke-${run_id}"
-project_payload="$(printf '{"name":"%s","description":"Infra smoke validation","workflowJson":{"nodes":[],"edges":[]}}' "$project_name")"
-
-project_create_response="$(
-  curl -sS \
-    -c "$COOKIE_JAR" \
-    -b "$COOKIE_JAR" \
-    -H "content-type: application/json" \
-    -H "x-workspace-id: ${workspace_id}" \
-    --data "$project_payload" \
-    "${BASE_URL}/api/studio/projects"
-)"
-assert_success "$project_create_response" "project create"
-
-project_id="$(printf "%s" "$project_create_response" | json_value "project.id")"
-if [ -z "$project_id" ]; then
-  echo "[FAIL] project create returned no project id"
-  echo "$project_create_response"
-  exit 1
-fi
-
-project_list_response="$(
-  curl -sS \
-    -c "$COOKIE_JAR" \
-    -b "$COOKIE_JAR" \
-    -H "x-workspace-id: ${workspace_id}" \
-    "${BASE_URL}/api/studio/projects"
-)"
-assert_success "$project_list_response" "project list"
-
-project_open_response="$(
-  curl -sS \
-    -c "$COOKIE_JAR" \
-    -b "$COOKIE_JAR" \
-    -H "x-workspace-id: ${workspace_id}" \
-    "${BASE_URL}/api/studio/projects/${project_id}"
-)"
-assert_success "$project_open_response" "project open"
-
 asset_id=""
 if [ "$SMOKE_STORAGE_MODE" = "s3" ]; then
   node -e 'require("fs").writeFileSync(process.argv[1], Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wf8MZ0AAAAASUVORK5CYII=", "base64"));' "$SMOKE_UPLOAD_FILE"
   upload_size="$(wc -c < "$SMOKE_UPLOAD_FILE" | tr -d ' ')"
 
-  presign_payload="$(printf '{"projectId":"%s","assetType":"image","fileName":"smoke.png","contentType":"image/png","expectedSizeBytes":%s}' "$project_id" "$upload_size")"
+  presign_payload="$(printf '{"assetType":"image","fileName":"smoke.png","contentType":"image/png","expectedSizeBytes":%s}' "$upload_size")"
   presign_response="$(
     curl -sS \
       -c "$COOKIE_JAR" \
@@ -229,7 +186,7 @@ if [ "$SMOKE_STORAGE_MODE" = "s3" ]; then
   assert_success "$finalize_response" "asset finalize"
 else
   asset_key="smoke/${run_id}/asset.png"
-  asset_payload="$(printf '{"projectId":"%s","type":"image","storageProvider":"local","storageKey":"%s","mimeType":"image/png","metadata":{"smoke":true}}' "$project_id" "$asset_key")"
+  asset_payload="$(printf '{"type":"image","storageProvider":"local","storageKey":"%s","mimeType":"image/png","metadata":{"smoke":true}}' "$asset_key")"
 
   asset_create_response="$(
     curl -sS \
@@ -250,13 +207,12 @@ else
   fi
 fi
 
-project_id_encoded="$(urlencode "$project_id")"
 asset_list_response="$(
   curl -sS \
     -c "$COOKIE_JAR" \
     -b "$COOKIE_JAR" \
     -H "x-workspace-id: ${workspace_id}" \
-    "${BASE_URL}/api/studio/assets?projectId=${project_id_encoded}"
+    "${BASE_URL}/api/studio/assets"
 )"
 assert_success "$asset_list_response" "asset list"
 
@@ -270,14 +226,4 @@ asset_delete_response="$(
 )"
 assert_success "$asset_delete_response" "asset delete (soft)"
 
-project_delete_response="$(
-  curl -sS \
-    -c "$COOKIE_JAR" \
-    -b "$COOKIE_JAR" \
-    -X DELETE \
-    -H "x-workspace-id: ${workspace_id}" \
-    "${BASE_URL}/api/studio/projects/${project_id}"
-)"
-assert_success "$project_delete_response" "project delete (soft)"
-
-echo "[OK] Infra smoke passed: auth, workspaces, project lifecycle, asset lifecycle"
+echo "[OK] Infra smoke passed: auth, workspaces, workspace media lifecycle"

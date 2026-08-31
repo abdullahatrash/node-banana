@@ -17,7 +17,7 @@ const notoArabic = Noto_Sans_Arabic({
 export const metadata: Metadata = {
   title: "Tasmeemai - AI Content Studio",
   description:
-    "AI Content Studio for creating and managing content pipelines using AI. Create workflows to generate images, videos, text, and more.",
+    "Arabic-first AI content creation and social publishing for MENA brands.",
 };
 
 export default async function RootLayout({

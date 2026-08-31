@@ -36,7 +36,9 @@ function SignInForm() {
   const { data: session, isPending } = authClient.useSession();
   const nextParam = searchParams.get("next");
   const nextPath =
-    nextParam && isSafeRedirectPath(nextParam) ? nextParam : "/studio";
+    nextParam && isSafeRedirectPath(nextParam)
+      ? nextParam
+      : "/simple-studio/images";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -80,7 +82,7 @@ function SignInForm() {
       </div>
       <div className="w-full max-w-md border border-neutral-800 bg-neutral-900 rounded-xl p-6">
         <h1 className="text-xl font-semibold">Sign in</h1>
-        <p className="text-sm text-neutral-400 mt-1">Access your AI Studio workspace.</p>
+        <p className="text-sm text-neutral-400 mt-1">Access your content workspace.</p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <label className="block">

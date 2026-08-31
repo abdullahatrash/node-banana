@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assetTypeEnum, storageProviderEnum } from "@/lib/db/schema";
-import { getProject, listProjectAssets, recordAsset } from "@/lib/studio/repository";
+import {
+  getProject,
+  listProjectAssets,
+  listWorkspaceAssets,
+  recordAsset,
+} from "@/lib/studio/repository";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 interface AssetsGetResponse {
   success: boolean;
-  assets?: Awaited<ReturnType<typeof listProjectAssets>>;
+  assets?: Awaited<ReturnType<typeof listWorkspaceAssets>>;
   error?: string;
 }
 
@@ -34,17 +39,9 @@ export const GET = withStudioAuth<undefined>(
   { route: "/api/studio/assets", action: "read" },
   async (request: NextRequest, authz): Promise<NextResponse<AssetsGetResponse>> => {
     const projectId = request.nextUrl.searchParams.get("projectId");
-    if (!projectId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "projectId query parameter is required.",
-        },
-        { status: 400 },
-      );
-    }
-
-    const assets = await listProjectAssets(authz.workspaceId, projectId);
+    const assets = projectId
+      ? await listProjectAssets(authz.workspaceId, projectId)
+      : await listWorkspaceAssets(authz.workspaceId);
     return NextResponse.json({
       success: true,
       assets,

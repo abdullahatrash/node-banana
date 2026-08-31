@@ -30,7 +30,7 @@ export default function SignUpPage() {
 
   useEffect(() => {
     if (session?.user) {
-      router.replace("/studio");
+      router.replace("/simple-studio/images");
     }
   }, [router, session]);
 
@@ -51,7 +51,7 @@ export default function SignUpPage() {
         return;
       }
 
-      router.replace("/studio");
+      router.replace("/simple-studio/images");
     } catch (submitError) {
       setError(getErrorMessage(submitError, "Sign up failed."));
     } finally {

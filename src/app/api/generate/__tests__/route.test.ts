@@ -34,13 +34,6 @@ vi.mock("@google/genai", () => ({
   GoogleGenAI: MockGoogleGenAI,
 }));
 
-// Mock image upload utilities (not used in Gemini path but imported)
-vi.mock("@/lib/images", () => ({
-  uploadImageForUrl: vi.fn(),
-  shouldUseImageUrl: vi.fn().mockReturnValue(false),
-  deleteImages: vi.fn(),
-}));
-
 import { POST } from "../route";
 import { clearFalInputMappingCache } from "../providers/fal";
 

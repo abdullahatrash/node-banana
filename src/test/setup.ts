@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
-// Mock ResizeObserver for React Flow tests
+// Mock ResizeObserver for responsive component tests
 class ResizeObserverMock {
   observe = vi.fn();
   unobserve = vi.fn();
@@ -10,16 +10,6 @@ class ResizeObserverMock {
 }
 
 global.ResizeObserver = ResizeObserverMock;
-
-// Mock DOMMatrixReadOnly for React Flow
-class DOMMatrixReadOnlyMock {
-  m22: number = 1;
-  constructor() {
-    this.m22 = 1;
-  }
-}
-
-global.DOMMatrixReadOnly = DOMMatrixReadOnlyMock as unknown as typeof DOMMatrixReadOnly;
 
 // Mock matchMedia for useIsMobile hook
 Object.defineProperty(window, "matchMedia", {

@@ -1,5 +1,3 @@
-import type { WorkflowFile } from "@/store/workflowStore";
-import { parseWorkflowCredentialSlots } from "@/types";
 import type { CredentialHumanCapabilityIdentity } from "@/lib/credential-vault/application-capabilities";
 import type { UsageCapabilityIdentity } from "@/lib/agent-runtime/usage/capabilities";
 import type { BudgetHumanCapabilityIdentity } from "@/lib/agent-runtime/budgets/capabilities";
@@ -599,22 +597,6 @@ export interface StudioWorkspace {
   role: string;
 }
 
-export interface StudioProjectSummary {
-  id: string;
-  workspaceId: string;
-  name: string;
-  slug: string | null;
-  description: string | null;
-  status: string | null;
-  sourceDirectoryPath: string | null;
-  updatedAt: string | null;
-}
-
-export interface StudioProjectDetail extends StudioProjectSummary {
-  workflowJson: JsonRecord | null;
-  createdAt: string | null;
-}
-
 export interface StudioAsset {
   id: string;
   workspaceId: string;
@@ -629,7 +611,7 @@ export interface StudioAsset {
 
 export interface StudioAssetPresignInput {
   projectId?: string | null;
-  assetType: "image" | "video" | "audio" | "model3d" | "workflow";
+  assetType: "image" | "video" | "audio" | "model3d";
   fileName?: string;
   contentType: string;
   expectedSizeBytes: number;
@@ -660,7 +642,7 @@ export interface StudioAssetDownloadResult {
 
 export interface StudioAssetIngestInput {
   projectId?: string | null;
-  assetType: "image" | "video" | "audio" | "model3d" | "workflow";
+  assetType: "image" | "video" | "audio" | "model3d";
   sourceDataUrl?: string;
   sourceUrl?: string;
   fileName?: string;
@@ -683,39 +665,6 @@ function parseWorkspace(value: unknown): StudioWorkspace | null {
   const role = asString(row.role);
   if (!id || !name || !slug || !role) return null;
   return { id, name, slug, role };
-}
-
-function parseProjectSummary(value: unknown): StudioProjectSummary | null {
-  const row = asRecord(value);
-  if (!row) return null;
-  const id = asString(row.id);
-  const workspaceId = asString(row.workspaceId);
-  const name = asString(row.name);
-  if (!id || !workspaceId || !name) return null;
-
-  return {
-    id,
-    workspaceId,
-    name,
-    slug: asString(row.slug),
-    description: asString(row.description),
-    status: asString(row.status),
-    sourceDirectoryPath: asString(row.sourceDirectoryPath),
-    updatedAt: asString(row.updatedAt),
-  };
-}
-
-function parseProjectDetail(value: unknown): StudioProjectDetail | null {
-  const row = asRecord(value);
-  if (!row) return null;
-  const summary = parseProjectSummary(row);
-  if (!summary) return null;
-
-  return {
-    ...summary,
-    workflowJson: asRecord(row.workflowJson),
-    createdAt: asString(row.createdAt),
-  };
 }
 
 function parseAsset(value: unknown): StudioAsset | null {
@@ -755,66 +704,6 @@ export async function listStudioWorkspaces(): Promise<StudioWorkspace[]> {
   }
 
   return parsed;
-}
-
-export async function listStudioProjects(): Promise<StudioProjectSummary[]> {
-  const data = await fetchApi("/api/studio/projects");
-  const projects = Array.isArray(data.projects) ? data.projects : [];
-  const parsed = projects
-    .map(parseProjectSummary)
-    .filter((project): project is StudioProjectSummary => Boolean(project));
-
-  if (parsed[0]?.workspaceId) {
-    setActiveWorkspaceId(parsed[0].workspaceId);
-  }
-
-  return parsed;
-}
-
-export async function getStudioProjectCount(): Promise<{
-  count: number;
-  max: number;
-}> {
-  const data = await fetchApi("/api/studio/projects");
-  const count = typeof data.projectCount === "number" ? data.projectCount : 0;
-  const max = typeof data.maxProjects === "number" ? data.maxProjects : Infinity;
-  return { count, max };
-}
-
-export async function getStudioProject(projectId: string): Promise<StudioProjectDetail> {
-  const data = await fetchApi(`/api/studio/projects/${encodeURIComponent(projectId)}`);
-  const project = parseProjectDetail(data.project);
-  if (!project) {
-    throw new Error("Project detail payload is invalid");
-  }
-  setActiveWorkspaceId(project.workspaceId);
-  return project;
-}
-
-export async function upsertStudioProject(input: {
-  projectId?: string;
-  name: string;
-  description?: string | null;
-  workflowJson?: Record<string, unknown> | null;
-  sourceDirectoryPath?: string | null;
-}): Promise<StudioProjectDetail | null> {
-  const data = await fetchApi("/api/studio/projects", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  const project = parseProjectDetail(data.project);
-  if (project?.workspaceId) {
-    setActiveWorkspaceId(project.workspaceId);
-  }
-  return project;
-}
-
-export async function deleteStudioProject(projectId: string): Promise<void> {
-  await fetchApi(`/api/studio/projects/${encodeURIComponent(projectId)}`, {
-    method: "DELETE",
-  });
 }
 
 export async function listStudioAssets(projectId: string): Promise<StudioAsset[]> {
@@ -930,46 +819,4 @@ export async function ingestStudioAsset(
     downloadUrl,
     expiresInSeconds,
   };
-}
-
-export async function getLegacyStudioAssetDownloadUrl(
-  input: { projectId: string; legacyKey: string },
-): Promise<{ key: string; downloadUrl: string; expiresInSeconds: number }> {
-  const data = await fetchApi("/api/studio/assets/legacy-download", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  const key = asString(data.key);
-  const downloadUrl = asString(data.downloadUrl);
-  const expiresInSeconds = asNumber(data.expiresInSeconds);
-
-  if (!key || !downloadUrl || expiresInSeconds === null) {
-    throw new Error("Legacy asset download payload is invalid");
-  }
-
-  return {
-    key,
-    downloadUrl,
-    expiresInSeconds,
-  };
-}
-
-export function isWorkflowFile(value: unknown): value is WorkflowFile {
-  const record = asRecord(value);
-  const credentialSlots = record?.credentialSlots;
-  const hasValidCredentialSlots =
-    credentialSlots === undefined ||
-    (Array.isArray(credentialSlots) &&
-      parseWorkflowCredentialSlots(credentialSlots, record?.nodes).length ===
-        credentialSlots.length);
-  return Boolean(
-    record &&
-      record.version === 1 &&
-      typeof record.name === "string" &&
-      Array.isArray(record.nodes) &&
-      Array.isArray(record.edges) &&
-      hasValidCredentialSlots,
-  );
 }
