@@ -372,6 +372,13 @@
       "when": 1788168826349,
       "tag": "0052_polite_arclight",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1788184065435,
+      "tag": "0053_fearless_lightspeed",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,68 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const migration = readFileSync(
+  resolve(process.cwd(), "drizzle/0053_fearless_lightspeed.sql"),
+  "utf8",
+);
+
+describe("onboarding persistence migration", () => {
+  it("creates the onboarding and Brand Profile authority", () => {
+    for (const table of [
+      "user_preferences",
+      "onboarding_sessions",
+      "brand_sources",
+      "brand_analysis_runs",
+      "brand_profiles",
+      "onboarding_activation_artifacts",
+      "onboarding_command_receipts",
+    ]) {
+      expect(migration).toContain(`CREATE TABLE "${table}"`);
+    }
+    expect(migration).toContain(
+      'ALTER TABLE "workspace_settings" ADD COLUMN "default_content_language"',
+    );
+  });
+
+  it("indexes every queryable foreign key and lifecycle lookup", () => {
+    for (const indexName of [
+      "onboarding_sessions_workspace_idx",
+      "onboarding_sessions_status_idx",
+      "brand_sources_workspace_created_idx",
+      "brand_sources_created_by_idx",
+      "brand_analysis_runs_workspace_status_idx",
+      "brand_analysis_runs_source_idx",
+      "brand_analysis_runs_retry_idx",
+      "brand_profiles_accepted_by_idx",
+      "onboarding_activation_artifacts_profile_idx",
+    ]) {
+      expect(migration).toContain(indexName);
+    }
+  });
+
+  it("allows only one active Brand Profile per Workspace", () => {
+    expect(migration).toContain("brand_profiles_active_workspace_unique");
+    expect(migration).toContain(
+      `WHERE "brand_profiles"."status" = 'active'`,
+    );
+  });
+
+  it("guards revisions, schema versions, source shape, and receipt fingerprints", () => {
+    for (const constraint of [
+      "onboarding_sessions_revision_check",
+      "brand_sources_revision_check",
+      "brand_sources_extracted_bytes_check",
+      "brand_sources_shape_check",
+      "brand_profiles_revision_check",
+      "brand_profiles_schema_version_check",
+      "onboarding_activation_artifacts_schema_version_check",
+      "onboarding_command_receipts_fingerprint_check",
+      "onboarding_command_receipts_revision_check",
+      "user_preferences_interface_locale_check",
+    ]) {
+      expect(migration).toContain(constraint);
+    }
+  });
+});
+

@@ -30,6 +30,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:backfill:org": "node scripts/db-backfill-workspace-organizations.mjs",
+    "db:backfill:onboarding": "node scripts/db-backfill-onboarding.mjs",
     "db:backfill:social": "node scripts/db-backfill-social-parity.mjs",
     "db:seed": "node scripts/db-seed.mjs",
     "db:set-password": "node scripts/db-set-password.mjs",

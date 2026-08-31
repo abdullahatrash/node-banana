@@ -83,6 +83,11 @@ import type {
   AutomationRevisionRecord,
   AutomationStageAttemptRecord,
 } from "@/lib/agent-runtime/automations/types";
+import type {
+  ActivationArtifactV1,
+  BrandProfileV1,
+  OnboardingAnswersV1,
+} from "@/lib/onboarding/schemas";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -294,6 +299,48 @@ export const planTierEnum = pgEnum("plan_tier", [
   "pro",
   "enterprise",
 ]);
+export const onboardingStatusEnum = pgEnum("onboarding_status", [
+  "not_started",
+  "in_progress",
+  "ready",
+  "completed",
+  "completed_legacy",
+]);
+export const onboardingStepEnum = pgEnum("onboarding_step", [
+  "identity",
+  "brand_source",
+  "company_stage",
+  "role",
+  "business_classification",
+  "goals",
+  "attribution",
+  "review",
+  "education",
+]);
+export const brandSourceKindEnum = pgEnum("brand_source_kind", [
+  "website",
+  "description",
+]);
+export const brandAnalysisStageEnum = pgEnum("brand_analysis_stage", [
+  "queued",
+  "fetching_source",
+  "extracting",
+  "generating_profile",
+  "generating_first_value",
+  "ready",
+]);
+export const brandAnalysisStatusEnum = pgEnum("brand_analysis_status", [
+  "queued",
+  "running",
+  "ready",
+  "failed_retryable",
+  "failed_terminal",
+]);
+export const brandProfileStatusEnum = pgEnum("brand_profile_status", [
+  "draft",
+  "active",
+  "superseded",
+]);
 export const agentPrincipalStatusEnum = pgEnum("agent_principal_status", [
   "active",
   "suspended",
@@ -348,6 +395,9 @@ export const workspaceSettings = pgTable(
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
     planTier: planTierEnum("plan_tier").default("free").notNull(),
+    defaultContentLanguage: text("default_content_language")
+      .default("ar")
+      .notNull(),
     brandKit: jsonb("brand_kit").$type<Record<string, unknown>>(),
     billingCustomerId: text("billing_customer_id"),
     billingSubscriptionId: text("billing_subscription_id"),
@@ -403,6 +453,250 @@ export const workspaceMembers = pgTable(
       columns: [table.workspaceId, table.userId],
     }),
     userIdx: index("workspace_members_user_idx").on(table.userId),
+  }),
+);
+
+/** User-scoped preferences remain independent from Workspace content defaults. */
+export const userPreferences = pgTable("user_preferences", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  interfaceLocale: text("interface_locale").default("ar").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+}, (table) => ({
+  localeCheck: check(
+    "user_preferences_interface_locale_check",
+    sql`${table.interfaceLocale} in ('ar', 'en')`,
+  ),
+}));
+
+/** Resumable, user-owned onboarding state. JSONB is parsed at repository edges. */
+export const onboardingSessions = pgTable(
+  "onboarding_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    status: onboardingStatusEnum("status").default("not_started").notNull(),
+    currentStep: onboardingStepEnum("current_step").default("identity").notNull(),
+    answers: jsonb("answers").$type<OnboardingAnswersV1>().notNull(),
+    contentLanguage: text("content_language").default("ar").notNull(),
+    revision: integer("revision").default(0).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    userUnique: uniqueIndex("onboarding_sessions_user_unique").on(table.userId),
+    workspaceIdx: index("onboarding_sessions_workspace_idx").on(table.workspaceId),
+    statusIdx: index("onboarding_sessions_status_idx").on(table.status),
+    revisionCheck: check(
+      "onboarding_sessions_revision_check",
+      sql`${table.revision} >= 0`,
+    ),
+  }),
+);
+
+/** Immutable input revisions used to derive Brand Profiles. */
+export const brandSources = pgTable(
+  "brand_sources",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    kind: brandSourceKindEnum("kind").notNull(),
+    submittedUrl: text("submitted_url"),
+    finalUrl: text("final_url"),
+    submittedDescription: text("submitted_description"),
+    cleanedText: text("cleaned_text"),
+    contentHash: text("content_hash"),
+    sourceLanguage: text("source_language"),
+    extractedBytes: integer("extracted_bytes"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceRevisionUnique: uniqueIndex(
+      "brand_sources_workspace_revision_unique",
+    ).on(table.workspaceId, table.revision),
+    workspaceCreatedIdx: index("brand_sources_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    createdByIdx: index("brand_sources_created_by_idx").on(table.createdByUserId),
+    revisionCheck: check("brand_sources_revision_check", sql`${table.revision} > 0`),
+    byteCheck: check(
+      "brand_sources_extracted_bytes_check",
+      sql`${table.extractedBytes} is null or (${table.extractedBytes} >= 0 and ${table.extractedBytes} <= 6291456)`,
+    ),
+    sourceShapeCheck: check(
+      "brand_sources_shape_check",
+      sql`(${table.kind} = 'website' and ${table.submittedUrl} is not null and ${table.submittedDescription} is null) or (${table.kind} = 'description' and ${table.submittedDescription} is not null and ${table.submittedUrl} is null)`,
+    ),
+  }),
+);
+
+/** Canonical asynchronous analysis resource; external execution is an Adapter. */
+export const brandAnalysisRuns = pgTable(
+  "brand_analysis_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => brandSources.id, { onDelete: "restrict" }),
+    retryOfRunId: text("retry_of_run_id"),
+    status: brandAnalysisStatusEnum("status").default("queued").notNull(),
+    stage: brandAnalysisStageEnum("stage").default("queued").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdempotencyUnique: uniqueIndex(
+      "brand_analysis_runs_workspace_idempotency_unique",
+    ).on(table.workspaceId, table.idempotencyKey),
+    workspaceStatusIdx: index("brand_analysis_runs_workspace_status_idx").on(
+      table.workspaceId,
+      table.status,
+    ),
+    sourceIdx: index("brand_analysis_runs_source_idx").on(table.sourceId),
+    retryIdx: index("brand_analysis_runs_retry_idx").on(table.retryOfRunId),
+  }),
+);
+
+/** Immutable, versioned Brand Profile revisions. */
+export const brandProfiles = pgTable(
+  "brand_profiles",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    status: brandProfileStatusEnum("status").default("draft").notNull(),
+    schemaVersion: integer("schema_version").default(1).notNull(),
+    profile: jsonb("profile").$type<BrandProfileV1>().notNull(),
+    generatedFromRunId: text("generated_from_run_id")
+      .notNull()
+      .references(() => brandAnalysisRuns.id, { onDelete: "restrict" }),
+    acceptedByUserId: text("accepted_by_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceRevisionUnique: uniqueIndex(
+      "brand_profiles_workspace_revision_unique",
+    ).on(table.workspaceId, table.revision),
+    activeWorkspaceUnique: uniqueIndex(
+      "brand_profiles_active_workspace_unique",
+    )
+      .on(table.workspaceId)
+      .where(sql`${table.status} = 'active'`),
+    runUnique: uniqueIndex("brand_profiles_run_unique").on(table.generatedFromRunId),
+    acceptedByIdx: index("brand_profiles_accepted_by_idx").on(table.acceptedByUserId),
+    revisionCheck: check("brand_profiles_revision_check", sql`${table.revision} > 0`),
+    schemaVersionCheck: check(
+      "brand_profiles_schema_version_check",
+      sql`${table.schemaVersion} = 1`,
+    ),
+  }),
+);
+
+/** First-value output used until the full Blitz domain replaces this Adapter. */
+export const onboardingActivationArtifacts = pgTable(
+  "onboarding_activation_artifacts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    brandProfileId: text("brand_profile_id")
+      .notNull()
+      .references(() => brandProfiles.id, { onDelete: "restrict" }),
+    schemaVersion: integer("schema_version").default(1).notNull(),
+    artifact: jsonb("artifact").$type<ActivationArtifactV1>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceProfileUnique: uniqueIndex(
+      "onboarding_activation_artifacts_workspace_profile_unique",
+    ).on(table.workspaceId, table.brandProfileId),
+    profileIdx: index("onboarding_activation_artifacts_profile_idx").on(
+      table.brandProfileId,
+    ),
+    schemaVersionCheck: check(
+      "onboarding_activation_artifacts_schema_version_check",
+      sql`${table.schemaVersion} = 1`,
+    ),
+  }),
+);
+
+/** Idempotent command receipts prevent duplicate workspaces, sources, and runs. */
+export const onboardingCommandReceipts = pgTable(
+  "onboarding_command_receipts",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    commandType: text("command_type").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    sessionRevision: integer("session_revision").notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "onboarding_command_receipts_pk",
+      columns: [table.userId, table.idempotencyKey],
+    }),
+    fingerprintCheck: check(
+      "onboarding_command_receipts_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+    revisionCheck: check(
+      "onboarding_command_receipts_revision_check",
+      sql`${table.sessionRevision} > 0`,
+    ),
   }),
 );
 
