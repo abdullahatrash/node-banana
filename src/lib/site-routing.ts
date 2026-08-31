@@ -1,12 +1,15 @@
 const PRODUCT_PATH_PREFIXES = [
   "/agents",
+  "/blitz",
   "/dashboard",
   "/editor",
+  "/onboarding",
   "/sign-in",
   "/sign-up",
   "/simple-studio",
   "/social",
   "/studio",
+  "/verify-email",
 ] as const;
 
 type SiteSurface = "marketing" | "product" | "neutral";

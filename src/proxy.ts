@@ -38,9 +38,12 @@ export const config = {
   matcher: [
     "/",
     "/agents/:path*",
+    "/blitz/:path*",
     "/dashboard/:path*",
+    "/onboarding/:path*",
     "/sign-in",
     "/sign-up",
+    "/verify-email",
     "/simple-studio/:path*",
     "/social/:path*",
     "/studio/:path*",
