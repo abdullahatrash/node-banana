@@ -4,13 +4,13 @@ import { getLocaleFromCookies } from "@/lib/locale";
 import { getPublicAppUrl } from "@/lib/site-routing";
 
 export const metadata: Metadata = {
-  title: "تصميمي — صناعة ونشر المحتوى للمنطقة العربية",
+  title: "تصميمي — محتوى قصير للمنطقة العربية",
   description:
-    "مساحة عمل عربية لإنشاء الصور والفيديو والنصوص، وتنظيم المحتوى ونشره عبر قنواتك الاجتماعية.",
+    "حوّل الترندات وأفكار علامتك إلى فيديوهات وشرائح، واملأ تقويمك وانشر عبر تيك توك وإنستغرام ريلز ويوتيوب شورتس.",
   openGraph: {
-    title: "تصميمي — محتوى عربي من الفكرة إلى النشر",
+    title: "تصميمي — 30 يومًا من المحتوى القصير في دقائق",
     description:
-      "أنشئ ونظّم وانشر محتوى علامتك من مساحة عمل واحدة مصممة لفرق المنطقة العربية.",
+      "منصة صناعة ونشر المحتوى القصير للشرق الأوسط وشمال أفريقيا.",
     type: "website",
     locale: "ar_AR",
   },
@@ -22,7 +22,7 @@ export default async function HomePage() {
   return (
     <MarketingHome
       locale={locale}
-      contentStudioUrl={getPublicAppUrl("/simple-studio/images")}
+      contentStudioUrl={getPublicAppUrl("/social/compose")}
       signInUrl={getPublicAppUrl("/sign-in")}
       signUpUrl={getPublicAppUrl("/sign-up")}
     />
