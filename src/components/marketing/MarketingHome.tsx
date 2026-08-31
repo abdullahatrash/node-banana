@@ -337,20 +337,20 @@ export function MarketingHome({
       <main>
         <section className="relative px-5 pb-20 pt-14 sm:px-8 sm:pt-20 lg:px-10 lg:pb-28 lg:pt-24">
           <div className={styles.heroGlow} aria-hidden="true" />
-          <div className="relative mx-auto grid max-w-7xl items-center gap-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-12">
-            <div className="relative z-10 max-w-2xl">
+          <div className="relative mx-auto flex max-w-7xl flex-col items-center gap-16 lg:gap-20">
+            <div className="relative z-10 mx-auto flex max-w-5xl flex-col items-center text-center">
               <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-[#0d4f45]/14 bg-white/70 px-3.5 py-2 text-xs font-semibold text-[#0d4f45] shadow-sm">
                 <SparklesIcon className="size-3.5 text-[#e75f45]" aria-hidden="true" />
                 {copy.hero.badge}
               </div>
-              <h1 className={`${styles.heroHeading} text-balance text-[clamp(3.2rem,6.2vw,5.8rem)] font-bold leading-[0.98] tracking-[-0.065em] text-[#102d2a]`}>
+              <h1 className={`${styles.heroHeading} max-w-5xl text-balance text-[clamp(3.2rem,7vw,6.5rem)] font-bold leading-[0.98] tracking-[-0.065em] text-[#102d2a]`}>
                 {copy.hero.titleBefore}{" "}
                 <span className="mt-2 block text-[#e75f45]">{copy.hero.titleAccent}</span>
               </h1>
-              <p className="mt-7 max-w-xl text-pretty text-lg leading-8 text-[#47635e] sm:text-xl sm:leading-9">
+              <p className="mt-7 max-w-3xl text-pretty text-lg leading-8 text-[#47635e] sm:text-xl sm:leading-9">
                 {copy.hero.body}
               </p>
-              <div className="mt-9 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+              <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
                 <Link className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#0d4f45] px-6 text-sm font-bold text-white shadow-[0_14px_32px_rgba(13,79,69,0.22)] transition hover:-translate-y-0.5 hover:bg-[#0a4038]" href={signUpUrl}>
                   {copy.hero.primary}
                   <ArrowIcon className="size-4 transition-transform group-hover:-translate-x-0.5 rtl:group-hover:-translate-x-0.5 ltr:group-hover:translate-x-0.5" aria-hidden="true" />
@@ -360,7 +360,7 @@ export function MarketingHome({
                   {copy.hero.secondary}
                 </a>
               </div>
-              <p className="mt-4 flex items-center gap-2 text-xs text-[#647a75]">
+              <p className="mt-4 flex items-center justify-center gap-2 text-xs text-[#647a75]">
                 <CheckIcon className="size-3.5 rounded-full bg-[#cde6d8] p-0.5 text-[#0d4f45]" aria-hidden="true" />
                 {copy.hero.note}
               </p>
@@ -566,7 +566,7 @@ function HeroPipelineMockup({ copy, isArabic }: { copy: typeof arabicCopy.mockup
     : { trend: "Trending format", brand: "Your brand version", calendar: "30 days" };
 
   return (
-    <div className={`${styles.mockupWrap} relative mx-auto w-full max-w-[650px]`}>
+    <div className={`${styles.mockupWrap} relative mx-auto w-full max-w-[920px]`}>
       <div className="relative overflow-hidden rounded-[32px] border border-[#153d37]/14 bg-[#f7f3eb] p-2 shadow-[0_34px_90px_rgba(16,45,42,0.18)] sm:p-3">
         <div className="overflow-hidden rounded-[24px] border border-[#153d37]/10 bg-[#fffdf8]">
           <div className="flex h-11 items-center justify-between border-b border-[#153d37]/8 px-4" dir="ltr">
