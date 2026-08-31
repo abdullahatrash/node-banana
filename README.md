@@ -88,6 +88,21 @@ S3_FORCE_PATH_STYLE=false                  # R2 default
 For non-development environments, `BETTER_AUTH_SECRET` is required and you must provide either `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` so auth origin validation works correctly.
 For production/staging-like deployments, `DATABASE_URL` is required for Better Auth (memory adapter fallback is local-only).
 
+### Marketing and product domains
+
+Attach the marketing apex/`www` domain and the `app` subdomain to the same deployment, then configure:
+
+```bash
+NEXT_PUBLIC_MARKETING_URL=https://your-domain.com
+NEXT_PUBLIC_APP_URL=https://app.your-domain.com
+BETTER_AUTH_URL=https://app.your-domain.com
+NEXT_PUBLIC_BETTER_AUTH_URL=https://app.your-domain.com
+```
+
+The marketing origin serves `/`. Product UI paths are permanently redirected to the app origin, and the app origin redirects `/` to `/simple-studio/images`. API routes remain reachable without host redirects so OAuth callbacks, webhooks, and scheduled infrastructure calls are not disrupted.
+
+Bare `http://localhost:3000` stays in single-origin mode. To exercise the split locally, use `http://www.localhost:3000` and `http://app.localhost:3000` and set the two public URL variables accordingly.
+
 Better Auth client defaults to same-origin when `NEXT_PUBLIC_BETTER_AUTH_URL`/`NEXT_PUBLIC_APP_URL` are not set. In development, `localhost` and `127.0.0.1` are trusted automatically; use `BETTER_AUTH_TRUSTED_ORIGINS` for any additional local origins.
 
 The development auth bypass is local-only (`DEV_AUTH_BYPASS=true`) and is ignored in production.

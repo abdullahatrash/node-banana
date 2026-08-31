@@ -48,12 +48,15 @@ Node Banana is pivoting into an Arabic-first content creation and publishing pro
 
 ### Product Surfaces
 
-- `/` — public marketing entry point
+- Marketing apex/`www` origin `/` — public marketing entry point
+- `app` subdomain — authenticated product and authentication routes
 - `/simple-studio/*` — authenticated image, video, and copy generation
 - `/editor/*` — separate short-form video editor
 - `/social/*` — channels, composer, media, calendar, publishing, and analytics
 - `/api/generate`, `/api/llm`, `/api/models/*` — reusable generation infrastructure
 - `/api/studio/assets/*` — workspace media storage and delivery
+
+Host routing is implemented in `src/proxy.ts` with its pure policy in `src/lib/site-routing.ts`. Production deployments must set both `NEXT_PUBLIC_MARKETING_URL` and `NEXT_PUBLIC_APP_URL`; bare localhost intentionally remains single-origin for development.
 
 ## AI Models
 
