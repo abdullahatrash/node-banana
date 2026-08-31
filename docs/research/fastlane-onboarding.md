@@ -4,7 +4,7 @@ Date: 2026-08-31
 
 ## Research goal
 
-Document Fastlane's acquisition-to-onboarding journey one verified step at a time so Node Banana can design an Arabic-first equivalent for the MENA region. This note deliberately stops at the first post-verification onboarding screen reached in the live walkthrough. It does not describe or infer any later screen.
+Document Fastlane's acquisition-to-onboarding journey one verified step at a time so Node Banana can design an Arabic-first equivalent for the MENA region. The note advances only as the live walkthrough reaches each screen and does not infer unseen later screens.
 
 ## Evidence boundaries
 
@@ -22,6 +22,7 @@ Document Fastlane's acquisition-to-onboarding journey one verified step at a tim
 | 4. Email verification | Submitting a new email/password successfully transitions to `/signup/verify-email-address`. | Live observation at [Fastlane email-verification route](https://app.usefastlane.ai/signup/verify-email-address) |
 | 5. Initial profile setup | After verification, the user reaches `/onboarding`. The screen collects an optional company logo, full name, and company name, then offers **Continue**. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 6. Brand-context source | The next onboarding state asks the user either to analyze a company website or provide a structured company description. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding), corroborated by the [public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js) |
+| 7. Company stage | While workspace preparation runs, the next questionnaire asks for team size and monthly revenue to tailor recommendations to the company's stage. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) and the user-supplied screenshot dated 2026-08-31 |
 
 The public client bundle independently corroborates `/onboarding` as the signup component's successful-signup destination. Source: [Fastlane public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js).
 
@@ -39,7 +40,7 @@ At `https://app.usefastlane.ai/onboarding`, the observed screen contains:
 - note **“Have multiple businesses? You can add more workspaces later in Settings > Workspaces.”**;
 - primary action **Continue**.
 
-No action on **Continue** has been recorded in this note, so the next screen and validation behavior remain unknown.
+Continuing from this screen leads to the brand-context source screen described below. Empty-field validation on this first screen was not tested.
 
 ### Second onboarding screen: website or description
 
@@ -78,6 +79,23 @@ Fastlane's public client code exposes an asynchronous workspace-preparation stat
 The progress UI says **“Preparing your workspace”** and **“This usually takes 30–60 seconds.”** If website security blocks the scanner, Fastlane offers a recovery form where the user can paste homepage text or describe the company manually. The description-only path is processed with AI and does not require website scraping.
 
 This confirms an asynchronous task pipeline from the client contract and progress states. The public client does not reveal whether the backend uses a particular job queue, worker framework, crawl depth, or scraping vendor, so those implementation details remain unknown.
+
+### Third onboarding screen: company stage
+
+The next state remains at `https://app.usefastlane.ai/onboarding`. Website/profile processing continues in parallel while the user answers a segmentation questionnaire.
+
+- heading **“Tell us about yourself”**;
+- helper copy **“This helps us tailor recommendations to your stage.”**;
+- **How big is your current team?** with six choices: **Just me**, **2–5**, **6–10**, **11–20**, **21–50**, and **50+**;
+- **What is your current monthly revenue?** with six choices: **Pre-revenue**, **$1–$1,000**, **$1,000–$10k**, **$10k–$50k**, **$50k–$500k**, and **$500k+**;
+- primary action **Continue**;
+- secondary action **Change website or description**;
+- a visual seven-position progress indicator with the third position active;
+- a floating **Preparing workspace** status showing **Website** and **Profile** stages.
+
+The **Continue** control is enabled before any selection, but its submit-time validation and whether either question is optional have not been tested. No team-size or revenue answer was selected during inspection.
+
+Product interpretation for Node Banana: these answers describe business maturity and should be stored as workspace/company segmentation data. They can tune onboarding recommendations, suggested publishing cadence, and education level, but should not be treated as factual brand-copy inputs unless the user explicitly wants revenue or team size mentioned in generated content.
 
 ### Related first-party product framing
 
@@ -126,6 +144,7 @@ Append new observations here in sequence. Record the URL, exact visible copy, av
 | Observed | `https://app.usefastlane.ai/signup/verify-email-address` | A successful new-email submission reached this route. Screen copy and actions have not yet been recorded. |
 | Observed | `https://app.usefastlane.ai/onboarding` | First setup screen: Log out; Fastlane logo; welcome/helper copy; optional company-logo upload (PNG/JPG, max 5MB); name; company name; multi-workspace note; Continue. The result of Continue has not yet been observed. |
 | Observed | `https://app.usefastlane.ai/onboarding` | Second setup state offers Website analysis or a manual Company Description. Website mode was restored after inspecting both paths; nothing was submitted. Public client code confirms async website/description processing, company-profile generation, first suggestions, and optional lead discovery. |
+| Observed | `https://app.usefastlane.ai/onboarding` | Third setup state asks for team-size and monthly-revenue bands while Website/Profile preparation runs in parallel. Continue is initially enabled; no answer or validation behavior was tested. |
 
 ## Primary sources
 
