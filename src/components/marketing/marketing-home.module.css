@@ -50,27 +50,19 @@
   transform: rotate(-3deg);
 }
 
-.processCard:nth-child(2) {
-  transform: translateY(18px);
-}
-
-.showcaseCard {
-  isolation: isolate;
-}
-
-.showcaseCard::after {
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgb(255 255 255 / 0.14);
-  border-radius: inherit;
-  content: "";
-  pointer-events: none;
-}
-
-.menaVisual {
+.pipelinePanel {
   background:
-    linear-gradient(135deg, rgb(255 255 255 / 0.08) 1px, transparent 1px) 0 0 / 28px 28px,
-    rgb(199 72 48 / 0.5);
+    linear-gradient(135deg, rgb(255 255 255 / 0.48) 1px, transparent 1px) 0 0 / 28px 28px,
+    #eee6da;
+}
+
+.phoneCard:nth-child(2),
+.phoneCard:nth-child(4) {
+  transform: translateY(28px);
+}
+
+.marketExample:nth-child(2) {
+  transform: translateY(18px);
 }
 
 .ctaPanel::before,
@@ -97,7 +89,9 @@
 }
 
 @media (max-width: 767px) {
-  .processCard:nth-child(2) {
+  .phoneCard:nth-child(2),
+  .phoneCard:nth-child(4),
+  .marketExample:nth-child(2) {
     transform: none;
   }
 

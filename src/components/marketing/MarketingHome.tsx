@@ -3,20 +3,12 @@ import Link from "next/link";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
-  BarChart3Icon,
   CalendarDaysIcon,
   CheckIcon,
-  FilmIcon,
-  FolderOpenIcon,
   Globe2Icon,
-  ImageIcon,
-  Layers3Icon,
-  MessageSquareTextIcon,
   PlayIcon,
   SendIcon,
   SparklesIcon,
-  TypeIcon,
-  WandSparklesIcon,
 } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import type { Locale } from "@/store/directionStore";
@@ -56,12 +48,11 @@ const arabicCopy = {
     ready: "12 فكرة جاهزة",
     social: "فيديو قصير",
   },
-  proof: [
-    { label: "من الترند إلى المحتوى", detail: "لا تبدأ من صفحة فارغة" },
-    { label: "30 يومًا أمامك", detail: "تقويم جاهز للمراجعة" },
-    { label: "مصمم لـ MENA", detail: "أسواق ولهجات ومواسم المنطقة" },
-    { label: "نشر مباشر", detail: "تيك توك وريلز وشورتس" },
-  ],
+  marketStrip: {
+    label: "اختر السوق",
+    markets: ["السعودية", "الإمارات", "مصر", "الكويت", "المغرب"],
+    note: "ترندات ولهجات ومواسم محلية",
+  },
   transformation: {
     eyebrow: "من الترند إلى علامتك",
     title: "حوّل ما يشاهده جمهورك إلى محتوى يناسب منتجك",
@@ -100,24 +91,9 @@ const arabicCopy = {
     title: "من رابط منتجك إلى تقويم ممتلئ",
     items: [
       { title: "أدخل موقعك أو منتجك", body: "نتعرّف على عرضك وجمهورك وصوت علامتك." },
-      { title: "اختر السوق والجمهور", body: "حدّد البلد والنيتش والقنوات التي تريد نموها." },
+      { title: "اختر السوق والجمهور", body: "حدّد البلد والمجال والقنوات التي تريد نموها." },
       { title: "دع تصميمي يبني الخطة", body: "أنشئ أفكارًا وفيديوهات وشرائح موزعة على التقويم." },
       { title: "راجع وانشر", body: "عدّل المحتوى ثم جدوله عبر حساباتك المرتبطة." },
-    ],
-  },
-  features: {
-    eyebrow: "أدوات أقل. نشر أكثر.",
-    title: "محرك محتوى قصير يعمل معك كل أسبوع",
-    body: "كل جزء من تصميمي مبني لإبقاء تقويمك ممتلئًا بمحتوى يناسب علامتك وسوقك، من الفكرة وحتى النشر.",
-    items: [
-      { title: "اكتشاف الترندات", body: "اعثر على الزوايا والصيغ التي تتحرك في سوقك ومجالك.", icon: "copilot" },
-      { title: "ملف ذكي لعلامتك", body: "يحفظ المنتج والجمهور والصوت ليبقى كل محتوى متناسقًا.", icon: "library" },
-      { title: "فيديوهات قصيرة", body: "حوّل الفكرة أو المادة الخام إلى فيديو رأسي سريع.", icon: "video" },
-      { title: "منشورات شرائح", body: "أنشئ قصصًا تعليمية أو ترويجية قابلة للتمرير.", icon: "image" },
-      { title: "تقويم تلقائي", body: "وزّع المحتوى على الأيام والقنوات ضمن خطة واضحة.", icon: "calendar" },
-      { title: "نشر مباشر", body: "جدول وانشر عبر الحسابات التي تملكها وتربطها.", icon: "publish" },
-      { title: "ما الذي ينجح؟", body: "تابع الأداء وكرّر الزوايا والصيغ الأفضل لعلامتك.", icon: "analytics" },
-      { title: "كتابة عربية طبيعية", body: "نصوص وتعليقات مبنية للعربية، لا مترجمة إليها لاحقًا.", icon: "copy" },
     ],
   },
   mena: {
@@ -129,7 +105,11 @@ const arabicCopy = {
       "نصوص عربية ولهجات تناسب جمهورك",
       "حملات مرتبطة بمواسم المنطقة",
     ],
-    markets: "الخليج · بلاد الشام · شمال أفريقيا",
+    examples: [
+      { market: "الرياض", dialect: "خليجي", hook: "نتيجة فاخرة في وقت أقل" },
+      { market: "القاهرة", dialect: "مصري", hook: "3 خطوات تغيّر روتينك" },
+      { market: "الدار البيضاء", dialect: "مغربي", hook: "روتين أخف لنهار أسرع" },
+    ],
   },
   platforms: {
     eyebrow: "من تقويم واحد إلى كل قناة",
@@ -187,7 +167,7 @@ const arabicCopy = {
     description: "منصة صناعة ونشر المحتوى القصير للمنطقة العربية.",
     product: "المنتج",
     company: "تصميمي",
-    links: ["الميزات", "كيف يعمل", "المنصات", "الأسئلة الشائعة"],
+    links: ["من الترند إلى المحتوى", "كيف يعمل", "المنصات", "الأسئلة الشائعة"],
     start: "ابدأ مجانًا",
     rights: "جميع الحقوق محفوظة.",
     region: "صُمّم للشرق الأوسط وشمال أفريقيا",
@@ -221,12 +201,11 @@ const englishCopy = {
     ready: "12 ideas ready",
     social: "Short-form video",
   },
-  proof: [
-    { label: "Trend to content", detail: "Never start from a blank page" },
-    { label: "30 days ahead", detail: "A calendar ready to review" },
-    { label: "Made for MENA", detail: "Regional markets, dialects, seasons" },
-    { label: "Publish directly", detail: "TikTok, Reels, and Shorts" },
-  ],
+  marketStrip: {
+    label: "Choose a market",
+    markets: ["Saudi Arabia", "UAE", "Egypt", "Kuwait", "Morocco"],
+    note: "Local trends, dialects, and seasons",
+  },
   transformation: {
     eyebrow: "From the trend to your brand",
     title: "Turn what your audience watches into content for your product",
@@ -258,27 +237,16 @@ const englishCopy = {
       { title: "Review and publish", body: "Edit the content, then schedule it through connected accounts." },
     ],
   },
-  features: {
-    eyebrow: "Fewer tools. More publishing.",
-    title: "A short-form engine that works with you every week",
-    body: "Every part of Tasmeemai keeps your calendar filled with content for your brand and market, from the first angle to the published post.",
-    items: [
-      { title: "Trend discovery", body: "Find the angles and formats moving in your market and niche.", icon: "copilot" },
-      { title: "Smart brand profile", body: "Keep the product, audience, and voice consistent in every piece.", icon: "library" },
-      { title: "Short videos", body: "Turn an idea or source asset into a fast vertical video.", icon: "video" },
-      { title: "Slideshow posts", body: "Create educational and promotional stories people can swipe.", icon: "image" },
-      { title: "Automatic calendar", body: "Distribute content across days and channels in one clear plan.", icon: "calendar" },
-      { title: "Direct publishing", body: "Schedule through the social accounts you own and connect.", icon: "publish" },
-      { title: "See what works", body: "Track performance and repeat your strongest angles and formats.", icon: "analytics" },
-      { title: "Natural Arabic copy", body: "Captions and scripts built for Arabic, not translated into it.", icon: "copy" },
-    ],
-  },
   mena: {
     eyebrow: "Built here, for the region",
     title: "What works in Riyadh may not work in Cairo",
     body: "Tasmeemai treats MENA as distinct markets with their own dialects, seasons, and culture, so content feels local rather than translated.",
     points: ["Trends by market and niche", "Arabic copy and dialects for your audience", "Campaigns built around regional moments"],
-    markets: "Gulf · Levant · North Africa",
+    examples: [
+      { market: "Riyadh", dialect: "Gulf", hook: "A premium result in less time" },
+      { market: "Cairo", dialect: "Egyptian", hook: "3 steps that change your routine" },
+      { market: "Casablanca", dialect: "Moroccan", hook: "A lighter routine for a faster day" },
+    ],
   },
   platforms: {
     eyebrow: "One calendar, every channel",
@@ -312,7 +280,7 @@ const englishCopy = {
     description: "Short-form content creation and publishing for MENA.",
     product: "Product",
     company: "Tasmeemai",
-    links: ["Features", "How it works", "Platforms", "FAQ"],
+    links: ["Trend to content", "How it works", "Platforms", "FAQ"],
     start: "Start free",
     rights: "All rights reserved.",
     region: "Built for the Middle East and North Africa",
@@ -325,17 +293,6 @@ const showcaseImages = [
   "/sample-images/cosmetics.jpg",
   "/sample-images/model-3.jpg",
 ];
-
-const featureIcons = {
-  image: ImageIcon,
-  video: FilmIcon,
-  copy: TypeIcon,
-  calendar: CalendarDaysIcon,
-  publish: SendIcon,
-  library: FolderOpenIcon,
-  analytics: BarChart3Icon,
-  copilot: MessageSquareTextIcon,
-};
 
 export function MarketingHome({
   locale,
@@ -387,7 +344,7 @@ export function MarketingHome({
                 {copy.hero.badge}
               </div>
               <h1 className={`${styles.heroHeading} text-balance text-[clamp(3.2rem,6.2vw,5.8rem)] font-bold leading-[0.98] tracking-[-0.065em] text-[#102d2a]`}>
-                {copy.hero.titleBefore}
+                {copy.hero.titleBefore}{" "}
                 <span className="mt-2 block text-[#e75f45]">{copy.hero.titleAccent}</span>
               </h1>
               <p className="mt-7 max-w-xl text-pretty text-lg leading-8 text-[#47635e] sm:text-xl sm:leading-9">
@@ -409,123 +366,71 @@ export function MarketingHome({
               </p>
             </div>
 
-            <HeroWorkspaceMockup copy={copy.mockup} />
+            <HeroPipelineMockup copy={copy.mockup} isArabic={isArabic} />
           </div>
         </section>
 
-        <section className="border-y border-[#143f38]/10 bg-white/45 px-5 sm:px-8 lg:px-10" aria-label={isArabic ? "مزايا التوجه الإقليمي" : "Regional positioning"}>
-          <div className="mx-auto grid max-w-7xl divide-y divide-[#143f38]/10 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4 rtl:sm:divide-x-reverse">
-            {copy.proof.map((item) => (
-              <div className="px-5 py-7 first:ps-0 last:pe-0 lg:px-7" key={item.label}>
-                <p className="font-bold text-[#153d37]">{item.label}</p>
-                <p className="mt-1 text-sm text-[#647a75]">{item.detail}</p>
-              </div>
-            ))}
+        <section className="border-y border-white/10 bg-[#102d2a] px-5 py-5 text-white sm:px-8 lg:px-10" aria-label={copy.marketStrip.label}>
+          <div className="mx-auto flex max-w-7xl flex-col gap-4 lg:flex-row lg:items-center">
+            <div className="flex shrink-0 items-center gap-2 text-sm font-bold text-[#a9d7c3]">
+              <Globe2Icon className="size-4" aria-hidden="true" />
+              {copy.marketStrip.label}
+            </div>
+            <div className="flex flex-1 gap-2 overflow-x-auto pb-1 lg:justify-center" dir={isArabic ? "rtl" : "ltr"}>
+              {copy.marketStrip.markets.map((market, index) => (
+                <span className={`shrink-0 rounded-full border px-4 py-2 text-sm font-bold ${index === 0 ? "border-[#f19b7f] bg-[#e75f45] text-white" : "border-white/12 bg-white/5 text-white/70"}`} key={market}>{market}</span>
+              ))}
+            </div>
+            <p className="shrink-0 text-xs text-white/45">{copy.marketStrip.note}</p>
           </div>
         </section>
 
         <section id="product" className="scroll-mt-24 px-5 py-24 sm:px-8 lg:px-10 lg:py-32">
           <div className="mx-auto max-w-7xl">
             <SectionHeading eyebrow={copy.transformation.eyebrow} title={copy.transformation.title} body={copy.transformation.body} />
-            <div className="mt-14 grid gap-4 md:grid-cols-3">
-              {copy.transformation.cards.map((card, index) => (
-                <article className={`${styles.processCard} rounded-[28px] border border-[#143f38]/10 bg-white/65 p-7 shadow-[0_18px_50px_rgba(26,61,54,0.06)]`} key={card.number}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold tracking-[0.18em] text-[#e75f45]">{card.number}</span>
-                    {index < 2 ? <ArrowIcon className="size-4 text-[#9bb0aa]" aria-hidden="true" /> : <CheckIcon className="size-4 text-[#0d4f45]" aria-hidden="true" />}
-                  </div>
-                  <h3 className="mt-10 text-2xl font-bold tracking-[-0.03em]">{card.title}</h3>
-                  <p className="mt-3 leading-7 text-[#5d736e]">{card.body}</p>
-                </article>
-              ))}
-            </div>
+            <TrendTransformationDemo copy={copy.transformation} isArabic={isArabic} />
           </div>
         </section>
 
-        <section className="bg-[#102d2a] px-5 py-24 text-[#fffaf0] sm:px-8 lg:px-10 lg:py-32">
+        <section className="overflow-hidden bg-[#102d2a] px-5 py-24 text-[#fffaf0] sm:px-8 lg:px-10 lg:py-32">
           <div className="mx-auto max-w-7xl">
             <SectionHeading dark eyebrow={copy.showcase.eyebrow} title={copy.showcase.title} body={copy.showcase.body} />
-            <div className="mt-14 grid auto-rows-[230px] grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {copy.showcase.items.map((item, index) => (
-                <article className={`${styles.showcaseCard} ${index === 1 ? "sm:col-span-2 lg:col-span-2" : ""} ${index === 3 ? "lg:row-span-2" : ""} group relative overflow-hidden rounded-[26px]`} key={item.title}>
-                  <Image src={showcaseImages[index]} alt={item.title} fill sizes={index === 1 ? "(max-width: 640px) 100vw, 50vw" : "(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"} className="object-cover transition duration-700 group-hover:scale-105" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#102d2a]/85 via-transparent to-transparent" />
-                  {index === 1 ? <span className="absolute end-4 top-4 flex size-9 items-center justify-center rounded-full bg-white/90 text-[#102d2a] shadow-lg"><PlayIcon className="size-4 fill-current" aria-hidden="true" /></span> : null}
-                  <div className="absolute inset-x-0 bottom-0 p-5">
-                    <span className="text-[11px] font-semibold text-[#f4b8a8]">{item.tag}</span>
-                    <h3 className="mt-1 text-xl font-bold text-white">{item.title}</h3>
-                  </div>
-                </article>
-              ))}
-            </div>
+            <ShortFormGallery copy={copy.showcase} />
           </div>
         </section>
 
         <section id="how" className="scroll-mt-24 px-5 py-24 sm:px-8 lg:px-10 lg:py-32">
           <div className="mx-auto max-w-7xl">
-            <SectionHeading centered eyebrow={copy.steps.eyebrow} title={copy.steps.title} />
-            <div className="relative mt-16">
-              <div className="absolute inset-x-[10%] top-6 hidden h-px bg-[#0d4f45]/15 md:block" aria-hidden="true" />
-              <ol className="relative grid gap-8 md:grid-cols-4">
-                {copy.steps.items.map((item, index) => (
-                  <li className="relative text-center" key={item.title}>
-                    <span className="relative z-10 mx-auto flex size-12 items-center justify-center rounded-2xl border border-[#0d4f45]/12 bg-[#fbf7ef] text-sm font-bold text-[#e75f45] shadow-[0_6px_20px_rgba(16,45,42,0.08)]">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                    <h3 className="mt-6 text-lg font-bold">{item.title}</h3>
-                    <p className="mx-auto mt-2 max-w-[15rem] text-sm leading-6 text-[#647a75]">{item.body}</p>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          </div>
-        </section>
-
-        <section id="features" className="scroll-mt-24 px-5 pb-24 sm:px-8 lg:px-10 lg:pb-32">
-          <div className="mx-auto max-w-7xl rounded-[36px] bg-[#eee6da] p-6 sm:p-10 lg:p-14">
-            <SectionHeading eyebrow={copy.features.eyebrow} title={copy.features.title} body={copy.features.body} />
-            <div className="mt-12 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {copy.features.items.map((feature) => {
-                const Icon = featureIcons[feature.icon as keyof typeof featureIcons];
-                return (
-                  <article className="rounded-[24px] border border-white/60 bg-[#fbf7ef]/80 p-6 transition duration-300 hover:-translate-y-1 hover:bg-white hover:shadow-[0_16px_40px_rgba(16,45,42,0.08)]" key={feature.title}>
-                    <span className="flex size-10 items-center justify-center rounded-xl bg-[#cfe5d8] text-[#0d4f45]">
-                      <Icon className="size-5" aria-hidden="true" />
-                    </span>
-                    <h3 className="mt-7 text-lg font-bold">{feature.title}</h3>
-                    <p className="mt-2 text-sm leading-6 text-[#647a75]">{feature.body}</p>
-                  </article>
-                );
-              })}
-            </div>
+            <SectionHeading eyebrow={copy.steps.eyebrow} title={copy.steps.title} />
+            <CalendarAutomation copy={copy.steps} isArabic={isArabic} />
           </div>
         </section>
 
         <section className="px-5 pb-24 sm:px-8 lg:px-10 lg:pb-32">
-          <div className="mx-auto grid max-w-7xl overflow-hidden rounded-[36px] bg-[#e46549] text-[#fffaf0] lg:grid-cols-[1.05fr_0.95fr]">
-            <div className="p-8 sm:p-12 lg:p-16">
-              <p className="text-xs font-bold tracking-[0.14em] text-[#ffd9ce]">{copy.mena.eyebrow}</p>
-              <h2 className={`${styles.displayHeading} mt-5 max-w-2xl text-balance text-4xl font-bold leading-[1.12] tracking-[-0.045em] sm:text-5xl`}>{copy.mena.title}</h2>
-              <p className="mt-6 max-w-xl text-lg leading-8 text-[#fff4ec]/85">{copy.mena.body}</p>
-              <ul className="mt-8 space-y-3">
-                {copy.mena.points.map((point) => (
-                  <li className="flex items-center gap-3 text-sm font-semibold" key={point}>
-                    <span className="flex size-6 items-center justify-center rounded-full bg-[#fffaf0] text-[#c54932]"><CheckIcon className="size-3.5" aria-hidden="true" /></span>
-                    {point}
+          <div className="mx-auto max-w-7xl overflow-hidden rounded-[38px] bg-[#e46549] p-7 text-[#fffaf0] sm:p-10 lg:p-14">
+            <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-end">
+              <div>
+                <p className="text-xs font-bold tracking-[0.14em] text-[#ffd9ce]">{copy.mena.eyebrow}</p>
+                <h2 className={`${styles.displayHeading} mt-5 max-w-xl text-balance text-4xl font-bold leading-[1.12] tracking-[-0.045em] sm:text-5xl`}>{copy.mena.title}</h2>
+                <p className="mt-6 max-w-xl text-lg leading-8 text-[#fff4ec]/85">{copy.mena.body}</p>
+              </div>
+              <ul className="grid gap-3 sm:grid-cols-3">
+                {copy.mena.examples.map((example, index) => (
+                  <li className={`${styles.marketExample} rounded-[26px] border border-white/18 bg-[#102d2a] p-5 shadow-[0_20px_55px_rgba(83,29,18,0.18)]`} key={example.market}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-bold text-white">{example.market}</span>
+                      <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] text-white/60">{example.dialect}</span>
+                    </div>
+                    <p className="mt-10 text-2xl font-bold leading-snug text-white">{example.hook}</p>
+                    <div className="mt-6 flex gap-1.5" aria-hidden="true">
+                      {[0, 1, 2].map((dot) => <span className={`h-1.5 rounded-full ${dot === index ? "w-8 bg-[#f19b7f]" : "w-3 bg-white/20"}`} key={dot} />)}
+                    </div>
                   </li>
                 ))}
               </ul>
             </div>
-            <div className={`${styles.menaVisual} relative min-h-[420px] overflow-hidden p-8 sm:p-12 lg:min-h-full`}>
-              <Globe2Icon className="absolute -bottom-14 -end-14 size-72 text-white/10" strokeWidth={0.7} aria-hidden="true" />
-              <div className="relative flex h-full flex-col justify-between rounded-[28px] border border-white/20 bg-[#102d2a]/92 p-7 shadow-2xl">
-                <div className="flex items-center justify-between">
-                  <span className="rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white/80">MENA</span>
-                  <SparklesIcon className="size-5 text-[#f2ad8f]" aria-hidden="true" />
-                </div>
-                <p className={`${styles.displayHeading} max-w-xs text-4xl font-bold leading-tight tracking-[-0.04em] sm:text-5xl`}>{isArabic ? "نبدأ من هنا." : "We start here."}</p>
-                <p className="text-sm font-medium text-white/65">{copy.mena.markets}</p>
-              </div>
+            <div className="mt-8 flex flex-wrap gap-2 border-t border-white/15 pt-6">
+              {copy.mena.points.map((point) => <span className="rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white/80" key={point}>{point}</span>)}
             </div>
           </div>
         </section>
@@ -533,12 +438,16 @@ export function MarketingHome({
         <section id="platforms" className="scroll-mt-24 border-y border-[#143f38]/10 bg-white/45 px-5 py-24 sm:px-8 lg:px-10 lg:py-28">
           <div className="mx-auto max-w-7xl text-center">
             <SectionHeading centered eyebrow={copy.platforms.eyebrow} title={copy.platforms.title} body={copy.platforms.body} />
-            <div className="mx-auto mt-12 flex max-w-4xl flex-wrap justify-center gap-3" dir="ltr">
+            <div className="mx-auto mt-12 flex max-w-5xl flex-col items-stretch gap-3 rounded-[32px] border border-[#143f38]/10 bg-[#eee6da] p-4 shadow-[0_22px_65px_rgba(16,45,42,0.08)] sm:flex-row sm:items-center" dir="ltr">
+              <div className="flex flex-1 items-center gap-3 rounded-[22px] bg-[#102d2a] p-4 text-left text-white">
+                <CalendarDaysIcon className="size-5 text-[#f19b7f]" aria-hidden="true" />
+                <div><p className="text-xs text-white/45">Tasmeemai</p><p className="font-bold">{isArabic ? "تقويم 30 يومًا" : "30-day calendar"}</p></div>
+              </div>
+              <ArrowRightIcon className="mx-auto size-5 rotate-90 text-[#8ba09a] sm:rotate-0" aria-hidden="true" />
               {copy.platforms.names.map((name) => (
-                <span className="flex items-center gap-2.5 rounded-2xl border border-[#143f38]/10 bg-[#fbf7ef] px-5 py-3.5 text-sm font-bold text-[#153d37] shadow-[0_8px_24px_rgba(16,45,42,0.05)]" key={name}>
-                  <span className="size-2 rounded-full bg-[#e75f45]" />
-                  {name}
-                </span>
+                <div className="flex flex-1 items-center justify-center gap-2.5 rounded-[22px] border border-[#143f38]/8 bg-[#fbf7ef] px-4 py-5 text-sm font-bold text-[#153d37]" key={name}>
+                  <span className="size-2 rounded-full bg-[#e75f45]" />{name}
+                </div>
               ))}
             </div>
             <p className="mt-7 text-xs text-[#71847f]">{copy.platforms.footnote}</p>
@@ -546,18 +455,31 @@ export function MarketingHome({
         </section>
 
         <section className="px-5 py-24 sm:px-8 lg:px-10 lg:py-32">
-          <div className={`${styles.ctaPanel} relative mx-auto max-w-7xl overflow-hidden rounded-[38px] bg-[#0d4f45] px-6 py-16 text-center text-white sm:px-12 sm:py-20`}>
-            <div className="relative z-10 mx-auto max-w-3xl">
+          <div className={`${styles.ctaPanel} relative mx-auto grid max-w-7xl overflow-hidden rounded-[38px] bg-[#0d4f45] px-6 py-14 text-white sm:px-12 sm:py-16 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-14`}>
+            <div className="relative z-10 max-w-2xl">
               <p className="text-xs font-bold tracking-[0.14em] text-[#a9d7c3]">{copy.early.eyebrow}</p>
               <h2 className={`${styles.displayHeading} mt-5 text-balance text-4xl font-bold leading-tight tracking-[-0.045em] sm:text-6xl`}>{copy.early.title}</h2>
-              <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-white/70">{copy.early.body}</p>
-              <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
+              <p className="mt-6 max-w-2xl text-lg leading-8 text-white/70">{copy.early.body}</p>
+              <div className="mt-9 flex flex-col gap-3 sm:flex-row">
                 <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#fffaf0] px-6 text-sm font-bold text-[#0d4f45] transition hover:-translate-y-0.5 hover:bg-white" href={signUpUrl}>
                   {copy.early.primary}<ArrowIcon className="size-4" aria-hidden="true" />
                 </Link>
                 <Link className="inline-flex min-h-12 items-center justify-center rounded-full border border-white/20 bg-white/5 px-6 text-sm font-bold text-white transition hover:bg-white/10" href={contentStudioUrl}>
                   {copy.early.secondary}
                 </Link>
+              </div>
+            </div>
+            <div className="relative z-10 mt-12 rounded-[28px] border border-white/15 bg-[#092f2a] p-5 shadow-2xl lg:mt-0">
+              <div className="rounded-2xl border border-white/10 bg-white/7 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/40">{isArabic ? "رابط العلامة" : "Brand URL"}</p>
+                <p className="mt-2 truncate text-sm text-white/80" dir="ltr">https://yourbrand.com</p>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-white/10 bg-white/7 p-4"><p className="text-[10px] text-white/40">{copy.marketStrip.label}</p><p className="mt-2 text-sm font-bold">{copy.marketStrip.markets[0]}</p></div>
+                <div className="rounded-2xl border border-white/10 bg-white/7 p-4"><p className="text-[10px] text-white/40">{isArabic ? "الصيغ" : "Format"}</p><p className="mt-2 text-sm font-bold">TikTok · Reels · Shorts</p></div>
+              </div>
+              <div className="mt-3 flex items-center justify-between rounded-2xl bg-[#e75f45] px-5 py-4 text-sm font-bold text-white">
+                <span>{copy.early.primary}</span><SparklesIcon className="size-4" aria-hidden="true" />
               </div>
             </div>
           </div>
@@ -594,7 +516,7 @@ export function MarketingHome({
             <nav aria-label={copy.footer.product}>
               <p className="text-xs font-bold uppercase tracking-[0.16em] text-white/55">{copy.footer.product}</p>
               <ul className="mt-5 space-y-3 text-sm text-white/75">
-                <li><a className="hover:text-white" href="#features">{copy.footer.links[0]}</a></li>
+                <li><a className="hover:text-white" href="#product">{copy.footer.links[0]}</a></li>
                 <li><a className="hover:text-white" href="#how">{copy.footer.links[1]}</a></li>
                 <li><a className="hover:text-white" href="#platforms">{copy.footer.links[2]}</a></li>
                 <li><a className="hover:text-white" href="#faq">{copy.footer.links[3]}</a></li>
@@ -638,44 +560,50 @@ function SectionHeading({
   );
 }
 
-function HeroWorkspaceMockup({ copy }: { copy: typeof arabicCopy.mockup }) {
-  return (
-    <div className={`${styles.mockupWrap} relative mx-auto w-full max-w-[690px]`}>
-      <div className="absolute -start-5 top-16 z-20 hidden w-44 rotate-[-4deg] rounded-2xl border border-[#143f38]/10 bg-[#fffaf0] p-4 shadow-[0_18px_45px_rgba(16,45,42,0.16)] sm:block rtl:rotate-[4deg]">
-        <div className="flex items-center gap-2 text-xs font-bold text-[#102d2a]"><CalendarDaysIcon className="size-4 text-[#e75f45]" aria-hidden="true" />{copy.calendar}</div>
-        <div className="mt-3 grid grid-cols-5 gap-1">
-          {Array.from({ length: 15 }).map((_, index) => <span className={`aspect-square rounded-[4px] ${[3, 7, 11].includes(index) ? "bg-[#e75f45]" : "bg-[#e8e1d6]"}`} key={index} />)}
-        </div>
-      </div>
+function HeroPipelineMockup({ copy, isArabic }: { copy: typeof arabicCopy.mockup; isArabic: boolean }) {
+  const labels = isArabic
+    ? { trend: "صيغة رائجة", brand: "نسخة علامتك", calendar: "30 يومًا" }
+    : { trend: "Trending format", brand: "Your brand version", calendar: "30 days" };
 
-      <div className="relative overflow-hidden rounded-[30px] border border-[#153d37]/14 bg-[#f7f3eb] p-2 shadow-[0_34px_90px_rgba(16,45,42,0.18)] sm:p-3">
-        <div className="overflow-hidden rounded-[23px] border border-[#153d37]/10 bg-[#fffdf8]">
-          <div className="flex h-11 items-center justify-between border-b border-[#153d37]/8 px-4">
-            <div className="flex gap-1.5" dir="ltr"><span className="size-2.5 rounded-full bg-[#e98c78]" /><span className="size-2.5 rounded-full bg-[#e8c273]" /><span className="size-2.5 rounded-full bg-[#83b69d]" /></div>
-            <span className="text-[10px] font-semibold text-[#78908a]">Tasmeemai Workspace</span>
+  return (
+    <div className={`${styles.mockupWrap} relative mx-auto w-full max-w-[650px]`}>
+      <div className="relative overflow-hidden rounded-[32px] border border-[#153d37]/14 bg-[#f7f3eb] p-2 shadow-[0_34px_90px_rgba(16,45,42,0.18)] sm:p-3">
+        <div className="overflow-hidden rounded-[24px] border border-[#153d37]/10 bg-[#fffdf8]">
+          <div className="flex h-11 items-center justify-between border-b border-[#153d37]/8 px-4" dir="ltr">
+            <div className="flex gap-1.5"><span className="size-2.5 rounded-full bg-[#e98c78]" /><span className="size-2.5 rounded-full bg-[#e8c273]" /><span className="size-2.5 rounded-full bg-[#83b69d]" /></div>
+            <span className="text-[10px] font-semibold text-[#78908a]">Tasmeemai · Content Engine</span>
           </div>
-          <div className="grid min-h-[430px] grid-cols-[62px_1fr] sm:grid-cols-[150px_1fr]" dir="ltr">
-            <aside className="border-r border-[#153d37]/8 bg-[#f2ede4] p-3">
-              <div className="mb-7 flex items-center gap-2"><span className="flex size-7 items-center justify-center rounded-lg bg-[#0d4f45] text-xs font-bold text-white">ت</span><span className="hidden text-xs font-bold text-[#153d37] sm:block">Tasmeemai</span></div>
-              <div className="space-y-2">
-                {[WandSparklesIcon, Layers3Icon, CalendarDaysIcon, BarChart3Icon].map((Icon, index) => (
-                  <div className={`flex items-center gap-2 rounded-lg px-2 py-2 ${index === 0 ? "bg-white text-[#0d4f45] shadow-sm" : "text-[#8a9b97]"}`} key={index}><Icon className="size-3.5" aria-hidden="true" /><span className="hidden h-1.5 w-14 rounded-full bg-current opacity-30 sm:block" /></div>
-                ))}
+          <div className="p-4 sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2"><span className="flex size-8 items-center justify-center rounded-xl bg-[#0d4f45] text-xs font-bold text-white">ت</span><div><p className="text-[9px] text-[#78908a]">{copy.eyebrow}</p><p className="text-sm font-bold text-[#102d2a]">{copy.heading}</p></div></div>
+              <span className="rounded-full bg-[#d8eadf] px-2.5 py-1.5 text-[9px] font-bold text-[#0d4f45]">{copy.ready}</span>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-[0.72fr_1.28fr]" dir="ltr">
+              <div className="relative min-h-[320px] overflow-hidden rounded-[22px] bg-[#102d2a]">
+                <Image src="/sample-images/cosmetics.jpg" alt="" fill priority sizes="(max-width: 640px) 90vw, 220px" className="object-cover opacity-90" />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#102d2a] via-transparent to-black/10" />
+                <span className="absolute left-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#102d2a]">{labels.trend}</span>
+                <div className="absolute inset-x-0 bottom-0 p-4 text-white" dir={isArabic ? "rtl" : "ltr"}>
+                  <p className="text-[10px] text-white/60">{copy.prompt}</p>
+                  <p className="mt-2 text-lg font-bold">{labels.brand}</p>
+                </div>
               </div>
-            </aside>
-            <div className="min-w-0 p-4 sm:p-6" dir="rtl">
-              <p className="text-[10px] font-semibold text-[#e75f45]">{copy.eyebrow}</p>
-              <div className="mt-1 flex items-center justify-between gap-3">
-                <h2 className="truncate text-base font-bold text-[#102d2a] sm:text-xl">{copy.heading}</h2>
-                <span className="shrink-0 rounded-full bg-[#d8eadf] px-2 py-1 text-[8px] font-bold text-[#0d4f45]">{copy.ready}</span>
-              </div>
-              <div className="mt-5 rounded-2xl border border-[#153d37]/10 bg-[#f7f3eb] p-3">
-                <p className="truncate text-[10px] text-[#6e817d]">{copy.prompt}</p>
-                <div className="mt-3 flex justify-end"><span className="rounded-lg bg-[#0d4f45] px-3 py-1.5 text-[9px] font-bold text-white">{copy.generate}</span></div>
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-[#d9c4a7]"><Image src="/sample-images/cosmetics.jpg" alt="" fill priority sizes="(max-width: 768px) 35vw, 220px" className="object-cover" /></div>
-                <div className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-[#d9c4a7]"><Image src="/sample-images/new-bg-model-product.png" alt="" fill priority sizes="(max-width: 768px) 35vw, 220px" className="object-cover" /></div>
+
+              <div className="flex min-w-0 flex-col rounded-[22px] border border-[#153d37]/9 bg-[#f3eee5] p-4" dir={isArabic ? "rtl" : "ltr"}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-xs font-bold text-[#102d2a]"><CalendarDaysIcon className="size-4 text-[#e75f45]" aria-hidden="true" />{copy.calendar}</div>
+                  <span className="text-[10px] font-semibold text-[#e75f45]">{labels.calendar}</span>
+                </div>
+                <div className="mt-4 grid flex-1 grid-cols-5 gap-1.5">
+                  {Array.from({ length: 30 }).map((_, index) => {
+                    const filled = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28].includes(index);
+                    return <span className={`relative min-h-8 rounded-[7px] border ${filled ? "border-[#e75f45]/30 bg-[#f8d7cb]" : "border-[#153d37]/6 bg-white/55"}`} key={index}><span className="absolute start-1.5 top-1 text-[7px] text-[#78908a]">{index + 1}</span>{filled ? <span className="absolute inset-x-1.5 bottom-1.5 h-1 rounded-full bg-[#e75f45]" /> : null}</span>;
+                  })}
+                </div>
+                <div className="mt-4 flex items-center justify-between rounded-xl bg-[#0d4f45] px-3 py-2.5 text-white">
+                  <span className="text-[9px] font-semibold">{copy.generate}</span><SparklesIcon className="size-3.5 text-[#f4b8a8]" aria-hidden="true" />
+                </div>
               </div>
             </div>
           </div>
@@ -685,10 +613,73 @@ function HeroWorkspaceMockup({ copy }: { copy: typeof arabicCopy.mockup }) {
       <div className="absolute -bottom-6 -end-3 z-20 w-48 rotate-[3deg] rounded-2xl border border-[#143f38]/10 bg-[#fffaf0] p-3.5 shadow-[0_18px_45px_rgba(16,45,42,0.16)] sm:-end-7 sm:w-56 rtl:rotate-[-3deg]">
         <div className="flex items-center gap-3">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#f8d7cb] text-[#d55239]"><SendIcon className="size-4" aria-hidden="true" /></span>
-          <div className="min-w-0"><p className="truncate text-xs font-bold text-[#102d2a]">{copy.social}</p><p className="mt-1 text-[9px] text-[#71847f]">Instagram · 18:30</p></div>
+          <div className="min-w-0"><p className="truncate text-xs font-bold text-[#102d2a]">{copy.social}</p><p className="mt-1 text-[9px] text-[#71847f]">Instagram Reels · 18:30</p></div>
           <CheckIcon className="ms-auto size-4 shrink-0 text-[#0d4f45]" aria-hidden="true" />
         </div>
       </div>
+    </div>
+  );
+}
+
+function TrendTransformationDemo({ copy, isArabic }: { copy: typeof arabicCopy.transformation; isArabic: boolean }) {
+  const labels = isArabic ? ["الرائج الآن", "بصوت علامتك", "جاهز للنشر"] : ["Trending now", "In your brand voice", "Ready to publish"];
+  return (
+    <div className={`${styles.pipelinePanel} mt-14 grid gap-3 rounded-[34px] border border-[#143f38]/10 bg-[#eee6da] p-4 shadow-[0_24px_70px_rgba(16,45,42,0.08)] lg:grid-cols-3 lg:p-5`}>
+      {copy.cards.map((card, index) => (
+        <article className="relative overflow-hidden rounded-[26px] border border-white/70 bg-[#fffaf0] p-5" key={card.number}>
+          <div className="flex items-center justify-between gap-3"><span className="text-[10px] font-bold tracking-[0.16em] text-[#e75f45]">{labels[index]}</span><span className="text-xs font-bold text-[#a0aca8]">{card.number}</span></div>
+          {index === 0 ? (
+            <div className="relative mt-5 aspect-[16/11] overflow-hidden rounded-2xl"><Image src="/sample-images/desert.jpg" alt="" fill sizes="(max-width: 1024px) 90vw, 30vw" className="object-cover" /><span className="absolute bottom-3 end-3 rounded-full bg-white/90 px-3 py-1.5 text-[10px] font-bold text-[#102d2a]">9:16 · Hook</span></div>
+          ) : index === 1 ? (
+            <div className="mt-5 space-y-2 rounded-2xl bg-[#102d2a] p-4 text-white">
+              <div className="flex gap-2"><span className="rounded-full bg-[#e75f45] px-2.5 py-1 text-[9px]">MENA</span><span className="rounded-full bg-white/10 px-2.5 py-1 text-[9px]">Arabic</span></div>
+              <div className="pt-7"><p className="text-[10px] text-white/45">{isArabic ? "زاوية العلامة" : "Brand angle"}</p><p className="mt-2 text-lg font-bold">{isArabic ? "نتيجة واضحة في وقت أقل" : "A clear result in less time"}</p></div>
+            </div>
+          ) : (
+            <div className="relative mx-auto mt-5 aspect-[9/12] max-w-[180px] overflow-hidden rounded-[22px] bg-[#102d2a]"><Image src="/sample-images/new-bg-model-product.png" alt="" fill sizes="180px" className="object-cover" /><div className="absolute inset-0 bg-gradient-to-t from-[#102d2a]/85 via-transparent to-transparent" /><span className="absolute bottom-3 start-3 end-3 rounded-xl bg-white/90 px-3 py-2 text-center text-[10px] font-bold text-[#102d2a]">TikTok · Reels · Shorts</span></div>
+          )}
+          <h3 className="mt-5 text-xl font-bold text-[#102d2a]">{card.title}</h3>
+          <p className="mt-2 text-sm leading-6 text-[#607570]">{card.body}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function ShortFormGallery({ copy }: { copy: typeof arabicCopy.showcase }) {
+  return (
+    <div className="mt-14 flex snap-x gap-4 overflow-x-auto pb-5 sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-4">
+      {copy.items.map((item, index) => (
+        <article className={`${styles.phoneCard} group relative aspect-[9/16] min-w-[76%] snap-center overflow-hidden rounded-[30px] border-[6px] border-[#25413d] bg-[#1c3834] shadow-[0_25px_60px_rgba(0,0,0,0.24)] sm:min-w-0`} key={item.title}>
+          <Image src={showcaseImages[index]} alt={item.title} fill sizes="(max-width: 640px) 76vw, (max-width: 1024px) 45vw, 24vw" className="object-cover transition duration-700 group-hover:scale-105" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#081d1a]/95 via-transparent to-black/15" />
+          <div className="absolute inset-x-0 top-0 flex items-center justify-between p-4"><span className="rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#102d2a]">{item.tag}</span><PlayIcon className="size-4 fill-white text-white" aria-hidden="true" /></div>
+          <div className="absolute inset-x-0 bottom-0 p-5"><p className="text-[10px] text-[#f4b8a8]">Tasmeemai</p><h3 className="mt-1 text-2xl font-bold text-white">{item.title}</h3><div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/20"><div className="h-full w-2/3 rounded-full bg-[#e75f45]" /></div></div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function CalendarAutomation({ copy, isArabic }: { copy: typeof arabicCopy.steps; isArabic: boolean }) {
+  const plannedDays = new Set([0, 1, 3, 5, 7, 8, 10, 12, 14, 16, 17, 19, 21, 23, 25, 27, 29]);
+  const platformCodes = ["TT", "IG", "YT"];
+  return (
+    <div className="mt-14 grid overflow-hidden rounded-[36px] border border-[#143f38]/10 bg-[#eee6da] shadow-[0_28px_80px_rgba(16,45,42,0.09)] lg:grid-cols-[1.25fr_0.75fr]">
+      <div className="border-b border-[#143f38]/10 p-5 sm:p-8 lg:border-b-0 lg:border-e">
+        <div className="flex items-center justify-between gap-4"><div><p className="text-xs font-bold text-[#e75f45]">{isArabic ? "تقويم المحتوى" : "Content calendar"}</p><h3 className="mt-1 text-2xl font-bold text-[#102d2a]">{isArabic ? "30 يومًا أمامك" : "30 days ahead"}</h3></div><span className="rounded-full bg-[#d8eadf] px-3 py-1.5 text-xs font-bold text-[#0d4f45]">30 / 30</span></div>
+        <div className="mt-6 grid grid-cols-5 gap-2">
+          {Array.from({ length: 30 }).map((_, index) => {
+            const planned = plannedDays.has(index);
+            return <div className={`min-h-20 rounded-xl border p-2 ${planned ? "border-[#e75f45]/22 bg-[#fff7f1]" : "border-[#143f38]/7 bg-white/45"}`} key={index}><div className="flex items-center justify-between"><span className="text-[9px] text-[#78908a]">{index + 1}</span>{planned ? <span className="size-1.5 rounded-full bg-[#e75f45]" /> : null}</div>{planned ? <div className="mt-5 rounded-lg bg-[#102d2a] px-1.5 py-1 text-center text-[8px] font-bold text-white" dir="ltr">{platformCodes[index % 3]}</div> : null}</div>;
+          })}
+        </div>
+      </div>
+      <ol className="space-y-1 p-5 sm:p-8">
+        {copy.items.map((item, index) => (
+          <li className="flex gap-4 rounded-2xl p-4 transition hover:bg-white/50" key={item.title}><span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#102d2a] text-xs font-bold text-white">{index + 1}</span><div><h3 className="font-bold text-[#102d2a]">{item.title}</h3><p className="mt-1 text-sm leading-6 text-[#607570]">{item.body}</p></div></li>
+        ))}
+      </ol>
     </div>
   );
 }
