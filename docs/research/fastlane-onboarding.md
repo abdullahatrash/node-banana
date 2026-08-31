@@ -21,6 +21,7 @@ Document Fastlane's acquisition-to-onboarding journey one verified step at a tim
 | 3. Duplicate-email validation | Submitting an already-used email keeps the user on signup and shows the inline message: **“That email address is taken. Please try another.”** | Live observation at [Fastlane signup](https://app.usefastlane.ai/signup) |
 | 4. Email verification | Submitting a new email/password successfully transitions to `/signup/verify-email-address`. | Live observation at [Fastlane email-verification route](https://app.usefastlane.ai/signup/verify-email-address) |
 | 5. Initial profile setup | After verification, the user reaches `/onboarding`. The screen collects an optional company logo, full name, and company name, then offers **Continue**. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
+| 6. Brand-context source | The next onboarding state asks the user either to analyze a company website or provide a structured company description. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding), corroborated by the [public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js) |
 
 The public client bundle independently corroborates `/onboarding` as the signup component's successful-signup destination. Source: [Fastlane public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js).
 
@@ -39,6 +40,44 @@ At `https://app.usefastlane.ai/onboarding`, the observed screen contains:
 - primary action **Continue**.
 
 No action on **Continue** has been recorded in this note, so the next screen and validation behavior remain unknown.
+
+### Second onboarding screen: website or description
+
+The next state remains at `https://app.usefastlane.ai/onboarding` and offers two mutually exclusive sources for brand context.
+
+**Website mode (default)**
+
+- heading **“Analyze your website”**;
+- helper copy **“We use this to understand your brand and generate relevant content.”**;
+- selected tab **Website** and alternate tab **Use description instead**;
+- **Company Website** input, prefilled with `https://` and placeholder `https://yourcompany.com`;
+- primary action **Analyse Website**;
+- secondary action **← Back**.
+
+**Description mode**
+
+- heading **“Tell us about your company”**;
+- helper copy **“No website yet? Add the brand context we should use for content generation.”**;
+- **Company Description** textarea with the prompt **“Describe what you sell, who it is for, why it matters, and the tone we should use.”**;
+- structured starter text: **Product/service, Audience, Problem solved, Key benefits, Tone/positioning, Things to avoid**;
+- minimum 20 characters and maximum 50,000 characters;
+- disabled **Continue** action until the minimum is met;
+- secondary action **← Back**.
+
+After inspection, the live UI was restored to Website mode. No website or company description was submitted during this observation.
+
+### What Fastlane does after submission
+
+Fastlane's public client code exposes an asynchronous workspace-preparation state with these stages:
+
+1. **Website / Description** — website mode tracks a `WEBSITE_SCRAPING` task; description mode marks the context as description-only.
+2. **Profile** — `COMPANY_PROFILE_GENERATION` produces AI-powered company insights.
+3. **Suggestions** — the UI waits for the first Blitz content card to be ready.
+4. **Leads** — when engagement features are enabled, `REDDIT_LEADS_INITIAL` performs initial lead discovery.
+
+The progress UI says **“Preparing your workspace”** and **“This usually takes 30–60 seconds.”** If website security blocks the scanner, Fastlane offers a recovery form where the user can paste homepage text or describe the company manually. The description-only path is processed with AI and does not require website scraping.
+
+This confirms an asynchronous task pipeline from the client contract and progress states. The public client does not reveal whether the backend uses a particular job queue, worker framework, crawl depth, or scraping vendor, so those implementation details remain unknown.
 
 ### Related first-party product framing
 
@@ -86,6 +125,7 @@ Append new observations here in sequence. Record the URL, exact visible copy, av
 | Observed | `https://app.usefastlane.ai/signup` | Signup offers Google or email/password. A duplicate email produces the inline error “That email address is taken. Please try another.” |
 | Observed | `https://app.usefastlane.ai/signup/verify-email-address` | A successful new-email submission reached this route. Screen copy and actions have not yet been recorded. |
 | Observed | `https://app.usefastlane.ai/onboarding` | First setup screen: Log out; Fastlane logo; welcome/helper copy; optional company-logo upload (PNG/JPG, max 5MB); name; company name; multi-workspace note; Continue. The result of Continue has not yet been observed. |
+| Observed | `https://app.usefastlane.ai/onboarding` | Second setup state offers Website analysis or a manual Company Description. Website mode was restored after inspecting both paths; nothing was submitted. Public client code confirms async website/description processing, company-profile generation, first suggestions, and optional lead discovery. |
 
 ## Primary sources
 
