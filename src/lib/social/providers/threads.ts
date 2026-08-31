@@ -17,6 +17,7 @@ import {
   GRAPH_BASE,
   makeOAuthState,
   MetaApiError,
+  metaErrorToClassifierBody,
   verifyGrantedScopes,
 } from "@/lib/social/providers/meta-common";
 import { registerProvider } from "@/lib/social/provider-registry";
@@ -248,12 +249,7 @@ export const threadsProvider: SocialProviderAdapter = {
   },
 
   classifyError(error: unknown): SocialProviderError {
-    const body =
-      error instanceof Error
-        ? JSON.stringify({ message: error.message })
-        : typeof error === "string"
-          ? error
-          : JSON.stringify(error);
+    const body = metaErrorToClassifierBody(error);
 
     return (
       classifyMetaError(body) ?? {

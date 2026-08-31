@@ -10,15 +10,15 @@ describe("support bundle bind database context", () => {
     let baseTransactions = 0;
     let savepoints = 0;
     const execute = vi.fn(async () => undefined);
-    let transactionExecutor!: SupportBundleDbExecutor;
     const transactionRecord = {
       execute,
       transaction: async (operation: (executor: SupportBundleDbExecutor) => Promise<unknown>) => {
         savepoints += 1;
-        return operation(transactionExecutor);
+        return operation(transactionRecord as unknown as SupportBundleDbExecutor);
       },
     };
-    transactionExecutor = transactionRecord as unknown as SupportBundleDbExecutor;
+    const transactionExecutor =
+      transactionRecord as unknown as SupportBundleDbExecutor;
     const baseRecord = {
       transaction: async (operation: (executor: SupportBundleDbExecutor) => Promise<unknown>) => {
         baseTransactions += 1;

@@ -255,4 +255,15 @@ describe("/api/social/internal/dispatch POST", () => {
       "publishPostChainWorkflow",
     );
   });
+
+  it("supports GET as a cron-triggered dispatch", async () => {
+    mockListDueQueuedPosts.mockResolvedValue([]);
+
+    const { GET } = await import("../route");
+    const response = await GET(createRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+  });
 });

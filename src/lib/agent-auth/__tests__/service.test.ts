@@ -148,7 +148,7 @@ async function dispatchIdentity(
 }
 
 describe("Workspace Agent pairing and authentication", () => {
-  it("requires a dedicated pepper in production-like environments", () => {
+  it("requires a dedicated pepper when credentials are used in production-like environments", async () => {
     const previousAppEnv = process.env.APP_ENV;
     const previousPepper = process.env.AGENT_KEY_PEPPER;
     const previousPeppers = process.env.AGENT_KEY_PEPPERS;
@@ -159,9 +159,13 @@ describe("Workspace Agent pairing and authentication", () => {
     delete process.env.AGENT_KEY_PEPPERS;
     delete process.env.AGENT_KEY_PEPPER_ACTIVE_VERSION;
     try {
-      expect(
-        () => new AgentAuthService(new InMemoryAgentAuthRepository()),
-      ).toThrow(
+      const service = new AgentAuthService(new InMemoryAgentAuthRepository());
+      await expect(
+        service.createPairingChallenge({
+          agentName: "Build-safe agent",
+          requestedAccess: ["capabilities.list@1"],
+        }),
+      ).rejects.toThrow(
         "AGENT_KEY_PEPPER or AGENT_KEY_PEPPERS must be set in production.",
       );
     } finally {

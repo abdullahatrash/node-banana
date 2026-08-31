@@ -108,6 +108,12 @@ export interface PublishStatusResult {
 
 /**
  * Provider capabilities exposed to the UI (e.g., provider list endpoint).
+ *
+ * `configured` is NOT set by individual adapters' `getCapabilities()` —
+ * it's computed and injected by `listProviderCapabilities()` in
+ * provider-registry.ts, based on whether the platform's required server
+ * OAuth env vars are present (see platform-config.ts). It's optional here
+ * only so adapter implementations don't need to set it themselves.
  */
 export interface ProviderCapabilities {
   identifier: SocialPlatform;
@@ -117,6 +123,7 @@ export interface ProviderCapabilities {
   supportsVideo: boolean;
   supportsCarousel: boolean;
   requiresPageSelection: boolean;
+  configured?: boolean;
 }
 
 /**

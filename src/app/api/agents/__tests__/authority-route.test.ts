@@ -9,6 +9,7 @@ const mockProvisionAuthority = vi.fn();
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: () => true,
   getDb: vi.fn(),
+  schema: {},
 }));
 
 vi.mock("@/lib/studio/authz", () => ({

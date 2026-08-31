@@ -33,3 +33,48 @@ export class CapabilityFailure extends Error {
     this.remediation = options.remediation;
   }
 }
+
+export type ToolErrorCode =
+  | "invalid_input"
+  | "unauthenticated"
+  | "forbidden"
+  | "not_found"
+  | "invalid_output"
+  | "unsupported_node"
+  | "byok_key_missing"
+  | "internal";
+
+export interface StructuredToolError {
+  code: ToolErrorCode;
+  message: string;
+  fix: string;
+}
+
+export class ToolError extends Error {
+  readonly code: ToolErrorCode;
+  readonly fix: string;
+
+  constructor(args: { code: ToolErrorCode; message: string; fix: string }) {
+    super(args.message);
+    this.name = "ToolError";
+    this.code = args.code;
+    this.fix = args.fix;
+    Object.setPrototypeOf(this, ToolError.prototype);
+  }
+
+  toStructured(): StructuredToolError {
+    return { code: this.code, message: this.message, fix: this.fix };
+  }
+}
+
+export function toStructuredError(error: unknown): StructuredToolError {
+  if (error instanceof ToolError) {
+    return error.toStructured();
+  }
+
+  return {
+    code: "internal",
+    message: error instanceof Error ? error.message : "Unexpected tool failure.",
+    fix: "Retry the request; if it persists, the server may be unavailable.",
+  };
+}

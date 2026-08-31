@@ -107,4 +107,15 @@ describe("/api/social/internal/token-refresh-dispatch POST", () => {
       failed: 1,
     });
   });
+
+  it("supports GET as a cron-triggered token refresh dispatch", async () => {
+    mockListExpiringSocialAccounts.mockResolvedValue([]);
+
+    const { GET } = await import("../route");
+    const response = await GET(createRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+  });
 });

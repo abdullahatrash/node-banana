@@ -365,6 +365,13 @@
       "when": 1786245011389,
       "tag": "0051_runtime_spend_control_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1788168826349,
+      "tag": "0052_polite_arclight",
+      "breakpoints": true
     }
   ]
 }

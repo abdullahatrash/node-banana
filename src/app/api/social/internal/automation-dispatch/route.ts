@@ -72,7 +72,7 @@ function readMediaUrls(
   return media.length > 0 ? media : undefined;
 }
 
-export async function POST(
+async function handleAutomationDispatch(
   request: NextRequest,
 ): Promise<NextResponse<AutomationDispatchResponse>> {
   if (!isDatabaseConfigured()) {
@@ -332,4 +332,16 @@ export async function POST(
       { status: 500 },
     );
   }
+}
+
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse<AutomationDispatchResponse>> {
+  return handleAutomationDispatch(request);
+}
+
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<AutomationDispatchResponse>> {
+  return handleAutomationDispatch(request);
 }

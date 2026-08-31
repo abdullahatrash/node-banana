@@ -8,7 +8,7 @@ import {
   DeterministicLinkedInPlatformAdapter,
   DeterministicLinkedInPlatformTransport,
   type DeterministicLinkedInIntent,
-} from "@/lib/provider-adapters/publishing/deterministic-linkedin";
+} from "@/lib/publishing-adapters/deterministic-linkedin";
 import { describe, expect, it, vi } from "vitest";
 import { PublishingDeliveryExecutionService } from "../execution";
 import {

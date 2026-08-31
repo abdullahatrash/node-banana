@@ -407,6 +407,85 @@ export const workspaceMembers = pgTable(
 );
 
 /**
+ * Workspace-scoped API tokens for programmatic Bearer access.
+ * Only a SHA-256 hash is persisted; the raw `nb_` token is shown once.
+ */
+export const apiTokens = pgTable(
+  "api_tokens",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    tokenPrefix: text("token_prefix").notNull(),
+    revoked: boolean("revoked").default(false).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    tokenHashUnique: uniqueIndex("api_tokens_token_hash_unique").on(
+      table.tokenHash,
+    ),
+    workspaceIdx: index("api_tokens_workspace_idx").on(table.workspaceId),
+    createdAtIdx: index("api_tokens_created_at_idx").on(table.createdAt),
+  }),
+);
+
+/** AI inference providers supported by the workspace BYOK vault. */
+export const byokProviderEnum = pgEnum("byok_provider", [
+  "gemini",
+  "openai",
+  "anthropic",
+  "kie",
+  "fal",
+  "replicate",
+  "wavespeed",
+]);
+
+/** Encrypted, workspace-scoped provider credentials. */
+export const workspaceProviderKeys = pgTable(
+  "workspace_provider_keys",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: byokProviderEnum("provider").notNull(),
+    keyEncrypted: text("key_encrypted").notNull(),
+    keyHint: text("key_hint").notNull(),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceProviderUnique: uniqueIndex(
+      "workspace_provider_keys_workspace_provider_unique",
+    ).on(table.workspaceId, table.provider),
+    workspaceIdx: index("workspace_provider_keys_workspace_idx").on(
+      table.workspaceId,
+    ),
+  }),
+);
+
+/**
  * Workspace Agent identities are deliberately separate from Better Auth
  * users. A human remains accountable as sponsor, while the Agent authenticates
  * with independently rotatable keys.
@@ -5772,6 +5851,51 @@ export const projects = pgTable(
     ),
     workspaceIdx: index("projects_workspace_idx").on(table.workspaceId),
     updatedIdx: index("projects_updated_idx").on(table.updatedAt),
+  }),
+);
+
+/**
+ * Form-driven project runs retained for the headless API/MCP/CLI generation
+ * surface. This is intentionally separate from the canonical agent-runtime
+ * `workflow_runs` event stream.
+ */
+export const projectWorkflowRuns = pgTable(
+  "project_workflow_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    status: generationStatusEnum("status").default("queued").notNull(),
+    progress: jsonb("progress").$type<Record<string, unknown>>(),
+    outputs: jsonb("outputs").$type<Record<string, unknown>[]>(),
+    inputOverrides: jsonb("input_overrides").$type<Record<string, unknown>>(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("project_workflow_runs_workspace_idx").on(
+      table.workspaceId,
+    ),
+    projectIdx: index("project_workflow_runs_project_idx").on(table.projectId),
+    statusIdx: index("project_workflow_runs_status_idx").on(table.status),
+    createdAtIdx: index("project_workflow_runs_created_at_idx").on(
+      table.createdAt,
+    ),
   }),
 );
 

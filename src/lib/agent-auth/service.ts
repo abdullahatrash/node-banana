@@ -279,18 +279,40 @@ function cleanExpiry(
 }
 
 export class AgentAuthService {
+  private resolvedPepperConfig?: AgentKeyPepperConfig;
+
   constructor(
     readonly repository: AgentAuthRepository,
     private readonly clock: AgentAuthClock = systemClock,
-    private readonly peppers: Readonly<Record<number, string>> =
-      loadAgentKeyPepperConfig().peppers,
-    private readonly currentPepperVersion =
-      loadAgentKeyPepperConfig().activeVersion,
+    private readonly configuredPeppers?: Readonly<Record<number, string>>,
+    private readonly configuredCurrentPepperVersion?: number,
     private readonly authorizationRepository?: Pick<
       AgentAuthorizationRepository,
       "issueAttenuatedKey" | "provisionAuthority"
     >,
   ) {}
+
+  private get pepperConfig(): AgentKeyPepperConfig {
+    if (
+      this.configuredPeppers !== undefined &&
+      this.configuredCurrentPepperVersion !== undefined
+    ) {
+      return {
+        peppers: this.configuredPeppers,
+        activeVersion: this.configuredCurrentPepperVersion,
+      };
+    }
+    this.resolvedPepperConfig ??= loadAgentKeyPepperConfig();
+    return this.resolvedPepperConfig;
+  }
+
+  private get peppers(): Readonly<Record<number, string>> {
+    return this.pepperConfig.peppers;
+  }
+
+  private get currentPepperVersion(): number {
+    return this.pepperConfig.activeVersion;
+  }
 
   private get currentPepper(): string {
     const pepper = this.peppers[this.currentPepperVersion];
@@ -1044,12 +1066,10 @@ export class AgentAuthService {
   }
 }
 
-const productionPepperConfig = loadAgentKeyPepperConfig();
-
 export const AGENT_AUTH_SERVICE = new AgentAuthService(
   new DrizzleAgentAuthRepository(getDb),
   systemClock,
-  productionPepperConfig.peppers,
-  productionPepperConfig.activeVersion,
+  undefined,
+  undefined,
   new DrizzleAgentAuthorizationRepository(getDb),
 );

@@ -194,4 +194,17 @@ describe("/api/social/internal/reconcile-processing POST", () => {
       errorMessage: "Authentication expired. Please reconnect your account.",
     });
   });
+
+  it("supports GET as a cron-triggered reconcile", async () => {
+    mockListPublishingPostsForReconciliation.mockResolvedValue([]);
+
+    const { GET } = await import("../route");
+    const response = await GET(
+      createRequest({ "x-social-internal-secret": "secret_123" }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+  });
 });

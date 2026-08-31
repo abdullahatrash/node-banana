@@ -1,0 +1,8 @@
+# pnpm workspace definition.
+#
+# The root Node Banana Next.js app is always part of the workspace implicitly
+# (pnpm always includes the root package), so it is intentionally NOT listed
+# here — listing it is unnecessary and its build/scripts stay untouched.
+# Only the additional workspace packages need globbing.
+packages:
+  - "packages/*"

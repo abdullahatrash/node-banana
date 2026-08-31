@@ -46,7 +46,7 @@ function getMinAgeSeconds(request: NextRequest): number {
   return queryAge ?? envAge ?? DEFAULT_MIN_AGE_SECONDS;
 }
 
-export async function POST(
+async function handleReconcile(
   request: NextRequest,
 ): Promise<NextResponse<ReconcileResponse>> {
   if (!isDatabaseConfigured()) {
@@ -240,4 +240,16 @@ export async function POST(
       { status: 500 },
     );
   }
+}
+
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse<ReconcileResponse>> {
+  return handleReconcile(request);
+}
+
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<ReconcileResponse>> {
+  return handleReconcile(request);
 }

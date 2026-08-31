@@ -1,6 +1,7 @@
 "use client"
 
 import { usePathname } from "next/navigation"
+import Link from "next/link"
 import { PlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -39,7 +40,7 @@ export function SocialSiteHeader() {
         <h1 className="text-base font-medium">{title}</h1>
 
         <div className="ms-auto">
-          <Button size="sm" render={<a href="/social/compose" />} nativeButton={false}>
+          <Button size="sm" render={<Link href="/social/compose" />} nativeButton={false}>
             <PlusIcon className="size-4" />
             New Post
           </Button>

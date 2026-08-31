@@ -779,6 +779,21 @@ export async function listWorkspaceAssets(
   return opts?.limit ? base.limit(opts.limit) : base;
 }
 
+export async function getWorkspaceById(workspaceId: string) {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      id: workspaces.id,
+      name: workspaces.name,
+      slug: workspaces.slug,
+    })
+    .from(workspaces)
+    .where(and(eq(workspaces.id, workspaceId), isNull(workspaces.deletedAt)))
+    .limit(1);
+
+  return row ?? null;
+}
+
 export async function getAsset(workspaceId: string, assetId: string) {
   const db = getDb();
   const [asset] = await db

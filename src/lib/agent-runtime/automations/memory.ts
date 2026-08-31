@@ -14,6 +14,12 @@ import type {
 
 const clone = <T>(value: T): T => structuredClone(value);
 const key = (...parts: string[]) => parts.join("\u0000");
+const terminalStatesForMemory = new Set<AutomationOccurrenceRecord["state"]>([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "skipped",
+]);
 
 export class MemoryAutomationRepository implements AutomationRepository {
   private automations = new Map<string, AutomationRecord>();

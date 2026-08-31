@@ -11,7 +11,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
@@ -54,13 +53,6 @@ export function AppSwitcher({ children, align = "start" }: AppSwitcherProps) {
             )}
           </DropdownMenuItem>
         ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => (window.location.href = "/dashboard")}
-        >
-          <BarChart3Icon className="size-4" />
-          <span>Command Center</span>
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

@@ -17,6 +17,7 @@ const mockCountActiveSocialAccounts = vi.fn();
 const mockUpsertSocialAccount = vi.fn();
 const mockGetProvider = vi.fn();
 const mockIsProviderRegistered = vi.fn();
+const mockIsPlatformConfigured = vi.fn();
 const mockEncryptToken = vi.fn();
 const mockDecryptToken = vi.fn();
 
@@ -68,6 +69,10 @@ vi.mock("@/lib/social/provider-registry", () => ({
   clearRegistry: vi.fn(),
   getProvider: (...args: unknown[]) => mockGetProvider(...args),
   isProviderRegistered: (...args: unknown[]) => mockIsProviderRegistered(...args),
+}));
+
+vi.mock("@/lib/social/platform-config", () => ({
+  isPlatformConfigured: (...args: unknown[]) => mockIsPlatformConfigured(...args),
 }));
 
 vi.mock("@/lib/social/crypto", () => ({
@@ -153,6 +158,7 @@ describe("/api/social/accounts GET", () => {
 describe("/api/social/accounts/connect POST", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsPlatformConfigured.mockReturnValue(true);
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -196,6 +202,30 @@ describe("/api/social/accounts/connect POST", () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("not available");
+  });
+
+  it("returns 400 for a registered but unconfigured platform, without leaking env var names", async () => {
+    authorized();
+    mockIsProviderRegistered.mockReturnValue(true);
+    mockIsPlatformConfigured.mockReturnValue(false);
+
+    const { POST } = await import("../../accounts/connect/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/accounts/connect", {
+        method: "POST",
+        body: JSON.stringify({ platform: "x" }),
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.code).toBe("platform_not_configured");
+    expect(data.error).toContain("not configured");
+    expect(JSON.stringify(data)).not.toMatch(/X_API_KEY|X_API_SECRET|_CLIENT_ID|_CLIENT_SECRET/);
+    // Must never reach the provider (no dead-end mid-OAuth attempt)
+    expect(mockGetProvider).not.toHaveBeenCalled();
+    expect(mockCreateOAuthState).not.toHaveBeenCalled();
   });
 
   it("returns authUrl for valid platform", async () => {

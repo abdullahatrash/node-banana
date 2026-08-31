@@ -11,6 +11,17 @@ import type {
   JsonSchema,
 } from "./contracts";
 import { CapabilityFailure } from "./errors";
+import { createSocialPostTool } from "./tools/create-social-post";
+import { getAssetDownloadUrlTool } from "./tools/get-asset-download-url";
+import { getRunStatusTool } from "./tools/get-run-status";
+import { getSocialPostStatusTool } from "./tools/get-social-post-status";
+import { listAssetsTool } from "./tools/list-assets";
+import { listSocialAccountsTool } from "./tools/list-social-accounts";
+import { listSocialPostsTool } from "./tools/list-social-posts";
+import { listWorkspacesTool } from "./tools/list-workspaces";
+import { runWorkflowTool } from "./tools/run-workflow";
+import { uploadAssetTool } from "./tools/upload-asset";
+import type { AnyToolDefinition } from "./types";
 
 const IDENTITY_NAME = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 const INTRODUCED_AT = "2026-07-24T00:00:00.000Z";
@@ -452,6 +463,32 @@ export function createCapabilityRegistry(
   registrations: CapabilityRegistration[],
 ): CapabilityRegistry {
   return new CapabilityRegistry(registrations);
+}
+
+/** Public API/MCP tools that remain valid after retiring the visual workflow. */
+export const toolRegistry: readonly AnyToolDefinition[] = [
+  listWorkspacesTool,
+  listSocialAccountsTool,
+  listAssetsTool,
+  uploadAssetTool,
+  getAssetDownloadUrlTool,
+  runWorkflowTool,
+  getRunStatusTool,
+  createSocialPostTool,
+  listSocialPostsTool,
+  getSocialPostStatusTool,
+] as const;
+
+const toolsByName = new Map<string, AnyToolDefinition>(
+  toolRegistry.map((tool) => [tool.name, tool]),
+);
+
+export function getTool(name: string): AnyToolDefinition | undefined {
+  return toolsByName.get(name);
+}
+
+export function listToolNames(): string[] {
+  return toolRegistry.map((tool) => tool.name);
 }
 
 export function defineCapability<Input, Output>(
