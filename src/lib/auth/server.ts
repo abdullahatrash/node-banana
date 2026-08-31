@@ -12,6 +12,7 @@ import {
   getSocialProviderConfig,
   isProductionLikeRuntime,
 } from "@/lib/auth/features";
+import { getAuthServerBaseURL } from "@/lib/auth/origins";
 import { getDb, isDatabaseConfigured, schema } from "@/lib/db";
 import { getEmailSender, verificationEmail } from "@/lib/auth/email-sender";
 import {
@@ -65,26 +66,16 @@ function getAuthSecret(): string {
   return DEV_SECRET_FALLBACK;
 }
 
-function getBaseUrl(): string {
+function getConfiguredBaseUrl(): string | undefined {
   const configured =
     process.env.BETTER_AUTH_URL?.trim() ||
     process.env.NEXT_PUBLIC_APP_URL?.trim() ||
     process.env.NEXT_PUBLIC_BETTER_AUTH_URL?.trim();
 
-  if (configured) {
-    return configured;
-  }
-
-  if (isProductionLikeRuntime()) {
-    throw new Error(
-      "BETTER_AUTH_URL (or NEXT_PUBLIC_APP_URL) must be set in production/staging environments.",
-    );
-  }
-
-  return "http://localhost:3000";
+  return configured;
 }
 
-function getTrustedOrigins(baseUrl: string): string[] {
+function getTrustedOrigins(configuredBaseUrl: string | undefined): string[] {
   const configured = [
     process.env.BETTER_AUTH_URL,
     process.env.NEXT_PUBLIC_APP_URL,
@@ -101,11 +92,17 @@ function getTrustedOrigins(baseUrl: string): string[] {
     configured.push("http://localhost:3000", "http://127.0.0.1:3000");
   }
 
-  configured.push(baseUrl);
+  if (configuredBaseUrl) {
+    configured.push(configuredBaseUrl);
+  }
   return Array.from(new Set(configured));
 }
 
-const baseUrl = getBaseUrl();
+const configuredBaseUrl = getConfiguredBaseUrl();
+const baseUrl = getAuthServerBaseURL(
+  configuredBaseUrl,
+  isProductionLikeRuntime(),
+);
 const authSecret = getAuthSecret();
 const authFeatureFlags = getAuthFeatureFlags();
 const authFeatureWarnings = getAuthFeatureWarnings(authFeatureFlags);
@@ -136,7 +133,7 @@ export const auth = betterAuth({
   basePath: "/api/auth",
   baseURL: baseUrl,
   secret: authSecret,
-  trustedOrigins: getTrustedOrigins(baseUrl),
+  trustedOrigins: getTrustedOrigins(configuredBaseUrl),
   database: getAuthDatabase(),
   plugins: authPlugins,
   emailAndPassword: {
