@@ -14,6 +14,10 @@ import {
 } from "@/lib/auth/features";
 import { getDb, isDatabaseConfigured, schema } from "@/lib/db";
 import { getEmailSender, verificationEmail } from "@/lib/auth/email-sender";
+import {
+  getOnboardingAnalytics,
+  recordOnboardingEventBestEffort,
+} from "@/lib/onboarding/analytics";
 
 const memoryDb = {
   user: [],
@@ -105,6 +109,7 @@ const baseUrl = getBaseUrl();
 const authSecret = getAuthSecret();
 const authFeatureFlags = getAuthFeatureFlags();
 const authFeatureWarnings = getAuthFeatureWarnings(authFeatureFlags);
+const onboardingAnalytics = getOnboardingAnalytics();
 for (const warning of authFeatureWarnings) {
   // Keep startup resilient for optional, staged features.
   console.warn(`[auth] ${warning}`);
@@ -148,10 +153,35 @@ export const auth = betterAuth({
           verificationUrl: url,
         }),
       );
+      await recordOnboardingEventBestEffort(onboardingAnalytics, {
+        eventName: "verification_sent",
+        userId: user.id,
+        occurredAt: new Date(),
+      });
     },
     sendOnSignUp: true,
     sendOnSignIn: true,
     autoSignInAfterVerification: true,
+    afterEmailVerification: async (user) => {
+      await recordOnboardingEventBestEffort(onboardingAnalytics, {
+        eventName: "verification_completed",
+        userId: user.id,
+        occurredAt: new Date(),
+      });
+    },
+  },
+  databaseHooks: {
+    user: {
+      create: {
+        after: async (user) => {
+          await recordOnboardingEventBestEffort(onboardingAnalytics, {
+            eventName: "signup_submitted",
+            userId: user.id,
+            occurredAt: new Date(),
+          });
+        },
+      },
+    },
   },
   advanced: {
     backgroundTasks: {

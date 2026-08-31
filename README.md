@@ -88,6 +88,8 @@ S3_FORCE_PATH_STYLE=false                  # R2 default
 For non-development environments, `BETTER_AUTH_SECRET` is required and you must provide either `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` so auth origin validation works correctly.
 For production/staging-like deployments, `DATABASE_URL` is required for Better Auth (memory adapter fallback is local-only).
 
+Verified email signup and the Arabic-first onboarding rollout also require the `AUTH_*`, `RESEND_*`, and `ONBOARDING_*` values documented in [`.env.example`](.env.example). Apply the onboarding migrations and legacy backfill in the order described by [`docs/onboarding-rollout.md`](docs/onboarding-rollout.md) before enabling product gates.
+
 ### Marketing and product domains
 
 Attach the marketing apex/`www` domain and the `app` subdomain to the same deployment, then configure:

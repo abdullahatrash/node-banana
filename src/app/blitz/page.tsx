@@ -1,15 +1,28 @@
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, FileText, ImageIcon, ShieldCheck, Sparkles } from "lucide-react";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import {
+  getOnboardingAnalytics,
+  recordOnboardingEventBestEffort,
+} from "@/lib/onboarding/analytics";
 
 export const dynamic = "force-dynamic";
 
 export default async function BlitzPage() {
-  const { aggregate } = await requireOnboardingComplete("/blitz");
+  const { aggregate, session } = await requireOnboardingComplete("/blitz");
   const locale = aggregate?.interfaceLocale ?? "ar";
   const rtl = locale === "ar";
   const artifact = aggregate?.activationArtifact?.artifact ?? null;
   const profile = aggregate?.activeProfile;
+  await recordOnboardingEventBestEffort(getOnboardingAnalytics(), {
+    eventName: "first_value_viewed",
+    userId: session.user.id,
+    workspaceId: aggregate?.session.workspaceId ?? undefined,
+    sessionId: aggregate?.session.id,
+    interfaceLocale: aggregate?.interfaceLocale,
+    contentLanguage: aggregate?.contentLanguage,
+    occurredAt: new Date(),
+  });
   const Arrow = rtl ? ArrowLeft : ArrowRight;
   const copy = rtl
     ? {

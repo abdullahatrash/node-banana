@@ -6,6 +6,8 @@ import { getServerAuthSession } from "@/lib/auth/session";
 import { getDb, isDatabaseConfigured } from "@/lib/db";
 import { resolvePostAuthDestination } from "@/lib/auth/post-auth-destination";
 import { PostgresOnboardingRepository } from "./postgres-repository";
+import { shouldRequireOnboarding } from "./features";
+import { ensurePersonalWorkspaceForUser } from "@/lib/studio/repository";
 
 export async function requireOnboardingComplete(requestedPath: string) {
   const session = await getServerAuthSession(await headers());
@@ -17,6 +19,20 @@ export async function requireOnboardingComplete(requestedPath: string) {
   }
   if (!isDatabaseConfigured()) {
     redirect(`/onboarding?next=${encodeURIComponent(requestedPath)}`);
+  }
+
+  if (!shouldRequireOnboarding(session.user.id)) {
+    await ensurePersonalWorkspaceForUser({
+      userId: session.user.id,
+      userName: session.user.name,
+      userEmail: session.user.email,
+    });
+    const repository = new PostgresOnboardingRepository(getDb());
+    return {
+      session,
+      aggregate: await repository.readAggregate(session.user.id),
+      repository,
+    };
   }
 
   const repository = new PostgresOnboardingRepository(getDb());

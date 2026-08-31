@@ -14,14 +14,17 @@ import {
   workspaceMembers,
   workspaceSettings,
   workspaces,
+  onboardingSessions,
   type WorkspaceRole,
 } from "@/lib/db/schema";
 import {
   ensureOrganizationMembership,
   ensureWorkspaceOrganizationMappingByWorkspaceId,
+  ensurePersonalWorkspaceForUser,
   ensureWorkspaceUser,
 } from "@/lib/studio/repository";
 import { logger } from "@/utils/logger";
+import { shouldRequireOnboarding } from "@/lib/onboarding/features";
 
 export type ContentOSPlanTier = "free" | "pro" | "enterprise";
 
@@ -314,6 +317,38 @@ export async function getContentOSSession(
   }
 
   const rawSession = await getServerAuthSession(request.headers);
+  if (rawSession?.user?.emailVerified !== true) {
+    return authFailure(
+      options.route,
+      "forbidden",
+      403,
+      "Verify your email address before accessing the product.",
+    );
+  }
+  if (shouldRequireOnboarding(userId)) {
+    const [onboarding] = await getDb()
+      .select({ status: onboardingSessions.status })
+      .from(onboardingSessions)
+      .where(eq(onboardingSessions.userId, userId))
+      .limit(1);
+    if (
+      onboarding?.status !== "completed" &&
+      onboarding?.status !== "completed_legacy"
+    ) {
+      return authFailure(
+        options.route,
+        "forbidden",
+        403,
+        "Complete onboarding before accessing the product.",
+      );
+    }
+  } else {
+    await ensurePersonalWorkspaceForUser({
+      userId,
+      userName: authenticatedUser?.name,
+      userEmail: authenticatedUser?.email,
+    });
+  }
   const rawSessionData = rawSession?.session as
     | Record<string, unknown>
     | undefined;

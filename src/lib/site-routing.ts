@@ -95,7 +95,7 @@ export function getSiteRedirect(input: SiteRoutingInput): string | null {
 
   if (surface === "product" && requestUrl.pathname === "/") {
     return new URL(
-      "/simple-studio/images",
+      "/onboarding",
       input.appOrigin || requestUrl.origin,
     ).toString();
   }

@@ -22,6 +22,9 @@ describe("site routing", () => {
   it.each([
     "/sign-in",
     "/sign-up",
+    "/verify-email",
+    "/onboarding",
+    "/blitz",
     "/simple-studio/images",
     "/social/calendar",
     "/editor/projects",
@@ -65,7 +68,7 @@ describe("site routing", () => {
         hostname: "app.tasmeemai.test",
         ...origins,
       }),
-    ).toBe("https://app.tasmeemai.test/simple-studio/images");
+    ).toBe("https://app.tasmeemai.test/onboarding");
   });
 
   it("leaves marketing, product, and shared API requests on their proper origins", () => {
@@ -119,7 +122,7 @@ describe("site routing", () => {
         marketingOrigin: "http://www.localhost:3000",
         appOrigin: "http://app.localhost:3000",
       }),
-    ).toBe("http://app.localhost:3000/simple-studio/images");
+    ).toBe("http://app.localhost:3000/onboarding");
     expect(
       getSiteRedirect({
         requestUrl: "http://www.localhost:3000/sign-in?next=%2Fsocial",

@@ -1,4 +1,9 @@
 import type { BrandProfileGenerator } from "./brand-profile/ports";
+import {
+  noOpOnboardingAnalytics,
+  recordOnboardingEventBestEffort,
+  type OnboardingAnalytics,
+} from "./analytics";
 import type { BrandSourceReader } from "./brand-source/ports";
 import { BrandProfileGenerationError } from "./brand-profile/ports";
 import { BrandSourceReadError } from "./brand-source/ports";
@@ -35,6 +40,7 @@ export interface AnalysisWorkerDependencies {
   readerFor(kind: "website" | "description"): BrandSourceReader;
   generator(): BrandProfileGenerator;
   clock?: AnalysisWorkerClock;
+  analytics?: OnboardingAnalytics;
 }
 
 const STAGE_ORDER: BrandAnalysisStage[] = [
@@ -74,9 +80,11 @@ export function classifyAnalysisFailure(error: unknown): AnalysisFailure {
 
 export class DefaultOnboardingAnalysisWorker {
   private readonly clock: AnalysisWorkerClock;
+  private readonly analytics: OnboardingAnalytics;
 
   constructor(private readonly dependencies: AnalysisWorkerDependencies) {
     this.clock = dependencies.clock ?? { now: () => new Date() };
+    this.analytics = dependencies.analytics ?? noOpOnboardingAnalytics;
   }
 
   private async context(input: OnboardingAnalysisInput): Promise<AnalysisGenerationContext> {
@@ -132,21 +140,36 @@ export class DefaultOnboardingAnalysisWorker {
     input: OnboardingAnalysisInput,
     stage: OnboardingAnalysisWorkStage,
   ): Promise<void> {
+    const startedAt = this.clock.now();
     switch (stage) {
       case "start":
         await this.advance(input, "fetching_source");
-        return;
+        break;
       case "source":
         await this.readSource(input);
-        return;
+        break;
       case "profile":
         await this.generateProfile(input);
-        return;
+        break;
       case "activation":
         await this.generateActivation(input);
-        return;
+        break;
       case "finalize":
         await this.finalize(input);
+    }
+    const run = await this.dependencies.repository.getAnalysisRun(
+      input.workspaceId,
+      input.runId,
+    );
+    if (run) {
+      await recordOnboardingEventBestEffort(this.analytics, {
+        eventName: "analysis_stage_completed",
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        stage: run.stage,
+        durationMs: Math.max(0, this.clock.now().getTime() - startedAt.getTime()),
+        occurredAt: this.clock.now(),
+      });
     }
   }
 
@@ -263,6 +286,14 @@ export class DefaultOnboardingAnalysisWorker {
       startedAt: run.startedAt,
       finishedAt: this.clock.now(),
       updatedAt: this.clock.now(),
+    });
+    await recordOnboardingEventBestEffort(this.analytics, {
+      eventName: "analysis_failed",
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      stage: run.stage,
+      failureCode: failure.code,
+      occurredAt: this.clock.now(),
     });
   }
 }

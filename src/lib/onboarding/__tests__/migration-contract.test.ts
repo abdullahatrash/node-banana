@@ -10,6 +10,10 @@ const dispatchMigration = readFileSync(
   resolve(process.cwd(), "drizzle/0054_first_betty_ross.sql"),
   "utf8",
 );
+const analyticsMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0055_amazing_lake.sql"),
+  "utf8",
+);
 
 describe("onboarding persistence migration", () => {
   it("creates the onboarding and Brand Profile authority", () => {
@@ -38,6 +42,22 @@ describe("onboarding persistence migration", () => {
     expect(dispatchMigration).toContain(
       "onboarding_analysis_dispatch_workspace_status_idx",
     );
+  });
+
+  it("stores only constrained onboarding funnel telemetry", () => {
+    expect(analyticsMigration).toContain('CREATE TABLE "onboarding_analytics_events"');
+    for (const constraint of [
+      "onboarding_analytics_event_name_check",
+      "onboarding_analytics_step_check",
+      "onboarding_analytics_source_kind_check",
+      "onboarding_analytics_stage_check",
+      "onboarding_analytics_locale_check",
+      "onboarding_analytics_duration_check",
+      "onboarding_analytics_failure_code_check",
+    ]) {
+      expect(analyticsMigration).toContain(constraint);
+    }
+    expect(analyticsMigration).not.toContain("jsonb");
   });
 
   it("indexes every queryable foreign key and lifecycle lookup", () => {

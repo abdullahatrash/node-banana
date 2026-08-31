@@ -328,3 +328,11 @@ Append new observations here in sequence. Record the URL, exact visible copy, av
 - [Fastlane signup route](https://app.usefastlane.ai/signup), accessed 2026-08-31.
 - [Fastlane public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js), accessed 2026-08-31. The asset filename is content-hashed and may change after a deployment.
 - Node Banana repository files linked inline above, inspected 2026-08-31.
+
+## Resulting Node Banana implementation
+
+The observed journey is now implemented as an original Arabic-first flow rather than a pixel-for-pixel copy. The stable domain contract and state machine are in [`src/lib/onboarding/schemas.ts`](../../src/lib/onboarding/schemas.ts) and [`src/lib/onboarding/state-machine.ts`](../../src/lib/onboarding/state-machine.ts). The authenticated application boundary is [`src/lib/onboarding/service.ts`](../../src/lib/onboarding/service.ts) through [`src/app/api/onboarding/route.ts`](../../src/app/api/onboarding/route.ts).
+
+The Website path uses bounded, same-origin ingestion with public-address validation and DNS pinning in [`src/lib/onboarding/brand-source`](../../src/lib/onboarding/brand-source). Description input uses the same normalized evidence contract. Structured multilingual generation, one repair attempt, evidence-hash validation, and activation generation are in [`src/lib/onboarding/brand-profile`](../../src/lib/onboarding/brand-profile). Durable stages and their transactional dispatch intent are implemented by [`workflows/onboarding-brand-analysis.ts`](../../workflows/onboarding-brand-analysis.ts).
+
+The Arabic/English experience is in [`src/components/onboarding/OnboardingFlow.tsx`](../../src/components/onboarding/OnboardingFlow.tsx), while centralized product gates and the first-value handoff live in [`src/lib/onboarding/server-access.ts`](../../src/lib/onboarding/server-access.ts) and [`src/app/blitz/page.tsx`](../../src/app/blitz/page.tsx). Production sequencing, privacy-safe metrics, SQL dashboards, rollback, and kill-switch behavior are documented in [`docs/onboarding-rollout.md`](../onboarding-rollout.md).

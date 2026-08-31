@@ -736,6 +736,70 @@ export const onboardingCommandReceipts = pgTable(
   }),
 );
 
+/** Privacy-bounded onboarding funnel telemetry; no arbitrary JSON or source text. */
+export const onboardingAnalyticsEvents = pgTable(
+  "onboarding_analytics_events",
+  {
+    id: text("id").primaryKey(),
+    eventName: text("event_name").notNull(),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    workspaceId: text("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    sessionId: text("session_id"),
+    runId: text("run_id"),
+    step: text("step"),
+    sourceKind: text("source_kind"),
+    stage: text("stage"),
+    interfaceLocale: text("interface_locale"),
+    contentLanguage: text("content_language"),
+    durationMs: integer("duration_ms"),
+    failureCode: text("failure_code"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    eventTimeIdx: index("onboarding_analytics_event_time_idx").on(
+      table.eventName,
+      table.occurredAt,
+    ),
+    workspaceTimeIdx: index("onboarding_analytics_workspace_time_idx").on(
+      table.workspaceId,
+      table.occurredAt,
+    ),
+    userIdx: index("onboarding_analytics_user_idx").on(table.userId),
+    eventCheck: check(
+      "onboarding_analytics_event_name_check",
+      sql`${table.eventName} in ('signup_submitted','verification_sent','verification_completed','step_viewed','step_completed','source_selected','analysis_stage_completed','analysis_failed','profile_accepted','profile_edited','first_value_viewed','onboarding_completed')`,
+    ),
+    stepCheck: check(
+      "onboarding_analytics_step_check",
+      sql`${table.step} is null or ${table.step} in ('identity','brand_source','company_stage','role','business_classification','goals','attribution','review','education')`,
+    ),
+    sourceKindCheck: check(
+      "onboarding_analytics_source_kind_check",
+      sql`${table.sourceKind} is null or ${table.sourceKind} in ('website','description')`,
+    ),
+    stageCheck: check(
+      "onboarding_analytics_stage_check",
+      sql`${table.stage} is null or ${table.stage} in ('queued','fetching_source','extracting','generating_profile','generating_first_value','ready')`,
+    ),
+    localeCheck: check(
+      "onboarding_analytics_locale_check",
+      sql`${table.interfaceLocale} is null or ${table.interfaceLocale} in ('ar','en')`,
+    ),
+    durationCheck: check(
+      "onboarding_analytics_duration_check",
+      sql`${table.durationMs} is null or (${table.durationMs} >= 0 and ${table.durationMs} <= 86400000)`,
+    ),
+    failureCodeCheck: check(
+      "onboarding_analytics_failure_code_check",
+      sql`${table.failureCode} is null or ${table.failureCode} ~ '^[A-Z][A-Z0-9_]{0,79}$'`,
+    ),
+  }),
+);
+
 /**
  * Workspace-scoped API tokens for programmatic Bearer access.
  * Only a SHA-256 hash is persisted; the raw `nb_` token is shown once.

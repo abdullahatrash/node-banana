@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { getOnboardingAnalytics } from "./analytics";
 import { DefaultOnboardingAnalysisWorker } from "./analysis-worker";
 import { createConfiguredBrandProfileGenerator } from "./brand-profile/ai-sdk-adapter";
 import { DescriptionBrandSourceReader } from "./brand-source/description-adapter";
@@ -11,6 +12,9 @@ export function createProductionOnboardingService() {
   return new DefaultOnboardingService(
     new PostgresOnboardingRepository(getDb()),
     new DurableOnboardingQueue(),
+    undefined,
+    undefined,
+    getOnboardingAnalytics(),
   );
 }
 
@@ -24,5 +28,6 @@ export function createProductionOnboardingAnalysisWorker() {
         : new DescriptionBrandSourceReader();
     },
     generator: () => createConfiguredBrandProfileGenerator(),
+    analytics: getOnboardingAnalytics(),
   });
 }

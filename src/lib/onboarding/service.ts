@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import {
+  noOpOnboardingAnalytics,
+  recordOnboardingEventBestEffort,
+  type OnboardingAnalytics,
+} from "./analytics";
 import type { InterfaceLocale, OnboardingSnapshot } from "./contracts";
 import { OnboardingError } from "./errors";
 import type { OnboardingQueue } from "./queue";
@@ -157,6 +162,7 @@ export class DefaultOnboardingService {
     private readonly queue: OnboardingQueue,
     private readonly clock: OnboardingClock = systemClock,
     private readonly ids: OnboardingIdGenerator = randomIdGenerator,
+    private readonly analytics: OnboardingAnalytics = noOpOnboardingAnalytics,
   ) {}
 
   private async scheduleAnalysis(input: { workspaceId: string; runId: string }) {
@@ -214,7 +220,18 @@ export class DefaultOnboardingService {
         500,
       );
     }
-    return snapshotFromAggregate(aggregate);
+    const snapshot = snapshotFromAggregate(aggregate);
+    await recordOnboardingEventBestEffort(this.analytics, {
+      eventName: "step_viewed",
+      userId: aggregate.session.userId,
+      workspaceId: aggregate.session.workspaceId ?? undefined,
+      sessionId: aggregate.session.id,
+      step: aggregate.session.currentStep,
+      interfaceLocale: aggregate.interfaceLocale,
+      contentLanguage: aggregate.contentLanguage,
+      occurredAt: this.clock.now(),
+    });
+    return snapshot;
   }
 
   async execute(input: {
@@ -426,6 +443,36 @@ export class DefaultOnboardingService {
       await this.scheduleAnalysis({
         workspaceId: updated.session.workspaceId,
         runId: updated.analysis.id,
+      });
+    }
+    const telemetryBase = {
+      userId: input.userId,
+      workspaceId: updated.session.workspaceId ?? undefined,
+      sessionId: updated.session.id,
+      interfaceLocale: updated.interfaceLocale,
+      contentLanguage: updated.contentLanguage,
+      occurredAt: now,
+    } as const;
+    await recordOnboardingEventBestEffort(this.analytics, {
+      ...telemetryBase,
+      eventName: "step_completed",
+      step: aggregate.session.currentStep,
+    });
+    if (command.type === "set_brand_source") {
+      await recordOnboardingEventBestEffort(this.analytics, {
+        ...telemetryBase,
+        eventName: "source_selected",
+        sourceKind: command.payload.kind,
+      });
+    } else if (command.type === "accept_brand_profile") {
+      await recordOnboardingEventBestEffort(this.analytics, {
+        ...telemetryBase,
+        eventName: "profile_accepted",
+      });
+    } else if (command.type === "complete") {
+      await recordOnboardingEventBestEffort(this.analytics, {
+        ...telemetryBase,
+        eventName: "onboarding_completed",
       });
     }
     return snapshotFromAggregate(updated);
