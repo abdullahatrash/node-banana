@@ -1,0 +1,28 @@
+{
+  "schema": "artifact/v1",
+  "id": "art_imported_reference_001",
+  "workspaceId": "workspace_local",
+  "kind": "image",
+  "mediaType": "image/png",
+  "storage": {
+    "type": "asset",
+    "assetId": "asset_imported_reference_001"
+  },
+  "contentHash": "sha256:7c74649e5d23c384161039bd7578177d76571d539590c5d47875ba48b447b83f",
+  "origin": {
+    "type": "import",
+    "importedBy": {
+      "type": "actor-ref",
+      "ref": "actor:local-operator"
+    },
+    "importedAt": "2026-07-24T11:59:00Z",
+    "externalSource": {
+      "uri": "https://example.invalid/reference.png",
+      "attribution": "Prototype reference supplied by the operator"
+    }
+  },
+  "lineage": {
+    "parentArtifactIds": []
+  },
+  "createdAt": "2026-07-24T11:59:00Z"
+}

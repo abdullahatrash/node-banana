@@ -17,8 +17,8 @@ import {
   artifacts,
   contentWorkflows,
   credentialProfiles,
+  runtimeAutomations,
   socialAccounts,
-  socialAutomationRules,
   workspaceAgentPolicies,
   workspaceAgentPolicyRevisions,
   workspaceMembers,
@@ -428,13 +428,13 @@ export class DrizzleAgentAuthorizationRepository
     const automations = automationIds.length === 0
       ? []
       : await database
-            .select({ id: socialAutomationRules.id })
-            .from(socialAutomationRules)
+            .select({ id: runtimeAutomations.id })
+            .from(runtimeAutomations)
             .where(
               and(
-                eq(socialAutomationRules.workspaceId, workspaceId),
-                inArray(socialAutomationRules.id, automationIds),
-                eq(socialAutomationRules.enabled, true),
+                eq(runtimeAutomations.workspaceId, workspaceId),
+                inArray(runtimeAutomations.id, automationIds),
+                inArray(runtimeAutomations.controlState, ["active", "paused"]),
               ),
             )
             .for("share");

@@ -73,6 +73,16 @@ import type {
   PublishingDeliveryEvent,
   PublishingDeliveryTargetSnapshot,
 } from "@/lib/agent-runtime/publishing-deliveries/types";
+import type {
+  AutomationEventRecord,
+  AutomationOccurrenceCancellationRecord,
+  AutomationOccurrenceRecord,
+  AutomationOutboxIntentRecord,
+  AutomationRecord,
+  AutomationRevisionActivationRecord,
+  AutomationRevisionRecord,
+  AutomationStageAttemptRecord,
+} from "@/lib/agent-runtime/automations/types";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -1667,6 +1677,15 @@ export const contentWorkflowRevisions = pgTable(
     workspaceWorkflowIdUnique: uniqueIndex(
       "content_workflow_revisions_workspace_workflow_id_unique",
     ).on(table.workspaceId, table.workflowId, table.id),
+    workspaceWorkflowIdentityUnique: uniqueIndex(
+      "content_workflow_revisions_workspace_workflow_identity_unique",
+    ).on(
+      table.workspaceId,
+      table.workflowId,
+      table.id,
+      table.revision,
+      table.definitionDigest,
+    ),
     workspaceWorkflowFk: foreignKey({
       columns: [table.workspaceId, table.workflowId],
       foreignColumns: [contentWorkflows.workspaceId, contentWorkflows.id],
@@ -7797,6 +7816,233 @@ export const runtimeSupportBundleAccessAudits = pgTable("runtime_support_bundle_
 export const runtimeSupportBundleReceipts = pgTable("runtime_support_bundle_receipts", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), bundleId: text("bundle_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 }, (table) => ({ pk: primaryKey({ columns: [table.workspaceId, table.idempotencyKey], name: "runtime_support_bundle_receipts_pk" }), digestCheck: check("runtime_support_bundle_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+/** Stable Automation identities. Immutable definitions live in revision rows. */
+export const runtimeAutomations = pgTable(
+  "runtime_automations",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    controlState: text("control_state").notNull(),
+    controlVersion: integer("control_version").notNull(),
+    nextRevision: integer("next_revision").notNull(),
+    nextEventSequence: integer("next_event_sequence").notNull(),
+    createdByPrincipalId: text("created_by_principal_id").notNull(),
+    record: jsonb("record").$type<AutomationRecord>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.id], name: "runtime_automations_pk" }),
+    workspaceFk: foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "runtime_automations_workspace_fk" }).onDelete("restrict"),
+    creatorFk: foreignKey({ columns: [table.workspaceId, table.createdByPrincipalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_automations_creator_fk" }).onDelete("restrict"),
+    workspaceStateIdx: index("runtime_automations_workspace_state_idx").on(table.workspaceId, table.controlState, table.id),
+    stateCheck: check("runtime_automations_state_check", sql`${table.controlState} in ('active','paused','retired')`),
+    countersCheck: check("runtime_automations_counters_check", sql`${table.controlVersion} > 0 and ${table.nextRevision} > 0 and ${table.nextEventSequence} > 0`),
+  }),
+);
+
+export const runtimeAutomationRevisions = pgTable(
+  "runtime_automation_revisions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    automationId: text("automation_id").notNull(),
+    id: text("id").notNull(),
+    revision: integer("revision").notNull(),
+    definitionDigest: text("definition_digest").notNull(),
+    workflowId: text("workflow_id").notNull(),
+    workflowRevisionId: text("workflow_revision_id").notNull(),
+    workflowRevision: integer("workflow_revision").notNull(),
+    workflowDefinitionDigest: text("workflow_definition_digest").notNull(),
+    record: jsonb("record").$type<AutomationRevisionRecord>().notNull(),
+    authorPrincipalId: text("author_principal_id").notNull(),
+    authorKeyId: text("author_key_id").notNull(),
+    creationAuthorizationEvidenceRef: text("creation_authorization_evidence_ref").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.automationId, table.id], name: "runtime_automation_revisions_pk" }),
+    automationRevisionUnique: uniqueIndex("runtime_automation_revisions_number_unique").on(table.workspaceId, table.automationId, table.revision),
+    automationIdentityUnique: uniqueIndex("runtime_automation_revisions_identity_unique").on(table.workspaceId, table.automationId, table.id, table.revision),
+    automationFk: foreignKey({ columns: [table.workspaceId, table.automationId], foreignColumns: [runtimeAutomations.workspaceId, runtimeAutomations.id], name: "runtime_automation_revisions_automation_fk" }).onDelete("restrict"),
+    authorFk: foreignKey({ columns: [table.workspaceId, table.authorPrincipalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_automation_revisions_author_fk" }).onDelete("restrict"),
+    authorKeyFk: foreignKey({ columns: [table.authorPrincipalId, table.authorKeyId], foreignColumns: [agentKeys.principalId, agentKeys.id], name: "runtime_automation_revisions_author_key_fk" }).onDelete("restrict"),
+    evidenceFk: foreignKey({ columns: [table.workspaceId, table.authorPrincipalId, table.authorKeyId, table.creationAuthorizationEvidenceRef], foreignColumns: [agentAuthorizationDecisions.workspaceId, agentAuthorizationDecisions.principalId, agentAuthorizationDecisions.keyId, agentAuthorizationDecisions.operatorTraceRef], name: "runtime_automation_revisions_evidence_fk" }).onDelete("restrict"),
+    workflowRevisionFk: foreignKey({ columns: [table.workspaceId, table.workflowId, table.workflowRevisionId, table.workflowRevision, table.workflowDefinitionDigest], foreignColumns: [contentWorkflowRevisions.workspaceId, contentWorkflowRevisions.workflowId, contentWorkflowRevisions.id, contentWorkflowRevisions.revision, contentWorkflowRevisions.definitionDigest], name: "runtime_automation_revisions_workflow_revision_fk" }).onDelete("restrict"),
+    digestCheck: check("runtime_automation_revisions_digest_check", sql`${table.definitionDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.workflowDefinitionDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.revision} > 0 and ${table.workflowRevision} > 0`),
+  }),
+);
+
+export const runtimeAutomationRevisionArtifactBindings = pgTable(
+  "runtime_automation_revision_artifact_bindings",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    automationId: text("automation_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    position: integer("position").notNull(),
+    inputName: text("input_name").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    contentDigest: text("content_digest").notNull(),
+    kind: text("kind").notNull(),
+    origin: text("origin").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.automationId, table.revisionId, table.inputName], name: "runtime_automation_revision_artifact_bindings_pk" }),
+    positionUnique: uniqueIndex("runtime_automation_revision_artifact_bindings_position_unique").on(table.workspaceId, table.automationId, table.revisionId, table.position),
+    revisionFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.revisionId], foreignColumns: [runtimeAutomationRevisions.workspaceId, runtimeAutomationRevisions.automationId, runtimeAutomationRevisions.id], name: "runtime_automation_revision_artifact_bindings_revision_fk" }).onDelete("restrict"),
+    artifactContentFk: foreignKey({ columns: [table.workspaceId, table.artifactId, table.kind, table.contentDigest], foreignColumns: [artifacts.workspaceId, artifacts.id, artifacts.kind, artifacts.contentDigest], name: "runtime_automation_revision_artifact_bindings_artifact_content_fk" }).onDelete("restrict"),
+    artifactOriginFk: foreignKey({ columns: [table.workspaceId, table.artifactId, table.origin], foreignColumns: [artifacts.workspaceId, artifacts.id, artifacts.origin], name: "runtime_automation_revision_artifact_bindings_artifact_origin_fk" }).onDelete("restrict"),
+    positionCheck: check("runtime_automation_revision_artifact_bindings_position_check", sql`${table.position} >= 0 and length(${table.inputName}) between 1 and 200 and ${table.kind} = 'image' and ${table.origin} = 'imported' and ${table.contentDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const runtimeAutomationActiveRevisions = pgTable(
+  "runtime_automation_active_revisions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    automationId: text("automation_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    revision: integer("revision").notNull(),
+    activationId: text("activation_id").notNull(),
+    activatedAt: timestamp("activated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.automationId], name: "runtime_automation_active_revisions_pk" }),
+    revisionFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.revisionId, table.revision], foreignColumns: [runtimeAutomationRevisions.workspaceId, runtimeAutomationRevisions.automationId, runtimeAutomationRevisions.id, runtimeAutomationRevisions.revision], name: "runtime_automation_active_revisions_revision_fk" }).onDelete("restrict"),
+    revisionCheck: check("runtime_automation_active_revisions_revision_check", sql`${table.revision} > 0`),
+  }),
+);
+
+export const runtimeAutomationRevisionActivations = pgTable(
+  "runtime_automation_revision_activations",
+  {
+    workspaceId: text("workspace_id").notNull(), automationId: text("automation_id").notNull(), id: text("id").notNull(), revisionId: text("revision_id").notNull(), revision: integer("revision").notNull(), priorRevisionId: text("prior_revision_id"), actorPrincipalId: text("actor_principal_id").notNull(), actorKeyId: text("actor_key_id").notNull(), authorizationEvidenceRef: text("authorization_evidence_ref").notNull(), record: jsonb("record").$type<AutomationRevisionActivationRecord>().notNull(), activatedAt: timestamp("activated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.automationId, table.id], name: "runtime_automation_revision_activations_pk" }),
+    revisionFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.revisionId], foreignColumns: [runtimeAutomationRevisions.workspaceId, runtimeAutomationRevisions.automationId, runtimeAutomationRevisions.id], name: "runtime_automation_revision_activations_revision_fk" }).onDelete("restrict"),
+    priorRevisionFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.priorRevisionId], foreignColumns: [runtimeAutomationRevisions.workspaceId, runtimeAutomationRevisions.automationId, runtimeAutomationRevisions.id], name: "runtime_automation_revision_activations_prior_revision_fk" }).onDelete("restrict"),
+    actorKeyFk: foreignKey({ columns: [table.actorPrincipalId, table.actorKeyId], foreignColumns: [agentKeys.principalId, agentKeys.id], name: "runtime_automation_revision_activations_actor_key_fk" }).onDelete("restrict"),
+    evidenceFk: foreignKey({ columns: [table.workspaceId, table.actorPrincipalId, table.actorKeyId, table.authorizationEvidenceRef], foreignColumns: [agentAuthorizationDecisions.workspaceId, agentAuthorizationDecisions.principalId, agentAuthorizationDecisions.keyId, agentAuthorizationDecisions.operatorTraceRef], name: "runtime_automation_revision_activations_evidence_fk" }).onDelete("restrict"),
+    revisionCheck: check("runtime_automation_revision_activations_revision_check", sql`${table.revision} > 0`),
+  }),
+);
+
+export const runtimeAutomationOccurrences = pgTable(
+  "runtime_automation_occurrences",
+  {
+    workspaceId: text("workspace_id").notNull(), automationId: text("automation_id").notNull(), id: text("id").notNull(), automationRevisionId: text("automation_revision_id").notNull(), automationRevision: integer("automation_revision").notNull(), automationRevisionDigest: text("automation_revision_digest").notNull(), sourceOccurrenceKey: text("source_occurrence_key").notNull(), requestFingerprint: text("request_fingerprint").notNull(), state: text("state").notNull(), stage: text("stage").notNull(), desiredState: text("desired_state").notNull(), requestingPrincipalId: text("requesting_principal_id").notNull(), requestingKeyId: text("requesting_key_id").notNull(), invocationAuthorizationEvidenceRef: text("invocation_authorization_evidence_ref").notNull(), workflowId: text("workflow_id").notNull(), workflowRevisionId: text("workflow_revision_id").notNull(), workflowRevision: integer("workflow_revision").notNull(), workflowDefinitionDigest: text("workflow_definition_digest").notNull(), workflowRunId: text("workflow_run_id"), workflowRunStartSnapshotDigest: text("workflow_run_start_snapshot_digest"), failureCode: text("failure_code"), cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }), record: jsonb("record").$type<AutomationOccurrenceRecord>().notNull(), acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(), startedAt: timestamp("started_at", { withTimezone: true }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(), completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.id], name: "runtime_automation_occurrences_pk" }),
+    sourceKeyUnique: uniqueIndex("runtime_automation_occurrences_source_key_unique").on(table.workspaceId, table.automationId, table.sourceOccurrenceKey),
+    automationIdUnique: uniqueIndex("runtime_automation_occurrences_automation_id_unique").on(table.workspaceId, table.automationId, table.id),
+    workflowRunUnique: uniqueIndex("runtime_automation_occurrences_workflow_run_unique").on(table.workspaceId, table.workflowRunId),
+    automationFk: foreignKey({ columns: [table.workspaceId, table.automationId], foreignColumns: [runtimeAutomations.workspaceId, runtimeAutomations.id], name: "runtime_automation_occurrences_automation_fk" }).onDelete("restrict"),
+    revisionFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.automationRevisionId], foreignColumns: [runtimeAutomationRevisions.workspaceId, runtimeAutomationRevisions.automationId, runtimeAutomationRevisions.id], name: "runtime_automation_occurrences_revision_fk" }).onDelete("restrict"),
+    workflowRevisionFk: foreignKey({ columns: [table.workspaceId, table.workflowId, table.workflowRevisionId, table.workflowRevision, table.workflowDefinitionDigest], foreignColumns: [contentWorkflowRevisions.workspaceId, contentWorkflowRevisions.workflowId, contentWorkflowRevisions.id, contentWorkflowRevisions.revision, contentWorkflowRevisions.definitionDigest], name: "runtime_automation_occurrences_workflow_revision_fk" }).onDelete("restrict"),
+    requesterKeyFk: foreignKey({ columns: [table.requestingPrincipalId, table.requestingKeyId], foreignColumns: [agentKeys.principalId, agentKeys.id], name: "runtime_automation_occurrences_requester_key_fk" }).onDelete("restrict"),
+    invocationEvidenceFk: foreignKey({ columns: [table.workspaceId, table.requestingPrincipalId, table.requestingKeyId, table.invocationAuthorizationEvidenceRef], foreignColumns: [agentAuthorizationDecisions.workspaceId, agentAuthorizationDecisions.principalId, agentAuthorizationDecisions.keyId, agentAuthorizationDecisions.operatorTraceRef], name: "runtime_automation_occurrences_invocation_evidence_fk" }).onDelete("restrict"),
+    workflowRunFk: foreignKey({ columns: [table.workspaceId, table.workflowRunId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "runtime_automation_occurrences_workflow_run_fk" }).onDelete("restrict"),
+    acceptedIdx: index("runtime_automation_occurrences_accepted_idx").on(table.workspaceId, table.automationId, table.acceptedAt, table.id),
+    stateCheck: check("runtime_automation_occurrences_state_check", sql`${table.state} in ('queued','running','waiting','succeeded','failed','cancelled','skipped') and ${table.stage} in ('accepted','workflow_materialization','workflow_running','complete') and ${table.desiredState} in ('run','cancel')`),
+    digestCheck: check("runtime_automation_occurrences_digest_check", sql`${table.automationRevisionDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.workflowDefinitionDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.workflowRevision} > 0 and ${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$' and (${table.workflowRunStartSnapshotDigest} is null or ${table.workflowRunStartSnapshotDigest} ~ '^sha256:[a-f0-9]{64}$')`),
+    runLinkCheck: check("runtime_automation_occurrences_run_link_check", sql`(${table.workflowRunId} is null and ${table.workflowRunStartSnapshotDigest} is null) or (${table.workflowRunId} is not null and ${table.workflowRunStartSnapshotDigest} is not null)`),
+  }),
+);
+
+export const runtimeAutomationOccurrenceArtifacts = pgTable(
+  "runtime_automation_occurrence_artifacts",
+  {
+    workspaceId: text("workspace_id").notNull(), automationId: text("automation_id").notNull(), occurrenceId: text("occurrence_id").notNull(), position: integer("position").notNull(), artifactId: text("artifact_id").notNull(), contentDigest: text("content_digest").notNull(), kind: text("kind").notNull(), origin: text("origin").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.occurrenceId, table.position], name: "runtime_automation_occurrence_artifacts_pk" }),
+    artifactUnique: uniqueIndex("runtime_automation_occurrence_artifacts_unique").on(table.workspaceId, table.occurrenceId, table.artifactId),
+    occurrenceFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.occurrenceId], foreignColumns: [runtimeAutomationOccurrences.workspaceId, runtimeAutomationOccurrences.automationId, runtimeAutomationOccurrences.id], name: "runtime_automation_occurrence_artifacts_occurrence_fk" }).onDelete("restrict"),
+    artifactContentFk: foreignKey({ columns: [table.workspaceId, table.artifactId, table.kind, table.contentDigest], foreignColumns: [artifacts.workspaceId, artifacts.id, artifacts.kind, artifacts.contentDigest], name: "runtime_automation_occurrence_artifacts_artifact_content_fk" }).onDelete("restrict"),
+    artifactOriginFk: foreignKey({ columns: [table.workspaceId, table.artifactId, table.origin], foreignColumns: [artifacts.workspaceId, artifacts.id, artifacts.origin], name: "runtime_automation_occurrence_artifacts_artifact_origin_fk" }).onDelete("restrict"),
+    positionCheck: check("runtime_automation_occurrence_artifacts_position_check", sql`${table.position} >= 0 and ${table.kind} = 'image' and ${table.origin} = 'imported' and ${table.contentDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const runtimeAutomationStageAttempts = pgTable(
+  "runtime_automation_stage_attempts",
+  {
+    workspaceId: text("workspace_id").notNull(), automationId: text("automation_id").notNull(), occurrenceId: text("occurrence_id").notNull(), id: text("id").notNull(), stage: text("stage").notNull(), attempt: integer("attempt").notNull(), effectKey: text("effect_key").notNull(), state: text("state").notNull(), workflowRunId: text("workflow_run_id"), failureCode: text("failure_code"), record: jsonb("record").$type<AutomationStageAttemptRecord>().notNull(), startedAt: timestamp("started_at", { withTimezone: true }).notNull(), completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.occurrenceId, table.id], name: "runtime_automation_stage_attempts_pk" }),
+    attemptUnique: uniqueIndex("runtime_automation_stage_attempts_number_unique").on(table.workspaceId, table.occurrenceId, table.stage, table.attempt),
+    occurrenceFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.occurrenceId], foreignColumns: [runtimeAutomationOccurrences.workspaceId, runtimeAutomationOccurrences.automationId, runtimeAutomationOccurrences.id], name: "runtime_automation_stage_attempts_occurrence_fk" }).onDelete("restrict"),
+    workflowRunFk: foreignKey({ columns: [table.workspaceId, table.workflowRunId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "runtime_automation_stage_attempts_workflow_run_fk" }).onDelete("restrict"),
+    stateCheck: check("runtime_automation_stage_attempts_state_check", sql`${table.stage} = 'workflow_materialization' and ${table.state} in ('running','succeeded','failed') and ${table.attempt} > 0`),
+    resultCheck: check("runtime_automation_stage_attempts_result_check", sql`(${table.state} = 'running' and ${table.completedAt} is null and ${table.workflowRunId} is null and ${table.failureCode} is null) or (${table.state} = 'succeeded' and ${table.completedAt} is not null and ${table.workflowRunId} is not null and ${table.failureCode} is null) or (${table.state} = 'failed' and ${table.completedAt} is not null and ${table.workflowRunId} is null and ${table.failureCode} is not null)`),
+  }),
+);
+
+export const runtimeAutomationEvents = pgTable(
+  "runtime_automation_events",
+  {
+    workspaceId: text("workspace_id").notNull(), automationId: text("automation_id").notNull(), id: text("id").notNull(), sequence: integer("sequence").notNull(), type: text("type").notNull(), occurrenceId: text("occurrence_id"), revisionId: text("revision_id"), evidence: jsonb("evidence").$type<AutomationEventRecord["evidence"]>().notNull(), record: jsonb("record").$type<AutomationEventRecord>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.automationId, table.id], name: "runtime_automation_events_pk" }),
+    sequenceUnique: uniqueIndex("runtime_automation_events_sequence_unique").on(table.workspaceId, table.automationId, table.sequence),
+    automationFk: foreignKey({ columns: [table.workspaceId, table.automationId], foreignColumns: [runtimeAutomations.workspaceId, runtimeAutomations.id], name: "runtime_automation_events_automation_fk" }).onDelete("restrict"),
+    occurrenceFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.occurrenceId], foreignColumns: [runtimeAutomationOccurrences.workspaceId, runtimeAutomationOccurrences.automationId, runtimeAutomationOccurrences.id], name: "runtime_automation_events_occurrence_fk" }).onDelete("restrict"),
+    revisionFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.revisionId], foreignColumns: [runtimeAutomationRevisions.workspaceId, runtimeAutomationRevisions.automationId, runtimeAutomationRevisions.id], name: "runtime_automation_events_revision_fk" }).onDelete("restrict"),
+    sequenceIdx: index("runtime_automation_events_sequence_idx").on(table.workspaceId, table.automationId, table.sequence),
+    sequenceCheck: check("runtime_automation_events_sequence_check", sql`${table.sequence} > 0`),
+    typeCheck: check("runtime_automation_events_type_check", sql`${table.type} in ('automation.created','automation.revision_created','automation.revision_activated','occurrence.accepted','occurrence.materialization_started','occurrence.workflow_materialized','occurrence.materialization_failed','occurrence.cancellation_requested','occurrence.cancelled','occurrence.succeeded','occurrence.failed','occurrence.retry_derived')`),
+  }),
+);
+
+export const runtimeAutomationMutationReceipts = pgTable(
+  "runtime_automation_mutation_receipts",
+  {
+    workspaceId: text("workspace_id").notNull(), principalId: text("principal_id").notNull(), keyId: text("key_id").notNull(), authorizationEvidenceRef: text("authorization_evidence_ref").notNull(), capability: text("capability").notNull(), idempotencyKey: text("idempotency_key").notNull(), requestFingerprint: text("request_fingerprint").notNull(), resourceId: text("resource_id").notNull(), result: jsonb("result").$type<unknown>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.principalId, table.capability, table.idempotencyKey], name: "runtime_automation_mutation_receipts_pk" }),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_automation_mutation_receipts_principal_fk" }).onDelete("restrict"),
+    keyFk: foreignKey({ columns: [table.principalId, table.keyId], foreignColumns: [agentKeys.principalId, agentKeys.id], name: "runtime_automation_mutation_receipts_key_fk" }).onDelete("restrict"),
+    evidenceFk: foreignKey({ columns: [table.workspaceId, table.principalId, table.keyId, table.authorizationEvidenceRef], foreignColumns: [agentAuthorizationDecisions.workspaceId, agentAuthorizationDecisions.principalId, agentAuthorizationDecisions.keyId, agentAuthorizationDecisions.operatorTraceRef], name: "runtime_automation_mutation_receipts_evidence_fk" }).onDelete("restrict"),
+    fingerprintCheck: check("runtime_automation_mutation_receipts_fingerprint_check", sql`${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`),
+    capabilityCheck: check("runtime_automation_mutation_receipts_capability_check", sql`${table.capability} in ('automations.create@1','automation_revisions.create@1','automation_revisions.activate@1','automations.invoke@1','automation_occurrences.cancel@1','automation_occurrences.retry@1')`),
+  }),
+);
+
+export const runtimeAutomationOutboxIntents = pgTable(
+  "runtime_automation_outbox_intents",
+  {
+    id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), automationId: text("automation_id").notNull(), occurrenceId: text("occurrence_id").notNull(), purpose: text("purpose").notNull(), generation: integer("generation").notNull(), dedupeKey: text("dedupe_key").notNull(), state: text("state").notNull(), availableAt: timestamp("available_at", { withTimezone: true }).notNull(), claimToken: text("claim_token"), deliveryAttempts: integer("delivery_attempts").default(0).notNull(), claimedAt: timestamp("claimed_at", { withTimezone: true }), deliveredAt: timestamp("delivered_at", { withTimezone: true }), cancelledAt: timestamp("cancelled_at", { withTimezone: true }), record: jsonb("record").$type<AutomationOutboxIntentRecord>().notNull(),
+  },
+  (table) => ({
+    occurrenceGenerationUnique: uniqueIndex("runtime_automation_outbox_occurrence_generation_unique").on(table.workspaceId, table.occurrenceId, table.generation),
+    dedupeKeyUnique: uniqueIndex("runtime_automation_outbox_dedupe_key_unique").on(table.dedupeKey),
+    occurrenceFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.occurrenceId], foreignColumns: [runtimeAutomationOccurrences.workspaceId, runtimeAutomationOccurrences.automationId, runtimeAutomationOccurrences.id], name: "runtime_automation_outbox_occurrence_fk" }).onDelete("restrict"),
+    claimIdx: index("runtime_automation_outbox_claim_idx").on(table.state, table.availableAt, table.id),
+    stateCheck: check("runtime_automation_outbox_state_check", sql`${table.purpose} in ('materialize_workflow','observe_workflow','cancel_workflow') and ${table.state} in ('pending','claimed','delivered','cancelled') and ${table.generation} > 0 and ${table.deliveryAttempts} >= 0`),
+    lifecycleCheck: check("runtime_automation_outbox_lifecycle_check", sql`(${table.state} = 'pending' and ${table.claimToken} is null and ${table.claimedAt} is null and ${table.deliveredAt} is null and ${table.cancelledAt} is null) or (${table.state} = 'claimed' and ${table.claimToken} is not null and ${table.claimedAt} is not null and ${table.deliveredAt} is null and ${table.cancelledAt} is null) or (${table.state} = 'delivered' and ${table.claimToken} is null and ${table.claimedAt} is not null and ${table.deliveredAt} is not null and ${table.cancelledAt} is null) or (${table.state} = 'cancelled' and ${table.claimToken} is null and ${table.deliveredAt} is null and ${table.cancelledAt} is not null)`),
+  }),
+);
+
+export const runtimeAutomationOccurrenceCancellations = pgTable(
+  "runtime_automation_occurrence_cancellations",
+  {
+    workspaceId: text("workspace_id").notNull(), automationId: text("automation_id").notNull(), occurrenceId: text("occurrence_id").notNull(), id: text("id").notNull(), requestingPrincipalId: text("requesting_principal_id").notNull(), requestingKeyId: text("requesting_key_id").notNull(), authorizationEvidenceRef: text("authorization_evidence_ref").notNull(), disposition: text("disposition").notNull(), workflowRunId: text("workflow_run_id"), record: jsonb("record").$type<AutomationOccurrenceCancellationRecord>().notNull(), requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.occurrenceId], name: "runtime_automation_occurrence_cancellations_pk" }),
+    idUnique: uniqueIndex("runtime_automation_occurrence_cancellations_id_unique").on(table.workspaceId, table.id),
+    occurrenceFk: foreignKey({ columns: [table.workspaceId, table.automationId, table.occurrenceId], foreignColumns: [runtimeAutomationOccurrences.workspaceId, runtimeAutomationOccurrences.automationId, runtimeAutomationOccurrences.id], name: "runtime_automation_occurrence_cancellations_occurrence_fk" }).onDelete("restrict"),
+    requesterKeyFk: foreignKey({ columns: [table.requestingPrincipalId, table.requestingKeyId], foreignColumns: [agentKeys.principalId, agentKeys.id], name: "runtime_automation_occurrence_cancellations_requester_key_fk" }).onDelete("restrict"),
+    evidenceFk: foreignKey({ columns: [table.workspaceId, table.requestingPrincipalId, table.requestingKeyId, table.authorizationEvidenceRef], foreignColumns: [agentAuthorizationDecisions.workspaceId, agentAuthorizationDecisions.principalId, agentAuthorizationDecisions.keyId, agentAuthorizationDecisions.operatorTraceRef], name: "runtime_automation_occurrence_cancellations_evidence_fk" }).onDelete("restrict"),
+    workflowRunFk: foreignKey({ columns: [table.workspaceId, table.workflowRunId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "runtime_automation_occurrence_cancellations_workflow_run_fk" }).onDelete("restrict"),
+    dispositionCheck: check("runtime_automation_occurrence_cancellations_disposition_check", sql`${table.disposition} in ('prevented','cancellation_requested','too_late')`),
+  }),
+);
 
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];

@@ -13,6 +13,8 @@
     "dev": "node server.js",
     "node-banana": "tsx scripts/node-banana-cli.ts",
     "mcp": "tsx scripts/node-banana-mcp.ts",
+    "prototype:capabilities": "tsx prototypes/throwaway-capability-catalog-v1/cli.ts",
+    "prototype:runtime-boundary": "tsx prototypes/throwaway-runtime-boundary-v1/cli.ts",
     "proxy": "microfrontends proxy --local-apps node-banana",
     "build": "next build",
     "start": "next start",

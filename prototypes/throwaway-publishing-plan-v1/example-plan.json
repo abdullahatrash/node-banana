@@ -1,0 +1,47 @@
+{
+  "schema": "publishing-plan/v1",
+  "id": "pplan_launch_week",
+  "workspaceId": "ws_acme",
+  "title": "Launch-week product announcement",
+  "targets": [
+    {
+      "id": "target_youtube",
+      "channelRef": "channel_youtube_main",
+      "content": {
+        "text": "A practical tour of the new agent-native content runtime.",
+        "artifacts": [
+          {
+            "artifactId": "artifact_launch_video",
+            "hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "video"
+          }
+        ]
+      },
+      "publishingSettings": {
+        "title": "Meet the agent-native content runtime",
+        "privacyStatus": "private",
+        "madeForKids": false
+      },
+      "timing": {
+        "mode": "at",
+        "publishAt": "2030-01-15T09:00:00.000Z",
+        "displayTimeZone": "Europe/Athens"
+      }
+    },
+    {
+      "id": "target_reddit",
+      "channelRef": "channel_reddit_product",
+      "content": {
+        "text": "We built a headless content runtime that any agent harness can operate."
+      },
+      "publishingSettings": {
+        "type": "self",
+        "subreddit": "SideProject",
+        "title": "A headless content runtime for BYO agents"
+      },
+      "timing": {
+        "mode": "now"
+      }
+    }
+  ]
+}
