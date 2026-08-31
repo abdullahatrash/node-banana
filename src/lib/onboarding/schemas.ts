@@ -237,6 +237,29 @@ export const activationArtifactV1Schema = z
   })
   .strict();
 
+export const brandProfileCorrectionSchema = z
+  .object({
+    coreIdentity: nonEmptyText(1_500),
+    offering: uniqueArray(nonEmptyText(1_000), 20).min(1),
+    benefits: uniqueArray(nonEmptyText(1_000), 20),
+    differentiators: uniqueArray(nonEmptyText(1_000), 20),
+    mission: nonEmptyText(2_000),
+    positioning: nonEmptyText(2_000),
+    ownedSpace: nonEmptyText(1_000),
+    voice: z
+      .object({
+        descriptors: uniqueArray(nonEmptyText(120), 12).min(1),
+        do: uniqueArray(nonEmptyText(500), 10),
+        doNot: uniqueArray(nonEmptyText(500), 10),
+      })
+      .strict(),
+    prohibitedClaims: uniqueArray(nonEmptyText(500), 30),
+    prohibitedTopics: uniqueArray(nonEmptyText(500), 30),
+    contentAngles: uniqueArray(nonEmptyText(1_000), 30),
+    uncertainties: uniqueArray(nonEmptyText(1_000), 30),
+  })
+  .strict();
+
 const commandBase = {
   expectedRevision: z.number().int().nonnegative(),
   idempotencyKey: z.string().trim().min(8).max(200),
@@ -244,12 +267,16 @@ const commandBase = {
 
 export const onboardingCommandRequestSchema = z.discriminatedUnion("type", [
   z.object({ ...commandBase, type: z.literal("save_identity"), payload: identityAnswerSchema }).strict(),
+  z.object({ ...commandBase, type: z.literal("save_logo"), payload: z.object({ assetId: idSchema }).strict() }).strict(),
   z.object({ ...commandBase, type: z.literal("set_brand_source"), payload: brandSourceInputSchema }).strict(),
   z.object({ ...commandBase, type: z.literal("save_company_stage"), payload: companyStageAnswerSchema }).strict(),
   z.object({ ...commandBase, type: z.literal("save_role"), payload: roleAnswerSchema }).strict(),
   z.object({ ...commandBase, type: z.literal("save_business_classification"), payload: businessClassificationAnswerSchema }).strict(),
   z.object({ ...commandBase, type: z.literal("save_goals"), payload: goalsAnswerSchema }).strict(),
   z.object({ ...commandBase, type: z.literal("save_attribution"), payload: attributionAnswerSchema }).strict(),
+  z.object({ ...commandBase, type: z.literal("go_back"), payload: z.object({}).strict() }).strict(),
+  z.object({ ...commandBase, type: z.literal("change_brand_source"), payload: z.object({}).strict() }).strict(),
+  z.object({ ...commandBase, type: z.literal("edit_brand_profile"), payload: z.object({ profileId: idSchema, correction: brandProfileCorrectionSchema }).strict() }).strict(),
   z.object({ ...commandBase, type: z.literal("accept_brand_profile"), payload: z.object({ profileId: idSchema }).strict() }).strict(),
   z.object({ ...commandBase, type: z.literal("retry_analysis"), payload: z.object({}).strict() }).strict(),
   z.object({ ...commandBase, type: z.literal("complete"), payload: z.object({}).strict() }).strict(),
@@ -287,6 +314,7 @@ export const onboardingSnapshotSchema = z
 export type OnboardingAnswersV1 = z.infer<typeof onboardingAnswersV1Schema>;
 export type BrandProfileV1 = z.infer<typeof brandProfileV1Schema>;
 export type ActivationArtifactV1 = z.infer<typeof activationArtifactV1Schema>;
+export type BrandProfileCorrection = z.infer<typeof brandProfileCorrectionSchema>;
 export type BrandSourceInput = z.infer<typeof brandSourceInputSchema>;
 export type OnboardingCommandRequest = z.infer<typeof onboardingCommandRequestSchema>;
 export type ParsedOnboardingSnapshot = z.infer<typeof onboardingSnapshotSchema>;

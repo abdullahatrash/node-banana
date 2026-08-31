@@ -44,6 +44,7 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
   readonly receipts = new Map<string, MemoryReceipt>();
   readonly userLocales = new Map<string, "ar" | "en">();
   readonly workspaceLanguages = new Map<string, string>();
+  readonly logoAssets = new Map<string, string>();
   private mutationTail: Promise<void> = Promise.resolve();
 
   private async lock<T>(operation: () => Promise<T>): Promise<T> {
@@ -161,6 +162,17 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
         this.userLocales.set(input.userId, input.workspace.interfaceLocale);
         this.workspaceLanguages.set(input.workspace.id, input.workspace.contentLanguage);
       }
+      if (input.workspaceIdentityUpdate) {
+        if (current.workspaceId !== input.workspaceIdentityUpdate.workspaceId) {
+          return { kind: "conflict" };
+        }
+        current.contentLanguage = input.workspaceIdentityUpdate.contentLanguage;
+        this.userLocales.set(input.userId, input.workspaceIdentityUpdate.interfaceLocale);
+        this.workspaceLanguages.set(
+          input.workspaceIdentityUpdate.workspaceId,
+          input.workspaceIdentityUpdate.contentLanguage,
+        );
+      }
       if (input.source) this.sources.set(input.source.id, clone(input.source));
       if (input.analysisRun) {
         this.runs.set(input.analysisRun.id, clone(input.analysisRun));
@@ -174,6 +186,27 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
           createdAt: input.analysisRun.createdAt,
           updatedAt: input.analysisRun.updatedAt,
         });
+      }
+      if (input.replacementProfile || input.replacementActivationArtifact) {
+        const profile = input.replacementProfile;
+        const artifact = input.replacementActivationArtifact;
+        const source = profile?.sourceProfileId
+          ? this.profiles.get(profile.sourceProfileId)
+          : null;
+        if (
+          !profile ||
+          !artifact ||
+          !source ||
+          source.status !== "draft" ||
+          profile.workspaceId !== current.workspaceId ||
+          artifact.workspaceId !== current.workspaceId ||
+          artifact.brandProfileId !== profile.id
+        ) {
+          return { kind: "conflict" };
+        }
+        source.status = "superseded";
+        this.profiles.set(profile.id, clone(profile));
+        this.artifacts.set(artifact.id, clone(artifact));
       }
       if (input.activateProfileId) {
         const profile = this.profiles.get(input.activateProfileId);
@@ -211,6 +244,17 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
   async getBrandSource(workspaceId: string, sourceId: string) {
     const source = this.sources.get(sourceId);
     return source?.workspaceId === workspaceId ? clone(source) : null;
+  }
+
+  async getNextBrandSourceRevision(workspaceId: string) {
+    const revisions = [...this.sources.values()]
+      .filter((source) => source.workspaceId === workspaceId)
+      .map((source) => source.revision);
+    return Math.max(0, ...revisions) + 1;
+  }
+
+  async isWorkspaceLogoAsset(workspaceId: string, assetId: string) {
+    return this.logoAssets.get(assetId) === workspaceId;
   }
 
   async updateSourceExtraction(input: SourceExtractionUpdate) {

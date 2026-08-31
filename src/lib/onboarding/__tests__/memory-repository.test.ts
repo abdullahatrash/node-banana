@@ -82,6 +82,7 @@ function profile(): BrandProfileRecord {
       sourceIds: ["source_1"],
     },
     generatedFromRunId: "run_1",
+    sourceProfileId: null,
     acceptedByUserId: null,
     acceptedAt: null,
     createdAt: now,

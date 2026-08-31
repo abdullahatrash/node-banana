@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { InMemoryOnboardingRepository } from "../memory-repository";
 import { InMemoryOnboardingQueue } from "../queue";
 import type { BrandProfileRecord } from "../repository";
+import type { BrandProfileGenerator } from "../brand-profile/ports";
 import { DefaultOnboardingService, type OnboardingIdGenerator } from "../service";
 
 const now = new Date("2026-08-31T12:00:00.000Z");
 
-function testService() {
+function testService(profileGenerator?: () => BrandProfileGenerator) {
   const repository = new InMemoryOnboardingRepository();
   const queue = new InMemoryOnboardingQueue();
   const counts = new Map<string, number>();
@@ -22,6 +23,8 @@ function testService() {
     queue,
     { now: () => now },
     ids,
+    undefined,
+    profileGenerator,
   );
   return { repository, queue, service };
 }
@@ -150,6 +153,7 @@ function draftProfile(workspaceId: string, runId: string): BrandProfileRecord {
       sourceIds: ["source_1"],
     },
     generatedFromRunId: runId,
+    sourceProfileId: null,
     acceptedByUserId: null,
     acceptedAt: null,
     createdAt: now,
@@ -218,6 +222,105 @@ describe("DefaultOnboardingService", () => {
     ).rejects.toThrow(/not valid during identity/);
   });
 
+  it("preserves answers while navigating back and creates a new source revision", async () => {
+    const { repository, service } = testService();
+    await reachReview(service);
+    const changed = await service.execute({
+      userId: "user_1",
+      command: {
+        type: "change_brand_source",
+        expectedRevision: 7,
+        idempotencyKey: "change_source_1",
+        payload: {},
+      },
+    });
+    expect(changed.currentStep).toBe("brand_source");
+    expect(changed).toMatchObject({
+      answers: { goals: { expectedOutcomes: ["save_time"] } },
+    });
+
+    await service.execute({
+      userId: "user_1",
+      command: {
+        type: "set_brand_source",
+        expectedRevision: 8,
+        idempotencyKey: "source_command_2",
+        payload: {
+          kind: "description",
+          description: "A corrected description with enough detail for a second analysis.",
+        },
+      },
+    });
+    expect([...repository.sources.values()].map((source) => source.revision)).toEqual([1, 2]);
+  });
+
+  it("creates an immutable corrected profile revision and matching first value", async () => {
+    const generator: BrandProfileGenerator = {
+      async generateProfile() {
+        throw new Error("not used");
+      },
+      async generateActivationArtifact({ brandProfileId, profile }) {
+        return {
+          schemaVersion: 1,
+          contentLanguage: profile.contentLanguage,
+          kind: "social_post",
+          title: "Corrected suggestion",
+          hook: "Corrected hook",
+          body: "Corrected body",
+          rationale: "Uses the corrected profile.",
+          suggestedFormats: ["LinkedIn post"],
+          brandProfileId,
+        };
+      },
+    };
+    const { repository, service } = testService(() => generator);
+    const { workspaceId, runId } = await reachReview(service);
+    await repository.transitionAnalysisRun({
+      runId,
+      workspaceId,
+      expectedStatuses: ["queued"],
+      status: "ready",
+      stage: "ready",
+      startedAt: now,
+      finishedAt: now,
+      updatedAt: now,
+    });
+    const original = { ...draftProfile(workspaceId, runId), id: "profile_generated" };
+    await repository.createDraftProfile(original);
+
+    const edited = await service.execute({
+      userId: "user_1",
+      command: {
+        type: "edit_brand_profile",
+        expectedRevision: 7,
+        idempotencyKey: "edit_profile_1",
+        payload: {
+          profileId: original.id,
+          correction: {
+            coreIdentity: "A corrected, reviewed identity.",
+            offering: original.profile.offering,
+            benefits: original.profile.benefits,
+            differentiators: original.profile.differentiators,
+            mission: original.profile.mission,
+            positioning: original.profile.positioning,
+            ownedSpace: original.profile.ownedSpace,
+            voice: original.profile.voice,
+            prohibitedClaims: original.profile.prohibitedClaims,
+            prohibitedTopics: original.profile.prohibitedTopics,
+            contentAngles: original.profile.contentAngles,
+            uncertainties: original.profile.uncertainties,
+          },
+        },
+      },
+    });
+
+    expect(repository.profiles.get(original.id)?.status).toBe("superseded");
+    expect(edited.draftBrandProfile?.identity.coreIdentity).toBe(
+      "A corrected, reviewed identity.",
+    );
+    expect(edited.draftBrandProfileId).not.toBe(original.id);
+  });
+
   it("requires a validated draft, activates it, and completes with first value", async () => {
     const { repository, service } = testService();
     const { workspaceId, runId } = await reachReview(service);
@@ -284,4 +387,3 @@ describe("DefaultOnboardingService", () => {
     expect(completed.status).toBe("completed");
   });
 });
-

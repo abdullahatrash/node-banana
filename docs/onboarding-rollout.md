@@ -4,7 +4,7 @@ This runbook enables the verified, resumable onboarding journey without locking 
 
 ## Preflight
 
-1. Deploy database migrations `0053_fearless_lightspeed.sql`, `0054_first_betty_ross.sql`, and `0055_amazing_lake.sql` in order.
+1. Deploy database migrations `0053_fearless_lightspeed.sql` through `0057_same_demogoblin.sql` in order. Migrations 0056–0057 add immutable user-correction lineage for Brand Profiles.
 2. Run `pnpm db:backfill:onboarding` before enabling product gates. It marks existing workspace members `completed_legacy`; rerunning it is safe.
 3. Verify that every active production user with a workspace is either `completed`, `completed_legacy`, or intentionally in the new cohort.
 4. Configure `RESEND_API_KEY`, `AUTH_FROM_EMAIL`, `AUTH_EMAIL_DELIVERY=resend`, and an approved sending domain. Never enable console email links outside local development.

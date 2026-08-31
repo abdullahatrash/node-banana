@@ -6,17 +6,21 @@ import {
   type OnboardingAnalytics,
 } from "./analytics";
 import type { InterfaceLocale, OnboardingSnapshot } from "./contracts";
+import type { BrandProfileGenerator } from "./brand-profile/ports";
 import { OnboardingError } from "./errors";
 import type { OnboardingQueue } from "./queue";
 import type {
   BrandAnalysisRunRecord,
+  BrandProfileRecord,
   BrandSourceRecord,
   CommandCommitResult,
   OnboardingAggregate,
   OnboardingRepository,
+  WorkspaceIdentityUpdate,
   WorkspaceProvisionInput,
 } from "./repository";
 import {
+  brandProfileV1Schema,
   onboardingAnswersV1Schema,
   onboardingCommandRequestSchema,
   onboardingSnapshotSchema,
@@ -32,7 +36,7 @@ export interface OnboardingClock {
 }
 
 export interface OnboardingIdGenerator {
-  generate(prefix: "onb" | "ws" | "source" | "run"): string;
+  generate(prefix: "onb" | "ws" | "source" | "run" | "profile" | "activation"): string;
 }
 
 const systemClock: OnboardingClock = { now: () => new Date() };
@@ -77,7 +81,9 @@ function workspaceProvision(input: {
 function snapshotFromAggregate(aggregate: OnboardingAggregate): OnboardingSnapshot {
   const analysisReady = aggregate.analysis?.status === "ready";
   const status =
-    aggregate.session.status === "in_progress" && analysisReady
+    aggregate.session.status === "in_progress" &&
+    aggregate.session.currentStep === "review" &&
+    analysisReady
       ? "ready"
       : aggregate.session.status;
   return onboardingSnapshotSchema.parse({
@@ -114,6 +120,13 @@ function mergeAnswer(
   switch (command.type) {
     case "save_identity":
       return onboardingAnswersV1Schema.parse({ ...current, identity: command.payload });
+    case "save_logo":
+      return onboardingAnswersV1Schema.parse({
+        ...current,
+        identity: current.identity
+          ? { ...current.identity, logoAssetId: command.payload.assetId }
+          : undefined,
+      });
     case "set_brand_source":
       return onboardingAnswersV1Schema.parse({ ...current, brandSource: command.payload });
     case "save_company_stage":
@@ -163,6 +176,7 @@ export class DefaultOnboardingService {
     private readonly clock: OnboardingClock = systemClock,
     private readonly ids: OnboardingIdGenerator = randomIdGenerator,
     private readonly analytics: OnboardingAnalytics = noOpOnboardingAnalytics,
+    private readonly profileGenerator?: () => BrandProfileGenerator,
   ) {}
 
   private async scheduleAnalysis(input: { workspaceId: string; runId: string }) {
@@ -281,7 +295,7 @@ export class DefaultOnboardingService {
       );
     }
     if (
-      command.type === "accept_brand_profile" &&
+      (command.type === "accept_brand_profile" || command.type === "edit_brand_profile") &&
       command.payload.profileId !== aggregate.draftProfile?.id
     ) {
       throw new OnboardingError(
@@ -312,26 +326,48 @@ export class DefaultOnboardingService {
     const now = this.clock.now();
     const answers = mergeAnswer(aggregate.session.answers, command);
     let workspace: WorkspaceProvisionInput | undefined;
+    let workspaceIdentityUpdate: WorkspaceIdentityUpdate | undefined;
     let source: BrandSourceRecord | undefined;
     let analysisRun: BrandAnalysisRunRecord | undefined;
+    let replacementProfile: BrandProfileRecord | undefined;
+    let replacementActivationArtifact;
 
     if (command.type === "save_identity") {
       if (aggregate.session.workspaceId) {
+        workspaceIdentityUpdate = {
+          workspaceId: aggregate.session.workspaceId,
+          name: command.payload.companyName,
+          ownerName: command.payload.fullName,
+          interfaceLocale: command.payload.interfaceLocale ?? aggregate.interfaceLocale,
+          contentLanguage: command.payload.contentLanguage ?? aggregate.contentLanguage,
+        };
+      } else {
+        const workspaceId = this.ids.generate("ws");
+        workspace = workspaceProvision({
+          workspaceId,
+          userId: input.userId,
+          fullName: command.payload.fullName,
+          companyName: command.payload.companyName,
+          interfaceLocale: command.payload.interfaceLocale ?? aggregate.interfaceLocale,
+          contentLanguage: command.payload.contentLanguage ?? aggregate.contentLanguage,
+        });
+      }
+    }
+
+    if (command.type === "save_logo") {
+      if (
+        !aggregate.session.workspaceId ||
+        !(await this.repository.isWorkspaceLogoAsset(
+          aggregate.session.workspaceId,
+          command.payload.assetId,
+        ))
+      ) {
         throw new OnboardingError(
           "ONBOARDING_COMMAND_INVALID",
-          "This onboarding session already owns a Workspace.",
-          409,
+          "The selected logo is not a ready PNG or JPEG in this Workspace.",
+          400,
         );
       }
-      const workspaceId = this.ids.generate("ws");
-      workspace = workspaceProvision({
-        workspaceId,
-        userId: input.userId,
-        fullName: command.payload.fullName,
-        companyName: command.payload.companyName,
-        interfaceLocale: command.payload.interfaceLocale ?? aggregate.interfaceLocale,
-        contentLanguage: command.payload.contentLanguage ?? aggregate.contentLanguage,
-      });
     }
 
     if (command.type === "set_brand_source") {
@@ -346,7 +382,7 @@ export class DefaultOnboardingService {
       source = {
         id: this.ids.generate("source"),
         workspaceId,
-        revision: 1,
+        revision: await this.repository.getNextBrandSourceRevision(workspaceId),
         kind: command.payload.kind,
         submittedUrl: command.payload.kind === "website" ? command.payload.url : null,
         finalUrl: null,
@@ -374,6 +410,62 @@ export class DefaultOnboardingService {
         finishedAt: null,
         createdAt: now,
         updatedAt: now,
+      };
+    }
+
+    if (command.type === "edit_brand_profile") {
+      const currentDraft = aggregate.draftProfile;
+      const workspaceId = aggregate.session.workspaceId;
+      if (!currentDraft || !workspaceId || !this.profileGenerator) {
+        throw new OnboardingError(
+          "ONBOARDING_COMMAND_INVALID",
+          "The Brand Profile cannot be edited right now.",
+          409,
+        );
+      }
+      const profileId = this.ids.generate("profile");
+      const editedProfile = brandProfileV1Schema.parse({
+        ...currentDraft.profile,
+        identity: {
+          ...currentDraft.profile.identity,
+          coreIdentity: command.payload.correction.coreIdentity,
+        },
+        offering: command.payload.correction.offering,
+        benefits: command.payload.correction.benefits,
+        differentiators: command.payload.correction.differentiators,
+        mission: command.payload.correction.mission,
+        positioning: command.payload.correction.positioning,
+        ownedSpace: command.payload.correction.ownedSpace,
+        voice: command.payload.correction.voice,
+        prohibitedClaims: command.payload.correction.prohibitedClaims,
+        prohibitedTopics: command.payload.correction.prohibitedTopics,
+        contentAngles: command.payload.correction.contentAngles,
+        uncertainties: command.payload.correction.uncertainties,
+      });
+      const artifact = await this.profileGenerator().generateActivationArtifact({
+        brandProfileId: profileId,
+        profile: editedProfile,
+      });
+      replacementProfile = {
+        id: profileId,
+        workspaceId,
+        revision: await this.repository.getNextBrandProfileRevision(workspaceId),
+        status: "draft",
+        schemaVersion: 1,
+        profile: editedProfile,
+        generatedFromRunId: null,
+        sourceProfileId: currentDraft.id,
+        acceptedByUserId: null,
+        acceptedAt: null,
+        createdAt: now,
+      };
+      replacementActivationArtifact = {
+        id: this.ids.generate("activation"),
+        workspaceId,
+        brandProfileId: profileId,
+        schemaVersion: 1 as const,
+        artifact,
+        createdAt: now,
       };
     }
 
@@ -418,8 +510,11 @@ export class DefaultOnboardingService {
         requestFingerprint,
       },
       workspace,
+      workspaceIdentityUpdate,
       source,
       analysisRun,
+      replacementProfile,
+      replacementActivationArtifact,
       activateProfileId:
         command.type === "accept_brand_profile" ? command.payload.profileId : undefined,
     });
@@ -468,6 +563,11 @@ export class DefaultOnboardingService {
       await recordOnboardingEventBestEffort(this.analytics, {
         ...telemetryBase,
         eventName: "profile_accepted",
+      });
+    } else if (command.type === "edit_brand_profile") {
+      await recordOnboardingEventBestEffort(this.analytics, {
+        ...telemetryBase,
+        eventName: "profile_edited",
       });
     } else if (command.type === "complete") {
       await recordOnboardingEventBestEffort(this.analytics, {

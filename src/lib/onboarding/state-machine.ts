@@ -6,12 +6,16 @@ type OnboardingCommandType = OnboardingCommandRequest["type"];
 
 const COMMAND_STEP: Record<OnboardingCommandType, OnboardingStep> = {
   save_identity: "identity",
+  save_logo: "brand_source",
   set_brand_source: "brand_source",
   save_company_stage: "company_stage",
   save_role: "role",
   save_business_classification: "business_classification",
   save_goals: "goals",
   save_attribution: "attribution",
+  go_back: "identity",
+  change_brand_source: "review",
+  edit_brand_profile: "review",
   accept_brand_profile: "review",
   retry_analysis: "review",
   complete: "education",
@@ -26,6 +30,16 @@ const NEXT_STEP: Partial<Record<OnboardingCommandType, OnboardingStep>> = {
   save_goals: "attribution",
   save_attribution: "review",
   accept_brand_profile: "education",
+};
+
+const PREVIOUS_STEP: Partial<Record<OnboardingStep, OnboardingStep>> = {
+  brand_source: "identity",
+  company_stage: "brand_source",
+  role: "company_stage",
+  business_classification: "role",
+  goals: "business_classification",
+  attribution: "goals",
+  review: "attribution",
 };
 
 export interface OnboardingTransitionState {
@@ -53,6 +67,18 @@ export function transitionOnboarding(
     );
   }
 
+  if (command === "go_back") {
+    const previousStep = PREVIOUS_STEP[state.currentStep];
+    if (!previousStep) {
+      throw new OnboardingError(
+        "ONBOARDING_COMMAND_INVALID",
+        `The ${state.currentStep} step has no previous onboarding step.`,
+        409,
+      );
+    }
+    return { status: "in_progress", currentStep: previousStep };
+  }
+
   const requiredStep = COMMAND_STEP[command];
   if (state.currentStep !== requiredStep) {
     throw new OnboardingError(
@@ -72,6 +98,15 @@ export function transitionOnboarding(
       );
     }
     return { status: "in_progress", currentStep: "review" };
+  }
+
+
+  if (command === "change_brand_source") {
+    return { status: "in_progress", currentStep: "brand_source" };
+  }
+
+  if (command === "save_logo" || command === "edit_brand_profile") {
+    return state;
   }
 
   if (command === "accept_brand_profile") {
@@ -96,8 +131,10 @@ export function transitionOnboarding(
   }
 
   return {
-    status: command === "save_identity" ? "in_progress" : state.status,
+    status:
+      command === "save_identity" || command === "set_brand_source"
+        ? "in_progress"
+        : state.status,
     currentStep: NEXT_STEP[command] ?? state.currentStep,
   };
 }
-

@@ -54,6 +54,23 @@ describe("transitionOnboarding", () => {
     ).toThrowError(/does not need to be retried/);
   });
 
+  it("persists back navigation and source recovery as state transitions", () => {
+    expect(
+      transitionOnboarding(
+        { status: "in_progress", currentStep: "goals" },
+        "go_back",
+        emptyContext,
+      ),
+    ).toEqual({ status: "in_progress", currentStep: "business_classification" });
+    expect(
+      transitionOnboarding(
+        { status: "ready", currentStep: "review" },
+        "change_brand_source",
+        { ...emptyContext, analysisReady: true },
+      ),
+    ).toEqual({ status: "in_progress", currentStep: "brand_source" });
+  });
+
   it("requires a ready draft before review acceptance", () => {
     expect(() =>
       transitionOnboarding(

@@ -6,6 +6,12 @@ import { FormEvent, Suspense, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { isSafeLocalPath } from "@/lib/auth/post-auth-destination";
+import { useDirectionStore } from "@/store/directionStore";
+
+const copy = {
+  ar: { title: "تسجيل الدخول", subtitle: "ادخل إلى مساحة عمل المحتوى.", email: "البريد الإلكتروني", password: "كلمة المرور", failed: "تعذر تسجيل الدخول.", submitting: "جارٍ تسجيل الدخول…", submit: "تسجيل الدخول", newAccount: "ليس لديك حساب؟", signUp: "إنشاء حساب" },
+  en: { title: "Sign in", subtitle: "Access your content workspace.", email: "Email", password: "Password", failed: "Sign in failed.", submitting: "Signing in…", submit: "Sign in", newAccount: "Need an account?", signUp: "Sign up" },
+} as const;
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (
@@ -35,7 +41,9 @@ function SignInForm() {
   const nextPath =
     nextParam && isSafeLocalPath(nextParam)
       ? nextParam
-      : "/simple-studio/images";
+      : "/blitz";
+  const locale = useDirectionStore((state) => state.locale);
+  const text = copy[locale];
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -73,13 +81,13 @@ function SignInForm() {
           );
           return;
         }
-        setError(getErrorMessage(result.error, "Sign in failed."));
+        setError(getErrorMessage(result.error, text.failed));
         return;
       }
 
       router.replace(`/onboarding?next=${encodeURIComponent(nextPath)}`);
     } catch (submitError) {
-      setError(getErrorMessage(submitError, "Sign in failed."));
+      setError(getErrorMessage(submitError, text.failed));
     } finally {
       setIsSubmitting(false);
     }
@@ -91,12 +99,12 @@ function SignInForm() {
         <LanguageSwitcher />
       </div>
       <div className="w-full max-w-md border border-neutral-800 bg-neutral-900 rounded-xl p-6">
-        <h1 className="text-xl font-semibold">Sign in</h1>
-        <p className="text-sm text-neutral-400 mt-1">Access your content workspace.</p>
+        <h1 className="text-xl font-semibold">{text.title}</h1>
+        <p className="text-sm text-neutral-400 mt-1">{text.subtitle}</p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <label className="block">
-            <span className="text-xs text-neutral-400">Email</span>
+            <span className="text-xs text-neutral-400">{text.email}</span>
             <input
               type="email"
               autoComplete="email"
@@ -109,7 +117,7 @@ function SignInForm() {
           </label>
 
           <label className="block">
-            <span className="text-xs text-neutral-400">Password</span>
+            <span className="text-xs text-neutral-400">{text.password}</span>
             <input
               type="password"
               autoComplete="current-password"
@@ -132,14 +140,14 @@ function SignInForm() {
             disabled={isSubmitting || isPending}
             className="w-full rounded-md bg-neutral-100 text-neutral-900 py-2 text-sm font-medium hover:bg-neutral-200 disabled:opacity-60"
           >
-            {isSubmitting ? "Signing in..." : "Sign in"}
+            {isSubmitting ? text.submitting : text.submit}
           </button>
         </form>
 
         <p className="mt-4 text-xs text-neutral-400">
-          Need an account?{" "}
+          {text.newAccount}{" "}
           <Link href="/sign-up" className="text-neutral-200 hover:text-white underline underline-offset-2">
-            Sign up
+            {text.signUp}
           </Link>
         </p>
       </div>

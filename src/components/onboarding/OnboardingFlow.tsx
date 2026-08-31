@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Building2, FileText, Globe2, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, FileText, Globe2, ImagePlus, Sparkles } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import {
   ACQUISITION_SOURCES,
@@ -76,6 +77,8 @@ export function OnboardingFlow() {
   const [otherOutcome, setOtherOutcome] = useState("");
   const [sources, setSources] = useState<Array<(typeof ACQUISITION_SOURCES)[number]>>([]);
   const [otherSource, setOtherSource] = useState("");
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
 
   const hydrate = useCallback((next: ParsedOnboardingSnapshot) => {
     setSnapshot(next);
@@ -179,8 +182,16 @@ export function OnboardingFlow() {
     headingRef.current?.focus();
   }, [snapshot?.currentStep]);
 
-  const send = useCallback(async (type: string, payload: unknown) => {
-    if (!snapshot || submitting) return false;
+  useEffect(() => () => {
+    if (logoPreview) URL.revokeObjectURL(logoPreview);
+  }, [logoPreview]);
+
+  const send = useCallback(async (
+    type: string,
+    payload: unknown,
+    baseSnapshot: ParsedOnboardingSnapshot | null = snapshot,
+  ): Promise<ParsedOnboardingSnapshot | null> => {
+    if (!baseSnapshot || submitting) return null;
     setSubmitting(true);
     setError(null);
     try {
@@ -189,7 +200,7 @@ export function OnboardingFlow() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           type,
-          expectedRevision: snapshot.revision,
+          expectedRevision: baseSnapshot.revision,
           idempotencyKey: crypto.randomUUID(),
           payload,
         }),
@@ -200,14 +211,21 @@ export function OnboardingFlow() {
         throw new Error(body.error);
       }
       hydrate(body.snapshot);
-      return true;
+      return body.snapshot;
     } catch (submitError) {
       setError(submitError instanceof Error && submitError.message ? submitError.message : copy.error);
-      return false;
+      return null;
     } finally {
       setSubmitting(false);
     }
   }, [copy.error, fetchSnapshot, hydrate, snapshot, submitting]);
+
+  const goBack = () => void send("go_back", {});
+  const backButton = () => (
+    <button type="button" disabled={submitting} onClick={goBack} className="mt-4 flex items-center gap-2 text-sm text-stone-400 hover:text-white disabled:opacity-50">
+      {locale === "ar" ? <ArrowRight className="size-4" /> : <ArrowLeft className="size-4" />}{copy.back}
+    </button>
+  );
 
   const stepIndex = snapshot ? ONBOARDING_STEPS.indexOf(snapshot.currentStep) : 0;
   const directionIcon = locale === "ar" ? ArrowLeft : ArrowRight;
@@ -244,11 +262,56 @@ export function OnboardingFlow() {
   switch (snapshot.currentStep) {
     case "identity":
       content = (
-        <form onSubmit={(event) => { event.preventDefault(); void send("save_identity", { fullName, companyName, logoAssetId: null, interfaceLocale: locale, contentLanguage }); }}>
+        <form onSubmit={async (event) => {
+          event.preventDefault();
+          const next = await send("save_identity", {
+            fullName,
+            companyName,
+            logoAssetId: snapshot.answers.identity?.logoAssetId ?? null,
+            interfaceLocale: locale,
+            contentLanguage,
+          });
+          if (!next || !logoFile) return;
+          setSubmitting(true);
+          try {
+            const form = new FormData();
+            form.set("logo", logoFile);
+            const response = await fetch("/api/onboarding/logo", { method: "POST", body: form });
+            const body = (await response.json()) as { success: boolean; assetId?: string; error?: string };
+            if (!response.ok || !body.assetId) throw new Error(body.error);
+            await send("save_logo", { assetId: body.assetId }, next);
+            setLogoFile(null);
+            if (logoPreview) URL.revokeObjectURL(logoPreview);
+            setLogoPreview(null);
+          } catch (uploadError) {
+            setError(uploadError instanceof Error && uploadError.message ? uploadError.message : copy.error);
+          } finally {
+            setSubmitting(false);
+          }
+        }}>
           <h2 className="text-2xl font-semibold text-white">{copy.identityTitle}</h2>
           <div className="mt-6 space-y-5">
             <label className="block text-sm text-stone-300">{copy.fullName}<input className={inputClass} required minLength={2} maxLength={120} autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} /></label>
             <label className="block text-sm text-stone-300">{copy.companyName}<input className={inputClass} required minLength={1} maxLength={160} value={companyName} onChange={(e) => setCompanyName(e.target.value)} /></label>
+            <label className="block text-sm text-stone-300">
+              {copy.logo}
+              <span className="mt-2 flex min-h-24 cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] p-4 hover:border-amber-300/50">
+                {logoPreview ? <Image src={logoPreview} alt="" width={64} height={64} unoptimized className="size-16 rounded-xl object-cover" /> : <span className="grid size-16 place-items-center rounded-xl bg-white/5"><ImagePlus className="size-6 text-stone-500" /></span>}
+                <span><span className="block font-medium text-stone-200">{copy.uploadLogo}</span><span className="mt-1 block text-xs text-stone-500">{copy.logoHelp}</span></span>
+              </span>
+              <input className="sr-only" type="file" accept="image/png,image/jpeg" onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                if (file && (!(["image/png", "image/jpeg"] as string[]).includes(file.type) || file.size > 5 * 1024 * 1024)) {
+                  setError(copy.logoHelp);
+                  event.target.value = "";
+                  return;
+                }
+                if (logoPreview) URL.revokeObjectURL(logoPreview);
+                setLogoFile(file);
+                setLogoPreview(file ? URL.createObjectURL(file) : null);
+                setError(null);
+              }} />
+            </label>
             <fieldset><legend className="mb-3 text-sm text-stone-300">{copy.contentLanguage}</legend><ChoiceGrid columns={2} options={[{ value: "ar", label: copy.arabic }, { value: "en", label: copy.english }]} value={contentLanguage as "ar" | "en"} onChange={setContentLanguage} /></fieldset>
           </div>
           {submitButton(!fullName.trim() || !companyName.trim())}
@@ -273,6 +336,7 @@ export function OnboardingFlow() {
             <label className="mt-6 block text-sm text-stone-300">{copy.description}<textarea className={`${inputClass} min-h-40 resize-y`} required minLength={20} maxLength={50000} placeholder={copy.descriptionPlaceholder} value={description} onChange={(e) => setDescription(e.target.value)} /></label>
           )}
           {submitButton(sourceKind === "website" ? !website : description.trim().length < 20)}
+          {backButton()}
         </form>
       );
       break;
@@ -283,6 +347,7 @@ export function OnboardingFlow() {
           <fieldset className="mt-6"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.teamSize}</legend><ChoiceGrid options={localizedOptions(optionLabels.teamSize, locale)} value={teamSize ?? undefined} onChange={setTeamSize} /></fieldset>
           <fieldset className="mt-7"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.revenue}</legend><ChoiceGrid options={localizedOptions(optionLabels.revenue, locale)} value={revenue ?? undefined} onChange={setRevenue} /></fieldset>
           {submitButton(!teamSize || !revenue)}
+          {backButton()}
         </form>
       );
       break;
@@ -293,6 +358,7 @@ export function OnboardingFlow() {
           <div className="mt-6"><ChoiceGrid columns={2} options={localizedOptions(optionLabels.roles, locale)} value={role ?? undefined} onChange={setRole} /></div>
           {role === "other" && <input className={inputClass} required maxLength={120} value={otherRole} onChange={(e) => setOtherRole(e.target.value)} />}
           {submitButton(!role || (role === "other" && !otherRole.trim()))}
+          {backButton()}
         </form>
       );
       break;
@@ -304,6 +370,7 @@ export function OnboardingFlow() {
           <fieldset className="mt-7"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.categories}</legend><ChoiceGrid columns={2} options={localizedOptions(optionLabels.categories, locale)} values={categories} onChange={(value) => setCategories(toggle(categories, value))} /></fieldset>
           {categories.includes("other") && <input className={inputClass} required maxLength={120} value={otherCategory} onChange={(e) => setOtherCategory(e.target.value)} />}
           {submitButton(!businessModel || categories.length === 0 || (categories.includes("other") && !otherCategory.trim()))}
+          {backButton()}
         </form>
       );
       break;
@@ -315,6 +382,7 @@ export function OnboardingFlow() {
           <fieldset className="mt-7"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.outcomes}</legend><ChoiceGrid columns={2} options={localizedOptions(optionLabels.outcomes, locale)} values={outcomes} onChange={(value) => setOutcomes(toggle(outcomes, value))} /></fieldset>
           {outcomes.includes("other") && <input className={inputClass} required maxLength={240} value={otherOutcome} onChange={(e) => setOtherOutcome(e.target.value)} />}
           {submitButton(!intent || outcomes.length === 0 || (outcomes.includes("other") && !otherOutcome.trim()))}
+          {backButton()}
         </form>
       );
       break;
@@ -326,6 +394,7 @@ export function OnboardingFlow() {
           <div className="mt-6"><ChoiceGrid columns={3} options={localizedOptions(optionLabels.sources, locale)} values={sources} onChange={(value) => setSources(toggle(sources, value))} /></div>
           {sources.includes("other") && <input className={inputClass} required maxLength={160} value={otherSource} onChange={(e) => setOtherSource(e.target.value)} />}
           {submitButton(sources.includes("other") && !otherSource.trim())}
+          {backButton()}
         </form>
       );
       break;
@@ -336,12 +405,13 @@ export function OnboardingFlow() {
         <div>
           <h2 className="text-2xl font-semibold text-white">{failed ? copy.sourceFailed : copy.profileTitle}</h2>
           {failed ? (
-            <div className="mt-6 rounded-2xl border border-red-400/20 bg-red-400/[0.06] p-5"><p className="text-sm leading-6 text-stone-300">{copy.sourceFailedDetail}</p><button disabled={submitting} onClick={() => void send("retry_analysis", {})} className="mt-5 rounded-xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-50">{copy.retry}</button></div>
+            <div className="mt-6 rounded-2xl border border-red-400/20 bg-red-400/[0.06] p-5"><p className="text-sm leading-6 text-stone-300">{copy.sourceFailedDetail}</p><div className="mt-5 flex flex-wrap gap-3"><button disabled={submitting} onClick={() => void send("retry_analysis", {})} className="rounded-xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-50">{copy.retry}</button><button disabled={submitting} onClick={() => void send("change_brand_source", {})} className="rounded-xl border border-white/15 px-5 py-3 text-sm text-white disabled:opacity-50">{copy.changeSource}</button></div></div>
           ) : ready ? (
-            <><div className="mt-6"><BrandProfileReview profile={snapshot.draftBrandProfile!} locale={locale} /></div><button disabled={submitting} onClick={() => void send("accept_brand_profile", { profileId: snapshot.draftBrandProfileId })} className="mt-7 flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-40">{submitting ? copy.saving : copy.acceptProfile}<ContinueIcon className="size-4" /></button></>
+            <><div className="mt-6"><BrandProfileReview profile={snapshot.draftBrandProfile!} locale={locale} saving={submitting} onSave={async (correction) => Boolean(await send("edit_brand_profile", { profileId: snapshot.draftBrandProfileId, correction }))} /></div><button disabled={submitting} onClick={() => void send("accept_brand_profile", { profileId: snapshot.draftBrandProfileId })} className="mt-7 flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-40">{submitting ? copy.saving : copy.acceptProfile}<ContinueIcon className="size-4" /></button><button disabled={submitting} onClick={() => void send("change_brand_source", {})} className="mt-4 text-sm text-stone-400 underline hover:text-white">{copy.changeSource}</button></>
           ) : (
             <div className="mt-8 flex flex-col items-center rounded-3xl border border-white/10 bg-white/[0.035] px-6 py-14 text-center"><Sparkles className="size-8 animate-pulse text-amber-300" /><p className="mt-4 font-semibold text-white">{copy.preparing}</p><p className="mt-2 max-w-md text-sm leading-6 text-stone-500">{copy.preparingDetail}</p></div>
           )}
+          {!ready && !failed && backButton()}
         </div>
       );
       break;

@@ -644,8 +644,8 @@ export const brandProfiles = pgTable(
     schemaVersion: integer("schema_version").default(1).notNull(),
     profile: jsonb("profile").$type<BrandProfileV1>().notNull(),
     generatedFromRunId: text("generated_from_run_id")
-      .notNull()
       .references(() => brandAnalysisRuns.id, { onDelete: "restrict" }),
+    sourceProfileId: text("source_profile_id"),
     acceptedByUserId: text("accepted_by_user_id").references(() => user.id, {
       onDelete: "restrict",
     }),
@@ -665,6 +665,12 @@ export const brandProfiles = pgTable(
       .where(sql`${table.status} = 'active'`),
     runUnique: uniqueIndex("brand_profiles_run_unique").on(table.generatedFromRunId),
     acceptedByIdx: index("brand_profiles_accepted_by_idx").on(table.acceptedByUserId),
+    sourceProfileIdx: index("brand_profiles_source_profile_idx").on(table.sourceProfileId),
+    sourceProfileFk: foreignKey({
+      columns: [table.sourceProfileId],
+      foreignColumns: [table.id],
+      name: "brand_profiles_source_profile_id_fk",
+    }).onDelete("restrict"),
     revisionCheck: check("brand_profiles_revision_check", sql`${table.revision} > 0`),
     schemaVersionCheck: check(
       "brand_profiles_schema_version_check",

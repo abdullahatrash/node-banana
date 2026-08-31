@@ -1,9 +1,10 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import {
   brandAnalysisRuns,
   brandProfiles,
   brandSources,
+  assets,
   member,
   onboardingActivationArtifacts,
   onboardingAnalysisDispatchIntents,
@@ -382,6 +383,40 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
           .where(eq(user.id, input.userId));
       }
 
+      if (input.workspaceIdentityUpdate) {
+        if (workspaceId !== input.workspaceIdentityUpdate.workspaceId) {
+          return { kind: "conflict" };
+        }
+        interfaceLocaleSchema.parse(input.workspaceIdentityUpdate.interfaceLocale);
+        contentLanguageSchema.parse(input.workspaceIdentityUpdate.contentLanguage);
+        await tx
+          .update(workspaces)
+          .set({ name: input.workspaceIdentityUpdate.name, updatedAt: now })
+          .where(eq(workspaces.id, workspaceId));
+        await tx
+          .update(organization)
+          .set({ name: input.workspaceIdentityUpdate.name })
+          .where(eq(organization.id, `org_${workspaceId}`));
+        await tx
+          .update(workspaceSettings)
+          .set({
+            defaultContentLanguage: input.workspaceIdentityUpdate.contentLanguage,
+            updatedAt: now,
+          })
+          .where(eq(workspaceSettings.workspaceId, workspaceId));
+        await tx
+          .update(userPreferences)
+          .set({
+            interfaceLocale: input.workspaceIdentityUpdate.interfaceLocale,
+            updatedAt: now,
+          })
+          .where(eq(userPreferences.userId, input.userId));
+        await tx
+          .update(user)
+          .set({ name: input.workspaceIdentityUpdate.ownerName, updatedAt: now })
+          .where(eq(user.id, input.userId));
+      }
+
       if (input.source) {
         await tx.insert(brandSources).values(input.source);
       }
@@ -395,6 +430,42 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
           createdAt: now,
           updatedAt: now,
         });
+      }
+      if (input.replacementProfile || input.replacementActivationArtifact) {
+        if (
+          !workspaceId ||
+          !input.replacementProfile ||
+          !input.replacementActivationArtifact ||
+          input.replacementProfile.workspaceId !== workspaceId ||
+          input.replacementActivationArtifact.workspaceId !== workspaceId ||
+          input.replacementActivationArtifact.brandProfileId !== input.replacementProfile.id ||
+          !input.replacementProfile.sourceProfileId
+        ) {
+          return { kind: "conflict" };
+        }
+        brandProfileV1Schema.parse(input.replacementProfile.profile);
+        activationArtifactV1Schema.parse(input.replacementActivationArtifact.artifact);
+        const [sourceDraft] = await tx
+          .select({ id: brandProfiles.id })
+          .from(brandProfiles)
+          .where(
+            and(
+              eq(brandProfiles.id, input.replacementProfile.sourceProfileId),
+              eq(brandProfiles.workspaceId, workspaceId),
+              eq(brandProfiles.status, "draft"),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        if (!sourceDraft) return { kind: "conflict" };
+        await tx
+          .update(brandProfiles)
+          .set({ status: "superseded" })
+          .where(eq(brandProfiles.id, sourceDraft.id));
+        await tx.insert(brandProfiles).values(input.replacementProfile);
+        await tx
+          .insert(onboardingActivationArtifacts)
+          .values(input.replacementActivationArtifact);
       }
       if (input.activateProfileId) {
         if (!workspaceId) return { kind: "conflict" };
@@ -444,7 +515,10 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
           status: input.nextStatus,
           currentStep: input.nextStep,
           answers: input.answers,
-          contentLanguage: input.workspace?.contentLanguage ?? currentRow.contentLanguage,
+          contentLanguage:
+            input.workspace?.contentLanguage ??
+            input.workspaceIdentityUpdate?.contentLanguage ??
+            currentRow.contentLanguage,
           revision: currentRow.revision + 1,
           completedAt: input.completedAt ?? currentRow.completedAt,
           updatedAt: now,
@@ -484,6 +558,35 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
       )
       .limit(1);
     return row ? sourceRecord(row) : null;
+  }
+
+  async getNextBrandSourceRevision(workspaceId: string) {
+    const [row] = await this.db
+      .select({ revision: brandSources.revision })
+      .from(brandSources)
+      .where(eq(brandSources.workspaceId, workspaceId))
+      .orderBy(desc(brandSources.revision))
+      .limit(1);
+    return (row?.revision ?? 0) + 1;
+  }
+
+  async isWorkspaceLogoAsset(workspaceId: string, assetId: string) {
+    const [row] = await this.db
+      .select({ id: assets.id })
+      .from(assets)
+      .where(
+        and(
+          eq(assets.id, assetId),
+          eq(assets.workspaceId, workspaceId),
+          eq(assets.type, "image"),
+          inArray(assets.mimeType, ["image/png", "image/jpeg"]),
+          sql`${assets.sizeBytes} <= ${5 * 1024 * 1024}`,
+          sql`${assets.metadata} ->> 'uploadState' = 'ready'`,
+          isNull(assets.deletedAt),
+        ),
+      )
+      .limit(1);
+    return Boolean(row);
   }
 
   async updateSourceExtraction(input: SourceExtractionUpdate) {
@@ -625,6 +728,9 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
 
   async createDraftProfile(input: BrandProfileRecord) {
     brandProfileV1Schema.parse(input.profile);
+    if (!input.generatedFromRunId) {
+      throw new Error("Generated Brand Profile drafts require an analysis run.");
+    }
     const [created] = await this.db
       .insert(brandProfiles)
       .values(input)

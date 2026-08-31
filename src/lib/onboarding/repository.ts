@@ -65,7 +65,8 @@ export interface BrandProfileRecord {
   status: "draft" | "active" | "superseded";
   schemaVersion: 1;
   profile: BrandProfileV1;
-  generatedFromRunId: string;
+  generatedFromRunId: string | null;
+  sourceProfileId: string | null;
   acceptedByUserId: string | null;
   acceptedAt: Date | null;
   createdAt: Date;
@@ -121,6 +122,14 @@ export interface WorkspaceProvisionInput {
   quotaBytes: number;
 }
 
+export interface WorkspaceIdentityUpdate {
+  workspaceId: string;
+  name: string;
+  ownerName: string;
+  interfaceLocale: InterfaceLocale;
+  contentLanguage: string;
+}
+
 export interface CommandReceiptInput {
   userId: string;
   idempotencyKey: string;
@@ -138,9 +147,12 @@ export interface CommandCommitInput {
   completedAt?: Date | null;
   receipt: CommandReceiptInput;
   workspace?: WorkspaceProvisionInput;
+  workspaceIdentityUpdate?: WorkspaceIdentityUpdate;
   source?: BrandSourceRecord;
   analysisRun?: BrandAnalysisRunRecord;
   activateProfileId?: string;
+  replacementProfile?: BrandProfileRecord;
+  replacementActivationArtifact?: ActivationArtifactRecord;
 }
 
 export type CommandCommitResult =
@@ -193,6 +205,8 @@ export interface OnboardingRepository {
   }): Promise<CommandReceiptResult>;
   commitCommand(input: CommandCommitInput): Promise<CommandCommitResult>;
   getBrandSource(workspaceId: string, sourceId: string): Promise<BrandSourceRecord | null>;
+  getNextBrandSourceRevision(workspaceId: string): Promise<number>;
+  isWorkspaceLogoAsset(workspaceId: string, assetId: string): Promise<boolean>;
   updateSourceExtraction(input: SourceExtractionUpdate): Promise<BrandSourceRecord | null>;
   getAnalysisRun(workspaceId: string, runId: string): Promise<BrandAnalysisRunRecord | null>;
   transitionAnalysisRun(input: AnalysisRunTransition): Promise<BrandAnalysisRunRecord | null>;

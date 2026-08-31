@@ -14,6 +14,14 @@ const analyticsMigration = readFileSync(
   resolve(process.cwd(), "drizzle/0055_amazing_lake.sql"),
   "utf8",
 );
+const correctionMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0056_marvelous_black_bolt.sql"),
+  "utf8",
+);
+const correctionForeignKeyMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0057_same_demogoblin.sql"),
+  "utf8",
+);
 
 describe("onboarding persistence migration", () => {
   it("creates the onboarding and Brand Profile authority", () => {
@@ -58,6 +66,14 @@ describe("onboarding persistence migration", () => {
       expect(analyticsMigration).toContain(constraint);
     }
     expect(analyticsMigration).not.toContain("jsonb");
+  });
+
+  it("stores corrected profiles as linked immutable revisions", () => {
+    expect(correctionMigration).toContain('ADD COLUMN "source_profile_id" text');
+    expect(correctionMigration).toContain("DROP NOT NULL");
+    expect(correctionForeignKeyMigration).toContain(
+      'CONSTRAINT "brand_profiles_source_profile_id_fk"',
+    );
   });
 
   it("indexes every queryable foreign key and lifecycle lookup", () => {

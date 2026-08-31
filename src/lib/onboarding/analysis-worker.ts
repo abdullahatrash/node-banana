@@ -220,6 +220,7 @@ export class DefaultOnboardingAnalysisWorker {
       schemaVersion: 1,
       profile,
       generatedFromRunId: input.runId,
+      sourceProfileId: null,
       acceptedByUserId: null,
       acceptedAt: null,
       createdAt: now,

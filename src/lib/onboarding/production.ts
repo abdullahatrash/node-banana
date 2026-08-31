@@ -15,6 +15,7 @@ export function createProductionOnboardingService() {
     undefined,
     undefined,
     getOnboardingAnalytics(),
+    () => createConfiguredBrandProfileGenerator(),
   );
 }
 

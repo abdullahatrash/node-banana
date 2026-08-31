@@ -1,0 +1,1 @@
+ALTER TABLE "brand_profiles" ADD CONSTRAINT "brand_profiles_source_profile_id_fk" FOREIGN KEY ("source_profile_id") REFERENCES "public"."brand_profiles"("id") ON DELETE restrict ON UPDATE no action;

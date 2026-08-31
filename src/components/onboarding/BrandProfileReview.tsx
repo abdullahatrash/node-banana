@@ -1,5 +1,6 @@
-import { AlertTriangle, Check, ShieldCheck } from "lucide-react";
-import type { BrandProfileV1 } from "@/lib/onboarding/schemas";
+import { useState } from "react";
+import { AlertTriangle, Check, Pencil, ShieldCheck } from "lucide-react";
+import type { BrandProfileCorrection, BrandProfileV1 } from "@/lib/onboarding/schemas";
 import type { InterfaceLocale } from "@/lib/onboarding/contracts";
 import { copyFor } from "./copy";
 
@@ -20,11 +21,16 @@ function List({ items }: { items: string[] }) {
 export function BrandProfileReview({
   profile,
   locale,
+  saving,
+  onSave,
 }: {
   profile: BrandProfileV1;
   locale: InterfaceLocale;
+  saving: boolean;
+  onSave(correction: BrandProfileCorrection): Promise<boolean>;
 }) {
   const copy = copyFor(locale);
+  const [correction, setCorrection] = useState<BrandProfileCorrection | null>(null);
   const labels =
     locale === "ar"
       ? {
@@ -47,6 +53,59 @@ export function BrandProfileReview({
           angles: "Content angles",
           uncertainty: "Items requiring your review",
         };
+
+  const startEditing = () => {
+    setCorrection({
+      coreIdentity: profile.identity.coreIdentity,
+      offering: profile.offering,
+      benefits: profile.benefits,
+      differentiators: profile.differentiators,
+      mission: profile.mission,
+      positioning: profile.positioning,
+      ownedSpace: profile.ownedSpace,
+      voice: profile.voice,
+      prohibitedClaims: profile.prohibitedClaims,
+      prohibitedTopics: profile.prohibitedTopics,
+      contentAngles: profile.contentAngles,
+      uncertainties: profile.uncertainties,
+    });
+  };
+
+  if (correction) {
+    const textClass =
+      "mt-2 min-h-24 w-full rounded-xl border border-white/12 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-amber-300";
+    const setLines = (key: keyof Pick<BrandProfileCorrection, "offering" | "benefits" | "differentiators" | "prohibitedClaims" | "prohibitedTopics" | "contentAngles" | "uncertainties">, value: string) => {
+      setCorrection({
+        ...correction,
+        [key]: value.split("\n").map((line) => line.trim()).filter(Boolean),
+      });
+    };
+    const fields = locale === "ar"
+      ? { core: "جوهر العلامة", offering: "ما الذي تقدمه (سطر لكل عنصر)", benefits: "الفوائد", differentiators: "عناصر التميّز", mission: "الرسالة", positioning: "التموضع", owned: "المساحة الذهنية", descriptors: "صفات النبرة", do: "ما يجب فعله", doNot: "ما يجب تجنبه", claims: "ادعاءات محظورة", topics: "مواضيع محظورة", angles: "زوايا المحتوى", uncertainties: "نقاط غير مؤكدة" }
+      : { core: "Brand essence", offering: "Offering (one item per line)", benefits: "Benefits", differentiators: "Differentiators", mission: "Mission", positioning: "Positioning", owned: "Owned space", descriptors: "Voice descriptors", do: "Voice do's", doNot: "Voice don'ts", claims: "Prohibited claims", topics: "Prohibited topics", angles: "Content angles", uncertainties: "Uncertainties" };
+    const lineFields = [
+      ["offering", fields.offering], ["benefits", fields.benefits],
+      ["differentiators", fields.differentiators], ["prohibitedClaims", fields.claims],
+      ["prohibitedTopics", fields.topics], ["contentAngles", fields.angles],
+      ["uncertainties", fields.uncertainties],
+    ] as const;
+    return (
+      <form className="space-y-4" onSubmit={async (event) => { event.preventDefault(); if (await onSave(correction)) setCorrection(null); }}>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="text-sm text-stone-300">{fields.core}<textarea required className={textClass} value={correction.coreIdentity} onChange={(event) => setCorrection({ ...correction, coreIdentity: event.target.value })} /></label>
+          <label className="text-sm text-stone-300">{fields.mission}<textarea required className={textClass} value={correction.mission} onChange={(event) => setCorrection({ ...correction, mission: event.target.value })} /></label>
+          <label className="text-sm text-stone-300">{fields.positioning}<textarea required className={textClass} value={correction.positioning} onChange={(event) => setCorrection({ ...correction, positioning: event.target.value })} /></label>
+          <label className="text-sm text-stone-300">{fields.owned}<textarea required className={textClass} value={correction.ownedSpace} onChange={(event) => setCorrection({ ...correction, ownedSpace: event.target.value })} /></label>
+          {lineFields.map(([key, label]) => <label key={key} className="text-sm text-stone-300">{label}<textarea required={key === "offering"} className={textClass} value={correction[key].join("\n")} onChange={(event) => setLines(key, event.target.value)} /></label>)}
+          {(["descriptors", "do", "doNot"] as const).map((key) => <label key={key} className="text-sm text-stone-300">{fields[key]}<textarea required={key === "descriptors"} className={textClass} value={correction.voice[key].join("\n")} onChange={(event) => setCorrection({ ...correction, voice: { ...correction.voice, [key]: event.target.value.split("\n").map((line) => line.trim()).filter(Boolean) } })} /></label>)}
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button disabled={saving} className="rounded-xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-50">{copy.saveProfile}</button>
+          <button type="button" disabled={saving} onClick={() => setCorrection(null)} className="rounded-xl border border-white/12 px-5 py-3 text-sm text-stone-200">{copy.cancel}</button>
+        </div>
+      </form>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -99,6 +158,7 @@ export function BrandProfileReview({
           <div className="mt-3"><List items={profile.uncertainties} /></div>
         </section>
       )}
+      <button type="button" onClick={startEditing} className="flex items-center gap-2 rounded-xl border border-white/12 px-4 py-2.5 text-sm text-stone-200 hover:border-amber-300/50"><Pencil className="size-4" />{copy.editProfile}</button>
     </div>
   );
 }

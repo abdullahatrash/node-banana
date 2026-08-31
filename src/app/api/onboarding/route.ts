@@ -13,6 +13,7 @@ import { createProductionOnboardingService } from "@/lib/onboarding/production";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 async function authorize(request: NextRequest) {
   const session = await getServerAuthSession(request.headers);

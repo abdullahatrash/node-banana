@@ -124,4 +124,23 @@ describe("OnboardingFlow", () => {
       "true",
     );
   });
+
+  it("persists back navigation through the onboarding command API", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(json({ success: true, snapshot: snapshot("company_stage", 2) }))
+      .mockResolvedValueOnce(json({ success: true, snapshot: snapshot("brand_source", 3) }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OnboardingFlow />);
+    await screen.findByRole("heading", { name: "أخبرنا عن مرحلتك الحالية" });
+    fireEvent.click(screen.getByRole("button", { name: "رجوع" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toMatchObject({
+      type: "go_back",
+      expectedRevision: 2,
+      payload: {},
+    });
+  });
 });
