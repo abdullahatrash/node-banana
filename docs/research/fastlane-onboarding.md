@@ -23,6 +23,7 @@ Document Fastlane's acquisition-to-onboarding journey one verified step at a tim
 | 5. Initial profile setup | After verification, the user reaches `/onboarding`. The screen collects an optional company logo, full name, and company name, then offers **Continue**. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 6. Brand-context source | The next onboarding state asks the user either to analyze a company website or provide a structured company description. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding), corroborated by the [public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js) |
 | 7. Company stage | While workspace preparation runs, the next questionnaire asks for team size and monthly revenue to tailor recommendations to the company's stage. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) and the user-supplied screenshot dated 2026-08-31 |
+| 8. User role | The next questionnaire asks which professional role best describes the user so Fastlane can customize their experience. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 
 The public client bundle independently corroborates `/onboarding` as the signup component's successful-signup destination. Source: [Fastlane public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js).
 
@@ -109,6 +110,21 @@ The **Continue** control is enabled before any selection, but its submit-time va
 
 Product interpretation for Node Banana: these answers describe business maturity and should be stored as workspace/company segmentation data. They can tune onboarding recommendations, suggested publishing cadence, and education level, but should not be treated as factual brand-copy inputs unless the user explicitly wants revenue or team size mentioned in generated content.
 
+### Fourth onboarding screen: user role
+
+The next state remains at `https://app.usefastlane.ai/onboarding`.
+
+- heading **“What describes you best?”**;
+- helper copy **“We'll customize your experience based on your role.”**;
+- label **Select your role**;
+- nine choices: **Founder**, **Social Media Manager**, **Marketing Manager**, **Agency Owner**, **Freelancer**, **Product Manager**, **Content Creator**, **Growth Manager**, and **Other**;
+- primary action **Continue**;
+- secondary action **← Back**.
+
+The **Continue** control is enabled before a selection, but submit-time validation and whether the question can be skipped have not been tested. No workspace-processing status is exposed on this screen.
+
+Product interpretation for Node Banana: this answer belongs to the individual user or their Workspace membership, not the Brand Profile. Multiple people in one Workspace can have different professional roles. The value may personalize navigation, education, recommendations, and default workflows without changing the brand's factual identity or generated claims.
+
 ### Related first-party product framing
 
 Fastlane's public “How it works” sequence is: **Enter your website → Blitz mode → Fill up your calendar → Track your growth.** This describes the product journey, not the verified account-onboarding screen sequence. Source: [Fastlane landing page](https://www.usefastlane.ai/).
@@ -157,6 +173,7 @@ Append new observations here in sequence. Record the URL, exact visible copy, av
 | Observed | `https://app.usefastlane.ai/onboarding` | First setup screen: Log out; Fastlane logo; welcome/helper copy; optional company-logo upload (PNG/JPG, max 5MB); name; company name; multi-workspace note; Continue. The result of Continue has not yet been observed. |
 | Observed | `https://app.usefastlane.ai/onboarding` | Second setup state offers Website analysis or a manual Company Description. Website mode was restored after inspecting both paths; nothing was submitted. Public client code confirms async website/description processing, company-profile generation, first suggestions, and optional lead discovery. |
 | Observed | `https://app.usefastlane.ai/onboarding` | Third setup state asks for team-size and monthly-revenue bands while Website/Profile preparation runs in parallel. Continue is initially enabled; no answer or validation behavior was tested. |
+| Observed | `https://app.usefastlane.ai/onboarding` | Fourth setup state asks the user's professional role from nine choices. Continue is initially enabled, no role was selected during inspection, and the earlier workspace-processing status is no longer visible. |
 
 ## Primary sources
 
