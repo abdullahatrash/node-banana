@@ -4,6 +4,22 @@ Node Banana includes a Social Hub for planning, composing, and publishing genera
 
 ## Language
 
+**Brand Source**:
+User-approved source material used to derive a Workspace's Brand Profile, such as a public website or a manual company description. It is evidence for the profile, not the canonical profile itself.
+_Avoid_: Scraped data, company input, website context
+
+**Brand Profile**:
+The Workspace-owned, user-reviewable structured understanding of a brand that guides content strategy and generation across the product. It may be derived from one or more Brand Sources but remains editable independently of them.
+_Avoid_: Brand kit, company profile, AI output, scraped profile
+
+**Interface Language**:
+The language and reading direction used by Node Banana's product interface for a person. It does not determine the language of generated content.
+_Avoid_: App language, content locale, prompt language
+
+**Content Language**:
+The Workspace's default language for generated content, overridable for a specific brief or generation. Arabic is the product default for MENA onboarding, not a restriction on English or other output languages.
+_Avoid_: Interface language, detected language, Arabic mode
+
 **Channel**:
 A connected social publishing destination inside a workspace, backed by one platform account, page, or channel and its auth credentials.
 _Avoid_: Integration, social account, provider account

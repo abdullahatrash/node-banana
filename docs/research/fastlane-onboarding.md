@@ -80,6 +80,18 @@ The progress UI says **“Preparing your workspace”** and **“This usually ta
 
 This confirms an asynchronous task pipeline from the client contract and progress states. The public client does not reveal whether the backend uses a particular job queue, worker framework, crawl depth, or scraping vendor, so those implementation details remain unknown.
 
+### Node Banana language and persistence decisions
+
+“Arabic-first” means Arabic is the default onboarding and content experience for the MENA audience; it does not mean Arabic-only. Node Banana must keep three concerns separate:
+
+- **Interface Language** controls UI copy and direction.
+- **Content Language** defaults generated output and is overridable per brief or generation.
+- A Brand Source's detected language helps extraction but must not silently choose or change the requested Content Language.
+
+The website or description pipeline should produce a versioned, schema-constrained **Brand Profile**, not an untyped LLM response. The server must parse and validate the structured output before persistence, reject or repair invalid output, and let the user review important claims. A minimal profile should distinguish product/service, audiences, problems, benefits, positioning, voice, prohibited claims/topics, supported content languages, and source provenance.
+
+Repository gap: Node Banana currently stores `brandKit` as `Record<string, unknown>` JSON in both `workspaces` and `workspace_settings`. That is valid JSON storage but not a trustworthy domain contract, and the duplicated authority risks drift. The onboarding implementation should introduce one canonical, versioned Brand Profile schema and one source of truth rather than saving raw model JSON into either existing field without validation. Sources: [`src/lib/db/schema.ts`](../../src/lib/db/schema.ts#L317-L355), [`src/lib/studio/repository.ts`](../../src/lib/studio/repository.ts#L120-L166).
+
 ### Third onboarding screen: company stage
 
 The next state remains at `https://app.usefastlane.ai/onboarding`. Website/profile processing continues in parallel while the user answers a segmentation questionnaire.
