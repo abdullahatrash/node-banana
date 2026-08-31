@@ -126,8 +126,13 @@ export interface CommandCommitInput {
 }
 
 export type CommandCommitResult =
-  | { kind: "committed" | "replayed"; session: OnboardingSessionRecord }
+  | { kind: "committed"; session: OnboardingSessionRecord }
+  | { kind: "replayed"; session: OnboardingSessionRecord }
   | { kind: "conflict" | "stale_revision" | "not_found" };
+
+export type CommandReceiptResult =
+  | { kind: "absent" | "conflict" }
+  | { kind: "replayed"; sessionRevision: number };
 
 export interface SourceExtractionUpdate {
   sourceId: string;
@@ -162,6 +167,11 @@ export interface OnboardingRepository {
     now: Date;
   }): Promise<OnboardingSessionRecord>;
   readAggregate(userId: string): Promise<OnboardingAggregate | null>;
+  readCommandReceipt(input: {
+    userId: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+  }): Promise<CommandReceiptResult>;
   commitCommand(input: CommandCommitInput): Promise<CommandCommitResult>;
   getBrandSource(workspaceId: string, sourceId: string): Promise<BrandSourceRecord | null>;
   updateSourceExtraction(input: SourceExtractionUpdate): Promise<BrandSourceRecord | null>;

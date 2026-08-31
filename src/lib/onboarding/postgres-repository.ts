@@ -220,6 +220,28 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
     };
   }
 
+  async readCommandReceipt(
+    input: Parameters<OnboardingRepository["readCommandReceipt"]>[0],
+  ) {
+    const [receipt] = await this.db
+      .select({
+        requestFingerprint: onboardingCommandReceipts.requestFingerprint,
+        sessionRevision: onboardingCommandReceipts.sessionRevision,
+      })
+      .from(onboardingCommandReceipts)
+      .where(
+        and(
+          eq(onboardingCommandReceipts.userId, input.userId),
+          eq(onboardingCommandReceipts.idempotencyKey, input.idempotencyKey),
+        ),
+      )
+      .limit(1);
+    if (!receipt) return { kind: "absent" as const };
+    return receipt.requestFingerprint === input.requestFingerprint
+      ? { kind: "replayed" as const, sessionRevision: receipt.sessionRevision }
+      : { kind: "conflict" as const };
+  }
+
   async commitCommand(input: CommandCommitInput): Promise<CommandCommitResult> {
     onboardingAnswersV1Schema.parse(input.answers);
     return this.db.transaction(async (tx): Promise<CommandCommitResult> => {

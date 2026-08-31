@@ -136,7 +136,8 @@ export interface OnboardingSnapshot {
   answers: unknown;
   analysis: OnboardingAnalysisSnapshot | null;
   draftBrandProfileId: string | null;
+  draftBrandProfile: import("./schemas").BrandProfileV1 | null;
   activeBrandProfileId: string | null;
   activationArtifactId: string | null;
+  activationArtifact: import("./schemas").ActivationArtifactV1 | null;
 }
-

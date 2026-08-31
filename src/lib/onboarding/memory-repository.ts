@@ -122,6 +122,16 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
     };
   }
 
+  async readCommandReceipt(
+    input: Parameters<OnboardingRepository["readCommandReceipt"]>[0],
+  ) {
+    const receipt = this.receipts.get(key(input.userId, input.idempotencyKey));
+    if (!receipt) return { kind: "absent" as const };
+    return receipt.fingerprint === input.requestFingerprint
+      ? { kind: "replayed" as const, sessionRevision: receipt.revision }
+      : { kind: "conflict" as const };
+  }
+
   async commitCommand(input: CommandCommitInput): Promise<CommandCommitResult> {
     return this.lock(async () => {
       const receiptKey = key(input.userId, input.receipt.idempotencyKey);

@@ -36,6 +36,8 @@ export const identityAnswerSchema = z
     fullName: nonEmptyText(120),
     companyName: nonEmptyText(160),
     logoAssetId: idSchema.nullable().default(null),
+    interfaceLocale: interfaceLocaleSchema.optional(),
+    contentLanguage: contentLanguageSchema.optional(),
   })
   .strict();
 
@@ -275,8 +277,10 @@ export const onboardingSnapshotSchema = z
       .strict()
       .nullable(),
     draftBrandProfileId: idSchema.nullable(),
+    draftBrandProfile: brandProfileV1Schema.nullable(),
     activeBrandProfileId: idSchema.nullable(),
     activationArtifactId: idSchema.nullable(),
+    activationArtifact: activationArtifactV1Schema.nullable(),
   })
   .strict();
 
@@ -286,4 +290,3 @@ export type ActivationArtifactV1 = z.infer<typeof activationArtifactV1Schema>;
 export type BrandSourceInput = z.infer<typeof brandSourceInputSchema>;
 export type OnboardingCommandRequest = z.infer<typeof onboardingCommandRequestSchema>;
 export type ParsedOnboardingSnapshot = z.infer<typeof onboardingSnapshotSchema>;
-
