@@ -181,4 +181,30 @@ describe("/api/studio/workspaces GET", () => {
       "dev_user",
     );
   });
+
+  it("does not return raw database or request evidence", async () => {
+    mockGetSession.mockResolvedValue({ user: { id: "user_1" } });
+    const canaries = [
+      "private prompt text",
+      "api_key_canary_123",
+      "Authorization: Bearer auth_canary",
+      "Cookie: session=cookie_canary",
+      "https://storage.invalid/object?X-Amz-Signature=signed_canary",
+      '{"providerBody":"provider_body_canary"}',
+    ];
+    mockSelectRows.mockRejectedValue(new Error(canaries.join(" | ")));
+
+    const response = await GET(createRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(data).toEqual({
+      success: false,
+      code: "WORKSPACES_UNAVAILABLE",
+      error: "Workspaces are temporarily unavailable.",
+    });
+    const serialized = JSON.stringify(data);
+    for (const canary of canaries) expect(serialized).not.toContain(canary);
+  });
 });

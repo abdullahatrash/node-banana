@@ -12,6 +12,7 @@ import {
   OAuthStateNotFoundError,
   OAuthStateExpiredError,
 } from "@/lib/social/repository";
+import { withLinkedInAuthorKind } from "@/lib/social/linkedin-author-kind";
 import type { SocialPlatform } from "@/lib/db/schema";
 import type { PageInfo } from "@/lib/social/provider-interface";
 import { logger } from "@/utils/logger";
@@ -260,6 +261,10 @@ export async function POST(
       tokenExpiresAt: authResult.expiresIn
         ? new Date(Date.now() + authResult.expiresIn * 1000)
         : undefined,
+      additionalSettings:
+        body.platform === "linkedin"
+          ? withLinkedInAuthorKind(undefined, "person")
+          : undefined,
       createdByUserId: result.session.user.id,
     });
     logger.info("system", "Social account connected", {

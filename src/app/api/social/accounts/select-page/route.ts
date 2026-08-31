@@ -11,6 +11,7 @@ import {
   OAuthSelectionSessionNotFoundError,
   OAuthSelectionSessionExpiredError,
 } from "@/lib/social/repository";
+import { withLinkedInAuthorKind } from "@/lib/social/linkedin-author-kind";
 import type { SocialPlatform } from "@/lib/db/schema";
 import { logger } from "@/utils/logger";
 
@@ -112,6 +113,10 @@ export async function POST(
       refreshTokenEncrypted: consumedSession.refreshTokenEncrypted ?? undefined,
       accessTokenSecret: consumedSession.accessTokenSecret ?? undefined,
       tokenExpiresAt: consumedSession.tokenExpiresAt ?? undefined,
+      additionalSettings:
+        body.platform === "linkedin"
+          ? withLinkedInAuthorKind(undefined, "organization")
+          : undefined,
       createdByUserId: result.session.user.id,
     });
     logger.info("system", "Social page selection completed", {

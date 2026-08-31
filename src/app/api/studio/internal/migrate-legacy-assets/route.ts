@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { isDatabaseConfigured } from "@/lib/db";
 import {
   buildAssetObjectKey,
@@ -18,6 +19,7 @@ interface MigrateLegacyResponse {
     nextContinuationToken?: string;
   };
   error?: string;
+  code?: "LEGACY_ASSET_MIGRATION_UNAVAILABLE";
 }
 
 const DEFAULT_BATCH_SIZE = 100;
@@ -68,7 +70,7 @@ export async function POST(
   request: NextRequest,
 ): Promise<NextResponse<MigrateLegacyResponse>> {
   if (!isDatabaseConfigured()) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: "DATABASE_URL is not configured." },
       { status: 503 },
     );
@@ -90,7 +92,7 @@ export async function POST(
     const continuationToken = request.nextUrl.searchParams.get("continuationToken") || undefined;
 
     if (!workspaceId) {
-      return NextResponse.json(
+      return noStoreJson(
         { success: false, error: "workspaceId query parameter is required." },
         { status: 400 },
       );
@@ -149,7 +151,7 @@ export async function POST(
       }
     }
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       summary: {
         scanned: listing.keys.length,
@@ -158,14 +160,12 @@ export async function POST(
         nextContinuationToken: listing.nextContinuationToken,
       },
     });
-  } catch (error) {
-    return NextResponse.json(
+  } catch {
+    return noStoreJson(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to migrate legacy assets",
+        code: "LEGACY_ASSET_MIGRATION_UNAVAILABLE",
+        error: "Legacy-asset migration is temporarily unavailable.",
       },
       { status: 500 },
     );

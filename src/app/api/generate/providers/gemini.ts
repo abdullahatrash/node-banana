@@ -32,7 +32,7 @@ export async function generateWithGemini(
   useGoogleSearch?: boolean,
   useImageSearch?: boolean
 ): Promise<NextResponse<GenerateResponse>> {
-  console.log(`[API:${requestId}] Gemini generation - Model: ${model}, Images: ${images?.length || 0}, Prompt: ${prompt?.length || 0} chars`);
+  safeGenerationLog.log(`[API:${requestId}] Gemini generation - Model: ${model}, Images: ${images?.length || 0}, Prompt: ${prompt?.length || 0} chars`);
 
   // Extract base64 data and MIME types from data URLs
   const imageData = (images || []).map((image, idx) => {
@@ -41,10 +41,10 @@ export async function generateWithGemini(
       // Extract MIME type from header (e.g., "data:image/png;" -> "image/png")
       const mimeMatch = header.match(/data:([^;]+)/);
       const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
-      console.log(`[API:${requestId}]   Image ${idx + 1}: ${mimeType}, ${(data.length / 1024).toFixed(1)}KB`);
+      safeGenerationLog.log(`[API:${requestId}]   Image ${idx + 1}: ${mimeType}, ${(data.length / 1024).toFixed(1)}KB`);
       return { data, mimeType };
     }
-    console.log(`[API:${requestId}]   Image ${idx + 1}: raw, ${(image.length / 1024).toFixed(1)}KB`);
+    safeGenerationLog.log(`[API:${requestId}]   Image ${idx + 1}: raw, ${(image.length / 1024).toFixed(1)}KB`);
     return { data: image, mimeType: "image/png" };
   });
 
@@ -103,7 +103,7 @@ export async function generateWithGemini(
     tools.push({ googleSearch: {} });
   }
 
-  console.log(`[API:${requestId}] Config: ${JSON.stringify(config)}`);
+  safeGenerationLog.log(`[API:${requestId}] Config: ${JSON.stringify(config)}`);
 
   // Make request to Gemini
   const geminiStartTime = Date.now();
@@ -121,13 +121,13 @@ export async function generateWithGemini(
   });
 
   const geminiDuration = Date.now() - geminiStartTime;
-  console.log(`[API:${requestId}] Gemini API completed in ${geminiDuration}ms`);
+  safeGenerationLog.log(`[API:${requestId}] Gemini API completed in ${geminiDuration}ms`);
 
   // Extract image from response
   const candidates = response.candidates;
 
   if (!candidates || candidates.length === 0) {
-    console.error(`[API:${requestId}] No candidates in Gemini response`);
+    safeGenerationLog.error(`[API:${requestId}] No candidates in Gemini response`);
     return NextResponse.json<GenerateResponse>(
       {
         success: false,
@@ -138,10 +138,10 @@ export async function generateWithGemini(
   }
 
   const parts = candidates[0].content?.parts;
-  console.log(`[API:${requestId}] Response parts: ${parts?.length || 0}`);
+  safeGenerationLog.log(`[API:${requestId}] Response parts: ${parts?.length || 0}`);
 
   if (!parts) {
-    console.error(`[API:${requestId}] No parts in Gemini candidate content`);
+    safeGenerationLog.error(`[API:${requestId}] No parts in Gemini candidate content`);
     return NextResponse.json<GenerateResponse>(
       {
         success: false,
@@ -158,7 +158,7 @@ export async function generateWithGemini(
       const imgData = part.inlineData.data;
       const imageSizeKB = (imgData.length / 1024).toFixed(1);
 
-      console.log(`[API:${requestId}] Output image: ${mimeType}, ${imageSizeKB}KB`);
+      safeGenerationLog.log(`[API:${requestId}] Output image: ${mimeType}, ${imageSizeKB}KB`);
 
       const dataUrl = `data:${mimeType};base64,${imgData}`;
 
@@ -167,10 +167,10 @@ export async function generateWithGemini(
       const responseSizeMB = (responseSize / (1024 * 1024)).toFixed(2);
 
       if (responseSize > 4.5 * 1024 * 1024) {
-        console.warn(`[API:${requestId}] Response size (${responseSizeMB}MB) approaching Next.js 5MB limit`);
+        safeGenerationLog.warn(`[API:${requestId}] Response size (${responseSizeMB}MB) approaching Next.js 5MB limit`);
       }
 
-      console.log(`[API:${requestId}] SUCCESS - Returning ${responseSizeMB}MB payload`);
+      safeGenerationLog.log(`[API:${requestId}] SUCCESS - Returning ${responseSizeMB}MB payload`);
 
       return NextResponse.json<GenerateResponse>(responsePayload);
     }
@@ -179,7 +179,7 @@ export async function generateWithGemini(
   // If no image found, check for text error
   for (const part of parts) {
     if (part.text) {
-      console.error(`[API:${requestId}] Gemini returned text instead of image: ${part.text.substring(0, 100)}`);
+      safeGenerationLog.error(`[API:${requestId}] Gemini returned text instead of image: ${part.text.substring(0, 100)}`);
       return NextResponse.json<GenerateResponse>(
         {
           success: false,
@@ -190,7 +190,7 @@ export async function generateWithGemini(
     }
   }
 
-  console.error(`[API:${requestId}] No image or text found in Gemini response`);
+  safeGenerationLog.error(`[API:${requestId}] No image or text found in Gemini response`);
   return NextResponse.json<GenerateResponse>(
     {
       success: false,
@@ -226,7 +226,7 @@ export async function generateWithGeminiVideo(
     return { success: false, error: `Unknown Veo model: ${modelId}` };
   }
 
-  console.log(`[API:${requestId}] Gemini video generation - Model: ${apiModelId}, Prompt: ${prompt?.length || 0} chars, Images: ${images?.length || 0}`);
+  safeGenerationLog.log(`[API:${requestId}] Gemini video generation - Model: ${apiModelId}, Prompt: ${prompt?.length || 0} chars, Images: ${images?.length || 0}`);
 
   const ai = new GoogleGenAI({ apiKey });
 
@@ -263,7 +263,7 @@ export async function generateWithGeminiVideo(
 
   // Validate image-to-video models have an image
   if (modelId.includes("image-to-video") && (!images || images.length === 0)) {
-    console.error(`[API:${requestId}] Image required for image-to-video model: ${modelId}`);
+    safeGenerationLog.error(`[API:${requestId}] Image required for image-to-video model: ${modelId}`);
     return { success: false, error: "Image required for image-to-video model" };
   }
 
@@ -286,7 +286,7 @@ export async function generateWithGeminiVideo(
     }
   }
 
-  console.log(`[API:${requestId}] Veo config: ${JSON.stringify(config)}`);
+  safeGenerationLog.log(`[API:${requestId}] Veo config: ${JSON.stringify(config)}`);
 
   // Start video generation (async operation)
   const startTime = Date.now();
@@ -302,66 +302,67 @@ export async function generateWithGeminiVideo(
     while (!operation.done) {
       const elapsed = Date.now() - startTime;
       if (elapsed > TIMEOUT) {
-        console.error(`[API:${requestId}] Veo generation timed out after ${(elapsed / 1000).toFixed(0)}s`);
+        safeGenerationLog.error(`[API:${requestId}] Veo generation timed out after ${(elapsed / 1000).toFixed(0)}s`);
         return { success: false, error: "Video generation timed out after 5 minutes" };
       }
 
-      console.log(`[API:${requestId}] Veo polling... (${(elapsed / 1000).toFixed(0)}s elapsed)`);
+      safeGenerationLog.log(`[API:${requestId}] Veo polling... (${(elapsed / 1000).toFixed(0)}s elapsed)`);
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
       operation = await ai.operations.getVideosOperation({ operation });
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error(`[API:${requestId}] Veo generation failed: ${msg}`);
+    safeGenerationLog.error(`[API:${requestId}] Veo generation failed: ${msg}`);
     return { success: false, error: `Video generation failed: ${msg}` };
   }
 
   const duration = Date.now() - startTime;
-  console.log(`[API:${requestId}] Veo generation completed in ${(duration / 1000).toFixed(1)}s`);
+  safeGenerationLog.log(`[API:${requestId}] Veo generation completed in ${(duration / 1000).toFixed(1)}s`);
 
   // Extract generated video
   const generatedVideos = operation.response?.generatedVideos;
   if (!generatedVideos || generatedVideos.length === 0) {
-    console.error(`[API:${requestId}] No generated videos in Veo response`);
+    safeGenerationLog.error(`[API:${requestId}] No generated videos in Veo response`);
     return { success: false, error: "No video generated. The content may have been filtered by safety policies." };
   }
 
   const videoUri = generatedVideos[0]?.video?.uri;
   if (!videoUri) {
-    console.error(`[API:${requestId}] No video URI in Veo response`);
+    safeGenerationLog.error(`[API:${requestId}] No video URI in Veo response`);
     return { success: false, error: "No video URI in response" };
   }
 
   // Fetch the video (append API key for authentication)
   const videoUrl = `${videoUri}&key=${apiKey}`;
-  console.log(`[API:${requestId}] Fetching video from URI...`);
+  safeGenerationLog.log(`[API:${requestId}] Fetching video from URI...`);
 
   const controller = new AbortController();
   const fetchTimeout = setTimeout(() => controller.abort(), 60_000);
   try {
     const videoResponse = await fetch(videoUrl, { signal: controller.signal });
     if (!videoResponse.ok) {
-      console.error(`[API:${requestId}] Failed to fetch video: ${videoResponse.status}`);
+      safeGenerationLog.error(`[API:${requestId}] Failed to fetch video: ${videoResponse.status}`);
       return { success: false, error: `Failed to download generated video: ${videoResponse.status}` };
     }
 
     const videoBuffer = await videoResponse.arrayBuffer();
     const videoSizeMB = (videoBuffer.byteLength / (1024 * 1024)).toFixed(2);
-    console.log(`[API:${requestId}] Video downloaded: ${videoSizeMB}MB`);
+    safeGenerationLog.log(`[API:${requestId}] Video downloaded: ${videoSizeMB}MB`);
 
     const base64Video = Buffer.from(videoBuffer).toString("base64");
     const dataUrl = `data:video/mp4;base64,${base64Video}`;
 
-    console.log(`[API:${requestId}] SUCCESS - Returning ${videoSizeMB}MB video`);
+    safeGenerationLog.log(`[API:${requestId}] SUCCESS - Returning ${videoSizeMB}MB video`);
 
     return {
       success: true,
       outputs: [{ type: "video", data: dataUrl }],
     };
   } catch (error) {
-    console.error(`[API:${requestId}] Failed to download video: ${error}`);
+    safeGenerationLog.error(`[API:${requestId}] Failed to download video: ${error}`);
     return { success: false, error: "Failed to download generated video" };
   } finally {
     clearTimeout(fetchTimeout);
   }
 }
+import { safeGenerationLog } from "./safe-generation-log";

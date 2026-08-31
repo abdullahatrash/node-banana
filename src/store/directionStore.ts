@@ -19,8 +19,8 @@ function directionFromLocale(locale: Locale): Direction {
 }
 
 export const useDirectionStore = create<DirectionState>((set) => ({
-  locale: "en",
-  direction: "ltr",
+  locale: "ar",
+  direction: "rtl",
 
   setLocale: (locale: Locale) => {
     const direction = directionFromLocale(locale);

@@ -5,8 +5,10 @@ import Link from "next/link";
 import { ChannelsIcon, ChevronDownIcon } from "./icons";
 
 const PILLARS = [
-  { id: "studio", label: "AI Studio", href: "/studio" },
+  { id: "studio", label: "Content Studio", href: "/simple-studio/images" },
+  { id: "editor", label: "Video Editor", href: "/editor/projects" },
   { id: "social", label: "Social Hub", href: "/social" },
+  { id: "analytics", label: "Analytics", href: "/social/analytics" },
 ] as const;
 
 interface PillarSwitcherProps {
@@ -19,7 +21,7 @@ export function PillarSwitcher({
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const current = PILLARS.find((p) => p.id === currentPillar) ?? PILLARS[0];
+  const current = PILLARS.find((p) => p.id === currentPillar) ?? PILLARS[1];
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {

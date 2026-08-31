@@ -240,11 +240,11 @@ export async function generateWithFalQueue(
   apiKey: string | null,
   input: GenerationInput
 ): Promise<GenerationOutput> {
-  console.log(`[API:${requestId}] fal.ai queue generation - Model: ${input.model.id}, Images: ${input.images?.length || 0}, Prompt: ${input.prompt.length} chars`);
+  safeGenerationLog.log(`[API:${requestId}] fal.ai queue generation - Model: ${input.model.id}, Images: ${input.images?.length || 0}, Prompt: ${input.prompt.length} chars`);
 
   const modelId = input.model.id;
   const hasDynamicInputs = input.dynamicInputs && Object.keys(input.dynamicInputs).length > 0;
-  console.log(`[API:${requestId}] Dynamic inputs: ${hasDynamicInputs ? Object.keys(input.dynamicInputs!).join(", ") : "none"}, API key: ${apiKey ? "yes" : "no"}`);
+  safeGenerationLog.log(`[API:${requestId}] Dynamic inputs: ${hasDynamicInputs ? Object.keys(input.dynamicInputs!).join(", ") : "none"}, API key: ${apiKey ? "yes" : "no"}`);
 
   // Fetch schema for type coercion and input mapping (cached)
   const { paramMap, arrayParams, schemaArrayParams, parameterTypes } = await getFalInputMapping(modelId, apiKey);
@@ -332,7 +332,7 @@ export async function generateWithFalQueue(
   }
 
   // Submit to queue
-  console.log(`[API:${requestId}] Submitting to fal.ai queue with inputs: ${Object.keys(requestBody).join(", ")}`);
+  safeGenerationLog.log(`[API:${requestId}] Submitting to fal.ai queue with inputs: ${Object.keys(requestBody).join(", ")}`);
   const submitResponse = await fetch(`https://queue.fal.run/${modelId}`, {
     method: "POST",
     headers,
@@ -377,11 +377,11 @@ export async function generateWithFalQueue(
   }
 
   const submitResult = await submitResponse.json();
-  console.log(`[API:${requestId}] Queue submit response:`, JSON.stringify(submitResult).substring(0, 500));
+  safeGenerationLog.log(`[API:${requestId}] Queue submit response:`, JSON.stringify(submitResult).substring(0, 500));
   const falRequestId = submitResult.request_id;
 
   if (!falRequestId) {
-    console.error(`[API:${requestId}] No request_id in queue submit response`);
+    safeGenerationLog.error(`[API:${requestId}] No request_id in queue submit response`);
     return {
       success: false,
       error: "No request_id in queue response",
@@ -399,7 +399,7 @@ export async function generateWithFalQueue(
     if (statusCheck.valid && submitResult.status_url.startsWith('https://queue.fal.run/')) {
       statusUrl = submitResult.status_url;
     } else {
-      console.warn(`[API:${requestId}] fal.ai provided invalid status URL: ${submitResult.status_url} — falling back to constructed URL`);
+      safeGenerationLog.warn(`[API:${requestId}] fal.ai provided invalid status URL: ${submitResult.status_url} — falling back to constructed URL`);
     }
   }
   if (submitResult.response_url) {
@@ -407,11 +407,11 @@ export async function generateWithFalQueue(
     if (responseCheck.valid && submitResult.response_url.startsWith('https://queue.fal.run/')) {
       responseUrl = submitResult.response_url;
     } else {
-      console.warn(`[API:${requestId}] fal.ai provided invalid response URL: ${submitResult.response_url} — falling back to constructed URL`);
+      safeGenerationLog.warn(`[API:${requestId}] fal.ai provided invalid response URL: ${submitResult.response_url} — falling back to constructed URL`);
     }
   }
 
-  console.log(`[API:${requestId}] Queue request submitted: ${falRequestId}, status URL: ${statusUrl}`);
+  safeGenerationLog.log(`[API:${requestId}] Queue request submitted: ${falRequestId}, status URL: ${statusUrl}`);
 
   // Poll for completion
   const maxWaitTime = 10 * 60 * 1000; // 10 minutes for video
@@ -421,7 +421,7 @@ export async function generateWithFalQueue(
 
   while (true) {
     if (Date.now() - startTime > maxWaitTime) {
-      console.error(`[API:${requestId}] Queue request timed out after 10 minutes`);
+      safeGenerationLog.error(`[API:${requestId}] Queue request timed out after 10 minutes`);
       return {
         success: false,
         error: `${input.model.name}: Video generation timed out after 10 minutes`,
@@ -436,7 +436,7 @@ export async function generateWithFalQueue(
     );
 
     if (!statusResponse.ok) {
-      console.error(`[API:${requestId}] Failed to poll status: ${statusResponse.status}`);
+      safeGenerationLog.error(`[API:${requestId}] Failed to poll status: ${statusResponse.status}`);
       return {
         success: false,
         error: `Failed to poll status: ${statusResponse.status}`,
@@ -447,7 +447,7 @@ export async function generateWithFalQueue(
     const status = statusResult.status;
 
     if (status !== lastStatus) {
-      console.log(`[API:${requestId}] Queue status: ${status}`);
+      safeGenerationLog.log(`[API:${requestId}] Queue status: ${status}`);
       lastStatus = status;
     }
 
@@ -459,7 +459,7 @@ export async function generateWithFalQueue(
       );
 
       if (!resultResponse.ok) {
-        console.error(`[API:${requestId}] Failed to fetch result: ${resultResponse.status}`);
+        safeGenerationLog.error(`[API:${requestId}] Failed to fetch result: ${resultResponse.status}`);
         return {
           success: false,
           error: `Failed to fetch result: ${resultResponse.status}`,
@@ -495,7 +495,7 @@ export async function generateWithFalQueue(
       }
 
       if (!mediaUrl) {
-        console.error(`[API:${requestId}] No media URL found in queue result. Result keys: ${Object.keys(result).join(", ")}`);
+        safeGenerationLog.error(`[API:${requestId}] No media URL found in queue result. Result keys: ${Object.keys(result).join(", ")}`);
         return {
           success: false,
           error: "No media URL in response",
@@ -508,7 +508,7 @@ export async function generateWithFalQueue(
 
       // For 3D models, return URL directly (GLB files are binary — don't base64 encode)
       if (is3DModel) {
-        console.log(`[API:${requestId}] SUCCESS - Returning 3D model URL`);
+        safeGenerationLog.log(`[API:${requestId}] SUCCESS - Returning 3D model URL`);
         return {
           success: true,
           outputs: [
@@ -528,7 +528,7 @@ export async function generateWithFalQueue(
       }
 
       // Fetch the media and convert to base64
-      console.log(`[API:${requestId}] Fetching output from: ${mediaUrl.substring(0, 80)}...`);
+      safeGenerationLog.log(`[API:${requestId}] Fetching output from: ${mediaUrl.substring(0, 80)}...`);
       const mediaResponse = await fetch(mediaUrl);
 
       if (!mediaResponse.ok) {
@@ -546,7 +546,7 @@ export async function generateWithFalQueue(
         const audioContentType = rawContentType.startsWith("audio/") ? rawContentType : "audio/mpeg";
         const audioBuffer = await mediaResponse.arrayBuffer();
         const audioBase64 = Buffer.from(audioBuffer).toString("base64");
-        console.log(`[API:${requestId}] SUCCESS - Returning audio`);
+        safeGenerationLog.log(`[API:${requestId}] SUCCESS - Returning audio`);
         return {
           success: true,
           outputs: [{
@@ -564,11 +564,11 @@ export async function generateWithFalQueue(
       const mediaSizeBytes = mediaArrayBuffer.byteLength;
       const mediaSizeMB = mediaSizeBytes / (1024 * 1024);
 
-      console.log(`[API:${requestId}] Output: ${contentType}, ${mediaSizeMB.toFixed(2)}MB`);
+      safeGenerationLog.log(`[API:${requestId}] Output: ${contentType}, ${mediaSizeMB.toFixed(2)}MB`);
 
       // For very large videos (>20MB), return URL only (data left empty for consumers)
       if (isVideo && mediaSizeMB > 20) {
-        console.log(`[API:${requestId}] SUCCESS - Returning URL for large video`);
+        safeGenerationLog.log(`[API:${requestId}] SUCCESS - Returning URL for large video`);
         return {
           success: true,
           outputs: [
@@ -582,7 +582,7 @@ export async function generateWithFalQueue(
       }
 
       const mediaBase64 = Buffer.from(mediaArrayBuffer).toString("base64");
-      console.log(`[API:${requestId}] SUCCESS - Returning ${isVideo ? "video" : "image"}`);
+      safeGenerationLog.log(`[API:${requestId}] SUCCESS - Returning ${isVideo ? "video" : "image"}`);
 
       return {
         success: true,
@@ -598,7 +598,7 @@ export async function generateWithFalQueue(
 
     if (status === "FAILED") {
       const errorMessage = statusResult.error || "Video generation failed";
-      console.error(`[API:${requestId}] Queue request failed: ${errorMessage}`);
+      safeGenerationLog.error(`[API:${requestId}] Queue request failed: ${errorMessage}`);
       return {
         success: false,
         error: `${input.model.name}: ${errorMessage}`,
@@ -608,3 +608,4 @@ export async function generateWithFalQueue(
     // Continue polling for IN_QUEUE, IN_PROGRESS, etc.
   }
 }
+import { safeGenerationLog } from "./safe-generation-log";

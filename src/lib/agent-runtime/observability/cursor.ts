@@ -1,0 +1,16 @@
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import type { ObservabilityCursorCodec } from "./types";
+
+const PREFIX = "omc1";
+type Payload = Awaited<ReturnType<ObservabilityCursorCodec["decode"]>>;
+interface Key { id: string; key: Uint8Array }
+const decode = (value: string) => { if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error(); const result = Buffer.from(value, "base64url"); if (result.toString("base64url") !== value) throw new Error(); return result; };
+const key = (value: Uint8Array) => { const result = Buffer.from(value); if (result.length !== 32) throw new TypeError("Observability cursor keys must be 32 bytes."); return result; };
+
+export class AesGcmObservabilityCursorCodec implements ObservabilityCursorCodec {
+  constructor(private readonly keys: () => { active: Key; all: Key[] }) {}
+  async encode(payload: NonNullable<Payload>): Promise<string> { const { active } = this.keys(); if (!/^[A-Za-z0-9_-]{1,40}$/.test(active.id)) throw new TypeError("Observability cursor key ID is invalid."); const iv = randomBytes(12); const cipher = createCipheriv("aes-256-gcm", key(active.key), iv); cipher.setAAD(Buffer.from(`${PREFIX}.${active.id}`)); const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload)), cipher.final()]); return [PREFIX, active.id, iv.toString("base64url"), encrypted.toString("base64url"), cipher.getAuthTag().toString("base64url")].join("."); }
+  async decode(token: string): Promise<Payload> { try { if (!token || token.length > 2048 || /[\u0000-\u001f\u007f]/.test(token)) return null; const [prefix, keyId, ivValue, encryptedValue, tagValue, extra] = token.split("."); if (prefix !== PREFIX || !keyId || !ivValue || !encryptedValue || !tagValue || extra !== undefined) return null; const selected = this.keys().all.find((candidate) => candidate.id === keyId); if (!selected) return null; const iv = decode(ivValue); const tag = decode(tagValue); if (iv.length !== 12 || tag.length !== 16) return null; const decipher = createDecipheriv("aes-256-gcm", key(selected.key), iv); decipher.setAAD(Buffer.from(`${PREFIX}.${keyId}`)); decipher.setAuthTag(tag); const parsed = JSON.parse(Buffer.concat([decipher.update(decode(encryptedValue)), decipher.final()]).toString("utf8")) as NonNullable<Payload>; if (parsed.scope !== "operational_metrics/v1" || typeof parsed.workspaceId !== "string" || typeof parsed.recordedAt !== "string" || typeof parsed.id !== "string") return null; return parsed; } catch { return null; } }
+}
+
+export function observabilityCursorKeysFromEnvironment(): { active: Key; all: Key[] } { const configured = process.env.OBSERVABILITY_CURSOR_KEYS?.trim(); if (!configured) throw new Error("OBSERVABILITY_CURSOR_KEYS is required."); const all = configured.split(",").map((entry) => { const split = entry.indexOf(":"); if (split <= 0) throw new Error("OBSERVABILITY_CURSOR_KEYS is invalid."); const item = { id: entry.slice(0, split), key: decode(entry.slice(split + 1)) }; if (!/^[A-Za-z0-9_-]{1,40}$/.test(item.id) || item.key.length !== 32) throw new Error("OBSERVABILITY_CURSOR_KEYS is invalid."); return item; }); if (!all.length || new Set(all.map((item) => item.id)).size !== all.length) throw new Error("OBSERVABILITY_CURSOR_KEYS is invalid."); return { active: all[0]!, all }; }

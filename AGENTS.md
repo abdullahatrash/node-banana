@@ -24,43 +24,39 @@ KIE_API_KEY=your_kie_api_key        # Optional, for Kie.ai models (Sora, Veo, Kl
 
 ## Architecture Overview
 
-Node Banana is a node-based visual workflow editor for AI image generation. Users drag nodes onto a React Flow canvas, connect them via typed handles, and execute pipelines that call AI APIs.
+Node Banana is pivoting into an Arabic-first content creation and publishing product for the MENA region. The legacy React Flow visual workflow editor has been retired. The product now centers on focused image, video, and copy generation forms, workspace media, social publishing, and a separate video editor.
 
 ### Core Stack
 - **Next.js 16** (App Router) with TypeScript
-- **@xyflow/react** (React Flow) for the node editor canvas
-- **Konva.js / react-konva** for canvas annotation drawing
-- **Zustand** for state management (single store pattern)
+- **Zustand** for client state management
+- **Better Auth + Postgres** for authentication and workspace data
+- **Provider adapters** for Gemini, OpenAI, Replicate, fal.ai, Kie.ai, and WaveSpeed
 
 ### Key Files
 
 | Purpose | Location |
 |---------|----------|
-| Central workflow state & execution logic | `src/store/workflowStore.ts` |
+| Form-driven generation state | `src/store/simpleStudioStore.ts` |
+| Social composer state | `src/store/socialComposerStore.ts` |
+| Social calendar state | `src/store/socialCalendarStore.ts` |
 | All TypeScript type definitions | `src/types/index.ts` |
-| Main canvas component & connection validation | `src/components/WorkflowCanvas.tsx` |
-| Base node component (shared by all nodes) | `src/components/nodes/BaseNode.tsx` |
 | Image generation API route | `src/app/api/generate/route.ts` |
 | LLM text generation API route | `src/app/api/llm/route.ts` |
-| Cost calculations | `src/utils/costCalculator.ts` |
-| Grid splitting utility | `src/utils/gridSplitter.ts` |
+| Model discovery and schemas | `src/app/api/models/` |
+| Workspace asset APIs | `src/app/api/studio/assets/` |
+| Social provider integrations | `src/lib/social/providers/` |
 
-### State Management
+### Product Surfaces
 
-All application state lives in `workflowStore.ts` using Zustand. Key patterns:
-- `useWorkflowStore()` hook provides access to nodes, edges, and all actions
-- `executeWorkflow(startFromNodeId?)` runs the pipeline via topological sort
-- `getConnectedInputs(nodeId)` retrieves upstream data for a node
-- `updateNodeData(nodeId, partialData)` updates node state
-- Auto-save runs every 90 seconds when enabled
+- Marketing apex/`www` origin `/` — public marketing entry point
+- `app` subdomain — authenticated product and authentication routes
+- `/simple-studio/*` — authenticated image, video, and copy generation
+- `/editor/*` — separate short-form video editor
+- `/social/*` — channels, composer, media, calendar, publishing, and analytics
+- `/api/generate`, `/api/llm`, `/api/models/*` — reusable generation infrastructure
+- `/api/studio/assets/*` — workspace media storage and delivery
 
-### Execution Flow
-
-1. User clicks Run or presses `Cmd/Ctrl+Enter`
-2. `executeWorkflow()` performs topological sort on node graph
-3. Nodes execute in dependency order, calling APIs as needed
-4. `getConnectedInputs()` provides upstream images/text to each node
-5. Locked groups are skipped; pause edges halt execution
+Host routing is implemented in `src/proxy.ts` with its pure policy in `src/lib/site-routing.ts`. Production deployments must set both `NEXT_PUBLIC_MARKETING_URL` and `NEXT_PUBLIC_APP_URL`; bare localhost intentionally remains single-origin for development.
 
 ## AI Models
 
@@ -71,95 +67,6 @@ Image generation models (these exist and are recently released):
 LLM models:
 - Google: `gemini-2.5-flash`, `gemini-3-flash-preview`, `gemini-3-pro-preview`
 - OpenAI: `gpt-4.1-mini`, `gpt-4.1-nano`
-
-## Node Types
-
-| Type | Purpose | Inputs | Outputs |
-|------|---------|--------|---------|
-| `imageInput` | Load/upload images | reference | image |
-| `annotation` | Draw on images (Konva) | image | image |
-| `prompt` | Text prompt input | none | text |
-| `nanoBanana` | AI image generation | image, text | image |
-| `llmGenerate` | AI text generation | text, image | text |
-| `splitGrid` | Split image into grid cells | image | reference |
-| `generateAudio` | AI audio/TTS generation | text | audio |
-| `audioInput` | Load/upload audio files | audio | audio |
-| `glbViewer` | Load/display 3D GLB models | none | image |
-| `output` | Display final result | image | none |
-
-## Node Connection System
-
-### Handle Types
-
-| Handle Type | Data Format | Description |
-|-------------|-------------|-------------|
-| `image` | Base64 data URL | Visual content |
-| `text` | String | Text content |
-| `audio` | Base64 data URL | Audio content |
-
-### Connection Rules
-
-1. **Type Matching**: Handles only connect to matching types (`image`→`image`, `text`→`text`)
-2. **Direction**: Connections flow from source (output) to target (input)
-3. **Multiplicity**: Image inputs accept multiple connections; text inputs accept one
-
-### Data Flow in `getConnectedInputs`
-
-Returns `{ images: string[], text: string | null }`.
-
-**Image data extracted from:**
-- `imageInput` → `data.image`
-- `annotation` → `data.outputImage`
-- `nanoBanana` → `data.outputImage`
-
-**Text data extracted from:**
-- `prompt` → `data.prompt`
-- `llmGenerate` → `data.outputText`
-
-**Audio data extracted from:**
-- `audioInput` → `data.audioFile`
-- `generateAudio` → `data.outputAudio`
-
-## Keyboard Shortcuts
-
-- `Cmd/Ctrl + Enter` - Run workflow
-- `Cmd/Ctrl + C/V` - Copy/paste nodes
-- `Shift + P` - Add prompt node at center
-- `Shift + I` - Add image input node
-- `Shift + G` - Add generate (nanoBanana) node
-- `Shift + V` - Add video (generateVideo) node
-- `Shift + L` - Add LLM node
-- `Shift + A` - Add annotation node
-- `Shift + T` - Add audio (generateAudio) node
-- `H` - Stack selected nodes horizontally
-- `V` - Stack selected nodes vertically
-- `G` - Arrange selected nodes in grid
-- `?` - Show keyboard shortcuts
-
-## Adding New Node Types
-
-1. Define the data interface in `src/types/index.ts`
-2. Add to `NodeType` union in `src/types/index.ts`
-3. Create default data in `createDefaultNodeData()` in `workflowStore.ts`
-4. Add dimensions to `defaultDimensions` in `workflowStore.ts`
-5. Create the component in `src/components/nodes/`
-6. Export from `src/components/nodes/index.ts`
-7. Register in `nodeTypes` in `WorkflowCanvas.tsx`
-8. Add minimap color in `WorkflowCanvas.tsx`
-9. Update `getConnectedInputs()` if the node produces consumable output
-10. Add execution logic in `executeWorkflow()` if the node requires processing
-11. Update `ConnectionDropMenu.tsx` to include the node in source/target lists
-
-### Handle Naming Convention
-
-Use descriptive handle IDs matching the data type:
-- `id="image"` for image data
-- `id="text"` for text data
-
-### Validation
-
-- Connection validation: `isValidConnection()` in `WorkflowCanvas.tsx`
-- Workflow validation: `validateWorkflow()` in `workflowStore.ts`
 
 ## Adding New Kie.ai Models (SOP)
 
@@ -183,7 +90,7 @@ Use separate entries for each capability variant (e.g., `model/text-to-video` an
 
 ### Step 3: Add Parameter Schema
 **File:** `src/app/api/models/[modelId]/route.ts` — Add to `getKieSchema()`.
-Define `parameters` (user-configurable settings) and `inputs` (connectable handles like prompt, images).
+Define `parameters` (user-configurable settings) and `inputs` (form inputs such as prompt and images).
 
 ### Step 4: Add Default Parameters
 **File:** `src/app/api/generate/route.ts` — Add case to `getKieModelDefaults()`.
@@ -208,15 +115,13 @@ All routes in `src/app/api/`:
 |-------|---------|---------|
 | `/api/generate` | 5 min | Image generation via Gemini |
 | `/api/llm` | 1 min | Text generation (Google/OpenAI) |
-| `/api/workflow` | default | Save/load workflow files |
-| `/api/save-generation` | default | Auto-save generated images |
-| `/api/logs` | default | Session logging |
+| `/api/models` | default | Discover available generation models |
+| `/api/studio/assets` | default | List and record workspace media |
 
 ## localStorage Keys
 
-- `node-banana-workflow-configs` - Project metadata (paths)
-- `node-banana-workflow-costs` - Cost tracking per workflow
-- `node-banana-nanoBanana-defaults` - Sticky generation settings
+- `node-banana-active-workspace-id` - Active workspace selection
+- `node-banana-provider-settings` - Locally stored provider configuration
 
 ## Git Workflow
 
@@ -230,4 +135,3 @@ All routes in `src/app/api/`:
 - Commit after each logical task or unit of work is complete. When implementing a multi-task plan, commit after finishing each task — do NOT batch all tasks into a single commit at the end.
 - Each commit should be atomic and self-contained: one task = one commit.
 - The .planning directory is untracked, do not attempt to commit any changes to the files in this directory.
-

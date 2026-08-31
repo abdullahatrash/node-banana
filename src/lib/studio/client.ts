@@ -1,4 +1,33 @@
-import type { WorkflowFile } from "@/store/workflowStore";
+import type { CredentialHumanCapabilityIdentity } from "@/lib/credential-vault/application-capabilities";
+import type { UsageCapabilityIdentity } from "@/lib/agent-runtime/usage/capabilities";
+import type { BudgetHumanCapabilityIdentity } from "@/lib/agent-runtime/budgets/capabilities";
+import type { QuotaCapabilityIdentity } from "@/lib/agent-runtime/quotas/capabilities";
+import type { ObservabilityCapabilityIdentity } from "@/lib/agent-runtime/observability/capabilities";
+import type {
+  WorkflowRunDto,
+  WorkflowRunEventDto,
+  WorkflowStepAttemptDto,
+} from "@/lib/agent-runtime/runs/types";
+import type { ArtifactMetadata } from "@/lib/agent-runtime/artifacts/types";
+import type { WorkflowRevisionDto } from "@/lib/agent-runtime/workflows/types";
+import type { BudgetReservation } from "@/lib/agent-runtime/budgets/types";
+import type { QuotaReservation, QuotaWait } from "@/lib/agent-runtime/quotas/types";
+import type { CostValuation, UsageRecord, UsageSource, UsageUnit } from "@/lib/agent-runtime/usage/types";
+import type { DiagnosticTrace } from "@/lib/agent-runtime/observability/types";
+import type {
+  PublishingDeliveryCancellationDto,
+  PublishingDeliveryDto,
+  PublishingDeliveryEventDto,
+  PublishingDeliveryReconciliationDto,
+} from "@/lib/agent-runtime/publishing-deliveries/types";
+import type { PublishingPlanRevisionDto } from "@/lib/agent-runtime/publishing-plans/types";
+import type { PublishingApprovalDto } from "@/lib/agent-runtime/publishing-approvals/types";
+import type { BudgetPolicy, BudgetPolicyRevision } from "@/lib/agent-runtime/budgets/types";
+import type { EffectiveQuotaCapacity } from "@/lib/agent-runtime/quotas/types";
+
+export type QuotaApplicationCapabilityIdentity =
+  | QuotaCapabilityIdentity
+  | Extract<BudgetHumanCapabilityIdentity, `spend_controls.${string}@1`>;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -6,11 +35,19 @@ const ACTIVE_WORKSPACE_STORAGE_KEY = "node-banana-active-workspace-id";
 
 export class StudioApiError extends Error {
   status: number;
+  code: string | null;
+  operatorTraceRef: string | null;
 
-  constructor(status: number, message: string) {
+  constructor(
+    status: number,
+    message: string,
+    options: { code?: string | null; operatorTraceRef?: string | null } = {},
+  ) {
     super(message);
     this.name = "StudioApiError";
     this.status = status;
+    this.code = options.code ?? null;
+    this.operatorTraceRef = options.operatorTraceRef ?? null;
   }
 }
 
@@ -72,7 +109,7 @@ function mergeHeaders(init?: RequestInit, requireWorkspace = true): Headers {
 async function fetchApi(
   input: RequestInfo,
   init?: RequestInit,
-  options?: { requireWorkspace?: boolean },
+  options?: { requireWorkspace?: boolean; preserveForbiddenMessage?: boolean },
 ): Promise<JsonRecord> {
   const requireWorkspace = options?.requireWorkspace ?? true;
   const activeWorkspaceId = getActiveWorkspaceId();
@@ -120,36 +157,444 @@ async function fetchApi(
 
   if (!response.ok || !success) {
     const message = readApiError(record);
-    throw new StudioApiError(
-      response.status,
-      getFriendlyStatusMessage(response.status, message),
-    );
+    throw new StudioApiError(response.status,
+      response.status === 403 && options?.preserveForbiddenMessage
+        ? message
+        : getFriendlyStatusMessage(response.status, message), {
+      code: asString(record.code),
+      operatorTraceRef: asString(record.operatorTraceRef),
+    });
   }
 
   return record;
 }
+
+export type RunInspectionCapabilityIdentity =
+  | "workflow_runs.get@2"
+  | "workflow_run_events.list@2"
+  | "workflow_step_attempts.list@2"
+  | "workflow_run_artifacts.get@2"
+  | "workflow_versions.get@2"
+  | "usage_records.list@1"
+  | "cost_valuations.list@1"
+  | "usage_summaries.get@1"
+  | "budget_reservations.list@1"
+  | "quota_reservations.list@1"
+  | "quota_waits.list@1"
+  | "diagnostic_traces.get@1";
+
+export type PublicJson<T> = T extends Date
+  ? string
+  : T extends readonly (infer Item)[]
+    ? PublicJson<Item>[]
+    : T extends object
+      ? { [Key in keyof T]: PublicJson<T[Key]> }
+      : T;
+
+export interface UsageSummaryDto {
+  schema: "usage-summary/v1";
+  quantityTotals: Array<{
+    dimension: string;
+    unit: UsageUnit;
+    source: UsageSource;
+    quantity: string | null;
+    unknownCount: number;
+  }>;
+  costSubtotals: Array<{ currency: string; amount: string; knownCount: number }>;
+  unknownValuationCount: number;
+  complete: boolean;
+}
+
+export type DiagnosticTraceDto = PublicJson<Omit<DiagnosticTrace, "workspaceId">>;
+
+export interface RunInspectionInputMap {
+  "workflow_runs.get@2": { workflowId: string; runId: string };
+  "workflow_run_events.list@2": { workflowId: string; runId: string; cursor?: string };
+  "workflow_step_attempts.list@2": { workflowId: string; runId: string };
+  "workflow_run_artifacts.get@2": { workflowId: string; runId: string; artifactId: string };
+  "workflow_versions.get@2": { workflowId: string; revisionId: string };
+  "usage_records.list@1": { runId: string; limit: number; cursor?: string };
+  "cost_valuations.list@1": { runId: string; limit: number; cursor?: string };
+  "usage_summaries.get@1": { runId: string };
+  "budget_reservations.list@1": { runId: string };
+  "quota_reservations.list@1": { runId: string; limit: number };
+  "quota_waits.list@1": { runId: string; limit: number };
+  "diagnostic_traces.get@1": { operatorTraceRef: string; operatorGrantId: string };
+}
+
+export interface RunInspectionResultMap {
+  "workflow_runs.get@2": WorkflowRunDto;
+  "workflow_run_events.list@2": {
+    items: WorkflowRunEventDto[];
+    nextCursor: string;
+  };
+  "workflow_step_attempts.list@2": { items: WorkflowStepAttemptDto[] };
+  "workflow_run_artifacts.get@2": {
+    artifact: ArtifactMetadata;
+    textContent: string | null;
+  };
+  "workflow_versions.get@2": WorkflowRevisionDto;
+  "usage_records.list@1": {
+    schema: "usage-record-page/v1";
+    items: PublicJson<UsageRecord>[];
+    nextCursor: string | null;
+  };
+  "cost_valuations.list@1": {
+    schema: "cost-valuation-page/v1";
+    items: PublicJson<CostValuation>[];
+    nextCursor: string | null;
+  };
+  "usage_summaries.get@1": UsageSummaryDto;
+  "budget_reservations.list@1": {
+    schema: "budget-reservation-list/v1";
+    items: PublicJson<BudgetReservation>[];
+  };
+  "quota_reservations.list@1": {
+    schema: "quota-reservation-list/v1";
+    items: PublicJson<QuotaReservation>[];
+  };
+  "quota_waits.list@1": {
+    schema: "quota-wait-list/v1";
+    items: PublicJson<QuotaWait>[];
+  };
+  "diagnostic_traces.get@1": DiagnosticTraceDto;
+}
+
+export async function invokeRunInspectionApplicationCapability<
+  Capability extends RunInspectionCapabilityIdentity,
+>(
+  capability: Capability,
+  input: RunInspectionInputMap[Capability],
+): Promise<RunInspectionResultMap[Capability]> {
+  const response = await fetchApi("/api/studio/runs/capabilities", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for Run inspection capability ${capability}.`,
+    );
+  }
+  return result as RunInspectionResultMap[Capability];
+}
+
+export type DeliveryOperationsCapabilityIdentity =
+  | "publishing_deliveries.get@2"
+  | "publishing_deliveries.list@2"
+  | "publishing_delivery_events.list@2"
+  | "publishing_plan_revisions.get@2"
+  | "publishing_approvals.get@2"
+  | "publishing_deliveries.cancel@1"
+  | "publishing_deliveries.reconcile@1"
+  | "budget_policies.get_effective@1"
+  | "budget_reservations.list@1"
+  | "budget_status.get@1"
+  | "quota_policies.get_effective@1"
+  | "quota_reservations.list@1"
+  | "quota_waits.list@1"
+  | "quota_waits.resume@1"
+  | "spend_controls.get@2"
+  | "spend_controls.suspend@2"
+  | "spend_controls.resume@2";
+
+interface DeliveryResourceManifest {
+  deliveryId: string;
+  channelIds: string[];
+  artifactIds: string[];
+}
+
+export interface DeliveryOperationsInputMap {
+  "publishing_deliveries.get@2": {
+    deliveryId: string;
+    channelIds?: string[];
+    artifactIds?: string[];
+  };
+  "publishing_deliveries.list@2": {
+    channelIds?: string[];
+    artifactIds?: string[];
+    planRevisionId?: string;
+    state?: PublishingDeliveryDto["state"];
+    targetId?: string;
+    limit?: number;
+    cursor?: string;
+  };
+  "publishing_delivery_events.list@2": {
+    deliveryId: string;
+    channelIds?: string[];
+    artifactIds?: string[];
+    afterSequence?: number;
+    limit?: number;
+  };
+  "publishing_plan_revisions.get@2": { revisionId: string };
+  "publishing_approvals.get@2": { approvalRequestId: string };
+  "publishing_deliveries.cancel@1": DeliveryResourceManifest;
+  "publishing_deliveries.reconcile@1": DeliveryResourceManifest & {
+    expectedUnknownEvidenceDigest: string;
+  };
+  "budget_policies.get_effective@1": { principalId: string };
+  "budget_reservations.list@1": { principalId?: string };
+  "budget_status.get@1": { principalId: string };
+  "quota_policies.get_effective@1": { principalId: string };
+  "quota_reservations.list@1": { principalId?: string; limit?: number };
+  "quota_waits.list@1": {
+    principalId?: string;
+    state?: "waiting" | "resumed" | "cancelled";
+    limit?: number;
+  };
+  "quota_waits.resume@1": { waitId: string };
+  "spend_controls.get@2": Record<string, never>;
+  "spend_controls.suspend@2": { reason: string };
+  "spend_controls.resume@2": { reason: string };
+}
+
+export interface WorkspaceSpendControlEvidenceDto {
+  schema: "workspace-spend-control/v2";
+  workspaceId: string;
+  suspended: boolean;
+  revision: number;
+  reason: string | null;
+  actorUserId: string | null;
+  recordedAt: string | null;
+  policyEventId: string | null;
+  authorizationEvidenceRef: string | null;
+}
+
+export interface DeliveryOperationsResultMap {
+  "publishing_deliveries.get@2": {
+    schema: "publishing-delivery-inspection/v2";
+    delivery: PublishingDeliveryDto;
+    cancellation: PublishingDeliveryCancellationDto | null;
+  };
+  "publishing_deliveries.list@2": {
+    schema: "publishing-delivery-page/v1";
+    items: PublishingDeliveryDto[];
+    nextCursor: string | null;
+  };
+  "publishing_delivery_events.list@2": {
+    schema: "publishing-delivery-event-page/v1";
+    items: PublishingDeliveryEventDto[];
+    nextAfterSequence: number | null;
+  };
+  "publishing_plan_revisions.get@2": PublishingPlanRevisionDto;
+  "publishing_approvals.get@2": {
+    projection: "human";
+    approval: PublicJson<PublishingApprovalDto>;
+  };
+  "publishing_deliveries.cancel@1": PublishingDeliveryCancellationDto;
+  "publishing_deliveries.reconcile@1": PublishingDeliveryReconciliationDto;
+  "budget_policies.get_effective@1": {
+    schema: "effective-budget-policy-list/v1";
+    items: Array<{
+      policy: PublicJson<BudgetPolicy>;
+      revision: PublicJson<Omit<BudgetPolicyRevision, "createdByUserId">>;
+    }>;
+  };
+  "budget_reservations.list@1": {
+    schema: "budget-reservation-list/v1";
+    items: PublicJson<BudgetReservation>[];
+  };
+  "budget_status.get@1": {
+    schema: "budget-status/v1";
+    workspaceId: string;
+    principalId: string;
+    evaluatedAt: string;
+    items: Array<{
+      scope: "workspace" | "principal";
+      policyId: string;
+      policyRevisionId: string;
+      currency: string;
+      period: {
+        kind: "calendar_day" | "calendar_week" | "calendar_month" | "lifetime";
+        timezone: string;
+        startsAt: string;
+        endsAt: string | null;
+      };
+      warningThreshold: string;
+      hardLimit: string;
+      committed: string;
+      available: string;
+      warningState: "below_warning" | "warning" | "hard_limit_reached";
+      certainty: "known" | "contains_unknown_cost";
+      unknownReservationCount: number;
+    }>;
+  };
+  "quota_policies.get_effective@1": {
+    schema: "effective-quota-capacity-list/v1";
+    items: PublicJson<EffectiveQuotaCapacity>[];
+  };
+  "quota_reservations.list@1": {
+    schema: "quota-reservation-list/v1";
+    items: PublicJson<QuotaReservation>[];
+  };
+  "quota_waits.list@1": {
+    schema: "quota-wait-list/v1";
+    items: PublicJson<QuotaWait>[];
+  };
+  "quota_waits.resume@1": { wait: PublicJson<QuotaWait> };
+  "spend_controls.get@2": WorkspaceSpendControlEvidenceDto;
+  "spend_controls.suspend@2": WorkspaceSpendControlEvidenceDto;
+  "spend_controls.resume@2": WorkspaceSpendControlEvidenceDto;
+}
+
+export async function invokeDeliveryOperationsApplicationCapability<
+  Capability extends DeliveryOperationsCapabilityIdentity,
+>(
+  capability: Capability,
+  input: DeliveryOperationsInputMap[Capability],
+  options: { idempotencyKey?: string } = {},
+): Promise<DeliveryOperationsResultMap[Capability]> {
+  const response = await fetchApi("/api/studio/publishing-deliveries/capabilities", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  }, { preserveForbiddenMessage: true });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for Delivery operations capability ${capability}.`,
+    );
+  }
+  return result as DeliveryOperationsResultMap[Capability];
+}
+
+export async function invokeCredentialApplicationCapability(
+  capability: CredentialHumanCapabilityIdentity,
+  input: Record<string, unknown> = {},
+  options: { idempotencyKey?: string } = {},
+): Promise<JsonRecord> {
+  const response = await fetchApi("/api/studio/credentials/capabilities", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for credential capability ${capability}.`,
+    );
+  }
+  return result;
+}
+
+export async function invokeUsageApplicationCapability(
+  capability: UsageCapabilityIdentity,
+  input: Record<string, unknown> = {},
+): Promise<JsonRecord> {
+  const response = await fetchApi("/api/studio/usage/capabilities", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(500, `Invalid output for usage capability ${capability}.`);
+  }
+  return result;
+}
+
+export async function invokeBudgetApplicationCapability(
+  capability: BudgetHumanCapabilityIdentity,
+  input: Record<string, unknown> = {},
+  options: { idempotencyKey?: string } = {},
+): Promise<JsonRecord> {
+  const response = await fetchApi("/api/studio/budgets/capabilities", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for Budget capability ${capability}.`,
+    );
+  }
+  return result;
+}
+
+export async function invokeQuotaApplicationCapability(
+  capability: QuotaApplicationCapabilityIdentity,
+  input: Record<string, unknown> = {},
+  options: { idempotencyKey?: string } = {},
+): Promise<JsonRecord> {
+  const response = await fetchApi("/api/studio/quotas/capabilities", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for Quota capability ${capability}.`,
+    );
+  }
+  return result;
+}
+
+export async function invokeObservabilityApplicationCapability(
+  capability: ObservabilityCapabilityIdentity,
+  input: Record<string, unknown> = {},
+  options: { idempotencyKey?: string } = {},
+): Promise<JsonRecord> {
+  const response = await fetchApi("/api/studio/observability/capabilities", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify({ capability, input }),
+    cache: "no-store",
+  });
+  const result = asRecord(response.result);
+  if (!result) {
+    throw new StudioApiError(
+      500,
+      `Invalid output for observability capability ${capability}.`,
+    );
+  }
+  return result;
+}
+
 
 export interface StudioWorkspace {
   id: string;
   name: string;
   slug: string;
   role: string;
-}
-
-export interface StudioProjectSummary {
-  id: string;
-  workspaceId: string;
-  name: string;
-  slug: string | null;
-  description: string | null;
-  status: string | null;
-  sourceDirectoryPath: string | null;
-  updatedAt: string | null;
-}
-
-export interface StudioProjectDetail extends StudioProjectSummary {
-  workflowJson: JsonRecord | null;
-  createdAt: string | null;
 }
 
 export interface StudioAsset {
@@ -166,7 +611,7 @@ export interface StudioAsset {
 
 export interface StudioAssetPresignInput {
   projectId?: string | null;
-  assetType: "image" | "video" | "audio" | "model3d" | "workflow";
+  assetType: "image" | "video" | "audio" | "model3d";
   fileName?: string;
   contentType: string;
   expectedSizeBytes: number;
@@ -197,7 +642,7 @@ export interface StudioAssetDownloadResult {
 
 export interface StudioAssetIngestInput {
   projectId?: string | null;
-  assetType: "image" | "video" | "audio" | "model3d" | "workflow";
+  assetType: "image" | "video" | "audio" | "model3d";
   sourceDataUrl?: string;
   sourceUrl?: string;
   fileName?: string;
@@ -220,39 +665,6 @@ function parseWorkspace(value: unknown): StudioWorkspace | null {
   const role = asString(row.role);
   if (!id || !name || !slug || !role) return null;
   return { id, name, slug, role };
-}
-
-function parseProjectSummary(value: unknown): StudioProjectSummary | null {
-  const row = asRecord(value);
-  if (!row) return null;
-  const id = asString(row.id);
-  const workspaceId = asString(row.workspaceId);
-  const name = asString(row.name);
-  if (!id || !workspaceId || !name) return null;
-
-  return {
-    id,
-    workspaceId,
-    name,
-    slug: asString(row.slug),
-    description: asString(row.description),
-    status: asString(row.status),
-    sourceDirectoryPath: asString(row.sourceDirectoryPath),
-    updatedAt: asString(row.updatedAt),
-  };
-}
-
-function parseProjectDetail(value: unknown): StudioProjectDetail | null {
-  const row = asRecord(value);
-  if (!row) return null;
-  const summary = parseProjectSummary(row);
-  if (!summary) return null;
-
-  return {
-    ...summary,
-    workflowJson: asRecord(row.workflowJson),
-    createdAt: asString(row.createdAt),
-  };
 }
 
 function parseAsset(value: unknown): StudioAsset | null {
@@ -292,66 +704,6 @@ export async function listStudioWorkspaces(): Promise<StudioWorkspace[]> {
   }
 
   return parsed;
-}
-
-export async function listStudioProjects(): Promise<StudioProjectSummary[]> {
-  const data = await fetchApi("/api/studio/projects");
-  const projects = Array.isArray(data.projects) ? data.projects : [];
-  const parsed = projects
-    .map(parseProjectSummary)
-    .filter((project): project is StudioProjectSummary => Boolean(project));
-
-  if (parsed[0]?.workspaceId) {
-    setActiveWorkspaceId(parsed[0].workspaceId);
-  }
-
-  return parsed;
-}
-
-export async function getStudioProjectCount(): Promise<{
-  count: number;
-  max: number;
-}> {
-  const data = await fetchApi("/api/studio/projects");
-  const count = typeof data.projectCount === "number" ? data.projectCount : 0;
-  const max = typeof data.maxProjects === "number" ? data.maxProjects : Infinity;
-  return { count, max };
-}
-
-export async function getStudioProject(projectId: string): Promise<StudioProjectDetail> {
-  const data = await fetchApi(`/api/studio/projects/${encodeURIComponent(projectId)}`);
-  const project = parseProjectDetail(data.project);
-  if (!project) {
-    throw new Error("Project detail payload is invalid");
-  }
-  setActiveWorkspaceId(project.workspaceId);
-  return project;
-}
-
-export async function upsertStudioProject(input: {
-  projectId?: string;
-  name: string;
-  description?: string | null;
-  workflowJson?: Record<string, unknown> | null;
-  sourceDirectoryPath?: string | null;
-}): Promise<StudioProjectDetail | null> {
-  const data = await fetchApi("/api/studio/projects", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  const project = parseProjectDetail(data.project);
-  if (project?.workspaceId) {
-    setActiveWorkspaceId(project.workspaceId);
-  }
-  return project;
-}
-
-export async function deleteStudioProject(projectId: string): Promise<void> {
-  await fetchApi(`/api/studio/projects/${encodeURIComponent(projectId)}`, {
-    method: "DELETE",
-  });
 }
 
 export async function listStudioAssets(projectId: string): Promise<StudioAsset[]> {
@@ -467,39 +819,4 @@ export async function ingestStudioAsset(
     downloadUrl,
     expiresInSeconds,
   };
-}
-
-export async function getLegacyStudioAssetDownloadUrl(
-  input: { projectId: string; legacyKey: string },
-): Promise<{ key: string; downloadUrl: string; expiresInSeconds: number }> {
-  const data = await fetchApi("/api/studio/assets/legacy-download", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  const key = asString(data.key);
-  const downloadUrl = asString(data.downloadUrl);
-  const expiresInSeconds = asNumber(data.expiresInSeconds);
-
-  if (!key || !downloadUrl || expiresInSeconds === null) {
-    throw new Error("Legacy asset download payload is invalid");
-  }
-
-  return {
-    key,
-    downloadUrl,
-    expiresInSeconds,
-  };
-}
-
-export function isWorkflowFile(value: unknown): value is WorkflowFile {
-  const record = asRecord(value);
-  return Boolean(
-    record &&
-      record.version === 1 &&
-      typeof record.name === "string" &&
-      Array.isArray(record.nodes) &&
-      Array.isArray(record.edges),
-  );
 }

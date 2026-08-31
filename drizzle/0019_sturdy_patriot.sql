@@ -1,0 +1,2 @@
+ALTER TABLE "agent_authorization_decisions" ADD CONSTRAINT "agent_authorization_decisions_grant_revision_id_agent_grant_revisions_id_fk" FOREIGN KEY ("grant_revision_id") REFERENCES "public"."agent_grant_revisions"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "agent_authorization_decisions" ADD CONSTRAINT "agent_authorization_decisions_policy_revision_id_workspace_agent_policy_revisions_id_fk" FOREIGN KEY ("policy_revision_id") REFERENCES "public"."workspace_agent_policy_revisions"("id") ON DELETE restrict ON UPDATE no action;

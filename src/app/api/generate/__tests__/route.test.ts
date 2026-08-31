@@ -34,13 +34,6 @@ vi.mock("@google/genai", () => ({
   GoogleGenAI: MockGoogleGenAI,
 }));
 
-// Mock image upload utilities (not used in Gemini path but imported)
-vi.mock("@/lib/images", () => ({
-  uploadImageForUrl: vi.fn(),
-  shouldUseImageUrl: vi.fn().mockReturnValue(false),
-  deleteImages: vi.fn(),
-}));
-
 // BYOK vault shim: the route now resolves keys via resolveInferenceKey, whose
 // vault tier delegates to resolveProviderKey. Mock the repository so tests
 // never touch the database; by default the vault mirrors process.env so the
@@ -65,7 +58,8 @@ vi.mock("@/lib/byok/repository", () => ({
 }));
 
 import { resolveProviderKey } from "@/lib/byok/repository";
-import { POST, clearFalInputMappingCache } from "../route";
+import { POST } from "../route";
+import { clearFalInputMappingCache } from "../providers/fal";
 
 const mockedResolveProviderKey = vi.mocked(resolveProviderKey);
 
@@ -2918,7 +2912,7 @@ describe("/api/generate route", () => {
       expect(data.model3dUrl).toBe("https://fal.media/hunyuan3d-v2-output.glb");
     });
 
-    it("should include Result keys in error log when no media URL found", async () => {
+    it("should not include provider Result keys in error logs when no media URL is found", async () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       // Schema fetch
@@ -2962,14 +2956,9 @@ describe("/api/generate route", () => {
       expect(data.success).toBe(false);
       expect(data.error).toContain("No media URL in response");
 
-      // Verify the enhanced error log includes Result keys
-      const errorCalls = consoleSpy.mock.calls;
-      const resultKeysLog = errorCalls.find(
-        (call) => typeof call[0] === "string" && call[0].includes("Result keys:")
-      );
-      expect(resultKeysLog).toBeDefined();
-      expect(resultKeysLog![0]).toContain("unknown_field");
-      expect(resultKeysLog![0]).toContain("another");
+      expect(consoleSpy).toHaveBeenCalled();
+      expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain("unknown_field");
+      expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain("another");
 
       consoleSpy.mockRestore();
     });

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const mockAuthorizeStudioRequest = vi.fn();
 const mockListProjectAssets = vi.fn();
+const mockListWorkspaceAssets = vi.fn();
 const mockGetProject = vi.fn();
 const mockRecordAsset = vi.fn();
 
@@ -27,6 +28,7 @@ vi.mock("@/lib/studio/authz", () => {
 vi.mock("@/lib/studio/repository", () => ({
   getProject: (...args: unknown[]) => mockGetProject(...args),
   listProjectAssets: (...args: unknown[]) => mockListProjectAssets(...args),
+  listWorkspaceAssets: (...args: unknown[]) => mockListWorkspaceAssets(...args),
   recordAsset: (...args: unknown[]) => mockRecordAsset(...args),
 }));
 
@@ -36,6 +38,13 @@ function createGetRequest(projectId = "proj_1"): NextRequest {
   return {
     headers: new Headers(),
     nextUrl: new URL(`http://localhost:3000/api/studio/assets?projectId=${projectId}`),
+  } as unknown as NextRequest;
+}
+
+function createWorkspaceGetRequest(): NextRequest {
+  return {
+    headers: new Headers(),
+    nextUrl: new URL("http://localhost:3000/api/studio/assets"),
   } as unknown as NextRequest;
 }
 
@@ -92,6 +101,26 @@ describe("/api/studio/assets auth hardening", () => {
         action: "read",
       },
     );
+  });
+
+  it("returns the workspace media library when no project is selected", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({
+      authorized: true,
+      userId: "user_1",
+      workspaceId: "ws_1",
+      role: "member",
+    });
+    mockListWorkspaceAssets.mockResolvedValue([
+      { id: "asset_1", projectId: null },
+    ]);
+
+    const response = await GET(createWorkspaceGetRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.assets).toHaveLength(1);
+    expect(mockListWorkspaceAssets).toHaveBeenCalledWith("ws_1");
   });
 
   it("returns 403 when POST references a project outside the workspace", async () => {

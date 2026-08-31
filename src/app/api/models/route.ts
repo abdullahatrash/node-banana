@@ -30,6 +30,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ProviderType } from "@/types";
 import { ProviderModel, ModelCapability } from "@/lib/providers";
+import { fetchGeminiModels } from "./gemini-discovery";
 import {
   getCachedModels,
   setCachedModels,
@@ -37,6 +38,7 @@ import {
   setCachedWaveSpeedSchemas,
   WaveSpeedApiSchema,
 } from "@/lib/providers/cache";
+import { searchMissRetryThrottle } from "./search-throttle";
 
 // API base URLs
 const REPLICATE_API_BASE = "https://api.replicate.com/v1";
@@ -46,9 +48,6 @@ const WAVESPEED_API_BASE = "https://api.wavespeed.ai/api/v3";
 // Search-miss retry throttle: per-cache-key timestamp of last cache-bypass retry.
 // Prevents repeated upstream calls for gibberish searches.
 const SEARCH_MISS_RETRY_THROTTLE_MS = 60_000;
-// Exported for test isolation — tests can reset this between cases.
-export const searchMissRetryThrottle = new Map<string, number>();
-
 // Categories we care about for image/video/3D/audio generation (fal.ai)
 const RELEVANT_CATEGORIES = [
   "text-to-image",
@@ -734,25 +733,6 @@ function filterModelsBySearch(
   });
 }
 
-/**
- * Convert a raw model id (kebab-case or snake_case; dots are preserved) to a
- * display name by title-casing each hyphen/underscore-separated segment.
- *
- * humanize("gemini-4-pro-image-preview") → "Gemini 4 Pro Image Preview"
- * humanize("veo_3_fast")                 → "Veo 3 Fast"
- * humanize("gemini-2.5-flash")           → "Gemini 2.5 Flash"
- */
-export function humanize(id: string): string {
-  return id
-    .split(/[-_]/)
-    .map((segment) =>
-      segment.length === 0
-        ? segment
-        : segment[0].toUpperCase() + segment.slice(1)
-    )
-    .join(" ");
-}
-
 // ============ WaveSpeed Types ============
 
 interface WaveSpeedModel {
@@ -1024,96 +1004,6 @@ async function fetchFalModels(
   // CostDialog shows model links instead of prices for fal.ai/Replicate
 
   return allModels;
-}
-
-// ============ Gemini Discovery ============
-
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_DISCOVERY_TIMEOUT_MS = 5000;
-
-interface GeminiDiscoveryModel {
-  name: string; // e.g. "models/gemini-4-pro-image-preview"
-  supportedGenerationMethods?: string[];
-}
-
-interface GeminiDiscoveryResponse {
-  models?: GeminiDiscoveryModel[];
-  nextPageToken?: string;
-}
-
-function inferGeminiCapabilities(id: string): ModelCapability[] | null {
-  const lower = id.toLowerCase();
-  if (lower.includes("image")) {
-    return ["text-to-image", "image-to-image"];
-  }
-  if (lower.startsWith("veo-") || lower.includes("video")) {
-    return ["text-to-video", "image-to-video"];
-  }
-  return null;
-}
-
-/**
- * Discover Gemini models via the Google Generative Language API.
- *
- * Filters to image/video generation models only. Returns [] on any failure
- * (network, auth, malformed response, timeout) — caller is expected to fall
- * back to the hardcoded list.
- *
- * Timeout: 5s total across all pages (shared AbortSignal).
- */
-export async function fetchGeminiModels(apiKey: string): Promise<ProviderModel[]> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), GEMINI_DISCOVERY_TIMEOUT_MS);
-
-  try {
-    const discovered: ProviderModel[] = [];
-    let pageToken: string | undefined;
-    let pageCount = 0;
-    const maxPages = 10; // safety bound
-
-    do {
-      const url = new URL(`${GEMINI_API_BASE}/models`);
-      url.searchParams.set("pageSize", "100");
-      if (pageToken) url.searchParams.set("pageToken", pageToken);
-
-      const response = await fetch(url.toString(), {
-        signal: controller.signal,
-        headers: { "x-goog-api-key": apiKey },
-      });
-      if (!response.ok) {
-        console.warn(`[Models] gemini: discovery HTTP ${response.status}`);
-        return [];
-      }
-
-      const data = (await response.json()) as GeminiDiscoveryResponse;
-      const models = data.models ?? [];
-
-      for (const model of models) {
-        const rawId = model.name.replace(/^models\//, "");
-        const capabilities = inferGeminiCapabilities(rawId);
-        if (!capabilities) continue;
-
-        discovered.push({
-          id: rawId,
-          name: humanize(rawId),
-          description: "Newly discovered Gemini model. Metadata may be incomplete.",
-          provider: "gemini",
-          capabilities,
-        });
-      }
-
-      pageToken = data.nextPageToken;
-      pageCount++;
-    } while (pageToken && pageCount < maxPages);
-
-    return discovered;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[Models] gemini: discovery failed: ${message}`);
-    return [];
-  } finally {
-    clearTimeout(timeoutId);
-  }
 }
 
 // ============ Main Handler ============

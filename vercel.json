@@ -42,6 +42,18 @@
   },
   "crons": [
     {
+      "path": "/api/agent-runtime/internal/run-relay",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/agent-runtime/internal/publishing-delivery-relay",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/observability-retention",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/social/internal/dispatch",
       "schedule": "* * * * *"
     },

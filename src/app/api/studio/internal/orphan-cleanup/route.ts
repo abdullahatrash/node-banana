@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { isDatabaseConfigured } from "@/lib/db";
 import { deleteObjectFromS3 } from "@/lib/storage";
 import { ensureInternalStudioAuth } from "@/lib/studio/internal-auth";
@@ -16,6 +17,7 @@ interface OrphanCleanupResponse {
     errors: number;
   };
   error?: string;
+  code?: "ORPHAN_CLEANUP_UNAVAILABLE";
 }
 
 const DEFAULT_BATCH_SIZE = 100;
@@ -32,7 +34,7 @@ export async function POST(
   request: NextRequest,
 ): Promise<NextResponse<OrphanCleanupResponse>> {
   if (!isDatabaseConfigured()) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: "DATABASE_URL is not configured." },
       { status: 503 },
     );
@@ -79,7 +81,7 @@ export async function POST(
       }
     }
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       summary: {
         scanned: expiredAssets.length,
@@ -88,14 +90,12 @@ export async function POST(
         errors,
       },
     });
-  } catch (error) {
-    return NextResponse.json(
+  } catch {
+    return noStoreJson(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to clean up orphaned assets",
+        code: "ORPHAN_CLEANUP_UNAVAILABLE",
+        error: "Orphan cleanup is temporarily unavailable.",
       },
       { status: 500 },
     );

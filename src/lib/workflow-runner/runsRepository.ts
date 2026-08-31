@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db";
-import { workflowRuns } from "@/lib/db/schema";
+import { projectWorkflowRuns as workflowRuns } from "@/lib/db/schema";
 import { ensureWorkspaceUser } from "@/lib/studio/repository";
 
 import type { RunOutput, RunProgress } from "./types";

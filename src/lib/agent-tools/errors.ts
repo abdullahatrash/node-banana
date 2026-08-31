@@ -1,11 +1,39 @@
-/**
- * Structured, agent-friendly errors for the tool registry.
- *
- * Every failure an agent can hit is one of these codes and always carries a
- * `fix` — a plain-language next step — so an LLM harness can self-correct
- * instead of guessing. The same shape is surfaced across all three registry
- * surfaces (MCP, CLI, public API), so agents learn one error contract.
- */
+import type {
+  CapabilityErrorCategory,
+  CapabilityIdentity,
+} from "./contracts";
+
+export class CapabilityFailure extends Error {
+  readonly code: string;
+  readonly category: CapabilityErrorCategory;
+  readonly retryable: boolean;
+  readonly details?: Record<string, unknown>;
+  readonly remediation?: {
+    capability: CapabilityIdentity;
+    input?: Record<string, unknown>;
+  };
+
+  constructor(options: {
+    code: string;
+    category: CapabilityErrorCategory;
+    message: string;
+    retryable?: boolean;
+    details?: Record<string, unknown>;
+    remediation?: {
+      capability: CapabilityIdentity;
+      input?: Record<string, unknown>;
+    };
+  }) {
+    super(options.message);
+    this.name = "CapabilityFailure";
+    this.code = options.code;
+    this.category = options.category;
+    this.retryable = options.retryable ?? false;
+    this.details = options.details;
+    this.remediation = options.remediation;
+  }
+}
+
 export type ToolErrorCode =
   | "invalid_input"
   | "unauthenticated"
@@ -19,7 +47,6 @@ export type ToolErrorCode =
 export interface StructuredToolError {
   code: ToolErrorCode;
   message: string;
-  /** What the caller should do next to succeed. */
   fix: string;
 }
 
@@ -32,7 +59,6 @@ export class ToolError extends Error {
     this.name = "ToolError";
     this.code = args.code;
     this.fix = args.fix;
-    // Restore prototype chain for `instanceof` across transpilation targets.
     Object.setPrototypeOf(this, ToolError.prototype);
   }
 
@@ -41,7 +67,6 @@ export class ToolError extends Error {
   }
 }
 
-/** Narrow an unknown thrown value to its structured form for transport. */
 export function toStructuredError(error: unknown): StructuredToolError {
   if (error instanceof ToolError) {
     return error.toStructured();

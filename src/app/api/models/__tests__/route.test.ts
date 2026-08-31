@@ -16,7 +16,8 @@ vi.mock("@/lib/providers/cache", () => ({
   getCacheKey: mockGetCacheKey,
 }));
 
-import { GET, searchMissRetryThrottle } from "../route";
+import { GET } from "../route";
+import { searchMissRetryThrottle } from "../search-throttle";
 
 // Store original env and fetch
 const originalEnv = { ...process.env };
@@ -779,22 +780,22 @@ describe("/api/models route", () => {
 
   describe("humanize helper", () => {
     it("converts kebab-case id to Title Case", async () => {
-      const { humanize } = await import("../route");
+      const { humanize } = await import("../model-name");
       expect(humanize("gemini-4-pro-image-preview")).toBe("Gemini 4 Pro Image Preview");
     });
 
     it("handles snake_case ids", async () => {
-      const { humanize } = await import("../route");
+      const { humanize } = await import("../model-name");
       expect(humanize("veo_3_fast")).toBe("Veo 3 Fast");
     });
 
     it("handles single-word ids", async () => {
-      const { humanize } = await import("../route");
+      const { humanize } = await import("../model-name");
       expect(humanize("veo")).toBe("Veo");
     });
 
     it("preserves numeric segments", async () => {
-      const { humanize } = await import("../route");
+      const { humanize } = await import("../model-name");
       expect(humanize("gemini-2.5-flash")).toBe("Gemini 2.5 Flash");
     });
   });
@@ -809,7 +810,7 @@ describe("/api/models route", () => {
     });
 
     it("returns only image/video models from the discovery response", async () => {
-      const { fetchGeminiModels } = await import("../route");
+      const { fetchGeminiModels } = await import("../gemini-discovery");
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -830,7 +831,7 @@ describe("/api/models route", () => {
     });
 
     it("infers image capabilities for ids containing 'image'", async () => {
-      const { fetchGeminiModels } = await import("../route");
+      const { fetchGeminiModels } = await import("../gemini-discovery");
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -852,7 +853,7 @@ describe("/api/models route", () => {
     });
 
     it("infers video capabilities for veo-* ids", async () => {
-      const { fetchGeminiModels } = await import("../route");
+      const { fetchGeminiModels } = await import("../gemini-discovery");
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -867,7 +868,7 @@ describe("/api/models route", () => {
     });
 
     it("returns [] on HTTP error", async () => {
-      const { fetchGeminiModels } = await import("../route");
+      const { fetchGeminiModels } = await import("../gemini-discovery");
 
       mockFetch.mockResolvedValueOnce({
         ok: false,
@@ -880,7 +881,7 @@ describe("/api/models route", () => {
     });
 
     it("returns [] on network throw", async () => {
-      const { fetchGeminiModels } = await import("../route");
+      const { fetchGeminiModels } = await import("../gemini-discovery");
 
       mockFetch.mockRejectedValueOnce(new Error("network down"));
 
@@ -889,7 +890,7 @@ describe("/api/models route", () => {
     });
 
     it("paginates when nextPageToken is present", async () => {
-      const { fetchGeminiModels } = await import("../route");
+      const { fetchGeminiModels } = await import("../gemini-discovery");
 
       mockFetch
         .mockResolvedValueOnce({

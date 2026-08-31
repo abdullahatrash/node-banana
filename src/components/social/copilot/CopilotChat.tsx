@@ -16,7 +16,7 @@ import {
   MessageContent,
   MessageResponse,
 } from "@/components/ai-elements/message"
-import { useWorkflowStore } from "@/store/workflowStore"
+import { useProviderSettingsStore } from "@/store/providerSettingsStore"
 import { buildLlmHeaders } from "@/store/utils/buildApiHeaders"
 import type { CopilotChannel } from "@/lib/social/copilot/channels"
 import type { CopilotDraft } from "@/lib/social/copilot/drafts"
@@ -105,8 +105,8 @@ function ReadinessChip({ readiness }: { readiness: CopilotReadiness }) {
 }
 
 export function CopilotChat() {
-  const providerSettings = useWorkflowStore((s) => s.providerSettings)
-  const updateProviderApiKey = useWorkflowStore((s) => s.updateProviderApiKey)
+  const providerSettings = useProviderSettingsStore((s) => s.providerSettings)
+  const updateProviderApiKey = useProviderSettingsStore((s) => s.updateProviderApiKey)
   const anthropicKey = providerSettings.providers.anthropic?.apiKey ?? ""
   const [keyInput, setKeyInput] = useState("")
   const [showKeyEntry, setShowKeyEntry] = useState(false)
@@ -119,7 +119,7 @@ export function CopilotChat() {
 
   // Inject the user's BYOK key on every request (read fresh from the store).
   const buildHeaders = useCallback(
-    () => buildLlmHeaders("anthropic", useWorkflowStore.getState().providerSettings),
+    () => buildLlmHeaders("anthropic", useProviderSettingsStore.getState().providerSettings),
     [],
   )
   const customFetch = useCallback(

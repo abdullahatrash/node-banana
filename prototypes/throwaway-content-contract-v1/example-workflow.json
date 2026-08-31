@@ -1,0 +1,106 @@
+{
+  "schema": "content-workflow/v1",
+  "id": "launch-linkedin",
+  "version": 1,
+  "name": "LinkedIn launch copy and hero image",
+  "description": "First agent-operated creative slice. Publishing is deliberately separate.",
+  "inputs": {
+    "brief": {
+      "type": "text",
+      "required": true,
+      "description": "The product launch brief supplied by the external agent."
+    },
+    "referenceImage": {
+      "type": "image",
+      "required": true,
+      "description": "An imported Artifact ID used as visual reference."
+    }
+  },
+  "credentialSlots": {
+    "generation-provider": {
+      "capability": "google.generative-ai",
+      "description": "Logical provider credential resolved by the runtime at Run start."
+    }
+  },
+  "steps": [
+    {
+      "id": "draft-copy",
+      "uses": "ai.text.generate/v1",
+      "inputs": {
+        "prompt": {
+          "from": "workflow-input",
+          "input": "brief"
+        }
+      },
+      "credentials": {
+        "provider": "generation-provider"
+      },
+      "config": {
+        "model": "google/gemini-2.5-flash",
+        "instruction": "Write concise LinkedIn launch copy."
+      },
+      "retry": {
+        "maxAttempts": 2,
+        "backoff": {
+          "initialMs": 1000,
+          "maxMs": 8000,
+          "multiplier": 2
+        }
+      }
+    },
+    {
+      "id": "generate-hero",
+      "uses": "ai.image.generate/v1",
+      "inputs": {
+        "prompt": {
+          "from": "step-output",
+          "step": "draft-copy",
+          "output": "text"
+        },
+        "referenceImage": {
+          "from": "workflow-input",
+          "input": "referenceImage"
+        }
+      },
+      "credentials": {
+        "provider": "generation-provider"
+      },
+      "config": {
+        "model": "google/gemini-2.5-flash-image",
+        "aspectRatio": "1:1"
+      },
+      "retry": {
+        "maxAttempts": 2,
+        "backoff": {
+          "initialMs": 1000,
+          "maxMs": 8000,
+          "multiplier": 2
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "postCopy": {
+      "from": "step-output",
+      "step": "draft-copy",
+      "output": "text"
+    },
+    "heroImage": {
+      "from": "step-output",
+      "step": "generate-hero",
+      "output": "image"
+    }
+  },
+  "ui": {
+    "positions": {
+      "draft-copy": {
+        "x": 120,
+        "y": 160
+      },
+      "generate-hero": {
+        "x": 520,
+        "y": 160
+      }
+    }
+  }
+}

@@ -10,6 +10,7 @@ function makeSettings(overrides: Partial<Record<string, { apiKey: string | null 
     kie: { id: "kie", name: "Kie.ai", enabled: true, apiKey: null },
     wavespeed: { id: "wavespeed", name: "WaveSpeed", enabled: true, apiKey: null },
     openai: { id: "openai", name: "OpenAI", enabled: true, apiKey: null },
+    anthropic: { id: "anthropic", name: "Anthropic", enabled: true, apiKey: null },
   };
   for (const [key, val] of Object.entries(overrides)) {
     if (defaults[key] && val !== undefined) {
@@ -82,6 +83,12 @@ describe("buildLlmHeaders", () => {
     const settings = makeSettings({ openai: { apiKey: "oai-key" } });
     const headers = buildLlmHeaders("openai", settings);
     expect(headers["X-OpenAI-API-Key"]).toBe("oai-key");
+  });
+
+  it("should add Anthropic API key for anthropic provider", () => {
+    const settings = makeSettings({ anthropic: { apiKey: "ant-key" } });
+    const headers = buildLlmHeaders("anthropic", settings);
+    expect(headers["X-Anthropic-API-Key"]).toBe("ant-key");
   });
 
   it("should not add header when API key is null", () => {

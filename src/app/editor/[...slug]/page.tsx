@@ -12,10 +12,10 @@ export default function EditorCatchAll() {
           Start the OpenCut editor service or use the microfrontend proxy.
         </p>
         <Link
-          href="/studio"
+          href="/simple-studio/videos"
           className="mt-4 inline-block rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500"
         >
-          Back to Studio
+          Back to Content Studio
         </Link>
       </div>
     </div>

@@ -14,6 +14,7 @@ import {
 } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { isRecord } from "@/lib/social/utils";
+import { preserveLinkedInAuthorKind } from "@/lib/social/linkedin-author-kind";
 import {
   socialAutomationRules,
   socialAutomationTasks,
@@ -687,13 +688,36 @@ export async function updateSocialAccount(
   },
 ) {
   const db = getDb();
+  let additionalSettings = data.additionalSettings;
+  if (data.additionalSettings !== undefined) {
+    const [current] = await db
+      .select({
+        platform: socialAccounts.platform,
+        additionalSettings: socialAccounts.additionalSettings,
+      })
+      .from(socialAccounts)
+      .where(
+        and(
+          eq(socialAccounts.workspaceId, workspaceId),
+          eq(socialAccounts.id, accountId),
+        ),
+      )
+      .limit(1);
+    if (!current) throw new SocialAccountNotFoundError(accountId);
+    if (current.platform === "linkedin") {
+      additionalSettings = preserveLinkedInAuthorKind(
+        current.additionalSettings,
+        data.additionalSettings,
+      );
+    }
+  }
   const [row] = await db
     .update(socialAccounts)
     .set({
       ...(data.displayName !== undefined && { displayName: data.displayName }),
       ...(data.disabled !== undefined && { disabled: data.disabled }),
       ...(data.additionalSettings !== undefined && {
-        additionalSettings: data.additionalSettings,
+        additionalSettings,
       }),
       updatedAt: new Date(),
     })

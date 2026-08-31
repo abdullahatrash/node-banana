@@ -15,7 +15,12 @@ import { workspacesList } from "./commands/workspaces";
  * command chain, so declaring `--json` on both positions makes both work.
  */
 function wantsJson(command: Command): boolean {
-  return Boolean(command.optsWithGlobals().json);
+  let current: Command | null = command;
+  while (current) {
+    if (current.opts().json) return true;
+    current = current.parent;
+  }
+  return false;
 }
 
 function withJson(command: Command): Command {

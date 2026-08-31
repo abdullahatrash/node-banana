@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
-import { ensureInternalStudioAuth } from "@/lib/studio/internal-auth";
+import {
+  ensureInternalStudioAuth,
+  ensureInternalStudioOrCronAuth,
+} from "@/lib/studio/internal-auth";
 
 function request(headers?: Record<string, string>): NextRequest {
   return new NextRequest("http://localhost:3000/api/studio/internal/test", {
@@ -12,6 +15,7 @@ function request(headers?: Record<string, string>): NextRequest {
 describe("studio/internal-auth", () => {
   beforeEach(() => {
     delete process.env.STUDIO_INTERNAL_API_SECRET;
+    delete process.env.CRON_SECRET;
   });
 
   it("accepts the shared secret from the dedicated header", () => {
@@ -56,5 +60,24 @@ describe("studio/internal-auth", () => {
     const response = ensureInternalStudioAuth(request());
 
     expect(response?.status).toBe(503);
+  });
+
+  it("accepts Vercel cron bearer auth only for cron-aware maintenance", () => {
+    process.env.STUDIO_INTERNAL_API_SECRET = "studio_secret";
+    process.env.CRON_SECRET = "cron_secret";
+    const cronRequest = request({ authorization: "Bearer cron_secret" });
+
+    expect(ensureInternalStudioOrCronAuth(cronRequest)).toBeNull();
+    expect(ensureInternalStudioAuth(cronRequest)?.status).toBe(401);
+  });
+
+  it("does not accept CRON_SECRET from the Studio-specific header", () => {
+    process.env.CRON_SECRET = "cron_secret";
+
+    const response = ensureInternalStudioOrCronAuth(
+      request({ "x-studio-internal-secret": "cron_secret" }),
+    );
+
+    expect(response?.status).toBe(401);
   });
 });

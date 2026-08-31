@@ -9,10 +9,6 @@
 }
 
 :root {
-  /* Handle colors (used by labels) */
-  --handle-color-image: #10b981;
-  --handle-color-text: #3b82f6;
-  --handle-color-3d: #f97316;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -55,7 +51,7 @@ html {
 }
 
 html[dir="rtl"] {
-  --font-sans: var(--font-noto-arabic), var(--font-geist), system-ui, sans-serif;
+  --font-sans: var(--font-alexandria), var(--font-geist), system-ui, sans-serif;
 }
 
 body {
@@ -64,167 +60,6 @@ body {
   overscroll-behavior-x: none;
   /* Prevent touch gestures from triggering navigation */
   touch-action: pan-y pinch-zoom;
-}
-
-/* React Flow customizations */
-.react-flow {
-  /* Prevent browser back/forward swipe navigation when panning */
-  overscroll-behavior-x: none;
-  touch-action: none;
-}
-
-.react-flow__node {
-  font-family: inherit;
-}
-
-/* Skip hit-testing on images inside nodes — parent containers handle all
-   click/hover events. Prevents expensive bitmap decoding during mouse movement. */
-.react-flow__node img {
-  pointer-events: none;
-}
-
-/* During active panning or node dragging, disable pointer events on all node
-   content to eliminate expensive browser hit-testing against the DOM tree.
-   The class is toggled on <html> via direct DOM access (no React re-render). */
-.canvas-interacting .react-flow__node > * {
-  pointer-events: none;
-}
-
-/* Remove default React Flow styling for output nodes to match custom nodes */
-.react-flow__node-output {
-  border: none !important;
-  border-radius: 0 !important;
-  padding: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-/* Switch dimming - nodes downstream of disabled Switch outputs */
-.react-flow__node.switch-dimmed {
-  opacity: 0.4;
-  transition: opacity 250ms ease-in-out;
-}
-
-.react-flow__node:not(.switch-dimmed) {
-  transition: opacity 250ms ease-in-out;
-}
-
-/* Base handle styles */
-.react-flow__handle {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid white;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-}
-
-/* Larger invisible hit area for easier clicking, especially when zoomed out */
-.react-flow__handle::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-}
-
-.react-flow__handle-left {
-  left: -7px;
-}
-
-.react-flow__handle-right {
-  right: -7px;
-}
-
-/* Image handles - soft green */
-.react-flow__handle[data-handletype="image"] {
-  background: #10b981;
-}
-
-/* Text handles - soft blue */
-.react-flow__handle[data-handletype="text"] {
-  background: #3b82f6;
-}
-
-/* 3D handles - orange */
-.react-flow__handle[data-handletype="3d"] {
-  background: #f97316;
-}
-
-.react-flow__edge-path {
-  stroke: #94a3b8;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.react-flow__edge.selected .react-flow__edge-path,
-.react-flow__edge:hover .react-flow__edge-path {
-  stroke: #3b82f6;
-}
-
-/* Hide resize handles but show resize cursor on edges */
-.react-flow__resize-control {
-  opacity: 0 !important;
-  pointer-events: auto !important;
-}
-
-.react-flow__resize-control.left,
-.react-flow__resize-control.right {
-  cursor: ew-resize !important;
-  width: 16px !important;
-}
-
-.react-flow__resize-control.top,
-.react-flow__resize-control.bottom {
-  cursor: ns-resize !important;
-  height: 16px !important;
-}
-
-.react-flow__resize-control.top.left,
-.react-flow__resize-control.bottom.right {
-  cursor: nwse-resize !important;
-}
-
-.react-flow__resize-control.top.right,
-.react-flow__resize-control.bottom.left {
-  cursor: nesw-resize !important;
-}
-
-/* React Flow Controls dark theme */
-.react-flow__controls {
-  background: #262626 !important;
-  border: 1px solid #404040 !important;
-  border-radius: 8px !important;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3) !important;
-}
-
-.react-flow__controls-button {
-  background: #262626 !important;
-  border-bottom: 1px solid #404040 !important;
-}
-
-.react-flow__controls-button svg {
-  fill: #d4d4d4 !important;
-}
-
-.react-flow__controls-button svg path {
-  fill: #d4d4d4 !important;
-}
-
-.react-flow__controls-button:hover {
-  background: #404040 !important;
-}
-
-.react-flow__controls-button:hover svg,
-.react-flow__controls-button:hover svg path {
-  fill: #fafafa !important;
-}
-
-.react-flow__controls-button:last-child {
-  border-bottom: none !important;
 }
 
 /* Custom scrollbar */
@@ -245,53 +80,6 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #737373;
-}
-
-/* Make the multi-selection box pass through pointer events so we can still
-   interact with handles, resize controls, and other node elements */
-.react-flow__nodesselection-rect {
-  pointer-events: none !important;
-}
-
-/* Edge pulse animation for loading connectors */
-@keyframes flowPulse {
-  0% {
-    stroke-dashoffset: 50;
-  }
-  100% {
-    stroke-dashoffset: 0;
-  }
-}
-
-/* Fan animation for image history */
-@keyframes fanEnter {
-  0% {
-    opacity: 0;
-    transform: scale(0.3) translate(0, 0);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translate(var(--fan-x), var(--fan-y));
-  }
-}
-
-@keyframes fanExit {
-  0% {
-    opacity: 1;
-    transform: scale(1) translate(var(--fan-x), var(--fan-y));
-  }
-  100% {
-    opacity: 0;
-    transform: scale(0.3) translate(0, 0);
-  }
-}
-
-.animate-fan-enter {
-  animation: fanEnter 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-}
-
-.animate-fan-exit {
-  animation: fanExit 0.15s ease-in forwards;
 }
 
 /* Simple Studio — card entrance */

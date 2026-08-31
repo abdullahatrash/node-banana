@@ -160,6 +160,50 @@ const redditDefinition: PublishingSettingsDefinition = {
   },
 };
 
+const linkedinAuthorTypes = new Set(["person", "organization"]);
+const linkedinKeys = new Set(["type"]);
+
+/**
+ * LinkedIn settings intentionally have a closed shape. The runtime Publishing
+ * Plan validator calls validateForPublish before normalize so misspelled or
+ * unsupported provider settings cannot be silently replaced by defaults.
+ */
+const linkedinDefinition: PublishingSettingsDefinition = {
+  platform: "linkedin",
+  label: "LinkedIn",
+  defaults: {
+    type: "person",
+  },
+  normalize(settings) {
+    return {
+      type:
+        typeof settings?.type === "string" &&
+        linkedinAuthorTypes.has(settings.type)
+          ? settings.type
+          : "person",
+    };
+  },
+  validateForPublish(settings) {
+    const value = settings ?? {};
+    const errors: string[] = [];
+    const unknownKeys = Object.keys(value).filter(
+      (key) => !linkedinKeys.has(key),
+    );
+    if (unknownKeys.length > 0) {
+      errors.push(
+        `LinkedIn settings contain unsupported fields: ${unknownKeys.sort().join(", ")}.`,
+      );
+    }
+    if (
+      value.type !== undefined &&
+      (typeof value.type !== "string" || !linkedinAuthorTypes.has(value.type))
+    ) {
+      errors.push("LinkedIn author type is invalid.");
+    }
+    return { valid: errors.length === 0, errors };
+  },
+};
+
 const mastodonVisibilities = new Set(["public", "unlisted", "private", "direct"])
 
 const mastodonDefinition: PublishingSettingsDefinition = {
@@ -188,6 +232,7 @@ const mastodonDefinition: PublishingSettingsDefinition = {
 }
 
 const definitions = new Map<SocialPlatform, PublishingSettingsDefinition>([
+  ["linkedin", linkedinDefinition],
   ["youtube", youtubeDefinition],
   ["tiktok", tiktokDefinition],
   ["reddit", redditDefinition],

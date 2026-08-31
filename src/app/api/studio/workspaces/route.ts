@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import {
   getAuthenticatedUserFromHeaders,
   getDevFallbackUserId,
@@ -22,6 +23,7 @@ interface WorkspacesResponse {
   success: boolean;
   workspaces?: WorkspaceItem[];
   error?: string;
+  code?: "WORKSPACES_UNAVAILABLE";
 }
 
 async function getSessionUser(request: Request): Promise<{
@@ -134,10 +136,11 @@ export async function GET(
       })),
     });
   } catch (error) {
-    return NextResponse.json(
+    return noStoreJson(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Failed to list workspaces",
+        code: "WORKSPACES_UNAVAILABLE",
+        error: "Workspaces are temporarily unavailable.",
       },
       { status: 500 },
     );

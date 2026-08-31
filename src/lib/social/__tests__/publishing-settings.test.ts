@@ -6,6 +6,31 @@ import {
 } from "@/lib/social/publishing-settings";
 
 describe("social/publishing-settings", () => {
+  it("normalizes a closed LinkedIn settings contract", () => {
+    const definition = getPublishingSettingsDefinition("linkedin");
+
+    expect(definition.normalize({ type: "organization" })).toEqual({
+      type: "organization",
+    });
+  });
+
+  it("rejects invalid and unknown LinkedIn settings before normalization", () => {
+    const definition = getPublishingSettingsDefinition("linkedin");
+
+    expect(
+      definition.validateForPublish(
+        { type: "company", commentary: "do not accept raw payloads" },
+        { content: "Launch", media: [] },
+      ),
+    ).toEqual({
+      valid: false,
+      errors: [
+        "LinkedIn settings contain unsupported fields: commentary.",
+        "LinkedIn author type is invalid.",
+      ],
+    });
+  });
+
   it("provides safe normalized defaults for a YouTube channel", () => {
     const definition = getPublishingSettingsDefinition("youtube");
 

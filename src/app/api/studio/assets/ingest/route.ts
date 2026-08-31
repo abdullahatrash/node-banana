@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { assetTypeEnum } from "@/lib/db/schema";
 import {
   buildAssetObjectKey,
@@ -32,6 +33,7 @@ interface IngestResponse {
   downloadUrl?: string;
   expiresInSeconds?: number;
   error?: string;
+  code?: "ASSET_INGEST_FAILED";
 }
 
 const MAX_INGEST_BYTES = 500 * 1024 * 1024;
@@ -163,7 +165,7 @@ export const POST = withStudioAuth<undefined>(
   { route: "/api/studio/assets/ingest", action: "write" },
   async (request: NextRequest, authz): Promise<NextResponse<IngestResponse>> => {
     if (!canUseS3Storage()) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           error:
@@ -180,7 +182,7 @@ export const POST = withStudioAuth<undefined>(
       const body = (await request.json()) as IngestRequest;
 
       if (!assetTypeEnum.enumValues.includes(body.assetType)) {
-        return NextResponse.json(
+        return noStoreJson(
           {
             success: false,
             error: `Unsupported asset type: ${body.assetType}`,
@@ -193,7 +195,7 @@ export const POST = withStudioAuth<undefined>(
       const hasSourceUrl = typeof body.sourceUrl === "string" && body.sourceUrl.trim().length > 0;
 
       if (hasDataUrl === hasSourceUrl) {
-        return NextResponse.json(
+        return noStoreJson(
           {
             success: false,
             error: "Exactly one of sourceDataUrl or sourceUrl is required.",
@@ -206,7 +208,7 @@ export const POST = withStudioAuth<undefined>(
       if (projectId) {
         const project = await getProject(authz.workspaceId, projectId);
         if (!project) {
-          return NextResponse.json(
+          return noStoreJson(
             {
               success: false,
               error: "No access to this project.",
@@ -223,14 +225,14 @@ export const POST = withStudioAuth<undefined>(
         const sourceMimeType = parsed.mimeType;
 
         if (bytes.length === 0) {
-          return NextResponse.json(
+          return noStoreJson(
             { success: false, error: "Source content is empty." },
             { status: 400 },
           );
         }
 
         if (bytes.length > MAX_INGEST_BYTES) {
-          return NextResponse.json(
+          return noStoreJson(
             { success: false, error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.` },
             { status: 413 },
           );
@@ -273,7 +275,7 @@ export const POST = withStudioAuth<undefined>(
         });
 
         const signed = await createPresignedDownload({ key });
-        return NextResponse.json({
+        return noStoreJson({
           success: true,
           assetId: pending.id,
           key,
@@ -330,7 +332,7 @@ export const POST = withStudioAuth<undefined>(
           uploadState: "failed",
           error: "Source content is empty.",
         });
-        return NextResponse.json(
+        return noStoreJson(
           { success: false, error: "Source content is empty." },
           { status: 400 },
         );
@@ -344,7 +346,7 @@ export const POST = withStudioAuth<undefined>(
           uploadState: "failed",
           error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.`,
         });
-        return NextResponse.json(
+        return noStoreJson(
           { success: false, error: `Source size exceeds ${MAX_INGEST_BYTES} bytes.` },
           { status: 413 },
         );
@@ -359,7 +361,7 @@ export const POST = withStudioAuth<undefined>(
       });
 
       const signed = await createPresignedDownload({ key });
-      return NextResponse.json({
+      return noStoreJson({
         success: true,
         assetId: pending.id,
         key,
@@ -368,7 +370,7 @@ export const POST = withStudioAuth<undefined>(
       });
     } catch (error) {
       if (error instanceof StudioAssetQuotaExceededError) {
-        return NextResponse.json(
+        return noStoreJson(
           {
             success: false,
             error: "Workspace storage quota exceeded.",
@@ -384,15 +386,21 @@ export const POST = withStudioAuth<undefined>(
             assetId: createdAssetId,
             uploadState: "failed",
             mimeType: uploadMimeType || undefined,
-            error: error instanceof Error ? error.message : "Asset ingest failed",
+            error: "ASSET_INGEST_FAILED",
           });
         } catch {
           // best-effort failure finalization
         }
       }
 
-      // Re-throw to let the outer withStudioAuth catch handle as 500
-      throw error;
+      return noStoreJson(
+        {
+          success: false,
+          code: "ASSET_INGEST_FAILED",
+          error: "Asset ingest failed.",
+        },
+        { status: 500 },
+      );
     }
   },
 );

@@ -3,8 +3,9 @@
 import { usePathname } from "next/navigation"
 import {
   PaletteIcon,
+  VideoIcon,
   ActivityIcon,
-  WorkflowIcon,
+  BarChart3Icon,
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -15,8 +16,9 @@ import {
 
 const PILLAR_ITEMS = [
   { href: "/simple-studio/images", label: "Simple Studio", icon: PaletteIcon },
-  { href: "/studio", label: "Advanced Workflow", icon: WorkflowIcon },
+  { href: "/editor/projects", label: "Video Editor", icon: VideoIcon },
   { href: "/social", label: "Social Hub", icon: ActivityIcon },
+  { href: "/social/analytics", label: "Analytics", icon: BarChart3Icon },
 ]
 
 interface AppSwitcherProps {

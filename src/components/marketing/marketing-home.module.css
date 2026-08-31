@@ -1,0 +1,107 @@
+.page {
+  --marketing-ink: #102d2a;
+  --marketing-green: #0d4f45;
+  --marketing-coral: #e75f45;
+}
+
+:global(html[dir="rtl"]) .heroHeading {
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+:global(html[dir="rtl"]) .displayHeading {
+  line-height: 1.22;
+  letter-spacing: 0;
+}
+
+.page :global(*) {
+  scroll-behavior: smooth;
+}
+
+.heroGlow {
+  position: absolute;
+  inset: -8rem -16rem auto auto;
+  width: 42rem;
+  height: 42rem;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 38% 38%, rgb(238 173 143 / 0.3), transparent 43%),
+    radial-gradient(circle at 65% 58%, rgb(77 151 128 / 0.22), transparent 48%);
+  filter: blur(12px);
+  pointer-events: none;
+}
+
+.heroGlow::after {
+  position: absolute;
+  inset: 8rem;
+  border: 1px solid rgb(13 79 69 / 0.08);
+  border-radius: 42% 58% 63% 37%;
+  content: "";
+  transform: rotate(18deg);
+}
+
+.mockupWrap::before {
+  position: absolute;
+  inset: 8% 6% -5% 10%;
+  border-radius: 36px;
+  background: rgb(13 79 69 / 0.09);
+  content: "";
+  filter: blur(28px);
+  transform: rotate(-3deg);
+}
+
+.pipelinePanel {
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.48) 1px, transparent 1px) 0 0 / 28px 28px,
+    #eee6da;
+}
+
+.phoneCard:nth-child(2),
+.phoneCard:nth-child(4) {
+  transform: translateY(28px);
+}
+
+.marketExample:nth-child(2) {
+  transform: translateY(18px);
+}
+
+.ctaPanel::before,
+.ctaPanel::after {
+  position: absolute;
+  border-radius: 999px;
+  content: "";
+  pointer-events: none;
+}
+
+.ctaPanel::before {
+  inset: -12rem auto auto -8rem;
+  width: 28rem;
+  height: 28rem;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  box-shadow: 0 0 0 54px rgb(255 255 255 / 0.03), 0 0 0 108px rgb(255 255 255 / 0.025);
+}
+
+.ctaPanel::after {
+  inset: auto -5rem -12rem auto;
+  width: 25rem;
+  height: 25rem;
+  background: radial-gradient(circle, rgb(231 95 69 / 0.32), transparent 68%);
+}
+
+@media (max-width: 767px) {
+  .phoneCard:nth-child(2),
+  .phoneCard:nth-child(4),
+  .marketExample:nth-child(2) {
+    transform: none;
+  }
+
+  .heroGlow {
+    inset: -5rem -18rem auto auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page :global(*) {
+    scroll-behavior: auto;
+  }
+}

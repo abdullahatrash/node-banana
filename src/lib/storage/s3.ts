@@ -98,6 +98,9 @@ function createS3Client(config: S3StorageConfig): S3Client {
     region: config.region,
     endpoint: config.endpoint,
     forcePathStyle: config.forcePathStyle,
+    // Presigned PUTs have no Body at signing time. WHEN_SUPPORTED would bind
+    // the checksum of an empty payload and make later non-empty uploads fail.
+    requestChecksumCalculation: "WHEN_REQUIRED",
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
@@ -142,6 +145,7 @@ export function buildAssetObjectKey(params: {
 export async function createPresignedUpload(params: {
   key: string;
   contentType: string;
+  contentLength?: number;
   expiresInSeconds?: number;
 }): Promise<PresignedUploadResult> {
   const config = getS3ConfigFromEnv();
@@ -152,6 +156,9 @@ export async function createPresignedUpload(params: {
     Bucket: config.bucket,
     Key: params.key,
     ContentType: params.contentType,
+    ...(params.contentLength !== undefined
+      ? { ContentLength: params.contentLength }
+      : {}),
   });
 
   const getCommand = new GetObjectCommand({
@@ -210,6 +217,52 @@ export async function getObjectFromS3(params: {
   return {
     body: Buffer.from(bytes),
     contentType: response.ContentType ?? null,
+  };
+}
+
+export async function getObjectStreamFromS3(params: {
+  key: string;
+}): Promise<{
+  body: AsyncIterable<Uint8Array>;
+  contentType: string | null;
+  versionId: string | null;
+  etag: string;
+  contentLength: number;
+}> {
+  const config = getS3ConfigFromEnv();
+  const client = createS3Client(config);
+  const response = await client.send(
+    new GetObjectCommand({
+      Bucket: config.bucket,
+      Key: params.key,
+    }),
+  );
+  const body = response.Body;
+  if (!body || !(Symbol.asyncIterator in body)) {
+    throw new Error("S3 response body is not streamable");
+  }
+  if (
+    !response.ETag ||
+    response.ContentLength === undefined ||
+    !Number.isSafeInteger(response.ContentLength) ||
+    response.ContentLength < 0
+  ) {
+    throw new Error("S3 response is missing immutable object identity");
+  }
+  return {
+    body: (async function* () {
+      for await (const chunk of body as AsyncIterable<
+        Uint8Array | Buffer | string
+      >) {
+        yield typeof chunk === "string"
+          ? Buffer.from(chunk)
+          : Uint8Array.from(chunk);
+      }
+    })(),
+    contentType: response.ContentType ?? null,
+    versionId: response.VersionId ?? null,
+    etag: response.ETag,
+    contentLength: response.ContentLength,
   };
 }
 
@@ -384,13 +437,27 @@ export async function listObjectsInS3(params: {
 export async function copyObjectInS3(params: {
   sourceKey: string;
   destinationKey: string;
+  sourceVersionId?: string | null;
+  sourceETag?: string;
 }): Promise<void> {
   const config = getS3ConfigFromEnv();
   const client = createS3Client(config);
+  const encodedSourceKey = params.sourceKey
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/");
+  const copySource = `${config.bucket}/${encodedSourceKey}${
+    params.sourceVersionId
+      ? `?versionId=${encodeURIComponent(params.sourceVersionId)}`
+      : ""
+  }`;
   await client.send(
     new CopyObjectCommand({
       Bucket: config.bucket,
-      CopySource: `${config.bucket}/${params.sourceKey}`,
+      CopySource: copySource,
+      ...(params.sourceETag
+        ? { CopySourceIfMatch: params.sourceETag }
+        : {}),
       Key: params.destinationKey,
     }),
   );
