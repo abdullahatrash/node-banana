@@ -27,6 +27,7 @@ Document Fastlane's acquisition-to-onboarding journey one verified step at a tim
 | 9. Business classification | The next questionnaire asks for a B2B/B2C business model and one or more business categories to make content more relevant to the audience. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 10. Signup intent and goals | The next questionnaire requires the user to choose why they signed up and what outcomes they expect from the platform. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 11. Acquisition attribution | The final observed questionnaire requires one or more answers describing how the user heard about Fastlane. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
+| 12. Personalized social proof | After the seven questionnaire screens, Fastlane shows an interstitial with role-personalized testimonial framing and three linked posts before product entry. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 
 The public client bundle independently corroborates `/onboarding` as the signup component's successful-signup destination. Source: [Fastlane public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js).
 
@@ -172,6 +173,20 @@ At least one acquisition source is required to enable progression, although the 
 
 Product interpretation for Node Banana: this is acquisition-attribution data for growth analytics. It belongs to the user's signup/onboarding record, not the Workspace Brand Profile and not the content-generation prompt. Because it offers no direct activation value to the user, Node Banana should consider making it skippable or collecting it after first value rather than blocking product entry solely for internal analytics.
 
+### Post-questionnaire interstitial: personalized social proof
+
+After the seven questionnaire positions, the route remains `https://app.usefastlane.ai/onboarding` and shows a testimonial interstitial rather than another data-collection screen.
+
+- heading **“Loved by founders like you”**;
+- helper copy **“See what others are saying about Fastlane”**;
+- three testimonial cards linking to first-party-selected posts on X, attributed to **@Aevmorfop**, **@harjjotsinghh**, and **@H0ogie**;
+- primary action **Continue**;
+- secondary action **← Back**.
+
+No data input or workspace-processing status is exposed. The phrase **“founders like you”** reflects the role selected on the earlier user-role step, proving that Fastlane applies onboarding answers immediately to personalize subsequent copy. The destination after Continue has not yet been observed.
+
+Product interpretation for Node Banana: this is an activation/reassurance surface, not a domain-data step. If retained, use role- and region-relevant MENA proof with verifiable attribution, Arabic copy when the Interface Language is Arabic, and an obvious fast path forward. It should not delay first value merely to increase testimonial exposure.
+
 ### Related first-party product framing
 
 Fastlane's public “How it works” sequence is: **Enter your website → Blitz mode → Fill up your calendar → Track your growth.** This describes the product journey, not the verified account-onboarding screen sequence. Source: [Fastlane landing page](https://www.usefastlane.ai/).
@@ -224,6 +239,7 @@ Append new observations here in sequence. Record the URL, exact visible copy, av
 | Observed | `https://app.usefastlane.ai/onboarding` | Fifth setup state asks for one business-model choice and one or more business categories. Continue is initially enabled; no choice, validation behavior, or Other-field behavior was tested. |
 | Observed | `https://app.usefastlane.ai/onboarding` | Sixth setup state asks for one signup-intent choice and one or more expected outcomes. Continue is initially disabled; exact enablement rules and Other-field behavior were not tested. |
 | Observed | `https://app.usefastlane.ai/onboarding` | Seventh setup state asks for one or more acquisition sources. Continue is initially disabled; Other-field behavior and the destination after Continue have not been tested. |
+| Observed | `https://app.usefastlane.ai/onboarding` | After the questionnaire, a no-input testimonial interstitial uses the selected Founder role in the heading “Loved by founders like you,” links to three X testimonials, and offers Continue or Back. |
 
 ## Primary sources
 
