@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { after } from "next/server";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { nextCookies } from "better-auth/next-js";
@@ -12,7 +13,7 @@ import {
   isProductionLikeRuntime,
 } from "@/lib/auth/features";
 import { getDb, isDatabaseConfigured, schema } from "@/lib/db";
-import { ensurePersonalWorkspaceForUser } from "@/lib/studio/repository";
+import { getEmailSender, verificationEmail } from "@/lib/auth/email-sender";
 
 const memoryDb = {
   user: [],
@@ -135,23 +136,29 @@ export const auth = betterAuth({
   plugins: authPlugins,
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: false,
+    requireEmailVerification: true,
+    minPasswordLength: 8,
+    maxPasswordLength: 128,
   },
-  socialProviders,
-  databaseHooks: {
-    user: {
-      create: {
-        after: async (createdUser) => {
-          // Only provision workspace when Postgres is enabled.
-          if (!isDatabaseConfigured()) return;
-
-          await ensurePersonalWorkspaceForUser({
-            userId: createdUser.id,
-            userName: createdUser.name ?? null,
-            userEmail: createdUser.email ?? null,
-          });
-        },
+  emailVerification: {
+    sendVerificationEmail: async ({ user, url }) => {
+      await getEmailSender().send(
+        verificationEmail({
+          to: user.email,
+          verificationUrl: url,
+        }),
+      );
+    },
+    sendOnSignUp: true,
+    sendOnSignIn: true,
+    autoSignInAfterVerification: true,
+  },
+  advanced: {
+    backgroundTasks: {
+      handler: (promise) => {
+        after(() => promise);
       },
     },
   },
+  socialProviders,
 });

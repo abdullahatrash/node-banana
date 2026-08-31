@@ -30,7 +30,7 @@ export default function SignUpPage() {
 
   useEffect(() => {
     if (session?.user) {
-      router.replace("/simple-studio/images");
+      router.replace("/onboarding");
     }
   }, [router, session]);
 
@@ -44,6 +44,7 @@ export default function SignUpPage() {
         name: name.trim(),
         email: email.trim(),
         password,
+        callbackURL: new URL("/onboarding", window.location.origin).toString(),
       });
 
       if (result.error) {
@@ -51,7 +52,7 @@ export default function SignUpPage() {
         return;
       }
 
-      router.replace("/simple-studio/images");
+      router.replace(`/verify-email?email=${encodeURIComponent(email.trim())}`);
     } catch (submitError) {
       setError(getErrorMessage(submitError, "Sign up failed."));
     } finally {
@@ -75,6 +76,8 @@ export default function SignUpPage() {
               type="text"
               autoComplete="name"
               required
+              minLength={8}
+              maxLength={128}
               value={name}
               onChange={(event) => setName(event.target.value)}
               className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-neutral-500"

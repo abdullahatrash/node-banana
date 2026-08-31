@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { isSafeLocalPath } from "@/lib/auth/post-auth-destination";
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (
@@ -16,10 +17,6 @@ function getErrorMessage(error: unknown, fallback: string): string {
     return (error as { message: string }).message;
   }
   return fallback;
-}
-
-function isSafeRedirectPath(path: string): boolean {
-  return path.startsWith("/") && !path.startsWith("//") && !path.includes(":");
 }
 
 export default function SignInPage() {
@@ -36,7 +33,7 @@ function SignInForm() {
   const { data: session, isPending } = authClient.useSession();
   const nextParam = searchParams.get("next");
   const nextPath =
-    nextParam && isSafeRedirectPath(nextParam)
+    nextParam && isSafeLocalPath(nextParam)
       ? nextParam
       : "/simple-studio/images";
 
@@ -47,7 +44,7 @@ function SignInForm() {
 
   useEffect(() => {
     if (session?.user) {
-      router.replace(nextPath);
+      router.replace(`/onboarding?next=${encodeURIComponent(nextPath)}`);
     }
   }, [router, session, nextPath]);
 
@@ -60,14 +57,27 @@ function SignInForm() {
       const result = await authClient.signIn.email({
         email: email.trim(),
         password,
+        callbackURL: new URL(
+          `/onboarding?next=${encodeURIComponent(nextPath)}`,
+          window.location.origin,
+        ).toString(),
       });
 
       if (result.error) {
+        if (
+          result.error.status === 403 ||
+          result.error.code === "EMAIL_NOT_VERIFIED"
+        ) {
+          router.replace(
+            `/verify-email?email=${encodeURIComponent(email.trim())}&next=${encodeURIComponent(nextPath)}`,
+          );
+          return;
+        }
         setError(getErrorMessage(result.error, "Sign in failed."));
         return;
       }
 
-      router.replace(nextPath);
+      router.replace(`/onboarding?next=${encodeURIComponent(nextPath)}`);
     } catch (submitError) {
       setError(getErrorMessage(submitError, "Sign in failed."));
     } finally {
