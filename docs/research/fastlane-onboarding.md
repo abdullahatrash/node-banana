@@ -220,6 +220,50 @@ The attempted **Why This Content?** click did not change the visible state becau
 
 This closes the observed acquisition-to-first-value onboarding sequence. It confirms that Fastlane processes Brand Sources while questionnaire screens are being answered, then lands the user on already-generated, reviewable content instead of an empty dashboard. Product interpretation for Node Banana: preserve this parallelism and first-value principle, but label the terminal action with its real destination and provide a clear way to review/correct the Brand Profile before accepting generated content.
 
+## Downstream verification: persisted Brand Profile
+
+The post-onboarding [Brand page](https://app.usefastlane.ai/brand) confirms that website analysis produces a structured, editable Workspace profile rather than one unstructured summary.
+
+### Provenance and refresh
+
+- Workspace name and logo are visible and editable.
+- **Website Brand source** retains the submitted URL.
+- **Change** can replace the Brand Source.
+- **Refresh from website** can re-run extraction from the source.
+- The profile shows a last-updated date.
+
+### Content strategy and voice
+
+- **Content Angles** are a managed list with Add and per-angle controls.
+- **Tone & Voice** has separate **Do's** and **Don'ts**, each capped at ten rules, and explicitly applies to all generated content text.
+
+### Identity & Product fields
+
+The edit panel exposes four text fields:
+
+1. **Core Identity** — “Who is your company and what do you do?”
+2. **Product Offering** — “What exactly are you selling?”
+3. **Unique Benefits** — “What makes your product/service valuable?”
+4. **Problem Solution** — “What customer problem does this solve and how?”
+
+### Purpose & Positioning fields
+
+The edit panel exposes three text fields:
+
+1. **Mission** — “What is your mission and what do you stand for?”
+2. **Differentiation** — “How are you different from other solutions?”
+3. **Owned Space** — “What space do you own in the customer's mind?”
+
+### Market & Competition fields
+
+- Customer Segments are repeatable records with **Name**, **Description**, and numeric percentage weight.
+- The profile enforces a visible **100% total** across segment weights.
+- Competitors are repeatable records with a name and optional URL.
+
+All three edit panels were opened for inspection and closed with **Cancel**; no profile data was changed. The **Content Hub** button was also inspected: it navigates out of Brand to `/content/talking-head-ugc`, confirming it is a separate creation surface rather than a Brand subview. That creation form exposes an explicit output-language selector with English selected and Arabic among many supported languages, further confirming that Content Language is separate from Brand Source language and Interface Language.
+
+Product interpretation for Node Banana: model these as validated typed fields with one canonical Workspace Brand Profile. Preserve Brand Source provenance separately, require customer-segment weights to total 100, maintain user-editable voice rules and content angles, and make refresh a reviewable update rather than silently overwriting user corrections.
+
 ### Related first-party product framing
 
 Fastlane's public “How it works” sequence is: **Enter your website → Blitz mode → Fill up your calendar → Track your growth.** This describes the product journey, not the verified account-onboarding screen sequence. Source: [Fastlane landing page](https://www.usefastlane.ai/).
@@ -275,6 +319,8 @@ Append new observations here in sequence. Record the URL, exact visible copy, av
 | Observed | `https://app.usefastlane.ai/onboarding` | After the questionnaire, a no-input testimonial interstitial uses the selected Founder role in the heading “Loved by founders like you,” links to three X testimonials, and offers Continue or Back. |
 | Observed | `https://app.usefastlane.ai/onboarding` | The next no-input interstitial explains Blitz Mode and Manual Creation through switchable tutorial cards and exposes Continue to Dashboard. Manual was inspected and the UI restored to Blitz; tutorials and the dashboard destination remain untested. |
 | Observed | `https://app.usefastlane.ai/blitz` | Continue to Dashboard actually completes onboarding into Blitz. The Workspace identity is present and an already-generated brand-specific Wall of Text card offers Reject/Edit/Approve, proving that analysis and content preparation completed during onboarding. No content action or first-use-hint dismissal was performed. |
+| Observed | `https://app.usefastlane.ai/brand` | The persisted Brand Profile exposes source provenance/refresh, content angles, voice rules, identity/product fields, purpose/positioning fields, weighted customer segments, and competitors. Editors were opened read-only and cancelled without saving. |
+| Observed | `https://app.usefastlane.ai/content/talking-head-ugc` | Brand's Content Hub button routes to a separate Talking Head UGC generator. Its language selector includes Arabic and many other output languages; the page was inspected and then left via browser Back. |
 
 ## Primary sources
 
