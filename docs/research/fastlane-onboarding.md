@@ -29,6 +29,7 @@ Document Fastlane's acquisition-to-onboarding journey one verified step at a tim
 | 11. Acquisition attribution | The final observed questionnaire requires one or more answers describing how the user heard about Fastlane. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 12. Personalized social proof | After the seven questionnaire screens, Fastlane shows an interstitial with role-personalized testimonial framing and three linked posts before product entry. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 13. Creation-mode education | The next interstitial explains Blitz Mode and Manual Creation, offers a tutorial for each, and presents the terminal **Continue to Dashboard** action. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
+| 14. First-value destination | **Continue to Dashboard** completes onboarding but routes directly to `/blitz`, where the new Workspace and an already-generated brand-specific content card are ready for review. | Live observation at [Fastlane Blitz](https://app.usefastlane.ai/blitz) |
 
 The public client bundle independently corroborates `/onboarding` as the signup component's successful-signup destination. Source: [Fastlane public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js).
 
@@ -202,6 +203,23 @@ Switching the two tabs changes the tutorial card. No evidence was observed that 
 
 Product interpretation for Node Banana: this is product-orientation content, not profile data. The Arabic-first equivalent should clearly explain automated/high-volume creation versus guided/manual creation in the selected Interface Language, then let the user enter the relevant first-value path directly. Avoid forcing tutorial playback or storing a preference unless the user explicitly chooses a default workflow.
 
+### Onboarding completion: first-value Blitz destination
+
+Selecting **Continue to Dashboard** leaves onboarding and routes to `https://app.usefastlane.ai/blitz`, not `/home` or a generic dashboard.
+
+- the Workspace switcher immediately shows the company name and uploaded/derived logo from onboarding;
+- a roughly 14-day free-trial indicator is visible;
+- the full product navigation becomes available, including Home, Blitz, Inspiration Library, Automations, AI Studio, Influencers, Content, Library, Calendar, Analytics, Warmed Accounts, Brand, Guide, and Settings;
+- Blitz already contains a company-specific **Wall of Text** content card derived from the analyzed brand context;
+- the card offers **Reject**, **Edit**, and **Approve** actions;
+- **Why This Content?**, **Smart positioning**, **Configure Blitz**, and **Remixed From** affordances expose recommendation rationale, strategy/configuration, and source-performance context;
+- a first-use hint with **Got it** teaches the Reject/Accept interaction;
+- Fastlane Copilot and a global product-update panel are also present.
+
+The attempted **Why This Content?** click did not change the visible state because the first-use hint appeared to be the active interaction layer. The hint was not dismissed, and no content was rejected, edited, or approved. The generated Brand Profile itself has not yet been inspected.
+
+This closes the observed acquisition-to-first-value onboarding sequence. It confirms that Fastlane processes Brand Sources while questionnaire screens are being answered, then lands the user on already-generated, reviewable content instead of an empty dashboard. Product interpretation for Node Banana: preserve this parallelism and first-value principle, but label the terminal action with its real destination and provide a clear way to review/correct the Brand Profile before accepting generated content.
+
 ### Related first-party product framing
 
 Fastlane's public “How it works” sequence is: **Enter your website → Blitz mode → Fill up your calendar → Track your growth.** This describes the product journey, not the verified account-onboarding screen sequence. Source: [Fastlane landing page](https://www.usefastlane.ai/).
@@ -256,6 +274,7 @@ Append new observations here in sequence. Record the URL, exact visible copy, av
 | Observed | `https://app.usefastlane.ai/onboarding` | Seventh setup state asks for one or more acquisition sources. Continue is initially disabled; Other-field behavior and the destination after Continue have not been tested. |
 | Observed | `https://app.usefastlane.ai/onboarding` | After the questionnaire, a no-input testimonial interstitial uses the selected Founder role in the heading “Loved by founders like you,” links to three X testimonials, and offers Continue or Back. |
 | Observed | `https://app.usefastlane.ai/onboarding` | The next no-input interstitial explains Blitz Mode and Manual Creation through switchable tutorial cards and exposes Continue to Dashboard. Manual was inspected and the UI restored to Blitz; tutorials and the dashboard destination remain untested. |
+| Observed | `https://app.usefastlane.ai/blitz` | Continue to Dashboard actually completes onboarding into Blitz. The Workspace identity is present and an already-generated brand-specific Wall of Text card offers Reject/Edit/Approve, proving that analysis and content preparation completed during onboarding. No content action or first-use-hint dismissal was performed. |
 
 ## Primary sources
 
