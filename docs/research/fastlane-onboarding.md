@@ -28,6 +28,7 @@ Document Fastlane's acquisition-to-onboarding journey one verified step at a tim
 | 10. Signup intent and goals | The next questionnaire requires the user to choose why they signed up and what outcomes they expect from the platform. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 11. Acquisition attribution | The final observed questionnaire requires one or more answers describing how the user heard about Fastlane. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 12. Personalized social proof | After the seven questionnaire screens, Fastlane shows an interstitial with role-personalized testimonial framing and three linked posts before product entry. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
+| 13. Creation-mode education | The next interstitial explains Blitz Mode and Manual Creation, offers a tutorial for each, and presents the terminal **Continue to Dashboard** action. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 
 The public client bundle independently corroborates `/onboarding` as the signup component's successful-signup destination. Source: [Fastlane public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js).
 
@@ -187,6 +188,20 @@ No data input or workspace-processing status is exposed. The phrase **“founder
 
 Product interpretation for Node Banana: this is an activation/reassurance surface, not a domain-data step. If retained, use role- and region-relevant MENA proof with verifiable attribution, Arabic copy when the Interface Language is Arabic, and an obvious fast path forward. It should not delay first value merely to increase testimonial exposure.
 
+### Onboarding completion gateway: creation modes
+
+After continuing from social proof, the route remains `https://app.usefastlane.ai/onboarding` and introduces the product's two content-creation paths.
+
+- heading **“Two ways to create content”**;
+- tab **Blitz Mode**, initially selected, with tutorial description **“Generate and schedule content at scale with AI”** and action **Play Blitz Mode tutorial**;
+- tab **Manual Creation**, with tutorial description **“Create and customize content step by step”** and action **Play Manual Creation tutorial**;
+- terminal action **Continue to Dashboard**;
+- top-level **Log out** remains available; no Back action is exposed.
+
+Switching the two tabs changes the tutorial card. No evidence was observed that tab selection is persisted as a user preference. Neither tutorial was played during inspection, and the UI was restored to the default Blitz Mode tab. The destination after **Continue to Dashboard** has not yet been observed.
+
+Product interpretation for Node Banana: this is product-orientation content, not profile data. The Arabic-first equivalent should clearly explain automated/high-volume creation versus guided/manual creation in the selected Interface Language, then let the user enter the relevant first-value path directly. Avoid forcing tutorial playback or storing a preference unless the user explicitly chooses a default workflow.
+
 ### Related first-party product framing
 
 Fastlane's public “How it works” sequence is: **Enter your website → Blitz mode → Fill up your calendar → Track your growth.** This describes the product journey, not the verified account-onboarding screen sequence. Source: [Fastlane landing page](https://www.usefastlane.ai/).
@@ -240,6 +255,7 @@ Append new observations here in sequence. Record the URL, exact visible copy, av
 | Observed | `https://app.usefastlane.ai/onboarding` | Sixth setup state asks for one signup-intent choice and one or more expected outcomes. Continue is initially disabled; exact enablement rules and Other-field behavior were not tested. |
 | Observed | `https://app.usefastlane.ai/onboarding` | Seventh setup state asks for one or more acquisition sources. Continue is initially disabled; Other-field behavior and the destination after Continue have not been tested. |
 | Observed | `https://app.usefastlane.ai/onboarding` | After the questionnaire, a no-input testimonial interstitial uses the selected Founder role in the heading “Loved by founders like you,” links to three X testimonials, and offers Continue or Back. |
+| Observed | `https://app.usefastlane.ai/onboarding` | The next no-input interstitial explains Blitz Mode and Manual Creation through switchable tutorial cards and exposes Continue to Dashboard. Manual was inspected and the UI restored to Blitz; tutorials and the dashboard destination remain untested. |
 
 ## Primary sources
 
