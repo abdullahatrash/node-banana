@@ -376,7 +376,7 @@ export function MarketingHome({
                 <SparklesIcon className="size-3.5 text-[#e75f45]" aria-hidden="true" />
                 {copy.hero.badge}
               </div>
-              <h1 className="text-balance text-[clamp(3.2rem,7.7vw,6.8rem)] font-bold leading-[0.98] tracking-[-0.065em] text-[#102d2a]">
+              <h1 className={`${styles.heroHeading} text-balance text-[clamp(3.2rem,7.7vw,6.8rem)] font-bold leading-[0.98] tracking-[-0.065em] text-[#102d2a]`}>
                 {copy.hero.titleBefore}
                 <span className="mt-2 block text-[#e75f45]">{copy.hero.titleAccent}</span>
               </h1>
@@ -495,7 +495,7 @@ export function MarketingHome({
           <div className="mx-auto grid max-w-7xl overflow-hidden rounded-[36px] bg-[#e46549] text-[#fffaf0] lg:grid-cols-[1.05fr_0.95fr]">
             <div className="p-8 sm:p-12 lg:p-16">
               <p className="text-xs font-bold tracking-[0.14em] text-[#ffd9ce]">{copy.mena.eyebrow}</p>
-              <h2 className="mt-5 max-w-2xl text-balance text-4xl font-bold leading-[1.12] tracking-[-0.045em] sm:text-5xl">{copy.mena.title}</h2>
+              <h2 className={`${styles.displayHeading} mt-5 max-w-2xl text-balance text-4xl font-bold leading-[1.12] tracking-[-0.045em] sm:text-5xl`}>{copy.mena.title}</h2>
               <p className="mt-6 max-w-xl text-lg leading-8 text-[#fff4ec]/85">{copy.mena.body}</p>
               <ul className="mt-8 space-y-3">
                 {copy.mena.points.map((point) => (
@@ -513,7 +513,7 @@ export function MarketingHome({
                   <span className="rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white/80">MENA</span>
                   <SparklesIcon className="size-5 text-[#f2ad8f]" aria-hidden="true" />
                 </div>
-                <p className="max-w-xs text-4xl font-bold leading-tight tracking-[-0.04em] sm:text-5xl">{isArabic ? "نبدأ من هنا." : "We start here."}</p>
+                <p className={`${styles.displayHeading} max-w-xs text-4xl font-bold leading-tight tracking-[-0.04em] sm:text-5xl`}>{isArabic ? "نبدأ من هنا." : "We start here."}</p>
                 <p className="text-sm font-medium text-white/65">{copy.mena.markets}</p>
               </div>
             </div>
@@ -539,7 +539,7 @@ export function MarketingHome({
           <div className={`${styles.ctaPanel} relative mx-auto max-w-7xl overflow-hidden rounded-[38px] bg-[#0d4f45] px-6 py-16 text-center text-white sm:px-12 sm:py-20`}>
             <div className="relative z-10 mx-auto max-w-3xl">
               <p className="text-xs font-bold tracking-[0.14em] text-[#a9d7c3]">{copy.early.eyebrow}</p>
-              <h2 className="mt-5 text-balance text-4xl font-bold leading-tight tracking-[-0.045em] sm:text-6xl">{copy.early.title}</h2>
+              <h2 className={`${styles.displayHeading} mt-5 text-balance text-4xl font-bold leading-tight tracking-[-0.045em] sm:text-6xl`}>{copy.early.title}</h2>
               <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-white/70">{copy.early.body}</p>
               <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
                 <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#fffaf0] px-6 text-sm font-bold text-[#0d4f45] transition hover:-translate-y-0.5 hover:bg-white" href={signUpUrl}>
@@ -622,7 +622,7 @@ function SectionHeading({
   return (
     <div className={`${centered ? "mx-auto text-center" : ""} max-w-3xl`}>
       <p className={`text-xs font-bold tracking-[0.14em] ${dark ? "text-[#f2ad8f]" : "text-[#e75f45]"}`}>{eyebrow}</p>
-      <h2 className={`mt-5 text-balance text-4xl font-bold leading-[1.12] tracking-[-0.045em] sm:text-5xl ${dark ? "text-white" : "text-[#102d2a]"}`}>{title}</h2>
+      <h2 className={`${styles.displayHeading} mt-5 text-balance text-4xl font-bold leading-[1.12] tracking-[-0.045em] sm:text-5xl ${dark ? "text-white" : "text-[#102d2a]"}`}>{title}</h2>
       {body ? <p className={`mt-6 text-lg leading-8 ${dark ? "text-white/60" : "text-[#607570]"}`}>{body}</p> : null}
     </div>
   );

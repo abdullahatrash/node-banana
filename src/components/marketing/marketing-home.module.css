@@ -4,6 +4,16 @@
   --marketing-coral: #e75f45;
 }
 
+:global(html[dir="rtl"]) .heroHeading {
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+:global(html[dir="rtl"]) .displayHeading {
+  line-height: 1.22;
+  letter-spacing: 0;
+}
+
 .page :global(*) {
   scroll-behavior: smooth;
 }
