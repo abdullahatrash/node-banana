@@ -51,7 +51,7 @@ html {
 }
 
 html[dir="rtl"] {
-  --font-sans: var(--font-noto-arabic), var(--font-geist), system-ui, sans-serif;
+  --font-sans: var(--font-alexandria), var(--font-geist), system-ui, sans-serif;
 }
 
 body {
