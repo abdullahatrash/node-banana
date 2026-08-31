@@ -26,6 +26,7 @@ Document Fastlane's acquisition-to-onboarding journey one verified step at a tim
 | 8. User role | The next questionnaire asks which professional role best describes the user so Fastlane can customize their experience. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 9. Business classification | The next questionnaire asks for a B2B/B2C business model and one or more business categories to make content more relevant to the audience. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 | 10. Signup intent and goals | The next questionnaire requires the user to choose why they signed up and what outcomes they expect from the platform. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
+| 11. Acquisition attribution | The final observed questionnaire requires one or more answers describing how the user heard about Fastlane. | Live observation at [Fastlane onboarding](https://app.usefastlane.ai/onboarding) |
 
 The public client bundle independently corroborates `/onboarding` as the signup component's successful-signup destination. Source: [Fastlane public app bundle](https://app.usefastlane.ai/assets/AppRoot-D7yJQDoX.js).
 
@@ -157,6 +158,20 @@ This is the first observed questionnaire where **Continue** is disabled before a
 
 Product interpretation for Node Banana: signup urgency and expected outcomes are onboarding-goal data, not Brand Profile facts. Store them on the user's onboarding state or as explicit Workspace goals when the user is setting strategy. They can prioritize activation guidance, recommended first actions, and success metrics but must not appear as factual generated brand claims.
 
+### Seventh onboarding screen: acquisition attribution
+
+The next state remains at `https://app.usefastlane.ai/onboarding` and corresponds to the seventh position in the observed onboarding questionnaire sequence.
+
+- heading **“How did you hear about us?”**;
+- prompt **Select all that apply**;
+- twelve choices: **X (Twitter)**, **LinkedIn**, **YouTube**, **TikTok**, **Instagram**, **Facebook**, **Podcast**, **Newsletter**, **Google**, **Reddit**, **Friend/Referral**, and **Other**;
+- primary action **Continue**, initially disabled;
+- secondary action **← Back**.
+
+At least one acquisition source is required to enable progression, although the behavior of **Other** and the result of Continue have not yet been tested. No workspace-processing status is exposed on this screen.
+
+Product interpretation for Node Banana: this is acquisition-attribution data for growth analytics. It belongs to the user's signup/onboarding record, not the Workspace Brand Profile and not the content-generation prompt. Because it offers no direct activation value to the user, Node Banana should consider making it skippable or collecting it after first value rather than blocking product entry solely for internal analytics.
+
 ### Related first-party product framing
 
 Fastlane's public “How it works” sequence is: **Enter your website → Blitz mode → Fill up your calendar → Track your growth.** This describes the product journey, not the verified account-onboarding screen sequence. Source: [Fastlane landing page](https://www.usefastlane.ai/).
@@ -208,6 +223,7 @@ Append new observations here in sequence. Record the URL, exact visible copy, av
 | Observed | `https://app.usefastlane.ai/onboarding` | Fourth setup state asks the user's professional role from nine choices. Continue is initially enabled, no role was selected during inspection, and the earlier workspace-processing status is no longer visible. |
 | Observed | `https://app.usefastlane.ai/onboarding` | Fifth setup state asks for one business-model choice and one or more business categories. Continue is initially enabled; no choice, validation behavior, or Other-field behavior was tested. |
 | Observed | `https://app.usefastlane.ai/onboarding` | Sixth setup state asks for one signup-intent choice and one or more expected outcomes. Continue is initially disabled; exact enablement rules and Other-field behavior were not tested. |
+| Observed | `https://app.usefastlane.ai/onboarding` | Seventh setup state asks for one or more acquisition sources. Continue is initially disabled; Other-field behavior and the destination after Continue have not been tested. |
 
 ## Primary sources
 
