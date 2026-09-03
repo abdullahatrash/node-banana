@@ -14,10 +14,24 @@ export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.
     maxQuantity: 30,
     outputShape: { width: 1080, height: 1920, fps: model.capabilities.some((capability) => capability.endsWith("video")) ? 30 : null },
     inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: "duration", imageKey: "image", imageMode: "single" as const, safety: { parameterKey: "disable_safety_checker", safeValue: false }, lockedParameters: { disable_safety_checker: false, draft: false, resolution: "1080p", audio: false } },
+    evidence: {
+      id: `qualification-${index}`, revision: 1,
+      digest: `sha256:${(index + 20).toString(16).padStart(64, "0")}` as `sha256:${string}`,
+      issuedAt: new Date("2026-09-01T00:00:00.000Z"), expiresAt: new Date("2026-12-01T00:00:00.000Z"), signingKeyId: "test-key",
+      license: { name: "Test commercial license", commercialUse: true, derivativeUse: true, sourceUrl: "https://example.com/license", digest: `sha256:${"a".repeat(64)}` as `sha256:${string}` },
+      pricingSource: { sourceUrl: "https://example.com/pricing", digest: `sha256:${"b".repeat(64)}` as `sha256:${string}`, checkedAt: new Date("2026-09-01T00:00:00.000Z") },
+      qualificationRun: { id: `qualification-run-${index}`, digest: `sha256:${"c".repeat(64)}` as `sha256:${string}`, completedAt: new Date("2026-09-01T00:00:00.000Z") },
+    },
   },
 }));
 
 export const testRef = (index: number): ExactModelRef => exactModelRef(QUALIFIED_TEST_MODELS[index]!)!;
+export const testQualification = (index: number) => {
+  const model = QUALIFIED_TEST_MODELS[index];
+  if (!model || model.qualification.status !== "qualified") throw new Error(`Test model ${index} is not qualified`);
+  const evidence = model.qualification.evidence;
+  return { id: evidence.id, revision: evidence.revision, digest: evidence.digest, expiresAt: evidence.expiresAt };
+};
 export const resolveTestModel = (ref: ExactModelRef) => findCuratedModel(ref, QUALIFIED_TEST_MODELS);
 export const testOutputContract = (index: number, quantity = 8) => {
   const model = QUALIFIED_TEST_MODELS[index];

@@ -6,9 +6,16 @@ export type ArabicVariety = "msa" | "gulf" | "egyptian" | "levantine" | "maghreb
 
 export interface ExactModelRef { provider: "replicate" | "google" | "kie" | "openai" | "fal" | "wavespeed"; model: string; version: string; inputSchemaDigest: string; }
 export interface CostQuote { currency: "USD"; amount: number; basis: "image" | "second" | "run"; quantity: number; quotedAt: Date; expiresAt: Date; }
+export interface ModelQualificationEvidence {
+  id: string; revision: number; digest: `sha256:${string}`; issuedAt: Date; expiresAt: Date;
+  signingKeyId: string;
+  license: { name: string; commercialUse: boolean; derivativeUse: boolean; sourceUrl: string; digest: `sha256:${string}` };
+  pricingSource: { sourceUrl: string; digest: `sha256:${string}`; checkedAt: Date };
+  qualificationRun: { id: string; digest: `sha256:${string}`; completedAt: Date };
+}
 export type ModelExecutionQualification =
   | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
-  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; outputShape: { width: number; height: number; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean }; lockedParameters: Record<string, string | number | boolean> } };
+  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; outputShape: { width: number; height: number; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean }; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
 export interface ModelDescriptor {
   provider: ExactModelRef["provider"]; model: string; label: string;
   capabilities: readonly GenerationCapability[]; quality: GenerationQuality;
@@ -32,6 +39,7 @@ export interface GenerationIntent {
   promptDigest: `sha256:${string}`; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
   rights: { snapshotId: string; revision: number; digest: `sha256:${string}`; basis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; evidenceRefs: string[]; sourceUrls: string[] };
   remixBrief: { digest: `sha256:${string}`; preserve: string[]; transform: string[]; avoid: string[] };
+  qualification: { id: string; revision: number; digest: `sha256:${string}`; expiresAt: Date };
   regionAdmission: { policyId: string; policyVersion: number; evidenceDigest: `sha256:${string}`; region: string; routeId: string; evidenceExpiresAt: Date };
   outputContract: { mediaType: "image" | "video"; aspectRatio: "9:16"; width: number; height: number; durationSeconds: number | null; fps: number | null; safetyParameterKey: string; safetyValue: string | number | boolean; lockedParametersDigest: `sha256:${string}` };
   requestedModel: ExactModelRef; selectedModel: ExactModelRef; fallbackAuthorizationId: string | null;

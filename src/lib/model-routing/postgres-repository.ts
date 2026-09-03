@@ -7,7 +7,8 @@ type Db = ReturnType<typeof getDb>; const date = (v: Date | string) => v instanc
 function grant(v: FallbackAuthorization): FallbackAuthorization { return { ...structuredClone(v), issuedAt: date(v.issuedAt), expiresAt: date(v.expiresAt), revokedAt: v.revokedAt ? date(v.revokedAt) : null }; }
 function intent(v: GenerationIntent): GenerationIntent {
   const legacyRegion = { policyId: "legacy-unverified", policyVersion: 0, evidenceDigest: `sha256:${"0".repeat(64)}` as const, region: "unverified", routeId: "unverified", evidenceExpiresAt: new Date(0) };
-  return { ...structuredClone(v), brand: { ...v.brand, acceptedAt: date(v.brand.acceptedAt) }, regionAdmission: v.regionAdmission ? { ...v.regionAdmission, evidenceExpiresAt: date(v.regionAdmission.evidenceExpiresAt) } : legacyRegion, quote: { ...v.quote, quotedAt: date(v.quote.quotedAt), expiresAt: date(v.quote.expiresAt) }, createdAt: date(v.createdAt) };
+  const legacyQualification = { id: "legacy-unverified", revision: 0, digest: `sha256:${"0".repeat(64)}` as const, expiresAt: new Date(0) };
+  return { ...structuredClone(v), brand: { ...v.brand, acceptedAt: date(v.brand.acceptedAt) }, qualification: v.qualification ? { ...v.qualification, expiresAt: date(v.qualification.expiresAt) } : legacyQualification, regionAdmission: v.regionAdmission ? { ...v.regionAdmission, evidenceExpiresAt: date(v.regionAdmission.evidenceExpiresAt) } : legacyRegion, quote: { ...v.quote, quotedAt: date(v.quote.quotedAt), expiresAt: date(v.quote.expiresAt) }, createdAt: date(v.createdAt) };
 }
 
 export class PostgresModelRoutingRepository implements ModelRoutingRepository {

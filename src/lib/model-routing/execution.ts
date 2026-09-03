@@ -30,6 +30,10 @@ export class GenerationExecutionService {
     if (input.sourceUrls.length && !intent.rights.evidenceRefs.length) return { kind: "invalid", code: "RIGHTS_EVIDENCE_REQUIRED" };
     const descriptor = this.resolveModel(intent.selectedModel);
     if (!descriptor || descriptor.qualification.status !== "qualified") return { kind: "unavailable", code: "MODEL_NOT_EXECUTABLE" };
+    const qualification = descriptor.qualification.evidence;
+    if (intent.qualification.id !== qualification.id || intent.qualification.revision !== qualification.revision ||
+      intent.qualification.digest !== qualification.digest || intent.qualification.expiresAt.getTime() !== qualification.expiresAt.getTime() ||
+      intent.qualification.expiresAt <= this.now()) return { kind: "unavailable", code: "MODEL_QUALIFICATION_EXPIRED_OR_CHANGED" };
     const region = await this.regions.revalidate({ workspaceId: input.workspaceId, model: intent.selectedModel, evidence: intent.regionAdmission, at: this.now() });
     if (region.kind !== "admitted") return { kind: "invalid", code: region.code };
     if (intent.fallbackAuthorizationId) {
