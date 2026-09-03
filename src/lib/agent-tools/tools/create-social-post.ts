@@ -16,6 +16,10 @@ import { getAsset } from "@/lib/studio/repository";
 
 import { ToolError } from "../errors";
 import type { ToolContext, ToolDefinition } from "../types";
+import {
+  exactApprovedSocialPostInput,
+  PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION,
+} from "../social-publishing-approval";
 
 const inputSchema = z.object({
   /** The connected social account (channel) to post to; must belong to the workspace. */
@@ -30,6 +34,17 @@ const inputSchema = z.object({
   draft: z.boolean().optional(),
   /** ISO timestamp to publish at. Omit (with draft omitted) to publish now. */
   scheduledAt: z.string().optional(),
+  /** Exact approved Plan Revision target plus fresh release authorization. */
+  publishingApproval: z.object({
+    approvalRequestId: z.string().min(1).max(200),
+    targetId: z.string().min(1).max(200),
+    targetEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    consumingPrincipalId: z.string().min(1).max(200),
+    consumingKeyId: z.string().min(1).max(200),
+    authorizationEvidenceRef: z.string().min(1).max(500),
+    authorizationIssuedAt: z.string().datetime({ offset: true }),
+    authorizationExpiresAt: z.string().datetime({ offset: true }),
+  }).strict().optional(),
 });
 
 const outputSchema = z.object({
@@ -197,6 +212,13 @@ export const createSocialPostTool: ToolDefinition<
     }
 
     if (!isDraft) {
+      if (!input.publishingApproval) {
+        throw new ToolError({
+          code: "forbidden",
+          message: "Publishing requires an accepted exact Plan Revision Approval.",
+          fix: "Request and approve the exact publishing plan target, then pass its publishingApproval evidence.",
+        });
+      }
       if (account.disabled) {
         throw new ToolError({
           code: "forbidden",
@@ -211,6 +233,22 @@ export const createSocialPostTool: ToolDefinition<
           fix: "Reconnect the account in the app, or create the post as a draft.",
         });
       }
+    }
+
+    const inspectedApproval = isDraft ? null : await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.inspect({
+      workspaceId,
+      socialAccountId: input.socialAccountId,
+      evidence: input.publishingApproval!,
+    });
+    if (!isDraft && (!inspectedApproval || !exactApprovedSocialPostInput(input, inspectedApproval.target))) {
+      throw new ToolError({
+        code: "forbidden",
+        message: "Publishing Approval is unavailable, consumed, stale, or does not match this exact post target.",
+        fix: "Inspect the current approved target and submit the exact approved content, settings, channel, and timing.",
+      });
+    }
+    if (inspectedApproval) {
+      scheduledDate = new Date(inspectedApproval.target.timing.publishAt);
     }
 
     await enforceMonthlyQuota(ctx);
@@ -247,18 +285,34 @@ export const createSocialPostTool: ToolDefinition<
       }
     }
 
+    const approvedTarget = inspectedApproval?.target;
     const post = await createSocialPost({
       workspaceId,
       socialAccountId: input.socialAccountId,
-      content,
-      mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-      platformSettings: input.platformSettings,
+      content: approvedTarget?.content.text ?? content,
+      mediaUrls: approvedTarget
+        ? approvedTarget.media.map((item) => ({ type: "image", url: item.previewUrl }))
+        : mediaUrls.length > 0 ? mediaUrls : undefined,
+      platformSettings: approvedTarget?.settings ?? input.platformSettings,
       studioAssetId: assetIds[0],
+      triggerSource: inspectedApproval ? `approved-plan:${inspectedApproval.requestId}:${inspectedApproval.target.targetId}` : undefined,
       createdByUserId: ctx.session.user.id,
     });
 
     if (isDraft || !scheduledDate) {
       return { postId: post.id, status: post.status, scheduledAt: null };
+    }
+
+    const consumption = await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.consume({
+      workspaceId,
+      inspected: inspectedApproval!,
+    });
+    if (consumption !== "consumed") {
+      throw new ToolError({
+        code: "forbidden",
+        message: "Publishing Approval could not be consumed with current exact release authorization.",
+        fix: "Refresh the release authorization and request a new Approval if this decision was already consumed.",
+      });
     }
 
     // Transition into the queued state the dispatch cron picks up: status
