@@ -678,12 +678,28 @@ export class GovernanceService {
         await this.requireStepUp(actor, "workspace.close", closure.id, command.stepUpToken);
         const closed = await this.memberships.closeWorkspace({ workspaceId: actor.workspaceId, currentOwnerUserId: actor.userId, closedAt: now });
         if (closed === "not_current_owner") throw new GovernanceError("FORBIDDEN", "Only the current Workspace Owner may complete closure.");
+        const exportId = newId("workspace_export");
+        const includeKinds: string[] = [];
+        const omissions = ["secrets", "credential_material", "non_transferable_licensed_media", "legally_retained_internal_evidence"];
         mutations = [
-          update(closure, "closed", { ...closureBody, executedAt: now.toISOString() }),
-          create("membership_projection", newId("membership_projection"), "queued", { operation: "close_workspace", requestedAt: now.toISOString(), attempts: 0 }),
+          update(closure, "erasure_queued", {
+            ...closureBody,
+            executedAt: now.toISOString(),
+            exportId,
+            erasureCursor: null,
+            erasureScheduled: false,
+            accessRevocationEvidence: null,
+            completionEvidence: null,
+            lease: null,
+          }),
+          create("workspace_export", exportId, "queued", {
+            ...await this.exportJobBody(actor, "workspace", null, null, now, { includeKinds, closureId: closure.id }),
+            includeKinds,
+            omissions,
+            closureId: closure.id,
+          }),
         ];
-        canonicalEffects = [{ type: "workspace_close", workspaceId: actor.workspaceId, currentOwnerUserId: actor.userId, occurredAt: now }];
-        result = { closureId: closure.id, status: "closed", closedAt: now.toISOString() };
+        result = { closureId: closure.id, status: "erasure_queued", exportId };
         target = { kind: closure.kind, id: closure.id };
         break;
       }

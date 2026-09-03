@@ -18,6 +18,8 @@ import { GovernanceSecretDeliverySweeper } from "./secret-delivery-sweeper";
 import { DrizzleGovernanceAuditFederation } from "./audit-federation";
 import { DrizzleGovernanceRetentionResourcePort } from "./retention-resource";
 import { DrizzleGovernanceReviewPresentationPort } from "./review-presentation";
+import { GovernanceWorkspaceClosureWorker } from "./closure-worker";
+import { DrizzleGovernanceWorkspaceClosureAdapter } from "./closure-production";
 
 function regionTrustKeys(): Map<string, Uint8Array> {
   const keys = new Map<string, Uint8Array>();
@@ -126,4 +128,11 @@ export function getProductionGovernanceMembershipProjectionWorker(): GovernanceM
 
 export function getProductionGovernanceSecretDeliverySweeper(): GovernanceSecretDeliverySweeper {
   return new GovernanceSecretDeliverySweeper(PRODUCTION_GOVERNANCE_REPOSITORY);
+}
+
+export function getProductionGovernanceWorkspaceClosureWorker(): GovernanceWorkspaceClosureWorker {
+  return new GovernanceWorkspaceClosureWorker(
+    PRODUCTION_GOVERNANCE_REPOSITORY,
+    new DrizzleGovernanceWorkspaceClosureAdapter(getDb),
+  );
 }

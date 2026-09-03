@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import {
   agentSecurityEvents,
@@ -188,7 +188,7 @@ export class WorkspaceClosureAwareAuthorizer implements CapabilityAuthorizer {
 
   async authorize(request: CapabilityAuthorizationRequest): Promise<CapabilityAuthorizationAdmission> {
     if (closureAllowsCapability(request)) return this.delegate.authorize(request);
-    const [closure] = await this.database().select({ id: workspaceGovernanceResources.id }).from(workspaceGovernanceResources).where(and(eq(workspaceGovernanceResources.workspaceId, request.securityContext.workspaceId), eq(workspaceGovernanceResources.kind, "workspace_closure"), eq(workspaceGovernanceResources.status, "cooling_off"))).limit(1);
+    const [closure] = await this.database().select({ id: workspaceGovernanceResources.id }).from(workspaceGovernanceResources).where(and(eq(workspaceGovernanceResources.workspaceId, request.securityContext.workspaceId), eq(workspaceGovernanceResources.kind, "workspace_closure"), inArray(workspaceGovernanceResources.status, ["cooling_off", "erasure_queued", "erasure_running", "waiting_retention_policy", "waiting_erasure", "waiting_export"]))).limit(1);
     if (!closure) return this.delegate.authorize(request);
     const trace = `otr_${randomUUID().replaceAll("-", "")}`;
     const context = request.securityContext;

@@ -230,9 +230,10 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
         and(eq(workspaceGovernanceResources.kind, "bulk_operation"), inArray(workspaceGovernanceResources.status, ["queued", "running", "cancelling"])),
         and(eq(workspaceGovernanceResources.kind, "deletion_receipt"), inArray(workspaceGovernanceResources.status, ["queued", "delayed", "running"])),
         and(eq(workspaceGovernanceResources.kind, "safety_appeal"), inArray(workspaceGovernanceResources.status, ["revalidation_queued", "revalidation_running"])),
+        and(eq(workspaceGovernanceResources.kind, "workspace_closure"), inArray(workspaceGovernanceResources.status, ["erasure_queued", "erasure_running", "waiting_retention_policy", "waiting_erasure", "waiting_export"])),
         and(eq(workspaceGovernanceResources.kind, "approval_request"), inArray(workspaceGovernanceResources.status, ["pending", "escalated"])),
       ),
-      sql`(${workspaceGovernanceResources.status} <> 'running' and ${workspaceGovernanceResources.status} <> 'revalidation_running') or coalesce(${workspaceGovernanceResources.body}->'lease'->>'expiresAt', '') <= ${evaluatedAt}`,
+      sql`(${workspaceGovernanceResources.status} <> 'running' and ${workspaceGovernanceResources.status} <> 'revalidation_running' and ${workspaceGovernanceResources.status} <> 'erasure_running') or coalesce(${workspaceGovernanceResources.body}->'lease'->>'expiresAt', '') <= ${evaluatedAt}`,
       sql`${workspaceGovernanceResources.status} <> 'delayed' or exists (select 1 from jsonb_each(${workspaceGovernanceResources.body}->'outcomes') value where value->>'state' = 'delayed' and value->>'retryAt' <= ${evaluatedAt})`,
     )).orderBy(asc(workspaceGovernanceResources.updatedAt), asc(workspaceGovernanceResources.workspaceId), asc(workspaceGovernanceResources.kind), asc(workspaceGovernanceResources.id))
       .limit(Math.min(Math.max(input.limit, 1), 1_000));

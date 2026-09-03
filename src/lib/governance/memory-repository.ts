@@ -81,6 +81,7 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
         return resource.status === "queued" || (resource.status === "running" && terminalLease(resource));
       }
       if (resource.kind === "safety_appeal") return resource.status === "revalidation_queued" || (resource.status === "revalidation_running" && terminalLease(resource));
+      if (resource.kind === "workspace_closure") return ["erasure_queued", "waiting_retention_policy", "waiting_erasure", "waiting_export"].includes(resource.status) || (resource.status === "erasure_running" && terminalLease(resource));
       return resource.kind === "approval_request" && ["pending", "escalated"].includes(resource.status);
     };
     const compare = (left: GovernanceResource, right: GovernanceResource) => left.updatedAt.getTime() - right.updatedAt.getTime() || left.workspaceId.localeCompare(right.workspaceId) || left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id);

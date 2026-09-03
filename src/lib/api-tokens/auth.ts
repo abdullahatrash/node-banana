@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   authzErrorResponse,
   resolveWorkspaceMemberPermissions,
+  isWorkspacePermissionAdmittedDuringClosure,
   withApiPermission,
   type ContentOSPermission,
   type ContentOSSession,
@@ -112,6 +113,16 @@ export async function authorizePublicApiRequest(
         authorized: false,
         response: NextResponse.json(
           { success: false, error: "This token cannot access this resource." },
+          { status: 403 },
+        ),
+      };
+    }
+
+    if (!(await isWorkspacePermissionAdmittedDuringClosure({ workspaceId: session.workspace.id, permission: options.permission }))) {
+      return {
+        authorized: false,
+        response: NextResponse.json(
+          { success: false, error: "Workspace closure blocks new write operations." },
           { status: 403 },
         ),
       };

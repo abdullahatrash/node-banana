@@ -8,6 +8,7 @@ import {
   getProductionGovernanceMembershipProjectionWorker,
   getProductionGovernanceSafetyAppealWorker,
   getProductionGovernanceSecretDeliverySweeper,
+  getProductionGovernanceWorkspaceClosureWorker,
   PRODUCTION_GOVERNANCE_REPOSITORY,
 } from "./production";
 
@@ -20,6 +21,7 @@ interface GovernanceSweepWorkers {
   approvals: { processWorkspace(workspaceId: string): Promise<number> };
   membership: { sweep(input: { limit: number }): Promise<{ scanned: number; succeeded: number; retryPending: number; deadLetter: number }> };
   secrets: { purge(input: { limit: number }): Promise<number> };
+  closure: { process(input: { workspaceId: string; closureId: string }): Promise<void> };
 }
 
 export interface GovernanceSweepSummary {
@@ -110,6 +112,9 @@ export class GovernanceRecoverySweep {
     if (resource.kind === "safety_appeal" && ["revalidation_queued", "revalidation_running"].includes(resource.status)) {
       return () => this.workers.safety.process({ workspaceId, appealId: resource.id });
     }
+    if (resource.kind === "workspace_closure" && ["erasure_queued", "erasure_running", "waiting_retention_policy", "waiting_erasure", "waiting_export"].includes(resource.status)) {
+      return () => this.workers.closure.process({ workspaceId, closureId: resource.id });
+    }
     return null;
   }
 }
@@ -124,5 +129,6 @@ export async function runProductionGovernanceSweep(input: { maxJobs: number; aft
     approvals: getProductionGovernanceApprovalDeadlineWorker(),
     membership: getProductionGovernanceMembershipProjectionWorker(),
     secrets: getProductionGovernanceSecretDeliverySweeper(),
+    closure: getProductionGovernanceWorkspaceClosureWorker(),
   }).run(input);
 }

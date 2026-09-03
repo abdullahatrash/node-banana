@@ -270,9 +270,12 @@ describe("GovernanceService", () => {
       .rejects.toMatchObject({ code: "STEP_UP_REQUIRED" });
     const executionChallenge = await closureService.execute(owner, { type: "begin_step_up", purpose: "workspace.close", resourceId: requested2.closureId }, "begin-close-execute") as { challengeId: string; verificationCode: string };
     const executionSession = await closureService.execute(owner, { type: "verify_step_up", challengeId: executionChallenge.challengeId, code: executionChallenge.verificationCode }, "verify-close-execute") as { stepUpToken: string };
-    await closureService.execute(owner, { type: "execute_workspace_closure", closureId: requested2.closureId, stepUpToken: executionSession.stepUpToken }, "execute-close-workspace");
+    const queued = await closureService.execute(owner, { type: "execute_workspace_closure", closureId: requested2.closureId, stepUpToken: executionSession.stepUpToken }, "execute-close-workspace") as { status: string; exportId: string };
     expect(closeWorkspace).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, currentOwnerUserId: owner.userId, closedAt: current });
-    expect(closureRepository.canonicalEffects).toContainEqual(expect.objectContaining({ type: "workspace_close", workspaceId: owner.workspaceId, currentOwnerUserId: owner.userId }));
+    expect(queued).toMatchObject({ status: "erasure_queued", exportId: expect.stringMatching(/^workspace_export_/) });
+    expect((await closureRepository.getResource({ workspaceId: owner.workspaceId, kind: "workspace_closure", id: requested2.closureId }))?.status).toBe("erasure_queued");
+    expect((await closureRepository.getResource({ workspaceId: owner.workspaceId, kind: "workspace_export", id: queued.exportId }))?.status).toBe("queued");
+    expect(closureRepository.canonicalEffects).not.toContainEqual(expect.objectContaining({ type: "workspace_close" }));
   });
 
   it("makes Portfolio assignments explicit, revocable by resource state, and non-authoritative", async () => {

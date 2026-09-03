@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
 import {
@@ -53,6 +53,22 @@ export type SocialPermission =
   | "social:manage";
 
 export type ContentOSPermission = StudioPermission | SocialPermission;
+
+const READ_ONLY_CONTENT_OS_PERMISSIONS = new Set<ContentOSPermission>([
+  "workspaces:read",
+  "projects:read",
+  "assets:read",
+  "social:view",
+]);
+
+const WRITE_BLOCKING_CLOSURE_STATUSES = [
+  "cooling_off",
+  "erasure_queued",
+  "erasure_running",
+  "waiting_retention_policy",
+  "waiting_erasure",
+  "waiting_export",
+] as const;
 
 type StudioAccessAction = "read" | "write" | "delete";
 
@@ -138,6 +154,24 @@ const SOCIAL_ROLE_PERMISSIONS: Record<WorkspaceRole, SocialPermission[]> = {
 
 export function getPermissionsForRole(role: WorkspaceRole): ContentOSPermission[] {
   return [...STUDIO_ROLE_PERMISSIONS[role], ...SOCIAL_ROLE_PERMISSIONS[role]];
+}
+
+/** Shared admission used by session and API-token surfaces. Closure continuation
+ * is intentionally exposed only through exact Governance capabilities. */
+export async function isWorkspacePermissionAdmittedDuringClosure(input: {
+  workspaceId: string;
+  permission: ContentOSPermission;
+}): Promise<boolean> {
+  if (READ_ONLY_CONTENT_OS_PERMISSIONS.has(input.permission)) return true;
+  const [closure] = await getDb().select({ id: workspaceGovernanceResources.id })
+    .from(workspaceGovernanceResources)
+    .where(and(
+      eq(workspaceGovernanceResources.workspaceId, input.workspaceId),
+      eq(workspaceGovernanceResources.kind, "workspace_closure"),
+      inArray(workspaceGovernanceResources.status, [...WRITE_BLOCKING_CLOSURE_STATUSES]),
+    ))
+    .limit(1);
+  return !closure;
 }
 
 export function permissionsFromCapabilityKeys(keys: ReadonlySet<string>): ContentOSPermission[] {
@@ -519,6 +553,20 @@ export async function withApiPermission(
           "forbidden",
           403,
           "You do not have access to this workspace.",
+        ),
+      ),
+    };
+  }
+
+  if (!(await isWorkspacePermissionAdmittedDuringClosure({ workspaceId: resolvedSession.workspace.id, permission: options.permission }))) {
+    return {
+      authorized: false,
+      response: authzErrorResponse(
+        authFailure(
+          options.route,
+          "forbidden",
+          403,
+          "Workspace closure blocks new write operations.",
         ),
       ),
     };
