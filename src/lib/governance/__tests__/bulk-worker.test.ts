@@ -22,9 +22,8 @@ describe("GovernanceBulkWorker", () => {
     const execute = vi.fn().mockImplementation(async ({ actor: targetActor }: { actor: { workspaceId: string } }) => targetActor.workspaceId === "workspace-uncertain"
       ? { type: "outcome_unknown", safeReason: "provider_timeout" }
       : { type: "succeeded", output: { archived: true } });
-    const worker = new GovernanceBulkWorker(repository, {
-      resolveActor: vi.fn().mockImplementation(async ({ workspaceId, userId }) => workspaceId === "workspace-forbidden" ? null : ({ workspaceId, userId, legacyRole: "admin" })),
-    }, { execute }, { now: () => new Date("2026-09-03T12:01:00.000Z") });
+    const resolveActor = vi.fn().mockImplementation(async ({ targetWorkspaceId, userId }) => targetWorkspaceId === "workspace-forbidden" ? null : ({ workspaceId: targetWorkspaceId, userId, legacyRole: "admin" }));
+    const worker = new GovernanceBulkWorker(repository, { resolveActor }, { execute }, { now: () => new Date("2026-09-03T12:01:00.000Z") });
     await worker.process({ workspaceId: actor.workspaceId, operationId: preview.operationId });
 
     const operation = await repository.getResource<{ items: Array<{ state: string; outcome: Record<string, unknown> }> }>({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId });
@@ -33,6 +32,7 @@ describe("GovernanceBulkWorker", () => {
     expect(operation?.body.items[1].outcome).toEqual({ code: "TARGET_WORKSPACE_FORBIDDEN" });
     expect(execute).toHaveBeenCalledTimes(2);
     expect(execute.mock.calls[0][0]).toMatchObject({ actor: { workspaceId: "workspace-authorized" }, capability: "content.archive@1", idempotencyKey: expect.stringContaining(preview.operationId) });
+    expect(resolveActor).toHaveBeenCalledWith(expect.objectContaining({ sourceWorkspaceId: actor.workspaceId, targetWorkspaceId: "workspace-authorized", userId: actor.userId, capability: "content.archive@1", targetKind: "content", targetId: "content-1", evaluatedAt: new Date("2026-09-03T12:01:00.000Z") }));
   });
 
   it("turns items left running by an interrupted worker into ambiguity instead of replaying", async () => {

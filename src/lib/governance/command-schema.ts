@@ -30,7 +30,7 @@ export const governanceCommandSchema: z.ZodType<GovernanceCommand> = z.discrimin
   z.object({ type: z.literal("cancel_workspace_closure"), closureId: id }).strict(),
   z.object({ type: z.literal("execute_workspace_closure"), closureId: id, stepUpToken: id }).strict(),
   z.object({ type: z.literal("create_portfolio"), name: text.max(120) }).strict(),
-  z.object({ type: z.literal("assign_portfolio"), portfolioId: id, targetWorkspaceId: id, permissions: z.array(z.enum(["navigate", "report", "templates", "bulk"])).min(1), expiresAt: timestamp.nullable() }).strict(),
+  z.object({ type: z.literal("assign_portfolio"), portfolioId: id, assigneeUserId: id, targetWorkspaceId: id, permissions: z.array(z.enum(["navigate", "report", "templates", "bulk"])).min(1), capabilityAllowlist: z.array(z.string().regex(/^[a-z][a-z0-9_.]*@[1-9][0-9]*$/)).min(1), resourceAllowlist: z.array(z.object({ kind: id, id }).strict()).min(1), expiresAt: timestamp.nullable() }).strict(),
   z.object({ type: z.literal("revoke_portfolio_assignment"), assignmentId: id }).strict(),
   z.object({ type: z.literal("issue_review_guest"), email: z.string().trim().email(), purpose: z.enum(["inspect", "comment", "accept_content", "approve_publishing", "reject"]), resourceKind: z.enum(["render_proof", "plan_revision"]), resourceId: id, revisionDigest: digest, expiresAt: timestamp }).strict(),
   z.object({ type: z.literal("revoke_review_guest"), grantId: id }).strict(),

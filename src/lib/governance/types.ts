@@ -273,6 +273,7 @@ export interface GovernanceActor {
   workspaceId: string;
   userId: string;
   legacyRole: "owner" | "admin" | "member";
+  portfolioAssignmentId?: string;
 }
 
 export interface GovernanceSnapshot {
@@ -306,8 +307,13 @@ export interface GovernanceMembershipPort {
 
 export interface GovernanceBulkAuthorizationPort {
   resolveActor(input: {
-    workspaceId: string;
+    sourceWorkspaceId: string;
+    targetWorkspaceId: string;
     userId: string;
+    capability: string;
+    targetKind: string;
+    targetId: string;
+    evaluatedAt: Date;
   }): Promise<GovernanceActor | null>;
 }
 

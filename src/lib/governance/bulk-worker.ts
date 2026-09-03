@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { workspaceMembers } from "@/lib/db/schema";
+import { workspaceGovernanceResources, workspaceMembers } from "@/lib/db/schema";
 import type {
   BulkOperationItem,
   GovernanceAuditEvent,
@@ -64,7 +64,7 @@ export class GovernanceBulkWorker {
       const batchIds = new Set(batch.map((item) => item.id));
       job = await this.transition(job, "running", { ...body, items: body.items.map((item) => batchIds.has(item.id) ? { ...item, state: "running" } : item) }, "dispatch_bulk_batch", "accepted");
       const outcomes = await Promise.all(batch.map(async (item) => {
-        const actor = await this.authorization.resolveActor({ workspaceId: item.targetWorkspaceId, userId: body.requestedByUserId });
+        const actor = await this.authorization.resolveActor({ sourceWorkspaceId: input.workspaceId, targetWorkspaceId: item.targetWorkspaceId, userId: body.requestedByUserId, capability: item.capability, targetKind: item.targetKind, targetId: item.targetId, evaluatedAt: this.clock.now() });
         if (!actor) return { item, result: { type: "failed_known" as const, code: "TARGET_WORKSPACE_FORBIDDEN" } };
         try {
           return { item, result: await this.capabilities.execute({ actor, capability: item.capability, capabilityInput: item.input, idempotencyKey: item.idempotencyKey }) };
@@ -97,9 +97,25 @@ export class GovernanceBulkWorker {
 }
 
 export class DrizzleGovernanceBulkAuthorizationPort implements GovernanceBulkAuthorizationPort {
-  async resolveActor(input: { workspaceId: string; userId: string }) {
-    const [membership] = await getDb().select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId))).limit(1);
-    return membership ? { workspaceId: input.workspaceId, userId: input.userId, legacyRole: membership.role } : null;
+  async resolveActor(input: Parameters<GovernanceBulkAuthorizationPort["resolveActor"]>[0]) {
+    const [membership] = await getDb().select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, input.targetWorkspaceId), eq(workspaceMembers.userId, input.userId))).limit(1);
+    if (!membership) return null;
+    if (input.sourceWorkspaceId === input.targetWorkspaceId) {
+      return { workspaceId: input.targetWorkspaceId, userId: input.userId, legacyRole: membership.role };
+    }
+    const [assignment] = await getDb().select({ id: workspaceGovernanceResources.id }).from(workspaceGovernanceResources).where(and(
+      eq(workspaceGovernanceResources.workspaceId, input.sourceWorkspaceId),
+      eq(workspaceGovernanceResources.kind, "portfolio_assignment"),
+      eq(workspaceGovernanceResources.status, "active"),
+      sql`${workspaceGovernanceResources.body}->>'assigneeUserId' = ${input.userId}`,
+      sql`${workspaceGovernanceResources.body}->>'sourceWorkspaceId' = ${input.sourceWorkspaceId}`,
+      sql`${workspaceGovernanceResources.body}->>'targetWorkspaceId' = ${input.targetWorkspaceId}`,
+      sql`${workspaceGovernanceResources.body}->'permissions' @> '["bulk"]'::jsonb`,
+      sql`${workspaceGovernanceResources.body}->'capabilityAllowlist' @> ${JSON.stringify([input.capability])}::jsonb`,
+      sql`${workspaceGovernanceResources.body}->'resourceAllowlist' @> ${JSON.stringify([{ kind: input.targetKind, id: input.targetId }])}::jsonb`,
+      or(isNull(sql`${workspaceGovernanceResources.body}->>'expiresAt'`), gt(sql`(${workspaceGovernanceResources.body}->>'expiresAt')::timestamptz`, input.evaluatedAt)),
+    )).limit(1);
+    return assignment ? { workspaceId: input.targetWorkspaceId, userId: input.userId, legacyRole: membership.role, portfolioAssignmentId: assignment.id } : null;
   }
 }
 

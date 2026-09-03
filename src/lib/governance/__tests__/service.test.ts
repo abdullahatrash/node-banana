@@ -161,9 +161,9 @@ describe("GovernanceService", () => {
   it("makes Portfolio assignments explicit, revocable by resource state, and non-authoritative", async () => {
     const { repository, service } = setup();
     const { portfolioId } = await service.execute(owner, { type: "create_portfolio", name: "MENA brands" }, "portfolio-create") as { portfolioId: string };
-    const { assignmentId } = await service.execute(owner, { type: "assign_portfolio", portfolioId, targetWorkspaceId: "workspace-client", permissions: ["navigate", "report", "bulk"], expiresAt: "2026-09-10T12:00:00.000Z" }, "portfolio-assign") as { assignmentId: string };
-    const assignment = await repository.getResource<{ targetWorkspaceId: string; grantsNoAuthority: boolean }>({ workspaceId: owner.workspaceId, kind: "portfolio_assignment", id: assignmentId });
-    expect(assignment?.body).toMatchObject({ targetWorkspaceId: "workspace-client", grantsNoAuthority: true });
+    const { assignmentId } = await service.execute(owner, { type: "assign_portfolio", portfolioId, assigneeUserId: "operator-1", targetWorkspaceId: "workspace-client", permissions: ["navigate", "report", "bulk"], capabilityAllowlist: ["content.archive@1"], resourceAllowlist: [{ kind: "content", id: "content-1" }], expiresAt: "2026-09-10T12:00:00.000Z" }, "portfolio-assign") as { assignmentId: string };
+    const assignment = await repository.getResource<{ assigneeUserId: string; sourceWorkspaceId: string; targetWorkspaceId: string; capabilityAllowlist: string[]; resourceAllowlist: Array<{ kind: string; id: string }>; grantsNoAuthority: boolean }>({ workspaceId: owner.workspaceId, kind: "portfolio_assignment", id: assignmentId });
+    expect(assignment?.body).toMatchObject({ assigneeUserId: "operator-1", sourceWorkspaceId: owner.workspaceId, targetWorkspaceId: "workspace-client", capabilityAllowlist: ["content.archive@1"], resourceAllowlist: [{ kind: "content", id: "content-1" }], grantsNoAuthority: true });
     await service.execute(owner, { type: "revoke_portfolio_assignment", assignmentId }, "portfolio-revoke");
     expect((await repository.getResource({ workspaceId: owner.workspaceId, kind: "portfolio_assignment", id: assignmentId }))?.status).toBe("revoked");
   });

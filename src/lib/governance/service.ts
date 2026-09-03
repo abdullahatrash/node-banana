@@ -69,7 +69,7 @@ export type GovernanceCommand =
   | { type: "cancel_workspace_closure"; closureId: string }
   | { type: "execute_workspace_closure"; closureId: string; stepUpToken: string }
   | { type: "create_portfolio"; name: string }
-  | { type: "assign_portfolio"; portfolioId: string; targetWorkspaceId: string; permissions: Array<"navigate" | "report" | "templates" | "bulk">; expiresAt: string | null }
+  | { type: "assign_portfolio"; portfolioId: string; assigneeUserId: string; targetWorkspaceId: string; permissions: Array<"navigate" | "report" | "templates" | "bulk">; capabilityAllowlist: string[]; resourceAllowlist: Array<{ kind: string; id: string }>; expiresAt: string | null }
   | { type: "revoke_portfolio_assignment"; assignmentId: string }
   | { type: "issue_review_guest"; email: string; purpose: "inspect" | "comment" | "accept_content" | "approve_publishing" | "reject"; resourceKind: "render_proof" | "plan_revision"; resourceId: string; revisionDigest: string; expiresAt: string }
   | { type: "revoke_review_guest"; grantId: string }
@@ -566,8 +566,15 @@ export class GovernanceService {
       case "assign_portfolio": {
         const portfolio = await this.repository.getResource({ workspaceId: actor.workspaceId, kind: "portfolio", id: safeId(command.portfolioId, "Portfolio") });
         if (!portfolio) throw new GovernanceError("NOT_FOUND", "Portfolio unavailable.");
-        const id = `${command.portfolioId}:${safeId(command.targetWorkspaceId, "Target Workspace")}`;
-        mutations = [create("portfolio_assignment", id, "active", { portfolioId: command.portfolioId, targetWorkspaceId: command.targetWorkspaceId, permissions: unique(command.permissions), expiresAt: command.expiresAt ? exactDate(command.expiresAt, "Assignment expiry").toISOString() : null, grantsNoAuthority: true })];
+        const assigneeUserId = safeId(command.assigneeUserId, "Assignee");
+        const targetWorkspaceId = safeId(command.targetWorkspaceId, "Target Workspace");
+        const capabilityAllowlist = unique(command.capabilityAllowlist.map((item) => text(item, "Allowed capability", 200))).sort();
+        const resourceAllowlist = command.resourceAllowlist.map((item) => ({ kind: text(item.kind, "Allowed resource kind", 100), id: safeId(item.id, "Allowed resource") }));
+        if (!command.permissions.includes("bulk") || !capabilityAllowlist.length || !resourceAllowlist.length) throw new GovernanceError("INVALID_INPUT", "Bulk Portfolio assignments require exact capability and resource allowlists.");
+        const expiresAt = command.expiresAt ? exactDate(command.expiresAt, "Assignment expiry") : null;
+        if (expiresAt && expiresAt <= now) throw new GovernanceError("INVALID_INPUT", "Assignment expiry must be in the future.");
+        const id = `${command.portfolioId}:${assigneeUserId}:${targetWorkspaceId}`;
+        mutations = [create("portfolio_assignment", id, "active", { portfolioId: command.portfolioId, assigneeUserId, sourceWorkspaceId: actor.workspaceId, targetWorkspaceId, permissions: unique(command.permissions), capabilityAllowlist, resourceAllowlist, expiresAt: expiresAt?.toISOString() ?? null, revokedAt: null, grantsNoAuthority: true })];
         result = { assignmentId: id, targetWorkspaceId: command.targetWorkspaceId };
         target = { kind: "portfolio_assignment", id };
         break;
