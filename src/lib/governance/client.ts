@@ -107,6 +107,18 @@ export function executeGovernanceCommand<T>(command: GovernanceCommand): Promise
   return invokeGovernanceCapability(capabilityByCommand[command.type], { command }, idempotencyKey);
 }
 
+export async function downloadGovernanceExport(exportId: string): Promise<void> {
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) throw new GovernanceApiError("WORKSPACE_REQUIRED", 400);
+  const response = await fetch(`/api/studio/governance/exports/${encodeURIComponent(exportId)}/download`, {
+    headers: { "x-workspace-id": workspaceId },
+    cache: "no-store",
+  });
+  const body = await response.json() as { success?: boolean; code?: string; downloadUrl?: string };
+  if (!response.ok || !body.success || !body.downloadUrl) throw new GovernanceApiError(body.code ?? "UNAVAILABLE", response.status);
+  window.location.assign(body.downloadUrl);
+}
+
 export interface PublishingApprovalListItem {
   id: string;
   status: "pending" | "approved" | "denied" | "expired" | "consumed";

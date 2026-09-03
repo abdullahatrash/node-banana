@@ -362,6 +362,21 @@ describe("GovernanceService", () => {
     expect(await service.execute(owner, { type: "request_workspace_export", includeKinds: ["content", "media", "plans"], stepUpToken: exportAuth.stepUpToken }, "workspace-export-key")).toMatchObject({ status: "queued", omissions: expect.arrayContaining(["secrets", "non_transferable_licensed_media"]) });
   });
 
+  it("authorizes only current-capability holders to retrieve a ready, unexpired Workspace-bound export", async () => {
+    const { repository, service } = setup();
+    const exportId = "audit-export-ready";
+    repository.resources.set(`${owner.workspaceId}\u0000audit_export\u0000${exportId}`, {
+      id: exportId, workspaceId: owner.workspaceId, kind: "audit_export", version: 2, status: "succeeded",
+      body: { artifactRef: `governance/${owner.workspaceId}/${exportId}/lease-1.encrypted.json`, expiresAt: "2026-09-04T12:00:00.000Z", manifest: { schema: "governance-export-manifest/v1" } },
+      createdByUserId: owner.userId, createdAt: new Date(NOW), updatedAt: new Date(NOW),
+    });
+    await expect(service.authorizeExportDownload(owner, exportId)).resolves.toMatchObject({ exportId, kind: "audit_export", artifactRef: expect.stringContaining(owner.workspaceId) });
+    await expect(service.authorizeExportDownload(creator, exportId)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const stored = repository.resources.get(`${owner.workspaceId}\u0000audit_export\u0000${exportId}`)!;
+    stored.body = { ...stored.body, artifactRef: `governance/other-workspace/${exportId}/stolen.encrypted.json` };
+    await expect(service.authorizeExportDownload(owner, exportId)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
   it("never turns caller-asserted or invalid region evidence into a residency claim", async () => {
     const { repository, service } = setup();
     const auth = await stepUp(service, "regions.manage");

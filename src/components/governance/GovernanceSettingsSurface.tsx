@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AlertCircleIcon, CheckCircle2Icon, Loader2Icon, RefreshCwIcon, ShieldCheckIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { executeGovernanceCommand, getGovernanceSnapshot, GovernanceApiError } from "@/lib/governance/client";
+import { downloadGovernanceExport, executeGovernanceCommand, getGovernanceSnapshot, GovernanceApiError } from "@/lib/governance/client";
 import type { GovernanceCommand } from "@/lib/governance/service";
 import type { GovernanceCapability, GovernanceResource, GovernanceSnapshot } from "@/lib/governance/types";
 import { GovernanceWorkflows } from "./GovernanceWorkflows";
@@ -34,6 +34,7 @@ function displayValue(value: unknown): string {
 
 function ResourceCard({ item, run, can }: { item: GovernanceResource; run: GovernanceCommandRunner; can(capability: GovernanceCapability): boolean }) {
   const t = useTranslations("governance");
+  const [downloadBusy, setDownloadBusy] = useState(false);
   const summary = Object.entries(item.body).flatMap(([key, value]) => {
     const rendered = displayValue(value);
     return rendered ? [[key, rendered] as const] : [];
@@ -50,11 +51,12 @@ function ResourceCard({ item, run, can }: { item: GovernanceResource; run: Gover
       </div>
       <p className="mt-1 break-all font-mono text-xs text-muted-foreground" dir="ltr">{item.id}</p>
       <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-        {summary.map(([key, value]) => <div key={key} className="min-w-0 rounded-lg bg-muted/40 p-2"><dt className="text-xs text-muted-foreground" dir="auto">{t.has(`resourceFields.${key}` as never) ? t(`resourceFields.${key}` as never) : key}</dt><dd className="break-words" dir="auto">{value}</dd></div>)}
+        {summary.map(([key, value]) => <div key={key} className="min-w-0 rounded-lg bg-muted/40 p-2"><dt className="text-xs text-muted-foreground" dir="auto">{t.has(`resourceFields.${key}` as never) ? t(`resourceFields.${key}` as never) : t("resourceFields.other")}</dt><dd className="break-words" dir="auto">{value}</dd></div>)}
       </dl>
-      {collections.map(([key, collection]) => <details key={key} className="mt-3 rounded-lg border"><summary className="cursor-pointer p-2 text-sm font-medium">{t(`recordCollections.${key}` as never)}</summary><div className="grid gap-2 border-t p-2">{collection.map((entry, index) => <dl key={index} className="grid gap-1 rounded bg-muted/40 p-2 text-xs sm:grid-cols-2">{Object.entries(entry as Record<string, unknown>).flatMap(([entryKey, entryValue]) => { const rendered = displayValue(entryValue); return rendered ? [<div key={entryKey}><dt className="text-muted-foreground" dir="auto">{t.has(`resourceFields.${entryKey}` as never) ? t(`resourceFields.${entryKey}` as never) : entryKey}</dt><dd className="break-words" dir="auto">{rendered}</dd></div>] : []; })}</dl>)}</div></details>)}
-      <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><CheckCircle2Icon className="size-3.5" />{t.has(`states.${item.status}` as never) ? t(`states.${item.status}` as never) : item.status}</p>
+      {collections.map(([key, collection]) => <details key={key} className="mt-3 rounded-lg border"><summary className="cursor-pointer p-2 text-sm font-medium">{t(`recordCollections.${key}` as never)}</summary><div className="grid gap-2 border-t p-2">{collection.map((entry, index) => <dl key={index} className="grid gap-1 rounded bg-muted/40 p-2 text-xs sm:grid-cols-2">{Object.entries(entry as Record<string, unknown>).flatMap(([entryKey, entryValue]) => { const rendered = displayValue(entryValue); return rendered ? [<div key={entryKey}><dt className="text-muted-foreground" dir="auto">{t.has(`resourceFields.${entryKey}` as never) ? t(`resourceFields.${entryKey}` as never) : t("resourceFields.other")}</dt><dd className="break-words" dir="auto">{rendered}</dd></div>] : []; })}</dl>)}</div></details>)}
+      <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><CheckCircle2Icon className="size-3.5" />{t.has(`states.${item.status}` as never) ? t(`states.${item.status}` as never) : t("states.unknown")}</p>
       {item.kind === "portfolio_assignment" && item.status === "active" && can("portfolios.manage") ? <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void run({ type: "revoke_portfolio_assignment", assignmentId: item.id })}>{t("actions.revoke")}</Button> : null}
+      {["audit_export", "workspace_export"].includes(item.kind) && item.status === "succeeded" && can(item.kind === "audit_export" ? "audit.export" : "exports.manage") ? <Button type="button" size="sm" variant="outline" className="mt-3" disabled={downloadBusy} onClick={() => { setDownloadBusy(true); void downloadGovernanceExport(item.id).finally(() => setDownloadBusy(false)); }}>{downloadBusy ? <Loader2Icon className="size-4 animate-spin" /> : null}{t("actions.downloadExport")}</Button> : null}
     </article>
   );
 }

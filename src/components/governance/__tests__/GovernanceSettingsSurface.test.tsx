@@ -58,7 +58,8 @@ describe("GovernanceSettingsSurface", () => {
   it("shows append-only audit evidence without exposing hidden payloads", async () => {
     renderSurface("audit");
     expect(await screen.findByRole("heading", { name: "Workspace Audit Trail" })).toBeInTheDocument();
-    expect(screen.getByText("create_custom_role")).toBeInTheDocument();
+    expect(screen.getByText("Governance activity")).toBeInTheDocument();
+    expect(screen.queryByText("create_custom_role")).not.toBeInTheDocument();
     expect(screen.getByText("roles.manage@1")).toHaveAttribute("dir", "ltr");
     expect(screen.queryByText(/tokenDigest/)).not.toBeInTheDocument();
   });

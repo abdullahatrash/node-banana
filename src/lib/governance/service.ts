@@ -376,6 +376,20 @@ export class GovernanceService {
     };
   }
 
+  async authorizeExportDownload(actor: GovernanceActor, exportId: string): Promise<{ exportId: string; kind: "audit_export" | "workspace_export"; artifactRef: string; expiresAt: string; manifest: unknown }> {
+    const id = safeId(exportId, "Export");
+    const resources = await this.repository.listResources<{ artifactRef?: string | null; expiresAt?: string; manifest?: unknown }>({ workspaceId: actor.workspaceId, kinds: ["audit_export", "workspace_export"] });
+    const item = resources.find((candidate) => candidate.id === id);
+    if (!item) throw new GovernanceError("NOT_FOUND", "Export unavailable.");
+    const required = item.kind === "audit_export" ? "audit.export" as const : "exports.manage" as const;
+    await this.require(actor, required);
+    if (item.status !== "succeeded" || !item.body.artifactRef || !item.body.expiresAt || !item.body.manifest) throw new GovernanceError("CONFLICT", "Export artifact is not ready.");
+    if (exactDate(item.body.expiresAt, "Export expiry") <= this.clock.now()) throw new GovernanceError("EXPIRED", "Export artifact expired.");
+    const prefix = `governance/${actor.workspaceId}/${item.id}/`;
+    if (!item.body.artifactRef.startsWith(prefix) || item.body.artifactRef.includes("..")) throw new GovernanceError("FORBIDDEN", "Export artifact binding is invalid.");
+    return { exportId: item.id, kind: item.kind as "audit_export" | "workspace_export", artifactRef: item.body.artifactRef, expiresAt: item.body.expiresAt, manifest: item.body.manifest };
+  }
+
   private async require(actor: GovernanceActor, capability: GovernanceCapability) {
     if (!(await this.capabilities(actor)).includes(capability)) {
       throw new GovernanceError("FORBIDDEN", `Capability ${capability} is not granted.`);
