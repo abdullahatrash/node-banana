@@ -52,7 +52,7 @@ vi.mock("@/lib/studio/authz", async () => {
   return {
     ...actual,
     withApiPermission: (...args: unknown[]) => mockWithApiPermission(...args),
-    resolveWorkspaceMemberPermissions: (...args: unknown[]) => mockResolvePermissions(...args),
+    resolveWorkspaceMemberPermissions: (input: unknown) => mockResolvePermissions(input),
   };
 });
 
