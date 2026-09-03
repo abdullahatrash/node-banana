@@ -350,14 +350,14 @@ function grantRecord(
   if (grant.action !== "publish" || !/^paag_[A-Za-z0-9_-]+$/.test(grant.id) ||
     !ID.test(grant.workspaceId) || !ID.test(grant.userId) || !ID.test(grant.channelId) ||
     !ID.test(grant.issuedByUserId) ||
-    (grant.subjectRoleAtIssue !== "owner" && grant.subjectRoleAtIssue !== "admin") ||
+    !["owner", "admin", "member"].includes(grant.subjectRoleAtIssue) ||
     (grant.expiresAt !== null && grant.expiresAt <= grant.issuedAt) ||
     (revocation && (!ID.test(revocation.revokedByUserId) || revocation.revokedAt < grant.issuedAt))) return null;
   return {
     id: grant.id,
     workspaceId: grant.workspaceId,
     userId: grant.userId,
-    subjectRoleAtIssue: grant.subjectRoleAtIssue as "owner" | "admin",
+    subjectRoleAtIssue: grant.subjectRoleAtIssue as "owner" | "admin" | "member",
     channelId: grant.channelId,
     action: "publish",
     issuedByUserId: grant.issuedByUserId,
@@ -699,7 +699,7 @@ async function lockCurrentApprovalRetrySource(
 }
 
 function authorityEvidence(input: {
-  workspaceId: string; userId: string; subjectRole: "owner" | "admin";
+  workspaceId: string; userId: string; subjectRole: "owner" | "admin" | "member";
   action: "publish"; channelIds: string[];
   grants: Array<{ channelId: string; grantId: string }>;
   issuedAt: Date; expiresAt: Date;
@@ -737,7 +737,7 @@ async function lockCurrentAuthority(
     .where(and(eq(workspaceMembers.workspaceId, request.workspaceId), eq(workspaceMembers.userId, session.userId)))
     .limit(1).for("share");
   if (!members[0] || members[0].role !== session.subjectRole ||
-    (session.subjectRole !== "owner" && session.subjectRole !== "admin")) return false;
+    !["owner", "admin", "member"].includes(session.subjectRole)) return false;
 
   const grantIds = session.grants.map((grant) => grant.grantId).sort();
   // Lock grant parents in one deterministic order. A revocation insert must
@@ -1244,7 +1244,7 @@ export class DrizzlePublishingApprovalAuthorityRepository
           .limit(1).for("share");
         if (!admins[0]) return { kind: "forbidden" as const };
         const subjects = await tx.select({ role: workspaceMembers.role }).from(workspaceMembers)
-          .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId), inArray(workspaceMembers.role, ["owner", "admin"])))
+          .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)))
           .limit(1).for("share");
         const channels = await tx.select({ id: socialAccounts.id }).from(socialAccounts)
           .where(and(eq(socialAccounts.workspaceId, input.workspaceId), eq(socialAccounts.id, input.channelId), eq(socialAccounts.platform, "linkedin"), eq(socialAccounts.disabled, false), eq(socialAccounts.requiresReauth, false)))
@@ -1264,7 +1264,7 @@ export class DrizzlePublishingApprovalAuthorityRepository
           id: `paag_${randomUUID().replaceAll("-", "")}`,
           workspaceId: input.workspaceId,
           userId: input.userId,
-          subjectRoleAtIssue: subjects[0].role as "owner" | "admin",
+          subjectRoleAtIssue: subjects[0].role,
           channelId: input.channelId,
           action: "publish",
           issuedByUserId: input.issuedByUserId,
@@ -1380,7 +1380,7 @@ export class DrizzlePublishingApprovalAuthorityRepository
         desc(runtimePublishingApprovalAuthorityGrants.issuedAt),
         desc(runtimePublishingApprovalAuthorityGrants.id),
       );
-    if (!rows[0] || (rows[0].memberRole !== "owner" && rows[0].memberRole !== "admin")) return null;
+    if (!rows[0]) return null;
     const subjectRole = rows[0].memberRole;
     const issuedAt = postgresDate(rows[0].databaseNow);
     if (issuedAt < input.evaluatedAt || issuedAt.getTime() - input.evaluatedAt.getTime() > 5_000) return null;

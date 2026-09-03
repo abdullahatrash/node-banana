@@ -30,7 +30,7 @@ export interface PublishingApprovalAuthorityGrantRecord {
   id: string;
   workspaceId: string;
   userId: string;
-  subjectRoleAtIssue: "owner" | "admin";
+  subjectRoleAtIssue: "owner" | "admin" | "member";
   channelId: string;
   action: PublishingApprovalAction;
   issuedByUserId: string;
@@ -46,7 +46,7 @@ export interface PublishingApprovalAuthoritySession {
   workspaceId: string;
   userId: string;
   /** Current Workspace role; membership is necessary but never sufficient. */
-  subjectRole: "owner" | "admin";
+  subjectRole: "owner" | "admin" | "member";
   action: PublishingApprovalAction;
   channelIds: string[];
   grants: Array<{ channelId: string; grantId: string }>;

@@ -106,6 +106,39 @@ describe("PublishingApprovalService", () => {
     })).rejects.toMatchObject({ code: "PUBLISHING_APPROVAL_AUTHORITY_REQUIRED" });
   });
 
+  it("allows a current member only when an exact per-channel publishing grant is verified", async () => {
+    const setup = await setupPublishingApprovals();
+    const approval = await setup.service.request(setup.requestInput());
+    const original = setup.authorityPort.checkCurrent;
+    setup.authorityPort.checkCurrent = async (input) => {
+      const session = await original(input);
+      return session ? { ...session, subjectRole: "member" as const } : null;
+    };
+
+    await expect(setup.service.decide({
+      workspaceId: "workspace_1",
+      userId: "member_1",
+      idempotencyKey: "approval-member-grant",
+      approvalRequestId: approval.id,
+      expectedInspectionDigest: approval.inspectionDigest,
+      decision: "approved",
+    })).resolves.toMatchObject({ status: "approved" });
+
+    setup.setAuthorityCurrent(false);
+    const second = await setup.service.request({
+      ...setup.requestInput(),
+      idempotencyKey: "approval-member-second-request",
+    });
+    await expect(setup.service.decide({
+      workspaceId: "workspace_1",
+      userId: "member_1",
+      idempotencyKey: "approval-member-without-grant",
+      approvalRequestId: second.id,
+      expectedInspectionDigest: second.inspectionDigest,
+      decision: "approved",
+    })).rejects.toMatchObject({ code: "PUBLISHING_APPROVAL_AUTHORITY_REQUIRED" });
+  });
+
   it("replays the original request after expiry and supersession without re-running mutable admission", async () => {
     const setup = await setupPublishingApprovals();
     const first = await setup.service.request(setup.requestInput());

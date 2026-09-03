@@ -162,6 +162,13 @@ describe("Postgres Publishing Approval repository contract", () => {
 
   it("derives grant roles, stamps times durably, and exposes no receipt-bypassing mutation", () => {
     expect(source).toContain("subjectRoleAtIssue: subjects[0].role");
+    expect(source).toContain('!["owner", "admin", "member"].includes');
+    const subjectLookup = source.slice(
+      source.indexOf("const subjects ="),
+      source.indexOf("const channels =", source.indexOf("const subjects =")),
+    );
+    expect(subjectLookup).not.toContain("inArray(workspaceMembers.role");
+    expect(source).toContain('const admins =');
     expect(source).toContain("randomUUID()");
     expect(source).toContain(".returning({ issuedAt:");
     expect(source).toContain(".returning({ revokedAt:");

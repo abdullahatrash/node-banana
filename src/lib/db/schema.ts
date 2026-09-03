@@ -2720,7 +2720,7 @@ export const runtimePublishingApprovalAuthorityGrants = pgTable(
     actionCheck: check(
       "runtime_publishing_approval_authority_grants_action_check",
       sql`${table.action} = 'publish'
-        and ${table.subjectRoleAtIssue} in ('owner','admin')`,
+        and ${table.subjectRoleAtIssue} in ('owner','admin','member')`,
     ),
     expiryCheck: check(
       "runtime_publishing_approval_authority_grants_expiry_check",

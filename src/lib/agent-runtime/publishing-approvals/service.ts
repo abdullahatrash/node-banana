@@ -206,7 +206,7 @@ function validAuthoritySession(input: {
     /^[A-Za-z0-9_-]{1,200}$/.test(session.id) &&
     session.workspaceId === input.workspaceId &&
     session.userId === input.userId &&
-    (session.subjectRole === "owner" || session.subjectRole === "admin") &&
+    (session.subjectRole === "owner" || session.subjectRole === "admin" || session.subjectRole === "member") &&
     session.action === input.action &&
     canonicalDigest(session.channelIds) === canonicalDigest(input.channelIds) &&
     canonicalDigest(grantChannels) === canonicalDigest(input.channelIds) &&
