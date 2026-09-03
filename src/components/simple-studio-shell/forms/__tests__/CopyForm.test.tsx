@@ -13,7 +13,9 @@ vi.mock("next-intl", () => ({
           progress: "Generation progress",
           viewAsset: "View asset",
         })[key] ?? key
-      : key,
+      : namespace === "simpleStudio.forms"
+        ? ({ prompt: "Prompt", generate: "Generate", "copy.tone": "Tone", "copy.platform": "Platform", "copy.unavailable": "Copy generation is paused", "languages.en": "English", "languages.ar": "عربي", "languages.both": "Both" })[key] ?? key
+        : key,
 }));
 
 describe("CopyForm", () => {

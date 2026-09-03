@@ -6,16 +6,13 @@ import { FormPageLayout } from "./FormPageLayout";
 import { FormInfoPanel } from "./FormInfoPanel";
 import { LatestResultsInline } from "./LatestResultsInline";
 import { GenerateProgress } from "./GenerateProgress";
+import { useTranslations } from "next-intl";
 
-const TONES = ["professional", "casual", "creative", "persuasive"];
-const PLATFORMS = ["general", "instagram", "x", "linkedin"];
+const TONES = ["professional", "casual", "creative", "persuasive"] as const;
+const PLATFORMS = ["general", "instagram", "x", "linkedin"] as const;
 const BATCH_PRESETS = [1, 4, 8];
 
-const OUTPUT_LANGUAGES: { value: "en" | "ar" | "both"; label: string }[] = [
-  { value: "en", label: "English" },
-  { value: "ar", label: "عربي" },
-  { value: "both", label: "Both" },
-];
+const OUTPUT_LANGUAGES = ["en", "ar", "both"] as const;
 
 const LLM_MODELS: { id: string; name: string; provider: string }[] = [
   { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "Google" },
@@ -28,6 +25,7 @@ const LLM_MODELS: { id: string; name: string; provider: string }[] = [
 ];
 
 export function CopyForm() {
+  const t = useTranslations("simpleStudio.forms");
   const prompt = useSimpleStudioStore((s) => s.prompt);
   const setPrompt = useSimpleStudioStore((s) => s.setPrompt);
   const tone = useSimpleStudioStore((s) => s.tone);
@@ -52,21 +50,21 @@ export function CopyForm() {
           batchPresets={BATCH_PRESETS}
           currentBatchCount={batchCount}
           onBatchCountChange={setBatchCount}
-          estimatedCost={<span>{batchCount} variant{batchCount > 1 ? "s" : ""}</span>}
-          tips={<p>Give the model context: audience, product, and desired action.</p>}
+          estimatedCost={<span>{t("copy.count", { count: batchCount })}</span>}
+          tips={<p>{t("copy.tip")}</p>}
         />
       }
     >
       <div className="space-y-4">
-        <div role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">Copy generation is paused until Google, OpenAI, and Anthropic implement the same accepted Brand Profile, Arabic language, rights/provenance, exact quote, budget reservation, and durable Operation admission required for media. · تم إيقاف توليد النص مؤقتًا حتى يكتمل مسار الاعتماد الآمن.</div>
+        <div role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">{t("copy.unavailable")}</div>
         <div>
           <label htmlFor="copy-prompt" className="mb-2 block text-sm font-medium">
-            Prompt
+            {t("prompt")}
           </label>
           <textarea
             id="copy-prompt"
             className="min-h-32 w-full resize-y rounded-md border bg-background p-3 text-sm"
-            placeholder="What should the copy be about?"
+            placeholder={t("copy.placeholder")}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
           />
@@ -75,7 +73,7 @@ export function CopyForm() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label htmlFor="copy-tone" className="mb-2 block text-sm font-medium">
-              Tone
+              {t("copy.tone")}
             </label>
             <select
               id="copy-tone"
@@ -83,9 +81,9 @@ export function CopyForm() {
               value={tone}
               onChange={(e) => setTone(e.target.value)}
             >
-              {TONES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+              {TONES.map((toneValue) => (
+                <option key={toneValue} value={toneValue}>
+                  {t(`tones.${toneValue}`)}
                 </option>
               ))}
             </select>
@@ -93,7 +91,7 @@ export function CopyForm() {
 
           <div>
             <label htmlFor="copy-platform" className="mb-2 block text-sm font-medium">
-              Platform
+              {t("copy.platform")}
             </label>
             <select
               id="copy-platform"
@@ -103,7 +101,7 @@ export function CopyForm() {
             >
               {PLATFORMS.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {t(`platforms.${p}`)}
                 </option>
               ))}
             </select>
@@ -111,20 +109,20 @@ export function CopyForm() {
         </div>
 
         <div>
-          <label className="mb-2 block text-sm font-medium">Output language</label>
+          <label className="mb-2 block text-sm font-medium">{t("copy.outputLanguage")}</label>
           <div className="flex gap-2">
             {OUTPUT_LANGUAGES.map((lang) => (
               <button
-                key={lang.value}
+                key={lang}
                 type="button"
                 className={`flex-1 rounded-md border px-3 py-1 text-xs ${
-                  outputLanguage === lang.value
+                  outputLanguage === lang
                     ? "border-primary bg-primary/10"
                     : "border-border hover:bg-muted"
                 }`}
-                onClick={() => setOutputLanguage(lang.value)}
+                onClick={() => setOutputLanguage(lang)}
               >
-                {lang.label}
+                {t(`languages.${lang}`)}
               </button>
             ))}
           </div>
@@ -132,7 +130,7 @@ export function CopyForm() {
 
         <div>
           <label htmlFor="copy-model" className="mb-2 block text-sm font-medium">
-            Model
+            {t("model")}
           </label>
           <select
             id="copy-model"
@@ -160,7 +158,7 @@ export function CopyForm() {
               void generate();
             }}
           >
-            Generate
+            {t("generate")}
           </Button>
         )}
 

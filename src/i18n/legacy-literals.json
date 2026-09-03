@@ -1,5 +1,3 @@
 [
-  "src/components/marketing/MarketingHome.tsx",
-  "src/components/simple-studio-shell/forms/CopyForm.tsx",
-  "src/components/simple-studio-shell/forms/VideoForm.tsx"
+  "src/components/marketing/MarketingHome.tsx"
 ]

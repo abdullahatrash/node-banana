@@ -22,6 +22,7 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
   const t = useTranslations("simpleStudio.modelSelect"); const locale = typeof document === "undefined" ? undefined : document.documentElement.lang || undefined;
   const selectedModelId = useSimpleStudioStore((s) => s.selectedModelId);
   const setSelectedModel = useSimpleStudioStore((s) => s.setSelectedModel);
+  const sourceMediaType = useSimpleStudioStore((s) => s.sourceMediaType);
 
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -44,7 +45,8 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
         if (data.success) {
           const seen = new Set<string>();
           const unique = (data.items || []).filter((m: ProviderModel) => {
-            const supported = mode === "video" ? m.capabilities?.some((capability) => capability === "text_to_video" || capability === "image_to_video") : m.capabilities?.some((capability) => capability === "text_to_image" || capability === "image_to_image");
+            const requiredCapability = mode === "video" ? sourceMediaType === "video" ? "video_to_video" : sourceMediaType === "image" ? "image_to_video" : "text_to_video" : "text_to_image";
+            const supported = m.capabilities?.includes(requiredCapability);
             if (m.provider !== "replicate" || m.qualification.status !== "qualified" || !supported || seen.has(m.model)) return false;
             seen.add(m.model);
             return true;
@@ -64,7 +66,7 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
       });
 
     return () => controller.abort();
-  }, [mode]);
+  }, [mode, sourceMediaType]);
 
   const sorted = [...models].sort((a, b) => a.label.localeCompare(b.label));
 

@@ -22,7 +22,7 @@ export function classifyContentLanguage(value: string): ContentLanguage {
 }
 
 export interface StudioGenerationRequest {
-  prompt: string; model: ExactModelRef; mode: "photo" | "video"; sourceAssetIds: string[]; quantity: number;
+  prompt: string; model: ExactModelRef; mode: "photo" | "video"; sourceMediaType: "image" | "video" | null; sourceAssetIds: string[]; quantity: number;
   arabicVariety: ArabicVariety; rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
   permittedRemix: "reference_only" | "transform" | "derivative"; rightsEvidenceIds: string[];
   remixBrief: { preserve: string[]; transform: string[]; avoid: string[] }; idempotencyKey: string; signal: AbortSignal;
@@ -34,7 +34,7 @@ async function errorFrom(response: Response) { const parsed = errorSchema.safePa
 
 export async function runAdmittedStudioGeneration(input: StudioGenerationRequest): Promise<{ result: string; assetId: string }> {
   const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new StudioGenerationError("WORKSPACE_REQUIRED");
-  const capability: GenerationCapability = input.mode === "video" ? (input.sourceAssetIds.length ? "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image");
+  const capability: GenerationCapability = input.mode === "video" ? (input.sourceAssetIds.length ? input.sourceMediaType === "video" ? "video_to_video" : "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image");
   const contentLanguage = classifyContentLanguage(input.prompt);
   const response = await fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief }), signal: input.signal });
   if (!response.ok) throw await errorFrom(response);

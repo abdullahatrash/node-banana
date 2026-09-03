@@ -46,7 +46,7 @@ function ResultCard({ gen }: { gen: Generation }) {
         {gen.result && (
           <video
             src={gen.result}
-            className="w-full aspect-video object-cover"
+            className="aspect-[9/16] w-full bg-black object-contain"
             muted
             playsInline
             controls
@@ -64,7 +64,7 @@ function ResultCard({ gen }: { gen: Generation }) {
         <img
           src={gen.result}
           alt={gen.prompt}
-          className="w-full aspect-square object-cover"
+          className="aspect-[9/16] w-full bg-muted object-contain"
         />
       )}
     </div>

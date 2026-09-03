@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { VideoForm } from "../VideoForm";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
-vi.mock("next-intl", () => ({ useTranslations: (namespace: string) => (key: string) => namespace === "simpleStudio.generation" ? ({ generating: "Generating…", cancel: "Cancel", progress: "Generation progress" })[key] ?? key : key }));
+vi.mock("next-intl", () => ({ useTranslations: (namespace: string) => (key: string) => namespace === "simpleStudio.generation" ? ({ generating: "Generating…", cancel: "Cancel", progress: "Generation progress" })[key] ?? key : namespace === "simpleStudio.forms" ? ({ prompt: "Prompt", generate: "Generate", enhancing: "Enhancing prompt…", enhance: "AI Prompt Enhance", "video.sourceImageAlt": "Source", "video.removeSource": "Remove source image", "video.includeDialogue": "Include dialogue", "video.dialogueText": "Dialogue text", "languages.en": "English", "languages.ar": "عربي" })[key] ?? key : key }));
 
 describe("VideoForm", () => {
   beforeEach(() => {
@@ -16,6 +16,7 @@ describe("VideoForm", () => {
       isGenerating: false,
       isRewriting: false,
       sourceImage: null,
+      sourceMediaType: null,
       rewriteEnabled: false,
       rewrittenPrompt: null,
       dialogueEnabled: false,
@@ -59,13 +60,13 @@ describe("VideoForm", () => {
   });
 
   it("renders source image preview from the store", () => {
-    useSimpleStudioStore.setState({ sourceImage: "data:image/png;base64,AAA" });
+    useSimpleStudioStore.setState({ sourceImage: "data:image/png;base64,AAA", sourceMediaType: "image" });
     render(<VideoForm />);
     expect(screen.getByAltText("Source")).toBeInTheDocument();
   });
 
   it("removes source image when clicking ×", async () => {
-    useSimpleStudioStore.setState({ sourceImage: "data:image/png;base64,AAA" });
+    useSimpleStudioStore.setState({ sourceImage: "data:image/png;base64,AAA", sourceMediaType: "image" });
     render(<VideoForm />);
     await userEvent.click(
       screen.getByRole("button", { name: /remove source image/i })

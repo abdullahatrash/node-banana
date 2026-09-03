@@ -12,6 +12,8 @@ const mockBuildAssetObjectKey = vi.fn();
 const mockCreatePresignedDownload = vi.fn();
 const mockRequireRegion = vi.fn(async (_input?: unknown) => undefined);
 
+vi.mock("sharp", () => ({ default: () => ({ metadata: async () => ({ width: 1080, height: 1920 }) }) }));
+
 vi.mock("@/lib/governance/region-enforcement", () => ({ GOVERNANCE_REGION_ROUTES: { assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" }, assetProcessing: { kind: "processing", routeId: "processing:asset-ingestion" } }, requireGovernanceRegionRoute: (...args: unknown[]) => mockRequireRegion(args[0]) }));
 
 const { MockStudioAssetQuotaExceededError } = vi.hoisted(() => {

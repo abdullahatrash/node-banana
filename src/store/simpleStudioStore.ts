@@ -64,7 +64,8 @@ export interface SimpleStudioState {
   referenceImages: string[];
   setReferenceImages: (images: string[]) => void;
   sourceImage: string | null;
-  setSourceImage: (image: string | null) => void;
+  sourceMediaType: "image" | "video" | null;
+  setSourceImage: (image: string | null, mediaType?: "image" | "video" | null) => void;
   videoDuration: number;
   setVideoDuration: (duration: number) => void;
   dialogueEnabled: boolean;
@@ -126,7 +127,7 @@ const CONCURRENT_LIMIT = 4;
 async function submitAdmittedGeneration(input: { state: SimpleStudioState; prompt: string; mode: "photo" | "video"; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
   if (!input.state.selectedModelId || input.state.selectedModelProvider !== "replicate" || !input.state.selectedModelVersion || !input.state.selectedModelSchemaDigest) throw new Error("MODEL_NOT_SELECTED");
   if (!input.state.rightsConfirmed) throw new Error("RIGHTS_CONFIRMATION_REQUIRED");
-  return runAdmittedStudioGeneration({ prompt: input.prompt, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : ["composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal });
+  return runAdmittedStudioGeneration({ prompt: input.prompt, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : ["composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal });
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +149,9 @@ async function processInChunks<T>(
 
 async function resolveSourceAssetIds(state: SimpleStudioState, mode: Exclude<SimpleStudioMode, "copy">, filePrefix: string) {
   const sources = mode === "photo" ? state.referenceImages : state.sourceImage ? [state.sourceImage] : [];
-  return Promise.all(sources.map(async (source, index) => source.startsWith("asset:") ? source.slice(6) : (await ingestStudioAsset({ assetType: "image", sourceDataUrl: source.startsWith("data:") ? source : undefined, sourceUrl: source.startsWith("http") ? source : undefined, fileName: `${filePrefix}-${index}.png` })).assetId));
+  const sourceType = mode === "video" && state.sourceMediaType === "video" ? "video" : "image";
+  const extension = sourceType === "video" ? "mp4" : "png";
+  return Promise.all(sources.map(async (source, index) => source.startsWith("asset:") ? source.slice(6) : (await ingestStudioAsset({ assetType: sourceType, sourceDataUrl: source.startsWith("data:") ? source : undefined, sourceUrl: source.startsWith("http") ? source : undefined, fileName: `${filePrefix}-${index}.${extension}` })).assetId));
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +222,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   referenceImages: [],
   setReferenceImages: (images) => set({ referenceImages: images }),
   sourceImage: null,
-  setSourceImage: (image) => set({ sourceImage: image }),
+  sourceMediaType: null,
+  setSourceImage: (image, mediaType = image ? "image" : null) => set({ sourceImage: image, sourceMediaType: image ? mediaType : null, selectedModelId: null, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null }),
   videoDuration: 5,
   setVideoDuration: (duration) => set({ videoDuration: duration }),
   dialogueEnabled: false,

@@ -8,6 +8,7 @@ import { ModelSelect } from "./ModelSelect";
 import { LatestResultsInline } from "./LatestResultsInline";
 import { GenerateProgress } from "./GenerateProgress";
 import { GenerationAdmissionPanel } from "./GenerationAdmissionPanel";
+import { useTranslations } from "next-intl";
 
 const ASPECT_RATIOS = [
   { value: "9:16", label: "9:16" },
@@ -18,6 +19,7 @@ const BATCH_PRESETS = [1, 4, 8, 12];
 const MAX_REFERENCE_IMAGES = 3;
 
 export function ImageForm() {
+  const t = useTranslations("simpleStudio.forms");
   const prompt = useSimpleStudioStore((s) => s.prompt);
   const setPrompt = useSimpleStudioStore((s) => s.setPrompt);
   const aspectRatio = useSimpleStudioStore((s) => s.aspectRatio);
@@ -60,23 +62,23 @@ export function ImageForm() {
           onAspectRatioChange={setAspectRatio}
           currentBatchCount={batchCount}
           onBatchCountChange={setBatchCount}
-          estimatedCost={<span>{batchCount} image{batchCount > 1 ? "s" : ""}</span>}
+          estimatedCost={<span>{t("image.count", { count: batchCount })}</span>}
           outputExample={
-            <div className="aspect-square w-full rounded-md border bg-muted" />
+            <div className="aspect-[9/16] w-full rounded-md border bg-muted" />
           }
-          tips={<p>Describe the scene, style, and subject for best results.</p>}
+          tips={<p>{t("image.tip")}</p>}
         />
       }
     >
       <div className="space-y-4">
         <div>
           <label htmlFor="image-prompt" className="mb-2 block text-sm font-medium">
-            Prompt
+            {t("prompt")}
           </label>
           <textarea
             id="image-prompt"
             className="min-h-32 w-full resize-y rounded-md border bg-background p-3 text-sm"
-            placeholder="Describe the image you want to generate…"
+            placeholder={t("image.placeholder")}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
           />
@@ -84,7 +86,7 @@ export function ImageForm() {
 
         <div className="flex items-center justify-between">
           <label htmlFor="image-rewrite" className="text-sm font-medium">
-            AI Prompt Enhance
+            {t("enhance")}
           </label>
           <button
             id="image-rewrite"
@@ -92,7 +94,7 @@ export function ImageForm() {
             role="switch"
             aria-checked={rewriteEnabled}
             disabled
-            title="Prompt enhancement is paused until its admitted text adapter is qualified."
+            title={t("enhancePaused")}
             onClick={() => setRewriteEnabled(!rewriteEnabled)}
             className={`relative h-5 w-9 rounded-full transition-colors ${
               rewriteEnabled ? "bg-primary" : "bg-muted"
@@ -109,7 +111,7 @@ export function ImageForm() {
         {rewriteEnabled && rewrittenPrompt && (
           <div className="rounded-md border bg-muted/40 p-3">
             <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-primary">
-              Enhanced prompt
+              {t("enhanced")}
             </div>
             <p className="text-xs leading-relaxed" dir="auto">
               {rewrittenPrompt}
@@ -119,7 +121,7 @@ export function ImageForm() {
 
         <div>
           <label className="mb-2 block text-sm font-medium">
-            Reference images (optional)
+            {t("image.references")}
           </label>
           <div className="flex flex-wrap gap-2">
             {referenceImages.map((img, i) => (
@@ -130,12 +132,12 @@ export function ImageForm() {
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={img}
-                  alt={`Reference ${i + 1}`}
-                  className="h-full w-full object-cover"
+                  alt={t("image.referenceAlt", { number: i + 1 })}
+                  className="h-full w-full object-contain"
                 />
                 <button
                   type="button"
-                  aria-label={`Remove reference image ${i + 1}`}
+                  aria-label={t("image.removeReference", { number: i + 1 })}
                   onClick={() =>
                     setReferenceImages(referenceImages.filter((_, j) => j !== i))
                   }
@@ -151,7 +153,7 @@ export function ImageForm() {
                 <input
                   type="file"
                   accept="image/*"
-                  aria-label="Add reference image"
+                  aria-label={t("image.addReference")}
                   className="hidden"
                   onChange={handleReferenceImageUpload}
                 />
@@ -159,13 +161,13 @@ export function ImageForm() {
             )}
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Up to {MAX_REFERENCE_IMAGES} images. Used by the model as visual context.
+            {t("image.referenceHint", { count: MAX_REFERENCE_IMAGES })}
           </p>
         </div>
 
         <div>
           <label htmlFor="image-model" className="mb-2 block text-sm font-medium">
-            Model
+            {t("model")}
           </label>
           <ModelSelect mode="photo" id="image-model" />
         </div>
@@ -183,7 +185,7 @@ export function ImageForm() {
               void generate();
             }}
           >
-            {isRewriting ? "Enhancing prompt…" : "Generate"}
+            {isRewriting ? t("enhancing") : t("generate")}
           </Button>
         )}
 

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "node:crypto";
+import sharp from "sharp";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { assetTypeEnum } from "@/lib/db/schema";
 import {
@@ -93,6 +95,26 @@ function parseDataUrl(sourceDataUrl: string): { mimeType: string; bytes: Buffer 
   const base64Data = match[2];
   const bytes = Buffer.from(base64Data, "base64");
   return { mimeType, bytes };
+}
+
+async function probeUploadedMedia(assetType: IngestRequest["assetType"], bytes: Buffer): Promise<{ checksum: `sha256:${string}`; width?: number; height?: number; durationSeconds?: number; metadata?: Record<string, unknown> }> {
+  const checksum = `sha256:${createHash("sha256").update(bytes).digest("hex")}` as const;
+  if (assetType === "image") {
+    const result = await sharp(bytes, { failOn: "error" }).metadata();
+    if (!result.width || !result.height) throw new Error("Uploaded image dimensions could not be decoded.");
+    return { checksum, width: result.width, height: result.height, metadata: { dimensionEvidence: "server-media-probe/v1" } };
+  }
+  if (assetType === "video") {
+    const { ALL_FORMATS, BlobSource, Input } = await import("mediabunny");
+    const media = new Input({ formats: ALL_FORMATS, source: new BlobSource(new Blob([new Uint8Array(bytes)])) });
+    try {
+      const track = await media.getPrimaryVideoTrack();
+      const durationSeconds = await media.computeDuration();
+      if (!track || !track.displayWidth || !track.displayHeight || !Number.isFinite(durationSeconds) || durationSeconds <= 0) throw new Error("Uploaded video metadata could not be decoded.");
+      return { checksum, width: track.displayWidth, height: track.displayHeight, durationSeconds, metadata: { dimensionEvidence: "server-media-probe/v1" } };
+    } finally { media.dispose(); }
+  }
+  return { checksum };
 }
 
 function sanitizeFileName(fileName?: string): string | null {
@@ -251,6 +273,9 @@ export const POST = withStudioAuth<undefined>(
         }
 
         uploadMimeType = (body.contentType?.trim().toLowerCase() || sourceMimeType || pickDefaultMimeType(body.assetType));
+        if (body.assetType === "image" && !uploadMimeType.startsWith("image/")) throw new Error("Uploaded image content type is invalid.");
+        if (body.assetType === "video" && !["video/mp4", "video/webm", "video/quicktime"].includes(uploadMimeType)) throw new Error("Uploaded video format is unsupported.");
+        const probed = await probeUploadedMedia(body.assetType, bytes);
         const sanitizedName = sanitizeFileName(body.fileName);
         const extension =
           getExtensionFromFileName(sanitizedName || undefined) ||
@@ -284,6 +309,11 @@ export const POST = withStudioAuth<undefined>(
           uploadState: "ready",
           sizeBytes: bytes.length,
           mimeType: uploadMimeType,
+          checksum: probed.checksum,
+          width: probed.width,
+          height: probed.height,
+          durationSeconds: probed.durationSeconds,
+          metadata: probed.metadata,
         });
 
         const signed = await createPresignedDownload({ key });

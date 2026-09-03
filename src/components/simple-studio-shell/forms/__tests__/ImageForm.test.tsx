@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { ImageForm } from "../ImageForm";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
-vi.mock("next-intl", () => ({ useTranslations: (namespace: string) => (key: string) => namespace === "simpleStudio.generation" ? ({ generating: "Generating…", cancel: "Cancel", progress: "Generation progress" })[key] ?? key : key }));
+vi.mock("next-intl", () => ({ useTranslations: (namespace: string) => (key: string, values?: Record<string, number>) => namespace === "simpleStudio.generation" ? ({ generating: "Generating…", cancel: "Cancel", progress: "Generation progress" })[key] ?? key : namespace === "simpleStudio.forms" ? ({ prompt: "Prompt", generate: "Generate", enhancing: "Enhancing prompt…", enhance: "AI Prompt Enhance", enhanced: "Enhanced prompt", "image.referenceAlt": `Reference ${values?.number}`, "image.removeReference": `Remove reference image ${values?.number}`, "image.addReference": "Add reference image" })[key] ?? key : key }));
 
 describe("ImageForm", () => {
   beforeEach(() => {
