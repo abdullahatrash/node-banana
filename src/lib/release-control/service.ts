@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { evaluateReleaseReadiness, parseProductTelemetryEvent } from "./policy";
 import { experimentSchema, releaseFlagSchema, releaseRecordInputSchema, type ReleaseRecordInput } from "./schemas";
-import type { ReleaseControlRepository, StoredReleaseRecord } from "./repository";
+import type { ReleaseControlRepository, ReleaseFlagRuntimeDecision, StoredReleaseRecord } from "./repository";
 import type { AccessibilityEvidence, ContractMigrationEvidence, ParityRequirement, PerformanceEvidence, PublicIncident, RecoveryObjective, ReleaseEvidence, ReleaseFlag, ReleaseReadinessDecision, RestoreDrillEvidence } from "./types";
 import { verifyReleaseAttestation, type ReleaseAttestationKeyring } from "./attestation";
 import type { ReleaseManifest } from "./manifest";
@@ -101,6 +101,25 @@ export class ReleaseControlService {
     const subjectPseudonym = this.subjectPseudonym(workspaceId, userId); const bucket = Number.parseInt(createHmac("sha256", this.telemetrySecret).update(`experiment:${experiment.id}:${subjectPseudonym}:${row.revision}`).digest("hex").slice(0, 8), 16) % 10_000;
     const treatments = experiment.variants.filter((variant) => variant !== "control"); const variant = bucket < experiment.allocationPercent * 100 ? treatments[bucket % treatments.length]! : "control";
     return this.repository.assignExperiment({ workspaceId, experimentId, subjectPseudonym, assignmentRevision: row.revision, variant, expiresAt: new Date(Math.min(new Date(experiment.expiresAt).getTime(), consent.expiresAt.getTime())), idempotencyKey, now });
+  }
+  async evaluateReleaseFlag(workspaceId: string, userId: string, flagId: string, context: { role: string; entitlement: string; locale: "ar" | "en"; entryPoint: string }, idempotencyKey: string, now = new Date()): Promise<ReleaseFlagRuntimeDecision> {
+    if (![flagId, context.role, context.entitlement, context.entryPoint].every((value) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value))) throw new TypeError("RELEASE_FLAG_CONTEXT_INVALID");
+    const manifest = this.trust.manifest?.(workspaceId, now); if (!manifest) throw new TypeError("RELEASE_MANIFEST_MISSING");
+    const records = await this.repository.listLatest(workspaceId, "flag"); const rows = new Map(records.map((row) => [row.id, row])); const subjectPseudonym = this.subjectPseudonym(workspaceId, userId);
+    const evaluate = async (currentId: string, path: Set<string>): Promise<ReleaseFlagRuntimeDecision> => {
+      if (path.has(currentId)) throw new TypeError("RELEASE_FLAG_DEPENDENCY_CYCLE");
+      const row = rows.get(currentId); if (!row) throw new TypeError("RELEASE_FLAG_NOT_ACTIVE");
+      const value = releaseFlagSchema.parse(row.document); const expiresAt = new Date(value.expiresAt);
+      if (value.status !== "active" || value.buildId !== manifest.buildId || expiresAt <= now || value.safeDefault !== "off") throw new TypeError("RELEASE_FLAG_NOT_ACTIVE");
+      const dependencyDecisions = await Promise.all(value.dependencyFlagIds.map((dependency) => evaluate(dependency, new Set(path).add(currentId))));
+      const eligible = value.eligibility.roles.includes(context.role) && value.eligibility.entitlements.includes(context.entitlement) && value.eligibility.locales.includes(context.locale);
+      const cohortBucket = Number.parseInt(createHmac("sha256", this.telemetrySecret).update(`release-flag:${value.id}:${row.revision}:${subjectPseudonym}`).digest("hex").slice(0, 8), 16) % 10_000;
+      const enabled = eligible && dependencyDecisions.every((decision) => decision.enabled) && cohortBucket < value.rolloutPercent * 100;
+      const decision: ReleaseFlagRuntimeDecision = { schema: "release-flag-decision/v1", flagId: value.id, flagRevision: row.revision, eligible, enabled, cohortBucket, evaluatedAt: now, expiresAt };
+      const evaluationId = `rfe_${createHmac("sha256", this.telemetrySecret).update(`${workspaceId}:${idempotencyKey}:${value.id}:${row.revision}`).digest("hex")}`;
+      return this.repository.recordReleaseFlagEvaluation({ workspaceId, evaluationId, subjectPseudonym, role: context.role, entitlement: context.entitlement, locale: context.locale, entryPoint: context.entryPoint, decision });
+    };
+    return evaluate(flagId, new Set());
   }
   deleteExpiredTelemetry(now = new Date(), limit = 500) { if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new TypeError("TELEMETRY_RETENTION_LIMIT_INVALID"); return this.repository.deleteExpiredTelemetry(now, limit); }
   backfillTelemetryPrivacyFields(limit = 500) { if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) throw new TypeError("TELEMETRY_BACKFILL_LIMIT_INVALID"); return this.repository.backfillTelemetryPrivacyFields(limit); }

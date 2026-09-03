@@ -15,6 +15,8 @@ function repository() {
     assignExperiment: vi.fn(async () => ({ assignment: {}, replayed: false })),
     hasExperimentExposure: vi.fn(async () => false),
     deleteExpiredTelemetry: vi.fn(async () => 0),
+    backfillTelemetryPrivacyFields: vi.fn(async () => ({ processed: 0, remaining: 0, status: "completed" as const })),
+    recordReleaseFlagEvaluation: vi.fn(async (input) => input.decision),
   } as unknown as ReleaseControlRepository;
 }
 
@@ -62,5 +64,28 @@ describe("ReleaseControlService", () => {
     await expect(service.telemetry("workspace-1", "owner-1", "auth-context", "mena", outcome, "request-key-outcome-1", NOW)).rejects.toThrow("EXPERIMENT_ASSIGNMENT_REQUIRED");
     vi.mocked(repo.getExperimentAssignment).mockResolvedValue({ schema: "experiment-assignment/v1", workspaceId: "workspace-1", experimentId: "exp_checkout", subjectPseudonym: `sub_${"a".repeat(64)}`, assignmentRevision: 3, variant: "treatment", assignedAt: NOW, expiresAt: new Date(NOW.getTime() + 60_000) });
     await expect(service.telemetry("workspace-1", "owner-1", "auth-context", "mena", outcome, "request-key-outcome-2", NOW)).rejects.toThrow("EXPERIMENT_EXPOSURE_REQUIRED");
+  });
+
+  it("deterministically evaluates and persists eligible release-flag dependency cohorts", async () => {
+    const repo = repository();
+    const flag = (id: string, dependencyFlagIds: string[]) => ({ id, buildId: "build-1", ownerUserId: "owner-1", hypothesis: "Safely admit generation", createdAt: new Date(NOW.getTime() - 1_000).toISOString(), expiresAt: new Date(NOW.getTime() + 60_000).toISOString(), rolloutPercent: 100, safeDefault: "off", status: "active", evidenceIds: ["evidence-1"], eligibility: { roles: ["owner"], entitlements: ["pro"], locales: ["ar"] }, dependencyFlagIds, telemetryEventName: "release_flag_evaluated", rollback: { mode: "automatic", triggerMetric: "error_rate", threshold: 0.1, windowMinutes: 15, ownerUserId: "owner-1" } });
+    vi.mocked(repo.listLatest).mockResolvedValue([
+      { workspaceId: "workspace-1", kind: "flag", id: "generation", revision: 4, buildId: "build-1", document: flag("generation", ["provider"]), createdByUserId: "owner-1", createdAt: NOW, expiresAt: new Date(NOW.getTime() + 60_000) },
+      { workspaceId: "workspace-1", kind: "flag", id: "provider", revision: 2, buildId: "build-1", document: flag("provider", []), createdByUserId: "owner-1", createdAt: NOW, expiresAt: new Date(NOW.getTime() + 60_000) },
+    ]);
+    const service = new ReleaseControlService(repo, "a-test-secret-long-enough-for-stable-hmac", { manifest: () => ({ buildId: "build-1" }) as never });
+    const context = { role: "owner", entitlement: "pro", locale: "ar" as const, entryPoint: "admitted_generation_execute" };
+    const first = await service.evaluateReleaseFlag("workspace-1", "owner-1", "generation", context, "request-flag-1", NOW);
+    const second = await service.evaluateReleaseFlag("workspace-1", "owner-1", "generation", context, "request-flag-2", NOW);
+    expect(first).toMatchObject({ eligible: true, enabled: true, flagRevision: 4 });
+    expect(second.cohortBucket).toBe(first.cohortBucket);
+    expect(repo.recordReleaseFlagEvaluation).toHaveBeenCalledTimes(4);
+  });
+
+  it("fails release flags closed for ineligible subjects and missing dependencies", async () => {
+    const repo = repository(); const document = { id: "generation", buildId: "build-1", ownerUserId: "owner-1", hypothesis: "Safely admit generation", createdAt: new Date(NOW.getTime() - 1_000).toISOString(), expiresAt: new Date(NOW.getTime() + 60_000).toISOString(), rolloutPercent: 100, safeDefault: "off", status: "active", evidenceIds: ["evidence-1"], eligibility: { roles: ["owner"], entitlements: ["pro"], locales: ["ar"] }, dependencyFlagIds: ["missing"], telemetryEventName: "release_flag_evaluated", rollback: { mode: "manual", triggerMetric: "error_rate", threshold: 0.1, windowMinutes: 15, ownerUserId: "owner-1" } };
+    vi.mocked(repo.listLatest).mockResolvedValue([{ workspaceId: "workspace-1", kind: "flag", id: "generation", revision: 1, buildId: "build-1", document, createdByUserId: "owner-1", createdAt: NOW, expiresAt: new Date(NOW.getTime() + 60_000) }]);
+    const service = new ReleaseControlService(repo, "a-test-secret-long-enough-for-stable-hmac", { manifest: () => ({ buildId: "build-1" }) as never });
+    await expect(service.evaluateReleaseFlag("workspace-1", "owner-1", "generation", { role: "viewer", entitlement: "free", locale: "en", entryPoint: "admitted_generation_execute" }, "request-flag-3", NOW)).rejects.toThrow("RELEASE_FLAG_NOT_ACTIVE");
   });
 });

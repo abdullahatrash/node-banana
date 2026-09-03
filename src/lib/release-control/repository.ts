@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, lte, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
-import { experimentAssignments, productTelemetryConsents, productTelemetryEvents, releaseControlMutationReceipts, releaseControlRecords } from "./db-schema";
+import { experimentAssignments, productTelemetryConsents, productTelemetryEvents, releaseControlMutationReceipts, releaseControlRecords, releaseFlagAssignments, releaseFlagEvaluations } from "./db-schema";
 
 type Db = ReturnType<typeof getDb>;
 export type ReleaseRecordKind = "evidence" | "flag" | "incident" | "recovery_objective" | "restore_drill" | "contract_migration" | "parity_requirement" | "experiment";
 export interface StoredReleaseRecord { workspaceId: string; kind: ReleaseRecordKind; id: string; revision: number; buildId: string | null; document: Record<string, unknown>; createdByUserId: string; createdAt: Date; expiresAt: Date | null }
 export interface TelemetryConsent { schema: "product-telemetry-consent/v1"; workspaceId: string; userId: string; revision: number; purpose: "product_analytics"; status: "active" | "revoked"; issuedAt: Date; expiresAt: Date }
 export interface ExperimentAssignment { schema: "experiment-assignment/v1"; workspaceId: string; experimentId: string; subjectPseudonym: string; assignmentRevision: number; variant: string; assignedAt: Date; expiresAt: Date }
+export interface ReleaseFlagRuntimeDecision { schema: "release-flag-decision/v1"; flagId: string; flagRevision: number; eligible: boolean; enabled: boolean; cohortBucket: number; evaluatedAt: Date; expiresAt: Date }
 
 function digest(value: unknown): string { return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`; }
 
@@ -94,6 +95,17 @@ export class ReleaseControlRepository {
     if (!row) throw new Error("TELEMETRY_BACKFILL_RESULT_MISSING");
     const status = row.status === "completed" ? "completed" : "running";
     return { processed: Number(row.processed), remaining: Number(row.remaining), status };
+  }
+
+  async recordReleaseFlagEvaluation(input: { workspaceId: string; evaluationId: string; subjectPseudonym: string; role: string; entitlement: string; locale: "ar" | "en"; entryPoint: string; decision: ReleaseFlagRuntimeDecision }): Promise<ReleaseFlagRuntimeDecision> {
+    return this.database().transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`release-flag:${input.workspaceId}:${input.decision.flagId}:${input.subjectPseudonym}`}, 0))`);
+      const [existing] = await tx.select().from(releaseFlagAssignments).where(and(eq(releaseFlagAssignments.workspaceId, input.workspaceId), eq(releaseFlagAssignments.flagId, input.decision.flagId), eq(releaseFlagAssignments.subjectPseudonym, input.subjectPseudonym), eq(releaseFlagAssignments.flagRevision, input.decision.flagRevision))).limit(1);
+      if (existing && (existing.cohortBucket !== input.decision.cohortBucket || new Date(existing.expiresAt).getTime() !== input.decision.expiresAt.getTime())) throw new ReleaseControlConflictError();
+      if (!existing) await tx.insert(releaseFlagAssignments).values({ workspaceId: input.workspaceId, flagId: input.decision.flagId, subjectPseudonym: input.subjectPseudonym, flagRevision: input.decision.flagRevision, eligible: input.decision.eligible, enabled: input.decision.enabled, cohortBucket: input.decision.cohortBucket, assignedAt: input.decision.evaluatedAt, expiresAt: input.decision.expiresAt });
+      await tx.insert(releaseFlagEvaluations).values({ workspaceId: input.workspaceId, evaluationId: input.evaluationId, flagId: input.decision.flagId, subjectPseudonym: input.subjectPseudonym, flagRevision: input.decision.flagRevision, entryPoint: input.entryPoint, role: input.role, entitlement: input.entitlement, locale: input.locale, eligible: input.decision.eligible, enabled: input.decision.enabled, evaluatedAt: input.decision.evaluatedAt }).onConflictDoNothing();
+      return input.decision;
+    });
   }
 
   async getTelemetryConsent(workspaceId: string, userId: string): Promise<TelemetryConsent | null> {

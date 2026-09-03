@@ -11,6 +11,7 @@ import { inspirationRightsSnapshots, modelGenerationBudgetReservations } from "@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import { getReleaseControlService } from "@/lib/release-control/production";
 
 const bodySchema = z.object({ prompt: z.string().trim().min(1).max(50_000), sourceAssetIds: z.array(z.string().min(1).max(200)).max(8).default([]) }).strict();
 
@@ -24,6 +25,16 @@ export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>(
   const routing = new PostgresModelRoutingRepository(getDb);
   const intent = await routing.getIntent(authz.workspaceId, intentId);
   if (!intent) return noStoreJson({ success: false, code: "GENERATION_INTENT_NOT_FOUND" }, { status: 404 });
+  const releaseFlagId = process.env.ADMITTED_GENERATION_RELEASE_FLAG_ID?.trim();
+  if (!releaseFlagId && process.env.NODE_ENV === "production") return noStoreJson({ success: false, code: "GENERATION_RELEASE_FLAG_UNCONFIGURED" }, { status: 503 });
+  if (releaseFlagId) {
+    try {
+      const flag = await getReleaseControlService().evaluateReleaseFlag(authz.workspaceId, authz.userId, releaseFlagId, { role: authz.role, entitlement: authz.contentSession.planTier, locale: intent.contentLanguage === "en" ? "en" : "ar", entryPoint: "admitted_generation_execute" }, `${key}:flag`);
+      if (!flag.enabled) return noStoreJson({ success: false, code: "GENERATION_RELEASE_FLAG_DISABLED" }, { status: 409 });
+    } catch {
+      return noStoreJson({ success: false, code: "GENERATION_RELEASE_FLAG_UNAVAILABLE" }, { status: 503 });
+    }
+  }
   const [brand] = await getDb().select({ acceptedAt: brandProfiles.acceptedAt, profile: brandProfiles.profile }).from(brandProfiles).where(and(eq(brandProfiles.workspaceId, authz.workspaceId), eq(brandProfiles.id, intent.brand.profileId), eq(brandProfiles.revision, intent.brand.revision), eq(brandProfiles.status, "active"))).limit(1);
   if (!brand?.acceptedAt || canonicalDigest(brand.profile) !== intent.brand.digest) return noStoreJson({ success: false, code: "BRAND_REVISION_NOT_ACCEPTED" }, { status: 409 });
   const [budget] = await getDb().select({ status: modelGenerationBudgetReservations.status, amount: modelGenerationBudgetReservations.quotedAmountUsd }).from(modelGenerationBudgetReservations).where(and(eq(modelGenerationBudgetReservations.workspaceId, authz.workspaceId), eq(modelGenerationBudgetReservations.intentId, intent.id))).limit(1);
@@ -31,7 +42,7 @@ export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>(
   const [rights] = await getDb().select({ digest: inspirationRightsSnapshots.digest, permittedRemix: inspirationRightsSnapshots.permittedRemix }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, authz.workspaceId), eq(inspirationRightsSnapshots.id, intent.rights.snapshotId), eq(inspirationRightsSnapshots.revision, intent.rights.revision))).limit(1);
   if (!rights || rights.digest !== intent.rights.digest || rights.permittedRemix !== intent.rights.permittedRemix) return noStoreJson({ success: false, code: "RIGHTS_SNAPSHOT_MISMATCH" }, { status: 409 });
   const sourceIds = [...new Set(parsed.data.sourceAssetIds)];
-  if (sourceIds.some((id) => !intent.rights.evidenceRefs.includes(id) && !intent.rights.evidenceRefs.includes(`asset:${id}`))) return noStoreJson({ success: false, code: "RIGHTS_EVIDENCE_MISMATCH" }, { status: 409 });
+  if (sourceIds.some((id) => !intent.rights.sourceAssetIds.includes(id))) return noStoreJson({ success: false, code: "RIGHTS_EVIDENCE_MISMATCH" }, { status: 409 });
   const sourceRows = sourceIds.length ? await getDb().select({ id: assets.id, storageKey: assets.storageKey }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
   if (sourceRows.length !== sourceIds.length || sourceRows.some((asset) => !asset.storageKey)) return noStoreJson({ success: false, code: "SOURCE_ASSET_UNAVAILABLE" }, { status: 409 });
   const sourceUrls = await Promise.all(sourceRows.map(async (asset) => (await createPresignedDownload({ key: asset.storageKey! })).downloadUrl));
