@@ -3,6 +3,7 @@
 import { getActiveWorkspaceId } from "@/lib/studio/client";
 import type { GovernanceCommand } from "./service";
 import type { GovernanceSnapshot } from "./types";
+import type { PublishingApprovalPresentation } from "@/lib/agent-runtime/publishing-approvals/types";
 
 export class GovernanceApiError extends Error {
   constructor(readonly code: string, readonly status: number) {
@@ -74,9 +75,116 @@ const capabilityByCommand: Record<GovernanceCommand["type"], string> = {
   retry_bulk_item: "bulk.execute@1",
   preview_import: "imports.manage@1",
   execute_import: "imports.manage@1",
+  provide_import_mapping: "imports.manage@1",
   request_workspace_export: "exports.manage@1",
 };
 
 export function executeGovernanceCommand<T>(command: GovernanceCommand): Promise<T> {
   return invokeGovernanceCapability(capabilityByCommand[command.type], { command }, crypto.randomUUID());
+}
+
+export interface PublishingApprovalListItem {
+  id: string;
+  status: "pending" | "approved" | "denied" | "expired" | "consumed";
+  planId: string;
+  planRevisionId: string;
+  planRevision: number;
+  planRevisionDigest: string;
+  inspectionDigest: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+async function publishingResponse<T>(response: Response): Promise<T> {
+  const body = await response.json() as { success?: boolean; code?: string; error?: string } & T;
+  if (!response.ok || !body.success) {
+    throw new GovernanceApiError(body.code ?? "UNAVAILABLE", response.status);
+  }
+  return body;
+}
+
+export async function listPublishingApprovals(
+  status?: PublishingApprovalListItem["status"],
+): Promise<PublishingApprovalListItem[]> {
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) throw new GovernanceApiError("WORKSPACE_REQUIRED", 400);
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  const response = await fetch(`/api/studio/publishing-approvals${query}`, {
+    headers: { "x-workspace-id": workspaceId },
+    cache: "no-store",
+  });
+  const body = await publishingResponse<{ items: PublishingApprovalListItem[] }>(response);
+  return body.items;
+}
+
+export async function inspectPublishingApproval(
+  approvalRequestId: string,
+): Promise<PublishingApprovalPresentation> {
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) throw new GovernanceApiError("WORKSPACE_REQUIRED", 400);
+  const response = await fetch(`/api/studio/publishing-approvals/${encodeURIComponent(approvalRequestId)}`, {
+    headers: { "x-workspace-id": workspaceId },
+    cache: "no-store",
+  });
+  const body = await publishingResponse<{ presentation: PublishingApprovalPresentation }>(response);
+  return body.presentation;
+}
+
+export async function decidePublishingApproval(input: {
+  approvalRequestId: string;
+  expectedInspectionDigest: string;
+  decision: "approved" | "denied";
+}): Promise<unknown> {
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) throw new GovernanceApiError("WORKSPACE_REQUIRED", 400);
+  const response = await fetch(`/api/studio/publishing-approvals/${encodeURIComponent(input.approvalRequestId)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-workspace-id": workspaceId,
+      "idempotency-key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({
+      decision: input.decision,
+      expectedInspectionDigest: input.expectedInspectionDigest,
+    }),
+  });
+  return publishingResponse(response);
+}
+
+export interface PublishingAuthorityGrant {
+  id: string;
+  userId: string;
+  channelId: string;
+  action: "publish";
+  issuedAt: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+}
+
+export async function listPublishingAuthorityGrants(): Promise<PublishingAuthorityGrant[]> {
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) throw new GovernanceApiError("WORKSPACE_REQUIRED", 400);
+  const response = await fetch("/api/studio/publishing-approval-authority", { headers: { "x-workspace-id": workspaceId }, cache: "no-store" });
+  const body = await publishingResponse<{ grants: PublishingAuthorityGrant[] }>(response);
+  return body.grants;
+}
+
+export async function issuePublishingAuthorityGrant(input: { userId: string; channelId: string; expiresAt: string | null }): Promise<unknown> {
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) throw new GovernanceApiError("WORKSPACE_REQUIRED", 400);
+  return publishingResponse(await fetch("/api/studio/publishing-approval-authority", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify(input),
+  }));
+}
+
+export async function revokePublishingAuthorityGrant(grantId: string): Promise<unknown> {
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) throw new GovernanceApiError("WORKSPACE_REQUIRED", 400);
+  return publishingResponse(await fetch(`/api/studio/publishing-approval-authority/${encodeURIComponent(grantId)}`, {
+    method: "DELETE",
+    headers: { "x-workspace-id": workspaceId, "idempotency-key": crypto.randomUUID() },
+  }));
 }
