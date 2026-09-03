@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { runMicrofrontendsMiddleware } from "@vercel/microfrontends/next/middleware";
 import { getSiteRedirect, normalizeOrigin } from "./lib/site-routing";
+import { getPublicLocaleFromPath, localeCookieName } from "./i18n/config";
 
 export async function proxy(request: NextRequest) {
   const forwardedHost = request.headers
@@ -24,6 +25,22 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl, 308);
   }
 
+  const publicLocale = getPublicLocaleFromPath(request.nextUrl.pathname);
+  if (publicLocale) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-interface-locale", publicLocale);
+    requestHeaders.set("x-interface-route", request.nextUrl.pathname);
+    const localizedResponse = NextResponse.next({
+      request: { headers: requestHeaders },
+    });
+    localizedResponse.cookies.set(localeCookieName, publicLocale, {
+      maxAge: 60 * 60 * 24 * 365,
+      path: "/",
+      sameSite: "lax",
+    });
+    return localizedResponse;
+  }
+
   // Phase 1: all /editor/* routes go directly to the OpenCut microfrontend.
   // Phase 2 can add flag values here to gate access by plan.
   const response = await runMicrofrontendsMiddleware({
@@ -32,11 +49,17 @@ export async function proxy(request: NextRequest) {
   });
 
   if (response) return response;
+
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-interface-route", request.nextUrl.pathname);
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 export const config = {
   matcher: [
     "/",
+    "/ar/:path*",
+    "/en/:path*",
     "/agents/:path*",
     "/blitz/:path*",
     "/dashboard/:path*",

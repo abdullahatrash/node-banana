@@ -4,9 +4,11 @@ import Link from "next/link";
 import { PillarSwitcher } from "./PillarSwitcher";
 import { PlusIcon } from "./icons";
 import { authClient } from "@/lib/auth/client";
+import { useTranslations } from "next-intl";
 
 export function SocialHeader() {
   const session = authClient.useSession();
+  const t = useTranslations("shell");
   const userName =
     session.data?.user?.name || session.data?.user?.email || "";
 
@@ -24,7 +26,7 @@ export function SocialHeader() {
         className="flex items-center gap-1 rounded-[5px] bg-green-700 px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-green-600"
       >
         <PlusIcon size={12} />
-        New Post
+        {t("actions.newPost")}
       </Link>
 
       {userName && (

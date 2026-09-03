@@ -1,17 +1,17 @@
 import { CheckCircle2, LoaderCircle } from "lucide-react";
 import type { ParsedOnboardingSnapshot } from "@/lib/onboarding/schemas";
 import type { InterfaceLocale } from "@/lib/onboarding/contracts";
-import { copyFor } from "./copy";
+import { useOnboardingCopy } from "./copy";
 
 export function PreparationStatus({
   analysis,
-  locale,
+  locale: _locale,
 }: {
   analysis: ParsedOnboardingSnapshot["analysis"];
   locale: InterfaceLocale;
 }) {
+  const copy = useOnboardingCopy();
   if (!analysis || analysis.status.startsWith("failed_")) return null;
-  const copy = copyFor(locale);
   const ready = analysis.status === "ready";
   return (
     <aside

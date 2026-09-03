@@ -1,0 +1,64 @@
+{
+  "common": {
+    "languageSwitch": { "ar": "العربية", "en": "English" },
+    "account": "Account",
+    "billing": "Billing",
+    "notifications": "Notifications",
+    "logOut": "Log out",
+    "email": "Email",
+    "password": "Password",
+    "selectionSummary": "{count, plural, =0 {No items selected} one {One item selected} other {# items selected}}",
+    "actorGreeting": "{gender, select, female {Welcome, Ms. {name}} male {Welcome, Mr. {name}} other {Welcome, {name}}}"
+  },
+  "metadata": { "appTitle": "Tasmeemai — AI Content Studio", "appDescription": "Arabic-first AI content creation and social publishing for MENA brands.", "homeTitle": "Tasmeemai — Short-form content for MENA", "homeDescription": "Turn market insights and brand ideas into videos and slides, fill your calendar, and publish across your channels.", "homeOgTitle": "Tasmeemai — 30 days of short-form content in minutes", "homeOgDescription": "Short-form content creation and publishing for the Middle East and North Africa." },
+  "errors": {
+    "required": "Complete this required field.",
+    "invalid": "Check this value and try again.",
+    "unauthenticated": "Sign in to continue.",
+    "forbidden": "You don’t have permission to do that.",
+    "conflict": "This changed elsewhere. Review the latest version before continuing.",
+    "rateLimited": "Too many requests. Wait a moment and try again.",
+    "capabilityUnavailable": "This action is not available for the current workspace or selection.",
+    "providerUnavailable": "The provider is temporarily unavailable. Your work has not been lost.",
+    "unknown": "Something went wrong. Please try again."
+  },
+  "notifications": {
+    "generationReadyTitle": "Your content is ready",
+    "generationReadyBody": "{name} is ready to review.",
+    "publishingFailedTitle": "Publishing needs attention",
+    "publishingFailedBody": "We couldn’t publish {name}. Review the delivery details before retrying."
+  },
+  "shell": {
+    "areas": { "simpleStudio": "Simple Studio", "videoEditor": "Video Editor", "socialHub": "Social Hub", "analytics": "Analytics" },
+    "groups": { "create": "Create", "browse": "Browse", "navigation": "Navigation", "channels": "Channels" },
+    "routes": { "images": "Images", "videos": "Videos", "copy": "Copy", "library": "Library", "promptLibrary": "Prompt Library", "calendar": "Calendar", "compose": "Compose", "copilot": "Copilot", "posts": "Posts", "channels": "Channels", "events": "Events", "analytics": "Analytics", "media": "Media", "integrations": "Integrations", "plugs": "Plugs", "agents": "Agents", "settings": "Settings" },
+    "filters": { "all": "All", "photo": "Photo", "video": "Video", "copy": "Copy" },
+    "actions": { "savePrompt": "Save prompt", "newSavedPrompt": "New saved prompt", "newPost": "New post", "addChannel": "Add channel" },
+    "current": "Current",
+    "userFallback": "User",
+    "noChannels": "No channels connected"
+  },
+  "toast": { "copy": "Copy message", "dismiss": "Dismiss", "showDetails": "Show details", "hideDetails": "Hide details" },
+  "auth": {
+    "signIn": { "title": "Sign in", "subtitle": "Access your content workspace.", "failed": "Sign in failed. Please check your details and try again.", "submitting": "Signing in…", "submit": "Sign in", "newAccount": "Need an account?", "signUp": "Sign up" },
+    "signUp": { "title": "Create account", "subtitle": "Start setting up your brand workspace.", "name": "Name", "namePlaceholder": "Full name", "failed": "Sign up failed. Please check your details and try again.", "submitting": "Creating account…", "submit": "Sign up", "existing": "Already have an account?", "signIn": "Sign in" },
+    "verifyEmail": { "eyebrow": "Next step", "title": "Verify your email", "description": "We sent you a verification link. Open it to continue setting up your workspace.", "sending": "Sending…", "resend": "Resend link", "sent": "A new verification link was sent.", "failed": "We couldn’t send the link. Please try again.", "back": "Back to sign in" },
+    "email": { "verificationSubject": "Verify your email", "verificationBody": "Verify your email address to start setting up your workspace:", "verificationAction": "Verify email" }
+  },
+  "onboarding": {
+    "eyebrow": "Let’s prepare your workspace", "title": "Tell us about your brand", "subtitle": "A few short answers help us build a Brand Profile you review before it is used.", "continue": "Continue", "back": "Back", "optional": "Optional", "saving": "Saving…", "loading": "Restoring your progress…", "retry": "Try again", "identityTitle": "Let’s start with you", "fullName": "Full name", "companyName": "Company or brand name", "contentLanguage": "Default content language", "logo": "Company logo (optional)", "uploadLogo": "Choose logo", "logoHelp": "PNG or JPG, up to 5 MB", "arabic": "العربية", "english": "English", "sourceTitle": "How should we learn about your brand?", "sourceSubtitle": "Enter your website to read key public pages, or describe the brand yourself.", "website": "Website", "description": "Brand description", "websitePlaceholder": "https://example.com", "descriptionPlaceholder": "What do you offer, for whom, and what makes it different?", "teamTitle": "Tell us about your current stage", "teamSize": "How big is your current team?", "revenue": "What is your current monthly revenue?", "roleTitle": "What is your primary role?", "businessTitle": "How would you describe the business?", "businessModel": "Business model", "categories": "Business category", "goalsTitle": "What do you want to achieve?", "intent": "Are you ready to market now?", "outcomes": "Choose your most important outcomes", "attributionTitle": "How did you hear about us?", "attributionSubtitle": "You can skip this step.", "preparing": "Preparing your workspace", "preparingDetail": "We are analyzing the source and building a structured Brand Profile.", "profileTitle": "Review your Brand Profile", "profileSubtitle": "This is an AI-generated draft, not an accepted fact, until you approve it.", "acceptProfile": "Accept profile and continue", "editProfile": "Correct profile", "saveProfile": "Save corrections", "cancel": "Cancel", "sourceFailed": "We couldn’t prepare the Brand Profile", "sourceFailedDetail": "Try again, or go back and provide a manual description.", "educationTitle": "Your workspace is ready", "educationSubtitle": "Your first suggestions use the Brand Profile you accepted.", "finish": "See my first suggestion", "error": "Something went wrong. Please try again.", "changeSource": "Use a different source",
+    "educationFeatures": { "identity": "Structured identity", "audience": "Clear audience", "suggestion": "Ready suggestion" },
+    "profileLabels": { "identity": "Brand essence", "offering": "Offering", "audiences": "Audiences", "benefits": "Benefits", "positioning": "Positioning", "voice": "Voice", "angles": "Content angles", "uncertainty": "Items requiring your review" },
+    "profileFields": { "core": "Brand essence", "offering": "Offering (one item per line)", "benefits": "Benefits", "differentiators": "Differentiators", "mission": "Mission", "positioning": "Positioning", "owned": "Owned space", "descriptors": "Voice descriptors", "do": "Voice do's", "doNot": "Voice don'ts", "claims": "Prohibited claims", "topics": "Prohibited topics", "angles": "Content angles", "uncertainties": "Uncertainties" },
+    "options": {
+      "teamSize": { "solo": "Just me", "2_5": "2–5", "6_10": "6–10", "11_20": "11–20", "21_50": "21–50", "50_plus": "50+" },
+      "revenue": { "pre_revenue": "Pre-revenue", "1_1000_usd": "$1–$1,000", "1000_10000_usd": "$1,000–$10k", "10000_50000_usd": "$10k–$50k", "50000_500000_usd": "$50k–$500k", "500000_plus_usd": "$500k+" },
+      "roles": { "founder": "Founder", "social_media_manager": "Social media manager", "marketing_manager": "Marketing manager", "agency_owner": "Agency owner", "freelancer": "Freelancer", "product_manager": "Product manager", "content_creator": "Content creator", "growth_manager": "Growth manager", "other": "Other" },
+      "models": { "b2b": "B2B", "b2c": "B2C", "both": "Both" },
+      "categories": { "ecommerce": "E-commerce", "saas": "SaaS", "agency": "Agency", "services": "Services", "marketplace": "Marketplace", "media_content": "Media & content", "mobile_app": "Mobile app", "other": "Other" },
+      "intents": { "marketing_now": "I want to market now", "marketing_later": "I’m planning for later", "curious": "I’m just curious" },
+      "outcomes": { "save_time": "Save time", "more_social_views": "More social views", "drive_site_traffic": "Drive site traffic", "generate_revenue": "Generate revenue", "learn_content_marketing": "Learn content marketing", "other": "Another outcome" },
+      "sources": { "x": "X", "linkedin": "LinkedIn", "youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram", "facebook": "Facebook", "podcast": "Podcast", "newsletter": "Newsletter", "google": "Google", "reddit": "Reddit", "referral": "Referral", "other": "Other" }
+    }
+  }
+}

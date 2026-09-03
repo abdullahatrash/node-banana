@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AppSwitcher } from "../AppSwitcher";
+import { I18nTestProvider } from "@/test/i18n";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/simple-studio/images",
@@ -8,11 +9,11 @@ vi.mock("next/navigation", () => ({
 
 describe("AppSwitcher", () => {
   it("lists the shipped content surfaces without advanced workflow", () => {
-    render(
+    render(<I18nTestProvider locale="en">
       <AppSwitcher>
         <span>Open switcher</span>
-      </AppSwitcher>,
-    );
+      </AppSwitcher>
+    </I18nTestProvider>);
 
     fireEvent.click(screen.getByText("Open switcher"));
 

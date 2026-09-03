@@ -23,6 +23,7 @@ import {
 import { EllipsisVerticalIcon, CircleUserRoundIcon, CreditCardIcon, BellIcon, LogOutIcon, LanguagesIcon } from "lucide-react"
 import { useDirectionStore } from "@/store/directionStore"
 import { useRouter } from "next/navigation"
+import { useLocale, useTranslations } from "next-intl"
 
 export function NavUser({
   user,
@@ -34,11 +35,26 @@ export function NavUser({
   }
 }) {
   const { isMobile } = useSidebar()
-  const { locale, setLocale } = useDirectionStore()
+  const locale = useLocale()
+  const setLocale = useDirectionStore((state) => state.setLocale)
   const router = useRouter()
+  const t = useTranslations("common")
+  const initials = user.name
+    .trim()
+    .split(/\s+/u)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toLocaleUpperCase() || "—"
 
   function toggleLanguage() {
     setLocale(locale === "en" ? "ar" : "en")
+    void fetch("/api/preferences/locale", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ locale: locale === "en" ? "ar" : "en" }),
+      keepalive: true,
+    })
     router.refresh()
   }
 
@@ -53,7 +69,7 @@ export function NavUser({
           >
             <Avatar className="size-8 rounded-lg grayscale">
               <AvatarImage src={user.avatar} alt={user.name} />
-              <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+              <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
             </Avatar>
             <div className="grid flex-1 text-start text-sm leading-tight">
               <span className="truncate font-medium">{user.name}</span>
@@ -74,7 +90,7 @@ export function NavUser({
                 <div className="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
                   <Avatar className="size-8">
                     <AvatarImage src={user.avatar} alt={user.name} />
-                    <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                    <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-start text-sm leading-tight">
                     <span className="truncate font-medium">{user.name}</span>
@@ -90,29 +106,29 @@ export function NavUser({
               <DropdownMenuItem>
                 <CircleUserRoundIcon
                 />
-                Account
+                {t("account")}
               </DropdownMenuItem>
               <DropdownMenuItem>
                 <CreditCardIcon
                 />
-                Billing
+                {t("billing")}
               </DropdownMenuItem>
               <DropdownMenuItem>
                 <BellIcon
                 />
-                Notifications
+                {t("notifications")}
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={toggleLanguage}>
               <LanguagesIcon />
-              {locale === "en" ? "العربية" : "English"}
+              {t(`languageSwitch.${locale === "en" ? "ar" : "en"}`)}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem>
               <LogOutIcon
               />
-              Log out
+              {t("logOut")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

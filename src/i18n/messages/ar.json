@@ -1,0 +1,64 @@
+{
+  "common": {
+    "languageSwitch": { "ar": "العربية", "en": "English" },
+    "account": "الحساب",
+    "billing": "الفوترة",
+    "notifications": "الإشعارات",
+    "logOut": "تسجيل الخروج",
+    "email": "البريد الإلكتروني",
+    "password": "كلمة المرور",
+    "selectionSummary": "{count, plural, =0 {لم يتم تحديد أي عنصر} one {تم تحديد عنصر واحد} two {تم تحديد عنصرين} few {تم تحديد # عناصر} many {تم تحديد # عنصرًا} other {تم تحديد # عنصر}}",
+    "actorGreeting": "{gender, select, female {مرحبًا بالسيدة {name}} male {مرحبًا بالسيد {name}} other {مرحبًا {name}}}"
+  },
+  "metadata": { "appTitle": "تصميمي — استوديو المحتوى الذكي", "appDescription": "صناعة محتوى بالذكاء الاصطناعي ونشره اجتماعيًا، بتجربة عربية أولًا لعلامات المنطقة.", "homeTitle": "تصميمي — محتوى قصير للمنطقة العربية", "homeDescription": "حوّل الترندات وأفكار علامتك إلى فيديوهات وشرائح، واملأ تقويمك وانشر عبر قنواتك.", "homeOgTitle": "تصميمي — 30 يومًا من المحتوى القصير في دقائق", "homeOgDescription": "منصة صناعة ونشر المحتوى القصير للشرق الأوسط وشمال أفريقيا." },
+  "errors": {
+    "required": "أكمل هذا الحقل المطلوب.",
+    "invalid": "راجع هذه القيمة وحاول مرة أخرى.",
+    "unauthenticated": "سجّل الدخول للمتابعة.",
+    "forbidden": "ليس لديك الإذن لتنفيذ هذا الإجراء.",
+    "conflict": "تغيّرت هذه البيانات في مكان آخر. راجع أحدث نسخة قبل المتابعة.",
+    "rateLimited": "طلبات كثيرة خلال وقت قصير. انتظر قليلًا ثم حاول مجددًا.",
+    "capabilityUnavailable": "هذا الإجراء غير متاح لمساحة العمل أو الاختيار الحالي.",
+    "providerUnavailable": "مزوّد الخدمة غير متاح مؤقتًا. لم نفقد عملك.",
+    "unknown": "حدث خطأ. حاول مرة أخرى."
+  },
+  "notifications": {
+    "generationReadyTitle": "محتواك جاهز",
+    "generationReadyBody": "أصبح {name} جاهزًا للمراجعة.",
+    "publishingFailedTitle": "النشر يحتاج إلى تدخلك",
+    "publishingFailedBody": "تعذر نشر {name}. راجع تفاصيل التسليم قبل إعادة المحاولة."
+  },
+  "shell": {
+    "areas": { "simpleStudio": "الاستوديو المبسّط", "videoEditor": "محرر الفيديو", "socialHub": "مركز النشر", "analytics": "التحليلات" },
+    "groups": { "create": "إنشاء", "browse": "استعراض", "navigation": "التنقل", "channels": "القنوات" },
+    "routes": { "images": "الصور", "videos": "الفيديو", "copy": "النصوص", "library": "المكتبة", "promptLibrary": "مكتبة التعليمات", "calendar": "التقويم", "compose": "إنشاء منشور", "copilot": "المساعد", "posts": "المنشورات", "channels": "القنوات", "events": "الأحداث", "analytics": "التحليلات", "media": "الوسائط", "integrations": "التكاملات", "plugs": "الموصلات", "agents": "الوكلاء", "settings": "الإعدادات" },
+    "filters": { "all": "الكل", "photo": "صور", "video": "فيديو", "copy": "نصوص" },
+    "actions": { "savePrompt": "حفظ التعليمة", "newSavedPrompt": "تعليمة محفوظة جديدة", "newPost": "منشور جديد", "addChannel": "إضافة قناة" },
+    "current": "الحالي",
+    "userFallback": "مستخدم",
+    "noChannels": "لا توجد قنوات متصلة"
+  },
+  "toast": { "copy": "نسخ الرسالة", "dismiss": "إغلاق", "showDetails": "عرض التفاصيل", "hideDetails": "إخفاء التفاصيل" },
+  "auth": {
+    "signIn": { "title": "تسجيل الدخول", "subtitle": "ادخل إلى مساحة عمل المحتوى.", "failed": "تعذر تسجيل الدخول. تحقق من بياناتك وحاول مرة أخرى.", "submitting": "جارٍ تسجيل الدخول…", "submit": "تسجيل الدخول", "newAccount": "ليس لديك حساب؟", "signUp": "إنشاء حساب" },
+    "signUp": { "title": "إنشاء حساب", "subtitle": "ابدأ إعداد مساحة عمل علامتك.", "name": "الاسم", "namePlaceholder": "الاسم الكامل", "failed": "تعذر إنشاء الحساب. تحقق من بياناتك وحاول مرة أخرى.", "submitting": "جارٍ إنشاء الحساب…", "submit": "إنشاء الحساب", "existing": "لديك حساب بالفعل؟", "signIn": "تسجيل الدخول" },
+    "verifyEmail": { "eyebrow": "الخطوة التالية", "title": "تحقّق من بريدك الإلكتروني", "description": "أرسلنا رابط التأكيد إلى بريدك. افتح الرابط للمتابعة إلى إعداد مساحة العمل.", "sending": "جارٍ الإرسال…", "resend": "إعادة إرسال الرابط", "sent": "تم إرسال رابط جديد.", "failed": "تعذر الإرسال الآن. حاول مرة أخرى.", "back": "العودة لتسجيل الدخول" },
+    "email": { "verificationSubject": "تأكيد بريدك الإلكتروني", "verificationBody": "أكّد بريدك الإلكتروني لبدء إعداد مساحة العمل:", "verificationAction": "تأكيد البريد الإلكتروني" }
+  },
+  "onboarding": {
+    "eyebrow": "لنجهّز مساحة عملك", "title": "أخبرنا عن علامتك", "subtitle": "إجابات قصيرة تساعدنا على بناء ملف علامة يمكنك مراجعته قبل استخدامه.", "continue": "متابعة", "back": "رجوع", "optional": "اختياري", "saving": "جارٍ الحفظ…", "loading": "نستعيد تقدمك…", "retry": "إعادة المحاولة", "identityTitle": "لنبدأ بالتعريف بك", "fullName": "الاسم الكامل", "companyName": "اسم الشركة أو العلامة", "contentLanguage": "لغة المحتوى الافتراضية", "logo": "شعار الشركة (اختياري)", "uploadLogo": "اختيار شعار", "logoHelp": "PNG أو JPG، بحد أقصى 5 ميجابايت", "arabic": "العربية", "english": "English", "sourceTitle": "كيف نتعرّف على علامتك؟", "sourceSubtitle": "أدخل موقعك لنقرأ الصفحات العامة المهمة، أو اكتب وصفاً بنفسك.", "website": "موقع إلكتروني", "description": "وصف العلامة", "websitePlaceholder": "https://example.com", "descriptionPlaceholder": "ماذا تقدم علامتك؟ لمن؟ وما الذي يميزها؟", "teamTitle": "أخبرنا عن مرحلتك الحالية", "teamSize": "ما حجم فريقك الحالي؟", "revenue": "ما الإيراد الشهري الحالي؟", "roleTitle": "ما دورك الأساسي؟", "businessTitle": "كيف تصف نشاطك؟", "businessModel": "نموذج العمل", "categories": "مجال النشاط", "goalsTitle": "ماذا تريد أن تحقق؟", "intent": "هل تريد التسويق الآن؟", "outcomes": "اختر النتائج الأهم لك", "attributionTitle": "كيف عرفت عنا؟", "attributionSubtitle": "يمكنك تخطي هذه الخطوة.", "preparing": "نجهّز مساحة عملك", "preparingDetail": "نحلل المصدر ونبني ملف علامتك بشكل منظم.", "profileTitle": "راجع ملف علامتك", "profileSubtitle": "هذه مسودة مولّدة وليست حقيقة معتمدة حتى توافق عليها.", "acceptProfile": "اعتماد الملف والمتابعة", "editProfile": "تصحيح الملف", "saveProfile": "حفظ التصحيحات", "cancel": "إلغاء", "sourceFailed": "تعذر تجهيز ملف العلامة", "sourceFailedDetail": "يمكنك المحاولة مرة أخرى أو الرجوع واستخدام وصف يدوي.", "educationTitle": "مساحة عملك جاهزة", "educationSubtitle": "بُنيت اقتراحاتك الأولى من ملف العلامة الذي اعتمدته.", "finish": "عرض الاقتراح الأول", "error": "حدث خطأ. حاول مرة أخرى.", "changeSource": "استخدام مصدر مختلف",
+    "educationFeatures": { "identity": "هوية منظمة", "audience": "جمهور واضح", "suggestion": "اقتراح جاهز" },
+    "profileLabels": { "identity": "جوهر العلامة", "offering": "ما الذي تقدمه", "audiences": "الجمهور", "benefits": "الفوائد", "positioning": "التموضع", "voice": "نبرة الصوت", "angles": "زوايا المحتوى", "uncertainty": "نقاط تحتاج إلى مراجعتك" },
+    "profileFields": { "core": "جوهر العلامة", "offering": "ما الذي تقدمه (سطر لكل عنصر)", "benefits": "الفوائد", "differentiators": "عناصر التميّز", "mission": "الرسالة", "positioning": "التموضع", "owned": "المساحة الذهنية", "descriptors": "صفات النبرة", "do": "ما يجب فعله", "doNot": "ما يجب تجنبه", "claims": "ادعاءات محظورة", "topics": "مواضيع محظورة", "angles": "زوايا المحتوى", "uncertainties": "نقاط غير مؤكدة" },
+    "options": {
+      "teamSize": { "solo": "أنا فقط", "2_5": "2–5", "6_10": "6–10", "11_20": "11–20", "21_50": "21–50", "50_plus": "+50" },
+      "revenue": { "pre_revenue": "قبل الإيرادات", "1_1000_usd": "$1–$1,000", "1000_10000_usd": "$1,000–$10k", "10000_50000_usd": "$10k–$50k", "50000_500000_usd": "$50k–$500k", "500000_plus_usd": "+$500k" },
+      "roles": { "founder": "مؤسس/ة", "social_media_manager": "مدير/ة تواصل اجتماعي", "marketing_manager": "مدير/ة تسويق", "agency_owner": "صاحب/ة وكالة", "freelancer": "مستقل/ة", "product_manager": "مدير/ة منتج", "content_creator": "صانع/ة محتوى", "growth_manager": "مدير/ة نمو", "other": "أخرى" },
+      "models": { "b2b": "شركات إلى شركات", "b2c": "شركات إلى أفراد", "both": "كلاهما" },
+      "categories": { "ecommerce": "تجارة إلكترونية", "saas": "برمجيات SaaS", "agency": "وكالة", "services": "خدمات", "marketplace": "سوق إلكتروني", "media_content": "إعلام ومحتوى", "mobile_app": "تطبيق جوال", "other": "أخرى" },
+      "intents": { "marketing_now": "أريد التسويق الآن", "marketing_later": "أخطط للمستقبل", "curious": "أستكشف فقط" },
+      "outcomes": { "save_time": "توفير الوقت", "more_social_views": "مشاهدات أكثر", "drive_site_traffic": "زيارات للموقع", "generate_revenue": "زيادة الإيرادات", "learn_content_marketing": "تعلم تسويق المحتوى", "other": "نتيجة أخرى" },
+      "sources": { "x": "X", "linkedin": "LinkedIn", "youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram", "facebook": "Facebook", "podcast": "بودكاست", "newsletter": "نشرة بريدية", "google": "Google", "reddit": "Reddit", "referral": "ترشيح", "other": "أخرى" }
+    }
+  }
+}

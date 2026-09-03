@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render as testingRender, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ParsedOnboardingSnapshot } from "@/lib/onboarding/schemas";
 import { useDirectionStore } from "@/store/directionStore";
+import { I18nTestProvider } from "@/test/i18n";
+import type { ReactElement } from "react";
 
 const replace = vi.fn();
 const router = { replace, refresh: vi.fn() };
@@ -12,6 +14,11 @@ vi.mock("@/components/LanguageSwitcher", () => ({
 }));
 
 import { OnboardingFlow } from "../OnboardingFlow";
+
+function render(ui: ReactElement) {
+  const locale = useDirectionStore.getState().locale;
+  return testingRender(<I18nTestProvider locale={locale}>{ui}</I18nTestProvider>);
+}
 
 function snapshot(
   currentStep: ParsedOnboardingSnapshot["currentStep"],

@@ -13,13 +13,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useTranslations } from "next-intl"
 
 const PILLAR_ITEMS = [
-  { href: "/simple-studio/images", label: "Simple Studio", icon: PaletteIcon },
-  { href: "/editor/projects", label: "Video Editor", icon: VideoIcon },
-  { href: "/social", label: "Social Hub", icon: ActivityIcon },
-  { href: "/social/analytics", label: "Analytics", icon: BarChart3Icon },
-]
+  { href: "/simple-studio/images", key: "simpleStudio", icon: PaletteIcon },
+  { href: "/editor/projects", key: "videoEditor", icon: VideoIcon },
+  { href: "/social", key: "socialHub", icon: ActivityIcon },
+  { href: "/social/analytics", key: "analytics", icon: BarChart3Icon },
+] as const
 
 interface AppSwitcherProps {
   children: React.ReactNode
@@ -28,6 +29,7 @@ interface AppSwitcherProps {
 
 export function AppSwitcher({ children, align = "start" }: AppSwitcherProps) {
   const pathname = usePathname()
+  const t = useTranslations("shell")
 
   const currentHref = PILLAR_ITEMS.find(
     (item) => pathname === item.href || pathname?.startsWith(item.href + "/")
@@ -45,10 +47,10 @@ export function AppSwitcher({ children, align = "start" }: AppSwitcherProps) {
             onClick={() => (window.location.href = item.href)}
           >
             <item.icon className="size-4" />
-            <span>{item.label}</span>
+            <span>{t(`areas.${item.key}`)}</span>
             {item.href === currentHref && (
               <span className="ms-auto text-[10px] text-muted-foreground">
-                current
+                {t("current")}
               </span>
             )}
           </DropdownMenuItem>

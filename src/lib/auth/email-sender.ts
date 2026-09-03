@@ -1,4 +1,7 @@
 import { isProductionLikeRuntime } from "./features";
+import { createTranslator } from "next-intl";
+import arMessages from "@/i18n/messages/ar.json";
+import enMessages from "@/i18n/messages/en.json";
 
 export interface TransactionalEmail {
   to: string;
@@ -79,17 +82,18 @@ export function verificationEmail(input: {
   verificationUrl: string;
 }): TransactionalEmail {
   const safeUrl = escapeHtml(input.verificationUrl);
+  const ar = createTranslator({ locale: "ar", messages: arMessages, namespace: "auth.email" });
+  const en = createTranslator({ locale: "en", messages: enMessages, namespace: "auth.email" });
   return {
     to: input.to,
-    subject: "تأكيد بريدك الإلكتروني | Verify your email",
+    subject: `${ar("verificationSubject")} | ${en("verificationSubject")}`,
     text: [
-      "أكّد بريدك الإلكتروني لبدء إعداد مساحة العمل:",
+      ar("verificationBody"),
       input.verificationUrl,
       "",
-      "Verify your email address to start setting up your workspace:",
+      en("verificationBody"),
       input.verificationUrl,
     ].join("\n"),
-    html: `<div dir="auto"><p>أكّد بريدك الإلكتروني لبدء إعداد مساحة العمل.</p><p><a href="${safeUrl}">تأكيد البريد الإلكتروني</a></p><hr><p>Verify your email address to start setting up your workspace.</p><p><a href="${safeUrl}">Verify email</a></p></div>`,
+    html: `<div><section lang="ar" dir="rtl"><p>${ar("verificationBody")}</p><p><a href="${safeUrl}">${ar("verificationAction")}</a></p></section><hr><section lang="en" dir="ltr"><p>${en("verificationBody")}</p><p><a href="${safeUrl}">${en("verificationAction")}</a></p></section></div>`,
   };
 }
-

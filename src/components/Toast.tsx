@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { create } from "zustand";
+import { useTranslations } from "next-intl";
 
 interface ToastState {
   message: string | null;
@@ -55,6 +56,7 @@ export function Toast() {
   const { message, type, persistent, details, hide } = useToast();
   const [isExpanded, setIsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const t = useTranslations("toast");
 
   useEffect(() => {
     // Reset expanded state when toast changes
@@ -85,6 +87,8 @@ export function Toast() {
   return (
     <div className="fixed top-6 end-6 z-[200] animate-in fade-in slide-in-from-top-4 duration-300 max-w-md">
       <div
+        role={type === "error" ? "alert" : "status"}
+        aria-live={type === "error" ? "assertive" : "polite"}
         className={`flex flex-col rounded-lg border shadow-xl ${typeStyles[type]}`}
       >
         <div className="flex items-center gap-3 px-4 py-3">
@@ -93,7 +97,8 @@ export function Toast() {
           <button
             onClick={handleCopy}
             className="p-1 rounded hover:bg-white/10 transition-colors"
-            title="Copy message"
+            title={t("copy")}
+            aria-label={t("copy")}
           >
             {copied ? (
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -108,7 +113,8 @@ export function Toast() {
           <button
             onClick={hide}
             className="p-1 rounded hover:bg-white/10 transition-colors"
-            title="Dismiss"
+            title={t("dismiss")}
+            aria-label={t("dismiss")}
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -119,12 +125,14 @@ export function Toast() {
           <>
             <button
               onClick={() => setIsExpanded(!isExpanded)}
+              aria-expanded={isExpanded}
+              aria-controls="toast-details"
               className="px-4 py-1 text-xs opacity-70 hover:opacity-100 transition-opacity text-start border-t border-white/10"
             >
-              {isExpanded ? "Hide details" : "Show details"}
+              {t(isExpanded ? "hideDetails" : "showDetails")}
             </button>
             {isExpanded && (
-              <div className="px-4 pb-3">
+              <div id="toast-details" className="px-4 pb-3">
                 <pre className="bg-black/30 rounded p-2 max-h-40 overflow-auto text-xs font-mono whitespace-pre-wrap break-words">
                   {details}
                 </pre>

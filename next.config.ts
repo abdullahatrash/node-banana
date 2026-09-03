@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
 import { withMicrofrontends } from "@vercel/microfrontends/next/config";
+import createNextIntlPlugin from "next-intl/plugin";
+
+const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -40,4 +43,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withWorkflow(withMicrofrontends(nextConfig));
+export default withWorkflow(withMicrofrontends(withNextIntl(nextConfig)));

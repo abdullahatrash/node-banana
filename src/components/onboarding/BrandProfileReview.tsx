@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AlertTriangle, Check, Pencil, ShieldCheck } from "lucide-react";
 import type { BrandProfileCorrection, BrandProfileV1 } from "@/lib/onboarding/schemas";
 import type { InterfaceLocale } from "@/lib/onboarding/contracts";
-import { copyFor } from "./copy";
+import { useOnboardingCopy } from "./copy";
 
 function List({ items }: { items: string[] }) {
   if (items.length === 0) return <span className="text-stone-500">—</span>;
@@ -20,7 +20,7 @@ function List({ items }: { items: string[] }) {
 
 export function BrandProfileReview({
   profile,
-  locale,
+  locale: _locale,
   saving,
   onSave,
 }: {
@@ -29,30 +29,9 @@ export function BrandProfileReview({
   saving: boolean;
   onSave(correction: BrandProfileCorrection): Promise<boolean>;
 }) {
-  const copy = copyFor(locale);
+  const copy = useOnboardingCopy();
   const [correction, setCorrection] = useState<BrandProfileCorrection | null>(null);
-  const labels =
-    locale === "ar"
-      ? {
-          identity: "جوهر العلامة",
-          offering: "ما الذي تقدمه",
-          audiences: "الجمهور",
-          benefits: "الفوائد",
-          positioning: "التموضع",
-          voice: "نبرة الصوت",
-          angles: "زوايا المحتوى",
-          uncertainty: "نقاط تحتاج إلى مراجعتك",
-        }
-      : {
-          identity: "Brand essence",
-          offering: "Offering",
-          audiences: "Audiences",
-          benefits: "Benefits",
-          positioning: "Positioning",
-          voice: "Voice",
-          angles: "Content angles",
-          uncertainty: "Items requiring your review",
-        };
+  const labels = copy.profileLabels;
 
   const startEditing = () => {
     setCorrection({
@@ -80,9 +59,7 @@ export function BrandProfileReview({
         [key]: value.split("\n").map((line) => line.trim()).filter(Boolean),
       });
     };
-    const fields = locale === "ar"
-      ? { core: "جوهر العلامة", offering: "ما الذي تقدمه (سطر لكل عنصر)", benefits: "الفوائد", differentiators: "عناصر التميّز", mission: "الرسالة", positioning: "التموضع", owned: "المساحة الذهنية", descriptors: "صفات النبرة", do: "ما يجب فعله", doNot: "ما يجب تجنبه", claims: "ادعاءات محظورة", topics: "مواضيع محظورة", angles: "زوايا المحتوى", uncertainties: "نقاط غير مؤكدة" }
-      : { core: "Brand essence", offering: "Offering (one item per line)", benefits: "Benefits", differentiators: "Differentiators", mission: "Mission", positioning: "Positioning", owned: "Owned space", descriptors: "Voice descriptors", do: "Voice do's", doNot: "Voice don'ts", claims: "Prohibited claims", topics: "Prohibited topics", angles: "Content angles", uncertainties: "Uncertainties" };
+    const fields = copy.profileFields;
     const lineFields = [
       ["offering", fields.offering], ["benefits", fields.benefits],
       ["differentiators", fields.differentiators], ["prohibitedClaims", fields.claims],

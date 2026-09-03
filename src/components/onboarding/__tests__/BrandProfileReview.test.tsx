@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render as testingRender, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { BrandProfileCorrection, BrandProfileV1 } from "@/lib/onboarding/schemas";
 import { BrandProfileReview } from "../BrandProfileReview";
+import { I18nTestProvider } from "@/test/i18n";
 
 const profile: BrandProfileV1 = {
   schemaVersion: 1,
@@ -30,8 +31,8 @@ const profile: BrandProfileV1 = {
 describe("BrandProfileReview", () => {
   it("lets the user correct material facts before acceptance", async () => {
     const onSave = vi.fn(async (_correction: BrandProfileCorrection) => true);
-    render(
-      <BrandProfileReview profile={profile} locale="ar" saving={false} onSave={onSave} />,
+    testingRender(
+      <I18nTestProvider locale="ar"><BrandProfileReview profile={profile} locale="ar" saving={false} onSave={onSave} /></I18nTestProvider>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "تصحيح الملف" }));

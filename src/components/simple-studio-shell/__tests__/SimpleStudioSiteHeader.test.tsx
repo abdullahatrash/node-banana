@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { SimpleStudioSiteHeader } from "../SimpleStudioSiteHeader";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
+import { I18nTestProvider } from "@/test/i18n";
 
 const pathnameMock = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -12,9 +13,11 @@ vi.mock("next/navigation", () => ({
 
 function renderHeader() {
   return render(
-    <SidebarProvider>
-      <SimpleStudioSiteHeader />
-    </SidebarProvider>,
+    <I18nTestProvider locale="en">
+      <SidebarProvider>
+        <SimpleStudioSiteHeader />
+      </SidebarProvider>
+    </I18nTestProvider>,
   );
 }
 

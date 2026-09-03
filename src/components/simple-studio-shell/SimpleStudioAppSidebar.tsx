@@ -27,24 +27,26 @@ import {
 } from "@/components/ui/sidebar";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { authClient } from "@/lib/auth/client";
+import { useTranslations } from "next-intl";
 
 const CREATE_ITEMS = [
-  { href: "/simple-studio/images", label: "Images", icon: ImageIcon },
-  { href: "/simple-studio/videos", label: "Videos", icon: VideoIcon },
-  { href: "/simple-studio/copy", label: "Copy", icon: FileTextIcon },
-];
+  { href: "/simple-studio/images", key: "images", icon: ImageIcon },
+  { href: "/simple-studio/videos", key: "videos", icon: VideoIcon },
+  { href: "/simple-studio/copy", key: "copy", icon: FileTextIcon },
+] as const;
 
 const BROWSE_ITEMS = [
-  { href: "/simple-studio/library", label: "Library", icon: GalleryThumbnailsIcon },
-  { href: "/simple-studio/prompt-library", label: "Prompt Library", icon: BookmarkIcon },
-];
+  { href: "/simple-studio/library", key: "library", icon: GalleryThumbnailsIcon },
+  { href: "/simple-studio/prompt-library", key: "promptLibrary", icon: BookmarkIcon },
+] as const;
 
 export function SimpleStudioAppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
   const session = authClient.useSession();
+  const t = useTranslations("shell");
 
   const user = {
-    name: session.data?.user?.name || "User",
+    name: session.data?.user?.name || t("userFallback"),
     email: session.data?.user?.email || "",
     avatar: session.data?.user?.image || "",
   };
@@ -60,7 +62,7 @@ export function SimpleStudioAppSidebar({ ...props }: React.ComponentProps<typeof
             <AppSwitcher>
               <div className="flex w-full items-center gap-2 rounded-md p-1.5 text-start text-sm font-semibold hover:bg-sidebar-accent cursor-pointer">
                 <PaletteIcon className="size-5" />
-                <span className="text-base font-semibold">Simple Studio</span>
+                <span className="text-base font-semibold">{t("areas.simpleStudio")}</span>
               </div>
             </AppSwitcher>
           </SidebarMenuItem>
@@ -69,7 +71,7 @@ export function SimpleStudioAppSidebar({ ...props }: React.ComponentProps<typeof
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Create</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("groups.create")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {CREATE_ITEMS.map((item) => (
@@ -79,7 +81,7 @@ export function SimpleStudioAppSidebar({ ...props }: React.ComponentProps<typeof
                     render={<Link href={item.href} />}
                   >
                     <item.icon />
-                    <span>{item.label}</span>
+                    <span>{t(`routes.${item.key}`)}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
@@ -90,7 +92,7 @@ export function SimpleStudioAppSidebar({ ...props }: React.ComponentProps<typeof
         <SidebarSeparator />
 
         <SidebarGroup>
-          <SidebarGroupLabel>Browse</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("groups.browse")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {BROWSE_ITEMS.map((item) => (
@@ -100,7 +102,7 @@ export function SimpleStudioAppSidebar({ ...props }: React.ComponentProps<typeof
                     render={<Link href={item.href} />}
                   >
                     <item.icon />
-                    <span>{item.label}</span>
+                    <span>{t(`routes.${item.key}`)}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

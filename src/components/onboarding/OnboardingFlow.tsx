@@ -21,7 +21,7 @@ import type { ParsedOnboardingSnapshot } from "@/lib/onboarding/schemas";
 import { useDirectionStore } from "@/store/directionStore";
 import { BrandProfileReview } from "./BrandProfileReview";
 import { PreparationStatus } from "./PreparationStatus";
-import { copyFor, optionLabels } from "./copy";
+import { useOnboardingCopy, useOnboardingOptionLabels } from "./copy";
 import { ChoiceGrid } from "./steps/ChoiceGrid";
 
 interface ApiResponse {
@@ -34,13 +34,12 @@ interface ApiResponse {
 const inputClass =
   "mt-2 w-full rounded-2xl border border-white/12 bg-black/20 px-4 py-3 text-sm text-white placeholder:text-stone-600 outline-none transition focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20";
 
-function localizedOptions<RecordType extends Record<string, { ar: string; en: string }>>(
+function localizedOptions<RecordType extends Record<string, string>>(
   record: RecordType,
-  locale: InterfaceLocale,
 ) {
-  return Object.entries(record).map(([value, labels]) => ({
+  return Object.entries(record).map(([value, label]) => ({
     value: value as keyof RecordType & string,
-    label: labels[locale],
+    label,
   }));
 }
 
@@ -53,7 +52,8 @@ function toggle<Value extends string>(values: Value[], value: Value): Value[] {
 export function OnboardingFlow() {
   const router = useRouter();
   const locale = useDirectionStore((state) => state.locale) as InterfaceLocale;
-  const copy = copyFor(locale);
+  const copy = useOnboardingCopy();
+  const optionLabels = useOnboardingOptionLabels();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [snapshot, setSnapshot] = useState<ParsedOnboardingSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -344,8 +344,8 @@ export function OnboardingFlow() {
       content = (
         <form onSubmit={(event) => { event.preventDefault(); if (teamSize && revenue) void send("save_company_stage", { teamSize, monthlyRevenue: revenue }); }}>
           <h2 className="text-2xl font-semibold text-white">{copy.teamTitle}</h2>
-          <fieldset className="mt-6"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.teamSize}</legend><ChoiceGrid options={localizedOptions(optionLabels.teamSize, locale)} value={teamSize ?? undefined} onChange={setTeamSize} /></fieldset>
-          <fieldset className="mt-7"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.revenue}</legend><ChoiceGrid options={localizedOptions(optionLabels.revenue, locale)} value={revenue ?? undefined} onChange={setRevenue} /></fieldset>
+          <fieldset className="mt-6"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.teamSize}</legend><ChoiceGrid options={localizedOptions(optionLabels.teamSize)} value={teamSize ?? undefined} onChange={setTeamSize} /></fieldset>
+          <fieldset className="mt-7"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.revenue}</legend><ChoiceGrid options={localizedOptions(optionLabels.revenue)} value={revenue ?? undefined} onChange={setRevenue} /></fieldset>
           {submitButton(!teamSize || !revenue)}
           {backButton()}
         </form>
@@ -355,7 +355,7 @@ export function OnboardingFlow() {
       content = (
         <form onSubmit={(event) => { event.preventDefault(); if (role) void send("save_role", { role, ...(role === "other" ? { otherRole } : {}) }); }}>
           <h2 className="text-2xl font-semibold text-white">{copy.roleTitle}</h2>
-          <div className="mt-6"><ChoiceGrid columns={2} options={localizedOptions(optionLabels.roles, locale)} value={role ?? undefined} onChange={setRole} /></div>
+          <div className="mt-6"><ChoiceGrid columns={2} options={localizedOptions(optionLabels.roles)} value={role ?? undefined} onChange={setRole} /></div>
           {role === "other" && <input className={inputClass} required maxLength={120} value={otherRole} onChange={(e) => setOtherRole(e.target.value)} />}
           {submitButton(!role || (role === "other" && !otherRole.trim()))}
           {backButton()}
@@ -366,8 +366,8 @@ export function OnboardingFlow() {
       content = (
         <form onSubmit={(event) => { event.preventDefault(); if (businessModel) void send("save_business_classification", { businessModel, categories, ...(categories.includes("other") ? { otherCategory } : {}) }); }}>
           <h2 className="text-2xl font-semibold text-white">{copy.businessTitle}</h2>
-          <fieldset className="mt-6"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.businessModel}</legend><ChoiceGrid options={localizedOptions(optionLabels.models, locale)} value={businessModel ?? undefined} onChange={setBusinessModel} /></fieldset>
-          <fieldset className="mt-7"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.categories}</legend><ChoiceGrid columns={2} options={localizedOptions(optionLabels.categories, locale)} values={categories} onChange={(value) => setCategories(toggle(categories, value))} /></fieldset>
+          <fieldset className="mt-6"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.businessModel}</legend><ChoiceGrid options={localizedOptions(optionLabels.models)} value={businessModel ?? undefined} onChange={setBusinessModel} /></fieldset>
+          <fieldset className="mt-7"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.categories}</legend><ChoiceGrid columns={2} options={localizedOptions(optionLabels.categories)} values={categories} onChange={(value) => setCategories(toggle(categories, value))} /></fieldset>
           {categories.includes("other") && <input className={inputClass} required maxLength={120} value={otherCategory} onChange={(e) => setOtherCategory(e.target.value)} />}
           {submitButton(!businessModel || categories.length === 0 || (categories.includes("other") && !otherCategory.trim()))}
           {backButton()}
@@ -378,8 +378,8 @@ export function OnboardingFlow() {
       content = (
         <form onSubmit={(event) => { event.preventDefault(); if (intent) void send("save_goals", { signupIntent: intent, expectedOutcomes: outcomes, ...(outcomes.includes("other") ? { otherOutcome } : {}) }); }}>
           <h2 className="text-2xl font-semibold text-white">{copy.goalsTitle}</h2>
-          <fieldset className="mt-6"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.intent}</legend><ChoiceGrid options={localizedOptions(optionLabels.intents, locale)} value={intent ?? undefined} onChange={setIntent} /></fieldset>
-          <fieldset className="mt-7"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.outcomes}</legend><ChoiceGrid columns={2} options={localizedOptions(optionLabels.outcomes, locale)} values={outcomes} onChange={(value) => setOutcomes(toggle(outcomes, value))} /></fieldset>
+          <fieldset className="mt-6"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.intent}</legend><ChoiceGrid options={localizedOptions(optionLabels.intents)} value={intent ?? undefined} onChange={setIntent} /></fieldset>
+          <fieldset className="mt-7"><legend className="mb-3 text-sm font-medium text-stone-300">{copy.outcomes}</legend><ChoiceGrid columns={2} options={localizedOptions(optionLabels.outcomes)} values={outcomes} onChange={(value) => setOutcomes(toggle(outcomes, value))} /></fieldset>
           {outcomes.includes("other") && <input className={inputClass} required maxLength={240} value={otherOutcome} onChange={(e) => setOtherOutcome(e.target.value)} />}
           {submitButton(!intent || outcomes.length === 0 || (outcomes.includes("other") && !otherOutcome.trim()))}
           {backButton()}
@@ -391,7 +391,7 @@ export function OnboardingFlow() {
         <form onSubmit={(event) => { event.preventDefault(); void send("save_attribution", { sources, ...(sources.includes("other") ? { otherSource } : {}) }); }}>
           <h2 className="text-2xl font-semibold text-white">{copy.attributionTitle}</h2>
           <p className="mt-2 text-sm text-stone-500">{copy.attributionSubtitle}</p>
-          <div className="mt-6"><ChoiceGrid columns={3} options={localizedOptions(optionLabels.sources, locale)} values={sources} onChange={(value) => setSources(toggle(sources, value))} /></div>
+          <div className="mt-6"><ChoiceGrid columns={3} options={localizedOptions(optionLabels.sources)} values={sources} onChange={(value) => setSources(toggle(sources, value))} /></div>
           {sources.includes("other") && <input className={inputClass} required maxLength={160} value={otherSource} onChange={(e) => setOtherSource(e.target.value)} />}
           {submitButton(sources.includes("other") && !otherSource.trim())}
           {backButton()}
@@ -422,7 +422,7 @@ export function OnboardingFlow() {
           <div className="mx-auto grid size-16 place-items-center rounded-2xl bg-amber-300 text-stone-950"><Sparkles className="size-7" /></div>
           <h2 className="mt-6 text-3xl font-semibold text-white">{copy.educationTitle}</h2>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-7 text-stone-400">{copy.educationSubtitle}</p>
-          <div className="mt-8 grid gap-3 sm:grid-cols-3">{[Globe2, Building2, FileText].map((Icon, index) => <div key={index} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5"><Icon className="mx-auto size-5 text-amber-300" /><p className="mt-3 text-xs text-stone-400">{locale === "ar" ? ["هوية منظمة", "جمهور واضح", "اقتراح جاهز"][index] : ["Structured identity", "Clear audience", "Ready suggestion"][index]}</p></div>)}</div>
+          <div className="mt-8 grid gap-3 sm:grid-cols-3">{[Globe2, Building2, FileText].map((Icon, index) => <div key={index} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5"><Icon className="mx-auto size-5 text-amber-300" /><p className="mt-3 text-xs text-stone-400">{copy.educationFeatures[index]}</p></div>)}</div>
           <button disabled={submitting} onClick={async () => { if (await send("complete", {})) router.replace("/blitz"); }} className="mt-8 flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-40">{submitting ? copy.saving : copy.finish}<ContinueIcon className="size-4" /></button>
         </div>
       );

@@ -40,21 +40,22 @@ import { AppSwitcher } from "@/components/AppSwitcher"
 import type { SocialPlatform } from "@/lib/db/schema"
 import { PLATFORM_LABELS } from "@/lib/social/constants"
 import { authClient } from "@/lib/auth/client"
+import { useTranslations } from "next-intl"
 
 const NAV_ITEMS = [
-  { href: "/social/calendar", label: "Calendar", icon: CalendarIcon },
-  { href: "/social/compose", label: "Compose", icon: PenSquareIcon },
-  { href: "/social/copilot", label: "Copilot", icon: SparklesIcon },
-  { href: "/social/posts", label: "Posts", icon: FileTextIcon },
-  { href: "/social/channels", label: "Channels", icon: ActivityIcon },
-  { href: "/social/events", label: "Events", icon: BellIcon },
-  { href: "/social/analytics", label: "Analytics", icon: BarChart3Icon },
-  { href: "/social/media", label: "Media", icon: ImageIcon },
-  { href: "/social/integrations", label: "Integrations", icon: PuzzleIcon },
-  { href: "/social/plugs", label: "Plugs", icon: PlugIcon },
-  { href: "/social/agents", label: "Agents", icon: BotIcon },
-  { href: "/social/settings", label: "Settings", icon: KeyRoundIcon },
-]
+  { href: "/social/calendar", key: "calendar", icon: CalendarIcon },
+  { href: "/social/compose", key: "compose", icon: PenSquareIcon },
+  { href: "/social/copilot", key: "copilot", icon: SparklesIcon },
+  { href: "/social/posts", key: "posts", icon: FileTextIcon },
+  { href: "/social/channels", key: "channels", icon: ActivityIcon },
+  { href: "/social/events", key: "events", icon: BellIcon },
+  { href: "/social/analytics", key: "analytics", icon: BarChart3Icon },
+  { href: "/social/media", key: "media", icon: ImageIcon },
+  { href: "/social/integrations", key: "integrations", icon: PuzzleIcon },
+  { href: "/social/plugs", key: "plugs", icon: PlugIcon },
+  { href: "/social/agents", key: "agents", icon: BotIcon },
+  { href: "/social/settings", key: "settings", icon: KeyRoundIcon },
+] as const
 
 
 export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
@@ -62,9 +63,10 @@ export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sideb
   const { accounts, selectedChannelFilter, setChannelFilter } =
     useSocialAccountsStore()
   const session = authClient.useSession()
+  const t = useTranslations("shell")
 
   const user = {
-    name: session.data?.user?.name || "User",
+    name: session.data?.user?.name || t("userFallback"),
     email: session.data?.user?.email || "",
     avatar: session.data?.user?.image || "",
   }
@@ -77,7 +79,7 @@ export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sideb
             <AppSwitcher>
               <div className="flex w-full items-center gap-2 rounded-md p-1.5 text-start text-sm font-semibold hover:bg-sidebar-accent cursor-pointer">
                 <BananaIcon className="size-5" />
-                <span className="text-base font-semibold">Social Hub</span>
+                <span className="text-base font-semibold">{t("areas.socialHub")}</span>
               </div>
             </AppSwitcher>
           </SidebarMenuItem>
@@ -87,7 +89,7 @@ export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sideb
       <SidebarContent>
         {/* Navigation */}
         <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("groups.navigation")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {NAV_ITEMS.map((item) => {
@@ -97,7 +99,7 @@ export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sideb
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton isActive={isActive} render={<Link href={item.href} />}>
                         <item.icon />
-                        <span>{item.label}</span>
+                        <span>{t(`routes.${item.key}`)}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 )
@@ -110,13 +112,13 @@ export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sideb
 
         {/* Connected Channels */}
         <SidebarGroup>
-          <SidebarGroupLabel>Channels</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("groups.channels")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {accounts.length === 0 ? (
                 <SidebarMenuItem>
                   <SidebarMenuButton className="text-muted-foreground">
-                    <span className="text-xs">No channels connected</span>
+                    <span className="text-xs">{t("noChannels")}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ) : (
@@ -155,7 +157,7 @@ export function SocialAppSidebar({ ...props }: React.ComponentProps<typeof Sideb
               <SidebarMenuItem>
                 <SidebarMenuButton render={<Link href="/social/channels" />} className="text-muted-foreground">
                   <PlusIcon />
-                  <span>Add channel</span>
+                  <span>{t("actions.addChannel")}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

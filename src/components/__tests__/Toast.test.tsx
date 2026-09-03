@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import { render as testingRender, screen, fireEvent, act } from "@testing-library/react";
 import { Toast, useToast } from "@/components/Toast";
+import { I18nTestProvider } from "@/test/i18n";
+
+function render(ui: React.ReactNode) {
+  return testingRender(<I18nTestProvider locale="en">{ui}</I18nTestProvider>);
+}
 
 describe("Toast", () => {
   beforeEach(() => {
@@ -288,7 +293,7 @@ describe("Toast", () => {
         useToast.getState().show("Second message", "error", false, "Second details");
       });
 
-      rerender(<Toast />);
+      rerender(<I18nTestProvider locale="en"><Toast /></I18nTestProvider>);
 
       // Should be collapsed again (we see Show details, not Hide details)
       expect(screen.getByText("Show details")).toBeInTheDocument();

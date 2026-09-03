@@ -1,9 +1,15 @@
 "use client";
 
 import { create } from "zustand";
+import {
+  getDirection,
+  localeCookieName,
+  type AppDirection,
+  type AppLocale,
+} from "@/i18n/config";
 
-export type Locale = "en" | "ar";
-export type Direction = "ltr" | "rtl";
+export type Locale = AppLocale;
+export type Direction = AppDirection;
 
 interface DirectionState {
   locale: Locale;
@@ -11,24 +17,19 @@ interface DirectionState {
   setLocale: (locale: Locale) => void;
 }
 
-const LOCALE_COOKIE_NAME = "NEXT_LOCALE";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year
-
-function directionFromLocale(locale: Locale): Direction {
-  return locale === "ar" ? "rtl" : "ltr";
-}
 
 export const useDirectionStore = create<DirectionState>((set) => ({
   locale: "ar",
   direction: "rtl",
 
   setLocale: (locale: Locale) => {
-    const direction = directionFromLocale(locale);
+    const direction = getDirection(locale);
 
     if (typeof document !== "undefined") {
       document.documentElement.dir = direction;
       document.documentElement.lang = locale;
-      document.cookie = `${LOCALE_COOKIE_NAME}=${locale}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
+      document.cookie = `${localeCookieName}=${locale}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
     }
 
     set({ locale, direction });

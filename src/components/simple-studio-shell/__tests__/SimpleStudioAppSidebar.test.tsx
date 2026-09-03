@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SimpleStudioAppSidebar } from "../SimpleStudioAppSidebar";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { I18nTestProvider } from "@/test/i18n";
 
 // Mock next/navigation to control pathname
 vi.mock("next/navigation", () => ({
@@ -27,9 +28,11 @@ vi.mock("@/lib/auth/client", () => ({
 
 function renderSidebar() {
   return render(
-    <SidebarProvider>
-      <SimpleStudioAppSidebar />
-    </SidebarProvider>,
+    <I18nTestProvider locale="en">
+      <SidebarProvider>
+        <SimpleStudioAppSidebar />
+      </SidebarProvider>
+    </I18nTestProvider>,
   );
 }
 

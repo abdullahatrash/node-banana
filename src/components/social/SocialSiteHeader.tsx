@@ -6,28 +6,31 @@ import { PlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
+import { useTranslations } from "next-intl"
 
-const PAGE_TITLES: Record<string, string> = {
-  "/social/calendar": "Calendar",
-  "/social/compose": "Compose",
-  "/social/posts": "Posts",
-  "/social/channels": "Channels",
-  "/social/events": "Events",
-  "/social/analytics": "Analytics",
-  "/social/media": "Media",
-  "/social/integrations": "Integrations",
-  "/social/plugs": "Plugs",
-  "/social/agents": "Agents",
-}
+const PAGE_TITLES = {
+  "/social/calendar": "calendar",
+  "/social/compose": "compose",
+  "/social/posts": "posts",
+  "/social/channels": "channels",
+  "/social/events": "events",
+  "/social/analytics": "analytics",
+  "/social/media": "media",
+  "/social/integrations": "integrations",
+  "/social/plugs": "plugs",
+  "/social/agents": "agents",
+} as const
 
 export function SocialSiteHeader() {
   const pathname = usePathname()
+  const t = useTranslations("shell")
 
   // Find the matching title
-  const title =
+  const titleKey =
     Object.entries(PAGE_TITLES).find(
       ([path]) => pathname === path || pathname?.startsWith(path + "/"),
-    )?.[1] ?? "Social Hub"
+    )?.[1]
+  const title = titleKey ? t(`routes.${titleKey}`) : t("areas.socialHub")
 
   return (
     <header className="flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
@@ -42,7 +45,7 @@ export function SocialSiteHeader() {
         <div className="ms-auto">
           <Button size="sm" render={<Link href="/social/compose" />} nativeButton={false}>
             <PlusIcon className="size-4" />
-            New Post
+            {t("actions.newPost")}
           </Button>
         </div>
       </div>
