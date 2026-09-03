@@ -1,0 +1,3 @@
+# Model Fallback Requires Explicit Bounded Authorization
+
+Tasmeemai never silently substitutes a provider or model after degradation. A Model Policy may use only an ordered Model Fallback Authorization compatible with the requested capability, quality, Content Language, Arabic Variety, Data Region Policy, execution mode, and accepted Managed Execution Quote ceiling. Every attempted and selected provider, model, and version remains visible and attributable. When no authorized compatible fallback exists, the Run pauses for a creator decision instead of changing quality, region, language behavior, or price implicitly.

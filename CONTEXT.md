@@ -432,6 +432,26 @@ _Avoid_: audit log, telemetry, trace, debug metadata
 A non-authoritative low-cardinality aggregate of runtime health or demand, such as latency, queue depth, throughput, structured error counts, retry rate, quota pressure, storage growth, or projected spend. It contains no prompt, generated content, secret, signed URL, or raw resource payload.
 _Avoid_: usage record, business event, analytics event, diagnostic log
 
+**Product Telemetry Event**:
+A versioned, purpose- and retention-classified first-party observation of product interaction or experience health. It contains only minimized allowlisted dimensions and never prompt text, generated content, media, credentials, consent evidence, or arbitrary customer properties; regional consent and Data Region Policy govern collection.
+_Avoid_: Analytics payload, tracking event, log, customer behavior dump
+
+**Product Experiment**:
+A time-bounded comparison over eligible, consented product traffic with an accountable owner, hypothesis, exposure record, success and guardrail measures, expiry, and documented outcome. It may not alter or weaken security, billing, authorization, Approval, safety, retention, accessibility, or audit semantics.
+_Avoid_: Feature flag, A/B test forever, rollout, analytics segment
+
+**Release Flag**:
+A temporary, owned control for rolling a complete vertical slice to an explicit cohort with declared dependencies, evidence, observability, rollback behavior, and expiry. Both flag states use canonical Application Capabilities; a flag never exposes dead navigation, forks business authority, or converts an incomplete slice into parity.
+_Avoid_: Feature toggle, beta excuse, hidden route, permanent configuration
+
+**Service Incident**:
+A time-bounded degradation or outage linked to affected capabilities, providers, regions, and Workspaces. Customer communication distinguishes delayed, blocked, failed-known, and outcome-unknown work plus reservation or publishing risk, while public status history remains localized and discloses no other customer's data or unsafe provider detail.
+_Avoid_: Error toast, provider error, support case, internal alert
+
+**Recovery Objective**:
+The verified recovery point and recovery time target for one data class under its Data Region Policy and Retention Class. Restore drills prove canonical database, Artifact, audit, and external-effect reconciliation behavior; a backup that cannot meet deletion obligations is not compliant recovery.
+_Avoid_: Backup schedule, availability target, disaster-recovery claim, restore estimate
+
 **Platform Metric Observation**:
 An immutable time-stamped observation of one audience-performance metric using the source Platform's exact definition, scope, capture window, and freshness evidence. Cross-Platform normalization is allowed only where definitions are demonstrably comparable; otherwise observations remain separately labeled rather than forced into a universal total.
 _Avoid_: Analytics total, universal views, engagement counter, current metric
@@ -491,6 +511,18 @@ _Avoid_: Database dump, download all, backup, audit export
 **Parity Matrix**:
 The versioned verification record keyed by reference route, capability, role, Entitlement, viewport, direction, and state. Each required cell links sanitized observation evidence, Tasmeemai behavior, acceptance tests, screenshots, capability contracts, deliberate adaptations, and sign-off.
 _Avoid_: Feature checklist, QA spreadsheet, screenshot folder, parity claim
+
+**Experience Performance Budget**:
+A versioned release limit for Tasmeemai-controlled latency and responsiveness on a named surface, client, network profile, and representative MENA or provider region. It separates provider execution time from shell, navigation, query, search, preview, upload-initiation, command-acceptance, and status-propagation overhead.
+_Avoid_: Lighthouse score, provider latency, best effort, average page speed
+
+**Supported Client Matrix**:
+The release-tested set of browser/version, operating system, viewport, input modality, Interface Language, direction, zoom/reflow, reduced-motion, and assistive-technology combinations. An unsupported client receives a localized explanation rather than silently broken controls.
+_Avoid_: Responsive design, browser list, latest Chrome, screenshot sizes
+
+**Contract Migration**:
+A resumable idempotent expand/migrate/contract transition for durable data or a versioned capability, format, catalog, policy, or Automation contract. Active Runs and accepted revisions retain pinned old definitions through a declared compatibility window; dry-run, progress, rollback, and failure evidence prevent silent reinterpretation.
+_Avoid_: Database migration, breaking deploy, backfill script, schema bump
 
 **Retention Tombstone**:
 The minimal non-content identity, digest, terminal state, and idempotency evidence preserved after an eligible canonical resource expires or is deleted. It prevents identity reuse and duplicate effects without retaining prompts, generated content, Artifact bytes, diagnostics, or secrets.
@@ -660,6 +692,10 @@ _Avoid_: test timeout, arbitrary sleep, CI timeout, best-effort wait
 The transport-neutral acceptance contract for watching asynchronous domain work through authoritative resource snapshots and retained cursor-paged events. Each Durable Acceptance supplies the resource reference, exact inspect and event capabilities, and initial cursor; immutable per-resource event sequences can be resumed after agent-process loss without logs, database access, or mandatory live streaming.
 _Avoid_: log tailing, WebSocket contract, progress spinner, polling internal tables
 
+**Durable Operation Status**:
+The shared customer-facing projection for generation, ingestion, Persona training, metric refresh, export, Bulk Operation, and publishing work: `queued`, `admitted`, `running` with named stage, `waiting_user`, `waiting_provider`, `waiting_quota`, `waiting_time`, `blocked`, `cancelling`, `cancelled`, `succeeded`, `failed_known`, or `outcome_unknown`. It includes timestamps, honest progress confidence, reservation/cost evidence, safe reason, next action, and resumable event observation without inventing percentages or replacing the owning resource's canonical lifecycle.
+_Avoid_: Job status, spinner, percent complete, workflow state
+
 **Cross-Transport Continuation**:
 The operation of one canonical resource chain by the same Agent Principal across CLI and stdio MCP without export, import, duplicated client state, resource recreation, or human-supplied identifiers. Authorization, Capability Idempotency, snapshots, event cursors, errors, and effects remain properties of the shared Capability Entrypoint rather than either transport session.
 _Avoid_: transport migration, CLI fallback, MCP session resume, state synchronization
@@ -751,6 +787,10 @@ _Avoid_: Current revision, unpublished Artifact, shared mutable document, form s
 **Model Policy**:
 The versioned rule a Content Format Definition uses to select compatible provider operations and defaults by capability, Content Language, Arabic Variety, quality, latency, execution mode, and price. Advanced user overrides remain constrained to compatible operations, and exact provider/model/version identity stays inspectable.
 _Avoid_: Model dropdown, hidden router, Fastlane-style model alias, provider default
+
+**Model Fallback Authorization**:
+A creator- or Workspace-approved ordered set of operations a Model Policy may select after degradation, constrained by compatible capability, quality, Content Language, Arabic Variety, Data Region Policy, execution mode, and a Managed Execution Quote ceiling. Each attempted and selected provider/model/version is recorded; absence of applicable authorization pauses the Run for a decision.
+_Avoid_: Automatic model switch, retry policy, provider failover, cheapest model
 
 **Content Format Definition**:
 A versioned product-owned contract for one guided content format, declaring inputs, compatible languages and Arabic Varieties, media constraints, preview schema, Workflow Revision, provider capabilities, caption rules, duration and aspect limits, Managed Execution Quote policy, and editor handoff. UI controls and validation derive from it rather than re-encoding format behavior.
@@ -953,6 +993,16 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - A Safety Appeal references one Safety Decision and may authorize re-evaluation of only its exact intent; successful review still revalidates current authorization, safety, commercial, and provider conditions.
 - A Bulk Operation invokes the same single-resource capability contract per target, preserves per-item idempotency and outcome, and never treats partial or ambiguous completion as atomic success.
 - Workspace Export preserves canonical revisions, media, captions, plans, observations, and authorized configuration with a signed manifest; import validates and dry-runs idempotently while retaining source provenance.
+- Model Policy may change provider operations after degradation only through a compatible Model Fallback Authorization; every attempted identity remains visible and Managed Provider Execution never exceeds the accepted quote.
+- Every long-running resource maps its native lifecycle into the shared Durable Operation Status and Structured Progress Observation contract without replacing canonical state or fabricating progress.
+- Experience Performance Budgets measure Tasmeemai overhead separately from provider execution and apply to representative MENA and provider-region conditions; a regression fails the affected slice's release evidence.
+- Supported Client Matrix and WCAG 2.2 AA evidence are required in Arabic RTL and English LTR for each parity surface, including touch, keyboard, screen-reader, zoom/reflow, reduced motion, captions/transcripts, and editable suggested alt text.
+- Product Telemetry Events are consent-aware, minimized, classified, and content-free; Product Experiments are expiring governed resources and cannot vary security, money, Approval, safety, retention, accessibility, or audit semantics.
+- A Release Flag can vary cohort exposure but never business authority; only complete vertical slices may enter controlled rollout, and expired flags are removed.
+- Service Incidents link operational truth to localized in-product and public status communication, including explicit provider degradation, reservation, and public-publishing risk.
+- Backups and restore drills satisfy Recovery Objectives, Data Region Policies, Retention Classes, and deletion obligations; restored state reconciles ambiguous external effects before resuming them.
+- Contract Migrations preserve pinned historical and active definitions through compatibility windows and require dry-run, resumable progress, rollback, and explicit failure evidence.
+- The Parity Matrix is the authority for a full-parity claim: every required route, feature, state, role, Entitlement, viewport, and direction cell must be known, passing, evidenced, and signed off by product, engineering, Arabic-language, accessibility, and security owners.
 - Identity deletion, membership departure, Workspace Closure, and resource deletion are separate processes; a final Owner must transfer ownership before leaving, and closure preserves minimal legal, financial, anti-fraud, idempotency, and public-delivery evidence after eligible content erasure.
 - A **Channel** belongs to exactly one **Platform**.
 - A **Provider Adapter** supports exactly one **Platform**.
