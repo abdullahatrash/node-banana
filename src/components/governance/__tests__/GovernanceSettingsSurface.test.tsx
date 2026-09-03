@@ -20,7 +20,7 @@ vi.mock("@/lib/governance/client", () => ({
 
 const snapshot = {
   workspaceId: "workspace-a",
-  actorCapabilities: ["governance.view", "members.invite", "members.manage", "roles.manage", "portfolios.manage", "reviews.create", "reviews.decide_content", "reviews.decide_publishing", "approval_policies.manage", "audit.view", "audit.export", "regions.manage", "retention.manage", "safety.decide", "safety.appeal", "bulk.preview", "bulk.execute", "imports.manage", "exports.manage", "workspace.transfer_ownership", "workspace.close"],
+  actorCapabilities: ["governance.view", "members.invite", "members.manage", "roles.manage", "portfolios.manage", "reviews.create", "reviews.decide_content", "approval_policies.manage", "audit.view", "audit.export", "regions.manage", "retention.manage", "safety.decide", "safety.appeal", "bulk.preview", "bulk.execute", "imports.manage", "exports.manage", "workspace.transfer_ownership", "workspace.close"],
   resources: {
     custom_role: [{ id: "role-1", workspaceId: "workspace-a", kind: "custom_role", version: 2, status: "active", body: { activeRevision: 2, name: "Reviewer" }, createdByUserId: "owner", createdAt: new Date("2026-09-03T00:00:00.000Z"), updatedAt: new Date("2026-09-03T00:00:00.000Z") }],
   },
@@ -43,7 +43,7 @@ describe("GovernanceSettingsSurface", () => {
     expect(screen.getByText("Built-in capability bundles")).toBeInTheDocument();
     expect(screen.getAllByText("Reviewer")).not.toHaveLength(0);
     expect(screen.getByText("Version 2")).toBeInTheDocument();
-    expect(screen.getAllByText("reviews.decide_publishing")).not.toHaveLength(0);
+    expect(screen.queryByText("reviews.decide_publishing")).not.toBeInTheDocument();
   });
 
   it("creates an authored Arabic invitation with an exact built-in role", async () => {
@@ -87,6 +87,42 @@ describe("GovernanceSettingsSurface", () => {
     await user.selectOptions(mode, "quorum");
     expect(screen.getByLabelText("عدد الموافقات المطلوبة")).toBeInTheDocument();
     expect(screen.getByText("مراحل متسلسلة")).toBeInTheDocument();
+  });
+
+  it("keeps Publishing Approval requests out of Content Acceptance controls", async () => {
+    getSnapshot.mockResolvedValue({
+      ...snapshot,
+      resources: {
+        approval_policy: [
+          { id: "content-policy", workspaceId: "workspace-a", kind: "approval_policy", version: 1, status: "active", body: { activeRevision: 1, revisions: [{ revision: 1, purpose: "content_acceptance" }] }, createdByUserId: "owner", createdAt: new Date(), updatedAt: new Date() },
+          { id: "publishing-policy", workspaceId: "workspace-a", kind: "approval_policy", version: 1, status: "active", body: { activeRevision: 1, revisions: [{ revision: 1, purpose: "publishing_approval" }] }, createdByUserId: "owner", createdAt: new Date(), updatedAt: new Date() },
+        ],
+        approval_request: [
+          { id: "acceptance-request", workspaceId: "workspace-a", kind: "approval_request", version: 1, status: "pending", body: { purpose: "content_acceptance" }, createdByUserId: "owner", createdAt: new Date(), updatedAt: new Date() },
+          { id: "publishing-request", workspaceId: "workspace-a", kind: "approval_request", version: 1, status: "pending", body: { purpose: "publishing_approval" }, createdByUserId: "owner", createdAt: new Date(), updatedAt: new Date() },
+        ],
+      },
+    });
+    renderSurface("approval");
+    expect(await screen.findAllByText("acceptance-request")).not.toHaveLength(0);
+    const contentDecision = screen.getByText("Decide Content Acceptance").closest("details");
+    expect(contentDecision).toHaveTextContent("acceptance-request");
+    expect(contentDecision).not.toHaveTextContent("publishing-request");
+    expect(screen.getByLabelText("Approval Policy")).toHaveTextContent("content-policy");
+    expect(screen.getByLabelText("Approval Policy")).not.toHaveTextContent("publishing-policy");
+  });
+
+  it("makes elapsed cooling-off closures executable only after a fresh closure-bound step-up", async () => {
+    getSnapshot.mockResolvedValue({
+      ...snapshot,
+      resources: {
+        workspace_closure: [{ id: "closure-1", workspaceId: "workspace-a", kind: "workspace_closure", version: 1, status: "cooling_off", body: { executeAfter: "2025-01-01T00:00:00.000Z" }, createdByUserId: "owner", createdAt: new Date(), updatedAt: new Date() }],
+      },
+    });
+    renderSurface("members");
+    expect(await screen.findByText(/Executable after/)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Send a short-lived code" })).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: "Execute closure" })).not.toBeInTheDocument();
   });
 
   it("uses a signed package workflow for every canonical portable surface", async () => {

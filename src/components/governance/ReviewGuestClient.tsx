@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { CheckCircle2Icon, Loader2Icon, ShieldCheckIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,7 +82,9 @@ export function ReviewGuestClient({ reviewToken }: { reviewToken: string }) {
 
 function DecisionForm({ review, pending, decide }: { review: VerifiedReview; pending: boolean; decide(decision: "comment" | "accept" | "approve" | "reject", comment: string | null): void }) {
   const t = useTranslations("governance.reviewGuest");
+  const locale = useLocale();
   const [comment, setComment] = useState("");
   const decisions = review.purpose === "approve_publishing" ? ["approve", "reject"] as const : review.purpose === "accept_content" ? ["accept", "reject"] as const : review.purpose === "reject" ? ["reject"] as const : [];
-  return <section aria-labelledby="review-resource-title" className="grid gap-4"><div className="rounded-xl bg-muted/40 p-4"><h2 id="review-resource-title" className="font-medium">{t(`resource.${review.resourceKind}`)}</h2><p className="mt-2 font-mono text-xs" dir="ltr">{review.resourceId}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground" dir="ltr">{review.revisionDigest}</p><p className="mt-2 text-xs text-muted-foreground">{t("expires", { value: new Date(review.expiresAt).toLocaleString() })}</p></div><div><Label htmlFor="review-comment">{t("comment")}</Label><textarea id="review-comment" value={comment} onChange={(event) => setComment(event.target.value)} maxLength={2000} dir="auto" className="mt-2 min-h-28 w-full rounded-lg border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div><div className="flex flex-wrap gap-2">{decisions.map((decision) => <Button key={decision} type="button" variant={decision === "reject" ? "destructive" : "default"} disabled={pending} onClick={() => decide(decision, comment || null)}>{t(`decisions.${decision}`)}</Button>)}{review.purpose === "comment" ? <Button type="button" disabled={pending || !comment.trim()} onClick={() => decide("comment", comment)}>{t("decisions.comment")}</Button> : null}</div><p className="text-xs text-muted-foreground">{t("exactScope")}</p></section>;
+  const expiresAt = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(review.expiresAt));
+  return <section aria-labelledby="review-resource-title" className="grid gap-4"><div className="rounded-xl bg-muted/40 p-4"><h2 id="review-resource-title" className="font-medium">{t(`resource.${review.resourceKind}`)}</h2><p className="mt-2 font-mono text-xs" dir="ltr">{review.resourceId}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground" dir="ltr">{review.revisionDigest}</p><p className="mt-2 text-xs text-muted-foreground">{t("expires", { value: expiresAt })}</p></div><div><Label htmlFor="review-comment">{t("comment")}</Label><textarea id="review-comment" value={comment} onChange={(event) => setComment(event.target.value)} maxLength={2000} dir="auto" className="mt-2 min-h-28 w-full rounded-lg border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div><div className="flex flex-wrap gap-2">{decisions.map((decision) => <Button key={decision} type="button" variant={decision === "reject" ? "destructive" : "default"} disabled={pending} onClick={() => decide(decision, comment || null)}>{t(`decisions.${decision}`)}</Button>)}{review.purpose === "comment" ? <Button type="button" disabled={pending || !comment.trim()} onClick={() => decide("comment", comment)}>{t("decisions.comment")}</Button> : null}</div><p className="text-xs text-muted-foreground">{t("exactScope")}</p></section>;
 }
