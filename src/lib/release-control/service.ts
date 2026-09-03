@@ -33,6 +33,15 @@ export class ReleaseControlService {
   async append(workspaceId: string, userId: string, value: unknown, idempotencyKey: string, now = new Date()) {
     const input = releaseRecordInputSchema.parse(value);
     validateRecordSemantics(input, userId);
+    if (input.recordKind === "contract_migration") {
+      const requiredPredecessorPhase = input.document.phase === "migrate" ? "expand" : input.document.phase === "contract" ? "migrate" : null;
+      if (!requiredPredecessorPhase && input.document.predecessorId) throw new TypeError("MIGRATION_PREDECESSOR_INVALID");
+      if (requiredPredecessorPhase) {
+        const records = await this.repository.listLatest(workspaceId, "contract_migration");
+        const predecessor = records.find((record) => record.id === input.document.predecessorId)?.document;
+        if (!predecessor || predecessor.phase !== requiredPredecessorPhase || predecessor.contract !== input.document.contract || predecessor.buildId !== input.document.buildId || predecessor.status !== "verified" || predecessor.compatibilityVerified !== true || predecessor.rollbackVerified !== true) throw new TypeError("MIGRATION_PREDECESSOR_UNVERIFIED");
+      }
+    }
     return this.repository.append({ workspaceId, kind: input.recordKind, id: documentId(input), buildId: documentBuild(input), document: input.document, expiresAt: documentExpiry(input), userId, idempotencyKey, now });
   }
   async telemetry(workspaceId: string, value: unknown, idempotencyKey: string, now = new Date()) {

@@ -68,6 +68,7 @@ import {
 } from "@/lib/navigation/app-navigation";
 import type { ProductShellContext } from "@/lib/product-shell/server";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { ServiceStatusBanner } from "@/components/release-control/ServiceStatusBanner";
 
 const primaryIcons = {
   dashboard: CircleGaugeIcon,
@@ -310,6 +311,7 @@ export function ProductShell({
           <div className="ms-auto flex min-w-0 items-center gap-2">{headerActions}</div>
         </header>
         <div id="product-main-content" tabIndex={-1} className="flex min-h-0 flex-1 flex-col">
+          <ServiceStatusBanner />
           {children}
         </div>
       </SidebarInset>

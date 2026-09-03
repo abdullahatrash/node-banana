@@ -31,4 +31,9 @@ describe("ReleaseControlService", () => {
     await expect(service.telemetry("workspace-1", { ...safe, workspacePseudonym: `wsp_${"a".repeat(32)}` }, "request-key-4", NOW)).rejects.toThrow("TELEMETRY_NOT_ALLOWLISTED");
     await expect(service.telemetry("workspace-1", { ...safe, properties: { ...safe.properties, prompt: "private" } }, "request-key-5", NOW)).rejects.toThrow();
   });
+
+  it("does not admit migrate or contract phases without a verified predecessor", async () => {
+    const service = new ReleaseControlService(repository(), "test-secret");
+    await expect(service.append("workspace-1", "owner-1", { recordKind: "contract_migration", document: { id: "migration-2", contract: "generation/v2", buildId: "build-1", phase: "migrate", status: "verified", compatibilityVerified: true, rollbackVerified: true, observedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 1000).toISOString(), artifactDigest: `sha256:${"a".repeat(64)}`, predecessorId: "migration-1" } }, "request-key-6", NOW)).rejects.toThrow("MIGRATION_PREDECESSOR_UNVERIFIED");
+  });
 });

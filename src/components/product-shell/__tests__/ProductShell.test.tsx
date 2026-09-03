@@ -20,6 +20,9 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/auth/client", () => ({
   authClient: { signOut: vi.fn() },
 }));
+vi.mock("@/components/release-control/ServiceStatusBanner", () => ({
+  ServiceStatusBanner: () => null,
+}));
 
 const context: ProductShellContext = {
   user: {
