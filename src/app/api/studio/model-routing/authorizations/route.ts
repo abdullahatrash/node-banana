@@ -5,7 +5,7 @@ import { findCuratedModel } from "@/lib/model-routing/catalog";
 import { PRODUCTION_MODEL_ROUTING } from "@/lib/model-routing/production";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
-const ref = z.object({ provider: z.enum(["replicate","google","kie","openai","fal","wavespeed"]), model: z.string().min(1).max(200), version: z.string().min(1).max(200), inputSchemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
+const ref = z.object({ provider: z.enum(["replicate","google","kie","openai","fal","wavespeed"]), model: z.string().min(1).max(200), version: z.string().min(1).max(200), inputSchemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) });
 const body = z.object({ source: ref, targets: z.array(ref).min(1).max(10), capability: z.enum(["text_to_image","image_to_image","text_to_video","image_to_video","video_to_video"]), minimumQuality: z.enum(["preview","standard","premium"]), contentLanguage: z.enum(["ar","en","mixed"]), arabicVariety: z.enum(["msa","gulf","egyptian","levantine","maghrebi","other"]).nullable(), verifiedRegion: z.string().min(1).max(80), executionMode: z.enum(["sync","async"]), maxTotalCostUsd: z.number().positive().max(100), expiresAt: z.string().datetime() }).strict();
 const workspaceMatches = (request: NextRequest, workspaceId: string) => request.headers.get("x-workspace-id") === workspaceId;
 
