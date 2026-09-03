@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { OPERATION_PROJECTION_ADAPTERS } from "../adapters";
+import { getOperationProjectionAdapter, OPERATION_PROJECTION_ADAPTERS, UNAVAILABLE_OPERATION_KINDS } from "../adapters";
 
 describe("operation projection adapters", () => {
   it("covers all required owning resources", () => {
     expect(OPERATION_PROJECTION_ADAPTERS.map((item) => item.kind)).toEqual([
-      "workflow_run", "brand_ingestion", "governance_export", "governance_bulk", "workspace_import", "automation", "publishing_delivery", "persona_training", "metric_refresh", "ingestion",
+      "workflow_run", "brand_ingestion", "governance_export", "governance_bulk", "workspace_import", "automation", "publishing_delivery",
     ]);
+    expect(UNAVAILABLE_OPERATION_KINDS).toEqual(["persona_training", "metric_refresh", "ingestion"]);
+    expect(getOperationProjectionAdapter("persona-training/v1")).toBeNull();
   });
   it("normalizes aborted and unknown source states safely", () => {
     const adapter = OPERATION_PROJECTION_ADAPTERS[6];

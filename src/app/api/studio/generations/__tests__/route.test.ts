@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-vi.mock("@/lib/studio/authz", () => ({ authorizeStudioRequest: vi.fn(async () => ({ authorized: true, workspaceId: "ws", userId: "u", role: "owner" })), authzErrorResponse: vi.fn() }));
+vi.mock("@/lib/studio/authz", () => ({ authorizeStudioRequest: vi.fn(async () => ({ authorized: true, workspaceId: "ws", userId: "u", role: "owner", contentSession: { planTier: "enterprise" } })), authzErrorResponse: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getDb: vi.fn(() => ({})), isDatabaseConfigured: () => true, schema: {} }));
 import { POST } from "../route";
 

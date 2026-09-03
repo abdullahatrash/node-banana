@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { getActiveWorkspaceId } from "@/lib/studio/client";
+import { useTranslations } from "next-intl";
 
 interface ProviderModel {
   model: string;
   label: string;
   provider: string;
   capabilities?: string[];
-  qualification: { status: "unqualified" } | { status: "qualified"; version: string; inputSchemaDigest: string; executionPriceUsd: { basis: string; amount: number } };
+  qualification: { status: "unqualified" } | { status: "qualified"; version: string; inputSchemaDigest: string; executionPriceUsd: { basis: "image" | "second" | "run"; amount: number } };
 }
 
 interface ModelSelectProps {
@@ -18,6 +19,7 @@ interface ModelSelectProps {
 }
 
 export function ModelSelect({ mode, id }: ModelSelectProps) {
+  const t = useTranslations("simpleStudio.modelSelect"); const locale = typeof document === "undefined" ? undefined : document.documentElement.lang || undefined;
   const selectedModelId = useSimpleStudioStore((s) => s.selectedModelId);
   const setSelectedModel = useSimpleStudioStore((s) => s.setSelectedModel);
 
@@ -86,17 +88,17 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
       onChange={handleChange}
       disabled={isLoading && models.length === 0}
     >
-      <option value="">Select an admitted model</option>
+      <option value="">{t("select")}</option>
       {isLoading && models.length === 0 && (
-        <option disabled>Loading models…</option>
+        <option disabled>{t("loading")}</option>
       )}
       {hasError && !isLoading && (
-        <option disabled>Select a Workspace to load models</option>
+        <option disabled>{t("workspaceRequired")}</option>
       )}
-      {!hasError && !isLoading && sorted.length === 0 && <option disabled>No qualified models configured</option>}
+      {!hasError && !isLoading && sorted.length === 0 && <option disabled>{t("none")}</option>}
       {sorted.map((m) => (
         <option key={m.model} value={m.model}>
-          {m.label} · ${m.qualification.status === "qualified" ? m.qualification.executionPriceUsd.amount : "—"}/{m.qualification.status === "qualified" ? m.qualification.executionPriceUsd.basis : "—"}
+          {m.qualification.status === "qualified" ? `${m.label} · ${t("price", { amount: new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(m.qualification.executionPriceUsd.amount), basis: t(`basis.${m.qualification.executionPriceUsd.basis}`) })}` : m.label}
         </option>
       ))}
     </select>

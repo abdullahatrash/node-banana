@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { ImageForm } from "../ImageForm";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
-vi.mock("next-intl", () => ({ useTranslations: () => (key: string) => key }));
+vi.mock("next-intl", () => ({ useTranslations: (namespace: string) => (key: string) => namespace === "simpleStudio.generation" ? ({ generating: "Generating…", cancel: "Cancel", progress: "Generation progress" })[key] ?? key : key }));
 
 describe("ImageForm", () => {
   beforeEach(() => {

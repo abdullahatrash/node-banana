@@ -6,12 +6,9 @@
 
 import { create } from "zustand";
 import {
-  createStudioAssetPresign,
-  finalizeStudioAssetUpload,
-  getActiveWorkspaceId,
-  getStudioAssetDownloadUrl,
   ingestStudioAsset,
 } from "@/lib/studio/client";
+import { runAdmittedStudioGeneration } from "@/lib/model-routing/studio-generation-client";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -92,6 +89,8 @@ export interface SimpleStudioState {
   setPermittedRemix: (value: SimpleStudioState["permittedRemix"]) => void;
   rightsConfirmed: boolean;
   setRightsConfirmed: (value: boolean) => void;
+  rightsEvidenceIds: string[];
+  setRightsEvidenceIds: (value: string[]) => void;
 
   // Generation (per-mode)
   isGenerating: boolean;
@@ -124,37 +123,10 @@ let abortController: AbortController | null = null;
 
 const CONCURRENT_LIMIT = 4;
 
-const hasArabic = (value: string) => /[\u0600-\u06ff]/.test(value);
-const terminalOperationStates = new Set(["cancelled", "succeeded", "failed_known", "outcome_unknown"]);
-
-async function waitForAdmittedGeneration(input: { response: Record<string, unknown>; signal: AbortSignal }): Promise<{ result: string | null; assetId: string | null }> {
-  const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new Error("Select a Workspace before generating.");
-  let operation = input.response.operation as Record<string, unknown> | undefined;
-  const provider = input.response.provider as Record<string, unknown> | undefined;
-  const cancelProviderWork = () => { if (!operation?.id || typeof operation.revision !== "number" || terminalOperationStates.has(String(operation.state))) return; void fetch(`/api/studio/operations/${encodeURIComponent(String(operation.id))}`, { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": `simple-cancel:${String(operation.id)}:${crypto.randomUUID()}` }, body: JSON.stringify({ action: "cancel", expectedRevision: operation.revision }), keepalive: true }).catch(() => {}); };
-  input.signal.addEventListener("abort", cancelProviderWork, { once: true });
-  for (let attempt = 0; attempt < 150 && operation && !terminalOperationStates.has(String(operation.state)); attempt++) {
-    await new Promise<void>((resolve, reject) => { const timer = window.setTimeout(resolve, 2_000); input.signal.addEventListener("abort", () => { window.clearTimeout(timer); reject(new DOMException("Cancelled", "AbortError")); }, { once: true }); });
-    const response = await fetch(`/api/studio/operations/${encodeURIComponent(String(operation.id))}`, { headers: { "x-workspace-id": workspaceId }, cache: "no-store", signal: input.signal });
-    const body = await response.json() as Record<string, unknown>; if (!response.ok || !body.success) throw new Error(typeof body.error === "string" ? body.error : "Operation status is unavailable."); operation = body.operation as Record<string, unknown>;
-  }
-  input.signal.removeEventListener("abort", cancelProviderWork);
-  if (!operation || operation.state !== "succeeded") throw new Error(operation?.state === "outcome_unknown" ? "Provider outcome is unknown. Check Operations before retrying." : `Generation ended in ${String(operation?.state ?? "an unknown state")}.`);
-  const metadata = operation.metadata as Record<string, unknown> | undefined;
-  const ids = Array.isArray(metadata?.artifactIds) ? metadata.artifactIds.filter((item): item is string => typeof item === "string") : Array.isArray(provider?.artifactIds) ? provider.artifactIds.filter((item): item is string => typeof item === "string") : [];
-  const assetId = ids[0] ?? null; if (!assetId) throw new Error("Generation succeeded without a canonical artifact receipt.");
-  const download = await getStudioAssetDownloadUrl(assetId); return { result: download.downloadUrl, assetId };
-}
-
 async function submitAdmittedGeneration(input: { state: SimpleStudioState; prompt: string; mode: "photo" | "video"; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
-  const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new Error("Select a Workspace before generating.");
-  if (!input.state.selectedModelId || input.state.selectedModelProvider !== "replicate" || !input.state.selectedModelVersion || !input.state.selectedModelSchemaDigest) throw new Error("Choose an executable Replicate model from the admitted catalog.");
-  if (!input.state.rightsConfirmed) throw new Error("Confirm that the selected inspiration rights are accurate.");
-  const capability = input.mode === "video" ? (input.sourceAssetIds.length ? "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image");
-  const contentLanguage = hasArabic(input.prompt) ? "ar" : "en";
-  const response = await fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify({ prompt: input.prompt, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, capability, contentLanguage, arabicVariety: contentLanguage === "ar" ? input.state.arabicVariety : null, quantity: input.mode === "video" ? input.state.videoDuration : 1, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : ["composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] } }), signal: input.signal });
-  const body = await response.json() as Record<string, unknown>; if (!response.ok || !body.success) { const actions = Array.isArray(body.nextActions) ? body.nextActions as Array<Record<string, unknown>> : []; const next = actions[0]?.label; throw new Error(`${typeof body.error === "string" ? body.error : "Generation admission failed."}${typeof next === "string" ? ` Next: ${next}.` : ""}`); }
-  return waitForAdmittedGeneration({ response: body, signal: input.signal });
+  if (!input.state.selectedModelId || input.state.selectedModelProvider !== "replicate" || !input.state.selectedModelVersion || !input.state.selectedModelSchemaDigest) throw new Error("MODEL_NOT_SELECTED");
+  if (!input.state.rightsConfirmed) throw new Error("RIGHTS_CONFIRMATION_REQUIRED");
+  return runAdmittedStudioGeneration({ prompt: input.prompt, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : ["composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal });
 }
 
 // ---------------------------------------------------------------------------
@@ -174,56 +146,9 @@ async function processInChunks<T>(
   }
 }
 
-/**
- * Persist a base64 data URL result to R2 via presign → PUT → finalize.
- * Returns the assetId on success, null on failure (non-fatal).
- */
-async function persistToR2(
-  dataUrl: string,
-  mode: SimpleStudioMode,
-  _prompt: string,
-  _batchId: string,
-): Promise<string | null> {
-  try {
-    // Convert data URL or remote URL to blob
-    const res = await fetch(dataUrl);
-    const blob = await res.blob();
-
-    const assetType = mode === "video" ? "video" : "image";
-    const ext = mode === "video" ? "mp4" : "png";
-    // Use mode-aware content type rather than trusting blob.type
-    // (e.g. video results may report as application/octet-stream)
-    const contentType = mode === "video"
-      ? "video/mp4"
-      : blob.type || `image/${ext}`;
-
-    // Presign
-    const presign = await createStudioAssetPresign({
-      assetType,
-      contentType,
-      expectedSizeBytes: blob.size,
-      fileName: `simple-${mode}-${Date.now()}.${ext}`,
-    });
-
-    // Upload to R2
-    await fetch(presign.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-      body: blob,
-    });
-
-    // Finalize
-    await finalizeStudioAssetUpload(presign.assetId, {
-      uploadState: "ready",
-      sizeBytes: blob.size,
-      mimeType: contentType,
-    });
-
-    return presign.assetId;
-  } catch {
-    // Non-fatal — generation still shows in UI, just not persisted
-    return null;
-  }
+async function resolveSourceAssetIds(state: SimpleStudioState, mode: Exclude<SimpleStudioMode, "copy">, filePrefix: string) {
+  const sources = mode === "photo" ? state.referenceImages : state.sourceImage ? [state.sourceImage] : [];
+  return Promise.all(sources.map(async (source, index) => source.startsWith("asset:") ? source.slice(6) : (await ingestStudioAsset({ assetType: "image", sourceDataUrl: source.startsWith("data:") ? source : undefined, sourceUrl: source.startsWith("http") ? source : undefined, fileName: `${filePrefix}-${index}.png` })).assetId));
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +174,19 @@ function setGenerations(
       generationsByMode: { ...s.generationsByMode, [mode]: updated },
     };
   });
+}
+
+type StudioSet = (fn: (state: SimpleStudioState) => Partial<SimpleStudioState>) => void;
+async function executeGenerationEntry(input: { set: StudioSet; state: SimpleStudioState; generation: Generation; mode: SimpleStudioMode; prompt: string; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
+  setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "generating", error: null } : value));
+  try {
+    if (input.mode === "copy") throw new Error("TEXT_GENERATION_NOT_ADMITTED");
+    const admitted = await submitAdmittedGeneration({ state: input.state, prompt: input.prompt, mode: input.mode, sourceAssetIds: input.sourceAssetIds, idempotencyKey: input.idempotencyKey, signal: input.signal });
+    setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "complete", result: admitted.result, assetId: admitted.assetId } : value));
+  } catch (error) {
+    if (input.signal.aborted) return;
+    setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "failed", error: error instanceof Error ? error.message : "GENERATION_FAILED" } : value));
+  }
 }
 
 export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
@@ -301,11 +239,13 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   arabicVariety: "msa",
   setArabicVariety: (arabicVariety) => set({ arabicVariety }),
   rightsBasis: "owned",
-  setRightsBasis: (rightsBasis) => set({ rightsBasis, rightsConfirmed: false }),
+  setRightsBasis: (rightsBasis) => set((state) => ({ rightsBasis, rightsConfirmed: false, rightsEvidenceIds: rightsBasis === "owned" ? [] : state.rightsEvidenceIds })),
   permittedRemix: "transform",
   setPermittedRemix: (permittedRemix) => set({ permittedRemix, rightsConfirmed: false }),
   rightsConfirmed: false,
   setRightsConfirmed: (rightsConfirmed) => set({ rightsConfirmed }),
+  rightsEvidenceIds: [],
+  setRightsEvidenceIds: (rightsEvidenceIds) => set({ rightsEvidenceIds }),
 
   // Generation
   isGenerating: false,
@@ -379,9 +319,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
 
     let sourceAssetIds: string[] = [];
     if (genMode !== "copy") {
-      const sources = genMode === "photo" ? state.referenceImages : state.sourceImage ? [state.sourceImage] : [];
       try {
-        sourceAssetIds = await Promise.all(sources.map(async (source, index) => source.startsWith("asset:") ? source.slice(6) : (await ingestStudioAsset({ assetType: "image", sourceDataUrl: source.startsWith("data:") ? source : undefined, sourceUrl: source.startsWith("http") ? source : undefined, fileName: `inspiration-${batchId}-${index}.png` })).assetId));
+        sourceAssetIds = await resolveSourceAssetIds(state, genMode, `inspiration-${batchId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Inspiration media could not be stored safely.";
         setGenerations(set, genMode, (prev) => prev.map((generation) => generation.batchId === batchId ? { ...generation, status: "failed" as const, error: message } : generation));
@@ -389,53 +328,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       }
     }
 
-    const processGeneration = async (entry: Generation, sig: AbortSignal) => {
-      if (sig.aborted) return;
-
-      // Mark as generating
-      setGenerations(set, genMode, (prev) =>
-        prev.map((g) => g.id === entry.id ? { ...g, status: "generating" as const } : g),
-      );
-
-      try {
-        let result: string | null = null;
-        let canonicalAssetId: string | null = null;
-
-        if (genMode === "copy") {
-          throw new Error("Copy providers are paused until their brand-aware intent, exact quote, reservation, provenance, and Operation adapters are qualified.");
-        } else {
-          const admitted = await submitAdmittedGeneration({ state, prompt: finalPrompt, mode: genMode, sourceAssetIds, idempotencyKey: `simple-studio:${entry.id}`, signal: sig });
-          result = admitted.result; canonicalAssetId = admitted.assetId;
-        }
-
-        setGenerations(set, genMode, (prev) =>
-          prev.map((g) => g.id === entry.id ? { ...g, status: "complete" as const, result, assetId: canonicalAssetId } : g),
-        );
-
-        // Persist image/video results to R2 in the background (non-blocking)
-        // Results can be base64 data URLs or remote URLs (for large videos)
-        if (!canonicalAssetId && result && (result.startsWith("data:") || result.startsWith("http"))) {
-          persistToR2(result, genMode, finalPrompt, batchId).then((assetId) => {
-            if (assetId) {
-              setGenerations(set, genMode, (prev) =>
-                prev.map((g) => g.id === entry.id ? { ...g, assetId } : g),
-              );
-            }
-          }).catch(() => {
-            // Non-fatal — asset just won't be persisted
-          });
-        }
-      } catch (err) {
-        if (sig.aborted) return;
-        setGenerations(set, genMode, (prev) =>
-          prev.map((g) =>
-            g.id === entry.id
-              ? { ...g, status: "failed" as const, error: err instanceof Error ? err.message : "Generation failed" }
-              : g,
-          ),
-        );
-      }
-    };
+    const processGeneration = (entry: Generation, sig: AbortSignal) => sig.aborted ? Promise.resolve() : executeGenerationEntry({ set, state, generation: entry, mode: genMode, prompt: finalPrompt, sourceAssetIds, idempotencyKey: `simple-studio:${entry.id}`, signal: sig });
 
     await processInChunks(entries, CONCURRENT_LIMIT, processGeneration, signal);
 
@@ -469,49 +362,10 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
 
     const genMode = gen.mode;
 
-    // Mark as generating
-    setGenerations(set, genMode, (prev) =>
-      prev.map((g) => g.id === id ? { ...g, status: "generating" as const, error: null } : g),
-    );
-
     const retryController = new AbortController();
     const sig = retryController.signal;
-
-    try {
-      let result: string | null = null;
-      let canonicalAssetId: string | null = null;
-
-      if (genMode === "copy") {
-        throw new Error("Copy providers are paused until their admitted execution adapters are qualified.");
-      } else {
-        const sources = genMode === "photo" ? state.referenceImages : state.sourceImage ? [state.sourceImage] : [];
-        const sourceAssetIds = await Promise.all(sources.map(async (source, index) => source.startsWith("asset:") ? source.slice(6) : (await ingestStudioAsset({ assetType: "image", sourceDataUrl: source.startsWith("data:") ? source : undefined, sourceUrl: source.startsWith("http") ? source : undefined, fileName: `retry-inspiration-${id}-${index}.png` })).assetId));
-        const admitted = await submitAdmittedGeneration({ state, prompt: gen.prompt, mode: genMode, sourceAssetIds, idempotencyKey: `simple-studio-retry:${id}:${crypto.randomUUID()}`, signal: sig }); result = admitted.result; canonicalAssetId = admitted.assetId;
-      }
-
-      setGenerations(set, genMode, (prev) =>
-        prev.map((g) => g.id === id ? { ...g, status: "complete" as const, result, assetId: canonicalAssetId } : g),
-      );
-
-      if (!canonicalAssetId && result && (result.startsWith("data:") || result.startsWith("http"))) {
-        persistToR2(result, genMode, gen.prompt, gen.batchId).then((assetId) => {
-          if (assetId) {
-            setGenerations(set, genMode, (prev) =>
-              prev.map((g) => g.id === id ? { ...g, assetId } : g),
-            );
-          }
-        }).catch(() => {});
-      }
-    } catch (err) {
-      if (sig.aborted) return;
-      setGenerations(set, genMode, (prev) =>
-        prev.map((g) =>
-          g.id === id
-            ? { ...g, status: "failed" as const, error: err instanceof Error ? err.message : "Generation failed" }
-            : g,
-        ),
-      );
-    }
+    const sourceAssetIds = genMode === "copy" ? [] : await resolveSourceAssetIds(state, genMode, `retry-inspiration-${id}`);
+    await executeGenerationEntry({ set, state, generation: gen, mode: genMode, prompt: gen.prompt, sourceAssetIds, idempotencyKey: `simple-studio-retry:${id}:${crypto.randomUUID()}`, signal: sig });
   },
 
   rewritePrompt: async () => {
