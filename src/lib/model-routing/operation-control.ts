@@ -8,6 +8,8 @@ import { ReplicateHttpClient } from "./replicate-http-client";
 type Db = ReturnType<typeof getDb>;
 
 export class GenerationOperationControlAdapter implements OperationControlAdapter {
+  readonly supportsCancel = true;
+  readonly supportsRetry = false;
   constructor(private readonly database: () => Db) {}
   async cancel(operation: Parameters<OperationControlAdapter["cancel"]>[0]) {
     const [identity] = await this.database().select({ predictionId: replicatePredictionIdentities.predictionId, credentialRef: replicatePredictionIdentities.credentialRef }).from(replicatePredictionIdentities).where(and(eq(replicatePredictionIdentities.workspaceId, operation.workspaceId), eq(replicatePredictionIdentities.intentId, operation.resourceId))).limit(1);

@@ -8,7 +8,8 @@ export type OperationState = (typeof OPERATION_STATES)[number];
 export type OperationKind =
   | "workflow_run" | "brand_ingestion" | "governance_export"
   | "governance_bulk" | "workspace_import" | "automation"
-  | "publishing_delivery" | "generation";
+  | "publishing_delivery" | "generation" | "persona_training"
+  | "metric_refresh" | "ingestion";
 
 export type OperationActor =
   | { type: "human"; userId: string }
@@ -50,6 +51,7 @@ export interface OperationFilter {
   states?: OperationState[];
   kinds?: OperationKind[];
   limit: number;
+  before?: { updatedAt: Date; id: string };
 }
 
 export type OperationMutationResult =

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import { runtimeOperationEvents, runtimeOperationMutationReceipts, runtimeOperations } from "./db-schema";
 import type { OperationStatusRepository } from "./repository";
@@ -44,6 +44,6 @@ export class PostgresOperationStatusRepository implements OperationStatusReposit
     } catch { return { kind: "unavailable" }; }
   }
   async get(workspaceId: string, operationId: string) { const [row] = await this.database().select().from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, workspaceId), eq(runtimeOperations.id, operationId))).limit(1); return row ? operation(row) : null; }
-  async list(workspaceId: string, filter: OperationFilter) { const rows = await this.database().select().from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, workspaceId), filter.states?.length ? inArray(runtimeOperations.state, filter.states) : undefined, filter.kinds?.length ? inArray(runtimeOperations.kind, filter.kinds) : undefined)).orderBy(desc(runtimeOperations.updatedAt), desc(runtimeOperations.id)).limit(filter.limit); return rows.map(operation); }
+  async list(workspaceId: string, filter: OperationFilter) { const before = filter.before ? or(lt(runtimeOperations.updatedAt, filter.before.updatedAt), and(eq(runtimeOperations.updatedAt, filter.before.updatedAt), lt(runtimeOperations.id, filter.before.id))) : undefined; const rows = await this.database().select().from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, workspaceId), filter.states?.length ? inArray(runtimeOperations.state, filter.states) : undefined, filter.kinds?.length ? inArray(runtimeOperations.kind, filter.kinds) : undefined, before)).orderBy(desc(runtimeOperations.updatedAt), desc(runtimeOperations.id)).limit(filter.limit); return rows.map(operation); }
   async listEvents(workspaceId: string, operationId: string, limit: number) { const rows = await this.database().select({ value: runtimeOperationEvents.event }).from(runtimeOperationEvents).where(and(eq(runtimeOperationEvents.workspaceId, workspaceId), eq(runtimeOperationEvents.operationId, operationId))).orderBy(desc(runtimeOperationEvents.revision)).limit(limit); return rows.map((row) => event(row.value)).reverse(); }
 }

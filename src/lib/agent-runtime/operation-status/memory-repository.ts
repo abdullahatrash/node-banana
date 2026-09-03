@@ -41,7 +41,7 @@ export class MemoryOperationStatusRepository implements OperationStatusRepositor
   }
   async get(workspaceId: string, operationId: string) { return clone(this.operations.get(this.key(workspaceId, operationId)) ?? null); }
   async list(workspaceId: string, filter: OperationFilter) {
-    return [...this.operations.values()].filter((item) => item.workspaceId === workspaceId && (!filter.states?.length || filter.states.includes(item.state)) && (!filter.kinds?.length || filter.kinds.includes(item.kind))).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || a.id.localeCompare(b.id)).slice(0, filter.limit).map(clone);
+    return [...this.operations.values()].filter((item) => item.workspaceId === workspaceId && (!filter.states?.length || filter.states.includes(item.state)) && (!filter.kinds?.length || filter.kinds.includes(item.kind)) && (!filter.before || item.updatedAt < filter.before.updatedAt || (item.updatedAt.getTime() === filter.before.updatedAt.getTime() && item.id < filter.before.id))).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || b.id.localeCompare(a.id)).slice(0, filter.limit).map(clone);
   }
   async listEvents(workspaceId: string, operationId: string, limit: number) { return clone((this.events.get(this.key(workspaceId, operationId)) ?? []).slice(-limit)); }
 }

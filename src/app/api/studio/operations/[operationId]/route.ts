@@ -16,7 +16,7 @@ export const GET = withStudioAuth<{ params: Promise<Record<string, string>> }>({
   const operationId = idSchema.safeParse((await context.params).operationId);
   if (!operationId.success || request.headers.get("x-workspace-id") !== authz.workspaceId) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
   const [operation, events] = await Promise.all([PRODUCTION_OPERATION_STATUS.get(authz.workspaceId, operationId.data), PRODUCTION_OPERATION_STATUS.listEvents(authz.workspaceId, operationId.data)]);
-  return operation ? noStoreJson({ success: true, operation, events }) : noStoreJson({ success: false, code: "NOT_FOUND" }, { status: 404 });
+  return operation ? noStoreJson({ success: true, operation, events, controls: PRODUCTION_OPERATION_STATUS.availableControls(operation) }) : noStoreJson({ success: false, code: "NOT_FOUND" }, { status: 404 });
 });
 
 export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>({ route: "/api/studio/operations/[operationId]", action: "write" }, async (request: NextRequest, authz, context) => {
