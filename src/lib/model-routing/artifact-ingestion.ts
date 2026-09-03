@@ -24,6 +24,7 @@ export class S3CanonicalArtifactIngestion implements CanonicalArtifactIngestionP
       const declared = Number(response.headers.get("content-length") ?? 0);
       if (declared > MAX_BYTES) throw new Error("REPLICATE_OUTPUT_TOO_LARGE");
       const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || (input.intent.capability.includes("video") ? "video/mp4" : "image/png");
+      if ((input.intent.outputContract.mediaType === "video" && !contentType.startsWith("video/")) || (input.intent.outputContract.mediaType === "image" && !contentType.startsWith("image/"))) throw new Error("REPLICATE_OUTPUT_CONTRACT_MISMATCH");
       const assetType = contentType.startsWith("video/") ? "video" as const : "image" as const;
       const key = buildAssetObjectKey({ workspaceId: input.workspaceId, projectId: null, assetType, fileExtension: extension(contentType) });
       const pending = await recordPendingS3AssetWithQuota({ workspaceId: input.workspaceId, userId: input.intent.createdByUserId, projectId: null, type: assetType, storageBucket: process.env.S3_BUCKET_NAME || null, storageKey: key, mimeType: contentType, originalFileName: `${input.providerPredictionId}.${extension(contentType)}`, expectedSizeBytes: declared || MAX_BYTES });

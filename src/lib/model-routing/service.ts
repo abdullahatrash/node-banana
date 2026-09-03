@@ -82,6 +82,7 @@ export class ModelRoutingService {
     arabicVariety: ArabicVariety | null; rights: GenerationIntent["rights"];
     requestedModel: ExactModelRef; selectedModel: ExactModelRef;
     fallbackAuthorizationId: string | null; quantity: number;
+    remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
     userId: string; idempotencyKey: string; id?: string;
   }) {
     const at = this.now();
@@ -96,7 +97,8 @@ export class ModelRoutingService {
       !selected.capabilities.includes(input.capability) || !localeCompatible ||
       !input.rawPrompt.trim() || input.brand.revision < 1 || input.brand.acceptedAt > at ||
       !/^sha256:[a-f0-9]{64}$/.test(input.brand.digest) || !Number.isFinite(input.quantity) || input.quantity <= 0 ||
-      !rightsHaveEvidence ||
+      !rightsHaveEvidence || input.rights.revision < 1 || !/^sha256:[a-f0-9]{64}$/.test(input.rights.digest) || !input.rights.snapshotId ||
+      input.rights.permittedRemix === "reference_only" && input.remixBrief.transform.length > 0 ||
       (input.contentLanguage !== "en" && !input.arabicVariety)) {
       return { kind: "invalid" as const };
     }
@@ -128,6 +130,8 @@ export class ModelRoutingService {
       contentLanguage: input.contentLanguage,
       arabicVariety: input.contentLanguage === "en" ? null : input.arabicVariety,
       rights: { ...input.rights, evidenceRefs: [...input.rights.evidenceRefs], sourceUrls: [...input.rights.sourceUrls] },
+      remixBrief: { digest: digest(input.remixBrief), preserve: [...input.remixBrief.preserve], transform: [...input.remixBrief.transform], avoid: [...input.remixBrief.avoid] },
+      outputContract: { mediaType: input.capability.includes("video") ? "video" : "image", aspectRatio: "9:16", safetyParameterKey: selected.qualification.inputContract.safety.parameterKey, safetyValue: selected.qualification.inputContract.safety.safeValue, lockedParametersDigest: digest(selected.qualification.inputContract.lockedParameters) },
       requestedModel: input.requestedModel, selectedModel: input.selectedModel,
       fallbackAuthorizationId: input.fallbackAuthorizationId, quote,
       reservationIds: reservation.reservationIds, createdByUserId: input.userId, createdAt: at,

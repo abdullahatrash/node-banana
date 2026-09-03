@@ -1,7 +1,7 @@
 import { check, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { user, workspaces } from "@/lib/db/schema";
-import type { ExactModelRef, FallbackAuthorization, GenerationIntent } from "./types";
+import type { ExactModelRef, FallbackAuthorization, GenerationIntent, InspirationRightsSnapshot } from "./types";
 
 export const modelFallbackAuthorizations = pgTable("model_fallback_authorizations", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), revision: integer("revision").notNull(),
@@ -13,6 +13,7 @@ export const modelFallbackAuthorizations = pgTable("model_fallback_authorization
 export const generationIntents = pgTable("generation_intents", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), intent: jsonb("intent").$type<GenerationIntent>().notNull(),
   brandProfileId: text("brand_profile_id").notNull(), brandRevision: integer("brand_revision").notNull(), promptDigest: text("prompt_digest").notNull(), selectedProvider: text("selected_provider").notNull(), selectedModel: text("selected_model").notNull(), reservationId: text("reservation_id").notNull(),
+  rightsSnapshotId: text("rights_snapshot_id"), rightsSnapshotRevision: integer("rights_snapshot_revision"), remixBriefDigest: text("remix_brief_digest"), outputContract: jsonb("output_contract").$type<GenerationIntent["outputContract"]>(),
   createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 }, (table) => ({ pk: primaryKey({ name: "generation_intents_pk", columns: [table.workspaceId, table.id] }), brandIdx: index("generation_intents_brand_idx").on(table.workspaceId, table.brandProfileId, table.brandRevision), digestCheck: check("generation_intents_digest_check", sql`${table.promptDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.brandRevision} > 0`) }));
 
@@ -39,12 +40,19 @@ export const modelProviderEffectClaims = pgTable("model_provider_effect_claims",
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
   intentId: text("intent_id").notNull(), provider: text("provider").notNull(), state: text("state").notNull(),
   claimToken: text("claim_token").notNull(), predictionId: text("prediction_id"),
+  providerStatus: text("provider_status").notNull(), nextPollAt: timestamp("next_poll_at", { withTimezone: true }).notNull(), pollAttempts: integer("poll_attempts").notNull(), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
   claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 }, (table) => ({
   pk: primaryKey({ name: "model_provider_effect_claims_pk", columns: [table.workspaceId, table.intentId] }),
-  stateCheck: check("model_provider_effect_claims_state_check", sql`${table.provider} = 'replicate' and ${table.state} in ('claimed','submitted','outcome_unknown') and length(${table.claimToken}) between 16 and 200`),
+  stateCheck: check("model_provider_effect_claims_state_check", sql`${table.provider} = 'replicate' and ${table.state} in ('claimed','submitted','outcome_unknown','succeeded','failed_known','cancelled') and length(${table.claimToken}) between 16 and 200 and ${table.pollAttempts} >= 0`),
   predictionUnique: uniqueIndex("model_provider_effect_claims_prediction_unique").on(table.predictionId),
 }));
+
+export const inspirationRightsSnapshots = pgTable("inspiration_rights_snapshots", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), revision: integer("revision").notNull(),
+  snapshot: jsonb("snapshot").$type<InspirationRightsSnapshot>().notNull(), digest: text("digest").notNull(), basis: text("basis").notNull(), permittedRemix: text("permitted_remix").notNull(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "inspiration_rights_snapshots_pk", columns: [table.workspaceId, table.id, table.revision] }), digestCheck: check("inspiration_rights_snapshots_digest_check", sql`${table.digest} ~ '^sha256:[a-f0-9]{64}$' and ${table.revision} > 0 and ${table.basis} in ('owned','licensed','public_domain','consented') and ${table.permittedRemix} in ('reference_only','transform','derivative')`) }));
 
 export const modelGenerationBudgetReservations = pgTable("model_generation_budget_reservations", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),

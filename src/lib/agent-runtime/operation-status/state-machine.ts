@@ -6,7 +6,7 @@ const transitions: Record<OperationState, ReadonlySet<OperationState>> = {
   admitted: new Set(["running", "waiting_user", "waiting_provider", "waiting_quota", "waiting_time", "blocked", "cancelling", "cancelled", "failed_known"]),
   running: new Set(["running", "waiting_user", "waiting_provider", "waiting_quota", "waiting_time", "blocked", "cancelling", "succeeded", "failed_known", "outcome_unknown"]),
   waiting_user: new Set(["admitted", "running", "cancelling", "cancelled", "failed_known"]),
-  waiting_provider: new Set(["running", "waiting_time", "cancelling", "cancelled", "failed_known", "outcome_unknown"]),
+  waiting_provider: new Set(["running", "waiting_time", "cancelling", "cancelled", "succeeded", "failed_known", "outcome_unknown"]),
   waiting_quota: new Set(["admitted", "waiting_time", "cancelling", "cancelled", "failed_known"]),
   waiting_time: new Set(["admitted", "running", "cancelling", "cancelled", "failed_known"]),
   blocked: new Set(["admitted", "cancelling", "cancelled", "failed_known"]),

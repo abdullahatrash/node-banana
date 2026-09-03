@@ -30,9 +30,17 @@ export interface GenerationIntent {
   schema: "generation-intent/v1"; id: string; workspaceId: string;
   brand: { profileId: string; revision: number; digest: `sha256:${string}`; acceptedAt: Date };
   promptDigest: `sha256:${string}`; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
-  rights: { basis: "owned" | "licensed" | "public_domain" | "consented"; evidenceRefs: string[]; sourceUrls: string[] };
+  rights: { snapshotId: string; revision: number; digest: `sha256:${string}`; basis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; evidenceRefs: string[]; sourceUrls: string[] };
+  remixBrief: { digest: `sha256:${string}`; preserve: string[]; transform: string[]; avoid: string[] };
+  outputContract: { mediaType: "image" | "video"; aspectRatio: "9:16"; safetyParameterKey: string; safetyValue: string | number | boolean; lockedParametersDigest: `sha256:${string}` };
   requestedModel: ExactModelRef; selectedModel: ExactModelRef; fallbackAuthorizationId: string | null;
   quote: CostQuote; reservationIds: string[]; createdByUserId: string; createdAt: Date;
+}
+
+export interface InspirationRightsSnapshot {
+  schema: "inspiration-rights-snapshot/v1"; id: string; workspaceId: string; revision: number;
+  basis: GenerationIntent["rights"]["basis"]; permittedRemix: GenerationIntent["rights"]["permittedRemix"];
+  evidenceRefs: string[]; sourceUrls: string[]; digest: `sha256:${string}`; createdByUserId: string; createdAt: Date;
 }
 
 export type CompatibilityFailure = "target_not_authorized" | "expired" | "revoked" | "capability" | "quality" | "content_language" | "arabic_variety" | "region" | "execution_mode" | "quote_expired" | "cost_ceiling" | "source_quote";

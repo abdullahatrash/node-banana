@@ -16,3 +16,5 @@ export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.
 
 export const testRef = (index: number): ExactModelRef => exactModelRef(QUALIFIED_TEST_MODELS[index]!)!;
 export const resolveTestModel = (ref: ExactModelRef) => findCuratedModel(ref, QUALIFIED_TEST_MODELS);
+export const TEST_RIGHTS = { snapshotId: "rights", revision: 1, digest: `sha256:${"d".repeat(64)}` as `sha256:${string}`, basis: "owned" as const, permittedRemix: "transform" as const, evidenceRefs: ["asset-1"], sourceUrls: [] };
+export const TEST_REMIX_BRIEF = { preserve: ["brand palette"], transform: ["composition"], avoid: ["logos from source"] };

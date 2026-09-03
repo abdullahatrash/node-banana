@@ -35,6 +35,7 @@ export class GenerationExecutionService {
       if (!compatible.authorized) return { kind: "invalid", code: `FALLBACK_AUTHORIZATION_${compatible.reasons.join("_").toUpperCase()}` };
     }
     const contract = descriptor.qualification.inputContract;
+    if (intent.outputContract.aspectRatio !== "9:16" || intent.outputContract.safetyParameterKey !== contract.safety.parameterKey || intent.outputContract.safetyValue !== contract.safety.safeValue || intent.outputContract.lockedParametersDigest !== canonicalDigest(contract.lockedParameters)) return { kind: "invalid", code: "OUTPUT_CONTRACT_MISMATCH" };
     if (input.sourceUrls.length && !contract.imageKey) return { kind: "invalid", code: "MODEL_IMAGE_INPUT_UNSUPPORTED" };
     const providerInput: Record<string, unknown> = {
       ...structuredClone(contract.lockedParameters),

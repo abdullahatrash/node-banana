@@ -18,6 +18,11 @@ export class PostgresProviderEffectClaims implements ProviderEffectClaimPort {
         state: "claimed",
         claimToken: input.claimToken,
         predictionId: null,
+        providerStatus: "starting",
+        nextPollAt: input.at,
+        pollAttempts: 0,
+        leaseOwner: null,
+        leaseExpiresAt: null,
         claimedAt: input.at,
         updatedAt: input.at,
       }).onConflictDoNothing().returning({ claimToken: modelProviderEffectClaims.claimToken });
@@ -35,7 +40,7 @@ export class PostgresProviderEffectClaims implements ProviderEffectClaimPort {
       if (claim.state === "submitted") return claim.predictionId === input.predictionId ? "replayed" as const : "conflict" as const;
       if (claim.state !== "claimed") return "conflict" as const;
       await tx.insert(replicatePredictionIdentities).values({ workspaceId: input.workspaceId, intentId: input.intentId, predictionId: input.predictionId, model: input.model, createdAt: input.at }).onConflictDoNothing();
-      const updated = await tx.update(modelProviderEffectClaims).set({ state: "submitted", predictionId: input.predictionId, updatedAt: input.at }).where(and(eq(modelProviderEffectClaims.workspaceId, input.workspaceId), eq(modelProviderEffectClaims.intentId, input.intentId), eq(modelProviderEffectClaims.claimToken, input.claimToken), eq(modelProviderEffectClaims.state, "claimed"))).returning({ intentId: modelProviderEffectClaims.intentId });
+      const updated = await tx.update(modelProviderEffectClaims).set({ state: "submitted", predictionId: input.predictionId, providerStatus: "starting", nextPollAt: input.at, updatedAt: input.at }).where(and(eq(modelProviderEffectClaims.workspaceId, input.workspaceId), eq(modelProviderEffectClaims.intentId, input.intentId), eq(modelProviderEffectClaims.claimToken, input.claimToken), eq(modelProviderEffectClaims.state, "claimed"))).returning({ intentId: modelProviderEffectClaims.intentId });
       return updated.length ? "bound" as const : "conflict" as const;
     });
   }

@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { RefreshCwIcon, RotateCcwIcon, XCircleIcon } from "lucide-react";
+import { RefreshCwIcon, XCircleIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { inspectOperation, listOperations, mutateOperation } from "@/lib/agent-runtime/operation-status/client";
 import { OPERATION_STATES, type OperationEvent, type OperationRecord, type OperationState } from "@/lib/agent-runtime/operation-status/types";
-import { canRetryOperation, isTerminalOperationState } from "@/lib/agent-runtime/operation-status/state-machine";
+import { isTerminalOperationState } from "@/lib/agent-runtime/operation-status/state-machine";
+
+const canCancelFromCockpit = (operation: OperationRecord) => operation.kind === "generation" || ["queued", "admitted", "waiting_user", "waiting_quota", "waiting_time", "blocked"].includes(operation.state);
 
 export function OperationsCockpit() {
   const t = useTranslations("operations");
@@ -22,6 +24,6 @@ export function OperationsCockpit() {
       <div className="mt-4 grid gap-3">{items.map((item) => <button type="button" key={item.id} onClick={() => void inspect(item.id)} className="rounded-xl border bg-card p-4 text-start outline-none hover:bg-muted/40 focus-visible:ring-2"><div className="flex items-center justify-between gap-3"><strong>{t(`kinds.${item.kind}`)}</strong><span className="rounded-full bg-muted px-2 py-1 text-xs">{t(`states.${item.state}`)}</span></div><p className="mt-1 font-mono text-xs text-muted-foreground" dir="ltr">{item.resourceId}</p><p className="mt-2 text-xs text-muted-foreground">{item.stage ? t("stage", { stage: item.stage }) : t("revision", { revision: item.revision })}</p></button>)}</div>
       {!items.length && !error ? <p className="mt-6 rounded-xl border border-dashed p-8 text-center text-muted-foreground">{t("empty")}</p> : null}
     </section>
-    <aside aria-label={t("details")} className="rounded-xl border bg-card p-4">{selected ? <><h2 className="text-lg font-semibold">{t("details")}</h2><p className="mt-1 break-all font-mono text-xs" dir="ltr">{selected.id}</p><div className="mt-4 flex gap-2">{!isTerminalOperationState(selected.state) && selected.state !== "outcome_unknown" ? <Button disabled={busy} variant="destructive" onClick={() => void mutate({ action: "cancel", expectedRevision: selected.revision })}><XCircleIcon className="size-4" />{t("cancel")}</Button> : null}{canRetryOperation(selected.state) ? <Button disabled={busy} variant="outline" onClick={() => void mutate({ action: "retry" })}><RotateCcwIcon className="size-4" />{t("retry")}</Button> : null}</div><ol className="mt-5 space-y-3">{events.map((event) => <li key={event.id} className="border-s ps-3 text-sm"><strong>{t(`states.${event.to}`)}</strong><p className="text-xs text-muted-foreground" dir="auto">{event.reasonCode}</p></li>)}</ol></> : <p className="text-sm text-muted-foreground">{t("select")}</p>}</aside>
+    <aside aria-label={t("details")} className="rounded-xl border bg-card p-4">{selected ? <><h2 className="text-lg font-semibold">{t("details")}</h2><p className="mt-1 break-all font-mono text-xs" dir="ltr">{selected.id}</p><div className="mt-4 flex gap-2">{!isTerminalOperationState(selected.state) && selected.state !== "outcome_unknown" && canCancelFromCockpit(selected) ? <Button disabled={busy} variant="destructive" onClick={() => void mutate({ action: "cancel", expectedRevision: selected.revision })}><XCircleIcon className="size-4" />{t("cancel")}</Button> : null}</div><ol className="mt-5 space-y-3">{events.map((event) => <li key={event.id} className="border-s ps-3 text-sm"><strong>{t(`states.${event.to}`)}</strong><p className="text-xs text-muted-foreground" dir="auto">{event.reasonCode}</p></li>)}</ol></> : <p className="text-sm text-muted-foreground">{t("select")}</p>}</aside>
   </main>;
 }

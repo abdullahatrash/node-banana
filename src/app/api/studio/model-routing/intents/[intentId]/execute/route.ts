@@ -7,7 +7,7 @@ import { getDb } from "@/lib/db";
 import { assets, brandProfiles } from "@/lib/db/schema";
 import { productionGenerationExecution } from "@/lib/model-routing/execution-production";
 import { PostgresModelRoutingRepository } from "@/lib/model-routing/postgres-repository";
-import { modelGenerationBudgetReservations } from "@/lib/model-routing/db-schema";
+import { inspirationRightsSnapshots, modelGenerationBudgetReservations } from "@/lib/model-routing/db-schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
@@ -28,6 +28,8 @@ export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>(
   if (!brand?.acceptedAt || canonicalDigest(brand.profile) !== intent.brand.digest) return noStoreJson({ success: false, code: "BRAND_REVISION_NOT_ACCEPTED" }, { status: 409 });
   const [budget] = await getDb().select({ status: modelGenerationBudgetReservations.status, amount: modelGenerationBudgetReservations.amountUsd }).from(modelGenerationBudgetReservations).where(and(eq(modelGenerationBudgetReservations.workspaceId, authz.workspaceId), eq(modelGenerationBudgetReservations.intentId, intent.id))).limit(1);
   if (!budget || budget.status !== "held" || Number(budget.amount) !== intent.quote.amount * intent.quote.quantity) return noStoreJson({ success: false, code: "AUTHORITATIVE_BUDGET_RESERVATION_UNAVAILABLE" }, { status: 409 });
+  const [rights] = await getDb().select({ digest: inspirationRightsSnapshots.digest, permittedRemix: inspirationRightsSnapshots.permittedRemix }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, authz.workspaceId), eq(inspirationRightsSnapshots.id, intent.rights.snapshotId), eq(inspirationRightsSnapshots.revision, intent.rights.revision))).limit(1);
+  if (!rights || rights.digest !== intent.rights.digest || rights.permittedRemix !== intent.rights.permittedRemix) return noStoreJson({ success: false, code: "RIGHTS_SNAPSHOT_MISMATCH" }, { status: 409 });
   const sourceIds = [...new Set(parsed.data.sourceAssetIds)];
   if (sourceIds.some((id) => !intent.rights.evidenceRefs.includes(id) && !intent.rights.evidenceRefs.includes(`asset:${id}`))) return noStoreJson({ success: false, code: "RIGHTS_EVIDENCE_MISMATCH" }, { status: 409 });
   const sourceRows = sourceIds.length ? await getDb().select({ id: assets.id, storageKey: assets.storageKey }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
