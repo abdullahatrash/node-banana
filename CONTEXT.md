@@ -80,6 +80,18 @@ _Avoid_: Brand kit, company profile, AI output, scraped profile
 The language and reading direction used by Tasmeemai's product interface for a person. It does not determine the language of generated content.
 _Avoid_: App language, content locale, prompt language
 
+**Message Catalog**:
+The versioned, typed collection of stable semantic keys and qualified-human-authored messages for one supported Interface Language. The same catalog contract resolves product, validation, capability-error, notification, billing, consent, security, publishing, and guidance copy on server and client; released copy is never sourced from runtime machine translation or component-local language branches.
+_Avoid_: Translation file, copy object, locale condition, string dictionary
+
+**Interface Locale Preference**:
+A person's Workspace-specific durable selection of Interface Language, numeral system, and optional calendar presentation. Resolution prefers an explicit current-session choice, then this preference, the Workspace default, a supported browser preference, and finally Arabic; it never changes Content Language or Arabic Variety.
+_Avoid_: Locale cookie, Workspace language, Arabic mode, browser locale
+
+**Localization Incident**:
+A high-severity structured event emitted when released customer-facing copy cannot resolve in the requested Message Catalog. It identifies the route, semantic key, catalog/template version, and requested locale without leaking interpolated customer data; emergency rendering uses another authored catalog rather than a raw key.
+_Avoid_: Missing translation log, raw key, translation fallback string
+
 **Content Language**:
 The Workspace's default language for generated content, overridable for a specific brief or generation. Arabic is the product default for MENA onboarding, not a restriction on English or other output languages.
 _Avoid_: Interface language, detected language, Arabic mode
@@ -159,6 +171,14 @@ _Avoid_: Social Copilot, second assistant, AI agent, copilot bot, support bot
 **Notification Preference**:
 A person's Workspace-specific choice of delivery channel, quiet hours, Interface Language, digest cadence, and optional event categories. It changes delivery of eligible notifications, not whether operational events exist, and cannot suppress mandatory security, billing, consent-expiry, or public-delivery-failure notice obligations.
 _Avoid_: Workspace notification settings, event policy, mute all, email toggle
+
+**Notification Delivery**:
+One recipient- and channel-specific attempt to communicate a semantic product event. It pins the intended recipient, Message Catalog/template version, Interface Language snapshot, delivery channel, and idempotency identity so retries render deterministically; a scheduled digest selects the recipient's latest preference only when its Delivery is created.
+_Avoid_: Email, notification row, template send, event
+
+**Client Draft Recovery**:
+A non-authoritative local recovery copy of non-secret form state used after navigation, refresh, or network interruption. It exposes unsynced and conflict state, cannot represent server acceptance, and must never contain provider credentials, payment authorization, publishing authorization, or sensitive consent evidence.
+_Avoid_: Offline mode, autosave, browser source of truth, accepted draft
 
 **Feedback Case**:
 A trackable support resource containing the reporter, Workspace, category, description, consented attachments, product/version context, correspondence, state, and retention policy. It gives the reporter a stable reference and observable resolution instead of acting as an untracked email submission.
@@ -862,6 +882,14 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - A Channel Onboarding Order may assign bounded partner work, but a Partner Service Assignment grants neither reusable credentials nor publishing authority and ends with the order.
 - API and Agent Entitlements change discoverability or capacity only; every transport still invokes the same Application Capabilities and authorization, Approval, idempotency, and audit rules.
 - Notification Preferences are personal and Workspace-specific; mandatory security, billing, consent-expiry, and public-delivery-failure notices remain deliverable under legally safe channel rules.
+- Public indexable pages identify Interface Language in `/ar/...` or `/en/...` paths, while authenticated resources keep locale-neutral URLs and resolve each viewer's Interface Locale Preference independently.
+- Interface Locale Preference resolution is explicit session choice, then the person's Workspace-specific preference, Workspace default, supported browser preference, and finally Arabic; changing it never changes Content Language or Arabic Variety.
+- Message Catalog keys and interpolation schemas are identical across authored Arabic and English catalogs; a missing released key creates a Localization Incident and emergency authored-locale fallback, never raw-key rendering.
+- A Notification Delivery pins the recipient, Message Catalog/template version, and Interface Language snapshot; a later locale change affects new deliveries and newly instantiated digests, not deterministic retries.
+- User-authored mixed-direction text uses automatic direction at the content boundary, while URLs, handles, code, model identifiers, email, phone, and payment references use explicit isolated LTR presentation.
+- Search retains exact source values while using a shared discovery index that normalizes tatweel, optional diacritics, common Arabic alef/ya variants, Unicode form, and whitespace; identifiers, filenames, handles, quoted queries, and audit evidence retain exact-match semantics.
+- Interface Locale Preference may select Arabic-Indic or Latin numerals and an optional Hijri companion display; scheduling remains Gregorian, UTC-instant plus IANA-timezone authoritative, with explicit week-start and weekend configuration.
+- Client Draft Recovery may preserve non-secret form work and resumable-upload state, but generation, payment, Approval, and publishing exist only after confirmed idempotent server acceptance.
 - Identity deletion, membership departure, Workspace Closure, and resource deletion are separate processes; a final Owner must transfer ownership before leaving, and closure preserves minimal legal, financial, anti-fraud, idempotency, and public-delivery evidence after eligible content erasure.
 - A **Channel** belongs to exactly one **Platform**.
 - A **Provider Adapter** supports exactly one **Platform**.
