@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const migration = ["drizzle/0058_overconfident_rockslide.sql", "drizzle/0059_modern_slayback.sql", "drizzle/0060_green_grandmaster.sql", "drizzle/0061_atomic_governance_membership.sql"].map((path) => readFileSync(path, "utf8")).join("\n");
+const migration = ["drizzle/0058_overconfident_rockslide.sql", "drizzle/0059_modern_slayback.sql", "drizzle/0060_green_grandmaster.sql", "drizzle/0061_atomic_governance_membership.sql", "drizzle/0065_governance_secret_deliveries.sql", "drizzle/0066_governance_replay_identity.sql", "drizzle/0067_governance_projection_claims.sql"].map((path) => readFileSync(path, "utf8")).join("\n");
 const repository = readFileSync("src/lib/governance/postgres-repository.ts", "utf8");
 const membershipProjection = readFileSync("src/lib/governance/membership-postgres.ts", "utf8");
+const deployment = readFileSync("vercel.json", "utf8");
 
 describe("S2 governance migration", () => {
   it("pins all records to a Workspace and protects append-only evidence", () => {
@@ -29,5 +30,14 @@ describe("S2 governance migration", () => {
     expect(membershipProjection).not.toContain("insert(member)");
     expect(membershipProjection).not.toContain("update(member)");
     expect(membershipProjection).not.toContain("delete(member)");
+  });
+
+  it("binds bounded secret replay to authenticated identity and indexes projection recovery", () => {
+    expect(migration).toContain('"actor_identity"');
+    expect(migration).toContain('"auth_context_digest"');
+    expect(migration).toContain("workspace_governance_secret_deliveries_actor_binding_check");
+    expect(migration).toContain("workspace_governance_membership_projection_claim_idx");
+    expect(deployment).toContain('"path": "/api/studio/internal/governance-sweep"');
+    expect(deployment).toContain('"schedule": "* * * * *"');
   });
 });

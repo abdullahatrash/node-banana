@@ -28,15 +28,19 @@ describe("GovernanceRecoverySweep", () => {
       deletion: { process: vi.fn(async () => undefined) },
       safety: { process: vi.fn(async () => undefined) },
       approvals: { processWorkspace: vi.fn(async () => 2) },
+      membership: { sweep: vi.fn(async () => ({ scanned: 1, succeeded: 1, retryPending: 0, deadLetter: 0 })) },
+      secrets: { purge: vi.fn(async () => 3) },
     };
 
     const summary = await new GovernanceRecoverySweep(repository, workers).run({ workspaceIds: ["workspace-a"], maxJobsPerWorkspace: 100 });
 
-    expect(summary).toEqual({ workspaces: 1, examined: 6, dispatched: 5, failed: 0, deadlinesAdvanced: 2 });
+    expect(summary).toEqual({ workspaces: 1, examined: 6, dispatched: 5, failed: 0, deadlinesAdvanced: 2, membershipProjection: { scanned: 1, succeeded: 1, retryPending: 0, deadLetter: 0 }, expiredSecretDeliveriesPurged: 3 });
     expect(workers.export.process).toHaveBeenCalledWith({ workspaceId: "workspace-a", kind: "workspace_export", exportId: "export-1" });
     expect(workers.bulk.process).toHaveBeenCalledWith({ workspaceId: "workspace-a", operationId: "bulk-1" });
     expect(workers.import.process).toHaveBeenCalledWith({ workspaceId: "workspace-a", importId: "import-1" });
     expect(workers.deletion.process).toHaveBeenCalledWith({ workspaceId: "workspace-a", deletionReceiptId: "delete-1" });
     expect(workers.safety.process).toHaveBeenCalledWith({ workspaceId: "workspace-a", appealId: "appeal-1" });
+    expect(workers.membership.sweep).toHaveBeenCalledWith({ limit: 100 });
+    expect(workers.secrets.purge).toHaveBeenCalledWith({ limit: 100 });
   });
 });

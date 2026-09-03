@@ -13,7 +13,7 @@ export type GovernanceSettingsSection = "members" | "roles" | "approval" | "port
 export type GovernanceCommandRunner = <T = unknown>(command: GovernanceCommand) => Promise<T | null>;
 
 const kindsBySection: Record<GovernanceSettingsSection, string[]> = {
-  members: ["invitation_binding", "member_role_assignment", "workspace_closure"], roles: ["custom_role"],
+  members: ["invitation_binding", "member_role_assignment", "membership_projection", "workspace_closure"], roles: ["custom_role"],
   approval: ["approval_policy", "approval_request", "review_guest_grant"], portfolios: ["portfolio", "portfolio_assignment"],
   audit: ["audit_export"], data: ["data_region_policy", "retention_policy", "retention_hold", "deletion_receipt", "tombstone"],
   safety: ["safety_decision", "safety_appeal"], bulk: ["bulk_operation"], portability: ["workspace_import", "workspace_export"],

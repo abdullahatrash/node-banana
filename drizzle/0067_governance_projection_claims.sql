@@ -1,0 +1,1 @@
+CREATE INDEX "workspace_governance_membership_projection_claim_idx" ON "workspace_governance_resources" USING btree ("status", "updated_at") WHERE "kind" = 'membership_projection' and "status" in ('queued','retry_pending','processing');

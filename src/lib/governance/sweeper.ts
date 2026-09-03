@@ -8,7 +8,9 @@ import {
   getProductionGovernanceDeletionWorker,
   getProductionGovernanceExportWorker,
   getProductionGovernanceImportWorker,
+  getProductionGovernanceMembershipProjectionWorker,
   getProductionGovernanceSafetyAppealWorker,
+  getProductionGovernanceSecretDeliverySweeper,
   PRODUCTION_GOVERNANCE_REPOSITORY,
 } from "./production";
 
@@ -19,6 +21,8 @@ interface GovernanceSweepWorkers {
   deletion: { process(input: { workspaceId: string; deletionReceiptId: string }): Promise<void> };
   safety: { process(input: { workspaceId: string; appealId: string }): Promise<void> };
   approvals: { processWorkspace(workspaceId: string): Promise<number> };
+  membership: { sweep(input: { limit: number }): Promise<{ scanned: number; succeeded: number; retryPending: number; deadLetter: number }> };
+  secrets: { purge(input: { limit: number }): Promise<number> };
 }
 
 export interface GovernanceSweepSummary {
@@ -27,6 +31,8 @@ export interface GovernanceSweepSummary {
   dispatched: number;
   failed: number;
   deadlinesAdvanced: number;
+  membershipProjection: { scanned: number; succeeded: number; retryPending: number; deadLetter: number };
+  expiredSecretDeliveriesPurged: number;
 }
 
 /** Durable recovery entry point; individual workers acquire their own fenced leases. */
@@ -37,7 +43,7 @@ export class GovernanceRecoverySweep {
   ) {}
 
   async run(input: { workspaceIds: string[]; maxJobsPerWorkspace: number }): Promise<GovernanceSweepSummary> {
-    const summary: GovernanceSweepSummary = { workspaces: 0, examined: 0, dispatched: 0, failed: 0, deadlinesAdvanced: 0 };
+    const summary: GovernanceSweepSummary = { workspaces: 0, examined: 0, dispatched: 0, failed: 0, deadlinesAdvanced: 0, membershipProjection: { scanned: 0, succeeded: 0, retryPending: 0, deadLetter: 0 }, expiredSecretDeliveriesPurged: 0 };
     for (const workspaceId of input.workspaceIds) {
       summary.workspaces += 1;
       const resources = (await this.repository.listResources({ workspaceId })).slice(0, input.maxJobsPerWorkspace);
@@ -59,12 +65,23 @@ export class GovernanceRecoverySweep {
         summary.failed += 1;
       }
     }
+    try {
+      summary.membershipProjection = await this.workers.membership.sweep({ limit: input.maxJobsPerWorkspace });
+    } catch {
+      summary.failed += 1;
+    }
+    try {
+      summary.expiredSecretDeliveriesPurged = await this.workers.secrets.purge({ limit: input.maxJobsPerWorkspace });
+    } catch {
+      summary.failed += 1;
+    }
     return summary;
   }
 
   private dispatchFor(workspaceId: string, resource: GovernanceResource): (() => Promise<void>) | null {
     if ((resource.kind === "audit_export" || resource.kind === "workspace_export") && ["queued", "running"].includes(resource.status)) {
-      return () => this.workers.export.process({ workspaceId, kind: resource.kind, exportId: resource.id });
+      const kind = resource.kind;
+      return () => this.workers.export.process({ workspaceId, kind, exportId: resource.id });
     }
     if (resource.kind === "bulk_operation" && ["queued", "running", "cancelling"].includes(resource.status)) {
       return () => this.workers.bulk.process({ workspaceId, operationId: resource.id });
@@ -92,5 +109,7 @@ export async function runProductionGovernanceSweep(input: { workspaceLimit: numb
     deletion: getProductionGovernanceDeletionWorker(),
     safety: getProductionGovernanceSafetyAppealWorker(),
     approvals: getProductionGovernanceApprovalDeadlineWorker(),
+    membership: getProductionGovernanceMembershipProjectionWorker(),
+    secrets: getProductionGovernanceSecretDeliverySweeper(),
   }).run({ workspaceIds: workspaceRows.map((row) => row.id), maxJobsPerWorkspace: input.maxJobsPerWorkspace });
 }

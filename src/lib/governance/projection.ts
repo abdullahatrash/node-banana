@@ -9,7 +9,6 @@ const ALWAYS_HIDDEN_KINDS = new Set<GovernanceResourceKind>([
   "step_up_challenge",
   "step_up_session",
   "review_guest_session",
-  "membership_projection",
 ]);
 
 const RESOURCE_CAPABILITY: Partial<Record<GovernanceResourceKind, GovernanceCapability[]>> = {
@@ -33,6 +32,7 @@ const RESOURCE_CAPABILITY: Partial<Record<GovernanceResourceKind, GovernanceCapa
   safety_appeal: ["safety.decide", "safety.appeal"],
   bulk_operation: ["bulk.preview", "bulk.execute"],
   workspace_closure: ["workspace.close"],
+  membership_projection: ["members.manage"],
 };
 
 function sensitiveKey(key: string): boolean {

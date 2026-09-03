@@ -19,10 +19,10 @@ const governanceErrors: CapabilityErrorContract[] = [
 ];
 
 function actorFrom(context: ResolvedSecurityContext | undefined): GovernanceActor {
-  if (!context || context.kind !== "human") {
+  if (!context || context.kind !== "human" || !context.authContextId) {
     throw new CapabilityFailure({ code: "GOVERNANCE_FORBIDDEN", category: "authorization", retryable: false, message: "A human Workspace session is required." });
   }
-  return { workspaceId: context.workspaceId, userId: context.userId, legacyRole: context.role };
+  return { workspaceId: context.workspaceId, userId: context.userId, legacyRole: context.role, authContextId: context.authContextId };
 }
 
 function failure(error: unknown): never {

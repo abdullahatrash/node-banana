@@ -13,7 +13,7 @@ describe("governance sweep route", () => {
     vi.clearAllMocks();
     mocks.configured.mockReturnValue(true);
     mocks.auth.mockReturnValue(null);
-    mocks.sweep.mockResolvedValue({ workspaces: 1, examined: 3, dispatched: 2, failed: 0, deadlinesAdvanced: 1 });
+    mocks.sweep.mockResolvedValue({ workspaces: 1, examined: 3, dispatched: 2, failed: 0, deadlinesAdvanced: 1, membershipProjection: { scanned: 1, succeeded: 1, retryPending: 0, deadLetter: 0 }, expiredSecretDeliveriesPurged: 2 });
   });
 
   it("requires internal or scheduler authentication before dispatch", async () => {

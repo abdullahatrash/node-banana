@@ -14,8 +14,10 @@ export class ReplicatePredictionAdapter {
     let prediction: ReplicatePrediction;
     try { prediction = await this.client.create({ version: intent.selectedModel.version, input: structuredClone(providerInput) }); }
     catch { return { state: "outcome_unknown", predictionId: null, code: "REPLICATE_SUBMIT_TRANSPORT_LOST" }; }
-    const persisted = await this.ledger.persist({ workspaceId: intent.workspaceId, intentId: intent.id, provider: "replicate", predictionId: prediction.id, model: intent.selectedModel, createdAt: this.now() });
-    if (persisted === "conflict") return { state: "failed_known", predictionId: prediction.id, code: "PREDICTION_IDENTITY_CONFLICT" };
+    let persisted: Awaited<ReturnType<PredictionLedgerPort["persist"]>>;
+    try { persisted = await this.ledger.persist({ workspaceId: intent.workspaceId, intentId: intent.id, provider: "replicate", predictionId: prediction.id, model: intent.selectedModel, createdAt: this.now() }); }
+    catch { return { state: "outcome_unknown", predictionId: prediction.id, code: "PREDICTION_IDENTITY_PERSIST_FAILED" }; }
+    if (persisted === "conflict") return { state: "outcome_unknown", predictionId: prediction.id, code: "PREDICTION_IDENTITY_CONFLICT" };
     return this.map(intent, prediction);
   }
   async poll(intent: GenerationIntent, predictionId: string): Promise<ReplicateExecutionResult> {

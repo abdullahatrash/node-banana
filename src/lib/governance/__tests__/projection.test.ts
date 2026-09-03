@@ -29,5 +29,7 @@ describe("governance customer projections", () => {
     expect(canViewGovernanceResource("invitation_binding", ["members.invite"])).toBe(true);
     expect(canViewGovernanceResource("retention_hold", ["audit.view"])).toBe(false);
     expect(canViewGovernanceResource("retention_hold", ["retention.manage"])).toBe(true);
+    expect(canViewGovernanceResource("membership_projection", ["governance.view"])).toBe(false);
+    expect(canViewGovernanceResource("membership_projection", ["members.manage"])).toBe(true);
   });
 });

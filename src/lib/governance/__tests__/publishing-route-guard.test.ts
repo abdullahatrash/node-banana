@@ -3,7 +3,7 @@ import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
 import { requiresGovernedPublishingPlan } from "../publishing-route-guard";
 
-const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const };
+const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const, authContextId: "session-owner-a" };
 
 describe("legacy publishing route guard", () => {
   it("fails closed when the Workspace has an active Publishing Approval policy", async () => {

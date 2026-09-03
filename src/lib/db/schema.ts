@@ -8612,6 +8612,11 @@ export const workspaceGovernanceResources = pgTable(
     workspaceKindStatusIdx: index(
       "workspace_governance_resources_workspace_kind_status_idx",
     ).on(table.workspaceId, table.kind, table.status, table.updatedAt),
+    membershipProjectionClaimIdx: index(
+      "workspace_governance_membership_projection_claim_idx",
+    ).on(table.status, table.updatedAt).where(
+      sql`${table.kind} = 'membership_projection' and ${table.status} in ('queued','retry_pending','processing')`,
+    ),
     identityCheck: check(
       "workspace_governance_resources_identity_check",
       sql`${table.id} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.version} > 0 and length(${table.status}) between 1 and 80`,
@@ -8637,6 +8642,8 @@ export const workspaceGovernanceMutationReceipts = pgTable(
     capability: text("capability").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     requestDigest: text("request_digest").notNull(),
+    actorIdentity: text("actor_identity"),
+    authContextDigest: text("auth_context_digest"),
     result: jsonb("result").$type<unknown>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
@@ -8649,6 +8656,10 @@ export const workspaceGovernanceMutationReceipts = pgTable(
       "workspace_governance_mutation_receipts_digest_check",
       sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.capability} ~ '^[a-z][a-z0-9_.]*@[1-9][0-9]*$' and length(${table.idempotencyKey}) between 8 and 200`,
     ),
+    actorBindingCheck: check(
+      "workspace_governance_mutation_receipts_actor_binding_check",
+      sql`((${table.actorIdentity} is null and ${table.authContextDigest} is null) or (${table.actorIdentity} ~ '^(human|review_guest):[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.authContextDigest} ~ '^sha256:[a-f0-9]{64}$'))`,
+    ),
   }),
 );
 
@@ -8660,6 +8671,8 @@ export const workspaceGovernanceSecretDeliveries = pgTable(
     capability: text("capability").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     requestDigest: text("request_digest").notNull(),
+    actorIdentity: text("actor_identity").notNull(),
+    authContextDigest: text("auth_context_digest").notNull(),
     encryptedPayload: text("encrypted_payload").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
@@ -8668,6 +8681,7 @@ export const workspaceGovernanceSecretDeliveries = pgTable(
     pk: primaryKey({ name: "workspace_governance_secret_deliveries_pk", columns: [table.workspaceId, table.capability, table.idempotencyKey] }),
     expiryIdx: index("workspace_governance_secret_deliveries_expiry_idx").on(table.expiresAt),
     digestCheck: check("workspace_governance_secret_deliveries_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    actorBindingCheck: check("workspace_governance_secret_deliveries_actor_binding_check", sql`${table.actorIdentity} ~ '^(human|review_guest):[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.authContextDigest} ~ '^sha256:[a-f0-9]{64}$'`),
     envelopeCheck: check("workspace_governance_secret_deliveries_envelope_check", sql`${table.encryptedPayload} like 'v1.%' and octet_length(${table.encryptedPayload}) <= 65536`),
   }),
 );

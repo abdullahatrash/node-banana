@@ -24,7 +24,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ in
   const decoded = decodeInvitationToken(invitationToken);
   if (!decoded) return noStoreJson({ success: false, code: "GOVERNANCE_NOT_FOUND" }, { status: 404 });
   try {
-    const result = await PRODUCTION_GOVERNANCE_SERVICE.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: session.user.id, verifiedEmail: session.user.email, idempotencyKey: parsed.data.idempotencyKey });
+    const result = await PRODUCTION_GOVERNANCE_SERVICE.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: session.user.id, verifiedEmail: session.user.email, authContextId: session.session.id, idempotencyKey: parsed.data.idempotencyKey });
     return noStoreJson({ success: true, result });
   } catch (error) {
     if (!(error instanceof GovernanceError)) return noStoreJson({ success: false, code: "UNAVAILABLE" }, { status: 500 });

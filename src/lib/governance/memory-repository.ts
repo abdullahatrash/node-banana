@@ -45,6 +45,29 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
     return value ? copy(value) : null;
   }
 
+  async purgeExpiredSecretDeliveries(input: { expiredBefore: Date; limit: number }) {
+    const expired = [...this.secretDeliveries.entries()]
+      .filter(([, delivery]) => delivery.expiresAt <= input.expiredBefore)
+      .sort(([, left], [, right]) => left.expiresAt.getTime() - right.expiresAt.getTime())
+      .slice(0, Math.min(Math.max(input.limit, 1), 1_000));
+    for (const [key] of expired) this.secretDeliveries.delete(key);
+    return expired.length;
+  }
+
+  async listClaimableMembershipProjections(input: { evaluatedAt: Date; limit: number }) {
+    return [...this.resources.values()]
+      .filter((item) => {
+        if (item.kind !== "membership_projection") return false;
+        if (item.status === "queued") return true;
+        const body = item.body as { nextAttemptAt?: string; lease?: { expiresAt?: string } | null };
+        if (item.status === "retry_pending") return Boolean(body.nextAttemptAt && new Date(body.nextAttemptAt) <= input.evaluatedAt);
+        return item.status === "processing" && Boolean(body.lease?.expiresAt && new Date(body.lease.expiresAt) <= input.evaluatedAt);
+      })
+      .sort((left, right) => left.updatedAt.getTime() - right.updatedAt.getTime())
+      .slice(0, Math.min(Math.max(input.limit, 1), 500))
+      .map(copy);
+  }
+
   async getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;
     kind: GovernanceResourceKind;
@@ -87,7 +110,9 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
       const key = receiptKey(input.receipt);
       const existing = this.receipts.get(key);
       if (existing) {
-        return existing.requestDigest === input.receipt.requestDigest
+        return existing.requestDigest === input.receipt.requestDigest &&
+          (existing.actorIdentity ?? null) === (input.receipt.actorIdentity ?? null) &&
+          (existing.authContextDigest ?? null) === (input.receipt.authContextDigest ?? null)
           ? { type: "replayed", result: copy(existing.result) }
           : { type: "conflict" };
       }

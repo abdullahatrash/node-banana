@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, max, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, max, ne, or, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import {
   workspaceAuditTrailEvents,
@@ -157,6 +157,8 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
       capability: row.capability,
       idempotencyKey: row.idempotencyKey,
       requestDigest: row.requestDigest,
+      actorIdentity: row.actorIdentity,
+      authContextDigest: row.authContextDigest,
       result: structuredClone(row.result),
       createdAt: row.createdAt,
     } : null;
@@ -169,6 +171,51 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
       eq(workspaceGovernanceSecretDeliveries.idempotencyKey, input.idempotencyKey),
     )).limit(1);
     return row ? { ...row } : null;
+  }
+
+  async purgeExpiredSecretDeliveries(input: { expiredBefore: Date; limit: number }) {
+    const limit = Math.min(Math.max(input.limit, 1), 1_000);
+    return this.database().transaction(async (tx) => {
+      const expired = await tx.select({
+        workspaceId: workspaceGovernanceSecretDeliveries.workspaceId,
+        capability: workspaceGovernanceSecretDeliveries.capability,
+        idempotencyKey: workspaceGovernanceSecretDeliveries.idempotencyKey,
+      }).from(workspaceGovernanceSecretDeliveries)
+        .where(sql`${workspaceGovernanceSecretDeliveries.expiresAt} <= ${input.expiredBefore}`)
+        .orderBy(asc(workspaceGovernanceSecretDeliveries.expiresAt))
+        .limit(limit);
+      let deleted = 0;
+      for (const row of expired) {
+        const removed = await tx.delete(workspaceGovernanceSecretDeliveries).where(and(
+          eq(workspaceGovernanceSecretDeliveries.workspaceId, row.workspaceId),
+          eq(workspaceGovernanceSecretDeliveries.capability, row.capability),
+          eq(workspaceGovernanceSecretDeliveries.idempotencyKey, row.idempotencyKey),
+          sql`${workspaceGovernanceSecretDeliveries.expiresAt} <= ${input.expiredBefore}`,
+        )).returning({ idempotencyKey: workspaceGovernanceSecretDeliveries.idempotencyKey });
+        deleted += removed.length;
+      }
+      return deleted;
+    });
+  }
+
+  async listClaimableMembershipProjections(input: { evaluatedAt: Date; limit: number }) {
+    const evaluatedAt = input.evaluatedAt.toISOString();
+    const rows = await this.database().select().from(workspaceGovernanceResources).where(and(
+      eq(workspaceGovernanceResources.kind, "membership_projection"),
+      or(
+        eq(workspaceGovernanceResources.status, "queued"),
+        and(
+          eq(workspaceGovernanceResources.status, "retry_pending"),
+          sql`coalesce(${workspaceGovernanceResources.body}->>'nextAttemptAt', '') <= ${evaluatedAt}`,
+        ),
+        and(
+          eq(workspaceGovernanceResources.status, "processing"),
+          sql`coalesce(${workspaceGovernanceResources.body}->'lease'->>'expiresAt', '') <= ${evaluatedAt}`,
+        ),
+      ),
+    )).orderBy(asc(workspaceGovernanceResources.updatedAt), asc(workspaceGovernanceResources.id))
+      .limit(Math.min(Math.max(input.limit, 1), 500));
+    return rows.map((row) => fromResourceRow<Record<string, unknown>>(row));
   }
 
   async getResource<T = Record<string, unknown>>(input: {
@@ -242,7 +289,9 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
           )
           .limit(1);
         if (existing) {
-          return existing.requestDigest === input.receipt.requestDigest
+          return existing.requestDigest === input.receipt.requestDigest &&
+            existing.actorIdentity === (input.receipt.actorIdentity ?? null) &&
+            existing.authContextDigest === (input.receipt.authContextDigest ?? null)
             ? { type: "replayed" as const, result: structuredClone(existing.result) }
             : { type: "conflict" as const };
         }
@@ -320,6 +369,8 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
           capability: input.receipt.capability,
           idempotencyKey: input.receipt.idempotencyKey,
           requestDigest: input.receipt.requestDigest,
+          actorIdentity: input.receipt.actorIdentity ?? null,
+          authContextDigest: input.receipt.authContextDigest ?? null,
           result: input.receipt.result,
           createdAt: input.receipt.createdAt,
         });

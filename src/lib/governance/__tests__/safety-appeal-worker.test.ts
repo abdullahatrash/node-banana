@@ -4,7 +4,7 @@ import { GovernanceSafetyAppealWorker } from "../safety-appeal-worker";
 import { GovernanceService } from "../service";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
-const actor = { workspaceId: "workspace-1", userId: "owner-1", legacyRole: "owner" as const };
+const actor = { workspaceId: "workspace-1", userId: "owner-1", legacyRole: "owner" as const, authContextId: "session-owner-1" };
 
 async function queuedAppeal(repository: InMemoryGovernanceRepository) {
   const service = new GovernanceService(repository, { now: () => now });

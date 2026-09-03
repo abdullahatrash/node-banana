@@ -4,7 +4,7 @@ import { GovernanceService } from "../service";
 import { RepositoryGovernanceStepUpVerifier } from "../step-up";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
-const actor = { workspaceId: "workspace-1", userId: "owner-1", legacyRole: "owner" as const };
+const actor = { workspaceId: "workspace-1", userId: "owner-1", legacyRole: "owner" as const, authContextId: "session-owner-1" };
 
 describe("RepositoryGovernanceStepUpVerifier", () => {
   it("accepts only the exact Workspace, principal, purpose, resource, token, and active window", async () => {

@@ -57,6 +57,8 @@ interface ContentOSWorkspaceContext {
 }
 
 export interface ContentOSSession {
+  /** Opaque server-validated session identity; never serialized to clients. */
+  authContextId?: string;
   user: {
     id: string;
     name: string | null;
@@ -73,6 +75,7 @@ interface StudioAuthorizationSuccess {
   userId: string;
   workspaceId: string;
   role: WorkspaceRole;
+  authContextId: string;
   permissions: ContentOSPermission[];
   contentSession: ContentOSSession;
 }
@@ -299,6 +302,7 @@ export async function getContentOSSession(
     await ensureWorkspaceUser(workspaceId, userId);
 
     const contentSession: ContentOSSession = {
+      authContextId: `dev-bypass:${userId}`,
       user: {
         id: userId,
         name: authenticatedUser?.name ?? null,
@@ -357,6 +361,17 @@ export async function getContentOSSession(
       ? rawSessionData.activeOrganizationId
       : null,
   );
+  const authContextId = parseHeaderValue(
+    typeof rawSessionData?.id === "string" ? rawSessionData.id : null,
+  );
+  if (!authContextId) {
+    return authFailure(
+      options.route,
+      "unauthenticated",
+      401,
+      "A current server session is required.",
+    );
+  }
 
   const candidates = await getWorkspaceCandidates(userId);
   const resolved = resolveActiveWorkspace({
@@ -398,6 +413,7 @@ export async function getContentOSSession(
   });
 
   const contentSession: ContentOSSession = {
+    authContextId,
     user: {
       id: userId,
       name: authenticatedUser?.name ?? null,
@@ -520,12 +536,21 @@ export async function authorizeStudioRequest(
   }
 
   const session = permissionResult.session;
+  if (!session.authContextId) {
+    return authFailure(
+      options.route,
+      "unauthenticated",
+      401,
+      "A current server session is required.",
+    );
+  }
 
   return {
     authorized: true,
     userId: session.user.id,
     workspaceId: session.workspace.id,
     role: session.role,
+    authContextId: session.authContextId,
     permissions: session.permissions,
     contentSession: session,
   };

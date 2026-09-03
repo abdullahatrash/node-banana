@@ -11,6 +11,9 @@ import { GovernanceDeletionWorker } from "./deletion-worker";
 import { GovernanceSafetyAppealWorker } from "./safety-appeal-worker";
 import { HmacGovernanceImportManifestVerifier } from "./import-manifest";
 import { DrizzleGovernancePortableDataPort } from "./portability";
+import { ProductionGovernanceDeletionAdapter, ProductionGovernanceSafetyRevalidationAdapter } from "./production-adapters";
+import { BetterAuthOrganizationMembershipProjectionPort, GovernanceMembershipProjectionWorker } from "./membership-projection-worker";
+import { GovernanceSecretDeliverySweeper } from "./secret-delivery-sweeper";
 
 function regionTrustKeys(): Map<string, Uint8Array> {
   const keys = new Map<string, Uint8Array>();
@@ -91,9 +94,20 @@ export function getProductionGovernanceApprovalDeadlineWorker(): GovernanceAppro
 }
 
 export function getProductionGovernanceDeletionWorker(): GovernanceDeletionWorker {
-  return new GovernanceDeletionWorker(PRODUCTION_GOVERNANCE_REPOSITORY);
+  return new GovernanceDeletionWorker(PRODUCTION_GOVERNANCE_REPOSITORY, new ProductionGovernanceDeletionAdapter());
 }
 
 export function getProductionGovernanceSafetyAppealWorker(): GovernanceSafetyAppealWorker {
-  return new GovernanceSafetyAppealWorker(PRODUCTION_GOVERNANCE_REPOSITORY);
+  return new GovernanceSafetyAppealWorker(PRODUCTION_GOVERNANCE_REPOSITORY, new ProductionGovernanceSafetyRevalidationAdapter());
+}
+
+export function getProductionGovernanceMembershipProjectionWorker(): GovernanceMembershipProjectionWorker {
+  return new GovernanceMembershipProjectionWorker(
+    PRODUCTION_GOVERNANCE_REPOSITORY,
+    new BetterAuthOrganizationMembershipProjectionPort(),
+  );
+}
+
+export function getProductionGovernanceSecretDeliverySweeper(): GovernanceSecretDeliverySweeper {
+  return new GovernanceSecretDeliverySweeper(PRODUCTION_GOVERNANCE_REPOSITORY);
 }

@@ -110,6 +110,10 @@ export interface GovernanceReceipt {
   capability: string;
   idempotencyKey: string;
   requestDigest: string;
+  /** Null only for internal worker receipts that cannot deliver human secrets. */
+  actorIdentity?: string | null;
+  /** Digest of server-validated authentication context; never a raw session token. */
+  authContextDigest?: string | null;
   result: unknown;
   createdAt: Date;
 }
@@ -133,6 +137,8 @@ export interface GovernanceSecretDelivery {
   capability: string;
   idempotencyKey: string;
   requestDigest: string;
+  actorIdentity: string;
+  authContextDigest: string;
   encryptedPayload: string;
   expiresAt: Date;
   createdAt: Date;
@@ -189,6 +195,14 @@ export interface GovernanceRepository {
     capability: string;
     idempotencyKey: string;
   }): Promise<GovernanceSecretDelivery | null>;
+  purgeExpiredSecretDeliveries(input: {
+    expiredBefore: Date;
+    limit: number;
+  }): Promise<number>;
+  listClaimableMembershipProjections(input: {
+    evaluatedAt: Date;
+    limit: number;
+  }): Promise<GovernanceResource[]>;
   getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;
     kind: GovernanceResourceKind;
@@ -289,6 +303,8 @@ export interface GovernanceActor {
   workspaceId: string;
   userId: string;
   legacyRole: "owner" | "admin" | "member";
+  /** Server-owned session/invocation identity, never supplied by command input. */
+  authContextId: string;
   portfolioAssignmentId?: string;
 }
 

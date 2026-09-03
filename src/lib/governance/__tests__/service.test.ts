@@ -8,8 +8,8 @@ import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, t
 import { RETENTION_CLASSES, type GovernanceActor, type RetentionRule } from "../types";
 
 const NOW = new Date("2026-09-03T12:00:00.000Z");
-const owner: GovernanceActor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" };
-const creator: GovernanceActor = { workspaceId: "workspace-a", userId: "creator-a", legacyRole: "member" };
+const owner: GovernanceActor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner", authContextId: "session-owner-a" };
+const creator: GovernanceActor = { workspaceId: "workspace-a", userId: "creator-a", legacyRole: "member", authContextId: "session-creator-a" };
 const digest = canonicalDigest({ revision: 1 });
 const regionKey = Buffer.alloc(32, 7);
 
@@ -73,6 +73,23 @@ describe("GovernanceService", () => {
     expect(await repository.listAudit({ workspaceId: owner.workspaceId, limit: 100 })).toHaveLength(1);
   });
 
+  it("does not leak a concurrently committed receipt or secret to another authorized actor", async () => {
+    const { repository, service } = setup();
+    const command = { type: "create_invitation" as const, email: "race@example.com", binding: { kind: "built_in" as const, role: "viewer" as const }, expiresAt: "2026-09-10T12:00:00.000Z" };
+    const otherAdmin: GovernanceActor = { ...owner, userId: "admin-b", legacyRole: "admin", authContextId: "session-admin-b" };
+
+    const outcomes = await Promise.allSettled([
+      service.execute(owner, command, "concurrent-actor-bound-delivery"),
+      service.execute(otherAdmin, command, "concurrent-actor-bound-delivery"),
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    const rejected = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ code: expect.stringMatching(/^(CONFLICT|FORBIDDEN)$/) });
+    expect(await repository.listResources({ workspaceId: owner.workspaceId, kinds: ["invitation_binding"] })).toHaveLength(1);
+    expect(repository.secretDeliveries.size).toBe(1);
+  });
+
   it("accepts invitations only for the verified recipient and provisions canonical membership", async () => {
     const repository = new InMemoryGovernanceRepository();
     const provision = vi.fn().mockResolvedValue(undefined);
@@ -84,10 +101,10 @@ describe("GovernanceService", () => {
     });
     const invitation = await service.execute(owner, { type: "create_invitation", email: "new@example.com", binding: { kind: "built_in", role: "approver" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "create-invitation-key") as { invitationId: string; invitationToken: string };
     const decoded = decodeInvitationToken(invitation.invitationToken)!;
-    await expect(service.acceptInvitation({ ...decoded, token: decoded.secret, userId: "new-user", verifiedEmail: "other@example.com", idempotencyKey: "wrong-email-key" })).rejects.toMatchObject({ code: "NOT_FOUND" });
-    const accepted = await service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "new-user", verifiedEmail: "new@example.com", idempotencyKey: "accept-invite-key" });
+    await expect(service.acceptInvitation({ ...decoded, token: decoded.secret, userId: "new-user", verifiedEmail: "other@example.com", authContextId: "session-new-user", idempotencyKey: "wrong-email-key" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const accepted = await service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "new-user", verifiedEmail: "new@example.com", authContextId: "session-new-user", idempotencyKey: "accept-invite-key" });
     expect(accepted).toMatchObject({ accepted: true, userId: "new-user", binding: { kind: "built_in", role: "approver" } });
-    expect(await service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "new-user", verifiedEmail: "new@example.com", idempotencyKey: "accept-invite-key" })).toEqual(accepted);
+    expect(await service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "new-user", verifiedEmail: "new@example.com", authContextId: "session-new-user", idempotencyKey: "accept-invite-key" })).toEqual(accepted);
     expect(provision).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, userId: "new-user", binding: { kind: "built_in", role: "approver" } });
     expect(provision).toHaveBeenCalledTimes(1);
     expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "member_role_assignment", id: "new-user" })).toBeTruthy();
@@ -130,6 +147,42 @@ describe("GovernanceService", () => {
     expect(await service.execute(owner, command, "bounded-secret-delivery")).not.toHaveProperty("invitationToken");
   });
 
+  it("re-authorizes before replay and binds receipts and secrets to the exact actor session", async () => {
+    const { service } = setup();
+    const command = { type: "create_invitation" as const, email: "bound@example.com", binding: { kind: "built_in" as const, role: "viewer" as const }, expiresAt: "2026-09-10T12:00:00.000Z" };
+    const issued = await service.execute(owner, command, "actor-bound-delivery") as { invitationToken: string };
+    expect(issued.invitationToken).toBeTruthy();
+
+    await expect(service.execute(
+      { ...owner, legacyRole: "member" },
+      command,
+      "actor-bound-delivery",
+    )).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(service.execute(
+      { ...owner, userId: "other-admin", legacyRole: "admin", authContextId: "session-other-admin" },
+      command,
+      "actor-bound-delivery",
+    )).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(service.execute(
+      { ...owner, authContextId: "replacement-session-owner-a" },
+      command,
+      "actor-bound-delivery",
+    )).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("purges expired bounded secret deliveries without deleting permanent redacted receipts", async () => {
+    let current = new Date(NOW);
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => current });
+    const command = { type: "create_invitation" as const, email: "purge@example.com", binding: { kind: "built_in" as const, role: "viewer" as const }, expiresAt: "2026-09-10T12:00:00.000Z" };
+    await service.execute(owner, command, "purge-secret-delivery");
+    current = new Date(NOW.getTime() + 10 * 60_000 + 1);
+
+    expect(await repository.purgeExpiredSecretDeliveries({ expiredBefore: current, limit: 100 })).toBe(1);
+    expect(await repository.findSecretDelivery({ workspaceId: owner.workspaceId, capability: "members.invite@1", idempotencyKey: "purge-secret-delivery" })).toBeNull();
+    expect(await repository.findReceipt({ workspaceId: owner.workspaceId, capability: "members.invite@1", idempotencyKey: "purge-secret-delivery" })).not.toBeNull();
+  });
+
   it("returns role-filtered snapshots with deeply redacted security material", async () => {
     const { service } = setup();
     await service.execute(owner, { type: "create_invitation", email: "private@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "snapshot-invitation-key");
@@ -152,7 +205,7 @@ describe("GovernanceService", () => {
     const invitation = await service.execute(owner, { type: "create_invitation", email: "revoked@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "create-revoked-invite") as { invitationId: string; invitationToken: string };
     await service.execute(owner, { type: "revoke_invitation", invitationId: invitation.invitationId }, "revoke-invite-key");
     const decoded = decodeInvitationToken(invitation.invitationToken)!;
-    await expect(service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "revoked-user", verifiedEmail: "revoked@example.com", idempotencyKey: "accept-revoked-key" })).rejects.toMatchObject({ code: "EXPIRED" });
+    await expect(service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "revoked-user", verifiedEmail: "revoked@example.com", authContextId: "session-revoked-user", idempotencyKey: "accept-revoked-key" })).rejects.toMatchObject({ code: "EXPIRED" });
   });
 
   it("requires exact step-up for ownership transfer and enforces cancellable Workspace closure cooling-off", async () => {
@@ -185,6 +238,8 @@ describe("GovernanceService", () => {
     const session2 = await closureService.execute(owner, { type: "verify_step_up", challengeId: challenge2.challengeId, code: challenge2.verificationCode }, "verify-close-request-2") as { stepUpToken: string };
     const requested2 = await closureService.execute(owner, { type: "request_workspace_closure", reason: "Closure confirmed", coolingOffDays: 7, stepUpToken: session2.stepUpToken }, "request-close-workspace-2") as { closureId: string };
     current = new Date("2026-09-27T12:01:00.000Z");
+    await expect(closureService.execute(owner, { type: "execute_workspace_closure", closureId: requested2.closureId, stepUpToken: session2.stepUpToken }, "execute-close-with-workspace-scope"))
+      .rejects.toMatchObject({ code: "STEP_UP_REQUIRED" });
     const executionChallenge = await closureService.execute(owner, { type: "begin_step_up", purpose: "workspace.close", resourceId: requested2.closureId }, "begin-close-execute") as { challengeId: string; verificationCode: string };
     const executionSession = await closureService.execute(owner, { type: "verify_step_up", challengeId: executionChallenge.challengeId, code: executionChallenge.verificationCode }, "verify-close-execute") as { stepUpToken: string };
     await closureService.execute(owner, { type: "execute_workspace_closure", closureId: requested2.closureId, stepUpToken: executionSession.stepUpToken }, "execute-close-workspace");
@@ -212,6 +267,17 @@ describe("GovernanceService", () => {
     expect(decision.authorizesExecution).toBe(false);
   });
 
+  it("revalidates a Review Guest grant before replaying its secret session", async () => {
+    const { service } = setup();
+    const issued = await service.execute(owner, { type: "issue_review_guest", email: "revoked-reviewer@example.com", purpose: "inspect", resourceKind: "render_proof", resourceId: "proof-replay", revisionDigest: digest, expiresAt: "2026-09-04T12:00:00.000Z" }, "issue-revoked-review") as { grantId: string; reviewToken: string; verificationCode: string };
+    const decoded = decodeReviewToken(issued.reviewToken)!;
+    await service.verifyReviewGuest({ workspaceId: decoded.workspaceId, grantId: decoded.grantId, token: decoded.secret, code: issued.verificationCode, idempotencyKey: "verify-revoked-review" });
+    await service.execute(owner, { type: "revoke_review_guest", grantId: issued.grantId }, "revoke-verified-review");
+
+    await expect(service.verifyReviewGuest({ workspaceId: decoded.workspaceId, grantId: decoded.grantId, token: decoded.secret, code: issued.verificationCode, idempotencyKey: "verify-revoked-review" }))
+      .rejects.toMatchObject({ code: "EXPIRED" });
+  });
+
   it("validates all Approval Policy modes and keeps content acceptance distinct", async () => {
     const { service } = setup();
     const publishing = await service.execute(owner, { type: "publish_approval_policy", policy: { purpose: "publishing_approval", mode: { kind: "quorum", eligibleRoleIds: ["approver", "legal"], required: 2 }, separationOfDuty: true, deadlineSeconds: 3600, escalationRoleIds: ["owner"], expiresAfterSeconds: 7200 } }, "approval-policy-key") as { revision: { purpose: string; separationOfDuty: boolean } };
@@ -226,6 +292,24 @@ describe("GovernanceService", () => {
     const requested = await service.execute(owner, { type: "request_content_acceptance", policyId: published.policyId, policyRevision: published.revision.revision, resourceKind: "render_proof", resourceId: "render-proof-1", revisionDigest: digest }, "content-acceptance-request") as { requestId: string };
     const accepted = await service.execute(creator, { type: "decide_content_acceptance", requestId: requested.requestId, decision: "approve" }, "content-acceptance-decision");
     expect(accepted).toMatchObject({ purpose: "content_acceptance", status: "accepted", revisionDigest: digest, authorizesExecution: false });
+  });
+
+  it("rejects non-Content-Acceptance policy revisions and poisoned approval requests", async () => {
+    const { repository, service } = setup();
+    const publishing = await service.execute(owner, { type: "publish_approval_policy", policy: { purpose: "publishing_approval", mode: { kind: "single", eligibleRoleIds: ["creator"] }, separationOfDuty: false, deadlineSeconds: 3600, escalationRoleIds: [], expiresAfterSeconds: 86400 } }, "publishing-policy-for-content") as { policyId: string; revision: { revision: number } };
+    await expect(service.execute(owner, { type: "request_content_acceptance", policyId: publishing.policyId, policyRevision: publishing.revision.revision, resourceKind: "render_proof", resourceId: "wrong-purpose-proof", revisionDigest: digest }, "wrong-purpose-content-request"))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const content = await service.execute(owner, { type: "publish_approval_policy", policy: { purpose: "content_acceptance", mode: { kind: "single", eligibleRoleIds: ["creator"] }, separationOfDuty: false, deadlineSeconds: 60, escalationRoleIds: ["owner"], expiresAfterSeconds: 86400 } }, "content-policy-to-poison") as { policyId: string; revision: { revision: number } };
+    const requested = await service.execute(owner, { type: "request_content_acceptance", policyId: content.policyId, policyRevision: content.revision.revision, resourceKind: "render_proof", resourceId: "poisoned-proof", revisionDigest: digest }, "content-request-to-poison") as { requestId: string };
+    const stored = [...repository.resources.values()].find((resource) => resource.kind === "approval_request" && resource.id === requested.requestId);
+    expect(stored).toBeTruthy();
+    stored!.body = { ...stored!.body, purpose: "publishing_approval" };
+
+    await expect(service.execute(creator, { type: "decide_content_acceptance", requestId: requested.requestId, decision: "approve" }, "decide-poisoned-content"))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.execute(owner, { type: "advance_content_acceptance", requestId: requested.requestId }, "advance-poisoned-content"))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("requires exact-purpose step-up for region, retention, and exports", async () => {

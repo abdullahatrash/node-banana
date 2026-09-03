@@ -32,7 +32,7 @@ function request(input: { origin?: string; workspace?: string; idempotency?: str
 describe("governance capability route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authorize.mockResolvedValue({ authorized: true, workspaceId: "workspace-a", userId: "owner-a", role: "owner", permissions: [], contentSession: { user: { id: "owner-a", email: "owner@example.com", name: null }, workspace: { id: "workspace-a", organizationId: "org-a" }, role: "owner", planTier: "free", permissions: [] } });
+    authorize.mockResolvedValue({ authorized: true, workspaceId: "workspace-a", userId: "owner-a", role: "owner", authContextId: "session-owner-a", permissions: [], contentSession: { authContextId: "session-owner-a", user: { id: "owner-a", email: "owner@example.com", name: null }, workspace: { id: "workspace-a", organizationId: "org-a" }, role: "owner", planTier: "free", permissions: [] } });
   });
 
   it("rejects cross-origin mutations before dispatch", async () => {
@@ -46,7 +46,7 @@ describe("governance capability route", () => {
     const response = await POST(request({ origin: "http://localhost:3000", workspace: "workspace-a", idempotency: "stable-key-2", body: { capability: "members.invite@1", input: { command: { type: "create_invitation", email: "new@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" } } } }));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ success: true, result: { invitationId: "invite-1" } });
-    expect(dispatch).toHaveBeenCalledWith(expect.anything(), { securityContext: { kind: "human", workspaceId: "workspace-a", userId: "owner-a", role: "owner", idempotencyKey: "stable-key-2" } });
+    expect(dispatch).toHaveBeenCalledWith(expect.anything(), { securityContext: { kind: "human", workspaceId: "workspace-a", userId: "owner-a", role: "owner", authContextId: "session-owner-a", idempotencyKey: "stable-key-2" } });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: "new@example.com", text: expect.stringContaining("opaque-secret") }));
     expect(JSON.stringify(await (async () => ({ invitationId: "invite-1" }))())).not.toContain("opaque-secret");
   });

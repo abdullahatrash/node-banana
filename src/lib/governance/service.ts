@@ -211,6 +211,39 @@ function hasReceiptSecret(value: unknown): boolean {
   return Object.entries(value as Record<string, unknown>).some(([key, nested]) => RECEIPT_SECRET_KEYS.has(key) || hasReceiptSecret(nested));
 }
 
+function humanReplayBinding(actor: GovernanceActor): { actorIdentity: string; authContextDigest: string } {
+  const userId = safeId(actor.userId, "Actor");
+  const authContextId = actor.authContextId.trim();
+  if (!authContextId || authContextId.length > 500 || /[\u0000-\u001f\u007f]/.test(authContextId)) {
+    throw new GovernanceError("FORBIDDEN", "A server-validated authentication context is required.");
+  }
+  return {
+    actorIdentity: `human:${userId}`,
+    authContextDigest: canonicalDigest({
+      schema: "governance-human-auth-context/v1",
+      workspaceId: actor.workspaceId,
+      userId,
+      authContextId,
+    }),
+  };
+}
+
+function guestReplayBinding(input: {
+  workspaceId: string;
+  grantId: string;
+  authProof: Record<string, string>;
+}): { actorIdentity: string; authContextDigest: string } {
+  return {
+    actorIdentity: `review_guest:${safeId(input.grantId, "Review grant")}`,
+    authContextDigest: canonicalDigest({
+      schema: "governance-review-guest-auth-context/v1",
+      workspaceId: input.workspaceId,
+      grantId: input.grantId,
+      ...input.authProof,
+    }),
+  };
+}
+
 export function encodeReviewToken(workspaceId: string, grantId: string, secret: string): string {
   return `${Buffer.from(workspaceId, "utf8").toString("base64url")}.${grantId}.${secret}`;
 }
@@ -365,11 +398,13 @@ export class GovernanceService {
   }): Promise<unknown> {
     if (!IDEMPOTENCY.test(input.idempotencyKey)) throw new GovernanceError("INVALID_INPUT", "A stable idempotency key is required.");
     const requestDigest = canonicalDigest(input.command);
+    const replayBinding = humanReplayBinding(input.actor);
     const secretDelivery = hasReceiptSecret(input.result) ? {
       workspaceId: input.actor.workspaceId,
       capability: `${input.capability}@1`,
       idempotencyKey: input.idempotencyKey,
       requestDigest,
+      ...replayBinding,
       encryptedPayload: encryptGovernanceSecretDelivery(input.result),
       expiresAt: new Date(input.now.getTime() + SECRET_DELIVERY_LIFETIME_MS),
       createdAt: input.now,
@@ -380,6 +415,7 @@ export class GovernanceService {
         capability: `${input.capability}@1`,
         idempotencyKey: input.idempotencyKey,
         requestDigest,
+        ...replayBinding,
         result: receiptSafeResult(input.result),
         createdAt: input.now,
       },
@@ -389,7 +425,18 @@ export class GovernanceService {
       audit: this.audit({ actor: input.actor, capability: input.capability, command: input.command, target: input.target, now: input.now }),
     });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "The resource or idempotency key conflicts with current state.");
-    return outcome.type === "committed" ? input.result : outcome.result;
+    if (outcome.type === "committed") return input.result;
+    const delivery = await this.repository.findSecretDelivery({
+      workspaceId: input.actor.workspaceId,
+      capability: `${input.capability}@1`,
+      idempotencyKey: input.idempotencyKey,
+    });
+    return delivery && delivery.requestDigest === requestDigest &&
+      delivery.actorIdentity === replayBinding.actorIdentity &&
+      delivery.authContextDigest === replayBinding.authContextDigest &&
+      delivery.expiresAt > this.clock.now()
+      ? decryptGovernanceSecretDelivery(delivery.encryptedPayload)
+      : outcome.result;
   }
 
   private async preflight(input: {
@@ -397,6 +444,8 @@ export class GovernanceService {
     capability: string;
     idempotencyKey: string;
     requestDigest: string;
+    actorIdentity: string;
+    authContextDigest: string;
   }): Promise<unknown | undefined> {
     if (!IDEMPOTENCY.test(input.idempotencyKey)) {
       throw new GovernanceError("INVALID_INPUT", "A stable idempotency key is required.");
@@ -406,8 +455,13 @@ export class GovernanceService {
     if (existing.requestDigest !== input.requestDigest) {
       throw new GovernanceError("CONFLICT", "The idempotency key is already bound to another request.");
     }
+    if (existing.actorIdentity !== input.actorIdentity || existing.authContextDigest !== input.authContextDigest) {
+      throw new GovernanceError("FORBIDDEN", "The idempotency receipt belongs to another authenticated actor context.");
+    }
     const delivery = await this.repository.findSecretDelivery(input);
-    if (delivery && delivery.requestDigest === input.requestDigest && delivery.expiresAt > this.clock.now()) {
+    if (delivery && delivery.requestDigest === input.requestDigest &&
+      delivery.actorIdentity === input.actorIdentity && delivery.authContextDigest === input.authContextDigest &&
+      delivery.expiresAt > this.clock.now()) {
       return decryptGovernanceSecretDelivery(delivery.encryptedPayload);
     }
     return existing.result;
@@ -415,14 +469,18 @@ export class GovernanceService {
 
   async execute(actor: GovernanceActor, command: GovernanceCommand, idempotencyKey: string): Promise<unknown> {
     const capability = CAPABILITY_BY_COMMAND[command.type];
+    const replayBinding = humanReplayBinding(actor);
+    // Re-authorize every invocation against current role state before consulting
+    // any durable receipt or bounded secret delivery.
+    await this.require(actor, capability);
     const replay = await this.preflight({
       workspaceId: actor.workspaceId,
       capability: `${capability}@1`,
       idempotencyKey,
       requestDigest: canonicalDigest(command),
+      ...replayBinding,
     });
     if (replay !== undefined) return replay;
-    await this.require(actor, capability);
     const now = this.clock.now();
     const create = <T>(kind: GovernanceResourceKind, id: string, status: string, body: T) => ({
       type: "create" as const,
@@ -648,14 +706,17 @@ export class GovernanceService {
         if (!revision || revision.purpose !== "content_acceptance") throw new GovernanceError("NOT_FOUND", "The exact Content Acceptance policy revision is unavailable.");
         const id = newId("content_acceptance");
         const progress = createContentAcceptanceProgress({ policy: revision, requesterUserId: actor.userId, now });
-        mutations = [create("approval_request", id, progress.status, { policyId: policyResource.id, policyRevision: revision.revision, policySnapshot: revision, resourceKind: text(command.resourceKind, "Resource kind", 100), resourceId: safeId(command.resourceId, "Resource"), revisionDigest: command.revisionDigest, progress })];
+        mutations = [create("approval_request", id, progress.status, { purpose: "content_acceptance", policyId: policyResource.id, policyRevision: revision.revision, policySnapshot: revision, resourceKind: text(command.resourceKind, "Resource kind", 100), resourceId: safeId(command.resourceId, "Resource"), revisionDigest: command.revisionDigest, progress })];
         result = { requestId: id, purpose: "content_acceptance", status: progress.status, deadlineAt: progress.deadlineAt, expiresAt: progress.expiresAt, authorizesExecution: false };
         target = { kind: "approval_request", id };
         break;
       }
       case "decide_content_acceptance": {
         const request = await this.required("approval_request", command.requestId, actor.workspaceId);
-        const body = request.body as { policySnapshot: ApprovalPolicyRevision; progress: import("./types").ContentAcceptanceProgress; [key: string]: unknown };
+        const body = request.body as { purpose?: string; policySnapshot: ApprovalPolicyRevision; progress: import("./types").ContentAcceptanceProgress; [key: string]: unknown };
+        if (body.purpose !== "content_acceptance" || body.policySnapshot?.purpose !== "content_acceptance") {
+          throw new GovernanceError("NOT_FOUND", "The Content Acceptance request is unavailable.");
+        }
         const binding = await this.roleBinding(actor);
         const roleId = binding.kind === "built_in" ? binding.role : binding.roleId;
         let progress;
@@ -668,7 +729,10 @@ export class GovernanceService {
       }
       case "advance_content_acceptance": {
         const request = await this.required("approval_request", command.requestId, actor.workspaceId);
-        const body = request.body as { policySnapshot: ApprovalPolicyRevision; progress: import("./types").ContentAcceptanceProgress; [key: string]: unknown };
+        const body = request.body as { purpose?: string; policySnapshot: ApprovalPolicyRevision; progress: import("./types").ContentAcceptanceProgress; [key: string]: unknown };
+        if (body.purpose !== "content_acceptance" || body.policySnapshot?.purpose !== "content_acceptance") {
+          throw new GovernanceError("NOT_FOUND", "The Content Acceptance request is unavailable.");
+        }
         const progress = advanceApprovalDeadline({ policy: body.policySnapshot, progress: body.progress, now });
         if (progress === body.progress) throw new GovernanceError("CONFLICT", "Content Acceptance deadline has not changed state.");
         mutations = [update(request, progress.status, { ...body, progress })];
@@ -922,13 +986,6 @@ export class GovernanceService {
     const now = this.clock.now();
     const receiptCapability = "review_guests.verify@1";
     const request = { grantId: input.grantId, tokenDigest: secretDigest(input.token), codeDigest: secretDigest(input.code) };
-    const replay = await this.preflight({
-      workspaceId: input.workspaceId,
-      capability: receiptCapability,
-      idempotencyKey: input.idempotencyKey,
-      requestDigest: canonicalDigest(request),
-    });
-    if (replay !== undefined) return replay;
     const grant = await this.required("review_guest_grant", input.grantId, input.workspaceId);
     const body = grant.body as {
       email: string; tokenDigest: string; codeDigest: string; codeSalt: string;
@@ -940,10 +997,19 @@ export class GovernanceService {
     }
     if (secretDigest(input.token) !== body.tokenDigest) throw new GovernanceError("NOT_FOUND", "Review grant unavailable.");
     const verified = body.failedAttempts < 5 && codeMatches(input.code, body.codeSalt, body.codeDigest);
+    const replayBinding = guestReplayBinding({ workspaceId: input.workspaceId, grantId: grant.id, authProof: request });
+    const replay = await this.preflight({
+      workspaceId: input.workspaceId,
+      capability: receiptCapability,
+      idempotencyKey: input.idempotencyKey,
+      requestDigest: canonicalDigest(request),
+      ...replayBinding,
+    });
+    if (replay !== undefined) return replay;
     if (!verified) {
       const next = resource({ id: grant.id, workspaceId: grant.workspaceId, kind: grant.kind, version: grant.version + 1, status: body.failedAttempts >= 4 ? "locked" : grant.status, body: { ...body, failedAttempts: body.failedAttempts + 1 }, actor: grant.createdByUserId, createdAt: grant.createdAt, now });
       const result = { verified: false, attemptsRemaining: Math.max(0, 4 - body.failedAttempts) };
-      const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest: canonicalDigest(request), result, createdAt: now }, mutations: [{ type: "update", expectedVersion: grant.version, resource: next }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: "verify", resource: { kind: grant.kind, id: grant.id }, outcome: "denied", redactedDetails: {}, occurredAt: now } });
+      const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest: canonicalDigest(request), ...replayBinding, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: grant.version, resource: next }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: "verify", resource: { kind: grant.kind, id: grant.id }, outcome: "denied", redactedDetails: {}, occurredAt: now } });
       if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Review verification changed.");
       return outcome.type === "committed" ? result : outcome.result;
     }
@@ -953,7 +1019,7 @@ export class GovernanceService {
     const session = resource({ id: sessionId, workspaceId: input.workspaceId, kind: "review_guest_session", version: 1, status: "active", body: { grantId: grant.id, tokenDigest: secretDigest(sessionToken), purpose: body.purpose, resourceKind: body.resourceKind, resourceId: body.resourceId, revisionDigest: body.revisionDigest, expiresAt: expiresAt.toISOString() }, actor: null, now });
     const result = { verified: true, sessionId, sessionToken, purpose: body.purpose, resourceKind: body.resourceKind, resourceId: body.resourceId, revisionDigest: body.revisionDigest, expiresAt: expiresAt.toISOString() };
     const requestDigest = canonicalDigest(request);
-    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, result: receiptSafeResult(result), createdAt: now }, secretDelivery: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, encryptedPayload: encryptGovernanceSecretDelivery(result), createdAt: now, expiresAt: new Date(now.getTime() + SECRET_DELIVERY_LIFETIME_MS) }, mutations: [{ type: "create", expectedVersion: null, resource: session }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: "verify", resource: { kind: grant.kind, id: grant.id }, outcome: "completed", redactedDetails: {}, occurredAt: now } });
+    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding, result: receiptSafeResult(result), createdAt: now }, secretDelivery: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding, encryptedPayload: encryptGovernanceSecretDelivery(result), createdAt: now, expiresAt: new Date(now.getTime() + SECRET_DELIVERY_LIFETIME_MS) }, mutations: [{ type: "create", expectedVersion: null, resource: session }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: "verify", resource: { kind: grant.kind, id: grant.id }, outcome: "completed", redactedDetails: {}, occurredAt: now } });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Review verification changed.");
     return outcome.type === "committed" ? result : outcome.result;
   }
@@ -964,17 +1030,19 @@ export class GovernanceService {
     token: string;
     userId: string;
     verifiedEmail: string;
+    authContextId: string;
     idempotencyKey: string;
   }): Promise<unknown> {
     const now = this.clock.now();
     const receiptCapability = "members.invitations.accept@1";
     const requestDigest = canonicalDigest({ invitationId: input.invitationId, userId: input.userId, tokenDigest: secretDigest(input.token) });
-    const replay = await this.preflight({ workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest });
-    if (replay !== undefined) return replay;
     const invitation = await this.required("invitation_binding", input.invitationId, input.workspaceId);
     const body = invitation.body as { email: string; tokenDigest: string; binding: WorkspaceRoleBinding; expiresAt: string; acceptedAt: string | null; revokedAt: string | null };
-    if (invitation.status !== "pending" || body.revokedAt || exactDate(body.expiresAt, "Invitation expiry") <= now) throw new GovernanceError("EXPIRED", "Invitation expired or was revoked.");
     if (secretDigest(input.token) !== body.tokenDigest || body.email !== input.verifiedEmail.trim().toLowerCase()) throw new GovernanceError("NOT_FOUND", "Invitation unavailable.");
+    const replayBinding = humanReplayBinding({ workspaceId: input.workspaceId, userId: input.userId, legacyRole: "member", authContextId: input.authContextId });
+    const replay = await this.preflight({ workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding });
+    if (replay !== undefined) return replay;
+    if (invitation.status !== "pending" || body.revokedAt || exactDate(body.expiresAt, "Invitation expiry") <= now) throw new GovernanceError("EXPIRED", "Invitation expired or was revoked.");
     await this.validateRoleBinding(input.workspaceId, body.binding);
     if (body.binding.kind === "built_in" && body.binding.role === "owner") throw new GovernanceError("INVALID_INPUT", "Owner may only change through the ownership-transfer lifecycle.");
     await this.memberships.provisionAcceptedMembership({ workspaceId: input.workspaceId, userId: input.userId, binding: body.binding });
@@ -984,7 +1052,7 @@ export class GovernanceService {
     const assignmentNext = resource({ id: input.userId, workspaceId: input.workspaceId, kind: "member_role_assignment", version: (currentAssignment?.version ?? 0) + 1, status: "active", body: assignmentBody, actor: invitation.createdByUserId, createdAt: currentAssignment?.createdAt, now });
     const projection = resource({ id: newId("membership_projection"), workspaceId: input.workspaceId, kind: "membership_projection", version: 1, status: "queued", body: { operation: "upsert", userId: input.userId, role: body.binding.kind === "built_in" && body.binding.role === "admin" ? "admin" : "member", requestedAt: now.toISOString(), attempts: 0 }, actor: invitation.createdByUserId, now });
     const result = { invitationId: invitation.id, workspaceId: input.workspaceId, userId: input.userId, binding: body.binding, accepted: true };
-    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: invitation.version, resource: invitationNext }, { type: currentAssignment ? "update" : "create", expectedVersion: currentAssignment?.version ?? null, resource: assignmentNext }, { type: "create", expectedVersion: null, resource: projection }], canonicalEffects: [{ type: "membership_upsert", workspaceId: input.workspaceId, userId: input.userId, role: body.binding.kind === "built_in" && body.binding.role === "admin" ? "admin" : "member", occurredAt: now }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "human", id: input.userId }, capability: receiptCapability, action: "accept_invitation", resource: { kind: "invitation_binding", id: invitation.id }, outcome: "completed", redactedDetails: { roleBindingKind: body.binding.kind }, occurredAt: now } });
+    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: invitation.version, resource: invitationNext }, { type: currentAssignment ? "update" : "create", expectedVersion: currentAssignment?.version ?? null, resource: assignmentNext }, { type: "create", expectedVersion: null, resource: projection }], canonicalEffects: [{ type: "membership_upsert", workspaceId: input.workspaceId, userId: input.userId, role: body.binding.kind === "built_in" && body.binding.role === "admin" ? "admin" : "member", occurredAt: now }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "human", id: input.userId }, capability: receiptCapability, action: "accept_invitation", resource: { kind: "invitation_binding", id: invitation.id }, outcome: "completed", redactedDetails: { roleBindingKind: body.binding.kind }, occurredAt: now } });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Invitation acceptance changed.");
     return outcome.type === "committed" ? result : outcome.result;
   }
@@ -1003,25 +1071,26 @@ export class GovernanceService {
   }): Promise<unknown> {
     const now = this.clock.now();
     const requestDigest = canonicalDigest({ ...input, sessionToken: "[redacted]" });
-    const contentReceipt = await this.preflight({ workspaceId: input.workspaceId, capability: "reviews.decide_content@1", idempotencyKey: input.idempotencyKey, requestDigest });
-    if (contentReceipt !== undefined) return contentReceipt;
-    const publishingReceipt = await this.preflight({ workspaceId: input.workspaceId, capability: "reviews.decide_publishing@1", idempotencyKey: input.idempotencyKey, requestDigest });
-    if (publishingReceipt !== undefined) return publishingReceipt;
     const session = await this.required("review_guest_session", input.sessionId, input.workspaceId);
     const sessionBody = session.body as { grantId: string; tokenDigest: string; purpose: string; resourceId: string; revisionDigest: string; expiresAt: string };
     if (session.status !== "active" || sessionBody.tokenDigest !== secretDigest(input.sessionToken) || exactDate(sessionBody.expiresAt, "Review session expiry") <= now) throw new GovernanceError("EXPIRED", "Review session expired.");
     if (sessionBody.resourceId !== input.resourceId || sessionBody.revisionDigest !== input.revisionDigest) throw new GovernanceError("FORBIDDEN", "Review scope does not match the exact revision.");
     if (sessionBody.grantId !== input.grantId) throw new GovernanceError("FORBIDDEN", "Review session does not match this grant.");
-    const allowed: Record<string, string[]> = { inspect: [], comment: ["comment"], accept_content: ["accept", "reject", "comment"], approve_publishing: ["approve", "reject", "comment"], reject: ["reject", "comment"] };
-    if (!allowed[sessionBody.purpose]?.includes(input.decision)) throw new GovernanceError("FORBIDDEN", "Decision is outside the guest purpose.");
     const grant = await this.required("review_guest_grant", sessionBody.grantId, input.workspaceId);
     const grantBody = grant.body as { revokedAt: string | null; expiresAt: string; decision: unknown; [key: string]: unknown };
     if (grant.status === "revoked" || grantBody.revokedAt || exactDate(grantBody.expiresAt, "Review expiry") <= now) throw new GovernanceError("EXPIRED", "Review grant expired or was revoked.");
+    const replayBinding = guestReplayBinding({ workspaceId: input.workspaceId, grantId: input.grantId, authProof: { sessionId: input.sessionId, sessionTokenDigest: secretDigest(input.sessionToken) } });
+    const contentReceipt = await this.preflight({ workspaceId: input.workspaceId, capability: "reviews.decide_content@1", idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding });
+    if (contentReceipt !== undefined) return contentReceipt;
+    const publishingReceipt = await this.preflight({ workspaceId: input.workspaceId, capability: "reviews.decide_publishing@1", idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding });
+    if (publishingReceipt !== undefined) return publishingReceipt;
+    const allowed: Record<string, string[]> = { inspect: [], comment: ["comment"], accept_content: ["accept", "reject", "comment"], approve_publishing: ["approve", "reject", "comment"], reject: ["reject", "comment"] };
+    if (!allowed[sessionBody.purpose]?.includes(input.decision)) throw new GovernanceError("FORBIDDEN", "Decision is outside the guest purpose.");
     if (grantBody.decision) throw new GovernanceError("CONFLICT", "This exact review grant already has a decision.");
     const receiptCapability = sessionBody.purpose === "approve_publishing" ? "reviews.decide_publishing@1" : "reviews.decide_content@1";
     const result = { grantId: grant.id, resourceId: input.resourceId, revisionDigest: input.revisionDigest, decision: input.decision, decidedAt: now.toISOString(), authorizesExecution: false };
     const next = resource({ id: grant.id, workspaceId: grant.workspaceId, kind: grant.kind, version: grant.version + 1, status: "decided", body: { ...grantBody, decision: { ...result, comment: input.comment ? text(input.comment, "Review comment", 2000) : null } }, actor: grant.createdByUserId, createdAt: grant.createdAt, now });
-    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: grant.version, resource: next }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: input.decision, resource: { kind: sessionBody.purpose === "approve_publishing" ? "plan_revision" : "render_proof", id: input.resourceId }, outcome: "completed", redactedDetails: { revisionDigest: input.revisionDigest, authorizesExecution: false }, occurredAt: now } });
+    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: grant.version, resource: next }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: input.decision, resource: { kind: sessionBody.purpose === "approve_publishing" ? "plan_revision" : "render_proof", id: input.resourceId }, outcome: "completed", redactedDetails: { revisionDigest: input.revisionDigest, authorizesExecution: false }, occurredAt: now } });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Review decision changed.");
     return outcome.type === "committed" ? result : outcome.result;
   }

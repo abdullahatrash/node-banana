@@ -120,7 +120,7 @@ export class DrizzleGovernanceBulkAuthorizationPort implements GovernanceBulkAut
     const [membership] = await getDb().select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, input.targetWorkspaceId), eq(workspaceMembers.userId, input.userId))).limit(1);
     if (!membership) return null;
     if (input.sourceWorkspaceId === input.targetWorkspaceId) {
-      return { workspaceId: input.targetWorkspaceId, userId: input.userId, legacyRole: membership.role };
+      return { workspaceId: input.targetWorkspaceId, userId: input.userId, legacyRole: membership.role, authContextId: `bulk:${input.sourceWorkspaceId}:${input.userId}` };
     }
     const [assignment] = await getDb().select({ id: workspaceGovernanceResources.id }).from(workspaceGovernanceResources).where(and(
       eq(workspaceGovernanceResources.workspaceId, input.sourceWorkspaceId),
@@ -134,14 +134,14 @@ export class DrizzleGovernanceBulkAuthorizationPort implements GovernanceBulkAut
       sql`${workspaceGovernanceResources.body}->'resourceAllowlist' @> ${JSON.stringify([{ kind: input.targetKind, id: input.targetId }])}::jsonb`,
       or(isNull(sql`${workspaceGovernanceResources.body}->>'expiresAt'`), gt(sql`(${workspaceGovernanceResources.body}->>'expiresAt')::timestamptz`, input.evaluatedAt)),
     )).limit(1);
-    return assignment ? { workspaceId: input.targetWorkspaceId, userId: input.userId, legacyRole: membership.role, portfolioAssignmentId: assignment.id } : null;
+    return assignment ? { workspaceId: input.targetWorkspaceId, userId: input.userId, legacyRole: membership.role, authContextId: `bulk:${assignment.id}:${input.userId}`, portfolioAssignmentId: assignment.id } : null;
   }
 }
 
 export class ApplicationGovernanceBulkCapabilityPort implements GovernanceBulkCapabilityPort {
   async execute(input: Parameters<GovernanceBulkCapabilityPort["execute"]>[0]) {
     const { dispatchCapability } = await import("@/lib/agent-runtime/server-dispatcher");
-    const response = await dispatchCapability({ capability: input.capability, input: input.capabilityInput }, { securityContext: { kind: "human", workspaceId: input.actor.workspaceId, userId: input.actor.userId, role: input.actor.legacyRole, idempotencyKey: input.idempotencyKey } });
+    const response = await dispatchCapability({ capability: input.capability, input: input.capabilityInput }, { securityContext: { kind: "human", workspaceId: input.actor.workspaceId, userId: input.actor.userId, role: input.actor.legacyRole, authContextId: input.actor.authContextId, idempotencyKey: input.idempotencyKey } });
     if (response.type === "capability_error") return { type: "failed_known" as const, code: response.code };
     return { type: "succeeded" as const, output: response.output };
   }

@@ -51,7 +51,7 @@ describe("Approval Policy evaluator", () => {
     let current = new Date(now);
     const repository = new InMemoryGovernanceRepository();
     const service = new GovernanceService(repository, { now: () => new Date(current) });
-    const owner = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const };
+    const owner = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const, authContextId: "session-owner-a" };
     const published = await service.execute(owner, { type: "publish_approval_policy", policy: { purpose: "content_acceptance", mode: { kind: "single", eligibleRoleIds: ["approver"] }, separationOfDuty: true, deadlineSeconds: 3600, escalationRoleIds: ["admin"], expiresAfterSeconds: 7200 } }, "deadline-policy-create") as { policyId: string; revision: { revision: number } };
     const request = await service.execute(owner, { type: "request_content_acceptance", policyId: published.policyId, policyRevision: published.revision.revision, resourceKind: "render_proof", resourceId: "proof-deadline", revisionDigest: canonicalDigest({ revision: 1 }) }, "deadline-request-create") as { requestId: string };
     const worker = new GovernanceApprovalDeadlineWorker(repository, { now: () => new Date(current) });
