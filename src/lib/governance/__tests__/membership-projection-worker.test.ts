@@ -52,6 +52,8 @@ describe("GovernanceMembershipProjectionWorker", () => {
     expect(first.succeeded + second.succeeded).toBe(1);
     expect(apply).toHaveBeenCalledTimes(1);
     expect(apply).toHaveBeenCalledWith({
+      projectionId: job.id,
+      requestDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
       workspaceId: actor.workspaceId,
       operation: { operation: "update_role", userId: "member-success", role: "member" },
     });
@@ -98,8 +100,42 @@ describe("GovernanceMembershipProjectionWorker", () => {
     delete process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_KEY_ID;
     delete process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_SIGNING_KEY;
     await expect(new BetterAuthOrganizationMembershipProjectionPort().apply({
+      projectionId: "projection-a",
+      requestDigest: `sha256:${"a".repeat(64)}`,
       workspaceId: actor.workspaceId,
       operation: { operation: "update_role", userId: "member-a", role: "member" },
     })).rejects.toMatchObject({ code: "PROJECTION_CREDENTIAL_NOT_CONFIGURED", retryable: true });
+  });
+
+  it("pins stable receiver idempotency identity across signed transport retries", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestBodies.push(payload);
+      return new Response(JSON.stringify({
+        success: true,
+        outcome: requestBodies.length === 1 ? "applied" : "replayed",
+        projectionId: payload.projectionId,
+        requestDigest: payload.requestDigest,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const port = new BetterAuthOrganizationMembershipProjectionPort(
+      async () => ({ url: new URL("https://projection.internal/v1/better-auth/organization-membership"), keyId: "key-1", secret: "s".repeat(32), organizationId: "org-a" }),
+      fetcher as typeof fetch,
+    );
+    const input = {
+      projectionId: "projection-stable",
+      requestDigest: `sha256:${"b".repeat(64)}`,
+      workspaceId: actor.workspaceId,
+      operation: { operation: "remove" as const, userId: "member-a" },
+    };
+
+    await port.apply(input);
+    await port.apply(input);
+
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies[0]).toMatchObject({ schema: "better-auth-membership-projection/v2", projectionId: input.projectionId, requestDigest: input.requestDigest });
+    expect(requestBodies[1]).toMatchObject({ projectionId: input.projectionId, requestDigest: input.requestDigest });
+    expect(requestBodies[1]?.nonce).not.toBe(requestBodies[0]?.nonce);
   });
 });

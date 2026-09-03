@@ -47,7 +47,12 @@ export class GovernanceMembershipProjectionError extends Error {
 }
 
 export interface GovernanceMembershipProjectionPort {
-  apply(input: { workspaceId: string; operation: ProjectionOperation }): Promise<void>;
+  apply(input: {
+    projectionId: string;
+    requestDigest: string;
+    workspaceId: string;
+    operation: ProjectionOperation;
+  }): Promise<void>;
 }
 
 function safeOperation(body: ProjectionBody): ProjectionOperation {
@@ -114,7 +119,12 @@ export class GovernanceMembershipProjectionWorker {
     const body = claimed.body as ProjectionBody;
     try {
       const operation = safeOperation(body);
-      await this.projection.apply({ workspaceId: claimed.workspaceId, operation });
+      await this.projection.apply({
+        projectionId: claimed.id,
+        requestDigest: canonicalDigest({ workspaceId: claimed.workspaceId, operation }),
+        workspaceId: claimed.workspaceId,
+        operation,
+      });
       await this.transition(claimed, "succeeded", {
         ...body,
         lease: null,
@@ -206,7 +216,13 @@ export class GovernanceMembershipProjectionWorker {
  * broad owner identity is stored in this process.
  */
 export class BetterAuthOrganizationMembershipProjectionPort implements GovernanceMembershipProjectionPort {
+  constructor(
+    private readonly contextOverride?: (workspaceId: string) => Promise<{ url: URL; keyId: string; secret: string; organizationId: string }>,
+    private readonly fetcher: typeof fetch = fetch,
+  ) {}
+
   private async context(workspaceId: string) {
+    if (this.contextOverride) return this.contextOverride(workspaceId);
     const endpoint = process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_URL?.trim();
     const keyId = process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_KEY_ID?.trim();
     const secret = process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_SIGNING_KEY?.trim();
@@ -221,16 +237,37 @@ export class BetterAuthOrganizationMembershipProjectionPort implements Governanc
     return { url, keyId, secret, organizationId: settings.organizationId };
   }
 
-  async apply(input: { workspaceId: string; operation: ProjectionOperation }): Promise<void> {
+  async apply(input: { projectionId: string; requestDigest: string; workspaceId: string; operation: ProjectionOperation }): Promise<void> {
     const context = await this.context(input.workspaceId);
     const issuedAt = new Date().toISOString();
-    const payload = { schema: "better-auth-membership-projection/v1", workspaceId: input.workspaceId, organizationId: context.organizationId, operation: input.operation, issuedAt, nonce: randomUUID() };
+    const payload = {
+      schema: "better-auth-membership-projection/v2",
+      projectionId: input.projectionId,
+      requestDigest: input.requestDigest,
+      workspaceId: input.workspaceId,
+      organizationId: context.organizationId,
+      operation: input.operation,
+      issuedAt,
+      nonce: randomUUID(),
+    };
     const signature = createHmac("sha256", context.secret).update(canonicalJson(payload)).digest("base64url");
     try {
-      const response = await fetch(context.url, { method: "POST", headers: { "content-type": "application/json", "x-governance-key-id": context.keyId, "x-governance-signature": signature, "x-governance-issued-at": issuedAt }, body: canonicalJson(payload), signal: AbortSignal.timeout(20_000) });
+      const response = await this.fetcher(context.url, { method: "POST", headers: { "content-type": "application/json", "x-governance-key-id": context.keyId, "x-governance-signature": signature, "x-governance-issued-at": issuedAt }, body: canonicalJson(payload), signal: AbortSignal.timeout(20_000) });
       if (!response.ok) throw new GovernanceMembershipProjectionError(`PROJECTION_SERVICE_HTTP_${response.status}`, true);
-      const result = await response.json() as { success?: boolean };
-      if (result.success !== true) throw new GovernanceMembershipProjectionError("PROJECTION_SERVICE_RESPONSE_INVALID", true);
+      const result = await response.json() as {
+        success?: boolean;
+        projectionId?: string;
+        requestDigest?: string;
+        outcome?: "applied" | "replayed";
+      };
+      if (
+        result.success !== true ||
+        result.projectionId !== input.projectionId ||
+        result.requestDigest !== input.requestDigest ||
+        (result.outcome !== "applied" && result.outcome !== "replayed")
+      ) {
+        throw new GovernanceMembershipProjectionError("PROJECTION_SERVICE_RECEIPT_INVALID", true);
+      }
     } catch (error) {
       if (error instanceof GovernanceMembershipProjectionError) throw error;
       throw new GovernanceMembershipProjectionError("BETTER_AUTH_PROJECTION_UNAVAILABLE", true);
