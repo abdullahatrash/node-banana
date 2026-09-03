@@ -27,6 +27,15 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
   readonly audit: GovernanceAuditEvent[] = [];
   private tail: Promise<void> = Promise.resolve();
 
+  async findReceipt(input: {
+    workspaceId: string;
+    capability: string;
+    idempotencyKey: string;
+  }): Promise<GovernanceReceipt | null> {
+    const value = this.receipts.get(receiptKey(input));
+    return value ? copy(value) : null;
+  }
+
   async getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;
     kind: GovernanceResourceKind;

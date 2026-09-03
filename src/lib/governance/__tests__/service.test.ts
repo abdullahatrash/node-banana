@@ -68,8 +68,24 @@ describe("GovernanceService", () => {
     await expect(service.acceptInvitation({ ...decoded, token: decoded.secret, userId: "new-user", verifiedEmail: "other@example.com", idempotencyKey: "wrong-email-key" })).rejects.toMatchObject({ code: "NOT_FOUND" });
     const accepted = await service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "new-user", verifiedEmail: "new@example.com", idempotencyKey: "accept-invite-key" });
     expect(accepted).toMatchObject({ accepted: true, userId: "new-user", binding: { kind: "built_in", role: "approver" } });
+    expect(await service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "new-user", verifiedEmail: "new@example.com", idempotencyKey: "accept-invite-key" })).toEqual(accepted);
     expect(provision).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, userId: "new-user", binding: { kind: "built_in", role: "approver" } });
+    expect(provision).toHaveBeenCalledTimes(1);
     expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "member_role_assignment", id: "new-user" })).toBeTruthy();
+  });
+
+  it("never persists plaintext bearer secrets in append-only receipts", async () => {
+    const { repository, service } = setup();
+    const invitation = await service.execute(owner, { type: "create_invitation", email: "secret@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "secret-invitation-key") as { invitationToken: string };
+    expect(invitation.invitationToken).toBeTruthy();
+    const receipt = await repository.findReceipt({ workspaceId: owner.workspaceId, capability: "members.invite@1", idempotencyKey: "secret-invitation-key" });
+    expect(JSON.stringify(receipt?.result)).not.toContain(invitation.invitationToken);
+    expect(receipt?.result).not.toHaveProperty("invitationToken");
+
+    const challenge = await service.execute(owner, { type: "begin_step_up", purpose: "exports.manage", resourceId: null }, "secret-step-up-code") as { verificationCode: string };
+    expect(challenge.verificationCode).toMatch(/^\d{6}$/);
+    const challengeReceipt = await repository.findReceipt({ workspaceId: owner.workspaceId, capability: "governance.view@1", idempotencyKey: "secret-step-up-code" });
+    expect(challengeReceipt?.result).not.toHaveProperty("verificationCode");
   });
 
   it("revokes a pending invitation so it can no longer be accepted", async () => {

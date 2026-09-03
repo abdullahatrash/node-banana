@@ -10,6 +10,7 @@ import type {
   GovernanceCommit,
   GovernanceCommitResult,
   GovernanceRepository,
+  GovernanceReceipt,
   GovernanceResource,
   GovernanceResourceKind,
 } from "./types";
@@ -49,6 +50,30 @@ function fromAuditRow(
 
 export class DrizzleGovernanceRepository implements GovernanceRepository {
   constructor(private readonly database: () => Db) {}
+
+  async findReceipt(input: {
+    workspaceId: string;
+    capability: string;
+    idempotencyKey: string;
+  }): Promise<GovernanceReceipt | null> {
+    const [row] = await this.database()
+      .select()
+      .from(workspaceGovernanceMutationReceipts)
+      .where(and(
+        eq(workspaceGovernanceMutationReceipts.workspaceId, input.workspaceId),
+        eq(workspaceGovernanceMutationReceipts.capability, input.capability),
+        eq(workspaceGovernanceMutationReceipts.idempotencyKey, input.idempotencyKey),
+      ))
+      .limit(1);
+    return row ? {
+      workspaceId: row.workspaceId,
+      capability: row.capability,
+      idempotencyKey: row.idempotencyKey,
+      requestDigest: row.requestDigest,
+      result: structuredClone(row.result),
+      createdAt: row.createdAt,
+    } : null;
+  }
 
   async getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;

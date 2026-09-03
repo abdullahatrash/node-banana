@@ -131,6 +131,11 @@ export type GovernanceCommitResult =
   | { type: "conflict" };
 
 export interface GovernanceRepository {
+  findReceipt(input: {
+    workspaceId: string;
+    capability: string;
+    idempotencyKey: string;
+  }): Promise<GovernanceReceipt | null>;
   getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;
     kind: GovernanceResourceKind;
