@@ -13,9 +13,20 @@ export interface ModelQualificationEvidence {
   pricingSource: { sourceUrl: string; digest: `sha256:${string}`; checkedAt: Date };
   qualificationRun: { id: string; digest: `sha256:${string}`; completedAt: Date };
 }
+export interface InspirationRightsEvidence {
+  schema: "inspiration-rights-evidence/v1"; id: string; workspaceId: string;
+  sourceAssetId: string; sourceDigest: `sha256:${string}`;
+  basis: "owned" | "licensed" | "public_domain" | "consented";
+  permittedRemix: "reference_only" | "transform" | "derivative";
+  issuer: { type: "workspace_asset_owner" | "license_authority" | "rights_holder" | "public_registry"; id: string };
+  verifier: { type: "workspace_member"; userId: string };
+  scope: { commercialUse: boolean; derivativeUse: boolean; modelInputUse: boolean; territories: string[] };
+  evidenceDocumentAssetId: string | null; sourceUrl: string | null;
+  issuedAt: Date; verifiedAt: Date; expiresAt: Date | null; digest: `sha256:${string}`;
+}
 export type ModelExecutionQualification =
   | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
-  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; outputShape: { width: number; height: number; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean }; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
+  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number; height: number; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean }; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
 export interface ModelDescriptor {
   provider: ExactModelRef["provider"]; model: string; label: string;
   capabilities: readonly GenerationCapability[]; quality: GenerationQuality;
@@ -37,7 +48,7 @@ export interface GenerationIntent {
   schema: "generation-intent/v1"; id: string; workspaceId: string;
   brand: { profileId: string; revision: number; digest: `sha256:${string}`; acceptedAt: Date };
   promptDigest: `sha256:${string}`; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
-  rights: { snapshotId: string; revision: number; digest: `sha256:${string}`; basis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; evidenceRefs: string[]; sourceUrls: string[] };
+  rights: { snapshotId: string; revision: number; digest: `sha256:${string}`; basis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; evidence: InspirationRightsEvidence[]; sourceAssetIds: string[] };
   remixBrief: { digest: `sha256:${string}`; preserve: string[]; transform: string[]; avoid: string[] };
   qualification: { id: string; revision: number; digest: `sha256:${string}`; expiresAt: Date };
   regionAdmission: { policyId: string; policyVersion: number; evidenceDigest: `sha256:${string}`; region: string; routeId: string; evidenceExpiresAt: Date };
@@ -49,7 +60,7 @@ export interface GenerationIntent {
 export interface InspirationRightsSnapshot {
   schema: "inspiration-rights-snapshot/v1"; id: string; workspaceId: string; revision: number;
   basis: GenerationIntent["rights"]["basis"]; permittedRemix: GenerationIntent["rights"]["permittedRemix"];
-  evidenceRefs: string[]; sourceUrls: string[]; digest: `sha256:${string}`; createdByUserId: string; createdAt: Date;
+  evidence: InspirationRightsEvidence[]; sourceAssetIds: string[]; digest: `sha256:${string}`; createdByUserId: string; createdAt: Date;
 }
 
 export type CompatibilityFailure = "target_not_authorized" | "expired" | "revoked" | "capability" | "quality" | "content_language" | "arabic_variety" | "region" | "execution_mode" | "quote_expired" | "cost_ceiling" | "source_quote";

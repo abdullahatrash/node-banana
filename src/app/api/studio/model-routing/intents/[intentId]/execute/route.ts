@@ -11,6 +11,7 @@ import { inspirationRightsSnapshots, modelGenerationBudgetReservations } from "@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import { validateRightsEvidence } from "@/lib/model-routing/rights-evidence";
 import { getReleaseControlService } from "@/lib/release-control/production";
 
 const bodySchema = z.object({ prompt: z.string().trim().min(1).max(50_000), sourceAssetIds: z.array(z.string().min(1).max(200)).max(8).default([]) }).strict();
@@ -42,9 +43,12 @@ export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>(
   const [rights] = await getDb().select({ digest: inspirationRightsSnapshots.digest, permittedRemix: inspirationRightsSnapshots.permittedRemix }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, authz.workspaceId), eq(inspirationRightsSnapshots.id, intent.rights.snapshotId), eq(inspirationRightsSnapshots.revision, intent.rights.revision))).limit(1);
   if (!rights || rights.digest !== intent.rights.digest || rights.permittedRemix !== intent.rights.permittedRemix) return noStoreJson({ success: false, code: "RIGHTS_SNAPSHOT_MISMATCH" }, { status: 409 });
   const sourceIds = [...new Set(parsed.data.sourceAssetIds)];
-  if (sourceIds.some((id) => !intent.rights.sourceAssetIds.includes(id))) return noStoreJson({ success: false, code: "RIGHTS_EVIDENCE_MISMATCH" }, { status: 409 });
-  const sourceRows = sourceIds.length ? await getDb().select({ id: assets.id, storageKey: assets.storageKey }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
+  if (sourceIds.length !== intent.rights.sourceAssetIds.length || sourceIds.some((id) => !intent.rights.sourceAssetIds.includes(id))) return noStoreJson({ success: false, code: "RIGHTS_EVIDENCE_MISMATCH" }, { status: 409 });
+  const rightsValidation = validateRightsEvidence({ workspaceId: authz.workspaceId, basis: intent.rights.basis, permittedRemix: intent.rights.permittedRemix, sourceAssetIds: intent.rights.sourceAssetIds, evidence: intent.rights.evidence, at: new Date() });
+  if (!rightsValidation.ok) return noStoreJson({ success: false, code: rightsValidation.code }, { status: 409 });
+  const sourceRows = sourceIds.length ? await getDb().select({ id: assets.id, storageKey: assets.storageKey, checksum: assets.checksum }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
   if (sourceRows.length !== sourceIds.length || sourceRows.some((asset) => !asset.storageKey)) return noStoreJson({ success: false, code: "SOURCE_ASSET_UNAVAILABLE" }, { status: 409 });
+  if (sourceRows.some((asset) => intent.rights.evidence.find((item) => item.sourceAssetId === asset.id)?.sourceDigest !== asset.checksum)) return noStoreJson({ success: false, code: "RIGHTS_SOURCE_DIGEST_MISMATCH" }, { status: 409 });
   const sourceUrls = await Promise.all(sourceRows.map(async (asset) => (await createPresignedDownload({ key: asset.storageKey! })).downloadUrl));
   const credential = await resolveDurableProviderKey(authz.workspaceId, "replicate");
   if (!credential) return noStoreJson({ success: false, code: "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", error: "Async generation requires a Workspace-stored Replicate key; transient request headers are not accepted." }, { status: 409 });

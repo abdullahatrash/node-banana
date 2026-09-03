@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ArtifactIngestionBusyError, S3CanonicalArtifactIngestion, validateDecodedArtifact } from "../artifact-ingestion";
+import { ArtifactIngestionBusyError, ArtifactLeaseGuard, S3CanonicalArtifactIngestion, validateDecodedArtifact } from "../artifact-ingestion";
 import type { ArtifactReceiptPort } from "../artifact-receipts";
 import type { GenerationIntent } from "../types";
 import { testOutputContract, testQualification, testRef, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
@@ -37,5 +37,13 @@ describe("canonical artifact ingestion", () => {
     const ingestion = new S3CanonicalArtifactIngestion(fetcher as unknown as typeof fetch, ["replicate.delivery"], receipts);
     await expect(ingestion.ingest({ workspaceId: "ws", intent, providerPredictionId: "prediction-1", output: ["https://replicate.delivery/output.mp4"] })).rejects.toBeInstanceOf(ArtifactIngestionBusyError);
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("fences a worker that loses its receipt epoch", async () => {
+    const receipts = { renew: vi.fn(async () => false) } as unknown as ArtifactReceiptPort;
+    const guard = new ArtifactLeaseGuard(receipts, { workspaceId: "ws", predictionId: "prediction", outputIndex: 0, intentId: "intent", leaseOwner: "owner", leaseEpoch: 4 }, () => new Date("2026-09-03T00:00:00.000Z"));
+    await expect(guard.assertOwned()).rejects.toThrow("ARTIFACT_LEASE_LOST");
+    guard.stop();
+    expect(receipts.renew).toHaveBeenCalledWith(expect.objectContaining({ leaseEpoch: 4 }));
   });
 });

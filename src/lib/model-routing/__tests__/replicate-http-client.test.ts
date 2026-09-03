@@ -11,7 +11,7 @@ describe("ReplicateHttpClient", () => {
       () => "test-token", fetcher, "https://replicate.invalid/v1",
     );
     expect(await client.create({
-      endpoint: "versioned", model: "owner/model", version: "exact-version", input: { aspect_ratio: "9:16" },
+      endpoint: "versioned", model: "owner/model", version: "exact-version", input: { aspect_ratio: "9:16" }, cancelAfterSeconds: 900,
     })).toMatchObject({ id: "prediction", status: "starting" });
     expect(fetcher).toHaveBeenCalledWith(
       "https://replicate.invalid/v1/predictions",
@@ -24,6 +24,7 @@ describe("ReplicateHttpClient", () => {
     );
     const headers = fetcher.mock.calls[0]?.[1]?.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer test-token");
+    expect(headers["Cancel-After"]).toBe("900s");
   });
 
   it("fails closed without a credential", async () => {

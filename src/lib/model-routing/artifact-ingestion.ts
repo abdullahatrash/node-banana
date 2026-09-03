@@ -42,6 +42,22 @@ async function download(fetcher: typeof fetch, url: URL, path: string, declared:
 
 export class ArtifactIngestionBusyError extends Error { readonly code = "ARTIFACT_INGESTION_BUSY"; constructor() { super("Artifact output is already being ingested."); } }
 
+export class ArtifactLeaseGuard {
+  private lost = false;
+  private readonly timer: ReturnType<typeof setInterval>;
+  constructor(private readonly receipts: ArtifactReceiptPort, private readonly identity: { workspaceId: string; predictionId: string; outputIndex: number; intentId: string; leaseOwner: string; leaseEpoch: number }, private readonly now: () => Date) {
+    this.timer = setInterval(() => { void this.renew().catch(() => { this.lost = true; }); }, 30_000);
+    this.timer.unref?.();
+  }
+  private async renew() {
+    if (this.lost) return;
+    const at = this.now();
+    if (!await this.receipts.renew({ ...this.identity, at, leaseExpiresAt: new Date(at.getTime() + 120_000) })) this.lost = true;
+  }
+  async assertOwned() { await this.renew(); if (this.lost) throw new Error("ARTIFACT_LEASE_LOST"); }
+  stop() { clearInterval(this.timer); }
+}
+
 /** Exactly-once, leased ingestion from trusted Replicate delivery into canonical Workspace assets. */
 export class S3CanonicalArtifactIngestion implements CanonicalArtifactIngestionPort {
   constructor(private readonly fetcher: typeof fetch = fetch, private readonly allowedHosts = (process.env.REPLICATE_OUTPUT_HOSTS ?? "replicate.delivery").split(",").map((item) => item.trim()).filter(Boolean), private readonly receipts: ArtifactReceiptPort = new PostgresArtifactReceiptRepository(getDb), private readonly now = () => new Date()) {}
@@ -52,18 +68,21 @@ export class S3CanonicalArtifactIngestion implements CanonicalArtifactIngestionP
       const assetType = input.intent.outputContract.mediaType; const proposedStorageKey = buildAssetObjectKey({ workspaceId: input.workspaceId, projectId: null, assetType, fileExtension: assetType === "video" ? "mp4" : "png" }); const owner = randomUUID(); const at = this.now();
       const claimed = await this.receipts.claim({ workspaceId: input.workspaceId, predictionId: input.providerPredictionId, outputIndex, intentId: input.intent.id, proposedStorageKey, leaseOwner: owner, leaseExpiresAt: new Date(at.getTime() + 120_000), at });
       if (claimed.kind === "busy") throw new ArtifactIngestionBusyError(); if (claimed.kind === "ready") { artifactIds.push(claimed.receipt.assetId!); continue; }
+      const lease = new ArtifactLeaseGuard(this.receipts, { workspaceId: input.workspaceId, predictionId: input.providerPredictionId, outputIndex, intentId: input.intent.id, leaseOwner: owner, leaseEpoch: claimed.receipt.leaseEpoch }, this.now);
+      try {
       const head = await this.fetcher(url, { method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(15_000) }); if (!head.ok) throw new Error("REPLICATE_OUTPUT_FETCH_FAILED");
       const declared = Number(head.headers.get("content-length") ?? 0); if (!Number.isSafeInteger(declared) || declared < 0 || declared > MAX_BYTES) throw new Error("REPLICATE_OUTPUT_TOO_LARGE"); const contentType = head.headers.get("content-type")?.split(";")[0]?.trim() || (input.intent.outputContract.mediaType === "video" ? "video/mp4" : "image/png");
       if ((input.intent.outputContract.mediaType === "video" && !contentType.startsWith("video/")) || (input.intent.outputContract.mediaType === "image" && !contentType.startsWith("image/"))) throw new Error("REPLICATE_OUTPUT_CONTRACT_MISMATCH");
       const [recovered] = await getDb().select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.storageKey, claimed.receipt.storageKey), isNull(assets.deletedAt))).limit(1); const recoveredMetadata = recovered?.metadata && typeof recovered.metadata === "object" && !Array.isArray(recovered.metadata) ? recovered.metadata as Record<string, unknown> : null;
-      if (recovered && recoveredMetadata?.uploadState === "ready" && recoveredMetadata.providerPredictionId === input.providerPredictionId && recoveredMetadata.providerOutputIndex === outputIndex && typeof recovered.checksum === "string" && recovered.width && recovered.height && recovered.sizeBytes) { const ready = await this.receipts.complete({ workspaceId: input.workspaceId, predictionId: input.providerPredictionId, outputIndex, intentId: input.intent.id, leaseOwner: owner, assetId: recovered.id, mimeType: recovered.mimeType ?? contentType, sizeBytes: recovered.sizeBytes, width: recovered.width, height: recovered.height, durationSeconds: typeof recoveredMetadata.durationSecondsExact === "number" ? recoveredMetadata.durationSecondsExact : null, fps: typeof recoveredMetadata.fps === "number" ? recoveredMetadata.fps : null, contentDigest: recovered.checksum as `sha256:${string}`, at: this.now() }); artifactIds.push(ready.assetId!); continue; }
+      if (recovered && recoveredMetadata?.uploadState === "ready" && recoveredMetadata.providerPredictionId === input.providerPredictionId && recoveredMetadata.providerOutputIndex === outputIndex && typeof recovered.checksum === "string" && recovered.width && recovered.height && recovered.sizeBytes) { await lease.assertOwned(); const ready = await this.receipts.complete({ workspaceId: input.workspaceId, predictionId: input.providerPredictionId, outputIndex, intentId: input.intent.id, leaseOwner: owner, leaseEpoch: claimed.receipt.leaseEpoch, assetId: recovered.id, mimeType: recovered.mimeType ?? contentType, sizeBytes: recovered.sizeBytes, width: recovered.width, height: recovered.height, durationSeconds: typeof recoveredMetadata.durationSecondsExact === "number" ? recoveredMetadata.durationSecondsExact : null, fps: typeof recoveredMetadata.fps === "number" ? recoveredMetadata.fps : null, contentDigest: recovered.checksum as `sha256:${string}`, at: this.now() }); artifactIds.push(ready.assetId!); continue; }
       const directory = await mkdtemp(join(tmpdir(), "node-banana-artifact-")); const path = join(directory, `output-${outputIndex}.${extension(contentType)}`);
       try {
-        const downloaded = await download(this.fetcher, url, path, declared); const decoded = await probe(path, input.intent.outputContract.mediaType); validateDecodedArtifact(input.intent.outputContract, decoded); const metadata = recordMetadata(input.intent, input.providerPredictionId, outputIndex, downloaded.digest, decoded.durationSeconds, decoded.fps);
+        const downloaded = await download(this.fetcher, url, path, declared); await lease.assertOwned(); const decoded = await probe(path, input.intent.outputContract.mediaType); validateDecodedArtifact(input.intent.outputContract, decoded); const metadata = recordMetadata(input.intent, input.providerPredictionId, outputIndex, downloaded.digest, decoded.durationSeconds, decoded.fps);
         const pending = await recordPendingS3AssetWithQuota({ workspaceId: input.workspaceId, userId: input.intent.createdByUserId, projectId: null, type: assetType, storageBucket: process.env.S3_BUCKET_NAME || null, storageKey: claimed.receipt.storageKey, mimeType: contentType, originalFileName: `${input.providerPredictionId}-${outputIndex}.${extension(contentType)}`, expectedSizeBytes: downloaded.sizeBytes, metadata });
-        await streamUploadToS3({ key: claimed.receipt.storageKey, body: createReadStream(path), contentType, contentLength: downloaded.sizeBytes }); await finalizeAssetUpload({ workspaceId: input.workspaceId, assetId: pending.id, uploadState: "ready", sizeBytes: downloaded.sizeBytes, checksum: downloaded.digest, mimeType: contentType, width: decoded.width, height: decoded.height, durationSeconds: decoded.durationSeconds === null ? null : Math.round(decoded.durationSeconds), metadata });
-        const ready = await this.receipts.complete({ workspaceId: input.workspaceId, predictionId: input.providerPredictionId, outputIndex, intentId: input.intent.id, leaseOwner: owner, assetId: pending.id, mimeType: contentType, sizeBytes: downloaded.sizeBytes, width: decoded.width, height: decoded.height, durationSeconds: decoded.durationSeconds, fps: decoded.fps, contentDigest: downloaded.digest, at: this.now() }); artifactIds.push(ready.assetId!);
+        await streamUploadToS3({ key: claimed.receipt.storageKey, body: createReadStream(path), contentType, contentLength: downloaded.sizeBytes }); await lease.assertOwned(); await finalizeAssetUpload({ workspaceId: input.workspaceId, assetId: pending.id, uploadState: "ready", sizeBytes: downloaded.sizeBytes, checksum: downloaded.digest, mimeType: contentType, width: decoded.width, height: decoded.height, durationSeconds: decoded.durationSeconds === null ? null : Math.round(decoded.durationSeconds), metadata });
+        const ready = await this.receipts.complete({ workspaceId: input.workspaceId, predictionId: input.providerPredictionId, outputIndex, intentId: input.intent.id, leaseOwner: owner, leaseEpoch: claimed.receipt.leaseEpoch, assetId: pending.id, mimeType: contentType, sizeBytes: downloaded.sizeBytes, width: decoded.width, height: decoded.height, durationSeconds: decoded.durationSeconds, fps: decoded.fps, contentDigest: downloaded.digest, at: this.now() }); artifactIds.push(ready.assetId!);
       } finally { await rm(directory, { recursive: true, force: true }); }
+      } finally { lease.stop(); }
     }
     return { artifactIds };
   }

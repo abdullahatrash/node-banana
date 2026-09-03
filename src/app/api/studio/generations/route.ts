@@ -11,8 +11,10 @@ import { configuredCatalog, findCuratedModel } from "@/lib/model-routing/catalog
 import { inspirationRightsSnapshots } from "@/lib/model-routing/db-schema";
 import { productionGenerationExecution } from "@/lib/model-routing/execution-production";
 import { PRODUCTION_MODEL_ROUTING } from "@/lib/model-routing/production";
-import type { InspirationRightsSnapshot } from "@/lib/model-routing/types";
+import type { InspirationRightsEvidence, InspirationRightsSnapshot } from "@/lib/model-routing/types";
 import { validateGenerationSources } from "@/lib/model-routing/source-validation";
+import { createImmutableRightsEvidence, loadRightsEvidence } from "@/lib/model-routing/rights-evidence-repository";
+import { hydrateRightsSnapshot, validateRightsEvidence } from "@/lib/model-routing/rights-evidence";
 import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
@@ -24,6 +26,7 @@ const bodySchema = z.object({
   contentLanguage: z.enum(["ar","en","mixed"]), arabicVariety: z.enum(["msa","gulf","egyptian","levantine","maghrebi","other"]).nullable(),
   quantity: z.number().positive().max(600), sourceAssetIds: z.array(z.string().min(1).max(200)).max(8).default([]),
   rightsBasis: z.enum(["owned","licensed","public_domain","consented"]), permittedRemix: z.enum(["reference_only","transform","derivative"]),
+  rightsEvidenceIds: z.array(z.string().min(1).max(200)).max(8).default([]),
   remixBrief: z.object({ preserve: briefList, transform: briefList, avoid: briefList }).strict(),
 }).strict();
 
@@ -43,18 +46,26 @@ export const POST = withStudioAuth<undefined>({ route: "/api/studio/generations"
   const [brand] = await getDb().select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, authz.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
   if (!brand?.acceptedAt) return noStoreJson({ success: false, code: "ACCEPTED_BRAND_REVISION_REQUIRED", error: "Accept a Brand Profile revision before generating brand-aware media.", nextActions: [action("accept_brand", "/onboarding/brand-review", "Review and accept Brand Profile")] }, { status: 422 });
   const sourceIds = [...new Set(input.sourceAssetIds)];
-  const sourceRows = sourceIds.length ? await getDb().select({ id: assets.id, type: assets.type, storageKey: assets.storageKey, checksum: assets.checksum, width: assets.width, height: assets.height, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
+  const sourceRows = sourceIds.length ? await getDb().select({ id: assets.id, type: assets.type, storageKey: assets.storageKey, checksum: assets.checksum, width: assets.width, height: assets.height, metadata: assets.metadata, createdByUserId: assets.createdByUserId, createdAt: assets.createdAt }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
   const sourceValidation = validateGenerationSources(input.capability, sourceIds, sourceRows.map((row) => ({ ...row, metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : null })));
   if (!sourceValidation.ok) return noStoreJson({ success: false, code: sourceValidation.code, error: sourceValidation.code === "SOURCE_9_16_REQUIRED" ? "Image-to-video requires an exact 9:16 source." : "The source must be canonical Workspace media with server-verified dimensions.", nextActions: [action("prepare_source", "/simple-studio/library", "Choose a server-verified 9:16 source")] }, { status: 422 });
-  if (input.rightsBasis !== "owned" && sourceIds.length === 0) return noStoreJson({ success: false, code: "RIGHTS_EVIDENCE_REQUIRED", error: "Non-owned rights require immutable evidence associated with every source.", nextActions: [action("review_rights", "/simple-studio/library", "Review inspiration rights")] }, { status: 422 });
   if (input.permittedRemix === "reference_only" && input.remixBrief.transform.length) return noStoreJson({ success: false, code: "REMIX_SCOPE_CONFLICT", error: "Reference-only rights cannot authorize requested transformations." }, { status: 422 });
-  const at = new Date(); const rightsId = stableRightsId(authz.workspaceId, key); const evidenceRefs = sourceIds.map((id) => `asset:${id}`);
-  const rightsInput = { basis: input.rightsBasis, permittedRemix: input.permittedRemix, evidenceRefs, sourceUrls: [] as string[] };
+  const at = new Date(); const rightsId = stableRightsId(authz.workspaceId, key);
+  const evidence = input.rightsBasis === "owned" ? await Promise.all(sourceRows.map(async (source) => {
+    const result = await createImmutableRightsEvidence({ workspaceId: authz.workspaceId, userId: authz.userId, idempotencyKey: `${key}:owned:${source.id}`, sourceAssetId: source.id, basis: "owned", permittedRemix: input.permittedRemix, issuer: { type: "workspace_asset_owner", id: source.createdByUserId }, scope: { commercialUse: true, derivativeUse: true, modelInputUse: true, territories: ["worldwide"] }, evidenceDocumentAssetId: null, sourceUrl: null, issuedAt: source.createdAt, expiresAt: null, at });
+    return result.kind === "created" || result.kind === "replayed" ? result.evidence : null;
+  })) : await loadRightsEvidence(authz.workspaceId, [...new Set(input.rightsEvidenceIds)]);
+  if (evidence.some((item) => !item)) return noStoreJson({ success: false, code: "OWNERSHIP_EVIDENCE_UNAVAILABLE", nextActions: [action("review_rights", "/simple-studio/library", "Review inspiration rights")] }, { status: 422 });
+  const typedEvidence = evidence.filter((item): item is InspirationRightsEvidence => item !== null);
+  const rightsValidation = validateRightsEvidence({ workspaceId: authz.workspaceId, basis: input.rightsBasis, permittedRemix: input.permittedRemix, sourceAssetIds: sourceIds, evidence: typedEvidence, at });
+  if (!rightsValidation.ok) return noStoreJson({ success: false, code: rightsValidation.code, nextActions: [action("review_rights", "/simple-studio/library", "Review inspiration rights")] }, { status: 422 });
+  const rightsInput = { basis: input.rightsBasis, permittedRemix: input.permittedRemix, evidence: typedEvidence, sourceAssetIds: sourceIds };
   const snapshot: InspirationRightsSnapshot = { schema: "inspiration-rights-snapshot/v1", id: rightsId, workspaceId: authz.workspaceId, revision: 1, ...rightsInput, digest: canonicalDigest(rightsInput) as `sha256:${string}`, createdByUserId: authz.userId, createdAt: at };
   const [inserted] = await getDb().insert(inspirationRightsSnapshots).values({ workspaceId: authz.workspaceId, id: snapshot.id, revision: 1, snapshot, digest: snapshot.digest, basis: snapshot.basis, permittedRemix: snapshot.permittedRemix, createdByUserId: authz.userId, createdAt: at }).onConflictDoNothing().returning({ snapshot: inspirationRightsSnapshots.snapshot });
-  const rights = inserted?.snapshot ?? (await getDb().select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, authz.workspaceId), eq(inspirationRightsSnapshots.id, rightsId), eq(inspirationRightsSnapshots.revision, 1))).limit(1))[0]?.snapshot;
+  const storedRights = inserted?.snapshot ?? (await getDb().select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, authz.workspaceId), eq(inspirationRightsSnapshots.id, rightsId), eq(inspirationRightsSnapshots.revision, 1))).limit(1))[0]?.snapshot;
+  const rights = storedRights ? hydrateRightsSnapshot(storedRights) : null;
   if (!rights || rights.digest !== snapshot.digest) return noStoreJson({ success: false, code: "IDEMPOTENCY_CONFLICT", error: "This generation key was already used with different rights evidence." }, { status: 409 });
-  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: authz.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidenceRefs: rights.evidenceRefs, sourceUrls: rights.sourceUrls }, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, quantity: input.quantity, userId: authz.userId, idempotencyKey: `${key}:intent` });
+  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: authz.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, quantity: input.quantity, userId: authz.userId, idempotencyKey: `${key}:intent` });
   if (created.kind !== "created" && created.kind !== "replayed") { const unavailable = created.kind === "unavailable" || created.kind === "budget_unavailable"; const code = "code" in created ? created.code : created.kind.toUpperCase(); return noStoreJson({ success: false, code, error: unavailable ? "Generation admission is temporarily unavailable." : "Generation was not admitted by Workspace policy.", nextActions: [action("inspect_operations", "/studio/operations", "Inspect generation admission")] }, { status: unavailable ? 503 : created.kind === "budget_denied" ? 402 : 422 }); }
   if (!created.intent) return noStoreJson({ success: false, code: "GENERATION_INTENT_UNAVAILABLE", error: "The admitted Generation Intent could not be loaded." }, { status: 503 });
   const sourceUrls = await Promise.all(sourceRows.map(async (source) => (await createPresignedDownload({ key: source.storageKey! })).downloadUrl));

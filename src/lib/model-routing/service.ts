@@ -10,6 +10,7 @@ import type {
   GenerationQuality, ExecutionMode, ModelDescriptor,
 } from "./types";
 import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } from "./generation-region";
+import { validateRightsEvidence } from "./rights-evidence";
 
 const digest = (value: unknown) => canonicalDigest(value) as `sha256:${string}`;
 const sameModel = (a: ExactModelRef, b: ExactModelRef) =>
@@ -93,13 +94,12 @@ export class ModelRoutingService {
     const selected = this.resolveModel(input.selectedModel);
     const localeCompatible = selected?.contentLanguages.includes(input.contentLanguage) &&
       (!input.arabicVariety || selected.arabicVarieties.includes(input.arabicVariety));
-    const rightsHaveEvidence = input.rights.basis === "owned" ||
-      input.rights.evidenceRefs.length > 0 || input.rights.sourceUrls.length > 0;
+    const rightsEvidence = validateRightsEvidence({ workspaceId: input.workspaceId, basis: input.rights.basis, permittedRemix: input.rights.permittedRemix, sourceAssetIds: input.rights.sourceAssetIds, evidence: input.rights.evidence, at });
     if (!requested || !selected || !requested.capabilities.includes(input.capability) ||
       !selected.capabilities.includes(input.capability) || !localeCompatible ||
       !input.rawPrompt.trim() || input.brand.revision < 1 || input.brand.acceptedAt > at ||
       !/^sha256:[a-f0-9]{64}$/.test(input.brand.digest) || !Number.isFinite(input.quantity) || input.quantity <= 0 ||
-      !rightsHaveEvidence || input.rights.revision < 1 || !/^sha256:[a-f0-9]{64}$/.test(input.rights.digest) || !input.rights.snapshotId ||
+      !rightsEvidence.ok || input.rights.revision < 1 || !/^sha256:[a-f0-9]{64}$/.test(input.rights.digest) || !input.rights.snapshotId ||
       input.rights.permittedRemix === "reference_only" && input.remixBrief.transform.length > 0 ||
       (input.contentLanguage !== "en" && !input.arabicVariety)) {
       return { kind: "invalid" as const };
@@ -133,7 +133,7 @@ export class ModelRoutingService {
       brand: input.brand, promptDigest: digest(input.rawPrompt), capability: input.capability,
       contentLanguage: input.contentLanguage,
       arabicVariety: input.contentLanguage === "en" ? null : input.arabicVariety,
-      rights: { ...input.rights, evidenceRefs: [...input.rights.evidenceRefs], sourceUrls: [...input.rights.sourceUrls] },
+      rights: { ...input.rights, evidence: structuredClone(input.rights.evidence), sourceAssetIds: [...input.rights.sourceAssetIds] },
       remixBrief: { digest: digest(input.remixBrief), preserve: [...input.remixBrief.preserve], transform: [...input.remixBrief.transform], avoid: [...input.remixBrief.avoid] },
       qualification: { id: selected.qualification.evidence.id, revision: selected.qualification.evidence.revision, digest: selected.qualification.evidence.digest, expiresAt: selected.qualification.evidence.expiresAt },
       regionAdmission: region.evidence,

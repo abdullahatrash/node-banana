@@ -56,6 +56,7 @@ describe("ReplicatePredictionAdapter mocked contract", () => {
       { create, get: vi.fn(), cancel: vi.fn() }, effects, { ingest: vi.fn() }, TEST_CREDENTIAL_REF, undefined, resolveTestModel,
     );
     expect((await adapter.submit(intent, {})).state).toBe("waiting_provider");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ cancelAfterSeconds: 900, version: intent.selectedModel.version }));
     expect(await adapter.submit(intent, {})).toEqual({ state: "waiting_provider", predictionId: "p", code: "SUBMISSION_ALREADY_EXISTS" });
     expect(create).toHaveBeenCalledTimes(1);
     expect(effects.claim.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]!);

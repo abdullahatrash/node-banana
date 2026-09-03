@@ -12,6 +12,7 @@ export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.
     inputSchemaDigest: `sha256:${(index + 1).toString(16).padStart(64, "0")}` as `sha256:${string}`,
     executionPriceUsd: { basis: model.priceUsd.basis, amount: model.priceUsd.basis === "second" ? 0.05 : model.priceUsd.amount },
     maxQuantity: 30,
+    cancelAfterSeconds: 900,
     outputShape: { width: 1080, height: 1920, fps: model.capabilities.some((capability) => capability.endsWith("video")) ? 30 : null },
     inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: "duration", imageKey: "image", imageMode: "single" as const, safety: { parameterKey: "disable_safety_checker", safeValue: false }, lockedParameters: { disable_safety_checker: false, draft: false, resolution: "1080p", audio: false } },
     evidence: {
@@ -48,7 +49,7 @@ export const testOutputContract = (index: number, quantity = 8) => {
     lockedParametersDigest: canonicalDigest(model.qualification.inputContract.lockedParameters) as `sha256:${string}`,
   };
 };
-export const TEST_RIGHTS = { snapshotId: "rights", revision: 1, digest: `sha256:${"d".repeat(64)}` as `sha256:${string}`, basis: "owned" as const, permittedRemix: "transform" as const, evidenceRefs: ["asset-1"], sourceUrls: [] };
+export const TEST_RIGHTS = { snapshotId: "rights", revision: 1, digest: `sha256:${"d".repeat(64)}` as `sha256:${string}`, basis: "owned" as const, permittedRemix: "transform" as const, evidence: [], sourceAssetIds: [] };
 export const TEST_REMIX_BRIEF = { preserve: ["brand palette"], transform: ["composition"], avoid: ["logos from source"] };
 export const TEST_CREDENTIAL_REF = { id: "provider-key-1", provider: "replicate" as const, updatedAt: "2026-09-03T00:00:00.000Z" };
 export const TEST_REGION_ADMISSION = { policyId: "active", policyVersion: 1, evidenceDigest: `sha256:${"9".repeat(64)}` as `sha256:${string}`, region: "replicate-us", routeId: "provider:replicate", evidenceExpiresAt: new Date("2026-09-10T00:00:00.000Z") };

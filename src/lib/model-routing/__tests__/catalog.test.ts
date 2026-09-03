@@ -15,7 +15,7 @@ function signedQualification(overrides: Record<string, unknown> = {}) {
     provider: model.provider, model: model.model, endpoint: "versioned", version: "operator-reviewed-immutable-version-1",
     inputSchemaDigest: `sha256:${"a1".repeat(32)}`, capabilities: [...model.capabilities], contentLanguages: [...model.contentLanguages],
     arabicVarieties: [...model.arabicVarieties], verifiedRegions: ["replicate-us"], executionModes: ["async"],
-    executionPriceUsd: { basis: "image", amount: 0.123 }, maxQuantity: 4,
+    executionPriceUsd: { basis: "image", amount: 0.123 }, maxQuantity: 4, cancelAfterSeconds: 900,
     outputShape: { width: 1080, height: 1920, fps: null },
     inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "disable_safety_filter", safeValue: false }, lockedParameters: { disable_safety_filter: false, mode: "standard", resolution: "1080p" } },
     license: { name: "Commercial provider license", commercialUse: true, derivativeUse: true, sourceUrl: "https://example.com/license", digest: `sha256:${"b2".repeat(32)}` },

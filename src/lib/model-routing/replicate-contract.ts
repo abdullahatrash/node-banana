@@ -4,7 +4,7 @@ import type { ExactModelRef, GenerationIntent, ModelDescriptor } from "./types";
 import type { DurableProviderCredentialRef } from "@/lib/byok/repository";
 
 export interface ReplicatePrediction { id: string; status: "starting" | "processing" | "succeeded" | "failed" | "canceled" | "aborted"; version?: string | null; output?: unknown; error?: string | null; }
-export interface ReplicateClientPort { create(input: { endpoint: "versioned"; model: string; version: string; input: Record<string, unknown> }): Promise<ReplicatePrediction>; get(id: string): Promise<ReplicatePrediction>; cancel(id: string): Promise<ReplicatePrediction>; }
+export interface ReplicateClientPort { create(input: { endpoint: "versioned"; model: string; version: string; input: Record<string, unknown>; cancelAfterSeconds: number }): Promise<ReplicatePrediction>; get(id: string): Promise<ReplicatePrediction>; cancel(id: string): Promise<ReplicatePrediction>; }
 export interface ProviderEffectClaimPort {
   claim(input: { workspaceId: string; intentId: string; provider: "replicate"; claimToken: string; credentialRef: DurableProviderCredentialRef; at: Date }): Promise<{ kind: "claimed" } | { kind: "existing"; state: "claimed" | "submitted" | "outcome_unknown"; predictionId: string | null }>;
   bindPrediction(input: { workspaceId: string; intentId: string; claimToken: string; predictionId: string; model: ExactModelRef; executedVersion: string | null; credentialRef: DurableProviderCredentialRef; at: Date }): Promise<"bound" | "replayed" | "conflict">;
@@ -28,7 +28,7 @@ export class ReplicatePredictionAdapter {
       return { state: "outcome_unknown", predictionId: claim.predictionId, code: "SUBMISSION_OUTCOME_UNKNOWN" };
     }
     let prediction: ReplicatePrediction;
-    try { prediction = await this.client.create({ endpoint: descriptor.qualification.endpoint, model: intent.selectedModel.model, version: intent.selectedModel.version, input: structuredClone(providerInput) }); }
+    try { prediction = await this.client.create({ endpoint: descriptor.qualification.endpoint, model: intent.selectedModel.model, version: intent.selectedModel.version, input: structuredClone(providerInput), cancelAfterSeconds: descriptor.qualification.cancelAfterSeconds }); }
     catch { await this.effects.markOutcomeUnknown({ workspaceId: intent.workspaceId, intentId: intent.id, claimToken, at: this.now() }); return { state: "outcome_unknown", predictionId: null, code: "REPLICATE_SUBMIT_TRANSPORT_LOST" }; }
     let persisted: Awaited<ReturnType<ProviderEffectClaimPort["bindPrediction"]>>;
     try { persisted = await this.effects.bindPrediction({ workspaceId: intent.workspaceId, intentId: intent.id, claimToken, predictionId: prediction.id, model: intent.selectedModel, executedVersion: prediction.version ?? null, credentialRef: this.credentialRef, at: this.now() }); }
