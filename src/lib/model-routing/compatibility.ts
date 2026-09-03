@@ -16,6 +16,7 @@ export function authorizeFallback(input: { authorization: FallbackAuthorization;
   if (!model?.verifiedRegions.includes(grant.verifiedRegion)) reasons.push("region");
   if (!model?.executionModes.includes(grant.executionMode)) reasons.push("execution_mode");
   if (quote.expiresAt <= at) reasons.push("quote_expired");
+  if (quote.basis !== grant.sourceQuote.basis || quote.amount > grant.sourceQuote.maxUnitAmount) reasons.push("source_quote");
   if (quote.amount * quote.quantity > grant.maxTotalCostUsd) reasons.push("cost_ceiling");
   return reasons.length ? { authorized: false, reasons } : { authorized: true };
 }

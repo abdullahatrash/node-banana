@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MemoryOperationStatusRepository } from "../memory-repository";
 import { OperationStatusService } from "../service";
+import { OperationControlRegistry } from "../controls";
 
 const actor = { type: "human" as const, userId: "user-1" };
 
@@ -8,10 +9,10 @@ describe("OperationStatusService", () => {
   it("enforces named running stages, monotonic revisions, redaction and idempotency", async () => {
     const repo = new MemoryOperationStatusRepository();
     const service = new OperationStatusService(repo, () => new Date("2026-09-03T00:00:00Z"));
-    const created = await service.create({ workspaceId: "ws-1", kind: "generation", resourceId: "gen-1", actor, idempotencyKey: "create-0001", metadata: { region: "eu", prompt: "secret", apiKey: "secret" } });
+    const created = await service.create({ workspaceId: "ws-1", kind: "generation", resourceId: "gen-1", actor, idempotencyKey: "create-0001", metadata: { region: "eu", prompt: "secret", apiKey: "secret", predictionId: "prediction-1", contentLanguage: "ar", reservationIds: ["reservation-1"], rightsEvidenceRefs: ["asset-1"], nextAction: "poll_provider" } });
     expect(created.kind).toBe("applied");
     if (created.kind !== "applied") return;
-    expect(created.operation.metadata).toEqual({ region: "eu" });
+    expect(created.operation.metadata).toEqual({ region: "eu", predictionId: "prediction-1", contentLanguage: "ar", reservationIds: ["reservation-1"], rightsEvidenceRefs: ["asset-1"], nextAction: "poll_provider" });
     const admitted = await service.transition({ workspaceId: "ws-1", operationId: created.operation.id, expectedRevision: 1, to: "admitted", reasonCode: "quota.admitted", actor, idempotencyKey: "admit-0001" });
     expect(admitted.kind).toBe("applied");
     const invalid = await service.transition({ workspaceId: "ws-1", operationId: created.operation.id, expectedRevision: 2, to: "running", reasonCode: "worker.started", actor, idempotencyKey: "run-invalid", stage: null });
@@ -43,5 +44,20 @@ describe("OperationStatusService", () => {
     if (queued.kind !== "applied") throw new Error("create failed");
     const cancelled = await service.requestCancellation({ workspaceId: "ws", operationId: queued.operation.id, expectedRevision: 1, actor, idempotencyKey: "cancel-003" });
     expect(cancelled.kind === "applied" && cancelled.operation.state).toBe("cancelled");
+  });
+
+  it("dispatches provider cancellation and waits for authoritative confirmation", async () => {
+    const repo = new MemoryOperationStatusRepository();
+    const cancel = async () => ({ kind: "accepted" as const });
+    const controls = new OperationControlRegistry().register("generation", { cancel, retry: async () => ({ kind: "conflict" as const }) });
+    const service = new OperationStatusService(repo, () => new Date("2026-09-03T00:00:00Z"), controls);
+    const created = await service.create({ workspaceId: "ws", kind: "generation", resourceId: "intent", actor, idempotencyKey: "create-provider" });
+    if (created.kind !== "applied") throw new Error("create failed");
+    const admitted = await service.transition({ workspaceId: "ws", operationId: created.operation.id, expectedRevision: 1, to: "admitted", reasonCode: "generation.admitted", actor, idempotencyKey: "admit-provider" });
+    if (admitted.kind !== "applied") throw new Error("admit failed");
+    const running = await service.transition({ workspaceId: "ws", operationId: created.operation.id, expectedRevision: 2, to: "running", stage: "provider.submit", reasonCode: "generation.started", actor, idempotencyKey: "run-provider" });
+    if (running.kind !== "applied") throw new Error("run failed");
+    const result = await service.requestCancellation({ workspaceId: "ws", operationId: created.operation.id, expectedRevision: 3, actor, idempotencyKey: "cancel-provider" });
+    expect(result.kind === "applied" && result.operation.state).toBe("cancelling");
   });
 });

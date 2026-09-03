@@ -17,12 +17,14 @@ export const CURATED_MODELS: readonly ModelDescriptor[] = [
   { provider: "replicate", model: "wan-video/wan-2.7-videoedit", label: "Wan 2.7 Video Edit", capabilities: ["video_to_video"], quality: "premium", ...shared, aspectRatios: ["9:16"], priceUsd: { basis: "second", amount: 0.09 }, lane: "canary", qualification: unqualified },
 ];
 
-const qualificationSchema = z.record(z.string(), z.object({ endpoint: z.enum(["versioned", "official_model"]), version: z.string().min(8).max(200), inputSchemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict());
+const inputKey = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
+const parameterValue = z.union([z.string().max(200), z.number().finite(), z.boolean()]);
+const qualificationSchema = z.record(z.string(), z.object({ endpoint: z.enum(["versioned", "official_model"]), version: z.string().min(8).max(200), inputSchemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), executionPriceUsd: z.object({ basis: z.enum(["image", "second", "run"]), amount: z.number().positive().max(100) }).strict(), maxQuantity: z.number().positive().max(10_000), inputContract: z.object({ promptKey: inputKey, aspectRatioKey: inputKey, quantityKey: inputKey.nullable(), imageKey: inputKey.nullable(), imageMode: z.enum(["single", "array"]), safety: z.object({ parameterKey: inputKey, safeValue: parameterValue }).strict(), lockedParameters: z.record(inputKey, parameterValue) }).strict() }).strict().superRefine((value, context) => { if (value.inputContract.lockedParameters[value.inputContract.safety.parameterKey] !== value.inputContract.safety.safeValue) context.addIssue({ code: "custom", message: "The exact provider-safe value must be locked." }); }));
 export function configuredCatalog(raw = process.env.REPLICATE_MODEL_QUALIFICATIONS_JSON): readonly ModelDescriptor[] {
   if (!raw) return CURATED_MODELS;
   let parsed: z.infer<typeof qualificationSchema>;
   try { parsed = qualificationSchema.parse(JSON.parse(raw)); } catch { return CURATED_MODELS; }
-  return CURATED_MODELS.map((item) => { const value = parsed[`${item.provider}:${item.model}`]; return value ? { ...item, qualification: { status: "qualified" as const, endpoint: value.endpoint, version: value.version, inputSchemaDigest: value.inputSchemaDigest as `sha256:${string}` } } : item; });
+  return CURATED_MODELS.map((item) => { const value = parsed[`${item.provider}:${item.model}`]; return value ? { ...item, qualification: { status: "qualified" as const, endpoint: value.endpoint, version: value.version, inputSchemaDigest: value.inputSchemaDigest as `sha256:${string}`, executionPriceUsd: value.executionPriceUsd, maxQuantity: value.maxQuantity, inputContract: value.inputContract } } : item; });
 }
 export function exactModelRef(model: ModelDescriptor): ExactModelRef | null { return model.qualification.status === "qualified" ? { provider: model.provider, model: model.model, version: model.qualification.version, inputSchemaDigest: model.qualification.inputSchemaDigest } : null; }
 export function findCuratedModel(ref: ExactModelRef, catalog = configuredCatalog()): ModelDescriptor | null { return catalog.find((item) => item.provider === ref.provider && item.model === ref.model && item.qualification.status === "qualified" && item.qualification.version === ref.version && item.qualification.inputSchemaDigest === ref.inputSchemaDigest) ?? null; }

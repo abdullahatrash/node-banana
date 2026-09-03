@@ -14,6 +14,7 @@ export type OperationActor =
   | { type: "human"; userId: string }
   | { type: "agent"; principalId: string; keyId: string }
   | { type: "system"; service: string };
+export type OperationMetadataValue = string | number | boolean | null | string[];
 
 export interface OperationRecord {
   schema: "operation-status/v1";
@@ -25,7 +26,7 @@ export interface OperationRecord {
   stage: string | null;
   revision: number;
   actor: OperationActor;
-  metadata: Record<string, string | number | boolean | null>;
+  metadata: Record<string, OperationMetadataValue>;
   retryOfOperationId: string | null;
   createdAt: Date;
   updatedAt: Date;

@@ -3,12 +3,13 @@ import { canRetryOperation, canTransitionOperation } from "./state-machine";
 import { redactOperationMetadata } from "./redaction";
 import type { OperationStatusRepository } from "./repository";
 import type { OperationActor, OperationFilter, OperationKind, OperationMutationResult, OperationRecord, OperationState } from "./types";
+import { OperationControlRegistry } from "./controls";
 
 const digest = (value: unknown) => `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 const id = () => randomUUID();
 
 export class OperationStatusService {
-  constructor(private readonly repository: OperationStatusRepository, private readonly now = () => new Date()) {}
+  constructor(private readonly repository: OperationStatusRepository, private readonly now = () => new Date(), private readonly controls = new OperationControlRegistry()) {}
 
   async create(input: { workspaceId: string; kind: OperationKind; resourceId: string; actor: OperationActor; metadata?: Record<string, unknown>; idempotencyKey: string; operationId?: string; retryOfOperationId?: string | null }): Promise<OperationMutationResult> {
     const requestDigest = digest({ command: "create", workspaceId: input.workspaceId, kind: input.kind, resourceId: input.resourceId, actor: input.actor, metadata: redactOperationMetadata(input.metadata ?? {}), retryOfOperationId: input.retryOfOperationId ?? null, operationId: input.operationId ?? null });
@@ -38,15 +39,27 @@ export class OperationStatusService {
     if (replay) return replay;
     const current = await this.repository.get(input.workspaceId, input.operationId);
     if (!current) return { kind: "not_found" as const };
-    const immediate = current.state === "queued" || current.state.startsWith("waiting_") || current.state === "blocked" || current.state === "admitted";
-    return this.transition({ ...input, to: immediate ? "cancelled" : "cancelling", reasonCode: immediate ? "operation.cancelled_before_effect" : "operation.cancellation_requested", idempotencyDigest });
+    const immediate = current.state === "queued" || current.state === "waiting_user" || current.state === "waiting_quota" || current.state === "waiting_time" || current.state === "blocked" || current.state === "admitted";
+    if (immediate) return this.transition({ ...input, to: "cancelled", reasonCode: "operation.cancelled_before_effect", idempotencyDigest });
+    const adapter = this.controls.adapter(current.kind);
+    if (!adapter) return { kind: "unavailable" as const };
+    const dispatched = await adapter.cancel(current);
+    if (dispatched.kind === "conflict" || dispatched.kind === "unavailable") return { kind: dispatched.kind };
+    if (dispatched.kind === "outcome_unknown") return this.transition({ ...input, to: "outcome_unknown", reasonCode: "operation.cancel_outcome_unknown", idempotencyDigest });
+    const cancelling = await this.transition({ ...input, idempotencyKey: `${input.idempotencyKey}:dispatch`, to: "cancelling", reasonCode: "operation.cancellation_dispatched" });
+    if (dispatched.kind === "accepted" || (cancelling.kind !== "applied" && cancelling.kind !== "replayed")) return cancelling;
+    return this.transition({ ...input, expectedRevision: cancelling.operation.revision, to: "cancelled", reasonCode: "operation.cancellation_confirmed", idempotencyDigest });
   }
 
   async retry(input: { workspaceId: string; operationId: string; actor: OperationActor; idempotencyKey: string }): Promise<OperationMutationResult> {
     const current = await this.repository.get(input.workspaceId, input.operationId);
     if (!current) return { kind: "not_found" };
     if (!canRetryOperation(current.state)) return { kind: "conflict" };
-    return this.create({ workspaceId: current.workspaceId, kind: current.kind, resourceId: current.resourceId, actor: input.actor, metadata: current.metadata, idempotencyKey: input.idempotencyKey, retryOfOperationId: current.id });
+    const adapter = this.controls.adapter(current.kind);
+    if (!adapter) return { kind: "unavailable" };
+    const dispatched = await adapter.retry(current);
+    if (dispatched.kind !== "accepted") return { kind: dispatched.kind };
+    return this.create({ workspaceId: current.workspaceId, kind: current.kind, resourceId: dispatched.resourceId, actor: input.actor, metadata: { ...current.metadata, ...(dispatched.metadata ?? {}) }, idempotencyKey: input.idempotencyKey, retryOfOperationId: current.id });
   }
 
   get(workspaceId: string, operationId: string) { return this.repository.get(workspaceId, operationId); }

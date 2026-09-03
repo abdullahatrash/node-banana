@@ -1,14 +1,14 @@
 import { check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { workspaces } from "@/lib/db/schema";
-import type { OperationActor, OperationEvent } from "./types";
+import type { OperationActor, OperationEvent, OperationMetadataValue } from "./types";
 
 export const runtimeOperations = pgTable("runtime_operations", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
   id: text("id").notNull(), kind: text("kind").notNull(), resourceId: text("resource_id").notNull(),
   state: text("state").notNull(), stage: text("stage"), revision: integer("revision").notNull(),
   actor: jsonb("actor").$type<OperationActor>().notNull(),
-  metadata: jsonb("metadata").$type<Record<string, string | number | boolean | null>>().notNull(),
+  metadata: jsonb("metadata").$type<Record<string, OperationMetadataValue>>().notNull(),
   retryOfOperationId: text("retry_of_operation_id"), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 }, (table) => ({
   pk: primaryKey({ name: "runtime_operations_pk", columns: [table.workspaceId, table.id] }),

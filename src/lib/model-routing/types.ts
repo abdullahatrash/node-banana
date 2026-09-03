@@ -8,7 +8,7 @@ export interface ExactModelRef { provider: "replicate" | "google" | "kie" | "ope
 export interface CostQuote { currency: "USD"; amount: number; basis: "image" | "second" | "run"; quantity: number; quotedAt: Date; expiresAt: Date; }
 export type ModelExecutionQualification =
   | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
-  | { status: "qualified"; endpoint: "versioned" | "official_model"; version: string; inputSchemaDigest: `sha256:${string}` };
+  | { status: "qualified"; endpoint: "versioned" | "official_model"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; inputContract: { promptKey: string; aspectRatioKey: string; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean }; lockedParameters: Record<string, string | number | boolean> } };
 export interface ModelDescriptor {
   provider: ExactModelRef["provider"]; model: string; label: string;
   capabilities: readonly GenerationCapability[]; quality: GenerationQuality;
@@ -22,6 +22,7 @@ export interface FallbackAuthorization {
   schema: "model-fallback-authorization/v1"; id: string; workspaceId: string; revision: number; source: ExactModelRef;
   targets: readonly ExactModelRef[]; capability: GenerationCapability; minimumQuality: GenerationQuality; contentLanguage: ContentLanguage;
   arabicVariety: ArabicVariety | null; verifiedRegion: string; executionMode: ExecutionMode; maxTotalCostUsd: number;
+  sourceQuote: { currency: "USD"; basis: CostQuote["basis"]; maxUnitAmount: number };
   issuedByUserId: string; issuedAt: Date; expiresAt: Date; revokedAt: Date | null; revokedByUserId: string | null;
 }
 
@@ -34,4 +35,4 @@ export interface GenerationIntent {
   quote: CostQuote; reservationIds: string[]; createdByUserId: string; createdAt: Date;
 }
 
-export type CompatibilityFailure = "target_not_authorized" | "expired" | "revoked" | "capability" | "quality" | "content_language" | "arabic_variety" | "region" | "execution_mode" | "quote_expired" | "cost_ceiling";
+export type CompatibilityFailure = "target_not_authorized" | "expired" | "revoked" | "capability" | "quality" | "content_language" | "arabic_variety" | "region" | "execution_mode" | "quote_expired" | "cost_ceiling" | "source_quote";

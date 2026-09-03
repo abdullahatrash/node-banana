@@ -43,7 +43,7 @@ export class ModelRoutingService {
       (!input.arabicVariety || target.arabicVarieties.includes(input.arabicVariety)) &&
       target.verifiedRegions.includes(input.verifiedRegion) &&
       target.executionModes.includes(input.executionMode));
-    if (!source || !source.capabilities.includes(input.capability) ||
+    if (!source || source.qualification.status !== "qualified" || !source.capabilities.includes(input.capability) ||
       targets.some((target) => !target) || !targetCompatible ||
       input.targets.some((target) => sameModel(target, input.source)) ||
       new Set(input.targets.map((target) => `${target.provider}:${target.model}:${target.version}:${target.inputSchemaDigest}`)).size !== input.targets.length ||
@@ -60,6 +60,7 @@ export class ModelRoutingService {
       arabicVariety: input.contentLanguage === "en" ? null : input.arabicVariety,
       verifiedRegion: input.verifiedRegion, executionMode: input.executionMode,
       maxTotalCostUsd: input.maxTotalCostUsd, issuedByUserId: input.userId,
+      sourceQuote: { currency: "USD", basis: source.qualification.executionPriceUsd.basis, maxUnitAmount: source.qualification.executionPriceUsd.amount },
       issuedAt: at, expiresAt: input.expiresAt, revokedAt: null, revokedByUserId: null,
     };
     const requestDigest = digest({ command: "issue", ...input, idempotencyKey: undefined, id: input.id ?? null });
@@ -104,7 +105,8 @@ export class ModelRoutingService {
       if (!input.fallbackAuthorizationId) return { kind: "fallback_not_authorized" as const };
       const grant = await this.repository.getAuthorization(input.workspaceId, input.fallbackAuthorizationId);
       if (!grant || !sameModel(grant.source, input.requestedModel)) return { kind: "fallback_not_authorized" as const };
-      const quote: CostQuote = { currency: "USD", amount: selected.priceUsd.amount, basis: selected.priceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
+      if (selected.qualification.status !== "qualified" || input.quantity > selected.qualification.maxQuantity) return { kind: "invalid" as const };
+      const quote: CostQuote = { currency: "USD", amount: selected.qualification.executionPriceUsd.amount, basis: selected.qualification.executionPriceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
       const compatibility = authorizeFallback({ authorization: grant, target: input.selectedModel, quote, at, resolveModel: this.resolveModel });
       if (!compatibility.authorized) return { kind: "fallback_incompatible" as const, reasons: compatibility.reasons };
       const grantReservation = await this.repository.reserveFallbackSpend({ workspaceId: input.workspaceId, authorizationId: grant.id, intentId: id, amountUsd: quote.amount * quote.quantity, at });
@@ -113,7 +115,8 @@ export class ModelRoutingService {
       fallbackReservation = { authorizationId: grant.id };
     } else if (input.fallbackAuthorizationId) return { kind: "invalid" as const };
 
-    const quote: CostQuote = { currency: "USD", amount: selected.priceUsd.amount, basis: selected.priceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
+    if (selected.qualification.status !== "qualified" || input.quantity > selected.qualification.maxQuantity) return { kind: "invalid" as const };
+    const quote: CostQuote = { currency: "USD", amount: selected.qualification.executionPriceUsd.amount, basis: selected.qualification.executionPriceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
     const reservation = await this.budgets.reserve({ workspaceId: input.workspaceId, principalId: input.userId, intentId: id, model: input.selectedModel, quote, at });
     if (reservation.kind !== "reserved") {
       if (fallbackReservation) await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });
