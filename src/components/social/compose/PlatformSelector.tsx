@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { useSocialComposerStore } from "@/store/socialComposerStore"
 import { PlatformIcon } from "@/components/social/shared/PlatformIcon"
@@ -20,9 +21,9 @@ export function PlatformSelector() {
       <div className="rounded-lg border border-dashed p-4 text-center">
         <p className="text-sm text-muted-foreground">
           No channels connected.{" "}
-          <a href="/social/channels" className="text-primary underline">
+          <Link href="/social/channels" className="text-primary underline">
             Connect one
-          </a>{" "}
+          </Link>{" "}
           to start posting.
         </p>
       </div>
