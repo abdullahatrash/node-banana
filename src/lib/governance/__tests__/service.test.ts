@@ -88,6 +88,23 @@ describe("GovernanceService", () => {
     expect(challengeReceipt?.result).not.toHaveProperty("verificationCode");
   });
 
+  it("returns role-filtered snapshots with deeply redacted security material", async () => {
+    const { service } = setup();
+    await service.execute(owner, { type: "create_invitation", email: "private@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "snapshot-invitation-key");
+    await service.execute(owner, { type: "issue_review_guest", email: "reviewer@example.com", purpose: "inspect", resourceKind: "render_proof", resourceId: "proof-1", revisionDigest: digest, expiresAt: "2026-09-10T12:00:00.000Z" }, "snapshot-review-key");
+    await service.execute(owner, { type: "begin_step_up", purpose: "exports.manage", resourceId: null }, "snapshot-step-up-key");
+
+    const snapshot = await service.snapshot(owner);
+    const serialized = JSON.stringify(snapshot);
+    expect(snapshot.resources.step_up_challenge).toBeUndefined();
+    expect(snapshot.resources.step_up_session).toBeUndefined();
+    expect(serialized).not.toContain("private@example.com");
+    expect(serialized).not.toContain("reviewer@example.com");
+    expect(serialized).not.toContain("tokenDigest");
+    expect(serialized).not.toContain("codeDigest");
+    expect(serialized).not.toContain("codeSalt");
+  });
+
   it("revokes a pending invitation so it can no longer be accepted", async () => {
     const { service } = setup();
     const invitation = await service.execute(owner, { type: "create_invitation", email: "revoked@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "create-revoked-invite") as { invitationId: string; invitationToken: string };

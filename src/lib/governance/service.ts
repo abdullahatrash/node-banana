@@ -26,6 +26,11 @@ import type {
 import { GOVERNANCE_CAPABILITIES, RETENTION_CLASSES } from "./types";
 import { BUILT_IN_WORKSPACE_ROLES } from "./types";
 import { advanceApprovalDeadline, ApprovalPolicyError, createContentAcceptanceProgress, decideContentAcceptance } from "./approval-policy";
+import {
+  canViewGovernanceResource,
+  projectGovernanceAuditEvent,
+  projectGovernanceResource,
+} from "./projection";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const IDEMPOTENCY = /^[\x20-\x7e]{8,200}$/;
@@ -283,12 +288,17 @@ export class GovernanceService {
         ? this.repository.listAudit({ workspaceId: actor.workspaceId, limit: 100 })
         : Promise.resolve([]),
     ]);
-    const visible = capabilities.includes("audit.view")
-      ? resources
-      : resources.filter((item) => !["step_up_challenge", "step_up_session", "review_guest_session"].includes(item.kind));
+    const visible = resources
+      .filter((item) => canViewGovernanceResource(item.kind, capabilities))
+      .map(projectGovernanceResource);
     const grouped: GovernanceSnapshot["resources"] = {};
     for (const item of visible) (grouped[item.kind] ??= []).push(item);
-    return { workspaceId: actor.workspaceId, actorCapabilities: capabilities, resources: grouped, audit };
+    return {
+      workspaceId: actor.workspaceId,
+      actorCapabilities: capabilities,
+      resources: grouped,
+      audit: audit.map(projectGovernanceAuditEvent),
+    };
   }
 
   private async require(actor: GovernanceActor, capability: GovernanceCapability) {

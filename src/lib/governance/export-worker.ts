@@ -2,6 +2,7 @@ import { createCipheriv, createHmac, randomBytes, randomUUID } from "node:crypto
 import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { putObjectToS3 } from "@/lib/storage";
 import type { GovernanceAuditEvent, GovernanceRepository, GovernanceResource } from "./types";
+import { projectGovernanceAuditEvent, projectGovernanceResource } from "./projection";
 
 export interface GovernanceExportStore {
   put(input: { key: string; bytes: Uint8Array }): Promise<void>;
@@ -63,10 +64,14 @@ export class GovernanceExportWorker {
       const jobBody = job.body as { from: string | null; to: string | null; expiresAt: string; includeKinds?: string[]; omissions?: string[] };
       const from = jobBody.from ? new Date(jobBody.from) : null;
       const to = jobBody.to ? new Date(jobBody.to) : null;
-      const auditEvents = (await this.listAllAudit(input.workspaceId)).filter((event) => (!from || event.occurredAt >= from) && (!to || event.occurredAt <= to));
+      const auditEvents = (await this.listAllAudit(input.workspaceId))
+        .filter((event) => (!from || event.occurredAt >= from) && (!to || event.occurredAt <= to))
+        .map(projectGovernanceAuditEvent);
       const includeKinds = new Set(jobBody.includeKinds ?? []);
       const resources = input.kind === "workspace_export"
-        ? (await this.repository.listResources({ workspaceId: input.workspaceId })).filter((item) => !OMITTED_RESOURCE_KINDS.has(item.kind) && (includeKinds.size === 0 || includeKinds.has(item.kind)))
+        ? (await this.repository.listResources({ workspaceId: input.workspaceId }))
+          .filter((item) => !OMITTED_RESOURCE_KINDS.has(item.kind) && (includeKinds.size === 0 || includeKinds.has(item.kind)))
+          .map(projectGovernanceResource)
         : [];
       const payload = {
         schema: input.kind === "audit_export" ? "workspace-audit-export/v1" : "workspace-export/v1",
