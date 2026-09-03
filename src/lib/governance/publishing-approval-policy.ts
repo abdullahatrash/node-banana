@@ -183,6 +183,9 @@ export class RepositoryPublishingApprovalGovernancePolicy
       id: input.binding.governanceRequestId,
     });
     if (!exactRequest(request, input)) return "unavailable" as const;
+    if (request.body.progress.status === "accepted") return input.decision === "approve" ? "accepted" as const : "conflict" as const;
+    if (request.body.progress.status === "rejected") return input.decision === "reject" ? "rejected" as const : "conflict" as const;
+    if (request.body.progress.status === "expired") return "expired" as const;
 
     const receiptKey = `ppd_${canonicalDigest({
       runtimeApprovalRequestId: input.runtimeApprovalRequestId,

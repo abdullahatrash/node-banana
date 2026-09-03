@@ -4,6 +4,7 @@ import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { BUILT_IN_ROLE_APPLICATION_CAPABILITIES, BUILT_IN_ROLE_CAPABILITIES } from "../roles";
 import { decodeInvitationToken, decodeReviewToken, GovernanceError, GovernanceService } from "../service";
+import { RepositoryPublishingApprovalGovernancePolicy } from "../publishing-approval-policy";
 import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionDeploymentEvidence } from "../region-policy";
 import { TRUSTED_RETENTION_LEGAL_FLOORS } from "../retention-policy";
 import { RETENTION_CLASSES, type GovernanceActor, type RetentionRule } from "../types";
@@ -270,13 +271,36 @@ describe("GovernanceService", () => {
   });
 
   it("binds a Review Guest to one expiring revision and never authorizes execution", async () => {
-    const { service } = setup();
+    const { repository, service } = setup();
+    const policy = await service.execute(owner, { type: "publish_approval_policy", policy: { purpose: "publishing_approval", mode: { kind: "single", eligibleRoleIds: ["review_guest"] }, separationOfDuty: true, deadlineSeconds: 3600, escalationRoleIds: ["owner"], expiresAfterSeconds: 86400 } }, "review-publishing-policy") as { policyId: string; revision: { revision: number } };
+    const binding = await new RepositoryPublishingApprovalGovernancePolicy(repository).bind({ workspaceId: owner.workspaceId, runtimeApprovalRequestId: "runtime-review-request", requestingPrincipalId: "requesting-agent", planId: "plan-1", planRevisionId: "plan-revision-1", planRevision: 1, planRevisionDigest: digest, policyId: policy.policyId, policyRevision: policy.revision.revision, expiresAt: new Date("2026-09-04T12:00:00.000Z"), requestedAt: new Date(NOW) });
+    expect(binding).not.toBeNull();
     const issued = await service.execute(owner, { type: "issue_review_guest", email: "reviewer@example.com", purpose: "approve_publishing", resourceKind: "plan_revision", resourceId: "plan-revision-1", revisionDigest: digest, expiresAt: "2026-09-04T12:00:00.000Z" }, "issue-review-key") as { grantId: string; reviewToken: string; verificationCode: string };
     const decoded = decodeReviewToken(issued.reviewToken)!;
     const verified = await service.verifyReviewGuest({ workspaceId: decoded.workspaceId, grantId: decoded.grantId, token: decoded.secret, code: issued.verificationCode, idempotencyKey: "verify-review-key" }) as { sessionId: string; sessionToken: string };
     await expect(service.decideReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, sessionId: verified.sessionId, sessionToken: verified.sessionToken, resourceId: "plan-revision-2", revisionDigest: digest, decision: "approve", comment: null, idempotencyKey: "wrong-review-key" })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    const decision = await service.decideReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, sessionId: verified.sessionId, sessionToken: verified.sessionToken, resourceId: "plan-revision-1", revisionDigest: digest, decision: "approve", comment: "Looks good", idempotencyKey: "decide-review-key" }) as { authorizesExecution: boolean };
+    const decision = await service.decideReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, sessionId: verified.sessionId, sessionToken: verified.sessionToken, resourceId: "plan-revision-1", revisionDigest: digest, decision: "approve", comment: "Looks good", idempotencyKey: "decide-review-key" }) as { approvalProgressStatus: string; authorizesExecution: boolean };
     expect(decision.authorizesExecution).toBe(false);
+    expect(decision.approvalProgressStatus).toBe("accepted");
+    expect((await repository.getResource({ workspaceId: owner.workspaceId, kind: "approval_request", id: binding!.governanceRequestId }))?.status).toBe("accepted");
+    await expect(new RepositoryPublishingApprovalGovernancePolicy(repository).decide({ workspaceId: owner.workspaceId, binding: binding!, runtimeApprovalRequestId: "runtime-review-request", userId: "authority-user", legacyRole: "admin", decision: "approve", idempotencyKey: "formalize-review-acceptance", decidedAt: new Date("2026-09-03T12:02:00.000Z") })).resolves.toBe("accepted");
+  });
+
+  it("counts an exact-scope Review Guest decision in Content Acceptance policy progress", async () => {
+    const { repository, service } = setup();
+    const policy = await service.execute(owner, { type: "publish_approval_policy", policy: { purpose: "content_acceptance", mode: { kind: "single", eligibleRoleIds: ["review_guest"] }, separationOfDuty: true, deadlineSeconds: 3600, escalationRoleIds: [], expiresAfterSeconds: 86400 } }, "review-content-policy") as { policyId: string; revision: { revision: number } };
+    const requested = await service.execute(owner, { type: "request_content_acceptance", policyId: policy.policyId, policyRevision: policy.revision.revision, resourceKind: "render_proof", resourceId: "guest-proof-1", revisionDigest: digest }, "review-content-request") as { requestId: string };
+    const issued = await service.execute(owner, { type: "issue_review_guest", email: "content-reviewer@example.com", purpose: "accept_content", resourceKind: "render_proof", resourceId: "guest-proof-1", revisionDigest: digest, expiresAt: "2026-09-04T12:00:00.000Z" }, "issue-content-review") as { grantId: string; reviewToken: string; verificationCode: string };
+    const decoded = decodeReviewToken(issued.reviewToken)!;
+    const verified = await service.verifyReviewGuest({ workspaceId: decoded.workspaceId, grantId: decoded.grantId, token: decoded.secret, code: issued.verificationCode, idempotencyKey: "verify-content-review" }) as { sessionId: string; sessionToken: string };
+    await expect(service.decideReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, sessionId: verified.sessionId, sessionToken: verified.sessionToken, resourceId: "guest-proof-1", revisionDigest: digest, decision: "accept", comment: null, idempotencyKey: "decide-content-review" })).resolves.toMatchObject({ approvalRequestId: requested.requestId, approvalProgressStatus: "accepted", authorizesExecution: false });
+    expect((await repository.getResource({ workspaceId: owner.workspaceId, kind: "approval_request", id: requested.requestId }))?.status).toBe("accepted");
+  });
+
+  it("refuses decision-capable guest links without a matching open exact approval request", async () => {
+    const { service } = setup();
+    await expect(service.execute(owner, { type: "issue_review_guest", email: "reviewer@example.com", purpose: "accept_content", resourceKind: "render_proof", resourceId: "unbound-proof", revisionDigest: digest, expiresAt: "2026-09-04T12:00:00.000Z" }, "unbound-content-review"))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("revalidates a Review Guest grant before replaying its secret session", async () => {

@@ -696,11 +696,16 @@ export class GovernanceService {
       case "issue_review_guest": {
         const expiry = exactDate(command.expiresAt, "Guest expiry");
         if (expiry <= now || expiry.getTime() - now.getTime() > MAX_GUEST_LIFETIME_MS || !SHA256.test(command.revisionDigest)) throw new GovernanceError("INVALID_INPUT", "Guest scope or expiry is invalid.");
+        if (command.purpose === "accept_content" && command.resourceKind !== "render_proof") throw new GovernanceError("INVALID_INPUT", "Content Acceptance guests require an exact Render Proof.");
+        if (command.purpose === "approve_publishing" && command.resourceKind !== "plan_revision") throw new GovernanceError("INVALID_INPUT", "Publishing Approval guests require an exact Plan Revision.");
+        const approvalRequest = ["accept_content", "approve_publishing", "reject"].includes(command.purpose)
+          ? await this.exactGuestApprovalRequest({ workspaceId: actor.workspaceId, resourceKind: command.resourceKind, resourceId: command.resourceId, revisionDigest: command.revisionDigest })
+          : null;
         const id = newId("review");
         const token = randomBytes(32).toString("base64url");
         const code = String(randomInt(100000, 1_000_000));
         const salt = randomBytes(16).toString("hex");
-        mutations = [create("review_guest_grant", id, "pending_verification", { email: command.email.trim().toLowerCase(), tokenDigest: secretDigest(token), codeDigest: codeDigest(code, salt), codeSalt: salt, failedAttempts: 0, purpose: command.purpose, resourceKind: command.resourceKind, resourceId: safeId(command.resourceId, "Review resource"), revisionDigest: command.revisionDigest, expiresAt: expiry.toISOString(), revokedAt: null, decision: null })];
+        mutations = [create("review_guest_grant", id, "pending_verification", { email: command.email.trim().toLowerCase(), tokenDigest: secretDigest(token), codeDigest: codeDigest(code, salt), codeSalt: salt, failedAttempts: 0, purpose: command.purpose, resourceKind: command.resourceKind, resourceId: safeId(command.resourceId, "Review resource"), revisionDigest: command.revisionDigest, approvalRequestId: approvalRequest?.id ?? null, approvalPurpose: approvalRequest ? String(approvalRequest.body.purpose) : null, expiresAt: expiry.toISOString(), revokedAt: null, decision: null })];
         result = { grantId: id, reviewToken: encodeReviewToken(actor.workspaceId, id, token), verificationCode: code, expiresAt: expiry.toISOString() };
         target = { kind: "review_guest_grant", id };
         break;
@@ -1103,7 +1108,7 @@ export class GovernanceService {
     if (sessionBody.resourceId !== input.resourceId || sessionBody.revisionDigest !== input.revisionDigest) throw new GovernanceError("FORBIDDEN", "Review scope does not match the exact revision.");
     if (sessionBody.grantId !== input.grantId) throw new GovernanceError("FORBIDDEN", "Review session does not match this grant.");
     const grant = await this.required("review_guest_grant", sessionBody.grantId, input.workspaceId);
-    const grantBody = grant.body as { revokedAt: string | null; expiresAt: string; decision: unknown; [key: string]: unknown };
+    const grantBody = grant.body as { revokedAt: string | null; expiresAt: string; decision: unknown; approvalRequestId?: string | null; approvalPurpose?: string | null; [key: string]: unknown };
     if (grant.status === "revoked" || grantBody.revokedAt || exactDate(grantBody.expiresAt, "Review expiry") <= now) throw new GovernanceError("EXPIRED", "Review grant expired or was revoked.");
     const replayBinding = guestReplayBinding({ workspaceId: input.workspaceId, grantId: input.grantId, authProof: { sessionId: input.sessionId, sessionTokenDigest: secretDigest(input.sessionToken) } });
     const contentReceipt = await this.preflight({ workspaceId: input.workspaceId, capability: "reviews.decide_content@1", idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding });
@@ -1114,9 +1119,30 @@ export class GovernanceService {
     if (!allowed[sessionBody.purpose]?.includes(input.decision)) throw new GovernanceError("FORBIDDEN", "Decision is outside the guest purpose.");
     if (grantBody.decision) throw new GovernanceError("CONFLICT", "This exact review grant already has a decision.");
     const receiptCapability = sessionBody.purpose === "approve_publishing" ? "reviews.decide_publishing@1" : "reviews.decide_content@1";
-    const result = { grantId: grant.id, resourceId: input.resourceId, revisionDigest: input.revisionDigest, decision: input.decision, decidedAt: now.toISOString(), authorizesExecution: false };
+    let approvalRequest: GovernanceResource<{ policySnapshot: ApprovalPolicyRevision; progress: import("./types").ContentAcceptanceProgress; purpose: string; [key: string]: unknown }> | null = null;
+    let approvalProgress: import("./types").ContentAcceptanceProgress | null = null;
+    if (["accept", "approve", "reject"].includes(input.decision)) {
+      if (!grantBody.approvalRequestId) throw new GovernanceError("NOT_FOUND", "The exact approval request is unavailable.");
+      approvalRequest = await this.repository.getResource({ workspaceId: input.workspaceId, kind: "approval_request", id: grantBody.approvalRequestId });
+      if (!approvalRequest || !["pending", "escalated"].includes(approvalRequest.status)) throw new GovernanceError("CONFLICT", "The exact approval request is no longer open.");
+      const requestBody = approvalRequest.body;
+      const matchesResource = requestBody.purpose === "publishing_approval"
+        ? requestBody.planRevisionId === input.resourceId && requestBody.planRevisionDigest === input.revisionDigest
+        : requestBody.resourceId === input.resourceId && requestBody.revisionDigest === input.revisionDigest;
+      if (requestBody.purpose !== grantBody.approvalPurpose || !matchesResource) throw new GovernanceError("FORBIDDEN", "Approval request no longer matches the exact guest scope.");
+      try {
+        const advanced = advanceApprovalDeadline({ policy: requestBody.policySnapshot, progress: requestBody.progress, now });
+        approvalProgress = advanced.status === "expired" ? advanced : decideContentAcceptance({ policy: requestBody.policySnapshot, progress: advanced, userId: `review_guest:${grant.id}`, roleId: "review_guest", decision: input.decision === "reject" ? "reject" : "approve", now });
+      } catch (error) {
+        if (error instanceof ApprovalPolicyError) throw new GovernanceError("FORBIDDEN", error.message);
+        throw error;
+      }
+    }
+    const result = { grantId: grant.id, resourceId: input.resourceId, revisionDigest: input.revisionDigest, decision: input.decision, decidedAt: now.toISOString(), approvalRequestId: approvalRequest?.id ?? null, approvalProgressStatus: approvalProgress?.status ?? null, authorizesExecution: false };
     const next = resource({ id: grant.id, workspaceId: grant.workspaceId, kind: grant.kind, version: grant.version + 1, status: "decided", body: { ...grantBody, decision: { ...result, comment: input.comment ? text(input.comment, "Review comment", 2000) : null } }, actor: grant.createdByUserId, createdAt: grant.createdAt, now });
-    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: grant.version, resource: next }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: input.decision, resource: { kind: sessionBody.purpose === "approve_publishing" ? "plan_revision" : "render_proof", id: input.resourceId }, outcome: "completed", redactedDetails: { revisionDigest: input.revisionDigest, authorizesExecution: false }, occurredAt: now } });
+    const mutations: Parameters<GovernanceRepository["commit"]>[0]["mutations"] = [{ type: "update", expectedVersion: grant.version, resource: next }];
+    if (approvalRequest && approvalProgress) mutations.push({ type: "update", expectedVersion: approvalRequest.version, resource: { ...approvalRequest, version: approvalRequest.version + 1, status: approvalProgress.status, body: { ...approvalRequest.body, progress: approvalProgress }, updatedAt: now } });
+    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding, result, createdAt: now }, mutations, audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: input.decision, resource: { kind: sessionBody.purpose === "approve_publishing" ? "plan_revision" : "render_proof", id: input.resourceId }, outcome: "completed", redactedDetails: { revisionDigest: input.revisionDigest, approvalRequestId: approvalRequest?.id ?? null, approvalProgressStatus: approvalProgress?.status ?? null, authorizesExecution: false }, occurredAt: now } });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Review decision changed.");
     return outcome.type === "committed" ? result : outcome.result;
   }
@@ -1125,6 +1151,19 @@ export class GovernanceService {
     const item = await this.repository.getResource({ workspaceId, kind, id: safeId(id, "Resource") });
     if (!item) throw new GovernanceError("NOT_FOUND", "Resource unavailable.");
     return item;
+  }
+
+  private async exactGuestApprovalRequest(input: { workspaceId: string; resourceKind: "render_proof" | "plan_revision"; resourceId: string; revisionDigest: string }) {
+    const resourceId = safeId(input.resourceId, "Review resource");
+    const requests = await this.repository.listResources<Record<string, unknown>>({ workspaceId: input.workspaceId, kinds: ["approval_request"] });
+    const matches = requests.filter((request) => {
+      if (!["pending", "escalated"].includes(request.status)) return false;
+      if (input.resourceKind === "plan_revision") return request.body.purpose === "publishing_approval" && request.body.planRevisionId === resourceId && request.body.planRevisionDigest === input.revisionDigest;
+      return request.body.purpose === "content_acceptance" && request.body.resourceKind === "render_proof" && request.body.resourceId === resourceId && request.body.revisionDigest === input.revisionDigest;
+    });
+    if (!matches.length) throw new GovernanceError("NOT_FOUND", "No open approval request matches the exact review revision.");
+    if (matches.length > 1) throw new GovernanceError("CONFLICT", "More than one open approval request matches this review revision.");
+    return matches[0];
   }
 
   private async validateRoleBinding(workspaceId: string, binding: WorkspaceRoleBinding) {
