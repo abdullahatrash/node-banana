@@ -1,0 +1,3 @@
+# Preserve Platform-Native Audience Metrics
+
+Tasmeemai records audience performance as immutable **Platform Metric Observations** carrying the source Platform's exact definition, scope, capture window, and freshness evidence. Cross-Platform normalized metrics and totals are produced only when definitions are demonstrably comparable; otherwise Analytics presents separately labeled values and explicit unknowns, trading superficially simple universal counters for honest, reconcilable reporting that does not equate views, impressions, reach, engagement, clicks, or watch time across incompatible Platforms.

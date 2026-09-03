@@ -12,9 +12,33 @@ _Avoid_: Clone, pixel parity, MVP parity, screen copy
 A dated, versioned inventory of the reference capabilities and states committed under **Reference Feature Parity**. Later reference-product changes enter a deliberate parity-change review rather than silently moving the accepted destination.
 _Avoid_: Latest Fastlane, moving target, feature checklist
 
+**Workspace**:
+The customer-owned isolation and collaboration boundary for one brand's people, Brand Profile, content, provider access, Channels, policies, commercial state, and audit evidence. A person's identity may belong to multiple Workspaces, but no resource or active operation silently moves between them.
+_Avoid_: Account, organization, tenant, project
+
+**Workspace Subscription**:
+The Workspace-owned commercial agreement that grants plan Entitlements and recurring Generation Credit allowances. Human roles govern purchase and administration, but the subscription never belongs to an individual identity.
+_Avoid_: User plan, billing account, membership tier
+
+**Entitlement**:
+A Workspace Subscription-derived allowance to access a product capability or bounded capacity. It is distinct from authorization, Budget Policy, Quota Policy, and a Generation Credit balance, all of which must independently permit the operation.
+_Avoid_: Permission, feature flag, quota, credit balance
+
+**Workspace Activation**:
+A read-only projection of durable Workspace milestones such as accepted Brand context, reusable media, connected Channels, accepted Content Pieces, and scheduled publishing. It reflects operational readiness and is never a manually checked onboarding list.
+_Avoid_: Quickstart checklist, onboarding progress, user tutorial
+
+**User Guidance Progress**:
+A person's Workspace-specific record of viewed, completed, or dismissed product education. It never changes Workspace Activation or another member's guidance state.
+_Avoid_: Workspace readiness, onboarding status, activation checklist
+
 **Inspiration Item**:
 A rights-aware reference to externally successful content and its time-stamped metadata, used to inform original Tasmeemai content. It retains source, capture time, metric freshness, rights status, and permitted remix behavior without pretending the referenced media is a Workspace-owned Artifact.
 _Avoid_: Scraped video, viral asset, template, copied post
+
+**Remix Brief**:
+A transformation plan derived from an **Inspiration Item** that identifies reusable topic, hook, pacing, structural, and performance insights while excluding protected expression. It retains source attribution, permitted-use evidence, Brand Profile alignment, and originality constraints for the resulting Content Piece.
+_Avoid_: Copy instructions, cloned post, inspiration prompt, source asset
 
 **Brand Source**:
 User-approved source material used to derive a Workspace's Brand Profile, such as a public website or a manual company description. It is evidence for the profile, not the canonical profile itself.
@@ -92,12 +116,12 @@ _Avoid_: CW, spoiler text, sensitive flag
 A **Publishing Setting** that controls the audience reach of a post on federated platforms. Mastodon supports public, unlisted, private, and direct.
 _Avoid_: Privacy setting, audience
 
-**Social Copilot**:
-A human-in-the-loop conversational assistant inside the Social Hub that helps a creator draft and rewrite post content, generate and attach media, select **Channels**, run **Publish Validation**, and create a scheduled draft **Post**. It proposes actions and edits drafts, but never schedules or publishes without explicit creator confirmation. Distinct from **Automation** (the rules-and-tasks engine on the existing `/social/agents` page).
-_Avoid_: Agent, AI agent, copilot bot, assistant, bot
+**Tasmeemai Copilot**:
+The single in-product, Workspace- and route-aware conversational assistant that advises across the product and invokes the same **Application Capabilities** as other clients. Its conversations and durable mutations are persisted against canonical resources; it never creates hidden state or substitutes conversational confirmation for required authorization or Approval.
+_Avoid_: Social Copilot, second assistant, AI agent, copilot bot, support bot
 
 **External Agent**:
-A BYO-agent harness running on the customer's own machine/infra (e.g., Claude Code, Codex, OpenClaw, Hermes) that supplies goals, judgment, and orchestration through the **Agent Interface**. It can define, validate, start, inspect, and resume content workflows and manage publishing work; durable execution belongs to the **Content Operations Runtime**. Distinct from **Social Copilot** (in-app, BYOK, runs server-side) and from **Automation** (trigger and policy rules).
+A BYO-agent harness running on the customer's own machine/infra (e.g., Claude Code, Codex, OpenClaw, Hermes) that supplies goals, judgment, and orchestration through the **Agent Interface**. It can define, validate, start, inspect, and resume content workflows and manage publishing work; durable execution belongs to the **Content Operations Runtime**. Distinct from **Tasmeemai Copilot** (in-product and human-directed) and from **Automation** (trigger and policy rules).
 _Avoid_: AI agent, bot, copilot, the agent
 
 **Principal**:
@@ -295,6 +319,10 @@ _Avoid_: audit log, telemetry, trace, debug metadata
 **Operational Metric**:
 A non-authoritative low-cardinality aggregate of runtime health or demand, such as latency, queue depth, throughput, structured error counts, retry rate, quota pressure, storage growth, or projected spend. It contains no prompt, generated content, secret, signed URL, or raw resource payload.
 _Avoid_: usage record, business event, analytics event, diagnostic log
+
+**Platform Metric Observation**:
+An immutable time-stamped observation of one audience-performance metric using the source Platform's exact definition, scope, capture window, and freshness evidence. Cross-Platform normalization is allowed only where definitions are demonstrably comparable; otherwise observations remain separately labeled rather than forced into a universal total.
+_Avoid_: Analytics total, universal views, engagement counter, current metric
 
 **Diagnostic Trace**:
 A short-lived operator-only correlation of sanitized logs and spans for one runtime path. It may retain timing, component and version, allowlisted status metadata, retry decisions, and stack traces, but never credentials, authorization material, prompts, generated content, media bytes, signed URLs, arbitrary headers, or raw provider bodies.
@@ -560,6 +588,26 @@ _Avoid_: agent-provided key, credential tool argument, OAuth tool
 An immutable, typed content resource produced by a **Content Workflow** step or imported from outside Tasmeemai. Postgres is authoritative for its Workspace ownership, media type, content hash, immutable storage reference, explicit origin, and lineage; the bytes live behind the **Artifact Store** port. Imported Artifacts record import provenance and never invent a Workflow Run; generated Artifacts record the Run, step, attempt, and output port that produced them.
 _Avoid_: output blob, generated file, media item, fake run output
 
+**Content Piece**:
+A stable Workspace-owned creative work in one declared content format, spanning its editable configuration, revisions, source references, executions, and produced Artifacts. It is the canonical item shown in the Library's Content area and remains distinct from a Workflow Run, Artifact, Prompt, and Publishing Plan.
+_Avoid_: Content item, generation, project, Artifact, Post
+
+**Content Piece Revision**:
+An immutable snapshot of a Content Piece's authored script, scenes, format configuration, source and Creator Persona references, and selected Artifact inputs or outputs. Editing creates a new revision, and any Publishing Plan references the exact revision it distributes.
+_Avoid_: Draft state, current content, mutable Artifact, generation result
+
+**Creator Persona**:
+A reusable Workspace-owned creative identity used to generate consistent visual appearance, voice, language variety, and disclosure behavior. It is explicitly a **Synthetic Persona** or **Consented Likeness Persona**, carries training and rights provenance, and never owns or impersonates a Channel.
+_Avoid_: AI Influencer, social account, character model, avatar
+
+**Synthetic Persona**:
+A Creator Persona designed as a wholly fictional identity without representing a real person. Its source and generated media still retain provenance and disclosure policy.
+_Avoid_: Fake person, virtual account, anonymous likeness
+
+**Consented Likeness Persona**:
+A Creator Persona representing a real person under recorded authority, consent scope, permitted uses, and retention terms. It may not outlive or exceed that authority, and deletion revokes future use while preserving legally required audit evidence.
+_Avoid_: Face model, celebrity clone, employee avatar, uploaded person
+
 **Artifact Store**:
 The replaceable Runtime Kernel port that stores and retrieves immutable Artifact bytes by stable storage reference and verified content hash. A local adapter may use the filesystem and a hosted adapter may use object storage without changing Artifact or capability contracts. It never owns Artifact identity, lineage, authorization, or lifecycle.
 _Avoid_: media database, artifact registry, upload API, blob field
@@ -675,6 +723,12 @@ _Avoid_: rank tracking, brand monitoring, mentions
 ## Relationships
 
 - A **Workspace** has zero or more **Channels**.
+- A **Workspace** owns its Workspace Subscription, Entitlements, recurring and purchased Generation Credits, storage allowance, and commercial history; a Human Principal's identity does not own or carry them between Workspaces.
+- Changing the active **Workspace** never rebinds an upload, conversation, Workflow Run, Content Piece, Creator Persona, Channel, Generation Credit, Publishing Plan, Approval, or Delivery that began in another Workspace.
+- A **Content Piece** has immutable Content Piece Revisions; a Publishing Plan that distributes it references one exact revision.
+- A **Creator Persona** belongs to one Workspace and may be referenced by Content Piece Revisions, but it never owns a Channel or authenticates publishing.
+- A **Remix Brief** references one or more Inspiration Items and records permitted structural influence without transferring ownership of their source media.
+- Platform Metric Observations may be aggregated across Platforms only under a declared comparable definition; otherwise Analytics presents them separately with source and freshness.
 - A **Channel** belongs to exactly one **Platform**.
 - A **Provider Adapter** supports exactly one **Platform**.
 - A **Post** has **Publishing Settings** for each selected **Channel** when that platform needs extra publishing choices.

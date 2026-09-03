@@ -1,0 +1,3 @@
+# One Global Copilot Over Shared Application Capabilities
+
+Tasmeemai will evolve the existing Social Copilot into one global **Tasmeemai Copilot** whose persisted conversations are pinned to a Workspace and may advise or operate canonical resources across the current product route. It invokes the same Application Capabilities, authorization, idempotency, usage, and Approval contracts as the Cockpit and Agent Interface rather than maintaining a second assistant, hidden mutation store, or UI-only tool implementation; this supersedes ADR 0008's Social-Hub-only surface scope while preserving its persisted-state and transport-neutral-tool principles.
