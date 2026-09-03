@@ -25,15 +25,36 @@ export const productTelemetryEvents = pgTable("product_telemetry_events", {
   eventId: text("event_id").notNull(),
   workspacePseudonym: text("workspace_pseudonym").notNull(),
   sessionPseudonym: text("session_pseudonym").notNull(),
+  subjectPseudonym: text("subject_pseudonym").notNull(),
+  regionClassification: text("region_classification").notNull(),
   name: text("name").notNull(),
+  experimentId: text("experiment_id"),
+  assignmentRevision: integer("assignment_revision"),
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   event: jsonb("event").$type<Record<string, unknown>>().notNull(),
 }, (table) => ({
   pk: primaryKey({ name: "product_telemetry_events_pk", columns: [table.workspaceId, table.eventId] }),
   pseudonymTimeIdx: index("product_telemetry_events_pseudonym_time_idx").on(table.workspacePseudonym, table.occurredAt),
   nameTimeIdx: index("product_telemetry_events_name_time_idx").on(table.name, table.occurredAt),
-  workspacePseudonymCheck: check("product_telemetry_events_workspace_pseudonym_check", sql`${table.workspacePseudonym} ~ '^wsp_[a-f0-9]{32,64}$' and ${table.sessionPseudonym} ~ '^ses_[a-f0-9]{32,64}$' and octet_length(${table.event}::text) <= 8192`),
+  expiryIdx: index("product_telemetry_events_expiry_idx").on(table.expiresAt),
+  experimentIdx: index("product_telemetry_events_experiment_idx").on(table.workspaceId, table.experimentId, table.subjectPseudonym, table.assignmentRevision, table.name),
+  workspacePseudonymCheck: check("product_telemetry_events_workspace_pseudonym_check", sql`${table.workspacePseudonym} ~ '^wsp_[a-f0-9]{32,64}$' and ${table.sessionPseudonym} ~ '^ses_[a-f0-9]{32,64}$' and ${table.subjectPseudonym} ~ '^sub_[a-f0-9]{64}$' and ${table.regionClassification} in ('mena','non_mena','unknown') and ${table.expiresAt} > ${table.receivedAt} and octet_length(${table.event}::text) <= 8192`),
+}));
+
+export const experimentAssignments = pgTable("experiment_assignments", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  experimentId: text("experiment_id").notNull(),
+  subjectPseudonym: text("subject_pseudonym").notNull(),
+  assignmentRevision: integer("assignment_revision").notNull(),
+  variant: text("variant").notNull(),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "experiment_assignments_pk", columns: [table.workspaceId, table.experimentId, table.subjectPseudonym, table.assignmentRevision] }),
+  activeIdx: index("experiment_assignments_active_idx").on(table.workspaceId, table.experimentId, table.subjectPseudonym, table.expiresAt),
+  valuesCheck: check("experiment_assignments_values_check", sql`${table.experimentId} ~ '^exp_[A-Za-z0-9_-]{4,80}$' and ${table.subjectPseudonym} ~ '^sub_[a-f0-9]{64}$' and ${table.assignmentRevision} > 0 and ${table.expiresAt} > ${table.assignedAt}`),
 }));
 
 export const productTelemetryConsents = pgTable("product_telemetry_consents", {

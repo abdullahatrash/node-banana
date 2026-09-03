@@ -2,13 +2,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { releaseRecordInputSchema, type ReleaseRecordInput } from "./schemas";
 
-export const RELEASE_SIGNER_ROLES = ["ci", "accessibility_auditor", "recovery_operator", "migration_operator", "product_signer", "engineering_signer"] as const;
+export const RELEASE_SIGNER_ROLES = ["ci", "accessibility_auditor", "recovery_operator", "migration_operator", "product_signer", "design_signer", "engineering_signer", "qa_signer", "localization_accessibility_signer"] as const;
 export type ReleaseSignerRole = typeof RELEASE_SIGNER_ROLES[number];
 export interface ReleaseAttestationKey { role: ReleaseSignerRole; secret: string }
 export type ReleaseAttestationKeyring = Record<string, ReleaseAttestationKey>;
 
 const signatureSchema = z.object({ keyId: z.string().regex(/^[A-Za-z0-9._-]{1,100}$/), role: z.enum(RELEASE_SIGNER_ROLES), issuedAt: z.string().datetime({ offset: true }), expiresAt: z.string().datetime({ offset: true }), signature: z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/) }).strict();
-export const releaseAttestationSchema = z.object({ schema: z.literal("release-attestation/v1"), workspaceId: z.string().min(1).max(200), record: releaseRecordInputSchema, signatures: z.array(signatureSchema).min(1).max(2) }).strict();
+export const releaseAttestationSchema = z.object({ schema: z.literal("release-attestation/v1"), workspaceId: z.string().min(1).max(200), record: releaseRecordInputSchema, signatures: z.array(signatureSchema).min(1).max(5) }).strict();
 export type ReleaseAttestation = z.infer<typeof releaseAttestationSchema>;
 
 function canonical(value: unknown): string {
@@ -39,14 +39,14 @@ export function verifyReleaseAttestation(value: unknown, keyring: ReleaseAttesta
     if (keyIds.has(item.keyId)) throw new TypeError("ATTESTATION_SIGNERS_NOT_INDEPENDENT");
     keyIds.add(item.keyId); roles.add(item.role);
   }
-  const required = attestation.record.recordKind === "evidence" ? (attestation.record.document.kind === "performance" ? ["ci"] : ["accessibility_auditor"]) : attestation.record.recordKind === "recovery_objective" || attestation.record.recordKind === "restore_drill" ? ["recovery_operator"] : attestation.record.recordKind === "contract_migration" ? ["migration_operator"] : attestation.record.recordKind === "parity_requirement" ? ["product_signer", "engineering_signer"] : [];
+  const required = attestation.record.recordKind === "evidence" ? (attestation.record.document.kind === "performance" ? ["ci"] : ["accessibility_auditor"]) : attestation.record.recordKind === "recovery_objective" || attestation.record.recordKind === "restore_drill" ? ["recovery_operator"] : attestation.record.recordKind === "contract_migration" ? ["migration_operator"] : attestation.record.recordKind === "parity_requirement" ? ["product_signer", "design_signer", "engineering_signer", "qa_signer", "localization_accessibility_signer"] : [];
   if (!required.length || required.some((role) => !roles.has(role as ReleaseSignerRole)) || roles.size !== required.length) throw new TypeError("ATTESTATION_ROLE_INVALID");
   if (!artifactDigest(attestation.record)) throw new TypeError("ATTESTATION_ARTIFACT_UNBOUND");
   const signerByRole = new Map(attestation.signatures.map((item) => [item.role, item.keyId]));
   if (attestation.record.recordKind === "evidence" && attestation.record.document.runner !== signerByRole.get(attestation.record.document.kind === "performance" ? "ci" : "accessibility_auditor")) throw new TypeError("ATTESTATION_ACTOR_MISMATCH");
   if (attestation.record.recordKind === "recovery_objective" && attestation.record.document.ownerUserId !== signerByRole.get("recovery_operator")) throw new TypeError("ATTESTATION_ACTOR_MISMATCH");
   if (attestation.record.recordKind === "restore_drill" && attestation.record.document.executedByUserId !== signerByRole.get("recovery_operator")) throw new TypeError("ATTESTATION_ACTOR_MISMATCH");
-  if (attestation.record.recordKind === "parity_requirement" && (attestation.record.document.productSignoffUserId !== signerByRole.get("product_signer") || attestation.record.document.engineeringSignoffUserId !== signerByRole.get("engineering_signer"))) throw new TypeError("ATTESTATION_ACTOR_MISMATCH");
+  if (attestation.record.recordKind === "parity_requirement" && (attestation.record.document.productSignoffUserId !== signerByRole.get("product_signer") || attestation.record.document.designSignoffUserId !== signerByRole.get("design_signer") || attestation.record.document.engineeringSignoffUserId !== signerByRole.get("engineering_signer") || attestation.record.document.qaSignoffUserId !== signerByRole.get("qa_signer") || attestation.record.document.localizationAccessibilitySignoffUserId !== signerByRole.get("localization_accessibility_signer"))) throw new TypeError("ATTESTATION_ACTOR_MISMATCH");
   return attestation;
 }
 
