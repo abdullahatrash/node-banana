@@ -38,6 +38,9 @@
     },
     "src/app/api/social/internal/cleanup/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/studio/internal/governance-sweep/route.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -51,6 +54,10 @@
     },
     {
       "path": "/api/studio/internal/observability-retention",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/governance-sweep",
       "schedule": "* * * * *"
     },
     {
