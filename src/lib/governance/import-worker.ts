@@ -12,7 +12,8 @@ const UNAVAILABLE_PORTABLE_DATA: GovernancePortableDataPort = {
 interface ImportItem {
   id: string; kind: string; sourceId: string; destinationId?: string; digest: string;
   payload?: Record<string, unknown>; action: "create_or_match" | "omit";
-  state: "queued" | "previewed" | "running" | "created" | "matched" | "omitted" | "failed_known";
+  mapping?: Record<string, string>;
+  state: "queued" | "previewed" | "running" | "waiting_user" | "created" | "matched" | "omitted" | "failed_known";
   outcome: Record<string, unknown> | null; provenancePreserved: boolean;
 }
 
@@ -49,8 +50,16 @@ export class GovernanceImportWorker {
       }
       const item = body.items.find((candidate) => candidate.state === "queued");
       if (!item) {
-        const status = body.items.some((candidate) => candidate.state === "failed_known") ? "failed_known" : "succeeded";
-        await this.updateJob(job, status, { ...body, lease: null, completedAt: this.clock.now().toISOString() }, "complete_import", status === "succeeded" ? "completed" : "failed");
+        const status = body.items.some((candidate) => candidate.state === "failed_known")
+          ? "failed_known"
+          : body.items.some((candidate) => candidate.state === "waiting_user")
+            ? "waiting_user"
+            : "succeeded";
+        await this.updateJob(job, status, {
+          ...body,
+          lease: null,
+          ...(status === "waiting_user" ? { waitingSince: this.clock.now().toISOString() } : { completedAt: this.clock.now().toISOString() }),
+        }, "complete_import", status === "succeeded" ? "completed" : status === "waiting_user" ? "accepted" : "failed");
         return;
       }
       const kind = (GOVERNANCE_PORTABLE_KINDS as readonly string[]).includes(item.kind) ? item.kind as GovernancePortableKind : null;
@@ -65,9 +74,12 @@ export class GovernanceImportWorker {
         kind, sourceId: item.sourceId, destinationId, digest: item.digest, payload,
         provenance: { source: body.source, sourceManifestDigest: body.sourceManifestDigest },
         idempotencyKey: `portable-import:${job.id}:${item.id}`,
+        mapping: item.mapping,
       });
       if (result.kind === "created" || result.kind === "matched") {
         job = await this.recordItem(job, item.id, result.kind, { destinationId: result.destinationId, [result.kind]: true });
+      } else if (result.kind === "waiting_user") {
+        job = await this.recordItem(job, item.id, "waiting_user", { code: result.reason, requiredMappings: result.requiredMappings });
       } else {
         job = await this.recordItem(job, item.id, "failed_known", { code: "reason" in result ? result.reason : "DESTINATION_ADAPTER_FAILED" });
       }

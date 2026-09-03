@@ -70,4 +70,33 @@ describe("GovernanceImportWorker", () => {
     current = new Date("2026-09-03T12:10:00.000Z");
     expect(await worker.recoverExpired({ workspaceId: actor.workspaceId })).toBe(0);
   });
+
+  it("durably waits for exact destination mappings and resumes the same item", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => new Date(now) }, undefined, undefined, { verify: () => true });
+    const body = payload("calendar_plan");
+    const preview = await service.execute(actor, {
+      type: "preview_import", source: "workspace-export", sourceManifestDigest: canonicalDigest({ manifest: 4 }), manifestKeyId: "trusted-test-key", manifestSignature: signature,
+      items: [{ kind: "calendar_plan", sourceId: "post-source", digest: canonicalDigest(body), transferable: true, payload: body }],
+    }, "preview-mapped-import") as { importId: string };
+    await service.execute(actor, { type: "execute_import", importId: preview.importId }, "execute-mapped-import");
+    const materialize = vi.fn(async (input: Parameters<GovernancePortableDataPort["materialize"]>[0]) => input.mapping?.destinationChannelId
+      ? { kind: "created" as const, destinationId: input.destinationId }
+      : { kind: "waiting_user" as const, reason: "DESTINATION_CHANNEL_MAPPING_REQUIRED", requiredMappings: ["destinationChannelId"] });
+    const worker = new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:01:00.000Z") }, { list: async () => [], materialize });
+
+    await worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
+    let job = await repository.getResource<{ items: Array<{ id: string; state: string; outcome: Record<string, unknown> }> }>({ workspaceId: actor.workspaceId, kind: "workspace_import", id: preview.importId });
+    expect(job?.status).toBe("waiting_user");
+    expect(job?.body.items[0]).toMatchObject({ state: "waiting_user", outcome: { requiredMappings: ["destinationChannelId"] } });
+
+    await expect(service.execute(actor, { type: "provide_import_mapping", importId: preview.importId, itemId: job!.body.items[0].id, mapping: {} }, "missing-import-mapping"))
+      .rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await service.execute(actor, { type: "provide_import_mapping", importId: preview.importId, itemId: job!.body.items[0].id, mapping: { destinationChannelId: "channel-target" } }, "provide-import-mapping");
+    await worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
+    job = await repository.getResource({ workspaceId: actor.workspaceId, kind: "workspace_import", id: preview.importId });
+    expect(job?.status).toBe("succeeded");
+    expect(materialize).toHaveBeenCalledTimes(2);
+    expect(materialize.mock.calls[1]?.[0].mapping).toEqual({ destinationChannelId: "channel-target" });
+  });
 });

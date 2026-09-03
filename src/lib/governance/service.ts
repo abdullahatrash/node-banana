@@ -100,6 +100,7 @@ export type GovernanceCommand =
   | { type: "retry_bulk_item"; operationId: string; itemId: string }
   | { type: "preview_import"; source: string; sourceManifestDigest: string; manifestKeyId: string; manifestSignature: string; items: Array<{ kind: string; sourceId: string; destinationId?: string; digest: string; transferable: boolean; omissionReason?: string; payload?: Record<string, unknown> }> }
   | { type: "execute_import"; importId: string }
+  | { type: "provide_import_mapping"; importId: string; itemId: string; mapping: Record<string, string> }
   | { type: "request_workspace_export"; includeKinds: string[]; stepUpToken: string };
 
 const CAPABILITY_BY_COMMAND: Record<GovernanceCommand["type"], GovernanceCapability> = {
@@ -139,6 +140,7 @@ const CAPABILITY_BY_COMMAND: Record<GovernanceCommand["type"], GovernanceCapabil
   retry_bulk_item: "bulk.execute",
   preview_import: "imports.manage",
   execute_import: "imports.manage",
+  provide_import_mapping: "imports.manage",
   request_workspace_export: "exports.manage",
 };
 
@@ -848,6 +850,24 @@ export class GovernanceService {
         const importBody = imported.body as { items: Array<{ state: string; [key: string]: unknown }>; [key: string]: unknown };
         mutations = [update(imported, "queued", { ...importBody, dryRun: false, queuedAt: now.toISOString(), requestedByUserId: actor.userId, items: importBody.items.map((item) => item.state === "previewed" ? { ...item, state: "queued" } : item) })];
         result = { importId: imported.id, status: "queued" };
+        target = { kind: imported.kind, id: imported.id };
+        break;
+      }
+      case "provide_import_mapping": {
+        const imported = await this.required("workspace_import", command.importId, actor.workspaceId);
+        if (imported.status !== "waiting_user") throw new GovernanceError("CONFLICT", "Import is not waiting for mappings.");
+        const importBody = imported.body as { items: Array<{ id: string; state: string; outcome?: Record<string, unknown> | null; [key: string]: unknown }>; [key: string]: unknown };
+        const item = importBody.items.find((candidate) => candidate.id === command.itemId);
+        if (!item) throw new GovernanceError("NOT_FOUND", "Import item unavailable.");
+        if (item.state !== "waiting_user") throw new GovernanceError("CONFLICT", "Import item is not waiting for a mapping.");
+        const requiredMappings = Array.isArray(item.outcome?.requiredMappings) ? item.outcome.requiredMappings.filter((value): value is string => typeof value === "string") : [];
+        if (requiredMappings.some((key) => !command.mapping[key])) throw new GovernanceError("INVALID_INPUT", "All required import mappings must be supplied.");
+        mutations = [update(imported, "queued", {
+          ...importBody,
+          queuedAt: now.toISOString(),
+          items: importBody.items.map((candidate) => candidate.id === item.id ? { ...candidate, mapping: command.mapping, state: "queued", outcome: null } : candidate),
+        })];
+        result = { importId: imported.id, itemId: item.id, status: "queued" };
         target = { kind: imported.kind, id: imported.id };
         break;
       }

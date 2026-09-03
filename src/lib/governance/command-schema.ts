@@ -61,6 +61,7 @@ export const governanceCommandSchema: z.ZodType<GovernanceCommand> = z.discrimin
   z.object({ type: z.literal("retry_bulk_item"), operationId: id, itemId: id }).strict(),
   z.object({ type: z.literal("preview_import"), source: text.max(300), sourceManifestDigest: digest, manifestKeyId: id, manifestSignature: z.string().regex(/^[A-Za-z0-9_-]{43}$/), items: z.array(z.object({ kind: id, sourceId: id, destinationId: id.optional(), digest, transferable: z.boolean(), omissionReason: text.max(500).optional(), payload: z.record(z.string(), z.unknown()).optional() }).strict()).min(1) }).strict(),
   z.object({ type: z.literal("execute_import"), importId: id }).strict(),
+  z.object({ type: z.literal("provide_import_mapping"), importId: id, itemId: id, mapping: z.record(z.string().regex(/^[a-z][A-Za-z0-9]{0,79}$/), z.string().trim().min(1).max(1_024)).refine((value) => Object.keys(value).length > 0 && Object.keys(value).length <= 16) }).strict(),
   z.object({ type: z.literal("request_workspace_export"), includeKinds: z.array(id), stepUpToken: id }).strict(),
 ]);
 

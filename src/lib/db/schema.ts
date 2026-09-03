@@ -8685,6 +8685,63 @@ export const workspaceAuditTrailEvents = pgTable(
   }),
 );
 
+/**
+ * Durable provenance and idempotency ledger for canonical Workspace imports.
+ * The source payload is retained as portable customer data, never as authority:
+ * role, credential, policy, and secret kinds are rejected before this boundary.
+ */
+export const workspacePortableImportRecords = pgTable(
+  "workspace_portable_import_records",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    kind: text("kind").notNull(),
+    source: text("source").notNull(),
+    sourceManifestDigest: text("source_manifest_digest").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    destinationId: text("destination_id").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    mapping: jsonb("mapping").$type<Record<string, string>>().notNull(),
+    disposition: text("disposition").notNull(),
+    requestedByUserId: text("requested_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_portable_import_records_pk",
+      columns: [table.workspaceId, table.idempotencyKey],
+    }),
+    sourceUnique: uniqueIndex("workspace_portable_import_records_source_unique").on(
+      table.workspaceId,
+      table.sourceManifestDigest,
+      table.kind,
+      table.sourceId,
+    ),
+    destinationIdx: index("workspace_portable_import_records_destination_idx").on(
+      table.workspaceId,
+      table.kind,
+      table.destinationId,
+    ),
+    kindCheck: check(
+      "workspace_portable_import_records_kind_check",
+      sql`${table.kind} in ('media','content_revision','prompt','brand_source','calendar_plan','platform_export_metadata')`,
+    ),
+    digestCheck: check(
+      "workspace_portable_import_records_digest_check",
+      sql`${table.sourceManifestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.sourceDigest} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+    dispositionCheck: check(
+      "workspace_portable_import_records_disposition_check",
+      sql`${table.disposition} in ('created','matched','archived')`,
+    ),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
