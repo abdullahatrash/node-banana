@@ -30,6 +30,11 @@ import { advanceApprovalDeadline, ApprovalPolicyError, createContentAcceptancePr
 import { UNCONFIGURED_GOVERNANCE_REGION_VERIFIER, type GovernanceRegionDeploymentEvidence, type GovernanceRegionVerificationPort } from "./region-policy";
 import { RepositoryGovernanceStepUpVerifier } from "./step-up";
 import {
+  UNCONFIGURED_GOVERNANCE_IMPORT_MANIFEST_VERIFIER,
+  type GovernanceImportManifestVerificationPort,
+} from "./import-manifest";
+import { GOVERNANCE_PORTABLE_KINDS, type GovernancePortableKind, validatePortablePayload } from "./portability";
+import {
   canViewGovernanceResource,
   projectGovernanceAuditEvent,
   projectGovernanceResource,
@@ -93,7 +98,7 @@ export type GovernanceCommand =
   | { type: "start_bulk"; operationId: string; stepUpToken?: string }
   | { type: "cancel_bulk"; operationId: string }
   | { type: "retry_bulk_item"; operationId: string; itemId: string }
-  | { type: "preview_import"; source: string; sourceManifestDigest: string; items: Array<{ kind: string; sourceId: string; destinationId?: string; digest: string; transferable: boolean; omissionReason?: string; payload?: Record<string, unknown> }> }
+  | { type: "preview_import"; source: string; sourceManifestDigest: string; manifestKeyId: string; manifestSignature: string; items: Array<{ kind: string; sourceId: string; destinationId?: string; digest: string; transferable: boolean; omissionReason?: string; payload?: Record<string, unknown> }> }
   | { type: "execute_import"; importId: string }
   | { type: "request_workspace_export"; includeKinds: string[]; stepUpToken: string };
 
@@ -256,6 +261,7 @@ export class GovernanceService {
       closeWorkspace: async () => "closed",
     },
     private readonly regionVerification: GovernanceRegionVerificationPort = UNCONFIGURED_GOVERNANCE_REGION_VERIFIER,
+    private readonly importManifestVerification: GovernanceImportManifestVerificationPort = UNCONFIGURED_GOVERNANCE_IMPORT_MANIFEST_VERIFIER,
   ) {}
 
   private async roleBinding(actor: GovernanceActor): Promise<WorkspaceRoleBinding> {
@@ -816,13 +822,22 @@ export class GovernanceService {
       }
       case "preview_import": {
         if (!SHA256.test(command.sourceManifestDigest) || !command.items.length) throw new GovernanceError("INVALID_INPUT", "Import manifest is invalid.");
+        if (!this.importManifestVerification.verify({
+          source: command.source,
+          sourceManifestDigest: command.sourceManifestDigest,
+          manifestKeyId: command.manifestKeyId,
+          manifestSignature: command.manifestSignature,
+          items: command.items.map(({ payload: _payload, ...item }) => item),
+        })) throw new GovernanceError("FORBIDDEN", "Import manifest signature is invalid or untrusted.");
         const id = `import_${canonicalDigest({ source: command.source, digest: command.sourceManifestDigest }).slice(7, 39)}`;
         const items = command.items.map((item, index) => {
           if (!item.transferable && !item.omissionReason) throw new GovernanceError("INVALID_INPUT", "Every omitted import item requires an explicit reason.");
-          if (item.transferable && (!item.payload || canonicalDigest(item.payload) !== item.digest)) throw new GovernanceError("INVALID_INPUT", "Transferable import payload does not match its signed digest.");
-          return { ...item, id: `${id}:${index + 1}`, sourceId: safeId(item.sourceId, "Source item"), destinationId: item.destinationId ? safeId(item.destinationId, "Destination item") : undefined, digest: SHA256.test(item.digest) ? item.digest : (() => { throw new GovernanceError("INVALID_INPUT", "Import item digest is invalid."); })(), action: item.transferable ? "create_or_match" : "omit", state: item.transferable ? "previewed" : "omitted", outcome: item.transferable ? null : { omissionReason: text(item.omissionReason!, "Omission reason", 500) }, provenancePreserved: true };
+          const portableKind = (GOVERNANCE_PORTABLE_KINDS as readonly string[]).includes(item.kind) ? item.kind as GovernancePortableKind : null;
+          const portablePayload = portableKind && item.payload ? validatePortablePayload(portableKind, item.payload) : null;
+          if (item.transferable && (!portableKind || !portablePayload || canonicalDigest(portablePayload) !== item.digest)) throw new GovernanceError("INVALID_INPUT", "Transferable import payload is not a valid canonical portable surface or does not match its signed digest.");
+          return { ...item, ...(portablePayload ? { payload: portablePayload } : {}), id: `${id}:${index + 1}`, sourceId: safeId(item.sourceId, "Source item"), destinationId: item.destinationId ? safeId(item.destinationId, "Destination item") : undefined, digest: SHA256.test(item.digest) ? item.digest : (() => { throw new GovernanceError("INVALID_INPUT", "Import item digest is invalid."); })(), action: item.transferable ? "create_or_match" : "omit", state: item.transferable ? "previewed" : "omitted", outcome: item.transferable ? null : { omissionReason: text(item.omissionReason!, "Omission reason", 500) }, provenancePreserved: true };
         });
-        mutations = [create("workspace_import", id, "previewed", { source: text(command.source, "Import source", 300), sourceManifestDigest: command.sourceManifestDigest, dryRun: true, items })];
+        mutations = [create("workspace_import", id, "previewed", { source: text(command.source, "Import source", 300), sourceManifestDigest: command.sourceManifestDigest, manifestKeyId: safeId(command.manifestKeyId, "Manifest key"), manifestSignature: command.manifestSignature, manifestVerified: true, dryRun: true, lease: null, items })];
         result = { importId: id, dryRun: true, items };
         target = { kind: "workspace_import", id };
         break;

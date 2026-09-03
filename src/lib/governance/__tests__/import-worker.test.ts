@@ -1,43 +1,73 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { GovernanceImportWorker } from "../import-worker";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
+import type { GovernancePortableDataPort, GovernancePortableKind } from "../portability";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
 const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const };
+const signature = "A".repeat(43);
+
+function payload(kind: GovernancePortableKind): Record<string, unknown> {
+  const timestamp = now.toISOString();
+  switch (kind) {
+    case "media": return { schema: "portable-media/v1", id: "asset-1", type: "image", storageProvider: "s3", storageBucket: "source", storageKey: "asset-1.png", mimeType: "image/png", sizeBytes: 100, width: 10, height: 10, durationSeconds: null, checksum: "sha256:asset", metadata: {}, createdAt: timestamp };
+    case "content_revision": return { schema: "portable-content-revision/v1", id: "revision-1", workflowId: "workflow-1", revision: 1, definitionDigest: `sha256:${"1".repeat(64)}`, definition: { schema: "content-workflow-revision-definition/v1" }, operationRegistryDigest: `sha256:${"2".repeat(64)}`, createdAt: timestamp };
+    case "prompt": return { schema: "portable-prompt/v1", id: "prompt-1", mode: "copy", name: "Launch", promptText: "Write", formConfig: {}, isPublic: false, createdAt: timestamp, updatedAt: timestamp };
+    case "brand_source": return { schema: "portable-brand-source/v1", id: "brand-1", revision: 1, kind: "description", submittedUrl: null, finalUrl: null, submittedDescription: "Brand", cleanedText: "Brand", contentHash: "hash", sourceLanguage: "ar", extractedBytes: 5, fetchedAt: null, createdAt: timestamp };
+    case "calendar_plan": return { schema: "portable-calendar-plan/v1", id: "post-1", sourceChannelId: "channel-1", status: "draft", kind: "post", content: "Copy", media: [], platformSettings: {}, scheduledAt: "2026-09-04T12:00:00.000Z", createdAt: timestamp, updatedAt: timestamp };
+    case "platform_export_metadata": return { schema: "portable-platform-export-metadata/v1", id: "post-1", platform: "linkedin", sourceChannelId: "channel-1", platformPostId: "remote-1", platformPostUrl: "https://example.com/post/1", publishedAt: timestamp, createdAt: timestamp };
+  }
+}
 
 describe("GovernanceImportWorker", () => {
-  it("materializes signed transferable configuration with source provenance and explicit omissions", async () => {
+  it("materializes every canonical portable surface through its exact adapter with provenance", async () => {
     const repository = new InMemoryGovernanceRepository();
-    const service = new GovernanceService(repository, { now: () => new Date(now) });
-    const payload = { name: "Imported portfolio", workspaceIds: ["workspace-a"] };
+    const service = new GovernanceService(repository, { now: () => new Date(now) }, undefined, undefined, { verify: () => true });
+    const kinds: GovernancePortableKind[] = ["media", "content_revision", "prompt", "brand_source", "calendar_plan", "platform_export_metadata"];
+    const items = kinds.map((kind) => {
+      const body = payload(kind);
+      return { kind, sourceId: `${kind}-source`, destinationId: `${kind}-destination`, digest: canonicalDigest(body), transferable: true as const, payload: body };
+    });
     const manifestDigest = canonicalDigest({ manifest: 1 });
-    const preview = await service.execute(actor, { type: "preview_import", source: "workspace-export:source-workspace", sourceManifestDigest: manifestDigest, items: [
-      { kind: "portfolio", sourceId: "portfolio-source", destinationId: "portfolio-imported", digest: canonicalDigest(payload), transferable: true, payload },
-      { kind: "invitation_binding", sourceId: "invite-secret", digest: canonicalDigest({ secret: true }), transferable: false, omissionReason: "secret-bearing invitation bindings are not transferable" },
-    ] }, "preview-signed-import") as { importId: string };
+    const preview = await service.execute(actor, { type: "preview_import", source: "workspace-export:source-workspace", sourceManifestDigest: manifestDigest, manifestKeyId: "trusted-test-key", manifestSignature: signature, items: [...items, { kind: "credential_material", sourceId: "credentials", digest: canonicalDigest({ omitted: true }), transferable: false, omissionReason: "secret material is never transferable" }] }, "preview-signed-import") as { importId: string };
     await service.execute(actor, { type: "execute_import", importId: preview.importId }, "execute-signed-import");
-    const worker = new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:01:00.000Z") });
+    const materialize = vi.fn(async (input: Parameters<GovernancePortableDataPort["materialize"]>[0]) => ({ kind: "created" as const, destinationId: input.destinationId }));
+    const worker = new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:01:00.000Z") }, { list: async () => [], materialize });
     await worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
     await worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
 
-    const imported = await repository.getResource<{ _importProvenance: { sourceManifestDigest: string; sourceId: string; sourceItemDigest: string } }>({ workspaceId: actor.workspaceId, kind: "portfolio", id: "portfolio-imported" });
-    expect(imported?.body._importProvenance).toEqual(expect.objectContaining({ sourceManifestDigest: manifestDigest, sourceId: "portfolio-source", sourceItemDigest: canonicalDigest(payload) }));
+    expect(materialize).toHaveBeenCalledTimes(kinds.length);
+    expect(materialize.mock.calls.map(([input]) => input.kind)).toEqual(kinds);
+    for (const [input] of materialize.mock.calls) expect(input).toMatchObject({ workspaceId: actor.workspaceId, requestedByUserId: actor.userId, provenance: { sourceManifestDigest: manifestDigest } });
     const job = await repository.getResource<{ items: Array<{ state: string; outcome: Record<string, unknown> }> }>({ workspaceId: actor.workspaceId, kind: "workspace_import", id: preview.importId });
     expect(job?.status).toBe("succeeded");
-    expect(job?.body.items.map((item) => item.state)).toEqual(["created", "omitted"]);
-    expect(job?.body.items[1].outcome).toEqual({ omissionReason: "secret-bearing invitation bindings are not transferable" });
+    expect(job?.body.items.map((item) => item.state)).toEqual([...kinds.map(() => "created"), "omitted"]);
   });
 
-  it("fails a signed but unsupported transferable kind without partially materializing it", async () => {
+  it("rejects security-policy payloads before they can enter an import job", async () => {
     const repository = new InMemoryGovernanceRepository();
-    const service = new GovernanceService(repository, { now: () => new Date(now) });
-    const payload = { arbitrary: true };
-    const preview = await service.execute(actor, { type: "preview_import", source: "workspace-export", sourceManifestDigest: canonicalDigest({ manifest: 2 }), items: [{ kind: "review_guest_grant", sourceId: "guest-1", digest: canonicalDigest(payload), transferable: true, payload }] }, "preview-unsupported-import") as { importId: string };
-    await service.execute(actor, { type: "execute_import", importId: preview.importId }, "execute-unsupported-import");
-    await new GovernanceImportWorker(repository).process({ workspaceId: actor.workspaceId, importId: preview.importId });
-    expect((await repository.getResource({ workspaceId: actor.workspaceId, kind: "workspace_import", id: preview.importId }))?.status).toBe("failed_known");
-    expect(await repository.getResource({ workspaceId: actor.workspaceId, kind: "review_guest_grant", id: `imported_${canonicalDigest(payload).slice(7, 39)}` })).toBeNull();
+    const service = new GovernanceService(repository, { now: () => new Date(now) }, undefined, undefined, { verify: () => true });
+    const body = { revisions: [{ capabilities: ["workspace.close"] }] };
+    await expect(service.execute(actor, { type: "preview_import", source: "workspace-export", sourceManifestDigest: canonicalDigest({ manifest: 2 }), manifestKeyId: "trusted-test-key", manifestSignature: signature, items: [{ kind: "custom_role", sourceId: "role-1", digest: canonicalDigest(body), transferable: true, payload: body }] }, "preview-security-import"))
+      .rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("uses an exclusive lease and recovers only expired running imports", async () => {
+    let current = new Date(now);
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => current }, undefined, undefined, { verify: () => true });
+    const body = payload("prompt");
+    const preview = await service.execute(actor, { type: "preview_import", source: "workspace-export", sourceManifestDigest: canonicalDigest({ manifest: 3 }), manifestKeyId: "trusted-test-key", manifestSignature: signature, items: [{ kind: "prompt", sourceId: "prompt-source", digest: canonicalDigest(body), transferable: true, payload: body }] }, "preview-lease-import") as { importId: string };
+    await service.execute(actor, { type: "execute_import", importId: preview.importId }, "execute-lease-import");
+    const materialize = vi.fn(async () => ({ kind: "created" as const, destinationId: "prompt-destination" }));
+    const worker = new GovernanceImportWorker(repository, { now: () => current }, { list: async () => [], materialize });
+    const first = worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
+    const second = worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
+    await Promise.all([first, second]);
+    expect(materialize).toHaveBeenCalledTimes(1);
+    current = new Date("2026-09-03T12:10:00.000Z");
+    expect(await worker.recoverExpired({ workspaceId: actor.workspaceId })).toBe(0);
   });
 });

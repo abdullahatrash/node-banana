@@ -12,12 +12,12 @@ class MemoryStore implements GovernanceExportStore {
   async put(input: { key: string; bytes: Uint8Array }) { this.values.set(input.key, input.bytes); }
 }
 
-async function createWorkspaceExport(repository: InMemoryGovernanceRepository) {
+async function createWorkspaceExport(repository: InMemoryGovernanceRepository, includeKinds = ["portfolio"]) {
   const service = new GovernanceService(repository, { now: () => new Date(now) });
   await service.execute(actor, { type: "create_portfolio", name: "Client portfolio" }, "portfolio-before-export");
   const challenge = await service.execute(actor, { type: "begin_step_up", purpose: "exports.manage", resourceId: null }, "begin-export-stepup") as { challengeId: string; verificationCode: string };
   const session = await service.execute(actor, { type: "verify_step_up", challengeId: challenge.challengeId, code: challenge.verificationCode }, "verify-export-stepup") as { stepUpToken: string };
-  return service.execute(actor, { type: "request_workspace_export", includeKinds: ["portfolio"], stepUpToken: session.stepUpToken }, "request-workspace-export") as Promise<{ exportId: string }>;
+  return service.execute(actor, { type: "request_workspace_export", includeKinds, stepUpToken: session.stepUpToken }, "request-workspace-export") as Promise<{ exportId: string }>;
 }
 
 describe("GovernanceExportWorker", () => {
@@ -48,6 +48,27 @@ describe("GovernanceExportWorker", () => {
     await expect(worker.process({ workspaceId: actor.workspaceId, kind: "workspace_export", exportId: requested.exportId })).rejects.toThrow(/32 bytes/);
     expect((await repository.getResource({ workspaceId: actor.workspaceId, kind: "workspace_export", id: requested.exportId }))?.status).toBe("failed_known");
     expect(store.values.size).toBe(0);
+  });
+
+  it("exports every canonical portable kind and signs an import authorization for exact item digests", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const store = new MemoryStore();
+    const kinds = ["media", "content_revision", "prompt", "brand_source", "calendar_plan", "platform_export_metadata"] as const;
+    const requested = await createWorkspaceExport(repository, [...kinds]);
+    const list = vi.fn(async () => kinds.map((kind, index) => ({ kind, sourceId: `${kind}-${index}`, digest: `sha256:${String(index + 1).repeat(64)}`, payload: { schema: `portable-${kind}/v1` } })));
+    const signingKey = Buffer.alloc(32, 2);
+    const worker = new GovernanceExportWorker(repository, store, {
+      encryptionKeyBase64: Buffer.alloc(32, 1).toString("base64"),
+      signingKeyBase64: signingKey.toString("base64"),
+    }, { now: () => new Date("2026-09-03T12:01:00.000Z") }, undefined, { list, materialize: async () => ({ kind: "unavailable", reason: "unused" }) });
+    await worker.process({ workspaceId: actor.workspaceId, kind: "workspace_export", exportId: requested.exportId });
+    expect(list).toHaveBeenCalledWith({ workspaceId: actor.workspaceId, kinds: [...kinds] });
+    const job = await repository.getResource<{ importAuthorization: { items: Array<{ kind: string; digest: string }>; manifestKeyId: string; manifestSignature: string } }>({ workspaceId: actor.workspaceId, kind: "workspace_export", id: requested.exportId });
+    expect(job?.body.importAuthorization).toMatchObject({
+      manifestKeyId: "workspace-export-signing-v1",
+      manifestSignature: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      items: kinds.map((kind, index) => ({ kind, digest: `sha256:${String(index + 1).repeat(64)}` })),
+    });
   });
 
   it("enforces the immutable requesting principal, authority snapshot, and scope before export", async () => {

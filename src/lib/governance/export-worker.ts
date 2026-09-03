@@ -3,6 +3,12 @@ import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { putObjectToS3 } from "@/lib/storage";
 import type { GovernanceAuditEvent, GovernanceRepository, GovernanceResource } from "./types";
 import { projectGovernanceAuditEvent, projectGovernanceResource } from "./projection";
+import {
+  GOVERNANCE_PORTABLE_KINDS,
+  type GovernancePortableDataPort,
+  type GovernancePortableKind,
+} from "./portability";
+import { governanceImportManifestPayload } from "./import-manifest";
 
 export interface GovernanceExportStore {
   put(input: { key: string; bytes: Uint8Array }): Promise<void>;
@@ -47,6 +53,7 @@ export class GovernanceExportWorker {
     private readonly keys: { encryptionKeyBase64: string; signingKeyBase64: string },
     private readonly clock: { now(): Date } = { now: () => new Date() },
     private readonly admitStorageRoute?: (input: { workspaceId: string; routeId: string; configuredRegion: string }) => Promise<{ allowed: boolean; reason?: string }>,
+    private readonly portableData?: GovernancePortableDataPort,
   ) {}
 
   private async listAllAudit(workspaceId: string): Promise<GovernanceAuditEvent[]> {
@@ -91,6 +98,16 @@ export class GovernanceExportWorker {
           .filter((item) => !OMITTED_RESOURCE_KINDS.has(item.kind) && (includeKinds.size === 0 || includeKinds.has(item.kind)))
           .map(projectGovernanceResource)
         : [];
+      const portableKinds = [...includeKinds].filter(
+        (kind): kind is GovernancePortableKind =>
+          (GOVERNANCE_PORTABLE_KINDS as readonly string[]).includes(kind),
+      );
+      const portableItems = input.kind === "workspace_export" && this.portableData
+        ? await this.portableData.list({
+            workspaceId: input.workspaceId,
+            kinds: includeKinds.size === 0 ? [...GOVERNANCE_PORTABLE_KINDS] : portableKinds,
+          })
+        : [];
       const payload = {
         schema: input.kind === "audit_export" ? "workspace-audit-export/v1" : "workspace-export/v1",
         workspaceId: input.workspaceId,
@@ -98,6 +115,7 @@ export class GovernanceExportWorker {
         exportedAt: now.toISOString(),
         audit: auditEvents,
         resources,
+        portableItems,
       };
       const plaintext = Buffer.from(canonicalJson(payload), "utf8");
       const iv = randomBytes(12);
@@ -126,7 +144,28 @@ export class GovernanceExportWorker {
         omissions: input.kind === "workspace_export" ? jobBody.omissions ?? [] : ["secrets", "credential_material", "unrequested_content"],
       };
       const signature = createHmac("sha256", signingKey).update(canonicalJson(manifestUnsigned)).digest("base64url");
+      const importUnsigned = governanceImportManifestPayload({
+        source: `workspace-export:${input.workspaceId}:${job.id}`,
+        sourceManifestDigest: manifestUnsigned.contentDigest,
+        items: portableItems.map((item) => ({
+          kind: item.kind,
+          sourceId: item.sourceId,
+          digest: item.digest,
+          transferable: true,
+        })),
+      });
+      const importSignature = createHmac("sha256", signingKey)
+        .update(canonicalJson(importUnsigned))
+        .digest("base64url");
       const next: GovernanceResource = { ...job, version: job.version + 1, status: "succeeded", body: { ...job.body, status: "succeeded", artifactRef: storageKey, manifest: { ...manifestUnsigned, signature: { algorithm: "HMAC-SHA256", keyId: "workspace-export-signing-v1", value: signature } } }, updatedAt: now };
+      next.body = {
+        ...next.body,
+        importAuthorization: {
+          ...importUnsigned,
+          manifestKeyId: "workspace-export-signing-v1",
+          manifestSignature: importSignature,
+        },
+      };
       const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: "governance_exports.process@1", idempotencyKey: `export-${job.id}-${job.version}`, requestDigest: canonicalDigest({ workspaceId: input.workspaceId, kind: input.kind, exportId: job.id, version: job.version }), result: { exportId: job.id, status: "succeeded" }, createdAt: now }, mutations: [{ type: "update", expectedVersion: job.version, resource: next }], audit: audit({ workspaceId: input.workspaceId, job, outcome: "completed", now }) });
       if (outcome.type === "conflict") throw new Error("Export job changed while processing.");
     } catch (error) {

@@ -1,27 +1,27 @@
 import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import type { GovernanceAuditEvent, GovernanceRepository, GovernanceResource, GovernanceResourceKind } from "./types";
-import { GOVERNANCE_RESOURCE_KINDS } from "./types";
+import type { GovernanceAuditEvent, GovernanceRepository, GovernanceResource } from "./types";
+import { GOVERNANCE_PORTABLE_KINDS, type GovernancePortableDataPort, type GovernancePortableKind, validatePortablePayload } from "./portability";
 
-const TRANSFERABLE_KINDS = new Set<GovernanceResourceKind>([
-  "custom_role",
-  "portfolio",
-  "approval_policy",
-  "data_region_policy",
-  "retention_policy",
-]);
+const IMPORT_LEASE_MS = 5 * 60_000;
+const UNAVAILABLE_PORTABLE_DATA: GovernancePortableDataPort = {
+  list: async () => [],
+  materialize: async () => ({ kind: "unavailable", reason: "DESTINATION_ADAPTER_REQUIRED" }),
+};
 
 interface ImportItem {
-  id: string;
-  kind: string;
-  sourceId: string;
-  destinationId?: string;
-  digest: string;
-  payload?: Record<string, unknown>;
-  action: "create_or_match" | "omit";
+  id: string; kind: string; sourceId: string; destinationId?: string; digest: string;
+  payload?: Record<string, unknown>; action: "create_or_match" | "omit";
   state: "queued" | "previewed" | "running" | "created" | "matched" | "omitted" | "failed_known";
-  outcome: Record<string, unknown> | null;
-  provenancePreserved: boolean;
+  outcome: Record<string, unknown> | null; provenancePreserved: boolean;
+}
+
+interface ImportJobBody {
+  source: string; sourceManifestDigest: string; manifestKeyId: string;
+  manifestSignature: string; manifestVerified: true; requestedByUserId: string;
+  items: ImportItem[];
+  lease: { id: string; claimedAt: string; expiresAt: string; attempt: number } | null;
+  [key: string]: unknown;
 }
 
 function audit(job: GovernanceResource, action: string, outcome: GovernanceAuditEvent["outcome"], now: Date): GovernanceAuditEvent {
@@ -29,59 +29,80 @@ function audit(job: GovernanceResource, action: string, outcome: GovernanceAudit
 }
 
 export class GovernanceImportWorker {
-  constructor(private readonly repository: GovernanceRepository, private readonly clock: { now(): Date } = { now: () => new Date() }) {}
+  constructor(
+    private readonly repository: GovernanceRepository,
+    private readonly clock: { now(): Date } = { now: () => new Date() },
+    private readonly portableData: GovernancePortableDataPort = UNAVAILABLE_PORTABLE_DATA,
+  ) {}
 
   async process(input: { workspaceId: string; importId: string }): Promise<void> {
-    let job = await this.repository.getResource({ workspaceId: input.workspaceId, kind: "workspace_import", id: input.importId });
-    if (!job || ["succeeded", "failed_known"].includes(job.status)) return;
-    if (!["queued", "running"].includes(job.status)) throw new Error("Workspace import is not executable.");
-    if (job.status === "queued") job = await this.updateJob(job, "running", job.body, "start_import", "accepted");
-
+    const found = await this.repository.getResource<ImportJobBody>({ workspaceId: input.workspaceId, kind: "workspace_import", id: input.importId });
+    if (!found || ["succeeded", "failed_known"].includes(found.status)) return;
+    const claimed = await this.claim(found);
+    if (!claimed) return;
+    let job = claimed;
     while (true) {
-      const body = job.body as { source: string; sourceManifestDigest: string; items: ImportItem[]; [key: string]: unknown };
+      const body = job.body;
+      if (body.manifestVerified !== true || !body.requestedByUserId) {
+        await this.updateJob(job, "failed_known", { ...body, failureCode: "UNVERIFIED_MANIFEST" }, "reject_import", "failed");
+        return;
+      }
       const item = body.items.find((candidate) => candidate.state === "queued");
       if (!item) {
         const status = body.items.some((candidate) => candidate.state === "failed_known") ? "failed_known" : "succeeded";
-        await this.updateJob(job, status, { ...body, completedAt: this.clock.now().toISOString() }, "complete_import", status === "succeeded" ? "completed" : "failed");
+        await this.updateJob(job, status, { ...body, lease: null, completedAt: this.clock.now().toISOString() }, "complete_import", status === "succeeded" ? "completed" : "failed");
         return;
       }
-      const kind = (GOVERNANCE_RESOURCE_KINDS as readonly string[]).includes(item.kind) ? item.kind as GovernanceResourceKind : null;
-      if (!kind || !TRANSFERABLE_KINDS.has(kind) || item.action !== "create_or_match" || !item.payload || canonicalDigest(item.payload) !== item.digest) {
+      const kind = (GOVERNANCE_PORTABLE_KINDS as readonly string[]).includes(item.kind) ? item.kind as GovernancePortableKind : null;
+      const payload = kind && item.payload ? validatePortablePayload(kind, item.payload) : null;
+      if (!kind || item.action !== "create_or_match" || !payload || canonicalDigest(payload) !== item.digest) {
         job = await this.recordItem(job, item.id, "failed_known", { code: "UNSUPPORTED_OR_INVALID_TRANSFER" });
         continue;
       }
       const destinationId = item.destinationId ?? `imported_${item.digest.slice(7, 39)}`;
-      const existing = await this.repository.getResource<{ _importProvenance?: { sourceManifestDigest?: string; sourceItemDigest?: string } }>({ workspaceId: input.workspaceId, kind, id: destinationId });
-      if (existing) {
-        const provenance = existing.body._importProvenance;
-        job = await this.recordItem(job, item.id, provenance?.sourceManifestDigest === body.sourceManifestDigest && provenance.sourceItemDigest === item.digest ? "matched" : "failed_known", provenance?.sourceItemDigest === item.digest ? { destinationId, matched: true } : { code: "DESTINATION_CONFLICT", destinationId });
-        continue;
+      const result = await this.portableData.materialize({
+        workspaceId: input.workspaceId, requestedByUserId: body.requestedByUserId,
+        kind, sourceId: item.sourceId, destinationId, digest: item.digest, payload,
+        provenance: { source: body.source, sourceManifestDigest: body.sourceManifestDigest },
+        idempotencyKey: `portable-import:${job.id}:${item.id}`,
+      });
+      if (result.kind === "created" || result.kind === "matched") {
+        job = await this.recordItem(job, item.id, result.kind, { destinationId: result.destinationId, [result.kind]: true });
+      } else {
+        job = await this.recordItem(job, item.id, "failed_known", { code: "reason" in result ? result.reason : "DESTINATION_ADAPTER_FAILED" });
       }
-      const now = this.clock.now();
-      const imported: GovernanceResource = { id: destinationId, workspaceId: input.workspaceId, kind, version: 1, status: "active", body: { ...item.payload, _importProvenance: { schema: "workspace-import-provenance/v1", source: body.source, sourceManifestDigest: body.sourceManifestDigest, sourceId: item.sourceId, sourceItemDigest: item.digest, importedAt: now.toISOString() } }, createdByUserId: job.createdByUserId, createdAt: now, updatedAt: now };
-      const nextItems = body.items.map((candidate) => candidate.id === item.id ? { ...candidate, state: "created" as const, outcome: { destinationId, created: true } } : candidate);
-      const next: GovernanceResource = { ...job, version: job.version + 1, body: { ...body, items: nextItems }, updatedAt: now };
-      const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: "imports.process@1", idempotencyKey: `import-item-${job.id}-${item.id}`, requestDigest: canonicalDigest({ importId: job.id, itemId: item.id, digest: item.digest }), result: { itemId: item.id, destinationId, state: "created" }, createdAt: now }, mutations: [{ type: "create", expectedVersion: null, resource: imported }, { type: "update", expectedVersion: job.version, resource: next }], audit: audit(job, "materialize_import_item", "completed", now) });
-      if (outcome.type === "conflict") {
-        const refreshed = await this.repository.getResource({ workspaceId: input.workspaceId, kind: "workspace_import", id: input.importId });
-        if (!refreshed) return;
-        job = refreshed;
-      } else job = next;
     }
   }
 
-  private async recordItem(job: GovernanceResource, itemId: string, state: ImportItem["state"], outcome: Record<string, unknown>): Promise<GovernanceResource> {
-    const body = job.body as { items: ImportItem[]; [key: string]: unknown };
-    return this.updateJob(job, "running", { ...body, items: body.items.map((item) => item.id === itemId ? { ...item, state, outcome } : item) }, "record_import_item", state === "failed_known" ? "failed" : "completed");
+  async recoverExpired(input: { workspaceId: string }): Promise<number> {
+    const now = this.clock.now();
+    const jobs = await this.repository.listResources<ImportJobBody>({ workspaceId: input.workspaceId, kinds: ["workspace_import"], status: "running" });
+    const expired = jobs.filter((job) => !job.body.lease || new Date(job.body.lease.expiresAt) <= now);
+    for (const job of expired) await this.process({ workspaceId: input.workspaceId, importId: job.id });
+    return expired.length;
   }
 
-  private async updateJob(job: GovernanceResource, status: string, body: Record<string, unknown>, action: string, outcome: GovernanceAuditEvent["outcome"]): Promise<GovernanceResource> {
+  private async claim(job: GovernanceResource<ImportJobBody>): Promise<GovernanceResource<ImportJobBody> | null> {
     const now = this.clock.now();
-    const next: GovernanceResource = { ...job, version: job.version + 1, status, body, updatedAt: now };
+    if (job.status === "running" && job.body.lease && new Date(job.body.lease.expiresAt) > now) return null;
+    if (job.status !== "queued" && job.status !== "running") throw new Error("Workspace import is not claimable.");
+    const lease = { id: `lease_${randomUUID().replaceAll("-", "")}`, claimedAt: now.toISOString(), expiresAt: new Date(now.getTime() + IMPORT_LEASE_MS).toISOString(), attempt: (job.body.lease?.attempt ?? 0) + 1 };
+    const next: GovernanceResource<ImportJobBody> = { ...job, version: job.version + 1, status: "running", body: { ...job.body, lease }, updatedAt: now };
+    const outcome = await this.repository.commit({ receipt: { workspaceId: job.workspaceId, capability: "imports.claim@1", idempotencyKey: `import-claim-${job.id}-${job.version}-${lease.id}`, requestDigest: canonicalDigest({ importId: job.id, version: job.version, lease }), result: { importId: job.id, status: "running", leaseId: lease.id }, createdAt: now }, mutations: [{ type: "update", expectedVersion: job.version, resource: next }], audit: audit(job, "claim_import", "accepted", now) });
+    return outcome.type === "committed" ? next : null;
+  }
+
+  private async recordItem(job: GovernanceResource<ImportJobBody>, itemId: string, state: ImportItem["state"], outcome: Record<string, unknown>): Promise<GovernanceResource<ImportJobBody>> {
+    return this.updateJob(job, "running", { ...job.body, items: job.body.items.map((item) => item.id === itemId ? { ...item, state, outcome } : item) }, "record_import_item", state === "failed_known" ? "failed" : "completed");
+  }
+
+  private async updateJob(job: GovernanceResource<ImportJobBody>, status: string, body: ImportJobBody, action: string, outcome: GovernanceAuditEvent["outcome"]): Promise<GovernanceResource<ImportJobBody>> {
+    const now = this.clock.now();
+    const next: GovernanceResource<ImportJobBody> = { ...job, version: job.version + 1, status, body, updatedAt: now };
     const committed = await this.repository.commit({ receipt: { workspaceId: job.workspaceId, capability: "imports.process@1", idempotencyKey: `${action}-${job.id}-${job.version}`, requestDigest: canonicalDigest({ importId: job.id, version: job.version, action }), result: { importId: job.id, status }, createdAt: now }, mutations: [{ type: "update", expectedVersion: job.version, resource: next }], audit: audit(job, action, outcome, now) });
     if (committed.type === "conflict") throw new Error("Workspace import changed concurrently.");
     return next;
   }
 }
 
-export const TRANSFERABLE_GOVERNANCE_IMPORT_KINDS = [...TRANSFERABLE_KINDS];
+export const TRANSFERABLE_GOVERNANCE_IMPORT_KINDS = [...GOVERNANCE_PORTABLE_KINDS];
