@@ -34,6 +34,7 @@ import {
   type GovernanceImportManifestVerificationPort,
 } from "./import-manifest";
 import { GOVERNANCE_PORTABLE_KINDS, type GovernancePortableKind, validatePortablePayload } from "./portability";
+import { decryptGovernanceSecretDelivery, encryptGovernanceSecretDelivery } from "./secret-delivery";
 import {
   canViewGovernanceResource,
   projectGovernanceAuditEvent,
@@ -45,6 +46,7 @@ const IDEMPOTENCY = /^[\x20-\x7e]{8,200}$/;
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
 const MAX_GUEST_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_STEP_UP_LIFETIME_MS = 15 * 60 * 1_000;
+const SECRET_DELIVERY_LIFETIME_MS = 10 * 60 * 1_000;
 
 export class GovernanceError extends Error {
   constructor(
@@ -203,6 +205,12 @@ function receiptSafeResult(value: unknown): unknown {
   );
 }
 
+function hasReceiptSecret(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasReceiptSecret);
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value as Record<string, unknown>).some(([key, nested]) => RECEIPT_SECRET_KEYS.has(key) || hasReceiptSecret(nested));
+}
+
 export function encodeReviewToken(workspaceId: string, grantId: string, secret: string): string {
   return `${Buffer.from(workspaceId, "utf8").toString("base64url")}.${grantId}.${secret}`;
 }
@@ -357,6 +365,15 @@ export class GovernanceService {
   }): Promise<unknown> {
     if (!IDEMPOTENCY.test(input.idempotencyKey)) throw new GovernanceError("INVALID_INPUT", "A stable idempotency key is required.");
     const requestDigest = canonicalDigest(input.command);
+    const secretDelivery = hasReceiptSecret(input.result) ? {
+      workspaceId: input.actor.workspaceId,
+      capability: `${input.capability}@1`,
+      idempotencyKey: input.idempotencyKey,
+      requestDigest,
+      encryptedPayload: encryptGovernanceSecretDelivery(input.result),
+      expiresAt: new Date(input.now.getTime() + SECRET_DELIVERY_LIFETIME_MS),
+      createdAt: input.now,
+    } : undefined;
     const outcome = await this.repository.commit({
       receipt: {
         workspaceId: input.actor.workspaceId,
@@ -368,6 +385,7 @@ export class GovernanceService {
       },
       mutations: input.mutations,
       canonicalEffects: input.canonicalEffects,
+      secretDelivery,
       audit: this.audit({ actor: input.actor, capability: input.capability, command: input.command, target: input.target, now: input.now }),
     });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "The resource or idempotency key conflicts with current state.");
@@ -387,6 +405,10 @@ export class GovernanceService {
     if (!existing) return undefined;
     if (existing.requestDigest !== input.requestDigest) {
       throw new GovernanceError("CONFLICT", "The idempotency key is already bound to another request.");
+    }
+    const delivery = await this.repository.findSecretDelivery(input);
+    if (delivery && delivery.requestDigest === input.requestDigest && delivery.expiresAt > this.clock.now()) {
+      return decryptGovernanceSecretDelivery(delivery.encryptedPayload);
     }
     return existing.result;
   }
@@ -927,7 +949,8 @@ export class GovernanceService {
     const expiresAt = new Date(Math.min(now.getTime() + 60 * 60_000, exactDate(body.expiresAt, "Review expiry").getTime()));
     const session = resource({ id: sessionId, workspaceId: input.workspaceId, kind: "review_guest_session", version: 1, status: "active", body: { grantId: grant.id, tokenDigest: secretDigest(sessionToken), purpose: body.purpose, resourceKind: body.resourceKind, resourceId: body.resourceId, revisionDigest: body.revisionDigest, expiresAt: expiresAt.toISOString() }, actor: null, now });
     const result = { verified: true, sessionId, sessionToken, purpose: body.purpose, resourceKind: body.resourceKind, resourceId: body.resourceId, revisionDigest: body.revisionDigest, expiresAt: expiresAt.toISOString() };
-    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest: canonicalDigest(request), result: receiptSafeResult(result), createdAt: now }, mutations: [{ type: "create", expectedVersion: null, resource: session }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: "verify", resource: { kind: grant.kind, id: grant.id }, outcome: "completed", redactedDetails: {}, occurredAt: now } });
+    const requestDigest = canonicalDigest(request);
+    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, result: receiptSafeResult(result), createdAt: now }, secretDelivery: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, encryptedPayload: encryptGovernanceSecretDelivery(result), createdAt: now, expiresAt: new Date(now.getTime() + SECRET_DELIVERY_LIFETIME_MS) }, mutations: [{ type: "create", expectedVersion: null, resource: session }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "review_guest", id: grant.id }, capability: receiptCapability, action: "verify", resource: { kind: grant.kind, id: grant.id }, outcome: "completed", redactedDetails: {}, occurredAt: now } });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Review verification changed.");
     return outcome.type === "committed" ? result : outcome.result;
   }

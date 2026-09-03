@@ -115,6 +115,21 @@ describe("GovernanceService", () => {
     expect(challengeReceipt?.result).not.toHaveProperty("verificationCode");
   });
 
+  it("recovers secret-bearing responses only from bounded encrypted delivery storage", async () => {
+    let current = new Date(NOW);
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => current });
+    const command = { type: "create_invitation" as const, email: "delivery@example.com", binding: { kind: "built_in" as const, role: "viewer" as const }, expiresAt: "2026-09-10T12:00:00.000Z" };
+    const issued = await service.execute(owner, command, "bounded-secret-delivery") as { invitationToken: string };
+    const storedDelivery = await repository.findSecretDelivery({ workspaceId: owner.workspaceId, capability: "members.invite@1", idempotencyKey: "bounded-secret-delivery" });
+    expect(storedDelivery?.encryptedPayload).not.toContain(issued.invitationToken);
+    expect(await service.execute(owner, command, "bounded-secret-delivery")).toEqual(issued);
+
+    current = new Date(NOW.getTime() + 10 * 60_000 + 1);
+    expect(await service.execute(owner, command, "bounded-secret-delivery")).toEqual(expect.objectContaining({ invitationId: expect.any(String) }));
+    expect(await service.execute(owner, command, "bounded-secret-delivery")).not.toHaveProperty("invitationToken");
+  });
+
   it("returns role-filtered snapshots with deeply redacted security material", async () => {
     const { service } = setup();
     await service.execute(owner, { type: "create_invitation", email: "private@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "snapshot-invitation-key");

@@ -4,6 +4,7 @@ import {
   workspaceAuditTrailEvents,
   workspaceGovernanceMutationReceipts,
   workspaceGovernanceResources,
+  workspaceGovernanceSecretDeliveries,
   workspaceMembers,
   workspaces,
 } from "@/lib/db/schema";
@@ -161,6 +162,15 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
     } : null;
   }
 
+  async findSecretDelivery(input: { workspaceId: string; capability: string; idempotencyKey: string }) {
+    const [row] = await this.database().select().from(workspaceGovernanceSecretDeliveries).where(and(
+      eq(workspaceGovernanceSecretDeliveries.workspaceId, input.workspaceId),
+      eq(workspaceGovernanceSecretDeliveries.capability, input.capability),
+      eq(workspaceGovernanceSecretDeliveries.idempotencyKey, input.idempotencyKey),
+    )).limit(1);
+    return row ? { ...row } : null;
+  }
+
   async getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;
     kind: GovernanceResourceKind;
@@ -313,6 +323,9 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
           result: input.receipt.result,
           createdAt: input.receipt.createdAt,
         });
+        if (input.secretDelivery) {
+          await tx.insert(workspaceGovernanceSecretDeliveries).values(input.secretDelivery);
+        }
         return { type: "committed" as const, result: structuredClone(input.receipt.result) };
       });
     } catch (error) {

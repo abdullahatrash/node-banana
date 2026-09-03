@@ -125,6 +125,17 @@ export interface GovernanceCommit {
   mutations: GovernanceMutation[];
   audit: GovernanceAuditEvent;
   canonicalEffects?: GovernanceCanonicalEffect[];
+  secretDelivery?: GovernanceSecretDelivery;
+}
+
+export interface GovernanceSecretDelivery {
+  workspaceId: string;
+  capability: string;
+  idempotencyKey: string;
+  requestDigest: string;
+  encryptedPayload: string;
+  expiresAt: Date;
+  createdAt: Date;
 }
 
 export type GovernanceCanonicalEffect =
@@ -173,6 +184,11 @@ export interface GovernanceRepository {
     capability: string;
     idempotencyKey: string;
   }): Promise<GovernanceReceipt | null>;
+  findSecretDelivery(input: {
+    workspaceId: string;
+    capability: string;
+    idempotencyKey: string;
+  }): Promise<GovernanceSecretDelivery | null>;
   getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;
     kind: GovernanceResourceKind;

@@ -8,6 +8,7 @@ import type {
   GovernanceResource,
   GovernanceResourceKind,
   GovernanceReceipt,
+  GovernanceSecretDelivery,
 } from "./types";
 
 function copy<T>(value: T): T {
@@ -25,6 +26,7 @@ function receiptKey(receipt: Pick<GovernanceReceipt, "workspaceId" | "capability
 export class InMemoryGovernanceRepository implements GovernanceRepository {
   readonly resources = new Map<string, GovernanceResource>();
   readonly receipts = new Map<string, GovernanceReceipt>();
+  readonly secretDeliveries = new Map<string, GovernanceSecretDelivery>();
   readonly audit: GovernanceAuditEvent[] = [];
   readonly canonicalEffects: GovernanceCanonicalEffect[] = [];
   private tail: Promise<void> = Promise.resolve();
@@ -35,6 +37,11 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
     idempotencyKey: string;
   }): Promise<GovernanceReceipt | null> {
     const value = this.receipts.get(receiptKey(input));
+    return value ? copy(value) : null;
+  }
+
+  async findSecretDelivery(input: { workspaceId: string; capability: string; idempotencyKey: string }) {
+    const value = this.secretDeliveries.get(receiptKey(input));
     return value ? copy(value) : null;
   }
 
@@ -108,6 +115,7 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
       audit.sequence = this.audit.length + 1;
       this.audit.push(audit);
       this.receipts.set(key, copy(input.receipt));
+      if (input.secretDelivery) this.secretDeliveries.set(key, copy(input.secretDelivery));
       return { type: "committed", result: copy(input.receipt.result) };
     } finally {
       release();

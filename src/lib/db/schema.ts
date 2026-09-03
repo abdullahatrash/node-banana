@@ -8652,6 +8652,26 @@ export const workspaceGovernanceMutationReceipts = pgTable(
   }),
 );
 
+/** Encrypted, bounded retry delivery; permanent receipts remain redacted. */
+export const workspaceGovernanceSecretDeliveries = pgTable(
+  "workspace_governance_secret_deliveries",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    encryptedPayload: text("encrypted_payload").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "workspace_governance_secret_deliveries_pk", columns: [table.workspaceId, table.capability, table.idempotencyKey] }),
+    expiryIdx: index("workspace_governance_secret_deliveries_expiry_idx").on(table.expiresAt),
+    digestCheck: check("workspace_governance_secret_deliveries_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    envelopeCheck: check("workspace_governance_secret_deliveries_envelope_check", sql`${table.encryptedPayload} like 'v1.%' and octet_length(${table.encryptedPayload}) <= 65536`),
+  }),
+);
+
 /** Customer-visible append-only evidence; sensitive payloads are redacted before insertion. */
 export const workspaceAuditTrailEvents = pgTable(
   "workspace_audit_trail_events",
