@@ -41,6 +41,7 @@ import {
   projectGovernanceAuditEvent,
   projectGovernanceResource,
 } from "./projection";
+import { TRUSTED_RETENTION_LEGAL_FLOORS, trustedRetentionRule } from "./retention-policy";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const IDEMPOTENCY = /^[\x20-\x7e]{8,200}$/;
@@ -818,10 +819,11 @@ export class GovernanceService {
       case "publish_retention_policy": {
         await this.requireStepUp(actor, "retention.manage", null, command.stepUpToken);
         this.validateRetention(command.rules);
+        const trustedRules = command.rules.map(trustedRetentionRule);
         const id = "active";
         const current = await this.repository.getResource<{ revisions: unknown[] }>({ workspaceId: actor.workspaceId, kind: "retention_policy", id });
         if (current && command.expectedVersion !== current.version) throw new GovernanceError("CONFLICT", "Retention Policy changed.");
-        const revision = { schema: "retention-policy-revision/v1", revision: (current?.body.revisions.length ?? 0) + 1, rules: command.rules, createdByUserId: actor.userId, createdAt: now.toISOString() };
+        const revision = { schema: "retention-policy-revision/v1", revision: (current?.body.revisions.length ?? 0) + 1, rules: trustedRules, legalFloorSource: "deployment_trusted/v1", createdByUserId: actor.userId, createdAt: now.toISOString() };
         const body = { revisions: [...(current?.body.revisions ?? []), revision], activeRevision: revision.revision };
         mutations = [current ? update(current, "active", body) : create("retention_policy", id, "active", body)];
         result = { policyId: id, revision };
@@ -1147,7 +1149,8 @@ export class GovernanceService {
   private validateRetention(rules: RetentionRule[]) {
     if (rules.length !== RETENTION_CLASSES.length || unique(rules.map((rule) => rule.retentionClass)).length !== RETENTION_CLASSES.length) throw new GovernanceError("INVALID_INPUT", "Every Retention Class requires exactly one rule.");
     for (const rule of rules) {
-      if (!RETENTION_CLASSES.includes(rule.retentionClass) || !Number.isInteger(rule.durationDays) || rule.durationDays < rule.legalFloorDays || rule.recoverableDays < 0 || rule.recoverableDays > rule.durationDays) throw new GovernanceError("INVALID_INPUT", "Retention rule violates its legal floor or bounds.");
+      const trustedFloor = TRUSTED_RETENTION_LEGAL_FLOORS[rule.retentionClass];
+      if (!RETENTION_CLASSES.includes(rule.retentionClass) || rule.legalFloorDays !== trustedFloor || !Number.isInteger(rule.durationDays) || rule.durationDays < trustedFloor || rule.recoverableDays < 0 || rule.recoverableDays > rule.durationDays) throw new GovernanceError("INVALID_INPUT", "Retention rule violates the deployment-trusted legal floor or bounds.");
     }
   }
 

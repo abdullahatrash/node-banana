@@ -5,6 +5,7 @@ import { InMemoryGovernanceRepository } from "../memory-repository";
 import { BUILT_IN_ROLE_APPLICATION_CAPABILITIES, BUILT_IN_ROLE_CAPABILITIES } from "../roles";
 import { decodeInvitationToken, decodeReviewToken, GovernanceError, GovernanceService } from "../service";
 import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionDeploymentEvidence } from "../region-policy";
+import { TRUSTED_RETENTION_LEGAL_FLOORS } from "../retention-policy";
 import { RETENTION_CLASSES, type GovernanceActor, type RetentionRule } from "../types";
 
 const NOW = new Date("2026-09-03T12:00:00.000Z");
@@ -350,8 +351,9 @@ describe("GovernanceService", () => {
   it("enforces Retention Class completeness, legal floors, holds, receipts, and tombstones", async () => {
     const { repository, service } = setup();
     const authorization = await stepUp(service, "retention.manage");
-    const rules: RetentionRule[] = RETENTION_CLASSES.map((retentionClass) => ({ retentionClass, durationDays: 365, recoverableDays: 30, legalFloorDays: retentionClass.includes("evidence") ? 365 : 0 }));
+    const rules: RetentionRule[] = RETENTION_CLASSES.map((retentionClass) => ({ retentionClass, durationDays: 365, recoverableDays: 30, legalFloorDays: TRUSTED_RETENTION_LEGAL_FLOORS[retentionClass] }));
     await service.execute(owner, { type: "publish_retention_policy", rules, stepUpToken: authorization.stepUpToken }, "retention-policy-key");
+    expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "retention_policy", id: "active" })).toMatchObject({ body: { revisions: [{ legalFloorSource: "deployment_trusted/v1", rules }] } });
     const hold = await service.execute(owner, { type: "create_retention_hold", retentionClasses: ["security_evidence"], reason: "Active legal preservation", expiresAt: null, stepUpToken: authorization.stepUpToken }, "retention-hold-key") as { holdId: string };
     const deletionAuthorization = await stepUp(service, "retention.delete", "media-1");
     const deleted = await service.execute(owner, { type: "record_deletion", resourceKind: "media", resourceId: "media-1", retentionClass: "security_evidence", systems: ["primary", "replica"], stepUpToken: deletionAuthorization.stepUpToken }, "deletion-record-key") as { tombstoneId: string };
@@ -359,6 +361,15 @@ describe("GovernanceService", () => {
     const releaseAuthorization = await stepUp(service, "retention.hold.release", hold.holdId);
     await service.execute(owner, { type: "release_retention_hold", holdId: hold.holdId, reason: "Legal matter closed", stepUpToken: releaseAuthorization.stepUpToken }, "release-hold-key");
     expect((await repository.getResource({ workspaceId: owner.workspaceId, kind: "retention_hold", id: hold.holdId }))?.status).toBe("released");
+  });
+
+  it("rejects Workspace-authored retention floors even when the submitted duration would satisfy them", async () => {
+    const { service } = setup();
+    const authorization = await stepUp(service, "retention.manage");
+    const rules: RetentionRule[] = RETENTION_CLASSES.map((retentionClass) => ({ retentionClass, durationDays: 730, recoverableDays: 30, legalFloorDays: TRUSTED_RETENTION_LEGAL_FLOORS[retentionClass] }));
+    rules[0] = { ...rules[0], legalFloorDays: TRUSTED_RETENTION_LEGAL_FLOORS[rules[0].retentionClass] + 1 };
+    await expect(service.execute(owner, { type: "publish_retention_policy", rules, stepUpToken: authorization.stepUpToken }, "caller-floor-key"))
+      .rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
   it("constrains Safety Appeals to exact-intent re-evaluation with current revalidation", async () => {
