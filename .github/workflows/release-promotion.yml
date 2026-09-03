@@ -3,26 +3,12 @@ name: Release promotion gate
 on:
   workflow_dispatch:
     inputs:
-      gate_url:
-        description: Production application origin
-        required: true
-        type: string
-      workspace_id:
-        description: Release-control workspace ID
-        required: true
-        type: string
       build_id:
         description: Exact immutable build or commit ID in the signed server manifest
         required: true
         type: string
   workflow_call:
     inputs:
-      gate_url:
-        required: true
-        type: string
-      workspace_id:
-        required: true
-        type: string
       build_id:
         required: true
         type: string
@@ -49,8 +35,9 @@ jobs:
           node-version: 22
       - name: Verify signed manifest-bound readiness
         env:
-          RELEASE_GATE_URL: ${{ inputs.gate_url }}
-          RELEASE_GATE_WORKSPACE_ID: ${{ inputs.workspace_id }}
+          RELEASE_GATE_ORIGIN: ${{ vars.PRODUCTION_RELEASE_GATE_ORIGIN }}
+          RELEASE_GATE_ALLOWED_HOSTS: ${{ vars.PRODUCTION_RELEASE_GATE_ALLOWED_HOSTS }}
+          RELEASE_GATE_WORKSPACE_ID: ${{ vars.RELEASE_GATE_WORKSPACE_ID }}
           RELEASE_EXPECTED_BUILD_ID: ${{ inputs.build_id }}
           RELEASE_DEPLOYMENT_GATE_SECRET: ${{ secrets.deployment_gate_secret }}
           RELEASE_READINESS_SIGNING_SECRET: ${{ secrets.readiness_signing_secret }}

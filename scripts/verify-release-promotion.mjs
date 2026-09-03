@@ -16,11 +16,28 @@ export function verifyPromotionResponse(body, input, now = new Date()) {
   return body.readiness;
 }
 
+export function trustedReleaseGateEndpoint(origin, allowedHosts, workspaceId) {
+  const hosts = new Set(String(allowedHosts || "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean));
+  if (!origin || !workspaceId || hosts.size === 0) throw new Error("Release gate trust configuration is incomplete.");
+  const base = new URL(origin);
+  const hostname = base.hostname.toLowerCase();
+  if (base.protocol !== "https:" || base.username || base.password || base.port || base.pathname !== "/" || base.search || base.hash) throw new Error("Release gate origin must be a bare HTTPS origin.");
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,62}\.)+[a-z]{2,63}$/.test(hostname) || !hosts.has(hostname)) throw new Error("Release gate host is not trusted.");
+  const endpoint = new URL("/api/studio/internal/release-readiness", base);
+  endpoint.searchParams.set("workspaceId", workspaceId);
+  return endpoint;
+}
+
+export function verifyGateTransport(response, endpoint) {
+  const finalUrl = new URL(response.url);
+  if (response.redirected || finalUrl.origin !== endpoint.origin || finalUrl.pathname !== endpoint.pathname) throw new Error("Release gate transport changed origin or path.");
+}
+
 async function main() {
-  const gateUrl = process.env.RELEASE_GATE_URL; const workspaceId = process.env.RELEASE_GATE_WORKSPACE_ID; const bearer = process.env.RELEASE_DEPLOYMENT_GATE_SECRET; const signingSecret = process.env.RELEASE_READINESS_SIGNING_SECRET; const keyId = process.env.RELEASE_READINESS_SIGNING_KEY_ID; const expectedBuildId = process.env.RELEASE_EXPECTED_BUILD_ID;
-  if (!gateUrl || !workspaceId || !bearer || bearer.length < 32 || !signingSecret || signingSecret.length < 32 || !keyId || !expectedBuildId) throw new Error("Release promotion gate configuration is incomplete.");
-  const url = new URL("/api/studio/internal/release-readiness", gateUrl); if (url.protocol !== "https:" && url.hostname !== "localhost") throw new Error("Release gate must use HTTPS."); url.searchParams.set("workspaceId", workspaceId);
-  const response = await fetch(url, { headers: { authorization: `Bearer ${bearer}` }, signal: AbortSignal.timeout(15_000) }); const body = await response.json();
+  const gateOrigin = process.env.RELEASE_GATE_ORIGIN; const allowedHosts = process.env.RELEASE_GATE_ALLOWED_HOSTS; const workspaceId = process.env.RELEASE_GATE_WORKSPACE_ID; const bearer = process.env.RELEASE_DEPLOYMENT_GATE_SECRET; const signingSecret = process.env.RELEASE_READINESS_SIGNING_SECRET; const keyId = process.env.RELEASE_READINESS_SIGNING_KEY_ID; const expectedBuildId = process.env.RELEASE_EXPECTED_BUILD_ID;
+  if (!bearer || bearer.length < 32 || !signingSecret || signingSecret.length < 32 || !keyId || !expectedBuildId) throw new Error("Release promotion gate configuration is incomplete.");
+  const url = trustedReleaseGateEndpoint(gateOrigin, allowedHosts, workspaceId);
+  const response = await fetch(url, { redirect: "error", headers: { authorization: `Bearer ${bearer}` }, signal: AbortSignal.timeout(15_000) }); verifyGateTransport(response, url); const body = await response.json();
   if (!response.ok) throw new Error(`Release gate rejected promotion with HTTP ${response.status}.`);
   const readiness = verifyPromotionResponse(body, { expectedBuildId, signingSecret, keyId });
   process.stdout.write(`Release promotion authorized for ${readiness.buildId}; ${readiness.parityMatrix.passingCells}/${readiness.parityMatrix.requiredCells} parity cells passed.\n`);

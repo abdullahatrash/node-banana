@@ -17,8 +17,6 @@ jobs:
     name: required signed readiness gate
     uses: ./.github/workflows/release-promotion.yml
     with:
-      gate_url: ${{ vars.PRODUCTION_APP_URL }}
-      workspace_id: ${{ vars.RELEASE_GATE_WORKSPACE_ID }}
       build_id: ${{ github.sha }}
     secrets:
       deployment_gate_secret: ${{ secrets.RELEASE_DEPLOYMENT_GATE_SECRET }}
