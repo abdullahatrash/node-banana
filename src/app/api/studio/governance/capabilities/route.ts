@@ -4,7 +4,7 @@ import { noStoreJson, requireAgentMutationRequest, requireExplicitAgentWorkspace
 import { PRODUCTION_CAPABILITY_REGISTRY, dispatchCapability } from "@/lib/agent-runtime/server-dispatcher";
 import { credentialHumanContext } from "@/lib/credential-vault/http";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
-import { getProductionGovernanceBulkWorker, getProductionGovernanceExportWorker, getProductionGovernanceImportWorker } from "@/lib/governance/production";
+import { getProductionGovernanceApprovalDeadlineWorker, getProductionGovernanceBulkWorker, getProductionGovernanceExportWorker, getProductionGovernanceImportWorker } from "@/lib/governance/production";
 import { getEmailSender } from "@/lib/auth/email-sender";
 import { deliverGovernanceSecret, redactGovernanceSecrets } from "@/lib/governance/notifications";
 import type { GovernanceCommand } from "@/lib/governance/service";
@@ -74,6 +74,9 @@ export const POST = withStudioAuth<undefined>(
         try { await getProductionGovernanceImportWorker().process({ workspaceId: authz.workspaceId, importId: output.importId! }); }
         catch { /* Import item evidence remains durable and idempotent for recovery. */ }
       });
+    }
+    if (parsed.data.capability === "governance.snapshot.get@1" || command?.type === "request_content_acceptance" || command?.type === "decide_content_acceptance") {
+      after(async () => { try { await getProductionGovernanceApprovalDeadlineWorker().processWorkspace(authz.workspaceId); } catch { /* A later sweep safely retries exact request versions. */ } });
     }
     return noStoreJson({ success: true, capability: `${response.capability.name}@${response.capability.version}`, result: redactGovernanceSecrets(response.output as Record<string, unknown>) });
   },

@@ -5,6 +5,7 @@ import { GovernanceExportWorker, S3GovernanceExportStore } from "./export-worker
 import { DrizzleGovernanceMembershipPort } from "./membership-postgres";
 import { ApplicationGovernanceBulkCapabilityPort, DrizzleGovernanceBulkAuthorizationPort, GovernanceBulkWorker } from "./bulk-worker";
 import { GovernanceImportWorker } from "./import-worker";
+import { GovernanceApprovalDeadlineWorker } from "./approval-worker";
 
 export const PRODUCTION_GOVERNANCE_REPOSITORY = new DrizzleGovernanceRepository(getDb);
 export const PRODUCTION_GOVERNANCE_SERVICE = new GovernanceService(
@@ -34,4 +35,8 @@ export function getProductionGovernanceBulkWorker(): GovernanceBulkWorker {
 
 export function getProductionGovernanceImportWorker(): GovernanceImportWorker {
   return new GovernanceImportWorker(PRODUCTION_GOVERNANCE_REPOSITORY);
+}
+
+export function getProductionGovernanceApprovalDeadlineWorker(): GovernanceApprovalDeadlineWorker {
+  return new GovernanceApprovalDeadlineWorker(PRODUCTION_GOVERNANCE_REPOSITORY);
 }

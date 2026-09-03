@@ -8,3 +8,5 @@ export * from "./membership-postgres";
 export * from "./bulk-worker";
 export * from "./import-worker";
 export * from "./notifications";
+export * from "./approval-policy";
+export * from "./approval-worker";

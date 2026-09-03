@@ -25,6 +25,7 @@ import type {
 } from "./types";
 import { GOVERNANCE_CAPABILITIES, RETENTION_CLASSES } from "./types";
 import { BUILT_IN_WORKSPACE_ROLES } from "./types";
+import { advanceApprovalDeadline, ApprovalPolicyError, createContentAcceptanceProgress, decideContentAcceptance } from "./approval-policy";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const IDEMPOTENCY = /^[\x20-\x7e]{8,200}$/;
@@ -67,6 +68,9 @@ export type GovernanceCommand =
   | { type: "issue_review_guest"; email: string; purpose: "inspect" | "comment" | "accept_content" | "approve_publishing" | "reject"; resourceKind: "render_proof" | "plan_revision"; resourceId: string; revisionDigest: string; expiresAt: string }
   | { type: "revoke_review_guest"; grantId: string }
   | { type: "publish_approval_policy"; policyId?: string; expectedVersion?: number; policy: Omit<ApprovalPolicyRevision, "schema" | "revision" | "createdByUserId" | "createdAt"> }
+  | { type: "request_content_acceptance"; policyId: string; policyRevision: number; resourceKind: string; resourceId: string; revisionDigest: string }
+  | { type: "decide_content_acceptance"; requestId: string; decision: "approve" | "reject" }
+  | { type: "advance_content_acceptance"; requestId: string }
   | { type: "begin_step_up"; purpose: string; resourceId: string | null }
   | { type: "verify_step_up"; challengeId: string; code: string }
   | { type: "request_audit_export"; from: string | null; to: string | null; stepUpToken: string }
@@ -103,6 +107,9 @@ const CAPABILITY_BY_COMMAND: Record<GovernanceCommand["type"], GovernanceCapabil
   issue_review_guest: "reviews.create",
   revoke_review_guest: "reviews.create",
   publish_approval_policy: "approval_policies.manage",
+  request_content_acceptance: "reviews.create",
+  decide_content_acceptance: "reviews.decide_content",
+  advance_content_acceptance: "approval_policies.manage",
   begin_step_up: "governance.view",
   verify_step_up: "governance.view",
   request_audit_export: "audit.export",
@@ -225,16 +232,20 @@ export class GovernanceService {
     },
   ) {}
 
-  private async capabilities(actor: GovernanceActor): Promise<GovernanceCapability[]> {
+  private async roleBinding(actor: GovernanceActor): Promise<WorkspaceRoleBinding> {
     const assignment = await this.repository.getResource<{ binding: WorkspaceRoleBinding }>({
       workspaceId: actor.workspaceId,
       kind: "member_role_assignment",
       id: actor.userId,
     });
-    const binding = assignment?.body.binding ?? {
+    return assignment?.body.binding ?? {
       kind: "built_in" as const,
       role: legacyRoleBinding(actor.legacyRole),
     };
+  }
+
+  private async capabilities(actor: GovernanceActor): Promise<GovernanceCapability[]> {
+    const binding = await this.roleBinding(actor);
     if (binding.kind === "built_in") return [...BUILT_IN_ROLE_CAPABILITIES[binding.role]];
     const custom = await this.repository.getResource<{ revisions: CustomRoleRevision[] }>({
       workspaceId: actor.workspaceId,
@@ -528,6 +539,41 @@ export class GovernanceService {
         mutations = [current ? update(current, "active", body) : create("approval_policy", id, "active", body)];
         result = { policyId: id, revision };
         target = { kind: "approval_policy", id };
+        break;
+      }
+      case "request_content_acceptance": {
+        if (!SHA256.test(command.revisionDigest)) throw new GovernanceError("INVALID_INPUT", "Content Acceptance revision digest is invalid.");
+        const policyResource = await this.required("approval_policy", command.policyId, actor.workspaceId);
+        const revision = (policyResource.body as { revisions: ApprovalPolicyRevision[] }).revisions.find((candidate) => candidate.revision === command.policyRevision);
+        if (!revision || revision.purpose !== "content_acceptance") throw new GovernanceError("NOT_FOUND", "The exact Content Acceptance policy revision is unavailable.");
+        const id = newId("content_acceptance");
+        const progress = createContentAcceptanceProgress({ policy: revision, requesterUserId: actor.userId, now });
+        mutations = [create("approval_request", id, progress.status, { policyId: policyResource.id, policyRevision: revision.revision, policySnapshot: revision, resourceKind: text(command.resourceKind, "Resource kind", 100), resourceId: safeId(command.resourceId, "Resource"), revisionDigest: command.revisionDigest, progress })];
+        result = { requestId: id, purpose: "content_acceptance", status: progress.status, deadlineAt: progress.deadlineAt, expiresAt: progress.expiresAt, authorizesExecution: false };
+        target = { kind: "approval_request", id };
+        break;
+      }
+      case "decide_content_acceptance": {
+        const request = await this.required("approval_request", command.requestId, actor.workspaceId);
+        const body = request.body as { policySnapshot: ApprovalPolicyRevision; progress: import("./types").ContentAcceptanceProgress; [key: string]: unknown };
+        const binding = await this.roleBinding(actor);
+        const roleId = binding.kind === "built_in" ? binding.role : binding.roleId;
+        let progress;
+        try { progress = decideContentAcceptance({ policy: body.policySnapshot, progress: body.progress, userId: actor.userId, roleId, decision: command.decision, now }); }
+        catch (error) { if (error instanceof ApprovalPolicyError) throw new GovernanceError("FORBIDDEN", error.message); throw error; }
+        mutations = [update(request, progress.status, { ...body, progress })];
+        result = { requestId: request.id, purpose: "content_acceptance", status: progress.status, decision: command.decision, revisionDigest: body.revisionDigest, authorizesExecution: false };
+        target = { kind: request.kind, id: request.id };
+        break;
+      }
+      case "advance_content_acceptance": {
+        const request = await this.required("approval_request", command.requestId, actor.workspaceId);
+        const body = request.body as { policySnapshot: ApprovalPolicyRevision; progress: import("./types").ContentAcceptanceProgress; [key: string]: unknown };
+        const progress = advanceApprovalDeadline({ policy: body.policySnapshot, progress: body.progress, now });
+        if (progress === body.progress) throw new GovernanceError("CONFLICT", "Content Acceptance deadline has not changed state.");
+        mutations = [update(request, progress.status, { ...body, progress })];
+        result = { requestId: request.id, purpose: "content_acceptance", status: progress.status, authorizesExecution: false };
+        target = { kind: request.kind, id: request.id };
         break;
       }
       case "begin_step_up": {

@@ -421,6 +421,13 @@
       "when": 1788454052990,
       "tag": "0059_modern_slayback",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1788454973821,
+      "tag": "0060_green_grandmaster",
+      "breakpoints": true
     }
   ]
 }

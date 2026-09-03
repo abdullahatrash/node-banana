@@ -141,6 +141,14 @@ describe("GovernanceService", () => {
     expect(content.policyId).not.toEqual((publishing as unknown as { policyId: string }).policyId);
   });
 
+  it("persists Content Acceptance against exact policy and content revisions without execution authority", async () => {
+    const { service } = setup();
+    const published = await service.execute(owner, { type: "publish_approval_policy", policy: { purpose: "content_acceptance", mode: { kind: "single", eligibleRoleIds: ["creator"] }, separationOfDuty: true, deadlineSeconds: 3600, escalationRoleIds: ["admin"], expiresAfterSeconds: 86400 } }, "content-policy-create") as { policyId: string; revision: { revision: number } };
+    const requested = await service.execute(owner, { type: "request_content_acceptance", policyId: published.policyId, policyRevision: published.revision.revision, resourceKind: "render_proof", resourceId: "render-proof-1", revisionDigest: digest }, "content-acceptance-request") as { requestId: string };
+    const accepted = await service.execute(creator, { type: "decide_content_acceptance", requestId: requested.requestId, decision: "approve" }, "content-acceptance-decision");
+    expect(accepted).toMatchObject({ purpose: "content_acceptance", status: "accepted", revisionDigest: digest, authorizesExecution: false });
+  });
+
   it("requires exact-purpose step-up for region, retention, and exports", async () => {
     const { service } = setup();
     const wrong = await stepUp(service, "audit.export");

@@ -7,6 +7,7 @@ export const GOVERNANCE_RESOURCE_KINDS = [
   "review_guest_grant",
   "review_guest_session",
   "approval_policy",
+  "approval_request",
   "step_up_challenge",
   "step_up_session",
   "audit_export",
@@ -165,6 +166,26 @@ export interface ApprovalPolicyRevision {
   expiresAfterSeconds: number;
   createdByUserId: string;
   createdAt: string;
+}
+
+export interface ContentAcceptanceDecision {
+  userId: string;
+  roleId: string;
+  decision: "approve" | "reject";
+  stage: number;
+  decidedAt: string;
+}
+
+export interface ContentAcceptanceProgress {
+  schema: "content-acceptance-progress/v1";
+  status: "pending" | "escalated" | "accepted" | "rejected" | "expired";
+  requesterUserId: string;
+  currentStage: number;
+  decisions: ContentAcceptanceDecision[];
+  deadlineAt: string;
+  expiresAt: string;
+  escalatedAt: string | null;
+  authorizesExecution: false;
 }
 
 export const RETENTION_CLASSES = [
