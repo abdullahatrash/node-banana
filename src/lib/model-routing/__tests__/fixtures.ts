@@ -1,4 +1,5 @@
 import { CURATED_MODELS, exactModelRef, findCuratedModel } from "../catalog";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { ExactModelRef, ModelDescriptor } from "../types";
 
 export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.map((model, index) => ({
@@ -16,5 +17,16 @@ export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.
 
 export const testRef = (index: number): ExactModelRef => exactModelRef(QUALIFIED_TEST_MODELS[index]!)!;
 export const resolveTestModel = (ref: ExactModelRef) => findCuratedModel(ref, QUALIFIED_TEST_MODELS);
+export const testOutputContract = (index: number) => {
+  const model = QUALIFIED_TEST_MODELS[index];
+  if (!model || model.qualification.status !== "qualified") throw new Error(`Test model ${index} is not qualified`);
+  return {
+    mediaType: model.capabilities.some((capability) => capability.endsWith("video")) ? "video" as const : "image" as const,
+    aspectRatio: "9:16" as const,
+    safetyParameterKey: model.qualification.inputContract.safety.parameterKey,
+    safetyValue: model.qualification.inputContract.safety.safeValue,
+    lockedParametersDigest: canonicalDigest(model.qualification.inputContract.lockedParameters) as `sha256:${string}`,
+  };
+};
 export const TEST_RIGHTS = { snapshotId: "rights", revision: 1, digest: `sha256:${"d".repeat(64)}` as `sha256:${string}`, basis: "owned" as const, permittedRemix: "transform" as const, evidenceRefs: ["asset-1"], sourceUrls: [] };
 export const TEST_REMIX_BRIEF = { preserve: ["brand palette"], transform: ["composition"], avoid: ["logos from source"] };

@@ -4,12 +4,12 @@ import { OperationStatusService } from "@/lib/agent-runtime/operation-status/ser
 import { MemoryModelRoutingRepository } from "../memory-repository";
 import { ReplicatePredictionAdapter } from "../replicate-contract";
 import { GenerationExecutionService } from "../execution";
-import { resolveTestModel, testRef, TEST_RIGHTS } from "./fixtures";
+import { resolveTestModel, testOutputContract, testRef, TEST_RIGHTS } from "./fixtures";
 import type { GenerationIntent } from "../types";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
 const at = new Date("2026-09-03T00:00:00Z");
-const intent: GenerationIntent = { schema: "generation-intent/v1", id: "intent", workspaceId: "ws", brand: { profileId: "brand", revision: 2, digest: `sha256:${"a".repeat(64)}`, acceptedAt: at }, promptDigest: canonicalDigest("Arabic campaign") as `sha256:${string}`, capability: "text_to_video", contentLanguage: "ar", arabicVariety: "gulf", rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, outputContract: { mediaType: "video", aspectRatio: "9:16", safetyParameterKey: "disable_safety_checker", safetyValue: false, lockedParametersDigest: `sha256:${"f".repeat(64)}` }, requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null, quote: { currency: "USD", amount: .05, basis: "second", quantity: 8, quotedAt: at, expiresAt: new Date("2026-09-03T00:05:00Z") }, reservationIds: ["budget"], createdByUserId: "user", createdAt: at };
+const intent: GenerationIntent = { schema: "generation-intent/v1", id: "intent", workspaceId: "ws", brand: { profileId: "brand", revision: 2, digest: `sha256:${"a".repeat(64)}`, acceptedAt: at }, promptDigest: canonicalDigest("Arabic campaign") as `sha256:${string}`, capability: "text_to_video", contentLanguage: "ar", arabicVariety: "gulf", rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, outputContract: testOutputContract(5), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null, quote: { currency: "USD", amount: .05, basis: "second", quantity: 8, quotedAt: at, expiresAt: new Date("2026-09-03T00:05:00Z") }, reservationIds: ["budget"], createdByUserId: "user", createdAt: at };
 
 describe("GenerationExecutionService", () => {
   it("requires the sealed prompt and projects admitted provider work durably", async () => {
