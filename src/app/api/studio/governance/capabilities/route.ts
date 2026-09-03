@@ -5,6 +5,9 @@ import { PRODUCTION_CAPABILITY_REGISTRY, dispatchCapability } from "@/lib/agent-
 import { credentialHumanContext } from "@/lib/credential-vault/http";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 import { getProductionGovernanceBulkWorker, getProductionGovernanceExportWorker, getProductionGovernanceImportWorker } from "@/lib/governance/production";
+import { getEmailSender } from "@/lib/auth/email-sender";
+import { deliverGovernanceSecret, redactGovernanceSecrets } from "@/lib/governance/notifications";
+import type { GovernanceCommand } from "@/lib/governance/service";
 
 const bodySchema = z.object({
   capability: z.string().regex(/^(?:governance\.snapshot\.get|governance\.view|members\.(?:invite|manage)|roles\.manage|portfolios\.manage|reviews\.(?:create|decide_content|decide_publishing)|approval_policies\.manage|audit\.(?:view|export)|regions\.manage|retention\.manage|safety\.(?:decide|appeal)|bulk\.(?:preview|execute)|imports\.manage|exports\.manage|workspace\.(?:transfer_ownership|close))@1$/),
@@ -35,9 +38,24 @@ export const POST = withStudioAuth<undefined>(
     if (!context) return noStoreJson({ success: false, code: "WORKSPACE_REQUIRED" }, { status: 400 });
     const definition = PRODUCTION_CAPABILITY_REGISTRY.getDefinition({ name: parsed.data.capability.slice(0, -2), version: 1 });
     if (!definition) return noStoreJson({ success: false, code: "CAPABILITY_NOT_FOUND" }, { status: 404 });
+    const command = (parsed.data.input as { command?: GovernanceCommand }).command;
+    if (command?.type === "begin_step_up" && !authz.contentSession.user.email) return noStoreJson({ success: false, code: "VERIFIED_EMAIL_REQUIRED" }, { status: 403 });
     const response = await dispatchCapability(parsed.data, { securityContext: context });
     if (response.type === "capability_error") return noStoreJson({ success: false, code: response.code, operatorTraceRef: response.operatorTraceRef }, { status: status(response.category) });
     const output = response.output as { exportId?: string; operationId?: string; importId?: string; status?: string };
+    const secretOutput = response.output as { invitationToken?: string; reviewToken?: string; verificationCode?: string };
+    const appOrigin = new URL(process.env.NEXT_PUBLIC_APP_URL ?? request.nextUrl.origin).origin;
+    if (command?.type === "create_invitation" && secretOutput.invitationToken) {
+      await deliverGovernanceSecret({ sender: getEmailSender(), recipient: command.email.trim().toLowerCase(), kind: "invitation", actionUrl: `${appOrigin}/invitations/${encodeURIComponent(secretOutput.invitationToken)}` });
+    }
+    if (command?.type === "issue_review_guest" && secretOutput.reviewToken && secretOutput.verificationCode) {
+      const sender = getEmailSender();
+      await deliverGovernanceSecret({ sender, recipient: command.email.trim().toLowerCase(), kind: "review", actionUrl: `${appOrigin}/review/${encodeURIComponent(secretOutput.reviewToken)}` });
+      await deliverGovernanceSecret({ sender, recipient: command.email.trim().toLowerCase(), kind: "review", code: secretOutput.verificationCode });
+    }
+    if (command?.type === "begin_step_up" && secretOutput.verificationCode) {
+      await deliverGovernanceSecret({ sender: getEmailSender(), recipient: authz.contentSession.user.email!, kind: "step_up", code: secretOutput.verificationCode });
+    }
     if (output?.exportId && (parsed.data.capability === "audit.export@1" || parsed.data.capability === "exports.manage@1")) {
       const kind = parsed.data.capability === "audit.export@1" ? "audit_export" as const : "workspace_export" as const;
       after(async () => {
@@ -57,6 +75,6 @@ export const POST = withStudioAuth<undefined>(
         catch { /* Import item evidence remains durable and idempotent for recovery. */ }
       });
     }
-    return noStoreJson({ success: true, capability: `${response.capability.name}@${response.capability.version}`, result: response.output });
+    return noStoreJson({ success: true, capability: `${response.capability.name}@${response.capability.version}`, result: redactGovernanceSecrets(response.output as Record<string, unknown>) });
   },
 );

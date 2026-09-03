@@ -7,3 +7,4 @@ export * from "./export-worker";
 export * from "./membership-postgres";
 export * from "./bulk-worker";
 export * from "./import-worker";
+export * from "./notifications";

@@ -63,6 +63,7 @@ export type GovernanceCommand =
   | { type: "execute_workspace_closure"; closureId: string; stepUpToken: string }
   | { type: "create_portfolio"; name: string }
   | { type: "assign_portfolio"; portfolioId: string; targetWorkspaceId: string; permissions: Array<"navigate" | "report" | "templates" | "bulk">; expiresAt: string | null }
+  | { type: "revoke_portfolio_assignment"; assignmentId: string }
   | { type: "issue_review_guest"; email: string; purpose: "inspect" | "comment" | "accept_content" | "approve_publishing" | "reject"; resourceKind: "render_proof" | "plan_revision"; resourceId: string; revisionDigest: string; expiresAt: string }
   | { type: "revoke_review_guest"; grantId: string }
   | { type: "publish_approval_policy"; policyId?: string; expectedVersion?: number; policy: Omit<ApprovalPolicyRevision, "schema" | "revision" | "createdByUserId" | "createdAt"> }
@@ -72,7 +73,8 @@ export type GovernanceCommand =
   | { type: "set_region_policy"; region: string; verificationEvidence: string[]; expectedVersion?: number; stepUpToken: string }
   | { type: "publish_retention_policy"; rules: RetentionRule[]; expectedVersion?: number; stepUpToken: string }
   | { type: "create_retention_hold"; retentionClasses: string[]; reason: string; expiresAt: string | null; stepUpToken: string }
-  | { type: "record_deletion"; resourceKind: string; resourceId: string; immediate: string[]; delayed: string[]; retained: string[]; holdIds: string[] }
+  | { type: "release_retention_hold"; holdId: string; reason: string; stepUpToken: string }
+  | { type: "record_deletion"; resourceKind: string; resourceId: string; retentionClass: string; immediate: string[]; delayed: string[]; retained: string[]; holdIds: string[]; stepUpToken: string }
   | { type: "create_safety_decision"; intentRef: string; reasonCode: string; policyVersion: string; safeExplanation: string; evidenceRef: string; remediation: string; appealEligible: boolean }
   | { type: "appeal_safety_decision"; decisionId: string; explanation: string }
   | { type: "resolve_safety_appeal"; appealId: string; outcome: "upheld" | "reevaluate_exact_intent"; currentRevalidationRequired: true }
@@ -97,6 +99,7 @@ const CAPABILITY_BY_COMMAND: Record<GovernanceCommand["type"], GovernanceCapabil
   execute_workspace_closure: "workspace.close",
   create_portfolio: "portfolios.manage",
   assign_portfolio: "portfolios.manage",
+  revoke_portfolio_assignment: "portfolios.manage",
   issue_review_guest: "reviews.create",
   revoke_review_guest: "reviews.create",
   publish_approval_policy: "approval_policies.manage",
@@ -106,6 +109,7 @@ const CAPABILITY_BY_COMMAND: Record<GovernanceCommand["type"], GovernanceCapabil
   set_region_policy: "regions.manage",
   publish_retention_policy: "retention.manage",
   create_retention_hold: "retention.manage",
+  release_retention_hold: "retention.manage",
   record_deletion: "retention.manage",
   create_safety_decision: "safety.decide",
   appeal_safety_decision: "safety.appeal",
@@ -487,6 +491,14 @@ export class GovernanceService {
         target = { kind: "portfolio_assignment", id };
         break;
       }
+      case "revoke_portfolio_assignment": {
+        const assignment = await this.required("portfolio_assignment", command.assignmentId, actor.workspaceId);
+        if (assignment.status !== "active") throw new GovernanceError("CONFLICT", "Portfolio assignment is not active.");
+        mutations = [update(assignment, "revoked", { ...assignment.body, revokedAt: now.toISOString() })];
+        result = { assignmentId: assignment.id, revoked: true };
+        target = { kind: assignment.kind, id: assignment.id };
+        break;
+      }
       case "issue_review_guest": {
         const expiry = exactDate(command.expiresAt, "Guest expiry");
         if (expiry <= now || expiry.getTime() - now.getTime() > MAX_GUEST_LIFETIME_MS || !SHA256.test(command.revisionDigest)) throw new GovernanceError("INVALID_INPUT", "Guest scope or expiry is invalid.");
@@ -589,9 +601,25 @@ export class GovernanceService {
         target = { kind: "retention_hold", id };
         break;
       }
+      case "release_retention_hold": {
+        const hold = await this.required("retention_hold", command.holdId, actor.workspaceId);
+        if (hold.status !== "active") throw new GovernanceError("CONFLICT", "Retention hold is not active.");
+        await this.requireStepUp(actor, "retention.hold.release", hold.id, command.stepUpToken);
+        mutations = [update(hold, "released", { ...hold.body, releaseReason: text(command.reason, "Release reason", 1000), releasedAt: now.toISOString(), releasedByUserId: actor.userId })];
+        result = { holdId: hold.id, status: "released" };
+        target = { kind: hold.kind, id: hold.id };
+        break;
+      }
       case "record_deletion": {
+        if (!(RETENTION_CLASSES as readonly string[]).includes(command.retentionClass)) throw new GovernanceError("INVALID_INPUT", "Deletion Retention Class is invalid.");
+        await this.requireStepUp(actor, "retention.delete", safeId(command.resourceId, "Resource"), command.stepUpToken);
+        const activeHolds = await this.repository.listResources<{ retentionClasses: string[]; expiresAt: string | null }>({ workspaceId: actor.workspaceId, kinds: ["retention_hold"], status: "active" });
+        const applicableHolds = activeHolds.filter((hold) => hold.body.retentionClasses.includes(command.retentionClass) && (!hold.body.expiresAt || exactDate(hold.body.expiresAt, "Hold expiry") > now));
+        const suppliedHolds = new Set(command.holdIds);
+        if (applicableHolds.some((hold) => !suppliedHolds.has(hold.id))) throw new GovernanceError("CONFLICT", "Deletion is missing an active applicable hold.");
+        if (applicableHolds.length && !command.retained.length) throw new GovernanceError("CONFLICT", "Held material must remain explicitly retained.");
         const id = newId("deletion");
-        const receiptBody = { resourceKind: text(command.resourceKind, "Resource kind", 100), resourceId: safeId(command.resourceId, "Resource"), immediate: unique(command.immediate), delayed: unique(command.delayed), retained: unique(command.retained), holdIds: unique(command.holdIds), recordedAt: now.toISOString() };
+        const receiptBody = { schema: "deletion-receipt/v1", retentionClass: command.retentionClass, resourceKind: text(command.resourceKind, "Resource kind", 100), resourceId: safeId(command.resourceId, "Resource"), immediate: unique(command.immediate), delayed: unique(command.delayed), retained: unique(command.retained), holdIds: unique(command.holdIds), recordedAt: now.toISOString() };
         const tombstoneId = `${receiptBody.resourceKind}:${receiptBody.resourceId}`;
         mutations = [create("deletion_receipt", id, "completed", receiptBody), create("tombstone", tombstoneId, "active", { resourceKind: receiptBody.resourceKind, resourceId: receiptBody.resourceId, deletionReceiptId: id, retainedEvidenceOnly: true })];
         result = { deletionReceiptId: id, tombstoneId };
