@@ -10,15 +10,25 @@ import { shouldRequireOnboarding } from "./features";
 import { ensurePersonalWorkspaceForUser } from "@/lib/studio/repository";
 
 export async function requireOnboardingComplete(requestedPath: string) {
-  const session = await getServerAuthSession(await headers());
+  const requestHeaders = await headers();
+  const headerPath = requestHeaders.get("x-interface-route");
+  const resolvedPath =
+    headerPath &&
+    headerPath.startsWith("/") &&
+    !headerPath.startsWith("//") &&
+    !headerPath.startsWith("/api/") &&
+    !headerPath.includes(":")
+      ? headerPath
+      : requestedPath;
+  const session = await getServerAuthSession(requestHeaders);
   if (!session?.user) {
-    redirect(`/sign-in?next=${encodeURIComponent(requestedPath)}`);
+    redirect(`/sign-in?next=${encodeURIComponent(resolvedPath)}`);
   }
   if (session.user.emailVerified !== true) {
-    redirect(`/verify-email?next=${encodeURIComponent(requestedPath)}`);
+    redirect(`/verify-email?next=${encodeURIComponent(resolvedPath)}`);
   }
   if (!isDatabaseConfigured()) {
-    redirect(`/onboarding?next=${encodeURIComponent(requestedPath)}`);
+    redirect(`/onboarding?next=${encodeURIComponent(resolvedPath)}`);
   }
 
   if (!shouldRequireOnboarding(session.user.id)) {
@@ -40,8 +50,8 @@ export async function requireOnboardingComplete(requestedPath: string) {
   const destination = resolvePostAuthDestination({
     emailVerified: true,
     onboardingStatus: aggregate?.session.status ?? null,
-    requestedPath,
+    requestedPath: resolvedPath,
   });
-  if (destination !== requestedPath) redirect(destination);
+  if (destination !== resolvedPath) redirect(destination);
   return { session, aggregate, repository };
 }

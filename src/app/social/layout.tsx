@@ -1,12 +1,12 @@
 import { SocialLayout } from "@/components/social/SocialLayout";
-import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { getProductShellContext } from "@/lib/product-shell/server";
 
 export default async function SocialRootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  await requireOnboardingComplete("/social/calendar");
+  const shellContext = await getProductShellContext("/social/calendar");
 
-  return <SocialLayout>{children}</SocialLayout>;
+  return <SocialLayout shellContext={shellContext}>{children}</SocialLayout>;
 }

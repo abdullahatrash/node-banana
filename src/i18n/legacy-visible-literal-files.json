@@ -1,7 +1,6 @@
 [
   "src/app/agents/AgentsClient.tsx",
   "src/app/agents/pair/[challengeId]/PairAgentClient.tsx",
-  "src/app/blitz/page.tsx",
   "src/app/editor/[...slug]/page.tsx",
   "src/app/editor/page.tsx",
   "src/app/sign-in/page.tsx",
@@ -41,7 +40,6 @@
   "src/components/social/ChannelCard.tsx",
   "src/components/social/ChannelsPageClient.tsx",
   "src/components/social/MastodonConnectModal.tsx",
-  "src/components/social/PillarSwitcher.tsx",
   "src/components/social/PlatformPicker.tsx",
   "src/components/social/ProviderKeysSettings.tsx",
   "src/components/social/SocialSidebar.tsx",
@@ -69,6 +67,5 @@
   "src/components/social/shared/PlatformIcon.tsx",
   "src/components/ui/breadcrumb.tsx",
   "src/components/ui/dialog.tsx",
-  "src/components/ui/sheet.tsx",
-  "src/components/ui/sidebar.tsx"
+  "src/components/ui/sheet.tsx"
 ]

@@ -24,22 +24,22 @@ describe("post-auth destination", () => {
     ).toBe("/onboarding");
   });
 
-  it("sends newly completed users to first value", () => {
+  it("sends newly completed users to the unified dashboard", () => {
     expect(
       resolvePostAuthDestination({
         emailVerified: true,
         onboardingStatus: "completed",
       }),
-    ).toBe("/blitz");
+    ).toBe("/dashboard");
   });
 
-  it("does not disrupt completed legacy users", () => {
+  it("gives completed legacy users the same unified entry point", () => {
     expect(
       resolvePostAuthDestination({
         emailVerified: true,
         onboardingStatus: "completed_legacy",
       }),
-    ).toBe("/simple-studio/images");
+    ).toBe("/dashboard");
   });
 
   it("honors safe requested product paths after completion", () => {
@@ -63,4 +63,3 @@ describe("post-auth destination", () => {
     }
   });
 });
-

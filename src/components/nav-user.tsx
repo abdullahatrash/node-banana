@@ -20,10 +20,11 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { EllipsisVerticalIcon, CircleUserRoundIcon, CreditCardIcon, BellIcon, LogOutIcon, LanguagesIcon } from "lucide-react"
+import { EllipsisVerticalIcon, CircleUserRoundIcon, LogOutIcon, LanguagesIcon } from "lucide-react"
 import { useDirectionStore } from "@/store/directionStore"
 import { useRouter } from "next/navigation"
 import { useLocale, useTranslations } from "next-intl"
+import { authClient } from "@/lib/auth/client"
 
 export function NavUser({
   user,
@@ -55,6 +56,12 @@ export function NavUser({
       body: JSON.stringify({ locale: locale === "en" ? "ar" : "en" }),
       keepalive: true,
     })
+    router.refresh()
+  }
+
+  async function logOut() {
+    await authClient.signOut()
+    router.replace("/sign-in")
     router.refresh()
   }
 
@@ -103,20 +110,10 @@ export function NavUser({
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push("/settings")}>
                 <CircleUserRoundIcon
                 />
                 {t("account")}
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <CreditCardIcon
-                />
-                {t("billing")}
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <BellIcon
-                />
-                {t("notifications")}
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
@@ -125,7 +122,7 @@ export function NavUser({
               {t(`languageSwitch.${locale === "en" ? "ar" : "en"}`)}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void logOut()}>
               <LogOutIcon
               />
               {t("logOut")}

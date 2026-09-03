@@ -150,4 +150,16 @@ describe("OnboardingFlow", () => {
       payload: {},
     });
   });
+
+  it("routes an already completed onboarding session to the dashboard", async () => {
+    const completed = snapshot("education", 9);
+    completed.status = "completed";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(json({ success: true, snapshot: completed })),
+    );
+
+    render(<OnboardingFlow />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
+  });
 });

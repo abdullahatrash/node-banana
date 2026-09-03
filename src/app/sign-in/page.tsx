@@ -24,7 +24,7 @@ function SignInForm() {
   const nextPath =
     nextParam && isSafeLocalPath(nextParam)
       ? nextParam
-      : "/blitz";
+      : "/dashboard";
   const t = useTranslations("auth.signIn");
   const common = useTranslations("common");
 

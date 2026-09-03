@@ -1,12 +1,12 @@
 import { SimpleStudioLayout } from "@/components/simple-studio-shell/SimpleStudioLayout";
-import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { getProductShellContext } from "@/lib/product-shell/server";
 
 export default async function SimpleStudioRootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  await requireOnboardingComplete("/simple-studio/images");
+  const shellContext = await getProductShellContext("/simple-studio/images");
 
-  return <SimpleStudioLayout>{children}</SimpleStudioLayout>;
+  return <SimpleStudioLayout shellContext={shellContext}>{children}</SimpleStudioLayout>;
 }

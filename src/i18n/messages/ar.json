@@ -29,8 +29,19 @@
     "publishingFailedBody": "تعذر نشر {name}. راجع تفاصيل التسليم قبل إعادة المحاولة."
   },
   "shell": {
+    "brandName": "تصميمي",
+    "navigationLabel": "التنقل في المنتج",
+    "skipToContent": "التخطي إلى المحتوى",
+    "sidebar": { "title": "تنقل مساحة العمل", "description": "تنقّل في تصميمي ومساحة عملك الحالية.", "toggle": "فتح أو إغلاق التنقل" },
+    "primary": { "dashboard": "لوحة التحكم", "blitz": "بليتز", "inspiration": "الإلهام", "automations": "الأتمتة", "aiStudio": "استوديو الذكاء الاصطناعي", "influencers": "المؤثرون", "content": "المحتوى", "library": "المكتبة", "calendar": "التقويم", "analytics": "التحليلات", "brand": "العلامة", "settings": "الإعدادات" },
+    "context": { "compose": "إنشاء منشور", "channels": "القنوات", "approvals": "الموافقات", "deliveries": "عمليات التسليم", "agents": "الوكلاء", "videoEditor": "محرر الفيديو", "usage": "الاستخدام", "budgets": "الميزانيات", "quotas": "الحصص", "credentials": "بيانات الاعتماد", "observability": "المراقبة", "promptLibrary": "مكتبة التعليمات", "posts": "المنشورات", "socialMedia": "وسائط النشر", "events": "الأحداث", "copilot": "المساعد", "integrations": "التكاملات", "plugs": "خطافات الويب" },
+    "status": { "planned": "مخطط", "plannedDetail": "هذه القدرة الكاملة مجدولة لشريحة تكافؤ لاحقة ولا نعرضها على أنها متاحة الآن." },
+    "workspace": { "label": "مساحة العمل", "select": "تبديل مساحة العمل", "owner": "مالك", "admin": "مسؤول", "member": "عضو", "empty": "لا توجد مساحة عمل مصرح بها", "unavailable": "سياق مساحة العمل غير متاح" },
+    "dashboard": { "eyebrow": "الصفحة الرئيسية لمساحة العمل", "title": "أنشئ وراجع وانشر من مكان واحد", "description": "استخدم تنقل مساحة العمل الموحد للوصول إلى كل قدرات الإنشاء والنشر والوكلاء والعمليات المتاحة.", "createTitle": "إنشاء المحتوى", "createDescription": "ابدأ بصورة أو فيديو أو مسار كتابة في استوديو الذكاء الاصطناعي.", "publishTitle": "التخطيط والنشر", "publishDescription": "أنشئ منشورًا واربط القنوات وأدر التقويم.", "operateTitle": "مراجعة العمليات", "operateDescription": "راجع الموافقات والتسليمات والاستخدام والميزانيات وحالة الخدمة.", "open": "فتح" },
+    "contentHub": { "title": "مساحة عمل المحتوى", "description": "اختر سطح إنشاء أو نشر متاحًا فعليًا. يصل نظام الصيغ الكامل في شريحة التكافؤ المخصصة له، ولا تعرض هذه الصفحة الصيغ غير المكتملة على أنها متاحة.", "copyTitle": "كتابة النصوص", "copyDescription": "أنشئ نصوص الحملات والمنشورات في استوديو الكتابة.", "imagesTitle": "إنشاء الصور", "imagesDescription": "أنشئ الأصول البصرية وطوّرها في استوديو الذكاء الاصطناعي.", "videosTitle": "إنشاء الفيديو", "videosDescription": "أنشئ أصول فيديو قصيرة باستخدام النماذج المتاحة.", "postsTitle": "إدارة المنشورات", "postsDescription": "افتح المسودات الاجتماعية المحفوظة وسجلات النشر." },
+    "settings": { "title": "الإعدادات", "description": "صلاحيات مساحة العمل وإعدادات مزوّدي الخدمة", "close": "إغلاق الإعدادات", "navigationLabel": "أقسام الإعدادات", "sections": { "api": "الوصول عبر API", "providers": "بيانات اعتماد المزوّدين" } },
     "areas": { "simpleStudio": "الاستوديو المبسّط", "videoEditor": "محرر الفيديو", "socialHub": "مركز النشر", "analytics": "التحليلات" },
-    "groups": { "create": "إنشاء", "browse": "استعراض", "navigation": "التنقل", "channels": "القنوات" },
+    "groups": { "create": "إنشاء", "browse": "استعراض", "navigation": "التنقل", "channels": "النشر", "workspace": "أدوات مساحة العمل", "operations": "العمليات", "more": "أدوات إضافية" },
     "routes": { "images": "الصور", "videos": "الفيديو", "copy": "النصوص", "library": "المكتبة", "promptLibrary": "مكتبة التعليمات", "calendar": "التقويم", "compose": "إنشاء منشور", "copilot": "المساعد", "posts": "المنشورات", "channels": "القنوات", "events": "الأحداث", "analytics": "التحليلات", "media": "الوسائط", "integrations": "التكاملات", "plugs": "الموصلات", "agents": "الوكلاء", "settings": "الإعدادات" },
     "filters": { "all": "الكل", "photo": "صور", "video": "فيديو", "copy": "نصوص" },
     "actions": { "savePrompt": "حفظ التعليمة", "newSavedPrompt": "تعليمة محفوظة جديدة", "newPost": "منشور جديد", "addChannel": "إضافة قناة" },
@@ -38,6 +49,7 @@
     "userFallback": "مستخدم",
     "noChannels": "لا توجد قنوات متصلة"
   },
+  "blitz": { "eyebrow": "أول قيمة من مساحة عملك", "readyTitle": "ملف علامتك جاهز", "empty": "تم تجهيز ملف علامتك. ابدأ الآن بإنشاء أول محتوى.", "why": "لماذا هذا الاقتراح؟", "formats": "صيغ مقترحة", "copy": "فتح استوديو الكتابة", "image": "إنشاء صورة", "provenance": "مبني من ملف علامة راجعته واعتمدته", "profileEvidence": "الملف {profileId} · المراجعة {revision}" },
   "toast": { "copy": "نسخ الرسالة", "dismiss": "إغلاق", "showDetails": "عرض التفاصيل", "hideDetails": "إخفاء التفاصيل" },
   "auth": {
     "signIn": { "title": "تسجيل الدخول", "subtitle": "ادخل إلى مساحة عمل المحتوى.", "failed": "تعذر تسجيل الدخول. تحقق من بياناتك وحاول مرة أخرى.", "submitting": "جارٍ تسجيل الدخول…", "submit": "تسجيل الدخول", "newAccount": "ليس لديك حساب؟", "signUp": "إنشاء حساب" },

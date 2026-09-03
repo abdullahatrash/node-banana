@@ -136,7 +136,7 @@ export function OnboardingFlow() {
       }
       if (!response.ok || !body.snapshot) throw new Error(body.error);
       if (body.snapshot.status === "completed" || body.snapshot.status === "completed_legacy") {
-        router.replace("/blitz");
+        router.replace("/dashboard");
         return;
       }
       hydrate(body.snapshot);
@@ -423,7 +423,7 @@ export function OnboardingFlow() {
           <h2 className="mt-6 text-3xl font-semibold text-white">{copy.educationTitle}</h2>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-7 text-stone-400">{copy.educationSubtitle}</p>
           <div className="mt-8 grid gap-3 sm:grid-cols-3">{[Globe2, Building2, FileText].map((Icon, index) => <div key={index} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5"><Icon className="mx-auto size-5 text-amber-300" /><p className="mt-3 text-xs text-stone-400">{copy.educationFeatures[index]}</p></div>)}</div>
-          <button disabled={submitting} onClick={async () => { if (await send("complete", {})) router.replace("/blitz"); }} className="mt-8 flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-40">{submitting ? copy.saving : copy.finish}<ContinueIcon className="size-4" /></button>
+          <button disabled={submitting} onClick={async () => { if (await send("complete", {})) router.replace("/dashboard"); }} className="mt-8 flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-40">{submitting ? copy.saving : copy.finish}<ContinueIcon className="size-4" /></button>
         </div>
       );
       break;

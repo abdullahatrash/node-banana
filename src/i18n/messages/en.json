@@ -29,8 +29,19 @@
     "publishingFailedBody": "We couldn’t publish {name}. Review the delivery details before retrying."
   },
   "shell": {
+    "brandName": "Tasmeemai",
+    "navigationLabel": "Product navigation",
+    "skipToContent": "Skip to content",
+    "sidebar": { "title": "Workspace navigation", "description": "Navigate Tasmeemai and your current workspace.", "toggle": "Toggle navigation" },
+    "primary": { "dashboard": "Dashboard", "blitz": "Blitz", "inspiration": "Inspiration", "automations": "Automations", "aiStudio": "AI Studio", "influencers": "Influencers", "content": "Content", "library": "Library", "calendar": "Calendar", "analytics": "Analytics", "brand": "Brand", "settings": "Settings" },
+    "context": { "compose": "Compose", "channels": "Channels", "approvals": "Approvals", "deliveries": "Deliveries", "agents": "Agents", "videoEditor": "Video Editor", "usage": "Usage", "budgets": "Budgets", "quotas": "Quotas", "credentials": "Credentials", "observability": "Observability", "promptLibrary": "Prompt Library", "posts": "Posts", "socialMedia": "Social media", "events": "Events", "copilot": "Copilot", "integrations": "Integrations", "plugs": "Webhooks" },
+    "status": { "planned": "Planned", "plannedDetail": "This complete capability is scheduled for a later parity slice and is not presented as available yet." },
+    "workspace": { "label": "Workspace", "select": "Switch workspace", "owner": "Owner", "admin": "Admin", "member": "Member", "empty": "No authorized workspace", "unavailable": "Workspace context is unavailable" },
+    "dashboard": { "eyebrow": "Workspace home", "title": "Create, review, and publish from one place", "description": "Use the unified workspace navigation to move between every available creation, publishing, agent, and operations capability.", "createTitle": "Create content", "createDescription": "Start with an image, video, or copy workflow in AI Studio.", "publishTitle": "Plan and publish", "publishDescription": "Compose a post, connect channels, and manage the calendar.", "operateTitle": "Review operations", "operateDescription": "Inspect approvals, deliveries, usage, budgets, and service health.", "open": "Open" },
+    "contentHub": { "title": "Content workspace", "description": "Choose a live creation or publishing surface. The complete format system arrives as its own parity slice; this hub does not disguise unfinished formats as available.", "copyTitle": "Write copy", "copyDescription": "Create campaign and social copy with the copy studio.", "imagesTitle": "Generate images", "imagesDescription": "Create and refine visual assets in AI Studio.", "videosTitle": "Generate videos", "videosDescription": "Create short-form video assets with available models.", "postsTitle": "Manage posts", "postsDescription": "Open saved social drafts and publishing records." },
+    "settings": { "title": "Settings", "description": "Workspace access and provider configuration", "close": "Close settings", "navigationLabel": "Settings sections", "sections": { "api": "API access", "providers": "Provider credentials" } },
     "areas": { "simpleStudio": "Simple Studio", "videoEditor": "Video Editor", "socialHub": "Social Hub", "analytics": "Analytics" },
-    "groups": { "create": "Create", "browse": "Browse", "navigation": "Navigation", "channels": "Channels" },
+    "groups": { "create": "Create", "browse": "Browse", "navigation": "Navigation", "channels": "Publishing", "workspace": "Workspace tools", "operations": "Operations", "more": "More tools" },
     "routes": { "images": "Images", "videos": "Videos", "copy": "Copy", "library": "Library", "promptLibrary": "Prompt Library", "calendar": "Calendar", "compose": "Compose", "copilot": "Copilot", "posts": "Posts", "channels": "Channels", "events": "Events", "analytics": "Analytics", "media": "Media", "integrations": "Integrations", "plugs": "Plugs", "agents": "Agents", "settings": "Settings" },
     "filters": { "all": "All", "photo": "Photo", "video": "Video", "copy": "Copy" },
     "actions": { "savePrompt": "Save prompt", "newSavedPrompt": "New saved prompt", "newPost": "New post", "addChannel": "Add channel" },
@@ -38,6 +49,7 @@
     "userFallback": "User",
     "noChannels": "No channels connected"
   },
+  "blitz": { "eyebrow": "First value from your workspace", "readyTitle": "Your Brand Profile is ready", "empty": "Your Brand Profile is prepared. Start creating your first content now.", "why": "Why this suggestion?", "formats": "Suggested formats", "copy": "Open copy studio", "image": "Create an image", "provenance": "Built from the Brand Profile you reviewed and accepted", "profileEvidence": "Profile {profileId} · Revision {revision}" },
   "toast": { "copy": "Copy message", "dismiss": "Dismiss", "showDetails": "Show details", "hideDetails": "Hide details" },
   "auth": {
     "signIn": { "title": "Sign in", "subtitle": "Access your content workspace.", "failed": "Sign in failed. Please check your details and try again.", "submitting": "Signing in…", "submit": "Sign in", "newAccount": "Need an account?", "signUp": "Sign up" },

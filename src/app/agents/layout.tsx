@@ -1,6 +1,7 @@
-import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { ProductShell } from "@/components/product-shell/ProductShell";
+import { getProductShellContext } from "@/lib/product-shell/server";
 
 export default async function AgentsLayout({ children }: { children: React.ReactNode }) {
-  await requireOnboardingComplete("/agents");
-  return children;
+  const shellContext = await getProductShellContext("/agents");
+  return <ProductShell context={shellContext}>{children}</ProductShell>;
 }

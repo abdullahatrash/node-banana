@@ -37,8 +37,5 @@ export function resolvePostAuthDestination(input: {
   }
 
   if (requestedPath) return requestedPath;
-  return input.onboardingStatus === "completed_legacy"
-    ? "/simple-studio/images"
-    : "/blitz";
+  return "/dashboard";
 }
-

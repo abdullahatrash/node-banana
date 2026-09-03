@@ -2,15 +2,16 @@
 
 import { useEffect } from "react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
-import { SocialAppSidebar } from "./SocialAppSidebar"
-import { SocialSiteHeader } from "./SocialSiteHeader"
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import { SocialHeaderActions } from "./SocialSiteHeader"
+import { ProductShell } from "@/components/product-shell/ProductShell"
+import type { ProductShellContext } from "@/lib/product-shell/server"
 
 interface SocialLayoutProps {
   children: React.ReactNode
+  shellContext: ProductShellContext
 }
 
-export function SocialLayout({ children }: SocialLayoutProps) {
+export function SocialLayout({ children, shellContext }: SocialLayoutProps) {
   const fetchAccounts = useSocialAccountsStore((s) => s.fetchAccounts)
 
   useEffect(() => {
@@ -18,21 +19,8 @@ export function SocialLayout({ children }: SocialLayoutProps) {
   }, [fetchAccounts])
 
   return (
-    <SidebarProvider
-      style={
-        {
-          "--sidebar-width": "calc(var(--spacing) * 64)",
-          "--header-height": "calc(var(--spacing) * 12)",
-        } as React.CSSProperties
-      }
-    >
-      <SocialAppSidebar variant="inset" />
-      <SidebarInset>
-        <SocialSiteHeader />
-        <div className="flex flex-1 flex-col">
-          {children}
-        </div>
-      </SidebarInset>
-    </SidebarProvider>
+    <ProductShell context={shellContext} headerActions={<SocialHeaderActions />}>
+      {children}
+    </ProductShell>
   )
 }

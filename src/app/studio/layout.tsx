@@ -1,11 +1,12 @@
-import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { ProductShell } from "@/components/product-shell/ProductShell";
+import { getProductShellContext } from "@/lib/product-shell/server";
 
 export default async function StudioLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  await requireOnboardingComplete("/studio/usage");
+  const shellContext = await getProductShellContext("/studio/usage");
 
-  return children;
+  return <ProductShell context={shellContext}>{children}</ProductShell>;
 }

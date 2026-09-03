@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { SimpleStudioSiteHeader } from "../SimpleStudioSiteHeader";
+import { SimpleStudioHeaderActions } from "../SimpleStudioSiteHeader";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
 import { I18nTestProvider } from "@/test/i18n";
@@ -15,37 +15,19 @@ function renderHeader() {
   return render(
     <I18nTestProvider locale="en">
       <SidebarProvider>
-        <SimpleStudioSiteHeader />
+        <SimpleStudioHeaderActions />
       </SidebarProvider>
     </I18nTestProvider>,
   );
 }
 
-describe("SimpleStudioSiteHeader", () => {
+describe("SimpleStudioHeaderActions", () => {
   beforeEach(() => {
     useSimpleStudioShellStore.setState({
       savePromptDialogOpen: false,
       libraryModeFilter: "all",
       promptLibraryTab: "templates",
     });
-  });
-
-  it("shows 'Images' title on /simple-studio/images", () => {
-    pathnameMock.mockReturnValue("/simple-studio/images");
-    renderHeader();
-    expect(screen.getByRole("heading", { name: "Images" })).toBeInTheDocument();
-  });
-
-  it("shows 'Library' title on /simple-studio/library", () => {
-    pathnameMock.mockReturnValue("/simple-studio/library");
-    renderHeader();
-    expect(screen.getByRole("heading", { name: "Library" })).toBeInTheDocument();
-  });
-
-  it("shows 'Prompt Library' title on /simple-studio/prompt-library", () => {
-    pathnameMock.mockReturnValue("/simple-studio/prompt-library");
-    renderHeader();
-    expect(screen.getByRole("heading", { name: "Prompt Library" })).toBeInTheDocument();
   });
 
   it("shows a Save prompt button on a form route", () => {

@@ -15,7 +15,7 @@ export default async function OnboardingPage() {
       userName: session.user.name,
       userEmail: session.user.email,
     });
-    redirect("/simple-studio/images");
+    redirect("/dashboard");
   }
   return <OnboardingFlow />;
 }

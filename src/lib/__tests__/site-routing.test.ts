@@ -31,6 +31,17 @@ describe("site routing", () => {
     "/studio/usage",
     "/agents",
     "/dashboard",
+    "/ai-studio",
+    "/automations",
+    "/content",
+    "/library",
+    "/calendar",
+    "/analytics",
+    "/settings",
+    "/compose",
+    "/channels",
+    "/approvals",
+    "/deliveries",
   ])("recognizes %s as product UI", (pathname) => {
     expect(isProductPath(pathname)).toBe(true);
   });
