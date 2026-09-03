@@ -16,6 +16,18 @@ _Avoid_: Latest Fastlane, moving target, feature checklist
 The customer-owned isolation and collaboration boundary for one brand's people, Brand Profile, content, provider access, Channels, policies, commercial state, and audit evidence. A person's identity may belong to multiple Workspaces, but no resource or active operation silently moves between them.
 _Avoid_: Account, organization, tenant, project
 
+**Workspace Role**:
+A versioned named bundle of Application Capability eligibility used to make common human access understandable. Built-in roles are Owner, Admin, Billing Admin, Creator, Approver, Analyst, and Viewer; a Workspace may define Custom Roles from the same stable capabilities. Effective authority remains the intersection of role bundle, exact resource grants, policy, Entitlement, and resource state, so no role alone grants Publishing Approval, credential use, or provider spend.
+_Avoid_: Permission, approval authority, entitlement, hardcoded role check
+
+**Portfolio**:
+A coordination boundary that groups independently owned client Workspaces for agency navigation, reporting, templates, and explicitly authorized bulk operations. It never owns, merges, transfers, or lends Workspace resources, subscriptions, Generation Credits, credentials, policies, or audit history.
+_Avoid_: Multi-brand Workspace, parent tenant, agency Workspace, shared billing account
+
+**Portfolio Assignment**:
+A person's explicit, revocable authorization to perform named cross-Workspace coordination capabilities over an allowlist of Workspaces in one Portfolio. Every invocation still resolves and displays one exact target Workspace and rechecks that Workspace's own membership, role, resource grants, policy, and Entitlements.
+_Avoid_: Global admin, agency member, cross-tenant role, inherited Workspace access
+
 **Workspace Subscription**:
 The Workspace-owned commercial agreement that grants plan Entitlements and recurring Generation Credit allowances. Human roles govern purchase and administration, but the subscription never belongs to an individual identity.
 _Avoid_: User plan, billing account, membership tier
@@ -208,6 +220,10 @@ _Avoid_: user context, auth object, session user, caller
 A **Principal** representing a real signed-in person whose identity and Workspace membership come from the human authentication system.
 _Avoid_: user ID, session, approver (unless making an Approval)
 
+**Review Guest**:
+A verified external recipient granted time-bounded, revocable, single-purpose access to inspect and decide an exact Render Proof or Publishing Plan Revision. A Review Guest is not a Workspace member and cannot browse other resources, alter Channels, use source media, or approve a later revision; verified email plus step-up code protects the review link.
+_Avoid_: Guest member, public share, anonymous approver, client account
+
 **Agent Principal**:
 A distinct, Workspace-bound **Principal** representing one External Agent installation or operational identity. An owner or administrator creates it with an accountable human sponsor. It is `active`, reversibly `suspended`, or terminally `revoked`; sponsor loss automatically suspends it until an Owner reassigns accountability and reviews its grants. Audit evidence distinguishes the acting Agent Principal from that sponsor; the Agent never impersonates the human.
 _Avoid_: service user, bot user, API user, human-on-behalf-of
@@ -377,8 +393,16 @@ The deny-by-default set of capability scopes and explicit resource allow-lists a
 _Avoid_: role, permissions object, API-key access, superadmin
 
 **Approval Authority**:
-An explicit human-only grant to decide **Publishing Approvals** for bounded Channels and publishing actions. Workspace Owners receive it by default; other Human Principals require an explicit grant. It is distinct from `publishing:release`, which only permits invoking release after valid Approval.
+An explicit human-only grant to participate in **Publishing Approvals** for bounded Channels and publishing actions under an exact Approval Policy. Owner, Admin, and Approver Workspace Roles may administer or establish eligibility as separately authorized, but no membership role itself grants a decision. It is distinct from `publishing:release`, which only permits invoking release after valid Approval.
 _Avoid_: publish permission, approver role, admin approval
+
+**Approval Policy**:
+An immutable versioned rule for one decision scope that declares eligible Approval Authorities, single, any-of, sequential, quorum, or separation-of-duty requirements, deadlines, escalation, and expiry. Each decision pins the exact policy and resource revision; Content Acceptance and Publishing Approval use distinct policies, and a content edit always requires a new decision.
+_Avoid_: Approver list, workflow status, role permission, reusable approval
+
+**Step-Up Authentication**:
+Recent proof of a Human Principal's identity required immediately before a bounded high-risk capability such as ownership transfer, Workspace Closure, authentication-factor change, credential replacement, Agent Principal creation, unbounded spend, payout change, exceptional credit/refund action, or bulk public release. It strengthens authentication but never replaces authorization, Approval, or idempotency.
+_Avoid_: Confirmation dialog, password prompt, approval, admin permission
 
 **Authorization Decision**:
 Durable evidence of an authorization evaluation at command admission or immediately before an external or irreversible effect. It records the requesting Principal, non-secret Agent Key identity when applicable, required scope, resource constraints, policy versions, result, reason, and time. Runtime workers act from persisted authorized intent without holding the caller's key or impersonating that Principal.
@@ -387,6 +411,18 @@ _Avoid_: permission check, middleware result, auth log
 **Security Event**:
 An immutable, access-controlled audit event for Principal, authentication, Agent Key, grant, Credential Profile, policy, authorization, or Approval activity. It identifies the Workspace, acting Principal, affected non-secret references, action, result, structured reason, time, and correlation/idempotency reference without retaining secret material. Exact retention belongs to Workspace telemetry policy.
 _Avoid_: application log, auth log, analytics event
+
+**Workspace Audit Trail**:
+The role-filtered customer projection of append-only Security Events and durable membership, grant, credential, billing, content-acceptance, Approval, Automation, generation, publishing, deletion, export, and support-access evidence. It is queryable and exportable without exposing secrets, operator-only traces, another Workspace, or data beyond the viewer's authority.
+_Avoid_: Server logs, activity feed, analytics, operator console
+
+**Safety Decision**:
+Immutable evidence that an exact generation, Inspiration, Persona, content, or publishing action was allowed, blocked, or constrained under a named policy version. It carries a stable reason code, safe explanation, affected intent/resource, evidence reference, allowed remediation, and appeal eligibility without exposing detection internals.
+_Avoid_: Moderation error, provider refusal, content warning, hidden risk score
+
+**Safety Appeal**:
+A trackable request for authorized human review of an eligible Safety Decision. A successful appeal changes only the disposition of the exact blocked intent and resumes it only after current authorization, policy, commercial, and provider readiness are revalidated; it never creates a general bypass.
+_Avoid_: Support ticket, override, retry, policy exemption
 
 **Durable Contract Evidence**:
 The canonical non-content facts required to inspect, authorize, meter, audit, reconcile, or reproduce a domain resource, including safe identities, state, events, effect evidence, Usage Records, policy decisions, and provenance. It follows the owning resource's retention and is never reconstructed from operational telemetry.
@@ -432,9 +468,25 @@ _Avoid_: support role, admin access, observability permission, debug mode
 The immutable versioned durations and expiry rules for canonical resources, Durable Contract Evidence, Operational Metrics, Diagnostic Traces, orchestrator history, Support Bundles, and acceptance evidence in one Workspace. It may shorten inactive history but never remove evidence required by active safety, idempotency, approval, delivery, reservation, or reconciliation obligations.
 _Avoid_: log retention, cleanup schedule, data lifecycle config, TTL settings
 
+**Retention Class**:
+A versioned category within a Workspace Retention Policy that gives one kind of content or evidence its default duration, legal floor, configurable bounds, hold behavior, deletion receipt, and tombstone rules. Recoverable drafts/media, published lineage, consent, security, billing/tax, provider diagnostics, and support attachments remain distinct classes.
+_Avoid_: One deletion period, table TTL, soft-delete flag, storage lifecycle
+
+**Data Region Policy**:
+A Workspace-pinned rule describing where supported storage and processing occur and which provider routes or cross-region transfers are allowed. Product claims exist only for verified infrastructure, contracts, subprocessors, backups, logging, and deletion behavior; unsupported providers are excluded rather than silently violating the policy.
+_Avoid_: MENA hosted, region dropdown, cloud region, provider location
+
 **Workspace Closure**:
 The recoverable process that blocks new Workspace effects, settles subscriptions and refunds, permits required ownership transfer or export, and later erases eligible content under retention policy. It is distinct from deleting a person's identity, leaving a membership, or deleting one resource.
 _Avoid_: Delete account, leave team, drop tenant, cascade delete
+
+**Bulk Operation**:
+A durable, previewable job that applies one existing single-resource Application Capability to an explicit target set with pinned Workspace, authorization, quote, conflict, and effect evidence. It supports dry-run, bounded concurrency, per-item outcomes, safe cancellation, and retry of only known-safe failures; an ambiguous external effect is never replayed blindly.
+_Avoid_: Select all handler, loop in the browser, batch endpoint, mass action
+
+**Workspace Export**:
+An asynchronous, access-controlled, encrypted, expiring package of eligible canonical Workspace data and a signed machine-readable manifest describing scope, hashes, timestamps, schema versions, and exclusions. Secrets, non-transferable licensed assets, and evidence that must legally remain are excluded with explicit reasons.
+_Avoid_: Database dump, download all, backup, audit export
 
 **Parity Matrix**:
 The versioned verification record keyed by reference route, capability, role, Entitlement, viewport, direction, and state. Each required cell links sanitized observation evidence, Tasmeemai behavior, acceptance tests, screenshots, capability contracts, deliberate adaptations, and sign-off.
@@ -859,6 +911,9 @@ _Avoid_: rank tracking, brand monitoring, mentions
 ## Relationships
 
 - A **Workspace** has zero or more **Channels**.
+- Built-in and Custom Workspace Roles are versioned capability bundles for human comprehension; exact resource grants, policies, Entitlements, and state still narrow effective authority, and no role alone grants Approval, credential use, or spend.
+- A Portfolio groups independently governed Workspaces and Portfolio Assignments coordinate across an explicit allowlist; no Portfolio action changes the selected target Workspace or borrows another Workspace's resources, credits, credentials, or authority.
+- A Review Guest can decide only the exact revision named by a verified, expiring review grant; edits, expiry, revocation, or scope mismatch require a new grant.
 - A **Workspace** owns its Workspace Subscription, Entitlements, recurring and purchased Generation Credits, storage allowance, and commercial history; a Human Principal's identity does not own or carry them between Workspaces.
 - A Workspace Subscription references an exact Plan Definition; a Trial Grant is Workspace-scoped but anti-abuse eligibility is not reset by creating another Workspace.
 - Merchant-of-Record callbacks are commercial evidence, while Tasmeemai's provider-neutral projections and idempotent application capabilities remain authoritative for Subscription, Entitlement, credit, invoice, refund, and dispute state.
@@ -890,6 +945,14 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - Search retains exact source values while using a shared discovery index that normalizes tatweel, optional diacritics, common Arabic alef/ya variants, Unicode form, and whitespace; identifiers, filenames, handles, quoted queries, and audit evidence retain exact-match semantics.
 - Interface Locale Preference may select Arabic-Indic or Latin numerals and an optional Hijri companion display; scheduling remains Gregorian, UTC-instant plus IANA-timezone authoritative, with explicit week-start and weekend configuration.
 - Client Draft Recovery may preserve non-secret form work and resumable-upload state, but generation, payment, Approval, and publishing exist only after confirmed idempotent server acceptance.
+- Approval Policies may require one, any-of, ordered, quorum, or separated authorities; every decision pins the policy and exact resource revision, while membership roles only establish separately governed eligibility or administration.
+- Step-Up Authentication is required before the configured high-risk human capabilities and expires independently of the session; it never widens the Principal's authority.
+- Workspace Audit Trail views and exports derive from append-only canonical evidence, apply viewer authorization and redaction on every access, and record the access itself when sensitive.
+- Data Region Policy is pinned per Workspace and filters storage, processing, backup, and provider routes; Tasmeemai makes no residency claim until every relevant subprocessor and lifecycle is verified.
+- Workspace Retention Policy applies explicit Retention Classes rather than one universal deletion period, and each deletion explains immediate erasure, delayed erasure, retained evidence, holds, receipts, and tombstones.
+- A Safety Appeal references one Safety Decision and may authorize re-evaluation of only its exact intent; successful review still revalidates current authorization, safety, commercial, and provider conditions.
+- A Bulk Operation invokes the same single-resource capability contract per target, preserves per-item idempotency and outcome, and never treats partial or ambiguous completion as atomic success.
+- Workspace Export preserves canonical revisions, media, captions, plans, observations, and authorized configuration with a signed manifest; import validates and dry-runs idempotently while retaining source provenance.
 - Identity deletion, membership departure, Workspace Closure, and resource deletion are separate processes; a final Owner must transfer ownership before leaving, and closure preserves minimal legal, financial, anti-fraud, idempotency, and public-delivery evidence after eligible content erasure.
 - A **Channel** belongs to exactly one **Platform**.
 - A **Provider Adapter** supports exactly one **Platform**.

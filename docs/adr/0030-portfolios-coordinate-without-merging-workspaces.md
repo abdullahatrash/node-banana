@@ -1,0 +1,3 @@
+# Portfolios Coordinate Without Merging Workspaces
+
+Each client brand remains an independently owned Workspace. A Portfolio may group Workspaces for agency navigation, reporting, templates, and authorized Bulk Operations, but never becomes a parent tenant or shared resource boundary. Portfolio Assignments use an explicit Workspace allowlist, every command pins and displays one target Workspace, and that Workspace's own membership, role, resource grants, policy, Entitlements, subscription, credits, credentials, and audit history remain authoritative. This enables agency workflows without creating implicit cross-client access or commercial leakage.
