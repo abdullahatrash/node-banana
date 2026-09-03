@@ -11,3 +11,4 @@ describe("operation status migration", () => {
   });
 });
 describe("operation projection lease migration", () => { it("registers durable per-workspace leases", () => { const sql = readFileSync("drizzle/0074_operation_projection_leases.sql", "utf8"); expect(sql).toContain("runtime_operation_projection_leases"); expect(sql).toContain("lease_expires_at"); }); });
+describe("operation projection checkpoint migration", () => { it("registers durable per-source Workspace watermarks", () => { const sql = readFileSync("drizzle/0085_operation_projection_checkpoints.sql", "utf8"); expect(sql).toContain("runtime_operation_projection_checkpoints"); expect(sql).toContain("last_source_updated_at"); expect(sql).toContain("last_resource_id"); }); });

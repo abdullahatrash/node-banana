@@ -32,7 +32,10 @@ export async function synchronizeOperationProjections(service: OperationStatusSe
       current = created.operation; summary.created++;
     }
     const steps = path(current.state, source.state);
-    if (!steps.length && current.state === source.state && (source.state !== "running" || current.stage === (source.stage ?? "source.execute"))) { summary.unchanged++; continue; }
+    if (!steps.length && current.state === source.state && (source.state !== "running" || current.stage === (source.stage ?? "source.execute"))) {
+      if (current.metadata.sourceUpdatedAt === source.updatedAt.toISOString()) { summary.unchanged++; continue; }
+      steps.push({ state: source.state, ...(source.state === "running" ? { stage: source.stage ?? "source.execute" } : {}) });
+    }
     for (const [index, step] of steps.entries()) {
       const result = await service.transition({ workspaceId: source.workspaceId, operationId, expectedRevision: current.revision, to: step.state, stage: step.state === "running" ? source.stage ?? step.stage ?? "source.execute" : null, reasonCode: "source.projection_reconciled", actor: { type: "system", service: "operation-projection" }, metadata: { ...source.metadata, sourceAdapter: source.adapterId, sourceUpdatedAt: source.updatedAt.toISOString() }, idempotencyKey: `project:${fp}:${index}` });
       if (result.kind !== "applied" && result.kind !== "replayed") { summary.conflicts++; break; }

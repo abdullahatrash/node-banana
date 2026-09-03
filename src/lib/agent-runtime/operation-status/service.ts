@@ -27,7 +27,8 @@ export class OperationStatusService {
     const current = await this.repository.get(input.workspaceId, input.operationId);
     if (!current) return { kind: "not_found" };
     const stage = input.to === "running" ? input.stage ?? null : null;
-    if (current.revision !== input.expectedRevision || !canTransitionOperation(current.state, input.to, stage) || !/^[a-z][a-z0-9_.-]{2,99}$/.test(input.reasonCode)) return { kind: "conflict" };
+    const projectionRefresh = input.actor.type === "system" && input.actor.service === "operation-projection" && input.reasonCode === "source.projection_reconciled" && current.state === input.to && current.stage === stage;
+    if (current.revision !== input.expectedRevision || (!projectionRefresh && !canTransitionOperation(current.state, input.to, stage)) || !/^[a-z][a-z0-9_.-]{2,99}$/.test(input.reasonCode)) return { kind: "conflict" };
     const at = this.now();
     const operation: OperationRecord = { ...current, state: input.to, stage, revision: current.revision + 1, actor: input.actor, metadata: { ...current.metadata, ...redactOperationMetadata(input.metadata ?? {}) }, updatedAt: at };
     return this.repository.transition({ operation, expectedRevision: current.revision, idempotencyKey: input.idempotencyKey, requestDigest, event: { schema: "operation-event/v1", id: id(), workspaceId: input.workspaceId, operationId: current.id, revision: operation.revision, from: current.state, to: operation.state, stage, reasonCode: input.reasonCode, actor: input.actor, occurredAt: at } });

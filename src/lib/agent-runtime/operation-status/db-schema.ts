@@ -42,3 +42,12 @@ export const runtimeOperationProjectionLeases = pgTable("runtime_operation_proje
   leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }).notNull(),
   lastProjectedAt: timestamp("last_projected_at", { withTimezone: true }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 }, (table) => ({ dueIdx: index("runtime_operation_projection_leases_due_idx").on(table.leaseExpiresAt, table.workspaceId) }));
+
+export const runtimeOperationProjectionCheckpoints = pgTable("runtime_operation_projection_checkpoints", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  sourceAdapter: text("source_adapter").notNull(), lastSourceUpdatedAt: timestamp("last_source_updated_at", { withTimezone: true }).notNull(),
+  lastResourceId: text("last_resource_id").notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "runtime_operation_projection_checkpoints_pk", columns: [table.workspaceId, table.sourceAdapter] }),
+  valueCheck: check("runtime_operation_projection_checkpoints_value_check", sql`length(${table.sourceAdapter}) between 3 and 100 and length(${table.lastResourceId}) between 1 and 200`),
+}));
