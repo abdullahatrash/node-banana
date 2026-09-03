@@ -51,6 +51,15 @@ export interface GovernancePortableItem {
   payload: Record<string, unknown>;
 }
 
+export interface GovernanceImportRegionRoutePin {
+  kind: "primary_storage";
+  routeId: "storage:workspace-import";
+  configuredRegion: string;
+  policyApplied: boolean;
+  evidenceDigest: string | null;
+  admittedAt: string;
+}
+
 export type GovernancePortableMaterializeResult =
   | { kind: "created" | "matched"; destinationId: string }
   | { kind: "waiting_user"; reason: string; requiredMappings: string[] }
@@ -68,6 +77,7 @@ export interface GovernancePortableDataPort {
     payload: Record<string, unknown>;
     provenance: { source: string; sourceManifestDigest: string };
     idempotencyKey: string;
+    regionRoute: GovernanceImportRegionRoutePin;
     mapping?: Record<string, string>;
   }): Promise<GovernancePortableMaterializeResult>;
 }
@@ -138,6 +148,12 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
   }
 
   async materialize(input: Parameters<GovernancePortableDataPort["materialize"]>[0]): Promise<GovernancePortableMaterializeResult> {
+    if (
+      input.regionRoute.kind !== "primary_storage" ||
+      input.regionRoute.routeId !== GOVERNANCE_REGION_ROUTES.workspaceImportStorage.routeId ||
+      !input.regionRoute.configuredRegion ||
+      !Number.isFinite(new Date(input.regionRoute.admittedAt).getTime())
+    ) return { kind: "invalid", reason: "IMPORT_REGION_ROUTE_PIN_INVALID" };
     const payload = validatePortablePayload(input.kind, input.payload);
     if (!payload || canonicalDigest(payload) !== input.digest) return { kind: "invalid", reason: "PORTABLE_PAYLOAD_DIGEST_MISMATCH" };
     const db = this.database();
@@ -162,7 +178,15 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
       sourceDigest: input.digest,
       destinationId: result.destinationId,
       payload,
-      mapping: input.mapping ?? {},
+      mapping: {
+        ...(input.mapping ?? {}),
+        _regionRouteKind: input.regionRoute.kind,
+        _regionRouteId: input.regionRoute.routeId,
+        _region: input.regionRoute.configuredRegion,
+        _regionPolicyApplied: String(input.regionRoute.policyApplied),
+        ...(input.regionRoute.evidenceDigest ? { _regionEvidenceDigest: input.regionRoute.evidenceDigest } : {}),
+        _regionAdmittedAt: input.regionRoute.admittedAt,
+      },
       disposition: input.kind === "platform_export_metadata" ? "archived" : result.kind,
       requestedByUserId: input.requestedByUserId,
       createdAt: new Date(),

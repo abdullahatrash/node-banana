@@ -12,6 +12,8 @@ export const GOVERNANCE_REGION_ROUTES = {
   deletion: { kind: "deletion", routeId: "deletion:workspace-resources" },
   backup: { kind: "backup", routeId: "backup:workspace-primary" },
   logging: { kind: "logging", routeId: "logging:workspace-audit" },
+  workspaceImportProcessing: { kind: "processing", routeId: "processing:workspace-import" },
+  workspaceImportStorage: { kind: "primary_storage", routeId: "storage:workspace-import" },
 } as const satisfies Record<string, { kind: GovernanceRegionRouteKind; routeId: string }>;
 
 export class GovernanceRegionRouteDeniedError extends Error {

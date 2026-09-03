@@ -101,6 +101,7 @@ export function getProductionGovernanceImportWorker(): GovernanceImportWorker {
     PRODUCTION_GOVERNANCE_REPOSITORY,
     undefined,
     new DrizzleGovernancePortableDataPort(getDb),
+    { admit: (input) => PRODUCTION_GOVERNANCE_REGION_ADMISSION.admit(input) },
   );
 }
 

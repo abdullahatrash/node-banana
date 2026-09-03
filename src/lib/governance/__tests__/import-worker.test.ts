@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import { GovernanceImportWorker } from "../import-worker";
+import { GovernanceImportWorker, type GovernanceImportRegionAdmissionPort } from "../import-worker";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
 import type { GovernancePortableDataPort, GovernancePortableKind } from "../portability";
@@ -9,6 +9,9 @@ import { copyPortableMediaIntoPrimaryStorage, validatePortablePayload, workspace
 const now = new Date("2026-09-03T12:00:00.000Z");
 const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const, authContextId: "session-owner-a" };
 const signature = "A".repeat(43);
+const allowRegion = () => ({
+  admit: vi.fn(async (_input: Parameters<GovernanceImportRegionAdmissionPort["admit"]>[0]) => ({ allowed: true as const, policyApplied: true, evidenceDigest: `sha256:${"e".repeat(64)}` })),
+});
 
 function payload(kind: GovernancePortableKind): Record<string, unknown> {
   const timestamp = now.toISOString();
@@ -60,13 +63,18 @@ describe("GovernanceImportWorker", () => {
     const preview = await service.execute(actor, { type: "preview_import", source: "workspace-export:source-workspace", sourceManifestDigest: manifestDigest, manifestKeyId: "trusted-test-key", manifestSignature: signature, items: [...items, { kind: "credential_material", sourceId: "credentials", digest: canonicalDigest({ omitted: true }), transferable: false, omissionReason: "secret material is never transferable" }] }, "preview-signed-import") as { importId: string };
     await service.execute(actor, { type: "execute_import", importId: preview.importId }, "execute-signed-import");
     const materialize = vi.fn(async (input: Parameters<GovernancePortableDataPort["materialize"]>[0]) => ({ kind: "created" as const, destinationId: input.destinationId }));
-    const worker = new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:01:00.000Z") }, { list: async () => [], materialize });
+    const regionAdmission = allowRegion();
+    const worker = new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:01:00.000Z") }, { list: async () => [], materialize }, regionAdmission);
     await worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
     await worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
 
     expect(materialize).toHaveBeenCalledTimes(kinds.length);
     expect(materialize.mock.calls.map(([input]) => input.kind)).toEqual(kinds);
     for (const [input] of materialize.mock.calls) expect(input).toMatchObject({ workspaceId: actor.workspaceId, requestedByUserId: actor.userId, provenance: { sourceManifestDigest: manifestDigest } });
+    expect(regionAdmission.admit).toHaveBeenCalledTimes(kinds.length + 1);
+    expect(regionAdmission.admit.mock.calls[0]?.[0]).toMatchObject({ workspaceId: actor.workspaceId, kind: "processing", routeId: "processing:workspace-import" });
+    for (const call of regionAdmission.admit.mock.calls.slice(1)) expect(call[0]).toMatchObject({ workspaceId: actor.workspaceId, kind: "primary_storage", routeId: "storage:workspace-import" });
+    for (const [input] of materialize.mock.calls) expect(input.regionRoute).toMatchObject({ kind: "primary_storage", routeId: "storage:workspace-import", policyApplied: true, evidenceDigest: `sha256:${"e".repeat(64)}` });
     const job = await repository.getResource<{ items: Array<{ state: string; outcome: Record<string, unknown> }> }>({ workspaceId: actor.workspaceId, kind: "workspace_import", id: preview.importId });
     expect(job?.status).toBe("succeeded");
     expect(job?.body.items.map((item) => item.state)).toEqual([...kinds.map(() => "created"), "omitted"]);
@@ -88,7 +96,7 @@ describe("GovernanceImportWorker", () => {
     const preview = await service.execute(actor, { type: "preview_import", source: "workspace-export", sourceManifestDigest: canonicalDigest({ manifest: 3 }), manifestKeyId: "trusted-test-key", manifestSignature: signature, items: [{ kind: "prompt", sourceId: "prompt-source", digest: canonicalDigest(body), transferable: true, payload: body }] }, "preview-lease-import") as { importId: string };
     await service.execute(actor, { type: "execute_import", importId: preview.importId }, "execute-lease-import");
     const materialize = vi.fn(async () => ({ kind: "created" as const, destinationId: "prompt-destination" }));
-    const worker = new GovernanceImportWorker(repository, { now: () => current }, { list: async () => [], materialize });
+    const worker = new GovernanceImportWorker(repository, { now: () => current }, { list: async () => [], materialize }, allowRegion());
     const first = worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
     const second = worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
     await Promise.all([first, second]);
@@ -109,7 +117,7 @@ describe("GovernanceImportWorker", () => {
     const materialize = vi.fn(async (input: Parameters<GovernancePortableDataPort["materialize"]>[0]) => input.mapping?.destinationChannelId
       ? { kind: "created" as const, destinationId: input.destinationId }
       : { kind: "waiting_user" as const, reason: "DESTINATION_CALENDAR_MAPPING_REQUIRED", requiredMappings: ["destinationChannelId"] });
-    const worker = new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:01:00.000Z") }, { list: async () => [], materialize });
+    const worker = new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:01:00.000Z") }, { list: async () => [], materialize }, allowRegion());
 
     await worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });
     let job = await repository.getResource<{ items: Array<{ id: string; state: string; outcome: Record<string, unknown> }> }>({ workspaceId: actor.workspaceId, kind: "workspace_import", id: preview.importId });
@@ -126,5 +134,22 @@ describe("GovernanceImportWorker", () => {
     expect(job?.status).toBe("succeeded");
     expect(materialize).toHaveBeenCalledTimes(2);
     expect(materialize.mock.calls[1]?.[0].mapping).toEqual({ destinationChannelId: "channel-target" });
+  });
+
+  it("does not lease or materialize when the exact processing route is denied", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => new Date(now) }, undefined, undefined, { verify: () => true });
+    const body = payload("prompt");
+    const preview = await service.execute(actor, {
+      type: "preview_import", source: "workspace-export", sourceManifestDigest: canonicalDigest({ manifest: 5 }), manifestKeyId: "trusted-test-key", manifestSignature: signature,
+      items: [{ kind: "prompt", sourceId: "prompt-source", digest: canonicalDigest(body), transferable: true, payload: body }],
+    }, "preview-region-denied-import") as { importId: string };
+    await service.execute(actor, { type: "execute_import", importId: preview.importId }, "execute-region-denied-import");
+    const materialize = vi.fn(async () => ({ kind: "created" as const, destinationId: "prompt-destination" }));
+    const worker = new GovernanceImportWorker(repository, undefined, { list: async () => [], materialize }, { admit: vi.fn(async () => ({ allowed: false as const, reason: "REGION_ROUTE_NOT_ALLOWLISTED" })) });
+
+    await expect(worker.process({ workspaceId: actor.workspaceId, importId: preview.importId })).rejects.toMatchObject({ reason: "REGION_ROUTE_NOT_ALLOWLISTED" });
+    expect(materialize).not.toHaveBeenCalled();
+    await expect(repository.getResource({ workspaceId: actor.workspaceId, kind: "workspace_import", id: preview.importId })).resolves.toMatchObject({ status: "queued", body: { lease: null } });
   });
 });

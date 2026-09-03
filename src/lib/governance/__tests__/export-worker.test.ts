@@ -95,7 +95,7 @@ describe("GovernanceExportWorker", () => {
       items: authorization.items,
     }, "roundtrip-preview") as { importId: string };
     await service.execute(destinationActor, { type: "execute_import", importId: preview.importId }, "roundtrip-execute");
-    await new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:03:00.000Z") }, portableData)
+    await new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:03:00.000Z") }, portableData, { admit: async () => ({ allowed: true, policyApplied: false }) })
       .process({ workspaceId: destinationActor.workspaceId, importId: preview.importId });
 
     expect(portableData.materialize).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "workspace-b", kind: "prompt", sourceId: "prompt-source", payload: body }));

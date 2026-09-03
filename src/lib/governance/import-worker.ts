@@ -1,13 +1,35 @@
 import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { GovernanceAuditEvent, GovernanceRepository, GovernanceResource } from "./types";
-import { GOVERNANCE_PORTABLE_KINDS, type GovernancePortableDataPort, type GovernancePortableKind, validatePortablePayload } from "./portability";
+import { GOVERNANCE_PORTABLE_KINDS, type GovernanceImportRegionRoutePin, type GovernancePortableDataPort, type GovernancePortableKind, validatePortablePayload } from "./portability";
+import { GOVERNANCE_REGION_ROUTES } from "./region-enforcement";
 
 const IMPORT_LEASE_MS = 5 * 60_000;
 const UNAVAILABLE_PORTABLE_DATA: GovernancePortableDataPort = {
   list: async () => [],
   materialize: async () => ({ kind: "unavailable", reason: "DESTINATION_ADAPTER_REQUIRED" }),
 };
+
+export interface GovernanceImportRegionAdmissionPort {
+  admit(input: {
+    workspaceId: string;
+    kind: "primary_storage" | "processing";
+    routeId: string;
+    configuredRegion: string;
+    evaluatedAt: Date;
+  }): Promise<{ allowed: true; policyApplied: boolean; evidenceDigest?: string } | { allowed: false; reason: string }>;
+}
+
+const DENYING_REGION_ADMISSION: GovernanceImportRegionAdmissionPort = {
+  admit: async () => ({ allowed: false, reason: "IMPORT_REGION_ADMISSION_NOT_CONFIGURED" }),
+};
+
+export class GovernanceImportRegionDeniedError extends Error {
+  constructor(readonly reason: string) {
+    super(`Workspace import region route denied: ${reason}`);
+    this.name = "GovernanceImportRegionDeniedError";
+  }
+}
 
 interface ImportItem {
   id: string; kind: string; sourceId: string; destinationId?: string; digest: string;
@@ -21,7 +43,7 @@ interface ImportJobBody {
   source: string; sourceManifestDigest: string; manifestKeyId: string;
   manifestSignature: string; manifestVerified: true; requestedByUserId: string;
   items: ImportItem[];
-  lease: { id: string; claimedAt: string; expiresAt: string; attempt: number } | null;
+  lease: { id: string; claimedAt: string; expiresAt: string; attempt: number; regionRoute: { kind: "processing"; routeId: string; configuredRegion: string; policyApplied: boolean; evidenceDigest: string | null; admittedAt: string } } | null;
   [key: string]: unknown;
 }
 
@@ -34,6 +56,7 @@ export class GovernanceImportWorker {
     private readonly repository: GovernanceRepository,
     private readonly clock: { now(): Date } = { now: () => new Date() },
     private readonly portableData: GovernancePortableDataPort = UNAVAILABLE_PORTABLE_DATA,
+    private readonly regionAdmission: GovernanceImportRegionAdmissionPort = DENYING_REGION_ADMISSION,
   ) {}
 
   async process(input: { workspaceId: string; importId: string }): Promise<void> {
@@ -69,11 +92,13 @@ export class GovernanceImportWorker {
         continue;
       }
       const destinationId = item.destinationId ?? `imported_${item.digest.slice(7, 39)}`;
+      const regionRoute = await this.admitMaterialization(input.workspaceId);
       const result = await this.portableData.materialize({
         workspaceId: input.workspaceId, requestedByUserId: body.requestedByUserId,
         kind, sourceId: item.sourceId, destinationId, digest: item.digest, payload,
         provenance: { source: body.source, sourceManifestDigest: body.sourceManifestDigest },
         idempotencyKey: `portable-import:${job.id}:${item.id}`,
+        regionRoute,
         mapping: item.mapping,
       });
       if (result.kind === "created" || result.kind === "matched") {
@@ -98,10 +123,27 @@ export class GovernanceImportWorker {
     const now = this.clock.now();
     if (job.status === "running" && job.body.lease && new Date(job.body.lease.expiresAt) > now) return null;
     if (job.status !== "queued" && job.status !== "running") throw new Error("Workspace import is not claimable.");
-    const lease = { id: `lease_${randomUUID().replaceAll("-", "")}`, claimedAt: now.toISOString(), expiresAt: new Date(now.getTime() + IMPORT_LEASE_MS).toISOString(), attempt: (job.body.lease?.attempt ?? 0) + 1 };
+    const configuredRegion = process.env.GOVERNANCE_IMPORT_PROCESSING_REGION ?? process.env.APP_DATA_REGION ?? "unconfigured";
+    const admission = await this.regionAdmission.admit({ workspaceId: job.workspaceId, ...GOVERNANCE_REGION_ROUTES.workspaceImportProcessing, configuredRegion, evaluatedAt: now });
+    if (!admission.allowed) throw new GovernanceImportRegionDeniedError(admission.reason);
+    const lease = {
+      id: `lease_${randomUUID().replaceAll("-", "")}`,
+      claimedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + IMPORT_LEASE_MS).toISOString(),
+      attempt: (job.body.lease?.attempt ?? 0) + 1,
+      regionRoute: { ...GOVERNANCE_REGION_ROUTES.workspaceImportProcessing, configuredRegion, policyApplied: admission.policyApplied, evidenceDigest: admission.evidenceDigest ?? null, admittedAt: now.toISOString() },
+    };
     const next: GovernanceResource<ImportJobBody> = { ...job, version: job.version + 1, status: "running", body: { ...job.body, lease }, updatedAt: now };
     const outcome = await this.repository.commit({ receipt: { workspaceId: job.workspaceId, capability: "imports.claim@1", idempotencyKey: `import-claim-${job.id}-${job.version}-${lease.id}`, requestDigest: canonicalDigest({ importId: job.id, version: job.version, lease }), result: { importId: job.id, status: "running", leaseId: lease.id }, createdAt: now }, mutations: [{ type: "update", expectedVersion: job.version, resource: next }], audit: audit(job, "claim_import", "accepted", now) });
     return outcome.type === "committed" ? next : null;
+  }
+
+  private async admitMaterialization(workspaceId: string): Promise<GovernanceImportRegionRoutePin> {
+    const admittedAt = this.clock.now();
+    const configuredRegion = process.env.GOVERNANCE_IMPORT_STORAGE_REGION ?? process.env.APP_DATA_REGION ?? "unconfigured";
+    const admission = await this.regionAdmission.admit({ workspaceId, ...GOVERNANCE_REGION_ROUTES.workspaceImportStorage, configuredRegion, evaluatedAt: admittedAt });
+    if (!admission.allowed) throw new GovernanceImportRegionDeniedError(admission.reason);
+    return { ...GOVERNANCE_REGION_ROUTES.workspaceImportStorage, configuredRegion, policyApplied: admission.policyApplied, evidenceDigest: admission.evidenceDigest ?? null, admittedAt: admittedAt.toISOString() };
   }
 
   private async recordItem(job: GovernanceResource<ImportJobBody>, itemId: string, state: ImportItem["state"], outcome: Record<string, unknown>): Promise<GovernanceResource<ImportJobBody>> {
