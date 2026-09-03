@@ -6,6 +6,7 @@ import type { ModelRoutingRepository } from "./repository";
 import type { ReplicatePredictionAdapter, ReplicateExecutionResult } from "./replicate-contract";
 import type { ExactModelRef, ModelDescriptor } from "./types";
 import { authorizeFallback } from "./compatibility";
+import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } from "./generation-region";
 
 export type GenerationExecutionResult =
   | { kind: "accepted"; operation: OperationRecord; provider: ReplicateExecutionResult }
@@ -18,6 +19,7 @@ export class GenerationExecutionService {
     private readonly replicate: ReplicatePredictionAdapter,
     private readonly now = () => new Date(),
     private readonly resolveModel: (ref: ExactModelRef) => ModelDescriptor | null = findCuratedModel,
+    private readonly regions: GenerationRegionAuthority = DENYING_GENERATION_REGION_AUTHORITY,
   ) {}
 
   async execute(input: { workspaceId: string; userId: string; intentId: string; rawPrompt: string; sourceUrls: string[]; idempotencyKey: string }): Promise<GenerationExecutionResult> {
@@ -28,6 +30,8 @@ export class GenerationExecutionService {
     if (input.sourceUrls.length && !intent.rights.evidenceRefs.length) return { kind: "invalid", code: "RIGHTS_EVIDENCE_REQUIRED" };
     const descriptor = this.resolveModel(intent.selectedModel);
     if (!descriptor || descriptor.qualification.status !== "qualified") return { kind: "unavailable", code: "MODEL_NOT_EXECUTABLE" };
+    const region = await this.regions.revalidate({ workspaceId: input.workspaceId, model: intent.selectedModel, evidence: intent.regionAdmission, at: this.now() });
+    if (region.kind !== "admitted") return { kind: "invalid", code: region.code };
     if (intent.fallbackAuthorizationId) {
       const grant = await this.routing.getAuthorization(input.workspaceId, intent.fallbackAuthorizationId);
       if (!grant) return { kind: "invalid", code: "FALLBACK_AUTHORIZATION_UNAVAILABLE" };
@@ -35,7 +39,7 @@ export class GenerationExecutionService {
       if (!compatible.authorized) return { kind: "invalid", code: `FALLBACK_AUTHORIZATION_${compatible.reasons.join("_").toUpperCase()}` };
     }
     const contract = descriptor.qualification.inputContract;
-    if (intent.outputContract.aspectRatio !== "9:16" || intent.outputContract.safetyParameterKey !== contract.safety.parameterKey || intent.outputContract.safetyValue !== contract.safety.safeValue || intent.outputContract.lockedParametersDigest !== canonicalDigest(contract.lockedParameters)) return { kind: "invalid", code: "OUTPUT_CONTRACT_MISMATCH" };
+    if (intent.outputContract.aspectRatio !== "9:16" || intent.outputContract.width !== descriptor.qualification.outputShape.width || intent.outputContract.height !== descriptor.qualification.outputShape.height || intent.outputContract.fps !== descriptor.qualification.outputShape.fps || intent.outputContract.durationSeconds !== (intent.outputContract.mediaType === "video" ? intent.quote.quantity : null) || intent.outputContract.safetyParameterKey !== contract.safety.parameterKey || intent.outputContract.safetyValue !== contract.safety.safeValue || intent.outputContract.lockedParametersDigest !== canonicalDigest(contract.lockedParameters)) return { kind: "invalid", code: "OUTPUT_CONTRACT_MISMATCH" };
     if (input.sourceUrls.length && !contract.imageKey) return { kind: "invalid", code: "MODEL_IMAGE_INPUT_UNSUPPORTED" };
     const providerInput: Record<string, unknown> = {
       ...structuredClone(contract.lockedParameters),

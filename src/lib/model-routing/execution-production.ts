@@ -7,6 +7,7 @@ import { ReplicatePredictionAdapter } from "./replicate-contract";
 import { S3CanonicalArtifactIngestion } from "./artifact-ingestion";
 import { GenerationExecutionService } from "./execution";
 import type { DurableProviderCredentialRef } from "@/lib/byok/repository";
+import { PRODUCTION_GENERATION_REGIONS } from "./production";
 
 export function productionGenerationExecution(credential: { key: string; ref: DurableProviderCredentialRef }) {
   const routing = new PostgresModelRoutingRepository(getDb);
@@ -16,5 +17,5 @@ export function productionGenerationExecution(credential: { key: string; ref: Du
     new S3CanonicalArtifactIngestion(),
     credential.ref,
   );
-  return new GenerationExecutionService(routing, PRODUCTION_OPERATION_STATUS, adapter);
+  return new GenerationExecutionService(routing, PRODUCTION_OPERATION_STATUS, adapter, undefined, undefined, PRODUCTION_GENERATION_REGIONS);
 }

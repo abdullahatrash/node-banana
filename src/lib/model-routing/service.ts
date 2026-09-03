@@ -9,6 +9,7 @@ import type {
   FallbackAuthorization, GenerationCapability, GenerationIntent,
   GenerationQuality, ExecutionMode, ModelDescriptor,
 } from "./types";
+import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } from "./generation-region";
 
 const digest = (value: unknown) => canonicalDigest(value) as `sha256:${string}`;
 const sameModel = (a: ExactModelRef, b: ExactModelRef) =>
@@ -25,6 +26,7 @@ export class ModelRoutingService {
     private readonly now = () => new Date(),
     private readonly resolveModel: (ref: ExactModelRef) => ModelDescriptor | null = findCuratedModel,
     private readonly budgets: GenerationBudgetAuthority = DENYING_GENERATION_BUDGET_AUTHORITY,
+    private readonly regions: GenerationRegionAuthority = DENYING_GENERATION_REGION_AUTHORITY,
   ) {}
 
   async issueAuthorization(input: {
@@ -102,6 +104,8 @@ export class ModelRoutingService {
       (input.contentLanguage !== "en" && !input.arabicVariety)) {
       return { kind: "invalid" as const };
     }
+    const region = await this.regions.admit({ workspaceId: input.workspaceId, model: input.selectedModel, at });
+    if (region.kind !== "admitted") return { kind: "region_denied" as const, code: region.code };
     let fallbackReservation: { authorizationId: string } | null = null;
     if (!sameModel(input.requestedModel, input.selectedModel)) {
       if (!input.fallbackAuthorizationId) return { kind: "fallback_not_authorized" as const };
@@ -131,7 +135,8 @@ export class ModelRoutingService {
       arabicVariety: input.contentLanguage === "en" ? null : input.arabicVariety,
       rights: { ...input.rights, evidenceRefs: [...input.rights.evidenceRefs], sourceUrls: [...input.rights.sourceUrls] },
       remixBrief: { digest: digest(input.remixBrief), preserve: [...input.remixBrief.preserve], transform: [...input.remixBrief.transform], avoid: [...input.remixBrief.avoid] },
-      outputContract: { mediaType: input.capability.includes("video") ? "video" : "image", aspectRatio: "9:16", safetyParameterKey: selected.qualification.inputContract.safety.parameterKey, safetyValue: selected.qualification.inputContract.safety.safeValue, lockedParametersDigest: digest(selected.qualification.inputContract.lockedParameters) },
+      regionAdmission: region.evidence,
+      outputContract: { mediaType: input.capability.includes("video") ? "video" : "image", aspectRatio: "9:16", width: selected.qualification.outputShape.width, height: selected.qualification.outputShape.height, durationSeconds: input.capability.includes("video") ? input.quantity : null, fps: selected.qualification.outputShape.fps, safetyParameterKey: selected.qualification.inputContract.safety.parameterKey, safetyValue: selected.qualification.inputContract.safety.safeValue, lockedParametersDigest: digest(selected.qualification.inputContract.lockedParameters) },
       requestedModel: input.requestedModel, selectedModel: input.selectedModel,
       fallbackAuthorizationId: input.fallbackAuthorizationId, quote,
       reservationIds: reservation.reservationIds, createdByUserId: input.userId, createdAt: at,

@@ -12,7 +12,7 @@ describe("model qualification catalog", () => {
   it("qualifies only exact server-configured immutable evidence", () => {
     const model = CURATED_MODELS[0]!;
     const digest = `sha256:${"a1".repeat(32)}`;
-    const catalog = configuredCatalog(JSON.stringify({ [`${model.provider}:${model.model}`]: { endpoint: "versioned", version: "operator-reviewed-version-1", inputSchemaDigest: digest, executionPriceUsd: { basis: "image", amount: 0.123 }, maxQuantity: 4, inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "safety_filter", safeValue: true }, lockedParameters: { safety_filter: true, mode: "standard", resolution: "1080p" } } } }));
+    const catalog = configuredCatalog(JSON.stringify({ [`${model.provider}:${model.model}`]: { endpoint: "versioned", version: "operator-reviewed-version-1", inputSchemaDigest: digest, executionPriceUsd: { basis: "image", amount: 0.123 }, maxQuantity: 4, outputShape: { width: 1080, height: 1920, fps: null }, inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "safety_filter", safeValue: true }, lockedParameters: { safety_filter: true, mode: "standard", resolution: "1080p" } } } }));
     const ref = exactModelRef(catalog[0]!);
     expect(ref).not.toBeNull();
     expect(findCuratedModel(ref!, catalog)).toBe(catalog[0]);
@@ -21,17 +21,17 @@ describe("model qualification catalog", () => {
 
   it("rejects qualification that does not lock safety filtering on", () => {
     const model = CURATED_MODELS[0]!;
-    const raw = JSON.stringify({ [`${model.provider}:${model.model}`]: { endpoint: "versioned", version: "operator-reviewed-version-1", inputSchemaDigest: `sha256:${"ab".repeat(32)}`, executionPriceUsd: { basis: "image", amount: 0.1 }, maxQuantity: 1, inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "safety_filter", safeValue: true }, lockedParameters: { safety_filter: false } } } });
+    const raw = JSON.stringify({ [`${model.provider}:${model.model}`]: { endpoint: "versioned", version: "operator-reviewed-version-1", inputSchemaDigest: `sha256:${"ab".repeat(32)}`, executionPriceUsd: { basis: "image", amount: 0.1 }, maxQuantity: 1, outputShape: { width: 1080, height: 1920, fps: null }, inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "safety_filter", safeValue: true }, lockedParameters: { safety_filter: false } } } });
     expect(configuredCatalog(raw).every((item) => item.qualification.status === "unqualified")).toBe(true);
   });
   it("accepts negative safety keys only at their exact safe value", () => {
     const model = CURATED_MODELS[0]!;
-    const configured = configuredCatalog(JSON.stringify({ [`${model.provider}:${model.model}`]: { endpoint: "versioned", version: "operator-reviewed-version-1", inputSchemaDigest: `sha256:${"cd".repeat(32)}`, executionPriceUsd: { basis: "image", amount: 0.1 }, maxQuantity: 1, inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "disable_safety_filter", safeValue: false }, lockedParameters: { disable_safety_filter: false } } } }));
+    const configured = configuredCatalog(JSON.stringify({ [`${model.provider}:${model.model}`]: { endpoint: "versioned", version: "operator-reviewed-version-1", inputSchemaDigest: `sha256:${"cd".repeat(32)}`, executionPriceUsd: { basis: "image", amount: 0.1 }, maxQuantity: 1, outputShape: { width: 1080, height: 1920, fps: null }, inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "disable_safety_filter", safeValue: false }, lockedParameters: { disable_safety_filter: false } } } }));
     expect(configured[0]?.qualification.status).toBe("qualified");
   });
   it("rejects mutable official-model endpoints even when a caller supplies a version label", () => {
     const model = CURATED_MODELS[0]!;
-    const raw = JSON.stringify({ [`${model.provider}:${model.model}`]: { endpoint: "official_model", version: "looks-pinned-but-is-ignored", inputSchemaDigest: `sha256:${"ef".repeat(32)}`, executionPriceUsd: { basis: "image", amount: 0.1 }, maxQuantity: 1, inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "safety_filter", safeValue: true }, lockedParameters: { safety_filter: true } } } });
+    const raw = JSON.stringify({ [`${model.provider}:${model.model}`]: { endpoint: "official_model", version: "looks-pinned-but-is-ignored", inputSchemaDigest: `sha256:${"ef".repeat(32)}`, executionPriceUsd: { basis: "image", amount: 0.1 }, maxQuantity: 1, outputShape: { width: 1080, height: 1920, fps: null }, inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "safety_filter", safeValue: true }, lockedParameters: { safety_filter: true } } } });
     expect(configuredCatalog(raw).every((item) => item.qualification.status === "unqualified")).toBe(true);
   });
 });

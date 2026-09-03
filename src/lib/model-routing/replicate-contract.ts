@@ -50,6 +50,6 @@ export class ReplicatePredictionAdapter {
     if (value.status === "canceled" || value.status === "aborted") return { state: "cancelled", predictionId: value.id };
     if (value.status === "failed") return { state: "failed_known", predictionId: value.id, code: "REPLICATE_FAILED" };
     try { const result = await this.artifacts.ingest({ workspaceId: intent.workspaceId, intent, providerPredictionId: value.id, output: value.output }); return { state: "succeeded", predictionId: value.id, artifactIds: result.artifactIds }; }
-    catch { return { state: "failed_known", predictionId: value.id, code: "ARTIFACT_INGESTION_FAILED" }; }
+    catch (error) { return error && typeof error === "object" && "code" in error && error.code === "ARTIFACT_INGESTION_BUSY" ? { state: "waiting_provider", predictionId: value.id, code: "ARTIFACT_INGESTION_IN_PROGRESS" } : { state: "failed_known", predictionId: value.id, code: "ARTIFACT_INGESTION_FAILED" }; }
   }
 }

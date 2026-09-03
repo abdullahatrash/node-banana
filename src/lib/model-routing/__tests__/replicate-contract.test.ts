@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { ReplicatePredictionAdapter } from "../replicate-contract";
 import type { GenerationIntent } from "../types";
-import { resolveTestModel, testOutputContract, testRef, TEST_CREDENTIAL_REF, TEST_RIGHTS } from "./fixtures";
+import { resolveTestModel, testOutputContract, testRef, TEST_CREDENTIAL_REF, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
 
 const intent: GenerationIntent = {
   schema: "generation-intent/v1", id: "intent", workspaceId: "ws",
   brand: { profileId: "b", revision: 1, digest: `sha256:${"a".repeat(64)}`, acceptedAt: new Date() },
   promptDigest: `sha256:${"b".repeat(64)}`, capability: "text_to_video", contentLanguage: "ar", arabicVariety: "msa",
-  rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, outputContract: testOutputContract(5), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null,
+  rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, regionAdmission: TEST_REGION_ADMISSION, outputContract: testOutputContract(5, 5), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null,
   quote: { currency: "USD", amount: .05, basis: "second", quantity: 5, quotedAt: new Date(), expiresAt: new Date(Date.now() + 1000) },
   reservationIds: ["r"], createdByUserId: "u", createdAt: new Date(),
 };

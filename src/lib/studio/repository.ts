@@ -455,6 +455,10 @@ interface FinalizeAssetUploadInput {
   sizeBytes?: number;
   checksum?: string;
   mimeType?: string;
+  width?: number;
+  height?: number;
+  durationSeconds?: number | null;
+  metadata?: Record<string, unknown>;
   error?: string;
 }
 
@@ -486,6 +490,7 @@ export async function finalizeAssetUpload(input: FinalizeAssetUploadInput) {
   const existingMetadata = asMetadataRecord(existing.metadata);
   const nextMetadata: Record<string, unknown> = {
     ...existingMetadata,
+    ...(input.metadata ?? {}),
     uploadState: input.uploadState,
   };
 
@@ -510,6 +515,9 @@ export async function finalizeAssetUpload(input: FinalizeAssetUploadInput) {
         typeof input.sizeBytes === "number" ? input.sizeBytes : existing.sizeBytes,
       checksum: input.checksum ?? existing.checksum,
       mimeType: input.mimeType ?? existing.mimeType,
+      width: input.width ?? existing.width,
+      height: input.height ?? existing.height,
+      durationSeconds: input.durationSeconds === undefined ? existing.durationSeconds : input.durationSeconds,
       updatedAt: now,
     })
     .where(
@@ -551,6 +559,7 @@ interface RecordPendingS3AssetWithQuotaInput {
   mimeType?: string | null;
   originalFileName?: string | null;
   expectedSizeBytes: number;
+  metadata?: Record<string, unknown>;
 }
 
 export async function recordPendingS3AssetWithQuota(
@@ -568,6 +577,12 @@ export async function recordPendingS3AssetWithQuota(
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext(${input.workspaceId}))`,
     );
+
+    const [existing] = await tx.select().from(assets).where(and(eq(assets.storageProvider, "s3"), eq(assets.storageKey, input.storageKey), isNull(assets.deletedAt))).limit(1);
+    if (existing) {
+      if (existing.workspaceId !== input.workspaceId) throw new StudioAssetNotFoundError();
+      return existing;
+    }
 
     await tx
       .insert(workspaceStorageLimits)
@@ -650,6 +665,7 @@ export async function recordPendingS3AssetWithQuota(
         storageKey: input.storageKey,
         mimeType: input.mimeType || null,
         metadata: {
+          ...(input.metadata ?? {}),
           uploadState: "pending",
           originalFileName: input.originalFileName || null,
           pendingExpiresAt,
@@ -665,6 +681,7 @@ export async function recordPendingS3AssetWithQuota(
           projectId: input.projectId || null,
           mimeType: input.mimeType || null,
           metadata: {
+            ...(input.metadata ?? {}),
             uploadState: "pending",
             originalFileName: input.originalFileName || null,
             pendingExpiresAt,

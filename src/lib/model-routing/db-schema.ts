@@ -1,6 +1,6 @@
-import { check, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, check, foreignKey, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { user, workspaces } from "@/lib/db/schema";
+import { assets, user, workspaces } from "@/lib/db/schema";
 import type { ExactModelRef, FallbackAuthorization, GenerationIntent, InspirationRightsSnapshot } from "./types";
 import type { DurableProviderCredentialRef } from "@/lib/byok/repository";
 
@@ -14,7 +14,7 @@ export const modelFallbackAuthorizations = pgTable("model_fallback_authorization
 export const generationIntents = pgTable("generation_intents", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), intent: jsonb("intent").$type<GenerationIntent>().notNull(),
   brandProfileId: text("brand_profile_id").notNull(), brandRevision: integer("brand_revision").notNull(), promptDigest: text("prompt_digest").notNull(), selectedProvider: text("selected_provider").notNull(), selectedModel: text("selected_model").notNull(), reservationId: text("reservation_id").notNull(),
-  rightsSnapshotId: text("rights_snapshot_id"), rightsSnapshotRevision: integer("rights_snapshot_revision"), remixBriefDigest: text("remix_brief_digest"), outputContract: jsonb("output_contract").$type<GenerationIntent["outputContract"]>(),
+  rightsSnapshotId: text("rights_snapshot_id"), rightsSnapshotRevision: integer("rights_snapshot_revision"), remixBriefDigest: text("remix_brief_digest"), regionAdmission: jsonb("region_admission").$type<GenerationIntent["regionAdmission"]>(), outputContract: jsonb("output_contract").$type<GenerationIntent["outputContract"]>(),
   createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 }, (table) => ({ pk: primaryKey({ name: "generation_intents_pk", columns: [table.workspaceId, table.id] }), brandIdx: index("generation_intents_brand_idx").on(table.workspaceId, table.brandProfileId, table.brandRevision), digestCheck: check("generation_intents_digest_check", sql`${table.promptDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.brandRevision} > 0`) }));
 
@@ -65,4 +65,18 @@ export const modelGenerationBudgetReservations = pgTable("model_generation_budge
   pk: primaryKey({ name: "model_generation_budget_reservations_pk", columns: [table.workspaceId, table.intentId] }),
   periodIdx: index("model_generation_budget_reservations_period_idx").on(table.workspaceId, table.policyId, table.periodStartsAt, table.status),
   valueCheck: check("model_generation_budget_reservations_value_check", sql`${table.amountUsd}::numeric > 0 and ${table.quotedAmountUsd}::numeric > 0 and ${table.releasedAmountUsd}::numeric >= 0 and (${table.actualAmountUsd} is null or ${table.actualAmountUsd}::numeric >= 0) and ${table.status} in ('held','released','settled','outcome_unknown')`),
+}));
+
+export const modelArtifactIngestionReceipts = pgTable("model_artifact_ingestion_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  predictionId: text("prediction_id").notNull().references(() => replicatePredictionIdentities.predictionId, { onDelete: "restrict" }), outputIndex: integer("output_index").notNull(), intentId: text("intent_id").notNull(),
+  status: text("status").notNull(), storageKey: text("storage_key").notNull(), assetId: text("asset_id").references(() => assets.id, { onDelete: "restrict" }),
+  leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  mimeType: text("mime_type"), sizeBytes: bigint("size_bytes", { mode: "number" }), width: integer("width"), height: integer("height"), durationSeconds: numeric("duration_seconds", { precision: 12, scale: 3 }), fps: numeric("fps", { precision: 8, scale: 3 }), contentDigest: text("content_digest"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "model_artifact_ingestion_receipts_pk", columns: [table.workspaceId, table.predictionId, table.outputIndex] }),
+  intentFk: foreignKey({ name: "model_artifact_ingestion_receipts_intent_fk", columns: [table.workspaceId, table.intentId], foreignColumns: [generationIntents.workspaceId, generationIntents.id] }).onDelete("restrict"),
+  assetUnique: uniqueIndex("model_artifact_ingestion_receipts_asset_unique").on(table.assetId).where(sql`${table.assetId} is not null`),
+  valueCheck: check("model_artifact_ingestion_receipts_value_check", sql`${table.outputIndex} >= 0 and ${table.status} in ('claimed','ready') and (${table.status} <> 'ready' or (${table.assetId} is not null and ${table.contentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.sizeBytes} > 0 and ${table.width} > 0 and ${table.height} > 0))`),
 }));

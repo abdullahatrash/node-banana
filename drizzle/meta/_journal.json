@@ -547,6 +547,13 @@
       "when": 1788525600000,
       "tag": "0077_generation_spend_and_effect_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1788529200000,
+      "tag": "0078_generation_region_and_artifact_receipts",
+      "breakpoints": true
     }
   ]
 }
