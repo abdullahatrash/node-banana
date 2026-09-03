@@ -775,6 +775,7 @@ export async function createSocialPost(input: {
   triggerSource?: string | null;
   parentPostId?: string | null;
   studioAssetId?: string;
+  stableMediaRefs?: Array<{ assetId: string; assetDigest: string; order: number; alt?: string }>;
   createdByUserId: string;
 }) {
   const db = getDb();
@@ -800,6 +801,7 @@ export async function createSocialPost(input: {
       triggerSource: input.triggerSource ?? null,
       parentPostId: input.parentPostId ?? null,
       studioAssetId: input.studioAssetId ?? null,
+      stableMediaRefs: input.stableMediaRefs ?? [],
       createdByUserId: input.createdByUserId,
       createdAt: now,
       updatedAt: now,

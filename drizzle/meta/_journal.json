@@ -582,6 +582,13 @@
       "when": 1788543600000,
       "tag": "0082_workflow_run_spend_quote_redemptions",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1788547200000,
+      "tag": "0083_social_post_stable_media_refs",
+      "breakpoints": true
     }
   ]
 }

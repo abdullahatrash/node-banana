@@ -4,7 +4,7 @@ import { GovernanceImportWorker, type GovernanceImportRegionAdmissionPort } from
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
 import type { GovernancePortableDataPort, GovernancePortableKind } from "../portability";
-import { copyPortableMediaIntoPrimaryStorage, validatePortablePayload, workspaceIdFromExportSource } from "../portability";
+import { buildPortableCalendarStableMediaRefs, copyPortableMediaIntoPrimaryStorage, validatePortablePayload, workspaceIdFromExportSource } from "../portability";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
 const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const, authContextId: "session-owner-a" };
@@ -20,7 +20,7 @@ function payload(kind: GovernancePortableKind): Record<string, unknown> {
     case "content_revision": return { schema: "portable-content-revision/v1", id: "revision-1", workflowId: "workflow-1", revision: 1, definitionDigest: `sha256:${"1".repeat(64)}`, definition: { schema: "content-workflow-revision-definition/v1" }, operationRegistryDigest: `sha256:${"2".repeat(64)}`, createdAt: timestamp };
     case "prompt": return { schema: "portable-prompt/v1", id: "prompt-1", mode: "copy", name: "Launch", promptText: "Write", formConfig: {}, isPublic: false, createdAt: timestamp, updatedAt: timestamp };
     case "brand_source": return { schema: "portable-brand-source/v1", id: "brand-1", revision: 1, kind: "description", submittedUrl: null, finalUrl: null, submittedDescription: "Brand", cleanedText: "Brand", contentHash: "hash", sourceLanguage: "ar", extractedBytes: 5, fetchedAt: null, createdAt: timestamp };
-    case "calendar_plan": return { schema: "portable-calendar-plan/v1", id: "post-1", sourceChannelId: "channel-1", status: "draft", kind: "post", content: "Copy", media: [], omittedRawMediaCount: 0, platformSettings: {}, scheduledAt: "2026-09-04T12:00:00.000Z", createdAt: timestamp, updatedAt: timestamp };
+    case "calendar_plan": return { schema: "portable-calendar-plan/v2", id: "post-1", sourceChannelId: "channel-1", status: "draft", kind: "post", content: "Copy", stableMediaRefs: [], platformSettings: {}, scheduledAt: "2026-09-04T12:00:00.000Z", createdAt: timestamp, updatedAt: timestamp };
     case "caption": return { schema: "portable-caption/v1", id: "caption:post-1", sourcePostId: "post-1", text: "Copy", createdAt: timestamp, updatedAt: timestamp };
     case "platform_observation": return { schema: "portable-platform-observation/v1", id: "event-1", eventType: "post.published", severity: "info", userFacing: true, sourcePostId: "post-1", sourceChannelId: "channel-1", provider: "linkedin", createdAt: timestamp };
     case "platform_export_metadata": return { schema: "portable-platform-export-metadata/v1", id: "post-1", platform: "linkedin", sourceChannelId: "channel-1", platformPostId: "remote-1", platformPostUrl: "https://example.com/post/1", publishedAt: timestamp, createdAt: timestamp };
@@ -37,32 +37,52 @@ describe("GovernanceImportWorker", () => {
     expect(admit).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "workspace-a", route: { kind: "primary_storage", routeId: "storage:workspace-assets" }, configuredRegion: "me-central-1" }));
   });
 
-  it("rejects raw calendar media URLs and accepts digest-bound asset references", () => {
+  it("rejects raw URLs and accepts every ordered digest-bound calendar asset", () => {
     const body = payload("calendar_plan");
-    expect(validatePortablePayload("calendar_plan", { ...body, media: [{ type: "image", url: "https://source.example/private.png" }] })).toBeNull();
-    expect(validatePortablePayload("calendar_plan", { ...body, media: [{ type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}` }] })).not.toBeNull();
-    expect(validatePortablePayload("calendar_plan", { ...body, media: [
-      { type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}` },
-      { type: "image", sourceAssetId: "asset-2", assetDigest: `sha256:${"b".repeat(64)}` },
-    ] })).toBeNull();
-    expect(validatePortablePayload("calendar_plan", { ...body, media: [{ type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}` }], omittedRawMediaCount: 1 })).toBeNull();
+    expect(validatePortablePayload("calendar_plan", { ...body, stableMediaRefs: [{ type: "image", url: "https://source.example/private.png", order: 0 }] })).toBeNull();
+    const stableMediaRefs = [
+      { type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}`, order: 0, alt: "Cover" },
+      { type: "video", sourceAssetId: "asset-2", assetDigest: `sha256:${"b".repeat(64)}`, order: 1, alt: "Demo" },
+    ];
+    expect(validatePortablePayload("calendar_plan", { ...body, stableMediaRefs })).toMatchObject({ stableMediaRefs });
+    expect(validatePortablePayload("calendar_plan", { ...body, stableMediaRefs: [stableMediaRefs[1], stableMediaRefs[0]] })).toBeNull();
+    expect(validatePortablePayload("calendar_plan", { ...body, stableMediaRefs: [stableMediaRefs[0], { ...stableMediaRefs[1], sourceAssetId: "asset-1" }] })).toBeNull();
   });
 
-  it("rejects unsupported calendar media multiplicity before creating an import preview", async () => {
+  it("previews multi-media calendar plans without dropping or capping references", async () => {
     const repository = new InMemoryGovernanceRepository();
     const service = new GovernanceService(repository, { now: () => new Date(now) }, undefined, undefined, { verify: () => true });
     const body = {
       ...payload("calendar_plan"),
-      media: [
-        { type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}` },
-        { type: "image", sourceAssetId: "asset-2", assetDigest: `sha256:${"b".repeat(64)}` },
+      stableMediaRefs: [
+        { type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}`, order: 0 },
+        { type: "image", sourceAssetId: "asset-2", assetDigest: `sha256:${"b".repeat(64)}`, order: 1 },
       ],
     };
-    await expect(service.execute(actor, {
+    const result = await service.execute(actor, {
       type: "preview_import", source: "workspace-export", sourceManifestDigest: canonicalDigest({ manifest: 6 }), manifestKeyId: "trusted-test-key", manifestSignature: signature,
       items: [{ kind: "calendar_plan", sourceId: "post-source", digest: canonicalDigest(body), transferable: true, payload: body }],
-    }, "preview-multi-media-calendar")).rejects.toMatchObject({ code: "INVALID_INPUT" });
-    await expect(repository.listResources({ workspaceId: actor.workspaceId, kinds: ["workspace_import"] })).resolves.toHaveLength(0);
+    }, "preview-multi-media-calendar") as { importId: string };
+    const job = await repository.getResource<{ items: Array<{ payload: Record<string, unknown> }> }>({ workspaceId: actor.workspaceId, kind: "workspace_import", id: result.importId });
+    expect(job?.body.items[0]?.payload).toMatchObject({ stableMediaRefs: body.stableMediaRefs });
+  });
+
+  it("exports every persisted media relation in stable order with digest and alt text", () => {
+    const first = { id: "asset-1", type: "image" as const, mimeType: "image/png", sizeBytes: 10, width: 10, height: 10, durationSeconds: null, checksum: "first" };
+    const second = { id: "asset-2", type: "video" as const, mimeType: "video/mp4", sizeBytes: 20, width: 1080, height: 1920, durationSeconds: 12, checksum: "second" };
+    const result = buildPortableCalendarStableMediaRefs({
+      postId: "post-1",
+      stableMediaRefs: [
+        { assetId: second.id, assetDigest: "", order: 1, alt: "Second" },
+        { assetId: first.id, assetDigest: "", order: 0, alt: "First" },
+      ],
+      studioAssetId: first.id,
+      assetsById: new Map([[first.id, first], [second.id, second]]),
+    });
+    expect(result).toEqual([
+      expect.objectContaining({ sourceAssetId: "asset-1", order: 0, alt: "First", assetDigest: expect.stringMatching(/^sha256:/) }),
+      expect.objectContaining({ sourceAssetId: "asset-2", order: 1, alt: "Second", assetDigest: expect.stringMatching(/^sha256:/) }),
+    ]);
   });
 
   it("derives server-copy authority only from an exact first-party Workspace export source", () => {

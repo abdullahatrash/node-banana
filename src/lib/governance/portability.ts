@@ -38,7 +38,11 @@ const schemas = {
   content_revision: z.object({ schema: z.literal("portable-content-revision/v1"), id, workflowId: id, revision: z.number().int().positive(), definitionDigest: id, definition: z.record(z.string(), z.unknown()), operationRegistryDigest: id, createdAt: z.string().datetime({ offset: true }) }).strict(),
   prompt: z.object({ schema: z.literal("portable-prompt/v1"), id, mode: z.enum(["photo", "video", "copy"]), name: z.string().min(1), promptText: z.string(), formConfig: z.record(z.string(), z.unknown()), isPublic: z.boolean(), createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
   brand_source: z.object({ schema: z.literal("portable-brand-source/v1"), id, revision: z.number().int().positive(), kind: z.enum(["website", "description"]), submittedUrl: z.string().nullable(), finalUrl: z.string().nullable(), submittedDescription: z.string().nullable(), cleanedText: z.string().nullable(), contentHash: z.string().nullable(), sourceLanguage: z.string().nullable(), extractedBytes: z.number().int().nonnegative().nullable(), fetchedAt: timestamp, createdAt: z.string().datetime({ offset: true }) }).strict(),
-  calendar_plan: z.object({ schema: z.literal("portable-calendar-plan/v1"), id, sourceChannelId: id, status: z.enum(["draft", "queued", "publishing", "published", "failed"]), kind: id, content: z.string().nullable(), media: z.array(z.object({ type: z.string(), sourceAssetId: id, assetDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), alt: z.string().optional() }).strict()).max(1), omittedRawMediaCount: z.number().int().nonnegative(), platformSettings: z.record(z.string(), z.unknown()), scheduledAt: timestamp, createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict().refine((value) => value.media.length + value.omittedRawMediaCount <= 1, { message: "Calendar media multiplicity is not representable by the destination schema." }),
+  calendar_plan: z.object({ schema: z.literal("portable-calendar-plan/v2"), id, sourceChannelId: id, status: z.enum(["draft", "queued", "publishing", "published", "failed"]), kind: id, content: z.string().nullable(), stableMediaRefs: z.array(z.object({ type: z.enum(["image", "video", "audio", "model3d", "workflow"]), sourceAssetId: id, assetDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), order: z.number().int().nonnegative(), alt: z.string().max(2_000).optional() }).strict()).superRefine((refs, context) => {
+    const orders = refs.map((ref) => ref.order);
+    if (new Set(orders).size !== orders.length || orders.some((order, index) => order !== index)) context.addIssue({ code: "custom", message: "Calendar media order must be unique, contiguous, and zero-based." });
+    if (new Set(refs.map((ref) => ref.sourceAssetId)).size !== refs.length) context.addIssue({ code: "custom", message: "Each calendar asset may appear only once." });
+  }), platformSettings: z.record(z.string(), z.unknown()), scheduledAt: timestamp, createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
   caption: z.object({ schema: z.literal("portable-caption/v1"), id, sourcePostId: id, text: z.string().min(1), createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
   platform_observation: z.object({ schema: z.literal("portable-platform-observation/v1"), id, eventType: z.enum(["post.queued", "post.publishing", "post.published", "post.failed", "account.reauth_required", "token.refreshed", "dispatch.failed"]), severity: z.enum(["info", "warn", "error"]), userFacing: z.boolean(), sourcePostId: z.string().nullable(), sourceChannelId: z.string().nullable(), provider: z.enum(["x", "linkedin", "facebook", "instagram", "tiktok", "youtube", "reddit", "threads", "pinterest", "bluesky", "mastodon"]).nullable(), createdAt: z.string().datetime({ offset: true }) }).strict(),
   platform_export_metadata: z.object({ schema: z.literal("portable-platform-export-metadata/v1"), id, platform: id, sourceChannelId: id, platformPostId: z.string().nullable(), platformPostUrl: z.string().nullable(), publishedAt: timestamp, createdAt: z.string().datetime({ offset: true }) }).strict(),
@@ -111,35 +115,28 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
   async list(input: { workspaceId: string; kinds: GovernancePortableKind[] }) {
     const requested = new Set(input.kinds);
     const db = this.database();
-    const [mediaRows, revisionRows, promptRows, brandRows, postRows, observationRows] = await Promise.all([
+    const [mediaRows, revisionRows, promptRows, brandRows, postRows, calendarAssetRows, observationRows] = await Promise.all([
       requested.has("media") ? db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), isNull(assets.deletedAt))) : [],
       requested.has("content_revision") ? db.select().from(contentWorkflowRevisions).where(eq(contentWorkflowRevisions.workspaceId, input.workspaceId)) : [],
       requested.has("prompt") ? db.select().from(savedPrompts).where(and(eq(savedPrompts.workspaceId, input.workspaceId), isNull(savedPrompts.deletedAt))) : [],
       requested.has("brand_source") ? db.select().from(brandSources).where(eq(brandSources.workspaceId, input.workspaceId)) : [],
       requested.has("calendar_plan") || requested.has("caption") || requested.has("platform_export_metadata")
-        ? db.select({ post: socialPosts, platform: socialAccounts.platform, assetId: assets.id, assetType: assets.type, assetMimeType: assets.mimeType, assetSizeBytes: assets.sizeBytes, assetWidth: assets.width, assetHeight: assets.height, assetDurationSeconds: assets.durationSeconds, assetChecksum: assets.checksum }).from(socialPosts)
+        ? db.select({ post: socialPosts, platform: socialAccounts.platform }).from(socialPosts)
           .innerJoin(socialAccounts, and(eq(socialAccounts.workspaceId, socialPosts.workspaceId), eq(socialAccounts.id, socialPosts.socialAccountId)))
-          .leftJoin(assets, and(eq(assets.workspaceId, socialPosts.workspaceId), eq(assets.id, socialPosts.studioAssetId), isNull(assets.deletedAt)))
           .where(and(eq(socialPosts.workspaceId, input.workspaceId), requested.has("platform_export_metadata") && !requested.has("calendar_plan") ? isNotNull(socialPosts.publishedAt) : undefined))
         : [],
+      requested.has("calendar_plan") ? db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), isNull(assets.deletedAt))) : [],
       requested.has("platform_observation") ? db.select({ id: socialEvents.id, eventType: socialEvents.eventType, severity: socialEvents.severity, userFacing: socialEvents.userFacing, postId: socialEvents.postId, accountId: socialEvents.accountId, provider: socialEvents.provider, createdAt: socialEvents.createdAt }).from(socialEvents).where(eq(socialEvents.workspaceId, input.workspaceId)) : [],
     ]);
+    const calendarAssets = new Map(calendarAssetRows.map((asset) => [asset.id, asset] as const));
     const raw: Array<{ kind: GovernancePortableKind; sourceId: string; payload: Record<string, unknown> }> = [];
     if (requested.has("media")) for (const row of mediaRows) raw.push({ kind: "media", sourceId: row.id, payload: { schema: "portable-media/v1", id: row.id, type: row.type, storageProvider: row.storageProvider, storageBucket: row.storageBucket, storageKey: row.storageKey, mimeType: row.mimeType, sizeBytes: row.sizeBytes, width: row.width, height: row.height, durationSeconds: row.durationSeconds, checksum: row.checksum, metadata: row.metadata, createdAt: row.createdAt.toISOString() } });
     if (requested.has("content_revision")) for (const row of revisionRows) raw.push({ kind: "content_revision", sourceId: row.id, payload: { schema: "portable-content-revision/v1", id: row.id, workflowId: row.workflowId, revision: row.revision, definitionDigest: row.definitionDigest, definition: row.definition as unknown as Record<string, unknown>, operationRegistryDigest: row.operationRegistryDigest, createdAt: row.createdAt.toISOString() } });
     if (requested.has("prompt")) for (const row of promptRows) raw.push({ kind: "prompt", sourceId: row.id, payload: { schema: "portable-prompt/v1", id: row.id, mode: row.mode, name: row.name, promptText: row.promptText, formConfig: row.formConfig, isPublic: row.isPublic, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } });
     if (requested.has("brand_source")) for (const row of brandRows) raw.push({ kind: "brand_source", sourceId: row.id, payload: { schema: "portable-brand-source/v1", id: row.id, revision: row.revision, kind: row.kind, submittedUrl: row.submittedUrl, finalUrl: row.finalUrl, submittedDescription: row.submittedDescription, cleanedText: row.cleanedText, contentHash: row.contentHash, sourceLanguage: row.sourceLanguage, extractedBytes: row.extractedBytes, fetchedAt: row.fetchedAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString() } });
-    if (requested.has("calendar_plan")) for (const { post, assetId, assetType, assetMimeType, assetSizeBytes, assetWidth, assetHeight, assetDurationSeconds, assetChecksum } of postRows) {
-      const stableMedia = assetId && assetType ? [{
-        type: assetType,
-        sourceAssetId: assetId,
-        assetDigest: portableAssetDigest({ type: assetType, mimeType: assetMimeType, sizeBytes: assetSizeBytes, width: assetWidth, height: assetHeight, durationSeconds: assetDurationSeconds, checksum: assetChecksum }),
-        ...(post.mediaUrls?.[0]?.alt ? { alt: post.mediaUrls[0].alt } : {}),
-      }] : [];
-      if (Math.max(stableMedia.length, post.mediaUrls?.length ?? 0) > 1) {
-        throw new Error(`CALENDAR_MEDIA_MULTIPLICITY_UNSUPPORTED:${post.id}`);
-      }
-      raw.push({ kind: "calendar_plan", sourceId: post.id, payload: { schema: "portable-calendar-plan/v1", id: post.id, sourceChannelId: post.socialAccountId, status: post.status, kind: post.kind, content: post.content, media: stableMedia, omittedRawMediaCount: Math.max(0, (post.mediaUrls?.length ?? 0) - stableMedia.length), platformSettings: post.platformSettings ?? {}, scheduledAt: post.scheduledAt?.toISOString() ?? null, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
+    if (requested.has("calendar_plan")) for (const { post } of postRows) {
+      const stableMediaRefs = buildPortableCalendarStableMediaRefs({ postId: post.id, stableMediaRefs: post.stableMediaRefs, studioAssetId: post.studioAssetId, legacyAlt: post.mediaUrls?.[0]?.alt, assetsById: calendarAssets });
+      raw.push({ kind: "calendar_plan", sourceId: post.id, payload: { schema: "portable-calendar-plan/v2", id: post.id, sourceChannelId: post.socialAccountId, status: post.status, kind: post.kind, content: post.content, stableMediaRefs, platformSettings: post.platformSettings ?? {}, scheduledAt: post.scheduledAt?.toISOString() ?? null, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
     }
     if (requested.has("caption")) for (const { post } of postRows.filter(({ post }) => Boolean(post.content))) raw.push({ kind: "caption", sourceId: post.id, payload: { schema: "portable-caption/v1", id: `caption:${post.id}`, sourcePostId: post.id, text: post.content!, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
     if (requested.has("platform_observation")) for (const row of observationRows) raw.push({ kind: "platform_observation", sourceId: row.id, payload: { schema: "portable-platform-observation/v1", id: row.id, eventType: row.eventType, severity: row.severity, userFacing: row.userFacing, sourcePostId: row.postId, sourceChannelId: row.accountId, provider: row.provider, createdAt: row.createdAt.toISOString() } });
@@ -302,7 +299,7 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
 
   private async materializeCalendarPlan(input: Parameters<GovernancePortableDataPort["materialize"]>[0], payload: z.infer<typeof schemas.calendar_plan>) {
     const destinationChannelId = input.mapping?.destinationChannelId;
-    const assetMappingKeys = payload.media.map((_, index) => `destinationAssetId${index}`);
+    const assetMappingKeys = payload.stableMediaRefs.map((_, index) => `destinationAssetId${index}`);
     const requiredMappings = ["destinationChannelId", ...assetMappingKeys].filter((key) => !input.mapping?.[key]);
     if (requiredMappings.length) return { kind: "waiting_user" as const, reason: "DESTINATION_CALENDAR_MAPPING_REQUIRED", requiredMappings };
     const db = this.database();
@@ -313,14 +310,20 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
       ? { kind: "matched" as const, destinationId: existing[0].id }
       : { kind: "conflict" as const, reason: "CALENDAR_PLAN_DESTINATION_CONFLICT" };
     const destinationAssets = [];
-    for (let index = 0; index < payload.media.length; index += 1) {
-      const reference = payload.media[index];
+    for (let index = 0; index < payload.stableMediaRefs.length; index += 1) {
+      const reference = payload.stableMediaRefs[index];
       const destinationAssetId = input.mapping![assetMappingKeys[index]];
       const [destinationAsset] = await db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.id, destinationAssetId), isNull(assets.deletedAt))).limit(1);
       if (!destinationAsset || portableAssetDigest(destinationAsset) !== reference.assetDigest) return { kind: "invalid" as const, reason: "DESTINATION_ASSET_MAPPING_MISMATCH" };
       destinationAssets.push(destinationAsset);
     }
-    await db.insert(socialPosts).values({ id: input.destinationId, workspaceId: input.workspaceId, socialAccountId: destinationChannelId!, status: "draft", kind: payload.kind, content: payload.content, mediaUrls: null, studioAssetId: destinationAssets[0]?.id ?? null, platformSettings: payload.platformSettings, scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : null, triggerSource: `workspace-import:${input.digest}`, createdByUserId: input.requestedByUserId, createdAt: new Date(payload.createdAt), updatedAt: new Date(payload.updatedAt) });
+    const stableMediaRefs = destinationAssets.map((asset, index) => ({
+      assetId: asset.id,
+      assetDigest: payload.stableMediaRefs[index].assetDigest,
+      order: index,
+      ...(payload.stableMediaRefs[index].alt ? { alt: payload.stableMediaRefs[index].alt } : {}),
+    }));
+    await db.insert(socialPosts).values({ id: input.destinationId, workspaceId: input.workspaceId, socialAccountId: destinationChannelId!, status: "draft", kind: payload.kind, content: payload.content, mediaUrls: null, stableMediaRefs, studioAssetId: destinationAssets[0]?.id ?? null, platformSettings: payload.platformSettings, scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : null, triggerSource: `workspace-import:${input.digest}`, createdByUserId: input.requestedByUserId, createdAt: new Date(payload.createdAt), updatedAt: new Date(payload.updatedAt) });
     return { kind: "created" as const, destinationId: input.destinationId };
   }
 
@@ -409,4 +412,25 @@ function fileName(storageKey: string): string {
 function portableAssetDigest(input: { type: string; mimeType: string | null; sizeBytes: number | null; width: number | null; height: number | null; durationSeconds: number | null; checksum: string | null }): string {
   if (input.checksum && /^sha256:[a-f0-9]{64}$/.test(input.checksum)) return input.checksum;
   return canonicalDigest({ type: input.type, mimeType: input.mimeType, sizeBytes: input.sizeBytes, width: input.width, height: input.height, durationSeconds: input.durationSeconds });
+}
+
+export function buildPortableCalendarStableMediaRefs(input: {
+  postId: string;
+  stableMediaRefs: Array<{ assetId: string; assetDigest: string; order: number; alt?: string }>;
+  studioAssetId: string | null;
+  legacyAlt?: string;
+  assetsById: ReadonlyMap<string, { id: string; type: "image" | "video" | "audio" | "model3d" | "workflow"; mimeType: string | null; sizeBytes: number | null; width: number | null; height: number | null; durationSeconds: number | null; checksum: string | null }>;
+}) {
+  const persisted = input.stableMediaRefs.length > 0
+    ? [...input.stableMediaRefs].sort((left, right) => left.order - right.order)
+    : input.studioAssetId
+      ? [{ assetId: input.studioAssetId, assetDigest: "", order: 0, ...(input.legacyAlt ? { alt: input.legacyAlt } : {}) }]
+      : [];
+  return persisted.map((reference, order) => {
+    const asset = input.assetsById.get(reference.assetId);
+    if (!asset) throw new Error(`CALENDAR_ASSET_NOT_FOUND:${input.postId}:${reference.assetId}`);
+    const assetDigest = portableAssetDigest(asset);
+    if (reference.assetDigest && reference.assetDigest !== assetDigest) throw new Error(`CALENDAR_ASSET_DIGEST_MISMATCH:${input.postId}:${reference.assetId}`);
+    return { type: asset.type, sourceAssetId: asset.id, assetDigest, order, ...(reference.alt ? { alt: reference.alt } : {}) };
+  });
 }

@@ -6537,6 +6537,18 @@ export const socialPosts = pgTable(
     mediaUrls: jsonb("media_urls").$type<
       Array<{ type: string; url: string; alt?: string }>
     >(),
+    /** Ordered, digest-bound canonical media relation used by portability. */
+    stableMediaRefs: jsonb("stable_media_refs")
+      .$type<
+        Array<{
+          assetId: string;
+          assetDigest: string;
+          order: number;
+          alt?: string;
+        }>
+      >()
+      .default([])
+      .notNull(),
     platformSettings: jsonb("platform_settings").$type<
       Record<string, unknown>
     >(),
@@ -6584,6 +6596,10 @@ export const socialPosts = pgTable(
       table.scheduledAt,
     ),
     createdAtIdx: index("social_posts_created_at_idx").on(table.createdAt),
+    stableMediaRefsArrayCheck: check(
+      "social_posts_stable_media_refs_array_check",
+      sql`jsonb_typeof(${table.stableMediaRefs}) = 'array'`,
+    ),
   }),
 );
 

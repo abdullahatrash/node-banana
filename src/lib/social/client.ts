@@ -87,6 +87,7 @@ export interface SocialPost {
   status: SocialPostStatus;
   content?: string | null;
   mediaUrls?: Array<{ type: string; url: string; alt?: string }> | null;
+  stableMediaRefs?: Array<{ assetId: string; assetDigest: string; order: number; alt?: string }>;
   platformSettings?: Record<string, unknown> | null;
   scheduledAt?: string | null;
   publishedAt?: string | null;
