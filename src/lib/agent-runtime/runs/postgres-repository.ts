@@ -437,7 +437,10 @@ function quoteMatchesAdmission(input: {
     input.quote.pricingSnapshotIds.every((id, index) => id === pricingSnapshotIds[index]) &&
     plan.reservations.length > 0 &&
     plan.reservations.every((reservation) => reservation.currency === input.quote.currency && reservation.reservedAmount === input.quote.amount) &&
-    workflowRunQuoteCeilingDigest({ amount: input.quote.amount, currency: input.quote.currency, providerModels, pricingSnapshotIds }) === input.quote.ceilingDigest;
+    input.quote.ceiling.maximumAmount === input.quote.amount &&
+    input.quote.ceiling.currency === input.quote.currency &&
+    input.quote.ceiling.maximumProviderAttempts === providerModels.reduce((total, model) => total + model.automaticAttempts, 0) &&
+    workflowRunQuoteCeilingDigest({ amount: input.quote.amount, currency: input.quote.currency, providerModels, pricingSnapshotIds, ceiling: input.quote.ceiling }) === input.quote.ceilingDigest;
 }
 
 async function findRun(

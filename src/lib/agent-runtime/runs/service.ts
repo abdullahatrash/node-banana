@@ -117,7 +117,10 @@ function matchesAcceptedSpendQuote(quote: WorkflowRunAcceptedSpendQuote, plan: B
   const pricingSnapshotIds = [...new Set(providerModels.flatMap((item) => item.pricingSnapshotIds))].sort();
   return plan.reservations.length > 0 &&
     plan.reservations.every((reservation) => reservation.currency === quote.currency && reservation.reservedAmount === quote.amount) &&
-    workflowRunQuoteCeilingDigest({ amount: quote.amount, currency: quote.currency, providerModels, pricingSnapshotIds }) === quote.ceilingDigest;
+    quote.ceiling.maximumAmount === quote.amount &&
+    quote.ceiling.currency === quote.currency &&
+    quote.ceiling.maximumProviderAttempts === providerModels.reduce((total, model) => total + model.automaticAttempts, 0) &&
+    workflowRunQuoteCeilingDigest({ amount: quote.amount, currency: quote.currency, providerModels, pricingSnapshotIds, ceiling: quote.ceiling }) === quote.ceilingDigest;
 }
 
 function usageQuotaReconciliationId(input: {

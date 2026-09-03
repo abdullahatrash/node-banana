@@ -24,6 +24,11 @@ export interface WorkflowRunAcceptedSpendQuote {
     pricingSnapshotIds: string[];
   }>;
   pricingSnapshotIds: string[];
+  ceiling: {
+    maximumAmount: string;
+    currency: string;
+    maximumProviderAttempts: number;
+  };
   ceilingDigest: string;
   quotedAt: string;
   expiresAt: string;
@@ -43,12 +48,13 @@ export function workflowRunQuoteInputDigest(input: {
   });
 }
 
-export function workflowRunQuoteCeilingDigest(input: Pick<WorkflowRunAcceptedSpendQuote, "amount" | "currency" | "providerModels" | "pricingSnapshotIds">): string {
+export function workflowRunQuoteCeilingDigest(input: Pick<WorkflowRunAcceptedSpendQuote, "amount" | "currency" | "providerModels" | "pricingSnapshotIds" | "ceiling">): string {
   return canonicalDigest({
     amount: input.amount,
     currency: input.currency,
     providerModels: input.providerModels,
     pricingSnapshotIds: [...input.pricingSnapshotIds].sort(),
+    ceiling: input.ceiling,
   });
 }
 
@@ -78,6 +84,9 @@ export class WorkflowRunSpendQuoteCodec {
         value.capability !== "workflow_runs.start@2" ||
         typeof value.quoteId !== "string" ||
         !value.quoteId.startsWith("quote_") ||
+        value.ceiling?.maximumAmount !== value.amount ||
+        value.ceiling?.currency !== value.currency ||
+        value.ceiling?.maximumProviderAttempts !== value.providerModels.reduce((total, model) => total + model.automaticAttempts, 0) ||
         workflowRunQuoteCeilingDigest(value) !== value.ceilingDigest
       ) return null;
       return value;

@@ -230,7 +230,7 @@ export class WorkflowRunGovernanceBulkQuotePort {
       const opened = this.open(input.quoteRef);
       if (!opened || opened.expiresAt <= input.evaluatedAt.toISOString()) return null;
       payload = opened;
-      const current = { amount: preview.ceiling.amount, currency: preview.ceiling.currency, providerModels, pricingSnapshotIds };
+      const current = { amount: preview.ceiling.amount, currency: preview.ceiling.currency, providerModels, pricingSnapshotIds, ceiling: { maximumAmount: preview.ceiling.amount, currency: preview.ceiling.currency, maximumProviderAttempts: providerModels.reduce((total, model) => total + model.automaticAttempts, 0) } };
       if (
         payload.sourceWorkspaceId !== input.sourceWorkspaceId || payload.targetWorkspaceId !== input.targetWorkspaceId ||
         payload.requestedByUserId !== input.requestedByUserId || payload.workflowId !== workflowId ||
@@ -256,10 +256,12 @@ export class WorkflowRunGovernanceBulkQuotePort {
         currency: preview.ceiling.currency,
         providerModels,
         pricingSnapshotIds,
-        ceilingDigest: workflowRunQuoteCeilingDigest({ amount: preview.ceiling.amount, currency: preview.ceiling.currency, providerModels, pricingSnapshotIds }),
+        ceiling: { maximumAmount: preview.ceiling.amount, currency: preview.ceiling.currency, maximumProviderAttempts: providerModels.reduce((total, model) => total + model.automaticAttempts, 0) },
+        ceilingDigest: "",
         quotedAt: input.evaluatedAt.toISOString(),
         expiresAt: new Date(input.evaluatedAt.getTime() + 5 * 60_000).toISOString(),
       };
+      payload.ceilingDigest = workflowRunQuoteCeilingDigest(payload);
     }
     const ref = this.codec.seal(payload);
     return { required: true as const, ref, amount: payload.amount, currency: payload.currency, source: "workflow_run_budget_preview" as const, providerModels: payload.providerModels, quotedAt: payload.quotedAt, expiresAt: payload.expiresAt, targetStateDigest: payload.targetStateDigest, digest: canonicalDigest(payload) };

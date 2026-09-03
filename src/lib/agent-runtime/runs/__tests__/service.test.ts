@@ -617,7 +617,7 @@ describe("WorkflowRunService", () => {
     const pricingSnapshotIds = [...new Set(providerModels.flatMap((item) => item.pricingSnapshotIds))].sort();
     const quote: WorkflowRunAcceptedSpendQuote = {
       schema: "workflow-run-accepted-spend-quote/v1", quoteId: "quote_fixed_1", sourceWorkspaceId: "portfolio_1", targetWorkspaceId: request.workspaceId, requestedByUserId: "owner_1", delegatedPrincipalId: request.principalId, delegatedKeyId: request.keyId, capability: "workflow_runs.start@2", workflowId: request.workflowId, workflowRevisionId: request.revisionId,
-      inputDigest: workflowRunQuoteInputDigest(request), targetStateDigest: canonicalDigest({ workflowId: request.workflowId, revisionId: request.revisionId }), amount: preview.ceiling.amount!, currency: preview.ceiling.currency!, providerModels, pricingSnapshotIds, ceilingDigest: "", quotedAt: at.toISOString(), expiresAt: new Date(at.getTime() + 300_000).toISOString(),
+      inputDigest: workflowRunQuoteInputDigest(request), targetStateDigest: canonicalDigest({ workflowId: request.workflowId, revisionId: request.revisionId }), amount: preview.ceiling.amount!, currency: preview.ceiling.currency!, providerModels, pricingSnapshotIds, ceiling: { maximumAmount: preview.ceiling.amount!, currency: preview.ceiling.currency!, maximumProviderAttempts: providerModels.reduce((total, model) => total + model.automaticAttempts, 0) }, ceilingDigest: "", quotedAt: at.toISOString(), expiresAt: new Date(at.getTime() + 300_000).toISOString(),
     };
     quote.ceilingDigest = workflowRunQuoteCeilingDigest(quote);
     const acceptedSpendQuoteRef = codec.seal(quote);
