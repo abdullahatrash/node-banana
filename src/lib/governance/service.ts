@@ -53,6 +53,27 @@ const SHA256 = /^sha256:[a-f0-9]{64}$/;
 const MAX_GUEST_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_STEP_UP_LIFETIME_MS = 15 * 60 * 1_000;
 const SECRET_DELIVERY_LIFETIME_MS = 10 * 60 * 1_000;
+const ACTIVE_CLOSURE_STATUSES = new Set([
+  "cooling_off",
+  "erasure_queued",
+  "erasure_running",
+  "waiting_retention_policy",
+  "waiting_external_effects",
+  "waiting_erasure",
+  "waiting_export",
+]);
+const CLOSURE_CONTINUATION_COMMANDS = new Set<GovernanceCommand["type"]>([
+  "cancel_workspace_closure",
+  "execute_workspace_closure",
+  "begin_step_up",
+  "verify_step_up",
+  "request_audit_export",
+  "request_workspace_export",
+  "publish_retention_policy",
+  "create_retention_hold",
+  "release_retention_hold",
+  "record_deletion",
+]);
 
 export class GovernanceError extends Error {
   constructor(
@@ -529,6 +550,7 @@ export class GovernanceService {
       ...replayBinding,
     });
     if (replay !== undefined) return replay;
+    await this.requireClosureAdmission(actor.workspaceId, command.type);
     const now = this.clock.now();
     const create = <T>(kind: GovernanceResourceKind, id: string, status: string, body: T) => ({
       type: "create" as const,
@@ -1087,6 +1109,7 @@ export class GovernanceService {
     idempotencyKey: string;
   }): Promise<unknown> {
     const now = this.clock.now();
+    await this.requireClosureAdmission(input.workspaceId, "issue_review_guest");
     const receiptCapability = "review_guests.verify@1";
     const request = { grantId: input.grantId, tokenDigest: secretDigest(input.token), codeDigest: secretDigest(input.code) };
     const grant = await this.required("review_guest_grant", input.grantId, input.workspaceId);
@@ -1137,6 +1160,7 @@ export class GovernanceService {
     idempotencyKey: string;
   }): Promise<unknown> {
     const now = this.clock.now();
+    await this.requireClosureAdmission(input.workspaceId, "create_invitation");
     const receiptCapability = "members.invitations.accept@1";
     const requestDigest = canonicalDigest({ invitationId: input.invitationId, userId: input.userId, tokenDigest: secretDigest(input.token) });
     const invitation = await this.required("invitation_binding", input.invitationId, input.workspaceId);
@@ -1158,6 +1182,14 @@ export class GovernanceService {
     const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: invitation.version, resource: invitationNext }, { type: currentAssignment ? "update" : "create", expectedVersion: currentAssignment?.version ?? null, resource: assignmentNext }, { type: "create", expectedVersion: null, resource: projection }], canonicalEffects: [{ type: "membership_upsert", workspaceId: input.workspaceId, userId: input.userId, role: body.binding.kind === "built_in" && body.binding.role === "admin" ? "admin" : "member", occurredAt: now }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "human", id: input.userId }, capability: receiptCapability, action: "accept_invitation", resource: { kind: "invitation_binding", id: invitation.id }, outcome: "completed", redactedDetails: { roleBindingKind: body.binding.kind }, occurredAt: now } });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Invitation acceptance changed.");
     return outcome.type === "committed" ? result : outcome.result;
+  }
+
+  private async requireClosureAdmission(workspaceId: string, commandType: GovernanceCommand["type"]): Promise<void> {
+    if (CLOSURE_CONTINUATION_COMMANDS.has(commandType)) return;
+    const closures = await this.repository.listResources({ workspaceId, kinds: ["workspace_closure"] });
+    if (closures.some((closure) => ACTIVE_CLOSURE_STATUSES.has(closure.status))) {
+      throw new GovernanceError("FORBIDDEN", "Workspace closure blocks new mutations.");
+    }
   }
 
   /** Presents only the immutable revision named by a verified guest session. */
@@ -1210,6 +1242,7 @@ export class GovernanceService {
     idempotencyKey: string;
   }): Promise<unknown> {
     const now = this.clock.now();
+    await this.requireClosureAdmission(input.workspaceId, "decide_content_acceptance");
     const requestDigest = canonicalDigest({ ...input, sessionToken: "[redacted]" });
     const session = await this.required("review_guest_session", input.sessionId, input.workspaceId);
     const sessionBody = session.body as { grantId: string; tokenDigest: string; purpose: string; resourceId: string; revisionDigest: string; expiresAt: string };

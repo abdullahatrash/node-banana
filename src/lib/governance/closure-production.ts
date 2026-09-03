@@ -1,4 +1,5 @@
 import { and, asc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { z } from "zod";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
 import {
@@ -18,6 +19,7 @@ import {
   usageLedgerReceipts,
 } from "@/lib/db/schema";
 import type { GovernanceWorkspaceClosureAdapter } from "./closure-worker";
+import type { WorkspaceClosureEffectOutcome, WorkspaceHardErasureEvidence } from "./closure-worker";
 import type { GovernanceRetentionResourceDescriptor } from "./retention-resource";
 
 type Db = ReturnType<typeof getDb>;
@@ -34,6 +36,57 @@ const SOURCE_ORDER = [
   "social_post",
   "support",
 ] as const;
+
+/** Every canonical Workspace-owned surface handed to the closure-specific
+ * hard-erasure integration. Row-level retention receipts run first; this is
+ * the final authoritative purge rather than a collection of ordinary delete
+ * endpoints with incompatible state machines. */
+export const CLOSURE_CANONICAL_SURFACES = [
+  "workspace_identity",
+  "memberships_invitations_and_role_assignments",
+  "portfolios_and_cross_workspace_assignments",
+  "review_guests_and_approval_records",
+  "audit_exports_imports_and_governance_receipts",
+  "region_retention_safety_and_bulk_records",
+  "projects_assets_and_generated_artifacts",
+  "content_workflows_revisions_and_runs",
+  "brand_profiles_sources_and_saved_prompts",
+  "calendar_posts_captions_and_platform_observations",
+  "social_accounts_tokens_automation_and_publish_receipts",
+  "credential_profiles_versions_tokens_agents_and_keys",
+  "model_routes_intents_predictions_effects_and_ingestion_receipts",
+  "budgets_quotas_reservations_usage_and_settlements",
+  "diagnostics_support_bundles_telemetry_and_experiments",
+  "release_attestations_manifests_flags_and_audit_lineage",
+] as const;
+
+const externalEffectOutcome = z.object({
+  state: z.enum(["deleted", "not_found", "retained", "failed_known", "outcome_unknown"]),
+  evidenceRef: z.string().min(1).max(500).optional(),
+  reason: z.string().min(1).max(500).optional(),
+}).strict();
+
+async function runClosureEffect(input: {
+  path: string;
+  body: Record<string, unknown>;
+}): Promise<z.infer<typeof externalEffectOutcome>> {
+  const base = process.env.GOVERNANCE_CLOSURE_EFFECT_URL?.trim();
+  const secret = process.env.GOVERNANCE_CLOSURE_EFFECT_SECRET?.trim();
+  if (!base || !secret) return { state: "outcome_unknown", reason: "CLOSURE_EFFECT_ADAPTER_NOT_CONFIGURED" };
+  try {
+    const response = await fetch(new URL(input.path, base), {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+      body: JSON.stringify(input.body),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) return { state: "outcome_unknown", reason: `CLOSURE_EFFECT_HTTP_${response.status}` };
+    const parsed = externalEffectOutcome.safeParse(await response.json());
+    return parsed.success ? parsed.data : { state: "outcome_unknown", reason: "CLOSURE_EFFECT_RESPONSE_INVALID" };
+  } catch (error) {
+    return { state: "outcome_unknown", reason: error instanceof Error ? error.name : "CLOSURE_EFFECT_REQUEST_FAILED" };
+  }
+}
 
 function systems(): string[] {
   const configured = (process.env.GOVERNANCE_DELETION_SYSTEMS ?? "primary")
@@ -72,7 +125,12 @@ export class DrizzleGovernanceWorkspaceClosureAdapter implements GovernanceWorks
   constructor(private readonly database: () => Db = getDb) {}
 
   async revokeAccess(input: { workspaceId: string; idempotencyKey: string; evaluatedAt: Date }) {
-    const counts = await this.database().transaction(async (tx) => {
+    const db = this.database();
+    const [socialTargets, credentialTargets] = await Promise.all([
+      db.select({ id: socialAccounts.id, provider: socialAccounts.platform }).from(socialAccounts).where(eq(socialAccounts.workspaceId, input.workspaceId)),
+      db.select({ id: credentialProfiles.id, provider: credentialProfiles.provider }).from(credentialProfiles).where(and(eq(credentialProfiles.workspaceId, input.workspaceId), isNull(credentialProfiles.deletedAt))),
+    ]);
+    const counts = await db.transaction(async (tx) => {
       const tokens = await tx.update(apiTokens).set({ revoked: true, revokedAt: input.evaluatedAt, updatedAt: input.evaluatedAt }).where(and(eq(apiTokens.workspaceId, input.workspaceId), eq(apiTokens.revoked, false))).returning({ id: apiTokens.id });
       const principals = await tx.update(agentPrincipals).set({ status: "revoked", revokedAt: input.evaluatedAt, updatedAt: input.evaluatedAt }).where(and(eq(agentPrincipals.workspaceId, input.workspaceId), isNull(agentPrincipals.revokedAt))).returning({ id: agentPrincipals.id });
       const principalIds = tx.select({ id: agentPrincipals.id }).from(agentPrincipals).where(eq(agentPrincipals.workspaceId, input.workspaceId));
@@ -81,10 +139,51 @@ export class DrizzleGovernanceWorkspaceClosureAdapter implements GovernanceWorks
       const accounts = await tx.update(socialAccounts).set({ disabled: true, requiresReauth: true, accessTokenEncrypted: "revoked:workspace-closure", refreshTokenEncrypted: null, accessTokenSecret: null, additionalSettings: null, updatedAt: input.evaluatedAt }).where(and(eq(socialAccounts.workspaceId, input.workspaceId), eq(socialAccounts.disabled, false))).returning({ id: socialAccounts.id });
       return { apiTokens: tokens.length, agentPrincipals: principals.length, agentKeys: keys.length, credentialProfiles: profiles.length, socialAccounts: accounts.length };
     });
+    const externalEffects: WorkspaceClosureEffectOutcome[] = await Promise.all([
+      ...socialTargets.map(async (target) => ({
+        kind: "social_disconnect" as const,
+        targetId: target.id,
+        idempotencyKey: `${input.idempotencyKey}:social:${target.id}`,
+        attempts: 1,
+        attemptedAt: input.evaluatedAt.toISOString(),
+        ...await runClosureEffect({ path: "/v1/social/disconnect", body: { schema: "workspace-closure-effect/v1", workspaceId: input.workspaceId, targetId: target.id, provider: target.provider, idempotencyKey: `${input.idempotencyKey}:social:${target.id}`, evaluatedAt: input.evaluatedAt.toISOString() } }),
+      })),
+      ...credentialTargets.map(async (target) => ({
+        kind: "provider_credential_revoke" as const,
+        targetId: target.id,
+        idempotencyKey: `${input.idempotencyKey}:credential:${target.id}`,
+        attempts: 1,
+        attemptedAt: input.evaluatedAt.toISOString(),
+        ...await runClosureEffect({ path: "/v1/providers/revoke", body: { schema: "workspace-closure-effect/v1", workspaceId: input.workspaceId, targetId: target.id, provider: target.provider, idempotencyKey: `${input.idempotencyKey}:credential:${target.id}`, evaluatedAt: input.evaluatedAt.toISOString() } }),
+      })),
+    ]);
     return {
       schema: "workspace-access-revocation-evidence/v1" as const,
       ...counts,
+      externalEffects,
       evidenceRef: canonicalDigest({ workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey }),
+    };
+  }
+
+  async hardEraseWorkspace(input: { workspaceId: string; closureId: string; idempotencyKey: string; evaluatedAt: Date; retainedResources: Array<{ resourceKind: string; resourceId: string; holdIds: string[] }> }): Promise<WorkspaceHardErasureEvidence> {
+    const effects: WorkspaceClosureEffectOutcome[] = await Promise.all(CLOSURE_CANONICAL_SURFACES.map(async (surface) => ({
+      kind: "workspace_hard_erasure" as const,
+      targetId: surface,
+      idempotencyKey: `${input.idempotencyKey}:${surface}`,
+      attempts: 1,
+      attemptedAt: input.evaluatedAt.toISOString(),
+      ...await runClosureEffect({
+        path: "/v1/workspaces/hard-erase",
+        body: { schema: "workspace-closure-hard-erasure/v1", workspaceId: input.workspaceId, closureId: input.closureId, surface, retainedResources: input.retainedResources, idempotencyKey: `${input.idempotencyKey}:${surface}`, evaluatedAt: input.evaluatedAt.toISOString() },
+      }),
+    })));
+    return {
+      schema: "workspace-hard-erasure-evidence/v1",
+      effects,
+      surfaces: [...CLOSURE_CANONICAL_SURFACES],
+      omissions: [],
+      retainedResources: input.retainedResources,
+      evidenceRef: canonicalDigest({ workspaceId: input.workspaceId, closureId: input.closureId, surfaces: CLOSURE_CANONICAL_SURFACES, retainedResources: input.retainedResources, effects }),
     };
   }
 

@@ -13,6 +13,31 @@ import type {
 
 const LEASE_MS = 5 * 60_000;
 const TERMINAL_DELETION_STATUSES = new Set(["completed", "completed_hold"]);
+const PROVEN_EXTERNAL_EFFECT_STATES = new Set(["deleted", "not_found", "retained"]);
+
+export interface WorkspaceClosureEffectOutcome {
+  kind: "social_disconnect" | "provider_credential_revoke" | "workspace_hard_erasure";
+  targetId: string;
+  idempotencyKey: string;
+  attempts: number;
+  attemptedAt: string;
+  state: "deleted" | "not_found" | "retained" | "failed_known" | "outcome_unknown";
+  evidenceRef?: string;
+  reason?: string;
+}
+
+export interface WorkspaceHardErasureEvidence {
+  schema: "workspace-hard-erasure-evidence/v1";
+  effects: WorkspaceClosureEffectOutcome[];
+  surfaces: string[];
+  omissions: string[];
+  retainedResources: Array<{ resourceKind: string; resourceId: string; holdIds: string[] }>;
+  evidenceRef: string;
+}
+
+function hasTerminalProof(effect: WorkspaceClosureEffectOutcome): boolean {
+  return PROVEN_EXTERNAL_EFFECT_STATES.has(effect.state) && Boolean(effect.evidenceRef?.trim());
+}
 
 interface ClosureBody {
   requestedByUserId: string;
@@ -22,6 +47,7 @@ interface ClosureBody {
   erasureCursor: string | null;
   erasureScheduled: boolean;
   accessRevocationEvidence: WorkspaceAccessRevocationEvidence | null;
+  hardErasureEvidence?: WorkspaceHardErasureEvidence | null;
   completionEvidence: Record<string, unknown> | null;
   lease: ClosureLease | null;
   [key: string]: unknown;
@@ -40,6 +66,7 @@ export interface WorkspaceAccessRevocationEvidence {
   agentKeys: number;
   credentialProfiles: number;
   socialAccounts: number;
+  externalEffects: WorkspaceClosureEffectOutcome[];
   evidenceRef: string;
 }
 
@@ -54,6 +81,13 @@ export interface GovernanceWorkspaceClosureAdapter {
     after: string | null;
     limit: number;
   }): Promise<{ items: Array<{ cursor: string; descriptor: GovernanceRetentionResourceDescriptor }>; nextCursor: string | null }>;
+  hardEraseWorkspace(input: {
+    workspaceId: string;
+    closureId: string;
+    idempotencyKey: string;
+    evaluatedAt: Date;
+    retainedResources: Array<{ resourceKind: string; resourceId: string; holdIds: string[] }>;
+  }): Promise<WorkspaceHardErasureEvidence>;
 }
 
 function audit(job: GovernanceResource, action: string, outcome: GovernanceAuditEvent["outcome"], now: Date): GovernanceAuditEvent {
@@ -93,11 +127,24 @@ export class GovernanceWorkspaceClosureWorker {
     const job = await this.claim(found);
     if (!job) return;
     const now = this.clock.now();
-    const revocation = await this.adapter.revokeAccess({
+    const revocationAttempt = await this.adapter.revokeAccess({
       workspaceId: input.workspaceId,
       idempotencyKey: `workspace-closure:${job.id}:access`,
       evaluatedAt: now,
     });
+    const previousEffects = new Map((job.body.accessRevocationEvidence?.externalEffects ?? []).map((effect) => [`${effect.kind}:${effect.targetId}`, effect]));
+    const revocation = {
+      ...revocationAttempt,
+      externalEffects: revocationAttempt.externalEffects.map((effect) => ({
+        ...effect,
+        attempts: (previousEffects.get(`${effect.kind}:${effect.targetId}`)?.attempts ?? 0) + 1,
+      })),
+    };
+    revocation.evidenceRef = canonicalDigest({ ...revocation, evidenceRef: undefined });
+    if (revocation.externalEffects.some((effect) => !hasTerminalProof(effect))) {
+      await this.release(job, "waiting_erasure", { ...job.body, accessRevocationEvidence: revocation }, now, "closure_waiting_external_revocation");
+      return;
+    }
     const scheduled = await this.scheduleRetention(job, revocation, now);
     if (scheduled) return;
     await this.tryComplete(job, revocation, now);
@@ -214,14 +261,55 @@ export class GovernanceWorkspaceClosureWorker {
       await this.release(job, exportJob?.status === "failed_known" ? "waiting_export" : "waiting_erasure", { ...job.body, accessRevocationEvidence: revocation }, now, "closure_waiting_dependencies");
       return;
     }
+    const retainedResources = deletions.flatMap((receipt) => {
+      const body = receipt.body as { resourceKind?: string; resourceId?: string; holdIds?: string[] };
+      return receipt.status === "completed_hold" && body.resourceKind && body.resourceId
+        ? [{ resourceKind: body.resourceKind, resourceId: body.resourceId, holdIds: [...(body.holdIds ?? [])].sort() }]
+        : [];
+    });
+    const hardErasureAttempt = await this.adapter.hardEraseWorkspace({
+      workspaceId: job.workspaceId,
+      closureId: job.id,
+      idempotencyKey: `workspace-closure:${job.id}:hard-erasure`,
+      evaluatedAt: now,
+      retainedResources,
+    });
+    const previousHardEffects = new Map((job.body.hardErasureEvidence?.effects ?? []).map((effect) => [effect.targetId, effect]));
+    const hardErasure = {
+      ...hardErasureAttempt,
+      effects: hardErasureAttempt.effects.map((effect) => ({ ...effect, attempts: (previousHardEffects.get(effect.targetId)?.attempts ?? 0) + 1 })),
+    };
+    hardErasure.evidenceRef = canonicalDigest({ ...hardErasure, evidenceRef: undefined });
+    if (
+      hardErasure.surfaces.length === 0 ||
+      hardErasure.effects.length !== hardErasure.surfaces.length ||
+      new Set(hardErasure.effects.map((effect) => effect.targetId)).size !== hardErasure.surfaces.length ||
+      hardErasure.effects.some((effect) => effect.kind !== "workspace_hard_erasure" || !hardErasure.surfaces.includes(effect.targetId)) ||
+      hardErasure.effects.some((effect) => !hasTerminalProof(effect))
+    ) {
+      await this.release(job, "waiting_erasure", { ...job.body, accessRevocationEvidence: revocation, hardErasureEvidence: hardErasure }, now, "closure_waiting_hard_erasure");
+      return;
+    }
     const tombstoneId = `workspace:${job.workspaceId}`;
     const existingTombstone = await this.repository.getResource({ workspaceId: job.workspaceId, kind: "tombstone", id: tombstoneId });
     const completionEvidence = {
-      schema: "workspace-closure-completion-evidence/v1",
+      schema: "workspace-closure-completion-evidence/v2",
       exportId: exportJob.id,
       exportManifestDigest: canonicalDigest((exportJob.body as { manifest?: unknown }).manifest ?? null),
       accessRevocationEvidence: revocation,
-      deletionReceiptIds: deletions.map((receipt) => receipt.id).sort(),
+      hardErasureEvidence: hardErasure,
+      deletionReceipts: deletions.map((receipt) => ({
+        id: receipt.id,
+        status: receipt.status,
+        holdIds: (receipt.body as { holdIds?: string[] }).holdIds ?? [],
+        outcomes: (receipt.body as { outcomes?: Record<string, unknown> }).outcomes ?? {},
+      })).sort((left, right) => left.id.localeCompare(right.id)),
+      holds: deletions.flatMap((receipt) => (receipt.body as { holdIds?: string[] }).holdIds ?? []).sort(),
+      omissions: [
+        ...(((exportJob.body as { manifest?: { omissions?: string[] } }).manifest?.omissions) ?? []),
+        ...hardErasure.omissions,
+      ].sort(),
+      unknowns: [],
       completedAt: now.toISOString(),
     };
     const next = updated(job, "closed", { ...job.body, lease: null, completionEvidence, closedAt: now.toISOString() }, now);

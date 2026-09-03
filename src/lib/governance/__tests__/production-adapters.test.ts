@@ -49,4 +49,19 @@ describe("production governance effect adapters", () => {
     expect(remove).toHaveBeenCalledWith({ workspaceId: "workspace-a", resourceKind, resourceId: "evidence-1", idempotencyKey: `delete-${resourceKind}` });
     expect(result).toMatchObject({ state: "deleted" });
   });
+
+  it("uses dedicated retained-lineage erasure for a published post", async () => {
+    const remove = vi.fn().mockResolvedValue({ state: "deleted", evidenceRef: "primary:published-lineage" });
+    const result = await new ProductionGovernanceDeletionAdapter({ delete: remove }).delete({
+      workspaceId: "workspace-a",
+      system: "primary",
+      resourceKind: "social_post",
+      resourceId: "post-published",
+      retentionClass: "published_lineage",
+      idempotencyKey: "delete-published",
+    });
+    expect(remove).toHaveBeenCalledWith({ workspaceId: "workspace-a", resourceKind: "published_lineage", resourceId: "post-published", idempotencyKey: "delete-published" });
+    expect(mocks.deleteSocialPost).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ state: "deleted" });
+  });
 });

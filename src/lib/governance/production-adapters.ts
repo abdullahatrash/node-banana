@@ -94,6 +94,16 @@ export class ProductionGovernanceDeletionAdapter implements GovernanceDeletionAd
         ? { state: "deleted", evidenceRef: `primary:${input.idempotencyKey}:prompt` }
         : { state: "not_found", evidenceRef: `primary:${input.idempotencyKey}:prompt-absent` };
     }
+    if ((input.resourceKind === "social_post" || input.resourceKind === "calendar_plan") && input.retentionClass === "published_lineage") {
+      try {
+        // Published records have provider/audit lineage and cannot traverse the
+        // ordinary draft rejection state machine. The closure-specific adapter
+        // erases that lineage only after the worker has enforced its legal floor.
+        return await this.evidence.delete({ workspaceId: input.workspaceId, resourceKind: "published_lineage", resourceId: input.resourceId, idempotencyKey: input.idempotencyKey });
+      } catch (error) {
+        return { state: "outcome_unknown", reason: error instanceof Error ? error.name : "PUBLISHED_LINEAGE_ERASURE_UNKNOWN" };
+      }
+    }
     if (input.resourceKind === "social_post" || input.resourceKind === "calendar_plan") {
       try {
         await deleteSocialPost(input.workspaceId, input.resourceId);

@@ -255,9 +255,17 @@ describe("GovernanceService", () => {
     const closureService = new GovernanceService(closureRepository, { now: () => new Date(current) }, {
       provisionAcceptedMembership: vi.fn(), removeMembership: vi.fn().mockResolvedValue("removed"), transferOwnership: vi.fn().mockResolvedValue("transferred"), closeWorkspace,
     });
+    const pendingInvitation = await closureService.execute(owner, { type: "create_invitation", email: "late@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-10-01T12:00:00.000Z" }, "invite-before-close") as { invitationId: string; invitationToken: string };
     const closureChallenge = await closureService.execute(owner, { type: "begin_step_up", purpose: "workspace.close", resourceId: null }, "begin-close-request") as { challengeId: string; verificationCode: string };
     const closureSession = await closureService.execute(owner, { type: "verify_step_up", challengeId: closureChallenge.challengeId, code: closureChallenge.verificationCode }, "verify-close-request") as { stepUpToken: string };
     const requested = await closureService.execute(owner, { type: "request_workspace_closure", reason: "Contract ended", coolingOffDays: 7, stepUpToken: closureSession.stepUpToken }, "request-close-workspace") as { closureId: string };
+    await expect(closureService.execute(owner, { type: "request_workspace_closure", reason: "Duplicate", coolingOffDays: 7, stepUpToken: closureSession.stepUpToken }, "duplicate-close-workspace"))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(closureService.execute(owner, { type: "create_portfolio", name: "Must not mutate" }, "write-during-cooling-off"))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    const decodedPending = decodeInvitationToken(pendingInvitation.invitationToken)!;
+    await expect(closureService.acceptInvitation({ ...decodedPending, token: decodedPending.secret, userId: "late-user", verifiedEmail: "late@example.com", authContextId: "late-session", idempotencyKey: "accept-during-cooling-off" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
     await closureService.execute(owner, { type: "cancel_workspace_closure", closureId: requested.closureId }, "cancel-close-workspace");
     expect(closeWorkspace).not.toHaveBeenCalled();
 
