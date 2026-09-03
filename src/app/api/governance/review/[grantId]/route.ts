@@ -6,6 +6,7 @@ import { PRODUCTION_GOVERNANCE_SERVICE } from "@/lib/governance/production";
 
 const bodySchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("verify"), code: z.string().regex(/^\d{6}$/), idempotencyKey: z.string().min(8).max(200) }).strict(),
+  z.object({ action: z.literal("inspect"), sessionId: z.string().min(1).max(200), sessionToken: z.string().min(32).max(100) }).strict(),
   z.object({ action: z.literal("decide"), sessionId: z.string().min(1).max(200), sessionToken: z.string().min(32).max(100), resourceId: z.string().min(1).max(200), revisionDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), decision: z.enum(["comment", "accept", "approve", "reject"]), comment: z.string().max(2000).nullable(), idempotencyKey: z.string().min(8).max(200) }).strict(),
 ]);
 
@@ -25,7 +26,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ gr
   try {
     const result = parsed.data.action === "verify"
       ? await PRODUCTION_GOVERNANCE_SERVICE.verifyReviewGuest({ ...parsed.data, workspaceId: token.workspaceId, grantId: token.grantId, token: token.secret })
-      : await PRODUCTION_GOVERNANCE_SERVICE.decideReviewGuest({ ...parsed.data, workspaceId: token.workspaceId, grantId: token.grantId });
+      : parsed.data.action === "inspect"
+        ? await PRODUCTION_GOVERNANCE_SERVICE.inspectReviewGuest({ ...parsed.data, workspaceId: token.workspaceId, grantId: token.grantId })
+        : await PRODUCTION_GOVERNANCE_SERVICE.decideReviewGuest({ ...parsed.data, workspaceId: token.workspaceId, grantId: token.grantId });
     return noStoreJson({ success: true, result });
   } catch (error) {
     if (!(error instanceof GovernanceError)) return noStoreJson({ success: false, code: "UNAVAILABLE" }, { status: 500 });

@@ -25,6 +25,7 @@ import type {
   WorkspaceRoleBinding,
   GovernanceMembershipPort,
   GovernanceBulkPreviewPort,
+  GovernanceReviewPresentationPort,
 } from "./types";
 import { GOVERNANCE_CAPABILITIES, RETENTION_CLASSES } from "./types";
 import { BUILT_IN_WORKSPACE_ROLES } from "./types";
@@ -334,6 +335,7 @@ export class GovernanceService {
     private readonly bulkPreview: GovernanceBulkPreviewPort = { inspect: async () => ({ type: "blocked", code: "BULK_PREVIEW_ADAPTER_NOT_CONFIGURED" }) },
     private readonly auditFederation: GovernanceAuditFederationPort = EMPTY_GOVERNANCE_AUDIT_FEDERATION,
     private readonly retentionResources: GovernanceRetentionResourcePort = UNCONFIGURED_GOVERNANCE_RETENTION_RESOURCE_PORT,
+    private readonly reviewPresentation: GovernanceReviewPresentationPort = { present: async () => null },
   ) {}
 
   private async roleBinding(actor: GovernanceActor): Promise<WorkspaceRoleBinding> {
@@ -1138,6 +1140,43 @@ export class GovernanceService {
     const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, ...replayBinding, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: invitation.version, resource: invitationNext }, { type: currentAssignment ? "update" : "create", expectedVersion: currentAssignment?.version ?? null, resource: assignmentNext }, { type: "create", expectedVersion: null, resource: projection }], canonicalEffects: [{ type: "membership_upsert", workspaceId: input.workspaceId, userId: input.userId, role: body.binding.kind === "built_in" && body.binding.role === "admin" ? "admin" : "member", occurredAt: now }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "human", id: input.userId }, capability: receiptCapability, action: "accept_invitation", resource: { kind: "invitation_binding", id: invitation.id }, outcome: "completed", redactedDetails: { roleBindingKind: body.binding.kind }, occurredAt: now } });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Invitation acceptance changed.");
     return outcome.type === "committed" ? result : outcome.result;
+  }
+
+  /** Presents only the immutable revision named by a verified guest session. */
+  async inspectReviewGuest(input: {
+    workspaceId: string;
+    grantId: string;
+    sessionId: string;
+    sessionToken: string;
+  }): Promise<unknown> {
+    const now = this.clock.now();
+    const session = await this.required("review_guest_session", input.sessionId, input.workspaceId);
+    const sessionBody = session.body as { grantId: string; tokenDigest: string; purpose: "inspect" | "comment" | "accept_content" | "approve_publishing" | "reject"; resourceKind: "render_proof" | "plan_revision"; resourceId: string; revisionDigest: string; expiresAt: string };
+    if (
+      session.status !== "active" ||
+      sessionBody.grantId !== input.grantId ||
+      sessionBody.tokenDigest !== secretDigest(input.sessionToken) ||
+      exactDate(sessionBody.expiresAt, "Review session expiry") <= now
+    ) throw new GovernanceError("EXPIRED", "Review session expired.");
+    const grant = await this.required("review_guest_grant", input.grantId, input.workspaceId);
+    const grantBody = grant.body as { revokedAt: string | null; expiresAt: string; approvalRequestId?: string | null };
+    if (grant.status === "revoked" || grantBody.revokedAt || exactDate(grantBody.expiresAt, "Review expiry") <= now) {
+      throw new GovernanceError("EXPIRED", "Review grant expired or was revoked.");
+    }
+    const presentation = await this.reviewPresentation.present({
+      workspaceId: input.workspaceId,
+      grantId: input.grantId,
+      sessionId: input.sessionId,
+      purpose: sessionBody.purpose,
+      resourceKind: sessionBody.resourceKind,
+      resourceId: sessionBody.resourceId,
+      revisionDigest: sessionBody.revisionDigest,
+      approvalRequestId: grantBody.approvalRequestId ?? null,
+      sessionExpiresAt: exactDate(sessionBody.expiresAt, "Review session expiry"),
+      presentedAt: now,
+    });
+    if (!presentation) throw new GovernanceError("NOT_FOUND", "The immutable review revision is unavailable.");
+    return presentation;
   }
 
   /** Guest decisions bind one immutable revision and never become execution authority. */

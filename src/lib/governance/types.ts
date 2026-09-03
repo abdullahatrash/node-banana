@@ -397,3 +397,52 @@ export interface GovernanceBulkPreviewPort {
     | { type: "blocked"; code: string }
   >;
 }
+
+export interface GovernanceReviewPresentation {
+  schema: "governance-review-presentation/v1";
+  resourceKind: "render_proof" | "plan_revision";
+  resourceId: string;
+  revisionDigest: string;
+  purpose: "inspect" | "comment" | "accept_content" | "approve_publishing" | "reject";
+  presentedAt: string;
+  expiresAt: string;
+  renderProof: null | {
+    artifactId: string;
+    kind: "text" | "image";
+    mediaType: string;
+    sizeBytes: number;
+    text: string | null;
+    mediaAccess: null | { url: string; expiresAt: string; digest: string };
+  };
+  planRevision: null | {
+    planRevisionId: string;
+    planRevision: number;
+    planRevisionDigest: string;
+    targets: Array<{
+      targetId: string;
+      targetEvidenceDigest: string;
+      channel: { id: string; platform: string; authorKind: string; displayName: string | null; historical: boolean };
+      content: { artifactId: string; digest: string; text: string };
+      media: Array<{ artifactId: string; digest: string; mediaType: string; sizeBytes: number; access: { url: string; expiresAt: string; digest: string } }>;
+      settings: Record<string, unknown>;
+      timing: { kind: "now" | "scheduled"; publishAt: string };
+      validationExpiresAt: string;
+    }>;
+  };
+  presentationDigest: string;
+}
+
+export interface GovernanceReviewPresentationPort {
+  present(input: {
+    workspaceId: string;
+    grantId: string;
+    sessionId: string;
+    purpose: GovernanceReviewPresentation["purpose"];
+    resourceKind: GovernanceReviewPresentation["resourceKind"];
+    resourceId: string;
+    revisionDigest: string;
+    approvalRequestId: string | null;
+    sessionExpiresAt: Date;
+    presentedAt: Date;
+  }): Promise<GovernanceReviewPresentation | null>;
+}

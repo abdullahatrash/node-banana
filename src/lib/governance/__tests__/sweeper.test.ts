@@ -52,7 +52,7 @@ describe("GovernanceRecoverySweep", () => {
       { workspaceId: "workspace-c", id: "middle", updatedAt: new Date("2026-09-03T10:00:00.000Z") },
     ];
     for (const job of jobs) await repository.commit({ receipt: { workspaceId: job.workspaceId, capability: "test.seed@1", idempotencyKey: `seed-${job.id}`, requestDigest: canonicalDigest(job), result: {}, createdAt: job.updatedAt }, mutations: [{ type: "create", expectedVersion: null, resource: { ...job, kind: "workspace_export", version: 1, status: "queued", body: {}, createdByUserId: "owner", createdAt: job.updatedAt } }], audit: { schema: "workspace-audit-event/v1", id: `audit-${job.id}`, workspaceId: job.workspaceId, actor: { kind: "system", id: null }, capability: "test.seed@1", action: "seed", resource: null, outcome: "completed", redactedDetails: {}, occurredAt: job.updatedAt } });
-    const process = vi.fn(async () => undefined);
+    const process = vi.fn(async (_input: { workspaceId: string; exportId: string }) => undefined);
     const workers = { export: { process }, bulk: { process: vi.fn() }, import: { process: vi.fn() }, deletion: { process: vi.fn() }, safety: { process: vi.fn() }, approvals: { processWorkspace: vi.fn(async () => 0) }, membership: { sweep: vi.fn(async () => ({ scanned: 0, succeeded: 0, retryPending: 0, deadLetter: 0 })) }, secrets: { purge: vi.fn(async () => 0) } };
     const sweep = new GovernanceRecoverySweep(repository, workers);
     const first = await sweep.run({ maxJobs: 2, evaluatedAt: now });

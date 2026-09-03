@@ -7,7 +7,7 @@ import { decodeInvitationToken, decodeReviewToken, GovernanceError, GovernanceSe
 import { RepositoryPublishingApprovalGovernancePolicy } from "../publishing-approval-policy";
 import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionDeploymentEvidence } from "../region-policy";
 import { TRUSTED_RETENTION_LEGAL_FLOORS } from "../retention-policy";
-import { RETENTION_CLASSES, type GovernanceActor, type RetentionRule } from "../types";
+import { RETENTION_CLASSES, type GovernanceActor, type GovernanceReviewPresentationPort, type RetentionRule } from "../types";
 
 const NOW = new Date("2026-09-03T12:00:00.000Z");
 const owner: GovernanceActor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner", authContextId: "session-owner-a" };
@@ -26,7 +26,7 @@ function regionEvidence(validSignature = true): GovernanceRegionDeploymentEviden
   return { ...payload, signature: validSignature ? createHmac("sha256", regionKey).update(canonicalJson(payload)).digest("base64url") : Buffer.alloc(32, 1).toString("base64url") };
 }
 
-function setup() {
+function setup(reviewPresentation?: GovernanceReviewPresentationPort) {
   const repository = new InMemoryGovernanceRepository();
   const service = new GovernanceService(
     repository,
@@ -37,6 +37,7 @@ function setup() {
     bulkPreview,
     undefined,
     { resolve: async ({ resourceKind, resourceId }) => ({ resourceKind: resourceKind as "media", resourceId, retentionClass: "security_evidence", createdAt: new Date(NOW), authoritativeSystems: ["primary", "replica"] }) },
+    reviewPresentation,
   );
   return { repository, service };
 }
@@ -298,6 +299,28 @@ describe("GovernanceService", () => {
     expect(decision.approvalProgressStatus).toBe("accepted");
     expect((await repository.getResource({ workspaceId: owner.workspaceId, kind: "approval_request", id: binding!.governanceRequestId }))?.status).toBe("accepted");
     await expect(new RepositoryPublishingApprovalGovernancePolicy(repository).decide({ workspaceId: owner.workspaceId, binding: binding!, runtimeApprovalRequestId: "runtime-review-request", userId: "authority-user", legacyRole: "admin", decision: "approve", idempotencyKey: "formalize-review-acceptance", decidedAt: new Date("2026-09-03T12:02:00.000Z") })).resolves.toBe("accepted");
+  });
+
+  it("lets an inspect-only Review Guest read the immutable exact presentation without decision authority", async () => {
+    const present = vi.fn().mockImplementation(async (input) => ({
+      schema: "governance-review-presentation/v1",
+      resourceKind: input.resourceKind,
+      resourceId: input.resourceId,
+      revisionDigest: input.revisionDigest,
+      purpose: input.purpose,
+      presentedAt: NOW.toISOString(),
+      expiresAt: input.sessionExpiresAt.toISOString(),
+      renderProof: { artifactId: input.resourceId, kind: "text", mediaType: "text/plain", sizeBytes: 8, text: "Approved", mediaAccess: null },
+      planRevision: null,
+      presentationDigest: canonicalDigest({ resourceId: input.resourceId, revisionDigest: input.revisionDigest }),
+    }));
+    const { service } = setup({ present });
+    const issued = await service.execute(owner, { type: "issue_review_guest", email: "inspect@example.com", purpose: "inspect", resourceKind: "render_proof", resourceId: "proof-inspect", revisionDigest: digest, expiresAt: "2026-09-04T12:00:00.000Z" }, "issue-inspect-review") as { grantId: string; reviewToken: string; verificationCode: string };
+    const decoded = decodeReviewToken(issued.reviewToken)!;
+    const verified = await service.verifyReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, token: decoded.secret, code: issued.verificationCode, idempotencyKey: "verify-inspect-review" }) as { sessionId: string; sessionToken: string };
+    await expect(service.inspectReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, sessionId: verified.sessionId, sessionToken: verified.sessionToken })).resolves.toMatchObject({ resourceId: "proof-inspect", purpose: "inspect", renderProof: { text: "Approved" } });
+    await expect(service.decideReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, sessionId: verified.sessionId, sessionToken: verified.sessionToken, resourceId: "proof-inspect", revisionDigest: digest, decision: "comment", comment: "No decision allowed", idempotencyKey: "inspect-cannot-decide" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(present).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: owner.workspaceId, grantId: issued.grantId, resourceId: "proof-inspect", revisionDigest: digest }));
   });
 
   it("counts an exact-scope Review Guest decision in Content Acceptance policy progress", async () => {

@@ -16,7 +16,7 @@ async function handle(request: NextRequest) {
   const rawCursor = request.nextUrl.searchParams.get("cursor");
   const after = rawCursor ? decodeGovernanceJobCursor(rawCursor) : undefined;
   if (rawCursor && !after) return noStoreJson({ success: false, error: "Invalid governance sweep cursor." }, { status: 400 });
-  const summary = await runProductionGovernanceSweep({ maxJobs: bounded(request.nextUrl.searchParams.get("jobs"), 200, 1_000), after });
+  const summary = await runProductionGovernanceSweep({ maxJobs: bounded(request.nextUrl.searchParams.get("jobs"), 200, 1_000), after: after ?? undefined });
   return noStoreJson({ success: true, summary, nextCursor: summary.nextCursor ? encodeGovernanceJobCursor(summary.nextCursor) : null });
 }
 
