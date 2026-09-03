@@ -98,6 +98,9 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
   }
 
   async commit(input: GovernanceCommit): Promise<GovernanceCommitResult> {
+    if (input.audit.workspaceId !== input.receipt.workspaceId || input.mutations.some((mutation) => mutation.resource.workspaceId !== input.receipt.workspaceId)) {
+      return { type: "conflict" };
+    }
     try {
       return await this.database().transaction(async (tx) => {
         const receiptLock = `${input.receipt.workspaceId}\u0000${input.receipt.capability}\u0000${input.receipt.idempotencyKey}`;

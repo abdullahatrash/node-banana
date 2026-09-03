@@ -53,11 +53,29 @@ function futureIso(days: number): string {
   return new Date(Date.now() + days * 86_400_000).toISOString();
 }
 
-function ResourceCard({ item }: { item: GovernanceResource }) {
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
+}
+
+async function browserDigest(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(canonicalJson(value));
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return `sha256:${[...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function ResourceCard({ item, run }: { item: GovernanceResource; run(command: GovernanceCommand): void }) {
   const t = useTranslations("governance");
   const summary = Object.entries(item.body)
     .filter(([, value]) => typeof value === "string" || typeof value === "number" || typeof value === "boolean")
     .slice(0, 3);
+  const action = item.kind === "invitation_binding" && item.status === "pending" ? { label: "actions.revoke" as const, command: { type: "revoke_invitation" as const, invitationId: item.id } }
+    : item.kind === "portfolio_assignment" && item.status === "active" ? { label: "actions.revoke" as const, command: { type: "revoke_portfolio_assignment" as const, assignmentId: item.id } }
+      : item.kind === "bulk_operation" && item.status === "previewed" ? { label: "actions.start" as const, command: { type: "start_bulk" as const, operationId: item.id } }
+        : item.kind === "bulk_operation" && ["queued", "running"].includes(item.status) ? { label: "actions.cancel" as const, command: { type: "cancel_bulk" as const, operationId: item.id } }
+          : item.kind === "workspace_import" && item.status === "previewed" ? { label: "actions.execute" as const, command: { type: "execute_import" as const, importId: item.id } }
+            : null;
   return (
     <article className="rounded-xl border bg-card p-4" aria-label={`${item.kind} ${item.id}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -77,6 +95,7 @@ function ResourceCard({ item }: { item: GovernanceResource }) {
         <CheckCircle2Icon className="size-3.5" />
         {t(stateKeys[item.status as keyof typeof stateKeys] ?? "states.active")}
       </p>
+      {action ? <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => run(action.command)}>{t(action.label)}</Button> : null}
     </article>
   );
 }
@@ -140,7 +159,7 @@ export function GovernanceSettingsSurface({ section }: { section: GovernanceSett
 
       {!snapshot && !errorCode ? <div className="flex min-h-40 items-center justify-center"><Loader2Icon className="size-6 animate-spin" /><span className="sr-only">{t("states.loading")}</span></div> : null}
       {snapshot && items.length === 0 ? <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">{t(`sections.${section}.empty`)}</div> : null}
-      {items.length ? <div className="grid gap-3 md:grid-cols-2">{items.map((item) => <ResourceCard key={`${item.kind}:${item.id}`} item={item} />)}</div> : null}
+      {items.length ? <div className="grid gap-3 md:grid-cols-2">{items.map((item) => <ResourceCard key={`${item.kind}:${item.id}`} item={item} run={run} />)}</div> : null}
     </div>
   );
 }
@@ -177,7 +196,7 @@ function BulkForm({ run, disabled, workspaceId }: { run(command: GovernanceComma
 
 function ImportForm({ run, disabled }: { run(command: GovernanceCommand): void; disabled: boolean }) {
   const t = useTranslations("governance");
-  return <FormShell title={t("forms.importTitle")} disabled={disabled} onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const sourceId = inputValue(form, "sourceId"); const digest = inputValue(form, "digest"); run({ type: "preview_import", source: inputValue(form, "source"), sourceManifestDigest: digest, items: [{ kind: "media", sourceId, digest, transferable: true }] }); }}><div className="grid gap-3 sm:grid-cols-3"><div><Label htmlFor="import-source">{t("fields.source")}</Label><Input id="import-source" name="source" required dir="auto" /></div><div><Label htmlFor="import-source-id">{t("fields.sourceId")}</Label><Input id="import-source-id" name="sourceId" required dir="ltr" /></div><div><Label htmlFor="import-digest">{t("fields.digest")}</Label><Input id="import-digest" name="digest" required pattern="sha256:[a-f0-9]{64}" dir="ltr" /></div></div><p className="text-xs text-muted-foreground">{t("portability.provenance")}</p></FormShell>;
+  return <FormShell title={t("forms.importTitle")} disabled={disabled} onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const source = inputValue(form, "source"); const sourceId = inputValue(form, "sourceId"); const kind = inputValue(form, "kind") as "custom_role" | "portfolio" | "approval_policy" | "data_region_policy" | "retention_policy"; const payload = JSON.parse(inputValue(form, "payload")) as Record<string, unknown>; void Promise.all([browserDigest(payload), browserDigest({ source, sourceId, kind, payload })]).then(([digest, sourceManifestDigest]) => run({ type: "preview_import", source, sourceManifestDigest, items: [{ kind, sourceId, digest, transferable: true, payload }] })); }}><div className="grid gap-3 sm:grid-cols-3"><div><Label htmlFor="import-source">{t("fields.source")}</Label><Input id="import-source" name="source" required dir="auto" /></div><div><Label htmlFor="import-source-id">{t("fields.sourceId")}</Label><Input id="import-source-id" name="sourceId" required dir="ltr" /></div><div><Label htmlFor="import-kind">{t("fields.kind")}</Label><select id="import-kind" name="kind" className="h-8 w-full rounded-lg border bg-background px-2 text-sm" defaultValue="portfolio">{(["custom_role", "portfolio", "approval_policy", "data_region_policy", "retention_policy"] as const).map((kind) => <option key={kind} value={kind}>{t(`kinds.${kind}`)}</option>)}</select></div></div><div><Label htmlFor="import-payload">{t("fields.payload")}</Label><textarea id="import-payload" name="payload" required dir="ltr" defaultValue={'{"name":"Imported portfolio","workspaceIds":[]}'} className="mt-2 min-h-28 w-full rounded-lg border bg-background p-3 font-mono text-xs" /></div><p className="text-xs text-muted-foreground">{t("portability.provenance")}</p></FormShell>;
 }
 
 function RoleCatalog() {

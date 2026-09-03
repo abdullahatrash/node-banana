@@ -52,7 +52,7 @@
   "governance": {
     "eyebrow": "Workspace governance",
     "version": "Version {version}",
-    "actions": { "refresh": "Refresh" },
+    "actions": { "refresh": "Refresh", "revoke": "Revoke", "start": "Start", "cancel": "Cancel", "execute": "Execute" },
     "sections": {
       "members": { "title": "Members and invitations", "description": "Invite verified people and bind each membership to one explicit built-in or versioned Custom Role.", "empty": "No invitations or role assignments have been recorded yet." },
       "roles": { "title": "Workspace Roles", "description": "Understand built-in capability bundles and create versioned Custom Roles without granting publishing Approval, credentials, or spend.", "empty": "No Custom Roles have been created yet." },
@@ -66,7 +66,7 @@
     },
     "roles": { "owner": "Owner", "admin": "Admin", "billing_admin": "Billing Admin", "creator": "Creator", "approver": "Approver", "analyst": "Analyst", "viewer": "Viewer", "catalog": "Built-in capability bundles", "customSafety": "Custom Roles may bundle stable application capabilities, but cannot create ownership, credential, provider-spend, or publishing Approval authority." },
     "forms": { "roleTitle": "Create Custom Role", "invitationTitle": "Create verified invitation", "portfolioTitle": "Create Portfolio", "approvalTitle": "Publish separation-of-duty policy", "bulkTitle": "Preview Bulk Operation", "importTitle": "Preview import" },
-    "fields": { "name": "Name", "description": "Description", "email": "Email", "role": "Role", "capability": "Exact capability", "targets": "Target IDs separated by spaces", "source": "Source", "sourceId": "Source item ID", "digest": "SHA-256 manifest digest" },
+    "fields": { "name": "Name", "description": "Description", "email": "Email", "role": "Role", "capability": "Exact capability", "targets": "Target IDs separated by spaces", "source": "Source", "sourceId": "Source item ID", "digest": "SHA-256 manifest digest", "kind": "Transferable configuration kind", "payload": "Canonical JSON payload" },
     "portfolios": { "noAuthority": "Portfolio assignments are revocable navigation and coordination allowlists. Every command must still pin and authorize its target Workspace." },
     "approval": { "separation": "Creates a Publishing Approval policy requiring an eligible Approver distinct from the requester, with a one-hour deadline and one-day expiry." },
     "bulk": { "previewFirst": "Preview does not execute effects. Start remains a separate authorized command, and outcome-unknown items cannot be retried blindly." },

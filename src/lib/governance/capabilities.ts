@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { CapabilityFailure } from "@/lib/agent-tools/errors";
 import { COMMON_DISCOVERY_ERRORS, defineCapability, QUERY_EFFECT } from "@/lib/agent-tools/registry";
-import type { CapabilityErrorContract, CapabilityRegistration, ResolvedSecurityContext } from "@/types/capabilities";
+import type { CapabilityErrorContract, CapabilityRegistration, JsonSchema, ResolvedSecurityContext } from "@/types/capabilities";
 import type { GovernanceActor } from "./types";
 import { GOVERNANCE_COMMAND_CAPABILITIES, GovernanceError, type GovernanceCommand, type GovernanceService } from "./service";
 
@@ -9,7 +9,9 @@ const commandTypes = Object.keys(GOVERNANCE_COMMAND_CAPABILITIES) as GovernanceC
 const commandSchema = z.object({ type: z.enum(commandTypes) }).passthrough();
 const invocationSchema = z.object({ command: commandSchema }).strict();
 const emptySchema = z.object({}).strict();
-const anyObject = { type: "object", additionalProperties: true } as const;
+const queryOutputSchema = z.object({ snapshot: z.unknown() }).strict();
+const mutationOutputSchema = z.object({ result: z.unknown() }).strict();
+const jsonSchema = (value: z.ZodType): JsonSchema => z.toJSONSchema(value, { target: "draft-7" }) as JsonSchema;
 const lifecycle = { status: "active", introducedAt: "2026-09-03T00:00:00.000Z", recommended: true } as const;
 const governanceErrors: CapabilityErrorContract[] = [
   ...COMMON_DISCOVERY_ERRORS,
@@ -39,14 +41,14 @@ export function createGovernanceRegistrations(service: GovernanceService): Capab
     summary: "Read the authorized, redacted governance snapshot for the explicitly selected Workspace.",
     lifecycle,
     input: emptySchema,
-    outputSchema: anyObject,
+    outputSchema: jsonSchema(queryOutputSchema),
     effect: QUERY_EFFECT,
     approval: { mode: "none" },
     idempotency: { mode: "retry-safe" },
     errors: governanceErrors,
     authorization: { resources: [] },
     handler: async (_input, context) => {
-      try { return await service.snapshot(actorFrom(context.securityContext)); } catch (error) { failure(error); }
+      try { return { snapshot: await service.snapshot(actorFrom(context.securityContext)) }; } catch (error) { failure(error); }
     },
   });
 
@@ -63,7 +65,7 @@ export function createGovernanceRegistrations(service: GovernanceService): Capab
       summary: `Execute ${capability} within one explicitly selected Workspace.`,
       lifecycle,
       input: invocationSchema,
-      outputSchema: anyObject,
+      outputSchema: jsonSchema(mutationOutputSchema),
       effect: { mutation: "runtime-state", visibility: "private", timing: capability === "bulk.execute" || capability === "imports.manage" || capability === "exports.manage" || capability === "audit.export" ? "durable-async" : "immediate", reversibility: "conditional", maySpendProviderBudget: false },
       approval: { mode: capability === "reviews.decide_publishing" ? "manages-approval" : "none" },
       idempotency: { mode: "key-required" },
@@ -78,7 +80,7 @@ export function createGovernanceRegistrations(service: GovernanceService): Capab
         const actor = actorFrom(securityContext);
         const key = securityContext?.kind === "human" ? securityContext.idempotencyKey : undefined;
         if (!key) throw new CapabilityFailure({ code: "IDEMPOTENCY_KEY_REQUIRED", category: "validation", retryable: false, message: "Idempotency key required." });
-        try { return await service.execute(actor, command, key); } catch (error) { failure(error); }
+        try { return { result: await service.execute(actor, command, key) }; } catch (error) { failure(error); }
       },
     }),
   );

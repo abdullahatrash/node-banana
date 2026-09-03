@@ -42,8 +42,10 @@ export const POST = withStudioAuth<undefined>(
     if (command?.type === "begin_step_up" && !authz.contentSession.user.email) return noStoreJson({ success: false, code: "VERIFIED_EMAIL_REQUIRED" }, { status: 403 });
     const response = await dispatchCapability(parsed.data, { securityContext: context });
     if (response.type === "capability_error") return noStoreJson({ success: false, code: response.code, operatorTraceRef: response.operatorTraceRef }, { status: status(response.category) });
-    const output = response.output as { exportId?: string; operationId?: string; importId?: string; status?: string };
-    const secretOutput = response.output as { invitationToken?: string; reviewToken?: string; verificationCode?: string };
+    const wrappedOutput = response.output as { result?: unknown; snapshot?: unknown };
+    const capabilityOutput = "result" in wrappedOutput ? wrappedOutput.result : "snapshot" in wrappedOutput ? wrappedOutput.snapshot : response.output;
+    const output = capabilityOutput as { exportId?: string; operationId?: string; importId?: string; status?: string };
+    const secretOutput = capabilityOutput as { invitationToken?: string; reviewToken?: string; verificationCode?: string };
     const appOrigin = new URL(process.env.NEXT_PUBLIC_APP_URL ?? request.nextUrl.origin).origin;
     if (command?.type === "create_invitation" && secretOutput.invitationToken) {
       await deliverGovernanceSecret({ sender: getEmailSender(), recipient: command.email.trim().toLowerCase(), kind: "invitation", actionUrl: `${appOrigin}/invitations/${encodeURIComponent(secretOutput.invitationToken)}` });
@@ -78,6 +80,6 @@ export const POST = withStudioAuth<undefined>(
     if (parsed.data.capability === "governance.snapshot.get@1" || command?.type === "request_content_acceptance" || command?.type === "decide_content_acceptance") {
       after(async () => { try { await getProductionGovernanceApprovalDeadlineWorker().processWorkspace(authz.workspaceId); } catch { /* A later sweep safely retries exact request versions. */ } });
     }
-    return noStoreJson({ success: true, capability: `${response.capability.name}@${response.capability.version}`, result: redactGovernanceSecrets(response.output as Record<string, unknown>) });
+    return noStoreJson({ success: true, capability: `${response.capability.name}@${response.capability.version}`, result: redactGovernanceSecrets(capabilityOutput as Record<string, unknown>) });
   },
 );

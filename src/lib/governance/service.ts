@@ -14,7 +14,6 @@ import type {
   GovernanceActor,
   GovernanceAuditEvent,
   GovernanceCapability,
-  GovernanceCommitResult,
   GovernanceRepository,
   GovernanceResource,
   GovernanceResourceKind,
