@@ -1,0 +1,21 @@
+import { and, eq } from "drizzle-orm";
+import { NextRequest } from "next/server";
+import { z } from "zod";
+import { noStoreJson } from "@/lib/agent-auth/http-request";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { getDb } from "@/lib/db";
+import { brandProfiles } from "@/lib/db/schema";
+import { findCuratedModel } from "@/lib/model-routing/catalog";
+import { PRODUCTION_MODEL_ROUTING } from "@/lib/model-routing/production";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+const modelRef = z.object({ provider: z.enum(["replicate","google","kie","openai","fal","wavespeed"]), model: z.string(), version: z.string(), inputSchemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
+const body = z.object({ brandProfileId: z.string().min(1).max(200), brandRevision: z.number().int().positive(), prompt: z.string().trim().min(1).max(50_000), capability: z.enum(["text_to_image","image_to_image","text_to_video","image_to_video","video_to_video"]), contentLanguage: z.enum(["ar","en","mixed"]), arabicVariety: z.enum(["msa","gulf","egyptian","levantine","maghrebi","other"]).nullable(), rights: z.object({ basis: z.enum(["owned","licensed","public_domain","consented"]), evidenceRefs: z.array(z.string().min(1).max(200)).max(100), sourceUrls: z.array(z.string().url()).max(100) }).strict(), requestedModel: modelRef, selectedModel: modelRef, fallbackAuthorizationId: z.string().nullable(), quote: z.object({ currency: z.literal("USD"), amount: z.number().nonnegative(), basis: z.enum(["image","second","run"]), quantity: z.number().positive(), quotedAt: z.string().datetime(), expiresAt: z.string().datetime() }).strict(), reservationId: z.string().min(1).max(200) }).strict();
+export const POST = withStudioAuth<undefined>({ route: "/api/studio/model-routing/intents", action: "write" }, async (request: NextRequest, authz) => {
+  const key = request.headers.get("idempotency-key"); let value: unknown = null; try { value = await request.json(); } catch { /* invalid */ } const parsed = body.safeParse(value);
+  if (request.headers.get("x-workspace-id") !== authz.workspaceId || !key || key.length < 8 || !parsed.success || !findCuratedModel(parsed.data.requestedModel) || !findCuratedModel(parsed.data.selectedModel)) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
+  const [brand] = await getDb().select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, authz.workspaceId), eq(brandProfiles.id, parsed.data.brandProfileId), eq(brandProfiles.revision, parsed.data.brandRevision), eq(brandProfiles.status, "active"))).limit(1);
+  if (!brand?.acceptedAt) return noStoreJson({ success: false, code: "BRAND_REVISION_NOT_ACCEPTED" }, { status: 409 });
+  const result = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: authz.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt }, rawPrompt: parsed.data.prompt, capability: parsed.data.capability, contentLanguage: parsed.data.contentLanguage, arabicVariety: parsed.data.arabicVariety, rights: parsed.data.rights, requestedModel: parsed.data.requestedModel, selectedModel: parsed.data.selectedModel, fallbackAuthorizationId: parsed.data.fallbackAuthorizationId, quote: { ...parsed.data.quote, quotedAt: new Date(parsed.data.quote.quotedAt), expiresAt: new Date(parsed.data.quote.expiresAt) }, reservationId: parsed.data.reservationId, userId: authz.userId, idempotencyKey: key });
+  const status = result.kind === "invalid" ? 400 : result.kind === "fallback_not_authorized" || result.kind === "fallback_incompatible" || result.kind === "conflict" ? 409 : result.kind === "unavailable" ? 503 : 200;
+  return noStoreJson({ success: status === 200, result }, { status });
+});

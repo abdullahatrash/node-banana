@@ -25,6 +25,7 @@ export type ContextNavigationKey =
   | "credentials"
   | "observability"
   | "operations"
+  | "modelRouting"
   | "promptLibrary"
   | "posts"
   | "socialMedia"
@@ -104,6 +105,7 @@ export const workspaceNavigation = [
 
 export const operationsNavigation = [
   { key: "operations", href: "/studio/operations", aliases: [] },
+  { key: "modelRouting", href: "/studio/model-routing", aliases: [] },
   { key: "usage", href: "/studio/usage", aliases: [] },
   { key: "budgets", href: "/studio/budgets", aliases: [] },
   { key: "quotas", href: "/studio/quotas", aliases: [] },

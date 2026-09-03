@@ -1,0 +1,2 @@
+import { readFileSync } from "node:fs"; import { describe, expect, it } from "vitest";
+describe("model routing migration", () => { it("durably binds authorizations, intents, receipts, and Replicate prediction identity", () => { const sql = readFileSync("drizzle/0068_model_routing.sql", "utf8"); for (const table of ["model_fallback_authorizations","generation_intents","model_routing_mutation_receipts","replicate_prediction_identities"]) expect(sql).toContain(table); expect(sql).toContain("replicate_prediction_identities_intent_fk"); }); });

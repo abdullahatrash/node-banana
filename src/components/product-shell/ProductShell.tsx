@@ -97,6 +97,7 @@ const contextIcons = {
   credentials: KeyRoundIcon,
   observability: ActivityIcon,
   operations: CircleGaugeIcon,
+  modelRouting: WandSparklesIcon,
   promptLibrary: BookmarkIcon,
   posts: BoxesIcon,
   socialMedia: ImageIcon,
