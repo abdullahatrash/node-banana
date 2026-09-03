@@ -23,6 +23,7 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
   const selectedModelId = useSimpleStudioStore((s) => s.selectedModelId);
   const setSelectedModel = useSimpleStudioStore((s) => s.setSelectedModel);
   const sourceMediaType = useSimpleStudioStore((s) => s.sourceMediaType);
+  const referenceImageCount = useSimpleStudioStore((s) => s.referenceImages.length);
 
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -45,13 +46,24 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
         if (data.success) {
           const seen = new Set<string>();
           const unique = (data.items || []).filter((m: ProviderModel) => {
-            const requiredCapability = mode === "video" ? sourceMediaType === "video" ? "video_to_video" : sourceMediaType === "image" ? "image_to_video" : "text_to_video" : "text_to_image";
+            const requiredCapability = mode === "video"
+              ? sourceMediaType === "video" ? "video_to_video" : sourceMediaType === "image" ? "image_to_video" : "text_to_video"
+              : referenceImageCount > 0 ? "image_to_image" : "text_to_image";
             const supported = m.capabilities?.includes(requiredCapability);
             if (m.provider !== "replicate" || m.qualification.status !== "qualified" || !supported || seen.has(m.model)) return false;
             seen.add(m.model);
             return true;
           });
           setModels(unique);
+          const selected = unique.find((item: ProviderModel) => item.model === selectedModelId);
+          if (!selected) {
+            const replacement = unique[0] as ProviderModel | undefined;
+            if (replacement?.qualification.status === "qualified") {
+              setSelectedModel(replacement.model, replacement.provider, replacement.label, replacement.qualification.version, replacement.qualification.inputSchemaDigest);
+            } else {
+              setSelectedModel(null, null, null);
+            }
+          }
         } else {
           setHasError(true);
         }
@@ -66,7 +78,7 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
       });
 
     return () => controller.abort();
-  }, [mode, sourceMediaType]);
+  }, [mode, referenceImageCount, selectedModelId, setSelectedModel, sourceMediaType]);
 
   const sorted = [...models].sort((a, b) => a.label.localeCompare(b.label));
 
