@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { GovernanceBulkWorker } from "../bulk-worker";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
 const actor = { workspaceId: "portfolio-workspace", userId: "owner-a", legacyRole: "owner" as const };
@@ -46,5 +47,37 @@ describe("GovernanceBulkWorker", () => {
     await new GovernanceBulkWorker(repository, { resolveActor: vi.fn() }, { execute }).process({ workspaceId: actor.workspaceId, operationId: preview.operationId });
     expect((await repository.getResource({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId }))?.status).toBe("outcome_unknown");
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("claims an exclusive lease so concurrent workers dispatch each item once", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => new Date(now) });
+    const preview = await service.execute(actor, { type: "preview_bulk", operationCapability: "content.archive@1", concurrency: 1, quoteRef: null, items: [{ targetWorkspaceId: "workspace-a", targetKind: "content", targetId: "content-a" }] }, "preview-concurrent-bulk") as { operationId: string };
+    await service.execute(actor, { type: "start_bulk", operationId: preview.operationId }, "start-concurrent-bulk");
+    const execute = vi.fn(async () => ({ type: "succeeded" as const, output: { archived: true } }));
+    const authorization = { resolveActor: vi.fn(async ({ targetWorkspaceId, userId }: { targetWorkspaceId: string; userId: string }) => ({ workspaceId: targetWorkspaceId, userId, legacyRole: "admin" as const })) };
+    const clock = { now: () => new Date("2026-09-03T12:01:00.000Z") };
+    await Promise.all([
+      new GovernanceBulkWorker(repository, authorization, { execute }, clock).process({ workspaceId: actor.workspaceId, operationId: preview.operationId }),
+      new GovernanceBulkWorker(repository, authorization, { execute }, clock).process({ workspaceId: actor.workspaceId, operationId: preview.operationId }),
+    ]);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect((await repository.getResource({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId }))?.status).toBe("succeeded");
+  });
+
+  it("provides a sweeper entry point for expired leases", async () => {
+    let current = new Date(now);
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => new Date(now) });
+    const preview = await service.execute(actor, { type: "preview_bulk", operationCapability: "content.archive@1", concurrency: 1, quoteRef: null, items: [{ targetWorkspaceId: "workspace-a", targetKind: "content", targetId: "content-a" }] }, "preview-expired-bulk") as { operationId: string };
+    await service.execute(actor, { type: "start_bulk", operationId: preview.operationId }, "start-expired-bulk");
+    const queued = await repository.getResource({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId });
+    const leased = { ...queued!, version: queued!.version + 1, status: "running", body: { ...queued!.body, lease: { id: "lease-old", claimedAt: now.toISOString(), expiresAt: "2026-09-03T12:05:00.000Z", attempt: 1 } }, updatedAt: now };
+    await repository.commit({ receipt: { workspaceId: actor.workspaceId, capability: "test.lease@1", idempotencyKey: "simulate-bulk-lease", requestDigest: canonicalDigest({ id: queued!.id }), result: {}, createdAt: now }, mutations: [{ type: "update", expectedVersion: queued!.version, resource: leased }], audit: { schema: "workspace-audit-event/v1", id: "audit-lease", workspaceId: actor.workspaceId, actor: { kind: "system", id: null }, capability: "test.lease@1", action: "lease", resource: null, outcome: "completed", redactedDetails: {}, occurredAt: now } });
+    const worker = new GovernanceBulkWorker(repository, { resolveActor: async ({ targetWorkspaceId, userId }) => ({ workspaceId: targetWorkspaceId, userId, legacyRole: "admin" }) }, { execute: async () => ({ type: "succeeded", output: {} }) }, { now: () => current });
+    expect(await worker.recoverExpired({ workspaceId: actor.workspaceId })).toBe(0);
+    current = new Date("2026-09-03T12:06:00.000Z");
+    expect(await worker.recoverExpired({ workspaceId: actor.workspaceId })).toBe(1);
+    expect((await repository.getResource({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId }))?.status).toBe("succeeded");
   });
 });

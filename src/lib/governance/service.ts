@@ -782,7 +782,7 @@ export class GovernanceService {
         if (!/^[a-z][a-z0-9_.]*@[1-9][0-9]*$/.test(command.operationCapability) || command.operationCapability === "bulk.execute@1") throw new GovernanceError("INVALID_INPUT", "Bulk Application Capability is invalid.");
         const id = newId("bulk");
         const items: BulkOperationItem[] = command.items.map((item, index) => ({ id: `${id}:${index + 1}`, targetWorkspaceId: safeId(item.targetWorkspaceId, "Target Workspace"), targetKind: text(item.targetKind, "Target kind", 100), targetId: safeId(item.targetId, "Target"), capability: command.operationCapability, input: item.input ?? { targetKind: item.targetKind, targetId: item.targetId }, idempotencyKey: `${id}:${index + 1}`, state: "previewed", outcome: null }));
-        mutations = [create("bulk_operation", id, "previewed", { capability: command.operationCapability, dryRun: true, concurrency: command.concurrency, quoteRef: command.quoteRef, requestedByUserId: actor.userId, items, cancellationRequestedAt: null })];
+        mutations = [create("bulk_operation", id, "previewed", { capability: command.operationCapability, dryRun: true, concurrency: command.concurrency, quoteRef: command.quoteRef, requestedByUserId: actor.userId, items, cancellationRequestedAt: null, lease: null })];
         result = { operationId: id, dryRun: true, itemCount: items.length };
         target = { kind: "bulk_operation", id };
         break;
