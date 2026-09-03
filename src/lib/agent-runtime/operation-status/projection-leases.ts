@@ -1,14 +1,12 @@
-import { and, asc, eq, lte } from "drizzle-orm";
+import { and, asc, eq, lte, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
-import { workspaces } from "@/lib/db/schema";
 import { runtimeOperationProjectionLeases } from "./db-schema";
 
 type Db = ReturnType<typeof getDb>;
 
 export async function claimOperationProjectionWorkspaces(database: Db, input: { owner: string; at: Date; limit: number; leaseMs: number }) {
   return database.transaction(async (tx) => {
-    const workspaceRows = await tx.select({ workspaceId: workspaces.id }).from(workspaces).limit(5_000);
-    if (workspaceRows.length) await tx.insert(runtimeOperationProjectionLeases).values(workspaceRows.map(({ workspaceId }) => ({ workspaceId, leaseOwner: null, leaseExpiresAt: new Date(0), lastProjectedAt: null, updatedAt: input.at }))).onConflictDoNothing();
+    await tx.execute(sql`insert into runtime_operation_projection_leases (workspace_id, lease_owner, lease_expires_at, last_projected_at, updated_at) select id, null, to_timestamp(0), null, ${input.at} from workspaces on conflict (workspace_id) do nothing`);
     const due = await tx.select({ workspaceId: runtimeOperationProjectionLeases.workspaceId }).from(runtimeOperationProjectionLeases).where(lte(runtimeOperationProjectionLeases.leaseExpiresAt, input.at)).orderBy(asc(runtimeOperationProjectionLeases.leaseExpiresAt), asc(runtimeOperationProjectionLeases.workspaceId)).limit(input.limit).for("update", { skipLocked: true });
     const expiresAt = new Date(input.at.getTime() + input.leaseMs);
     for (const row of due) await tx.update(runtimeOperationProjectionLeases).set({ leaseOwner: input.owner, leaseExpiresAt: expiresAt, updatedAt: input.at }).where(eq(runtimeOperationProjectionLeases.workspaceId, row.workspaceId));
