@@ -9,7 +9,7 @@ import {
   PRODUCTION_PUBLISHING_APPROVAL_REVISIONS,
 } from "@/lib/agent-runtime/publishing-approvals/production";
 import type { PublishingApprovalArtifactEvidence } from "@/lib/agent-runtime/publishing-approvals/audit-artifacts";
-import type { GovernanceReviewPresentation, GovernanceReviewPresentationPort } from "./types";
+import type { GovernanceRepository, GovernanceReviewPresentation, GovernanceReviewPresentationPort } from "./types";
 
 const MAX_MEDIA_ACCESS_MS = 15 * 60_000;
 
@@ -18,10 +18,44 @@ export interface ReviewMediaTokenPayload {
   workspaceId: string;
   grantId: string;
   sessionId: string;
+  purpose: "inspect" | "comment" | "accept_content" | "approve_publishing" | "reject";
+  resourceKind: "render_proof" | "plan_revision";
+  resourceId: string;
+  reviewRevisionDigest: string;
   artifactId: string;
   revisionDigest: string;
   evidence: PublishingApprovalArtifactEvidence;
   expiresAt: string;
+}
+
+/** Rechecks live authority on every byte request; a sealed URL is not authority by itself. */
+export async function reauthorizeReviewMediaAccess(
+  payload: ReviewMediaTokenPayload,
+  repository: Pick<GovernanceRepository, "getResource">,
+  now = new Date(),
+): Promise<boolean> {
+  const [session, grant] = await Promise.all([
+    repository.getResource({ workspaceId: payload.workspaceId, kind: "review_guest_session", id: payload.sessionId }),
+    repository.getResource({ workspaceId: payload.workspaceId, kind: "review_guest_grant", id: payload.grantId }),
+  ]);
+  if (!session || !grant || session.status !== "active" || grant.status === "revoked") return false;
+  const sessionBody = session.body as Record<string, unknown>;
+  const grantBody = grant.body as Record<string, unknown>;
+  const exactSession = sessionBody.grantId === payload.grantId
+    && sessionBody.purpose === payload.purpose
+    && sessionBody.resourceKind === payload.resourceKind
+    && sessionBody.resourceId === payload.resourceId
+    && sessionBody.revisionDigest === payload.reviewRevisionDigest;
+  const exactGrant = grantBody.purpose === payload.purpose
+    && grantBody.resourceKind === payload.resourceKind
+    && grantBody.resourceId === payload.resourceId
+    && grantBody.revisionDigest === payload.reviewRevisionDigest
+    && !grantBody.revokedAt;
+  const sessionExpiresAt = typeof sessionBody.expiresAt === "string" ? new Date(sessionBody.expiresAt) : null;
+  const grantExpiresAt = typeof grantBody.expiresAt === "string" ? new Date(grantBody.expiresAt) : null;
+  return exactSession && exactGrant
+    && Boolean(sessionExpiresAt && Number.isFinite(sessionExpiresAt.getTime()) && sessionExpiresAt > now)
+    && Boolean(grantExpiresAt && Number.isFinite(grantExpiresAt.getTime()) && grantExpiresAt > now);
 }
 
 function reviewKey(value = process.env.GOVERNANCE_REVIEW_MEDIA_SIGNING_KEY): Buffer | null {
@@ -142,6 +176,10 @@ export class DrizzleGovernanceReviewPresentationPort implements GovernanceReview
       workspaceId: input.workspaceId,
       grantId: input.grantId,
       sessionId: input.sessionId,
+      purpose: input.purpose,
+      resourceKind: input.resourceKind,
+      resourceId: input.resourceId,
+      reviewRevisionDigest: input.revisionDigest,
       artifactId: evidence.id,
       revisionDigest: evidence.digest,
       evidence,
