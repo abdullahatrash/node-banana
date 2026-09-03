@@ -12,6 +12,26 @@ export class GovernanceApiError extends Error {
   }
 }
 
+const RETRYABLE_TRANSPORT_STATUSES = new Set([502, 503, 504]);
+
+async function fetchWithStableRetry(
+  request: () => Promise<Response>,
+  maxAttempts = 2,
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await request();
+      if (!RETRYABLE_TRANSPORT_STATUSES.has(response.status) || attempt === maxAttempts) return response;
+      lastError = new GovernanceApiError("UNAVAILABLE", response.status);
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxAttempts) throw error;
+    }
+  }
+  throw lastError;
+}
+
 export async function invokeGovernanceCapability<T>(
   capability: string,
   input: Record<string, unknown>,
@@ -24,11 +44,12 @@ export async function invokeGovernanceCapability<T>(
     "x-workspace-id": workspaceId,
   };
   if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
-  const response = await fetch("/api/studio/governance/capabilities", {
+  const bodyJson = JSON.stringify({ capability, input });
+  const response = await fetchWithStableRetry(() => fetch("/api/studio/governance/capabilities", {
     method: "POST",
     headers,
-    body: JSON.stringify({ capability, input }),
-  });
+    body: bodyJson,
+  }));
   const body = await response.json() as { success?: boolean; code?: string; result?: T };
   if (!response.ok || !body.success) throw new GovernanceApiError(body.code ?? "UNAVAILABLE", response.status);
   return body.result as T;
@@ -80,7 +101,10 @@ const capabilityByCommand: Record<GovernanceCommand["type"], string> = {
 };
 
 export function executeGovernanceCommand<T>(command: GovernanceCommand): Promise<T> {
-  return invokeGovernanceCapability(capabilityByCommand[command.type], { command }, crypto.randomUUID());
+  // One key belongs to one logical submission and remains stable across the
+  // bounded transport retry inside invokeGovernanceCapability.
+  const idempotencyKey = crypto.randomUUID();
+  return invokeGovernanceCapability(capabilityByCommand[command.type], { command }, idempotencyKey);
 }
 
 export interface PublishingApprovalListItem {
