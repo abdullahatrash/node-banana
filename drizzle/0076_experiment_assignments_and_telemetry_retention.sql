@@ -4,6 +4,8 @@ ALTER TABLE "product_telemetry_events" ADD COLUMN IF NOT EXISTS "experiment_id" 
 ALTER TABLE "product_telemetry_events" ADD COLUMN IF NOT EXISTS "assignment_revision" integer;
 ALTER TABLE "product_telemetry_events" ADD COLUMN IF NOT EXISTS "expires_at" timestamptz;
 
+DROP TRIGGER IF EXISTS product_telemetry_events_append_only ON "product_telemetry_events";
+
 UPDATE "product_telemetry_events"
 SET "subject_pseudonym" = COALESCE("subject_pseudonym", 'sub_' || md5("workspace_id" || ':' || "session_pseudonym") || md5("session_pseudonym" || ':' || "workspace_id")),
     "region_classification" = COALESCE("region_classification", 'unknown'),
@@ -25,7 +27,6 @@ ALTER TABLE "product_telemetry_events" ADD CONSTRAINT "product_telemetry_events_
 CREATE INDEX IF NOT EXISTS "product_telemetry_events_expiry_idx" ON "product_telemetry_events" ("expires_at");
 CREATE INDEX IF NOT EXISTS "product_telemetry_events_experiment_idx" ON "product_telemetry_events" ("workspace_id", "experiment_id", "subject_pseudonym", "assignment_revision", "name");
 
-DROP TRIGGER IF EXISTS product_telemetry_events_append_only ON "product_telemetry_events";
 CREATE TRIGGER product_telemetry_events_append_only BEFORE UPDATE ON "product_telemetry_events" FOR EACH ROW EXECUTE FUNCTION prevent_release_evidence_mutation();
 
 CREATE TABLE IF NOT EXISTS "experiment_assignments" (
