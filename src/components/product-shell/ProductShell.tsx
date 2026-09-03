@@ -96,6 +96,7 @@ const contextIcons = {
   quotas: ListChecksIcon,
   credentials: KeyRoundIcon,
   observability: ActivityIcon,
+  operations: CircleGaugeIcon,
   promptLibrary: BookmarkIcon,
   posts: BoxesIcon,
   socialMedia: ImageIcon,

@@ -1,0 +1,27 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
+import { RefreshCwIcon, RotateCcwIcon, XCircleIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { inspectOperation, listOperations, mutateOperation } from "@/lib/agent-runtime/operation-status/client";
+import { OPERATION_STATES, type OperationEvent, type OperationRecord, type OperationState } from "@/lib/agent-runtime/operation-status/types";
+import { canRetryOperation, isTerminalOperationState } from "@/lib/agent-runtime/operation-status/state-machine";
+
+export function OperationsCockpit() {
+  const t = useTranslations("operations");
+  const [items, setItems] = useState<OperationRecord[]>([]); const [selected, setSelected] = useState<OperationRecord | null>(null); const [events, setEvents] = useState<OperationEvent[]>([]); const [filter, setFilter] = useState<OperationState | "">(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => { setError(""); try { setItems(await listOperations(filter || undefined)); } catch (value) { setError(value instanceof Error ? value.message : "UNAVAILABLE"); } }, [filter]);
+  useEffect(() => { void load(); }, [load]);
+  async function inspect(id: string) { const value = await inspectOperation(id); setSelected(value.operation); setEvents(value.events); }
+  async function mutate(body: { action: "cancel"; expectedRevision: number } | { action: "retry" }) { if (!selected) return; setBusy(true); try { await mutateOperation(selected.id, body); await load(); const value = await inspectOperation(selected.id); setSelected(value.operation); setEvents(value.events); } catch (value) { setError(value instanceof Error ? value.message : "UNAVAILABLE"); } finally { setBusy(false); } }
+  return <main className="mx-auto grid w-full max-w-7xl gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_24rem] lg:p-6">
+    <section aria-labelledby="operations-title"><header className="flex flex-wrap items-start justify-between gap-3"><div><h1 id="operations-title" className="text-2xl font-semibold">{t("title")}</h1><p className="mt-1 text-sm text-muted-foreground">{t("description")}</p></div><Button variant="outline" onClick={() => void load()}><RefreshCwIcon className="size-4" />{t("refresh")}</Button></header>
+      <label className="mt-5 block text-sm font-medium">{t("filter")}<select className="ms-3 rounded-md border bg-background px-3 py-2" value={filter} onChange={(event) => setFilter(event.target.value as OperationState | "")}><option value="">{t("all")}</option>{OPERATION_STATES.map((state) => <option key={state} value={state}>{t(`states.${state}`)}</option>)}</select></label>
+      {error ? <p role="alert" className="mt-4 rounded-lg border border-destructive/30 p-3 text-destructive">{t("error", { code: error })}</p> : null}
+      <div className="mt-4 grid gap-3">{items.map((item) => <button type="button" key={item.id} onClick={() => void inspect(item.id)} className="rounded-xl border bg-card p-4 text-start outline-none hover:bg-muted/40 focus-visible:ring-2"><div className="flex items-center justify-between gap-3"><strong>{t(`kinds.${item.kind}`)}</strong><span className="rounded-full bg-muted px-2 py-1 text-xs">{t(`states.${item.state}`)}</span></div><p className="mt-1 font-mono text-xs text-muted-foreground" dir="ltr">{item.resourceId}</p><p className="mt-2 text-xs text-muted-foreground">{item.stage ? t("stage", { stage: item.stage }) : t("revision", { revision: item.revision })}</p></button>)}</div>
+      {!items.length && !error ? <p className="mt-6 rounded-xl border border-dashed p-8 text-center text-muted-foreground">{t("empty")}</p> : null}
+    </section>
+    <aside aria-label={t("details")} className="rounded-xl border bg-card p-4">{selected ? <><h2 className="text-lg font-semibold">{t("details")}</h2><p className="mt-1 break-all font-mono text-xs" dir="ltr">{selected.id}</p><div className="mt-4 flex gap-2">{!isTerminalOperationState(selected.state) && selected.state !== "outcome_unknown" ? <Button disabled={busy} variant="destructive" onClick={() => void mutate({ action: "cancel", expectedRevision: selected.revision })}><XCircleIcon className="size-4" />{t("cancel")}</Button> : null}{canRetryOperation(selected.state) ? <Button disabled={busy} variant="outline" onClick={() => void mutate({ action: "retry" })}><RotateCcwIcon className="size-4" />{t("retry")}</Button> : null}</div><ol className="mt-5 space-y-3">{events.map((event) => <li key={event.id} className="border-s ps-3 text-sm"><strong>{t(`states.${event.to}`)}</strong><p className="text-xs text-muted-foreground" dir="auto">{event.reasonCode}</p></li>)}</ol></> : <p className="text-sm text-muted-foreground">{t("select")}</p>}</aside>
+  </main>;
+}

@@ -24,6 +24,7 @@ export type ContextNavigationKey =
   | "quotas"
   | "credentials"
   | "observability"
+  | "operations"
   | "promptLibrary"
   | "posts"
   | "socialMedia"
@@ -102,6 +103,7 @@ export const workspaceNavigation = [
 ] as const satisfies readonly NavigationItem<ContextNavigationKey>[];
 
 export const operationsNavigation = [
+  { key: "operations", href: "/studio/operations", aliases: [] },
   { key: "usage", href: "/studio/usage", aliases: [] },
   { key: "budgets", href: "/studio/budgets", aliases: [] },
   { key: "quotas", href: "/studio/quotas", aliases: [] },
