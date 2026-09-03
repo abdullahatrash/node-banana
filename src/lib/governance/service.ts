@@ -961,12 +961,14 @@ export class GovernanceService {
         if (operation.status !== "previewed") throw new GovernanceError("CONFLICT", "Only a previewed Bulk Operation may start.");
         for (const item of body.items) {
           const pinned = (item.outcome as { preview?: { authorizationContractDigest?: string; targetStateDigest?: string; quote?: { digest?: string } } } | null)?.preview;
-          const current = await this.bulkPreview.inspect({ sourceWorkspaceId: actor.workspaceId, requestedByUserId: actor.userId, capability: item.capability, targetWorkspaceId: item.targetWorkspaceId, targetKind: item.targetKind, targetId: item.targetId, capabilityInput: item.input, quoteRef: body.quoteRef, evaluatedAt: now });
+          const pinnedQuoteRef = pinned?.quote && (pinned.quote as { required?: boolean; ref?: string }).required === true ? (pinned.quote as { ref: string }).ref : body.quoteRef;
+          const current = await this.bulkPreview.inspect({ sourceWorkspaceId: actor.workspaceId, requestedByUserId: actor.userId, capability: item.capability, targetWorkspaceId: item.targetWorkspaceId, targetKind: item.targetKind, targetId: item.targetId, capabilityInput: item.input, quoteRef: pinnedQuoteRef, evaluatedAt: now });
           if (current.type === "blocked" || !pinned || current.authorizationContractDigest !== pinned.authorizationContractDigest || current.targetStateDigest !== pinned.targetStateDigest || current.quote.digest !== pinned.quote?.digest) throw new GovernanceError("CONFLICT", "Bulk preview evidence changed; create a fresh preview.");
         }
-        if (body.capability.includes("publish") || body.capability.includes("release")) {
+        const spendsProviderBudget = body.items.some((item) => ((item.outcome as { preview?: { quote?: { required?: boolean } } } | null)?.preview?.quote?.required === true));
+        if (body.capability.includes("publish") || body.capability.includes("release") || spendsProviderBudget) {
           if (!command.stepUpToken) throw new GovernanceError("STEP_UP_REQUIRED", "Bulk public release requires step-up.");
-          await this.requireStepUp(actor, "bulk.public_release", operation.id, command.stepUpToken);
+          await this.requireStepUp(actor, spendsProviderBudget ? "bulk.provider_spend" : "bulk.public_release", operation.id, command.stepUpToken);
         }
         mutations = [update(operation, "queued", { ...body, dryRun: false, items: body.items.map((item) => ({ ...item, state: "queued" })) })];
         result = { operationId: operation.id, status: "queued" };

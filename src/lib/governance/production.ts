@@ -3,7 +3,8 @@ import { DrizzleGovernanceRepository } from "./postgres-repository";
 import { GovernanceService } from "./service";
 import { GovernanceExportWorker, S3GovernanceExportStore } from "./export-worker";
 import { DrizzleGovernanceMembershipPort } from "./membership-postgres";
-import { ApplicationGovernanceBulkCapabilityPort, DrizzleGovernanceBulkAuthorizationPort, GovernanceBulkWorker, ProductionGovernanceBulkPreviewPort } from "./bulk-worker";
+import { ApplicationGovernanceBulkCapabilityPort, DrizzleGovernanceBulkAuthorizationPort, GovernanceBulkWorker, ProductionGovernanceBulkPreviewPort, WorkflowRunGovernanceBulkQuotePort } from "./bulk-worker";
+import { PRODUCTION_WORKFLOW_RUN_SERVICE } from "@/lib/agent-runtime/runs/production";
 import { GovernanceImportWorker } from "./import-worker";
 import { GovernanceApprovalDeadlineWorker } from "./approval-worker";
 import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionRouteKind } from "./region-policy";
@@ -50,13 +51,17 @@ function importTrustKeys(): Map<string, Uint8Array> {
 
 export const PRODUCTION_GOVERNANCE_REPOSITORY = new DrizzleGovernanceRepository(getDb);
 const PRODUCTION_GOVERNANCE_REGION_ADMISSION = new GovernanceRegionAdmissionService(PRODUCTION_GOVERNANCE_REPOSITORY);
+const PRODUCTION_GOVERNANCE_BULK_PREVIEW = new ProductionGovernanceBulkPreviewPort(
+  new DrizzleGovernanceBulkAuthorizationPort(),
+  new WorkflowRunGovernanceBulkQuotePort(PRODUCTION_WORKFLOW_RUN_SERVICE),
+);
 export const PRODUCTION_GOVERNANCE_SERVICE = new GovernanceService(
   PRODUCTION_GOVERNANCE_REPOSITORY,
   undefined,
   new DrizzleGovernanceMembershipPort(getDb),
   new ConfiguredGovernanceRegionVerifier(regionTrustKeys()),
   new HmacGovernanceImportManifestVerifier(importTrustKeys()),
-  new ProductionGovernanceBulkPreviewPort(),
+  PRODUCTION_GOVERNANCE_BULK_PREVIEW,
   new DrizzleGovernanceAuditFederation(getDb),
   new DrizzleGovernanceRetentionResourcePort(getDb),
   new DrizzleGovernanceReviewPresentationPort(getDb),
@@ -86,6 +91,8 @@ export function getProductionGovernanceBulkWorker(): GovernanceBulkWorker {
     PRODUCTION_GOVERNANCE_REPOSITORY,
     new DrizzleGovernanceBulkAuthorizationPort(),
     new ApplicationGovernanceBulkCapabilityPort(),
+    undefined,
+    PRODUCTION_GOVERNANCE_BULK_PREVIEW,
   );
 }
 

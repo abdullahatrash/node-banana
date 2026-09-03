@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
-import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { authorizationContractDigestFor } from "@/lib/agent-tools/registry";
 import { getDb } from "@/lib/db";
 import { assets, contentWorkflows, runtimePublishingDeliveries, socialAccounts, socialPosts, workspaceGovernanceResources, workspaceMembers } from "@/lib/db/schema";
@@ -39,6 +39,7 @@ export class GovernanceBulkWorker {
     private readonly authorization: GovernanceBulkAuthorizationPort,
     private readonly capabilities: GovernanceBulkCapabilityPort,
     private readonly clock: { now(): Date } = { now: () => new Date() },
+    private readonly preview: GovernanceBulkPreviewPort | null = null,
   ) {}
 
   async process(input: { workspaceId: string; operationId: string }): Promise<void> {
@@ -67,6 +68,14 @@ export class GovernanceBulkWorker {
       const outcomes = await Promise.all(batch.map(async (item) => {
         const actor = await this.authorization.resolveActor({ sourceWorkspaceId: input.workspaceId, targetWorkspaceId: item.targetWorkspaceId, userId: body.requestedByUserId, capability: item.capability, targetKind: item.targetKind, targetId: item.targetId, evaluatedAt: this.clock.now() });
         if (!actor) return { item, result: { type: "failed_known" as const, code: "TARGET_WORKSPACE_FORBIDDEN" } };
+        const pinned = (item.outcome as { preview?: Awaited<ReturnType<GovernanceBulkPreviewPort["inspect"]>> } | null)?.preview;
+        if (this.preview) {
+          const quoteRef = pinned?.type === "ready" && pinned.quote.required ? pinned.quote.ref : null;
+          const current = await this.preview.inspect({ sourceWorkspaceId: input.workspaceId, requestedByUserId: body.requestedByUserId, capability: item.capability, targetWorkspaceId: item.targetWorkspaceId, targetKind: item.targetKind, targetId: item.targetId, capabilityInput: item.input, quoteRef, evaluatedAt: this.clock.now() });
+          if (pinned?.type !== "ready" || current.type !== "ready" || current.authorizationContractDigest !== pinned.authorizationContractDigest || current.targetStateDigest !== pinned.targetStateDigest || current.quote.digest !== pinned.quote.digest) {
+            return { item, result: { type: "failed_known" as const, code: "BULK_PREVIEW_STALE" } };
+          }
+        }
         try {
           return { item, result: await this.capabilities.execute({ actor, capability: item.capability, capabilityInput: item.input, idempotencyKey: item.idempotencyKey }) };
         } catch {
@@ -149,12 +158,110 @@ export class ApplicationGovernanceBulkCapabilityPort implements GovernanceBulkCa
   }
 }
 
+interface SignedWorkflowBulkQuote {
+  schema: "governance-workflow-bulk-quote/v1";
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+  requestedByUserId: string;
+  capability: "workflow_runs.start@2";
+  workflowId: string;
+  workflowRevisionId: string;
+  inputDigest: string;
+  targetStateDigest: string;
+  amount: string;
+  currency: string;
+  providerModels: Array<{ provider: string; model: string; pricePerAttempt: string; automaticAttempts: number; pricingSnapshotIds: string[] }>;
+  quotedAt: string;
+  expiresAt: string;
+}
+
+type WorkflowPreviewService = { preview(input: { workspaceId: string; workflowId: string; revisionId: string; inputs: Record<string, unknown>; principalId: string; inputArtifactIds: string[] }): Promise<import("@/lib/agent-runtime/budgets/types").RunAdmissionPreview> };
+
+/** Issues and revalidates signed, actor/target/input-bound quotes from the
+ * actual Workflow Run budget preview. No caller-authored price is accepted. */
+export class WorkflowRunGovernanceBulkQuotePort {
+  constructor(
+    private readonly service: WorkflowPreviewService,
+    private readonly key: Uint8Array | null = (() => { const value = Buffer.from(process.env.GOVERNANCE_BULK_QUOTE_SIGNING_KEY ?? "", "base64"); return value.length === 32 ? value : null; })(),
+  ) {}
+
+  async quote(input: Parameters<GovernanceBulkPreviewPort["inspect"]>[0] & { targetStateDigest: string }) {
+    if (input.capability !== "workflow_runs.start@2" || input.targetKind !== "content" || !this.key) return null;
+    const workflowId = typeof input.capabilityInput.workflowId === "string" ? input.capabilityInput.workflowId : "";
+    const revisionId = typeof input.capabilityInput.revisionId === "string" ? input.capabilityInput.revisionId : "";
+    const inputs = input.capabilityInput.inputs;
+    const artifactIds = input.capabilityInput.inputArtifactIds;
+    if (workflowId !== input.targetId || !revisionId || !inputs || typeof inputs !== "object" || Array.isArray(inputs) || !Array.isArray(artifactIds) || artifactIds.some((id) => typeof id !== "string")) return null;
+    const preview = await this.service.preview({ workspaceId: input.targetWorkspaceId, workflowId, revisionId, inputs: inputs as Record<string, unknown>, principalId: input.requestedByUserId, inputArtifactIds: artifactIds as string[] });
+    if (!preview.admissible || !preview.ceiling.amount || !preview.ceiling.currency || preview.ceiling.certainty !== "conservative") return null;
+    const providerModels = preview.stepExposures.map((exposure) => ({
+      provider: exposure.provider,
+      model: exposure.model,
+      pricePerAttempt: exposure.amountPerAttempt ?? "",
+      automaticAttempts: exposure.automaticAttempts,
+      pricingSnapshotIds: [...exposure.pricingSnapshotIds].sort(),
+    }));
+    if (providerModels.some((item) => !item.pricePerAttempt || item.pricingSnapshotIds.length === 0)) return null;
+    const inputDigest = canonicalDigest({ workflowId, revisionId, inputs, inputArtifactIds: [...(artifactIds as string[])].sort() });
+    let payload: SignedWorkflowBulkQuote;
+    if (input.quoteRef) {
+      const opened = this.open(input.quoteRef);
+      if (!opened || opened.expiresAt <= input.evaluatedAt.toISOString()) return null;
+      payload = opened;
+      const current = { amount: preview.ceiling.amount, currency: preview.ceiling.currency, providerModels };
+      if (
+        payload.sourceWorkspaceId !== input.sourceWorkspaceId || payload.targetWorkspaceId !== input.targetWorkspaceId ||
+        payload.requestedByUserId !== input.requestedByUserId || payload.workflowId !== workflowId ||
+        payload.workflowRevisionId !== revisionId || payload.inputDigest !== inputDigest ||
+        payload.targetStateDigest !== input.targetStateDigest || canonicalDigest(current) !== canonicalDigest({ amount: payload.amount, currency: payload.currency, providerModels: payload.providerModels })
+      ) return null;
+    } else {
+      payload = {
+        schema: "governance-workflow-bulk-quote/v1",
+        sourceWorkspaceId: input.sourceWorkspaceId,
+        targetWorkspaceId: input.targetWorkspaceId,
+        requestedByUserId: input.requestedByUserId,
+        capability: "workflow_runs.start@2",
+        workflowId,
+        workflowRevisionId: revisionId,
+        inputDigest,
+        targetStateDigest: input.targetStateDigest,
+        amount: preview.ceiling.amount,
+        currency: preview.ceiling.currency,
+        providerModels,
+        quotedAt: input.evaluatedAt.toISOString(),
+        expiresAt: new Date(input.evaluatedAt.getTime() + 5 * 60_000).toISOString(),
+      };
+    }
+    const encoded = Buffer.from(canonicalJson(payload), "utf8").toString("base64url");
+    const ref = `${encoded}.${createHmac("sha256", this.key).update(encoded).digest("base64url")}`;
+    return { required: true as const, ref, amount: payload.amount, currency: payload.currency, source: "workflow_run_budget_preview" as const, providerModels: payload.providerModels, quotedAt: payload.quotedAt, expiresAt: payload.expiresAt, targetStateDigest: payload.targetStateDigest, digest: canonicalDigest(payload) };
+  }
+
+  private open(ref: string): SignedWorkflowBulkQuote | null {
+    if (!this.key) return null;
+    const [encoded, signature, extra] = ref.split(".");
+    if (!encoded || !signature || extra) return null;
+    const expected = createHmac("sha256", this.key).update(encoded).digest();
+    let supplied: Buffer;
+    try { supplied = Buffer.from(signature, "base64url"); } catch { return null; }
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
+    try {
+      const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as SignedWorkflowBulkQuote;
+      return value.schema === "governance-workflow-bulk-quote/v1" && value.capability === "workflow_runs.start@2" ? value : null;
+    } catch { return null; }
+  }
+}
+
 /** Production preview admission: exact target state + registry schema + current
  * composite human authorization. Spend-capable capabilities remain fail-closed
  * until a domain quote can be verified; caller-provided quote references are
  * never treated as authoritative. */
 export class ProductionGovernanceBulkPreviewPort implements GovernanceBulkPreviewPort {
-  constructor(private readonly authorization = new DrizzleGovernanceBulkAuthorizationPort()) {}
+  constructor(
+    private readonly authorization = new DrizzleGovernanceBulkAuthorizationPort(),
+    private readonly spendQuotes: WorkflowRunGovernanceBulkQuotePort | null = null,
+  ) {}
 
   async inspect(input: Parameters<GovernanceBulkPreviewPort["inspect"]>[0]): Promise<Awaited<ReturnType<GovernanceBulkPreviewPort["inspect"]>>> {
     const actor = await this.authorization.resolveActor({ sourceWorkspaceId: input.sourceWorkspaceId, targetWorkspaceId: input.targetWorkspaceId, userId: input.requestedByUserId, capability: input.capability, targetKind: input.targetKind, targetId: input.targetId, evaluatedAt: input.evaluatedAt });
@@ -168,13 +275,15 @@ export class ProductionGovernanceBulkPreviewPort implements GovernanceBulkPrevie
     const definition = runtime.PRODUCTION_CAPABILITY_REGISTRY.getDefinition(identity);
     if (!registration || !definition || definition.lifecycle.status === "retired") return { type: "blocked", code: "CAPABILITY_NOT_EXECUTABLE" };
     if (!registration.input.safeParse(input.capabilityInput).success) return { type: "blocked", code: "CAPABILITY_INPUT_INVALID" };
-    if (definition.effect.maySpendProviderBudget) return { type: "blocked", code: "AUTHORITATIVE_BULK_QUOTE_REQUIRED" };
-    if (input.quoteRef) return { type: "blocked", code: "UNVERIFIED_QUOTE_REFERENCE" };
+    if (!definition.effect.maySpendProviderBudget && input.quoteRef) return { type: "blocked", code: "UNVERIFIED_QUOTE_REFERENCE" };
     const authorizationContractDigest = authorizationContractDigestFor(identity, registration.authorization);
     const admission = await runtime.PRODUCTION_CAPABILITY_AUTHORIZER.authorize({ securityContext: { kind: "human", workspaceId: actor.workspaceId, userId: actor.userId, role: actor.legacyRole, authContextId: actor.authContextId }, audience: registration.audience ?? "agent", capability: identity, authorizationContractDigest, resources: [], resourceExtractionValid: true, effect: definition.effect });
     if (!admission.allowed) return { type: "blocked", code: admission.code ?? "CAPABILITY_NOT_AUTHORIZED" };
     if (!admission.operatorTraceRef) return { type: "blocked", code: "AUTHORIZATION_EVIDENCE_UNAVAILABLE" };
-    const quote = { required: false as const, amount: "0" as const, currency: "USD" as const, source: "capability_effect_contract" as const, digest: canonicalDigest({ capability: identity, contractDigest: definition.contractDigest, maySpendProviderBudget: false, amount: "0", currency: "USD" }) };
+    const quote = definition.effect.maySpendProviderBudget
+      ? await this.spendQuotes?.quote({ ...input, targetStateDigest: canonicalDigest(targetState) }) ?? null
+      : { required: false as const, amount: "0" as const, currency: "USD" as const, source: "capability_effect_contract" as const, digest: canonicalDigest({ capability: identity, contractDigest: definition.contractDigest, maySpendProviderBudget: false, amount: "0", currency: "USD" }) };
+    if (!quote) return { type: "blocked", code: "AUTHORITATIVE_BULK_QUOTE_REQUIRED" };
     return { type: "ready", authorizationEvidenceRef: admission.operatorTraceRef, authorizationContractDigest, targetStateDigest: canonicalDigest(targetState), entitlement: "exact_capability_granted", quote };
   }
 

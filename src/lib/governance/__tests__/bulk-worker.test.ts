@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GovernanceBulkWorker } from "../bulk-worker";
+import { GovernanceBulkWorker, WorkflowRunGovernanceBulkQuotePort } from "../bulk-worker";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
@@ -10,6 +10,23 @@ const previewPort = { inspect: async () => ({ type: "ready" as const, authorizat
 const serviceFor = (repository: InMemoryGovernanceRepository, clock = { now: () => new Date(now) }) => new GovernanceService(repository, clock, undefined, undefined, undefined, previewPort);
 
 describe("GovernanceBulkWorker", () => {
+  it("issues and revalidates an actor, workflow, model, price, expiry, and target-bound spend quote", async () => {
+    const preview = vi.fn().mockResolvedValue({
+      schema: "run-admission-preview/v1", workspaceId: "workspace-a", principalId: "owner-a", workflowId: "workflow-a", workflowRevisionId: "revision-a", evaluatedAt: now,
+      ceiling: { amount: "1.250000", currency: "USD", certainty: "conservative", fxSnapshotIds: [] },
+      applicableCredentialSpendGrants: [], applicablePolicies: [], requiredReservations: [], warnings: [], denialReasons: [], admissible: true,
+      stepExposures: [{ stepId: "generate", provider: "replicate", providerOperation: "predict", model: "owner/model@version", serviceTier: "standard", automaticAttempts: 1, credentialSlotId: "replicate", credentialProfileId: null, amountPerAttempt: "1.250000", currency: "USD", pricingSnapshotIds: ["price-1"], pricingSource: "builtin_catalog" }],
+    });
+    const port = new WorkflowRunGovernanceBulkQuotePort({ preview }, Buffer.alloc(32, 4));
+    const request = { sourceWorkspaceId: "portfolio-workspace", requestedByUserId: "owner-a", capability: "workflow_runs.start@2", targetWorkspaceId: "workspace-a", targetKind: "content", targetId: "workflow-a", capabilityInput: { workflowId: "workflow-a", revisionId: "revision-a", idempotencyKey: "run-key-1", inputs: { prompt: "مرحبا" }, inputArtifactIds: [] }, quoteRef: null, evaluatedAt: now, targetStateDigest: canonicalDigest({ workflow: "a" }) };
+    const issued = await port.quote(request);
+    expect(issued).toMatchObject({ required: true, amount: "1.250000", currency: "USD", providerModels: [{ provider: "replicate", model: "owner/model@version", pricingSnapshotIds: ["price-1"] }] });
+    const replay = await port.quote({ ...request, quoteRef: issued!.ref, evaluatedAt: new Date("2026-09-03T12:04:00.000Z") });
+    expect(replay?.digest).toBe(issued?.digest);
+    await expect(port.quote({ ...request, quoteRef: issued!.ref, targetStateDigest: canonicalDigest({ workflow: "changed" }), evaluatedAt: new Date("2026-09-03T12:04:00.000Z") })).resolves.toBeNull();
+    await expect(port.quote({ ...request, quoteRef: issued!.ref, evaluatedAt: new Date("2026-09-03T12:06:00.000Z") })).resolves.toBeNull();
+  });
+
   it("reauthorizes every pinned target Workspace and records independent outcomes", async () => {
     const repository = new InMemoryGovernanceRepository();
     const service = serviceFor(repository);

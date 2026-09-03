@@ -285,6 +285,24 @@ describe("GovernanceService", () => {
     expect((await repository.getResource({ workspaceId: owner.workspaceId, kind: "portfolio_assignment", id: assignmentId }))?.status).toBe("revoked");
   });
 
+  it("pins and revalidates an authoritative spend quote and requires resource-bound step-up before Bulk execution", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const inspect = vi.fn().mockImplementation(async (input) => ({
+      type: "ready" as const,
+      authorizationEvidenceRef: "authz-workflow",
+      authorizationContractDigest: canonicalDigest({ contract: "workflow_runs.start@2" }),
+      targetStateDigest: canonicalDigest({ workflow: input.targetId }),
+      entitlement: "exact_capability_granted" as const,
+      quote: { required: true as const, ref: "signed-workflow-quote", amount: "1.250000", currency: "USD", source: "workflow_run_budget_preview" as const, providerModels: [{ provider: "replicate", model: "owner/model@version", pricePerAttempt: "1.250000", automaticAttempts: 1, pricingSnapshotIds: ["price-1"] }], quotedAt: NOW.toISOString(), expiresAt: "2026-09-03T12:05:00.000Z", targetStateDigest: canonicalDigest({ workflow: input.targetId }), digest: canonicalDigest({ quote: "exact" }) },
+    }));
+    const service = new GovernanceService(repository, { now: () => new Date(NOW) }, undefined, undefined, { verify: () => true }, { inspect });
+    const preview = await service.execute(owner, { type: "preview_bulk", operationCapability: "workflow_runs.start@2", concurrency: 1, quoteRef: null, items: [{ targetWorkspaceId: owner.workspaceId, targetKind: "content", targetId: "workflow-1", input: { workflowId: "workflow-1", revisionId: "revision-1", idempotencyKey: "run-item-key", inputs: {}, inputArtifactIds: [] } }] }, "preview-spend-bulk") as { operationId: string };
+    await expect(service.execute(owner, { type: "start_bulk", operationId: preview.operationId }, "start-spend-without-stepup")).rejects.toMatchObject({ code: "STEP_UP_REQUIRED" });
+    const elevated = await stepUp(service, "bulk.provider_spend", preview.operationId);
+    await expect(service.execute(owner, { type: "start_bulk", operationId: preview.operationId, stepUpToken: elevated.stepUpToken }, "start-spend-with-stepup")).resolves.toMatchObject({ status: "queued" });
+    expect(inspect).toHaveBeenLastCalledWith(expect.objectContaining({ quoteRef: "signed-workflow-quote", targetWorkspaceId: owner.workspaceId, targetId: "workflow-1" }));
+  });
+
   it("binds a Review Guest to one expiring revision and never authorizes execution", async () => {
     const { repository, service } = setup();
     const policy = await service.execute(owner, { type: "publish_approval_policy", policy: { purpose: "publishing_approval", mode: { kind: "single", eligibleRoleIds: ["review_guest"] }, separationOfDuty: true, deadlineSeconds: 3600, escalationRoleIds: ["owner"], expiresAfterSeconds: 86400 } }, "review-publishing-policy") as { policyId: string; revision: { revision: number } };

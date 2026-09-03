@@ -393,7 +393,10 @@ export interface GovernanceBulkPreviewPort {
     quoteRef: string | null;
     evaluatedAt: Date;
   }): Promise<
-    | { type: "ready"; authorizationEvidenceRef: string; authorizationContractDigest: string; targetStateDigest: string; entitlement: "exact_capability_granted"; quote: { required: false; amount: "0"; currency: "USD"; source: "capability_effect_contract"; digest: string } }
+    | { type: "ready"; authorizationEvidenceRef: string; authorizationContractDigest: string; targetStateDigest: string; entitlement: "exact_capability_granted"; quote:
+      | { required: false; amount: "0"; currency: "USD"; source: "capability_effect_contract"; digest: string }
+      | { required: true; ref: string; amount: string; currency: string; source: "workflow_run_budget_preview"; providerModels: Array<{ provider: string; model: string; pricePerAttempt: string; automaticAttempts: number; pricingSnapshotIds: string[] }>; quotedAt: string; expiresAt: string; targetStateDigest: string; digest: string }
+    }
     | { type: "blocked"; code: string }
   >;
 }
