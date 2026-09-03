@@ -238,7 +238,7 @@ describe("GovernanceService", () => {
     await service.execute(owner, { type: "publish_retention_policy", rules, stepUpToken: authorization.stepUpToken }, "retention-policy-key");
     const hold = await service.execute(owner, { type: "create_retention_hold", retentionClasses: ["security_evidence"], reason: "Active legal preservation", expiresAt: null, stepUpToken: authorization.stepUpToken }, "retention-hold-key") as { holdId: string };
     const deletionAuthorization = await stepUp(service, "retention.delete", "media-1");
-    const deleted = await service.execute(owner, { type: "record_deletion", resourceKind: "media", resourceId: "media-1", retentionClass: "security_evidence", immediate: ["source bytes"], delayed: ["replicas"], retained: ["billing evidence"], holdIds: [hold.holdId], stepUpToken: deletionAuthorization.stepUpToken }, "deletion-record-key") as { tombstoneId: string };
+    const deleted = await service.execute(owner, { type: "record_deletion", resourceKind: "media", resourceId: "media-1", retentionClass: "security_evidence", systems: ["primary", "replica"], stepUpToken: deletionAuthorization.stepUpToken }, "deletion-record-key") as { tombstoneId: string };
     expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "tombstone", id: deleted.tombstoneId })).toBeTruthy();
     const releaseAuthorization = await stepUp(service, "retention.hold.release", hold.holdId);
     await service.execute(owner, { type: "release_retention_hold", holdId: hold.holdId, reason: "Legal matter closed", stepUpToken: releaseAuthorization.stepUpToken }, "release-hold-key");

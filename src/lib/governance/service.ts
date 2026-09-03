@@ -85,7 +85,7 @@ export type GovernanceCommand =
   | { type: "publish_retention_policy"; rules: RetentionRule[]; expectedVersion?: number; stepUpToken: string }
   | { type: "create_retention_hold"; retentionClasses: string[]; reason: string; expiresAt: string | null; stepUpToken: string }
   | { type: "release_retention_hold"; holdId: string; reason: string; stepUpToken: string }
-  | { type: "record_deletion"; resourceKind: string; resourceId: string; retentionClass: string; immediate: string[]; delayed: string[]; retained: string[]; holdIds: string[]; stepUpToken: string }
+  | { type: "record_deletion"; resourceKind: string; resourceId: string; retentionClass: string; systems: string[]; stepUpToken: string }
   | { type: "create_safety_decision"; intentRef: string; reasonCode: string; policyVersion: string; safeExplanation: string; evidenceRef: string; remediation: string; appealEligible: boolean }
   | { type: "appeal_safety_decision"; decisionId: string; explanation: string }
   | { type: "resolve_safety_appeal"; appealId: string; outcome: "upheld" | "reevaluate_exact_intent"; currentRevalidationRequired: true }
@@ -734,14 +734,14 @@ export class GovernanceService {
         await this.requireStepUp(actor, "retention.delete", safeId(command.resourceId, "Resource"), command.stepUpToken);
         const activeHolds = await this.repository.listResources<{ retentionClasses: string[]; expiresAt: string | null }>({ workspaceId: actor.workspaceId, kinds: ["retention_hold"], status: "active" });
         const applicableHolds = activeHolds.filter((hold) => hold.body.retentionClasses.includes(command.retentionClass) && (!hold.body.expiresAt || exactDate(hold.body.expiresAt, "Hold expiry") > now));
-        const suppliedHolds = new Set(command.holdIds);
-        if (applicableHolds.some((hold) => !suppliedHolds.has(hold.id))) throw new GovernanceError("CONFLICT", "Deletion is missing an active applicable hold.");
-        if (applicableHolds.length && !command.retained.length) throw new GovernanceError("CONFLICT", "Held material must remain explicitly retained.");
+        const systems = unique(command.systems.map((item) => text(item, "Deletion system", 120))).sort();
+        if (!systems.length) throw new GovernanceError("INVALID_INPUT", "At least one authoritative deletion system is required.");
         const id = newId("deletion");
-        const receiptBody = { schema: "deletion-receipt/v1", retentionClass: command.retentionClass, resourceKind: text(command.resourceKind, "Resource kind", 100), resourceId: safeId(command.resourceId, "Resource"), immediate: unique(command.immediate), delayed: unique(command.delayed), retained: unique(command.retained), holdIds: unique(command.holdIds), recordedAt: now.toISOString() };
+        const receiptBody = { schema: "deletion-receipt/v2", retentionClass: command.retentionClass, resourceKind: text(command.resourceKind, "Resource kind", 100), resourceId: safeId(command.resourceId, "Resource"), systems, outcomes: Object.fromEntries(applicableHolds.length ? systems.map((system) => [system, { state: "retained", evidenceRef: applicableHolds.map((hold) => hold.id).join(","), reason: "ACTIVE_RETENTION_HOLD" }]) : []), holdIds: applicableHolds.map((hold) => hold.id), requestedAt: now.toISOString() };
         const tombstoneId = `${receiptBody.resourceKind}:${receiptBody.resourceId}`;
-        mutations = [create("deletion_receipt", id, "completed", receiptBody), create("tombstone", tombstoneId, "active", { resourceKind: receiptBody.resourceKind, resourceId: receiptBody.resourceId, deletionReceiptId: id, retainedEvidenceOnly: true })];
-        result = { deletionReceiptId: id, tombstoneId };
+        mutations = [create("deletion_receipt", id, applicableHolds.length ? "completed_hold" : "queued", receiptBody)];
+        if (applicableHolds.length) mutations.push(create("tombstone", tombstoneId, "active", { resourceKind: receiptBody.resourceKind, resourceId: receiptBody.resourceId, deletionReceiptId: id, systemOutcomes: receiptBody.outcomes, retainedEvidenceOnly: true }));
+        result = { deletionReceiptId: id, status: applicableHolds.length ? "completed_hold" : "queued", tombstoneId: applicableHolds.length ? tombstoneId : null };
         target = { kind: "deletion_receipt", id };
         break;
       }

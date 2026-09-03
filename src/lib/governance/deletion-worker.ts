@@ -1,0 +1,54 @@
+import { randomUUID } from "node:crypto";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import type { GovernanceAuditEvent, GovernanceRepository, GovernanceResource } from "./types";
+
+export type GovernanceDeletionSystemOutcome =
+  | { state: "deleted" | "not_found"; evidenceRef: string }
+  | { state: "retained"; evidenceRef: string; reason: string }
+  | { state: "delayed"; retryAt: string; reason: string }
+  | { state: "failed_known" | "outcome_unknown"; reason: string };
+
+export interface GovernanceDeletionAdapter {
+  delete(input: { workspaceId: string; system: string; resourceKind: string; resourceId: string; retentionClass: string; idempotencyKey: string }): Promise<GovernanceDeletionSystemOutcome>;
+}
+
+export const FAIL_CLOSED_GOVERNANCE_DELETION_ADAPTER: GovernanceDeletionAdapter = {
+  delete: async () => ({ state: "failed_known", reason: "DELETION_ADAPTER_NOT_CONFIGURED" }),
+};
+
+function audit(job: GovernanceResource, outcome: GovernanceAuditEvent["outcome"], now: Date): GovernanceAuditEvent {
+  return { schema: "workspace-audit-event/v1", id: `audit_${randomUUID().replaceAll("-", "")}`, workspaceId: job.workspaceId, actor: { kind: "system", id: null }, capability: "retention.deletions.process@1", action: "process_deletion", resource: { kind: job.kind, id: job.id }, outcome, redactedDetails: {}, occurredAt: now };
+}
+
+export class GovernanceDeletionWorker {
+  constructor(private readonly repository: GovernanceRepository, private readonly adapter: GovernanceDeletionAdapter = FAIL_CLOSED_GOVERNANCE_DELETION_ADAPTER, private readonly clock: { now(): Date } = { now: () => new Date() }) {}
+
+  async process(input: { workspaceId: string; deletionReceiptId: string }): Promise<void> {
+    const job = await this.repository.getResource<{ resourceKind: string; resourceId: string; retentionClass: string; systems: string[]; outcomes: Record<string, GovernanceDeletionSystemOutcome>; [key: string]: unknown }>({ workspaceId: input.workspaceId, kind: "deletion_receipt", id: input.deletionReceiptId });
+    if (!job || ["completed", "completed_hold", "failed_known", "outcome_unknown"].includes(job.status)) return;
+    if (! ["queued", "delayed"].includes(job.status)) throw new Error("Deletion request is not executable.");
+    const now = this.clock.now();
+    const body = job.body;
+    const outcomes = { ...body.outcomes };
+    for (const system of body.systems) {
+      const previous = outcomes[system];
+      if (previous && !["delayed"].includes(previous.state)) continue;
+      try {
+        outcomes[system] = await this.adapter.delete({ workspaceId: input.workspaceId, system, resourceKind: body.resourceKind, resourceId: body.resourceId, retentionClass: body.retentionClass, idempotencyKey: `${job.id}:${system}` });
+      } catch {
+        outcomes[system] = { state: "outcome_unknown", reason: "ADAPTER_TRANSPORT_INTERRUPTED" };
+      }
+    }
+    const values = Object.values(outcomes);
+    const status = values.some((item) => item.state === "outcome_unknown") ? "outcome_unknown" : values.some((item) => item.state === "failed_known") ? "failed_known" : values.some((item) => item.state === "delayed") ? "delayed" : "completed";
+    const next: GovernanceResource = { ...job, version: job.version + 1, status, body: { ...body, outcomes, completedAt: status === "completed" ? now.toISOString() : null }, updatedAt: now };
+    const mutations: Parameters<GovernanceRepository["commit"]>[0]["mutations"] = [{ type: "update", expectedVersion: job.version, resource: next }];
+    let tombstoneId: string | null = null;
+    if (status === "completed") {
+      tombstoneId = `${body.resourceKind}:${body.resourceId}`;
+      mutations.push({ type: "create", expectedVersion: null, resource: { id: tombstoneId, workspaceId: input.workspaceId, kind: "tombstone", version: 1, status: "active", body: { resourceKind: body.resourceKind, resourceId: body.resourceId, deletionReceiptId: job.id, systemOutcomes: outcomes, retainedEvidenceOnly: values.some((item) => item.state === "retained") }, createdByUserId: job.createdByUserId, createdAt: now, updatedAt: now } });
+    }
+    const committed = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: "retention.deletions.process@1", idempotencyKey: `deletion-${job.id}-${job.version}`, requestDigest: canonicalDigest({ deletionReceiptId: job.id, version: job.version, outcomes }), result: { deletionReceiptId: job.id, status, tombstoneId }, createdAt: now }, mutations, audit: audit(job, status === "completed" ? "completed" : "failed", now) });
+    if (committed.type === "conflict") throw new Error("Deletion request changed concurrently.");
+  }
+}

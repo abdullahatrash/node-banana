@@ -7,6 +7,7 @@ import { ApplicationGovernanceBulkCapabilityPort, DrizzleGovernanceBulkAuthoriza
 import { GovernanceImportWorker } from "./import-worker";
 import { GovernanceApprovalDeadlineWorker } from "./approval-worker";
 import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionRouteKind } from "./region-policy";
+import { GovernanceDeletionWorker } from "./deletion-worker";
 
 function regionTrustKeys(): Map<string, Uint8Array> {
   const keys = new Map<string, Uint8Array>();
@@ -62,4 +63,8 @@ export function getProductionGovernanceImportWorker(): GovernanceImportWorker {
 
 export function getProductionGovernanceApprovalDeadlineWorker(): GovernanceApprovalDeadlineWorker {
   return new GovernanceApprovalDeadlineWorker(PRODUCTION_GOVERNANCE_REPOSITORY);
+}
+
+export function getProductionGovernanceDeletionWorker(): GovernanceDeletionWorker {
+  return new GovernanceDeletionWorker(PRODUCTION_GOVERNANCE_REPOSITORY);
 }
