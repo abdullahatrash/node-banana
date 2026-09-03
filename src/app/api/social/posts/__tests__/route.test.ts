@@ -15,6 +15,7 @@ const mockHasChainChildren = vi.fn();
 const mockCountSocialPostsCreatedInRange = vi.fn();
 const mockWorkflowStart = vi.fn();
 const mockEmitSocialEvent = vi.fn();
+const mockRequiresGovernedPublishingPlan = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -63,6 +64,10 @@ vi.mock("@/utils/logger", () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+vi.mock("@/lib/governance/publishing-route-guard", () => ({
+  requiresGovernedPublishingPlan: mockRequiresGovernedPublishingPlan,
 }));
 
 const mockSession = {
@@ -296,6 +301,20 @@ describe("/api/social/posts/[postId]/publish", () => {
       }),
     );
     mockFinalizeSocialDispatchRun.mockResolvedValue({});
+    mockRequiresGovernedPublishingPlan.mockResolvedValue(false);
+  });
+
+  it("refuses legacy direct dispatch when the Workspace requires governed Publishing Approval", async () => {
+    authorized();
+    mockRequiresGovernedPublishingPlan.mockResolvedValue(true);
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+    expect(response.status).toBe(409);
+    expect(mockGetSocialPost).not.toHaveBeenCalled();
+    expect(mockWorkflowStart).not.toHaveBeenCalled();
   });
 
   it("returns 401 for unauthenticated requests", async () => {

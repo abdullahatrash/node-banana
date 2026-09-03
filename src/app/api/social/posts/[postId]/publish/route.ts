@@ -24,6 +24,7 @@ import {
   publishPostWorkflow,
 } from "@/../workflows/social-publish";
 import { logger } from "@/utils/logger";
+import { requiresGovernedPublishingPlan } from "@/lib/governance/publishing-route-guard";
 
 interface PublishResponse {
   success: boolean;
@@ -130,6 +131,12 @@ export async function POST(
 
     const { postId } = await params;
     const workspaceId = result.session.workspace.id;
+    if (await requiresGovernedPublishingPlan(workspaceId)) {
+      return NextResponse.json(
+        { success: false, error: "This Workspace requires an exact governed Publishing Plan and accepted Publishing Approval before provider dispatch." },
+        { status: 409 },
+      );
+    }
     const body = await readOptionalJsonBody(request);
     const workflowContext = extractWorkflowContext(body);
     const post = await getSocialPost(workspaceId, postId);
