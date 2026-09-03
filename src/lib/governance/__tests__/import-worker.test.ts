@@ -4,7 +4,7 @@ import { GovernanceImportWorker } from "../import-worker";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
 import type { GovernancePortableDataPort, GovernancePortableKind } from "../portability";
-import { workspaceIdFromExportSource } from "../portability";
+import { copyPortableMediaIntoPrimaryStorage, validatePortablePayload, workspaceIdFromExportSource } from "../portability";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
 const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const, authContextId: "session-owner-a" };
@@ -17,7 +17,7 @@ function payload(kind: GovernancePortableKind): Record<string, unknown> {
     case "content_revision": return { schema: "portable-content-revision/v1", id: "revision-1", workflowId: "workflow-1", revision: 1, definitionDigest: `sha256:${"1".repeat(64)}`, definition: { schema: "content-workflow-revision-definition/v1" }, operationRegistryDigest: `sha256:${"2".repeat(64)}`, createdAt: timestamp };
     case "prompt": return { schema: "portable-prompt/v1", id: "prompt-1", mode: "copy", name: "Launch", promptText: "Write", formConfig: {}, isPublic: false, createdAt: timestamp, updatedAt: timestamp };
     case "brand_source": return { schema: "portable-brand-source/v1", id: "brand-1", revision: 1, kind: "description", submittedUrl: null, finalUrl: null, submittedDescription: "Brand", cleanedText: "Brand", contentHash: "hash", sourceLanguage: "ar", extractedBytes: 5, fetchedAt: null, createdAt: timestamp };
-    case "calendar_plan": return { schema: "portable-calendar-plan/v1", id: "post-1", sourceChannelId: "channel-1", status: "draft", kind: "post", content: "Copy", media: [], platformSettings: {}, scheduledAt: "2026-09-04T12:00:00.000Z", createdAt: timestamp, updatedAt: timestamp };
+    case "calendar_plan": return { schema: "portable-calendar-plan/v1", id: "post-1", sourceChannelId: "channel-1", status: "draft", kind: "post", content: "Copy", media: [], omittedRawMediaCount: 0, platformSettings: {}, scheduledAt: "2026-09-04T12:00:00.000Z", createdAt: timestamp, updatedAt: timestamp };
     case "caption": return { schema: "portable-caption/v1", id: "caption:post-1", sourcePostId: "post-1", text: "Copy", createdAt: timestamp, updatedAt: timestamp };
     case "platform_observation": return { schema: "portable-platform-observation/v1", id: "event-1", eventType: "post.published", severity: "info", userFacing: true, sourcePostId: "post-1", sourceChannelId: "channel-1", provider: "linkedin", createdAt: timestamp };
     case "platform_export_metadata": return { schema: "portable-platform-export-metadata/v1", id: "post-1", platform: "linkedin", sourceChannelId: "channel-1", platformPostId: "remote-1", platformPostUrl: "https://example.com/post/1", publishedAt: timestamp, createdAt: timestamp };
@@ -25,6 +25,21 @@ function payload(kind: GovernancePortableKind): Record<string, unknown> {
 }
 
 describe("GovernanceImportWorker", () => {
+  it("admits destination primary storage immediately before a portable media copy", async () => {
+    const order: string[] = [];
+    const admit = vi.fn(async () => { order.push("admit"); });
+    const copy = vi.fn(async () => { order.push("copy"); });
+    await copyPortableMediaIntoPrimaryStorage({ workspaceId: "workspace-a", sourceKey: "source/a.png", destinationKey: "destination/a.png", configuredRegion: "me-central-1" }, { admit, copy });
+    expect(order).toEqual(["admit", "copy"]);
+    expect(admit).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "workspace-a", route: { kind: "primary_storage", routeId: "storage:workspace-assets" }, configuredRegion: "me-central-1" }));
+  });
+
+  it("rejects raw calendar media URLs and accepts digest-bound asset references", () => {
+    const body = payload("calendar_plan");
+    expect(validatePortablePayload("calendar_plan", { ...body, media: [{ type: "image", url: "https://source.example/private.png" }] })).toBeNull();
+    expect(validatePortablePayload("calendar_plan", { ...body, media: [{ type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}` }] })).not.toBeNull();
+  });
+
   it("derives server-copy authority only from an exact first-party Workspace export source", () => {
     expect(workspaceIdFromExportSource("workspace-export:source-workspace")).toBe("source-workspace");
     expect(workspaceIdFromExportSource("workspace-export:source-workspace:export-1")).toBe("source-workspace");
@@ -93,7 +108,7 @@ describe("GovernanceImportWorker", () => {
     await service.execute(actor, { type: "execute_import", importId: preview.importId }, "execute-mapped-import");
     const materialize = vi.fn(async (input: Parameters<GovernancePortableDataPort["materialize"]>[0]) => input.mapping?.destinationChannelId
       ? { kind: "created" as const, destinationId: input.destinationId }
-      : { kind: "waiting_user" as const, reason: "DESTINATION_CHANNEL_MAPPING_REQUIRED", requiredMappings: ["destinationChannelId"] });
+      : { kind: "waiting_user" as const, reason: "DESTINATION_CALENDAR_MAPPING_REQUIRED", requiredMappings: ["destinationChannelId"] });
     const worker = new GovernanceImportWorker(repository, { now: () => new Date("2026-09-03T12:01:00.000Z") }, { list: async () => [], materialize });
 
     await worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });

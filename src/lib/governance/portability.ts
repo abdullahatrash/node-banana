@@ -17,6 +17,7 @@ import {
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { copyObjectInS3 } from "@/lib/storage/s3";
+import { GOVERNANCE_REGION_ROUTES, requireGovernanceRegionRoute } from "./region-enforcement";
 
 export const GOVERNANCE_PORTABLE_KINDS = [
   "media",
@@ -37,7 +38,7 @@ const schemas = {
   content_revision: z.object({ schema: z.literal("portable-content-revision/v1"), id, workflowId: id, revision: z.number().int().positive(), definitionDigest: id, definition: z.record(z.string(), z.unknown()), operationRegistryDigest: id, createdAt: z.string().datetime({ offset: true }) }).strict(),
   prompt: z.object({ schema: z.literal("portable-prompt/v1"), id, mode: z.enum(["photo", "video", "copy"]), name: z.string().min(1), promptText: z.string(), formConfig: z.record(z.string(), z.unknown()), isPublic: z.boolean(), createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
   brand_source: z.object({ schema: z.literal("portable-brand-source/v1"), id, revision: z.number().int().positive(), kind: z.enum(["website", "description"]), submittedUrl: z.string().nullable(), finalUrl: z.string().nullable(), submittedDescription: z.string().nullable(), cleanedText: z.string().nullable(), contentHash: z.string().nullable(), sourceLanguage: z.string().nullable(), extractedBytes: z.number().int().nonnegative().nullable(), fetchedAt: timestamp, createdAt: z.string().datetime({ offset: true }) }).strict(),
-  calendar_plan: z.object({ schema: z.literal("portable-calendar-plan/v1"), id, sourceChannelId: id, status: z.enum(["draft", "queued", "publishing", "published", "failed"]), kind: id, content: z.string().nullable(), media: z.array(z.object({ type: z.string(), url: z.string(), alt: z.string().optional() }).strict()), platformSettings: z.record(z.string(), z.unknown()), scheduledAt: timestamp, createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
+  calendar_plan: z.object({ schema: z.literal("portable-calendar-plan/v1"), id, sourceChannelId: id, status: z.enum(["draft", "queued", "publishing", "published", "failed"]), kind: id, content: z.string().nullable(), media: z.array(z.object({ type: z.string(), sourceAssetId: id, assetDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), alt: z.string().optional() }).strict()).max(16), omittedRawMediaCount: z.number().int().nonnegative(), platformSettings: z.record(z.string(), z.unknown()), scheduledAt: timestamp, createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
   caption: z.object({ schema: z.literal("portable-caption/v1"), id, sourcePostId: id, text: z.string().min(1), createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
   platform_observation: z.object({ schema: z.literal("portable-platform-observation/v1"), id, eventType: z.enum(["post.queued", "post.publishing", "post.published", "post.failed", "account.reauth_required", "token.refreshed", "dispatch.failed"]), severity: z.enum(["info", "warn", "error"]), userFacing: z.boolean(), sourcePostId: z.string().nullable(), sourceChannelId: z.string().nullable(), provider: z.enum(["x", "linkedin", "facebook", "instagram", "tiktok", "youtube", "reddit", "threads", "pinterest", "bluesky", "mastodon"]).nullable(), createdAt: z.string().datetime({ offset: true }) }).strict(),
   platform_export_metadata: z.object({ schema: z.literal("portable-platform-export-metadata/v1"), id, platform: id, sourceChannelId: id, platformPostId: z.string().nullable(), platformPostUrl: z.string().nullable(), publishedAt: timestamp, createdAt: z.string().datetime({ offset: true }) }).strict(),
@@ -71,6 +72,21 @@ export interface GovernancePortableDataPort {
   }): Promise<GovernancePortableMaterializeResult>;
 }
 
+export async function copyPortableMediaIntoPrimaryStorage(
+  input: { workspaceId: string; sourceKey: string; destinationKey: string; configuredRegion: string | undefined },
+  dependencies: {
+    admit: typeof requireGovernanceRegionRoute;
+    copy: typeof copyObjectInS3;
+  } = { admit: requireGovernanceRegionRoute, copy: copyObjectInS3 },
+): Promise<void> {
+  await dependencies.admit({
+    workspaceId: input.workspaceId,
+    route: GOVERNANCE_REGION_ROUTES.assetStorage,
+    configuredRegion: input.configuredRegion,
+  });
+  await dependencies.copy({ sourceKey: input.sourceKey, destinationKey: input.destinationKey });
+}
+
 export function validatePortablePayload(kind: GovernancePortableKind, payload: unknown) {
   const parsed = schemas[kind].safeParse(payload);
   return parsed.success ? parsed.data as Record<string, unknown> : null;
@@ -91,8 +107,9 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
       requested.has("prompt") ? db.select().from(savedPrompts).where(and(eq(savedPrompts.workspaceId, input.workspaceId), isNull(savedPrompts.deletedAt))) : [],
       requested.has("brand_source") ? db.select().from(brandSources).where(eq(brandSources.workspaceId, input.workspaceId)) : [],
       requested.has("calendar_plan") || requested.has("caption") || requested.has("platform_export_metadata")
-        ? db.select({ post: socialPosts, platform: socialAccounts.platform }).from(socialPosts)
+        ? db.select({ post: socialPosts, platform: socialAccounts.platform, assetId: assets.id, assetType: assets.type, assetMimeType: assets.mimeType, assetSizeBytes: assets.sizeBytes, assetWidth: assets.width, assetHeight: assets.height, assetDurationSeconds: assets.durationSeconds, assetChecksum: assets.checksum }).from(socialPosts)
           .innerJoin(socialAccounts, and(eq(socialAccounts.workspaceId, socialPosts.workspaceId), eq(socialAccounts.id, socialPosts.socialAccountId)))
+          .leftJoin(assets, and(eq(assets.workspaceId, socialPosts.workspaceId), eq(assets.id, socialPosts.studioAssetId), isNull(assets.deletedAt)))
           .where(and(eq(socialPosts.workspaceId, input.workspaceId), requested.has("platform_export_metadata") && !requested.has("calendar_plan") ? isNotNull(socialPosts.publishedAt) : undefined))
         : [],
       requested.has("platform_observation") ? db.select({ id: socialEvents.id, eventType: socialEvents.eventType, severity: socialEvents.severity, userFacing: socialEvents.userFacing, postId: socialEvents.postId, accountId: socialEvents.accountId, provider: socialEvents.provider, createdAt: socialEvents.createdAt }).from(socialEvents).where(eq(socialEvents.workspaceId, input.workspaceId)) : [],
@@ -102,7 +119,15 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
     if (requested.has("content_revision")) for (const row of revisionRows) raw.push({ kind: "content_revision", sourceId: row.id, payload: { schema: "portable-content-revision/v1", id: row.id, workflowId: row.workflowId, revision: row.revision, definitionDigest: row.definitionDigest, definition: row.definition as unknown as Record<string, unknown>, operationRegistryDigest: row.operationRegistryDigest, createdAt: row.createdAt.toISOString() } });
     if (requested.has("prompt")) for (const row of promptRows) raw.push({ kind: "prompt", sourceId: row.id, payload: { schema: "portable-prompt/v1", id: row.id, mode: row.mode, name: row.name, promptText: row.promptText, formConfig: row.formConfig, isPublic: row.isPublic, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } });
     if (requested.has("brand_source")) for (const row of brandRows) raw.push({ kind: "brand_source", sourceId: row.id, payload: { schema: "portable-brand-source/v1", id: row.id, revision: row.revision, kind: row.kind, submittedUrl: row.submittedUrl, finalUrl: row.finalUrl, submittedDescription: row.submittedDescription, cleanedText: row.cleanedText, contentHash: row.contentHash, sourceLanguage: row.sourceLanguage, extractedBytes: row.extractedBytes, fetchedAt: row.fetchedAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString() } });
-    if (requested.has("calendar_plan")) for (const { post } of postRows) raw.push({ kind: "calendar_plan", sourceId: post.id, payload: { schema: "portable-calendar-plan/v1", id: post.id, sourceChannelId: post.socialAccountId, status: post.status, kind: post.kind, content: post.content, media: post.mediaUrls ?? [], platformSettings: post.platformSettings ?? {}, scheduledAt: post.scheduledAt?.toISOString() ?? null, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
+    if (requested.has("calendar_plan")) for (const { post, assetId, assetType, assetMimeType, assetSizeBytes, assetWidth, assetHeight, assetDurationSeconds, assetChecksum } of postRows) {
+      const stableMedia = assetId && assetType ? [{
+        type: assetType,
+        sourceAssetId: assetId,
+        assetDigest: portableAssetDigest({ type: assetType, mimeType: assetMimeType, sizeBytes: assetSizeBytes, width: assetWidth, height: assetHeight, durationSeconds: assetDurationSeconds, checksum: assetChecksum }),
+        ...(post.mediaUrls?.[0]?.alt ? { alt: post.mediaUrls[0].alt } : {}),
+      }] : [];
+      raw.push({ kind: "calendar_plan", sourceId: post.id, payload: { schema: "portable-calendar-plan/v1", id: post.id, sourceChannelId: post.socialAccountId, status: post.status, kind: post.kind, content: post.content, media: stableMedia, omittedRawMediaCount: Math.max(0, (post.mediaUrls?.length ?? 0) - stableMedia.length), platformSettings: post.platformSettings ?? {}, scheduledAt: post.scheduledAt?.toISOString() ?? null, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
+    }
     if (requested.has("caption")) for (const { post } of postRows.filter(({ post }) => Boolean(post.content))) raw.push({ kind: "caption", sourceId: post.id, payload: { schema: "portable-caption/v1", id: `caption:${post.id}`, sourcePostId: post.id, text: post.content!, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
     if (requested.has("platform_observation")) for (const row of observationRows) raw.push({ kind: "platform_observation", sourceId: row.id, payload: { schema: "portable-platform-observation/v1", id: row.id, eventType: row.eventType, severity: row.severity, userFacing: row.userFacing, sourcePostId: row.postId, sourceChannelId: row.accountId, provider: row.provider, createdAt: row.createdAt.toISOString() } });
     if (requested.has("platform_export_metadata")) for (const { post, platform } of postRows.filter(({ post }) => post.publishedAt)) raw.push({ kind: "platform_export_metadata", sourceId: post.id, payload: { schema: "portable-platform-export-metadata/v1", id: post.id, platform, sourceChannelId: post.socialAccountId, platformPostId: post.platformPostId, platformPostUrl: post.platformPostUrl, publishedAt: post.publishedAt?.toISOString() ?? null, createdAt: post.createdAt.toISOString() } });
@@ -238,22 +263,37 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
     if (!safeStorageKey(sourceKey)) return { kind: "invalid" as const, reason: "INVALID_SOURCE_STORAGE_KEY" };
     const destinationKey = input.mapping?.destinationStorageKey ?? `workspace-imports/${input.workspaceId}/${input.digest.slice(7, 39)}/${fileName(payload.storageKey)}`;
     if (!safeStorageKey(destinationKey)) return { kind: "invalid" as const, reason: "INVALID_DESTINATION_STORAGE_KEY" };
-    await copyObjectInS3({ sourceKey, destinationKey });
+    await copyPortableMediaIntoPrimaryStorage({
+      workspaceId: input.workspaceId,
+      sourceKey,
+      destinationKey,
+      configuredRegion: process.env.S3_REGION ?? process.env.APP_DATA_REGION,
+    });
     await db.insert(assets).values({ id: input.destinationId, workspaceId: input.workspaceId, projectId: null, type: payload.type, storageProvider: "s3", storageBucket: configuredBucket, storageKey: destinationKey, mimeType: payload.mimeType, sizeBytes: payload.sizeBytes, width: payload.width, height: payload.height, durationSeconds: payload.durationSeconds, checksum: payload.checksum, metadata: { ...(payload.metadata ?? {}), importProvenance: { source: input.provenance.source, sourceId: input.sourceId, sourceManifestDigest: input.provenance.sourceManifestDigest } }, createdByUserId: input.requestedByUserId, createdAt: new Date(payload.createdAt), updatedAt: new Date(payload.createdAt) });
     return { kind: "created" as const, destinationId: input.destinationId };
   }
 
   private async materializeCalendarPlan(input: Parameters<GovernancePortableDataPort["materialize"]>[0], payload: z.infer<typeof schemas.calendar_plan>) {
     const destinationChannelId = input.mapping?.destinationChannelId;
-    if (!destinationChannelId) return { kind: "waiting_user" as const, reason: "DESTINATION_CHANNEL_MAPPING_REQUIRED", requiredMappings: ["destinationChannelId"] };
+    const assetMappingKeys = payload.media.map((_, index) => `destinationAssetId${index}`);
+    const requiredMappings = ["destinationChannelId", ...assetMappingKeys].filter((key) => !input.mapping?.[key]);
+    if (requiredMappings.length) return { kind: "waiting_user" as const, reason: "DESTINATION_CALENDAR_MAPPING_REQUIRED", requiredMappings };
     const db = this.database();
-    const channel = await db.select().from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), eq(socialAccounts.id, destinationChannelId))).limit(1);
+    const channel = await db.select().from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), eq(socialAccounts.id, destinationChannelId!))).limit(1);
     if (!channel[0] || channel[0].disabled || channel[0].requiresReauth) return { kind: "invalid" as const, reason: "DESTINATION_CHANNEL_UNAVAILABLE" };
     const existing = await db.select().from(socialPosts).where(eq(socialPosts.id, input.destinationId)).limit(1);
     if (existing[0]) return existing[0].workspaceId === input.workspaceId && existing[0].triggerSource === `workspace-import:${input.digest}`
       ? { kind: "matched" as const, destinationId: existing[0].id }
       : { kind: "conflict" as const, reason: "CALENDAR_PLAN_DESTINATION_CONFLICT" };
-    await db.insert(socialPosts).values({ id: input.destinationId, workspaceId: input.workspaceId, socialAccountId: destinationChannelId, status: "draft", kind: payload.kind, content: payload.content, mediaUrls: payload.media, platformSettings: payload.platformSettings, scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : null, triggerSource: `workspace-import:${input.digest}`, createdByUserId: input.requestedByUserId, createdAt: new Date(payload.createdAt), updatedAt: new Date(payload.updatedAt) });
+    const destinationAssets = [];
+    for (let index = 0; index < payload.media.length; index += 1) {
+      const reference = payload.media[index];
+      const destinationAssetId = input.mapping![assetMappingKeys[index]];
+      const [destinationAsset] = await db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.id, destinationAssetId), isNull(assets.deletedAt))).limit(1);
+      if (!destinationAsset || portableAssetDigest(destinationAsset) !== reference.assetDigest) return { kind: "invalid" as const, reason: "DESTINATION_ASSET_MAPPING_MISMATCH" };
+      destinationAssets.push(destinationAsset);
+    }
+    await db.insert(socialPosts).values({ id: input.destinationId, workspaceId: input.workspaceId, socialAccountId: destinationChannelId!, status: "draft", kind: payload.kind, content: payload.content, mediaUrls: null, studioAssetId: destinationAssets[0]?.id ?? null, platformSettings: payload.platformSettings, scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : null, triggerSource: `workspace-import:${input.digest}`, createdByUserId: input.requestedByUserId, createdAt: new Date(payload.createdAt), updatedAt: new Date(payload.updatedAt) });
     return { kind: "created" as const, destinationId: input.destinationId };
   }
 
@@ -337,4 +377,9 @@ function safeStorageKey(value: string): boolean {
 function fileName(storageKey: string): string {
   const candidate = storageKey.split("/").at(-1)?.replace(/[^A-Za-z0-9._-]/g, "_");
   return candidate && candidate.length <= 180 ? candidate : "asset.bin";
+}
+
+function portableAssetDigest(input: { type: string; mimeType: string | null; sizeBytes: number | null; width: number | null; height: number | null; durationSeconds: number | null; checksum: string | null }): string {
+  if (input.checksum && /^sha256:[a-f0-9]{64}$/.test(input.checksum)) return input.checksum;
+  return canonicalDigest({ type: input.type, mimeType: input.mimeType, sizeBytes: input.sizeBytes, width: input.width, height: input.height, durationSeconds: input.durationSeconds });
 }
