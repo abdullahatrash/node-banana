@@ -52,6 +52,10 @@ _Avoid_: Copy instructions, cloned post, inspiration prompt, source asset
 A bounded Workspace-owned queue of Brand-aligned content proposals produced under an explicit replenishment configuration and spend ceiling. Viewing the queue creates no provider work; scheduled or manual replenishment admits durable Runs only until the configured queue capacity is satisfied.
 _Avoid_: Infinite feed, swipe feed, background generation, idea list
 
+**Content Preference Proposal**:
+A reviewable suggestion to change future content selection based on repeated explicit creator feedback, such as structured Blitz rejection reasons. Accepting it creates the applicable preference or Brand Profile revision; it never silently mutates accepted Brand context or turns one rejection into a permanent rule.
+_Avoid_: Learned preference, implicit profile update, rejection memory
+
 **Brand Source**:
 User-approved source material used to derive a Workspace's Brand Profile, such as a public website or a manual company description. It is evidence for the profile, not the canonical profile itself.
 _Avoid_: Scraped data, company input, website context
@@ -336,6 +340,10 @@ _Avoid_: usage record, business event, analytics event, diagnostic log
 An immutable time-stamped observation of one audience-performance metric using the source Platform's exact definition, scope, capture window, and freshness evidence. Cross-Platform normalization is allowed only where definitions are demonstrably comparable; otherwise observations remain separately labeled rather than forced into a universal total.
 _Avoid_: Analytics total, universal views, engagement counter, current metric
 
+**Platform Metric Refresh**:
+A durable idempotent request to acquire new Platform Metric Observations for an exact Channel or resource set. Each source advances independently under provider limits, preserving prior observations and reporting its own progress, freshness, failure, and retry eligibility.
+_Avoid_: Refresh button, blocking sync, replace metrics, page reload
+
 **Diagnostic Trace**:
 A short-lived operator-only correlation of sanitized logs and spans for one runtime path. It may retain timing, component and version, allowlisted status metadata, retry decisions, and stack traces, but never credentials, authorization material, prompts, generated content, media bytes, signed URLs, arbitrary headers, or raw provider bodies.
 _Avoid_: Run Event, provider log, request dump, audit trail
@@ -616,9 +624,37 @@ _Avoid_: output blob, generated file, media item, fake run output
 A stable Workspace-owned creative work in one declared content format, spanning its editable configuration, revisions, source references, executions, and produced Artifacts. Its lifecycle is `active`, `archived`, or terminally `deleted`; it is the Library's canonical editable-content item, while execution and publishing states remain on their owning resources.
 _Avoid_: Content item, generation, project, Artifact, Post
 
+**Content Piece Draft**:
+A mutable autosaved working copy based on one exact Content Piece Revision and owned by one active editor. It uses optimistic versioning, is never executable or publishable, and becomes shared immutable history only when explicit Save, Preview, or Generate validation promotes it to a new Revision.
+_Avoid_: Current revision, unpublished Artifact, shared mutable document, form state
+
+**Model Policy**:
+The versioned rule a Content Format Definition uses to select compatible provider operations and defaults by capability, Content Language, Arabic Variety, quality, latency, execution mode, and price. Advanced user overrides remain constrained to compatible operations, and exact provider/model/version identity stays inspectable.
+_Avoid_: Model dropdown, hidden router, Fastlane-style model alias, provider default
+
 **Content Format Definition**:
 A versioned product-owned contract for one guided content format, declaring inputs, compatible languages and Arabic Varieties, media constraints, preview schema, Workflow Revision, provider capabilities, caption rules, duration and aspect limits, Managed Execution Quote policy, and editor handoff. UI controls and validation derive from it rather than re-encoding format behavior.
 _Avoid_: React form, template, workflow, format name, generation preset
+
+**Candidate Output**:
+An immutable Artifact produced as one of several alternatives for the same Content Piece Revision or AI Studio request. Candidate status is a relationship to the originating context and selection decision, not a separate media type or Content Piece.
+_Avoid_: Variant project, draft Artifact, batch item, duplicate content
+
+**Media Set**:
+A named Workspace-owned selection of canonical media references used by content formats, Automations, or Creator Personas. A Content Piece Revision or Automation Revision pins the exact membership it used so later set edits cannot rewrite history or duplicate blobs.
+_Avoid_: Media folder, copied assets, playlist, demo-video table
+
+**Content Theme**:
+A versioned, licensed presentation definition for visual composition, typography, caption styling, and reusable format defaults. Content Piece Revisions pin its exact version; a Theme contains no copied Workspace media or executable provider logic.
+_Avoid_: Template, CSS preset, media set, workflow
+
+**Layout Preview**:
+An immediate deterministic approximation of Content Piece composition that may use placeholders for ungenerated media. It is clearly labeled and never claims pixel or timing identity with production output.
+_Avoid_: Final preview, render, generated video, proof
+
+**Render Proof**:
+A reviewable output produced by the production rendering stack with the pinned fonts, bidi shaping, captions, timing, and platform safe areas used for release. Required Arabic or provider incompatibility blocks proof creation unless the creator explicitly selects a supported fallback.
+_Avoid_: Browser mock, thumbnail, layout preview, final publish
 
 **Content Piece Revision**:
 An immutable snapshot of a Content Piece's authored script, scenes, format configuration, source and Creator Persona references, and selected Artifact inputs or outputs. Editing creates a new revision, and any Publishing Plan references the exact revision it distributes.
@@ -758,14 +794,21 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - A **Workspace** owns its Workspace Subscription, Entitlements, recurring and purchased Generation Credits, storage allowance, and commercial history; a Human Principal's identity does not own or carry them between Workspaces.
 - Changing the active **Workspace** never rebinds an upload, conversation, Workflow Run, Content Piece, Creator Persona, Channel, Generation Credit, Publishing Plan, Approval, or Delivery that began in another Workspace.
 - A **Content Piece** has immutable Content Piece Revisions; a Publishing Plan that distributes it references one exact revision.
+- A Content Piece Draft is editor-owned mutable work based on an exact Revision; optimistic conflicts must be resolved before promotion, and a Publishing Plan can never reference the Draft.
 - Editing or regenerating a Content Piece appends a Revision, starts a distinct Workflow Run, and produces new immutable Artifacts; undo selects or derives from history rather than rewriting it.
+- A batch generation creates sibling Candidate Outputs under one originating request or Content Piece Revision rather than inventing one Content Piece per output.
+- Demo videos and other reusable collections are Media Sets over canonical media; Content Themes and set membership are version-pinned by the revisions that use them.
+- Layout Preview is approximate; Render Proof uses production fonts, bidi, captions, timing, and safe areas and is the review boundary before Content Acceptance or publishing.
 - Unreferenced drafts may be recoverably deleted, while active Plans, Approvals, Deliveries, Automations, Persona training, retention policy, or audit obligations block destructive removal and explain the dependency.
 - A **Creator Persona** belongs to one Workspace and may be referenced by Content Piece Revisions, but it never owns a Channel or authenticates publishing.
 - Only an `active` Creator Persona may be selected for new content; suspending, expiring, or deleting one blocks future effects without changing historical Content Pieces or Artifacts.
 - A **Remix Brief** references one or more Inspiration Items and records permitted structural influence without transferring ownership of their source media.
 - A **Blitz Queue** admits replenishment work only under its target capacity, format mix, Remix ratio, Brand constraints, language and Arabic Variety, provider mode, and spend ceiling; browsing never replenishes it.
+- Blitz rejection excludes the exact proposal and may contribute only to a reviewable Content Preference Proposal, never an implicit Brand Profile mutation.
 - Platform Metric Observations may be aggregated across Platforms only under a declared comparable definition; otherwise Analytics presents them separately with source and freshness.
+- A Platform Metric Refresh advances each source independently, retains prior observations, and never makes one unavailable Platform fail the entire Analytics view.
 - Entitlement visibility never grants authorization: gated capabilities remain discoverable with requirements and upgrade paths, while server-side policy independently enforces every operation.
+- Channel credentials enter only through official OAuth, app-password, API-credential, supported device-authorization, or vetted partner Credential Handoff; Tasmeemai never captures platform passwords or covertly automates interactive sessions.
 - A **Channel** belongs to exactly one **Platform**.
 - A **Provider Adapter** supports exactly one **Platform**.
 - A **Post** has **Publishing Settings** for each selected **Channel** when that platform needs extra publishing choices.
