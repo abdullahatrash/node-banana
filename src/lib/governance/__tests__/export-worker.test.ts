@@ -55,7 +55,7 @@ describe("GovernanceExportWorker", () => {
   it("exports every canonical portable kind and signs an import authorization for exact item digests", async () => {
     const repository = new InMemoryGovernanceRepository();
     const store = new MemoryStore();
-    const kinds = ["media", "content_revision", "prompt", "brand_source", "calendar_plan", "platform_export_metadata"] as const;
+    const kinds = ["media", "content_revision", "prompt", "brand_source", "calendar_plan", "caption", "platform_observation", "platform_export_metadata"] as const;
     const requested = await createWorkspaceExport(repository, [...kinds]);
     const list = vi.fn(async () => kinds.map((kind, index) => ({ kind, sourceId: `${kind}-${index}`, digest: `sha256:${String(index + 1).repeat(64)}`, payload: { schema: `portable-${kind}/v1` } })));
     const signingKey = Buffer.alloc(32, 2);

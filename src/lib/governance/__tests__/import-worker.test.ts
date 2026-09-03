@@ -18,6 +18,8 @@ function payload(kind: GovernancePortableKind): Record<string, unknown> {
     case "prompt": return { schema: "portable-prompt/v1", id: "prompt-1", mode: "copy", name: "Launch", promptText: "Write", formConfig: {}, isPublic: false, createdAt: timestamp, updatedAt: timestamp };
     case "brand_source": return { schema: "portable-brand-source/v1", id: "brand-1", revision: 1, kind: "description", submittedUrl: null, finalUrl: null, submittedDescription: "Brand", cleanedText: "Brand", contentHash: "hash", sourceLanguage: "ar", extractedBytes: 5, fetchedAt: null, createdAt: timestamp };
     case "calendar_plan": return { schema: "portable-calendar-plan/v1", id: "post-1", sourceChannelId: "channel-1", status: "draft", kind: "post", content: "Copy", media: [], platformSettings: {}, scheduledAt: "2026-09-04T12:00:00.000Z", createdAt: timestamp, updatedAt: timestamp };
+    case "caption": return { schema: "portable-caption/v1", id: "caption:post-1", sourcePostId: "post-1", text: "Copy", createdAt: timestamp, updatedAt: timestamp };
+    case "platform_observation": return { schema: "portable-platform-observation/v1", id: "event-1", eventType: "post.published", severity: "info", userFacing: true, sourcePostId: "post-1", sourceChannelId: "channel-1", provider: "linkedin", createdAt: timestamp };
     case "platform_export_metadata": return { schema: "portable-platform-export-metadata/v1", id: "post-1", platform: "linkedin", sourceChannelId: "channel-1", platformPostId: "remote-1", platformPostUrl: "https://example.com/post/1", publishedAt: timestamp, createdAt: timestamp };
   }
 }
@@ -34,7 +36,7 @@ describe("GovernanceImportWorker", () => {
   it("materializes every canonical portable surface through its exact adapter with provenance", async () => {
     const repository = new InMemoryGovernanceRepository();
     const service = new GovernanceService(repository, { now: () => new Date(now) }, undefined, undefined, { verify: () => true });
-    const kinds: GovernancePortableKind[] = ["media", "content_revision", "prompt", "brand_source", "calendar_plan", "platform_export_metadata"];
+    const kinds: GovernancePortableKind[] = ["media", "content_revision", "prompt", "brand_source", "calendar_plan", "caption", "platform_observation", "platform_export_metadata"];
     const items = kinds.map((kind) => {
       const body = payload(kind);
       return { kind, sourceId: `${kind}-source`, destinationId: `${kind}-destination`, digest: canonicalDigest(body), transferable: true as const, payload: body };

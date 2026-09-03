@@ -75,7 +75,7 @@
     "approvalModes": { "single": "معتمِد واحد", "any_of": "أي معتمِد مؤهل", "sequential": "مراحل متسلسلة", "quorum": "نصاب" },
     "reviewPurposes": { "inspect": "مراجعة", "comment": "تعليق", "accept_content": "قبول المحتوى", "approve_publishing": "الموافقة على النشر", "reject": "رفض" },
     "portfolioPermissions": { "navigate": "التنقل", "report": "التقارير", "templates": "القوالب", "bulk": "العمليات المجمّعة" },
-    "portableKinds": { "media": "وسائط مساحة العمل", "content_revision": "إصدارات المحتوى", "prompt": "المطالبات المحفوظة", "brand_source": "مصادر العلامة", "calendar_plan": "خطط التقويم", "platform_export_metadata": "بيانات تصدير المنصة", "unknown": "عنصر نقل غير مدعوم" },
+    "portableKinds": { "media": "وسائط مساحة العمل", "content_revision": "إصدارات المحتوى", "prompt": "المطالبات المحفوظة", "brand_source": "مصادر العلامة", "calendar_plan": "خطط التقويم", "caption": "التسميات التوضيحية المؤلفة", "platform_observation": "ملاحظات المنصة", "platform_export_metadata": "بيانات تصدير المنصة", "unknown": "عنصر نقل غير مدعوم" },
     "regionRoutes": { "primary_storage": "معرّف مسار التخزين الأساسي", "processing": "معرّف مسار المعالجة", "backup": "معرّف مسار النسخ الاحتياطي", "logging": "معرّف مسار السجلات", "deletion": "معرّف مسار الحذف" },
     "stepUp": { "title": "تأكيد أمني حديث", "request": "إرسال رمز قصير الصلاحية", "sent": "أدخل الرمز المرسل عبر القناة الموثقة.", "developmentCode": "رمز التطوير المحلي: {code}", "verified": "التأكيد الأمني جاهز لهذا الإجراء المحدد." },
     "publishing": { "empty": "لا يوجد طلب موافقة نشر بانتظار القرار.", "exactRevision": "إصدار خطة النشر الثابت المحدد", "channelId": "معرّف قناة LinkedIn", "blocked": "لا يمكن اتخاذ قرار بشأن هذا الطلب بصلاحياتك المحددة الحالية." },

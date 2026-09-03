@@ -11,6 +11,7 @@ import {
   contentWorkflowRevisions,
   savedPrompts,
   socialAccounts,
+  socialEvents,
   socialPosts,
   workspacePortableImportRecords,
 } from "@/lib/db/schema";
@@ -23,6 +24,8 @@ export const GOVERNANCE_PORTABLE_KINDS = [
   "prompt",
   "brand_source",
   "calendar_plan",
+  "caption",
+  "platform_observation",
   "platform_export_metadata",
 ] as const;
 export type GovernancePortableKind = (typeof GOVERNANCE_PORTABLE_KINDS)[number];
@@ -35,6 +38,8 @@ const schemas = {
   prompt: z.object({ schema: z.literal("portable-prompt/v1"), id, mode: z.enum(["photo", "video", "copy"]), name: z.string().min(1), promptText: z.string(), formConfig: z.record(z.string(), z.unknown()), isPublic: z.boolean(), createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
   brand_source: z.object({ schema: z.literal("portable-brand-source/v1"), id, revision: z.number().int().positive(), kind: z.enum(["website", "description"]), submittedUrl: z.string().nullable(), finalUrl: z.string().nullable(), submittedDescription: z.string().nullable(), cleanedText: z.string().nullable(), contentHash: z.string().nullable(), sourceLanguage: z.string().nullable(), extractedBytes: z.number().int().nonnegative().nullable(), fetchedAt: timestamp, createdAt: z.string().datetime({ offset: true }) }).strict(),
   calendar_plan: z.object({ schema: z.literal("portable-calendar-plan/v1"), id, sourceChannelId: id, status: z.enum(["draft", "queued", "publishing", "published", "failed"]), kind: id, content: z.string().nullable(), media: z.array(z.object({ type: z.string(), url: z.string(), alt: z.string().optional() }).strict()), platformSettings: z.record(z.string(), z.unknown()), scheduledAt: timestamp, createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
+  caption: z.object({ schema: z.literal("portable-caption/v1"), id, sourcePostId: id, text: z.string().min(1), createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
+  platform_observation: z.object({ schema: z.literal("portable-platform-observation/v1"), id, eventType: z.enum(["post.queued", "post.publishing", "post.published", "post.failed", "account.reauth_required", "token.refreshed", "dispatch.failed"]), severity: z.enum(["info", "warn", "error"]), userFacing: z.boolean(), sourcePostId: z.string().nullable(), sourceChannelId: z.string().nullable(), provider: z.enum(["x", "linkedin", "facebook", "instagram", "tiktok", "youtube", "reddit", "threads", "pinterest", "bluesky", "mastodon"]).nullable(), createdAt: z.string().datetime({ offset: true }) }).strict(),
   platform_export_metadata: z.object({ schema: z.literal("portable-platform-export-metadata/v1"), id, platform: id, sourceChannelId: id, platformPostId: z.string().nullable(), platformPostUrl: z.string().nullable(), publishedAt: timestamp, createdAt: z.string().datetime({ offset: true }) }).strict(),
 } satisfies Record<GovernancePortableKind, z.ZodType>;
 
@@ -80,16 +85,17 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
   async list(input: { workspaceId: string; kinds: GovernancePortableKind[] }) {
     const requested = new Set(input.kinds);
     const db = this.database();
-    const [mediaRows, revisionRows, promptRows, brandRows, postRows] = await Promise.all([
+    const [mediaRows, revisionRows, promptRows, brandRows, postRows, observationRows] = await Promise.all([
       requested.has("media") ? db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), isNull(assets.deletedAt))) : [],
       requested.has("content_revision") ? db.select().from(contentWorkflowRevisions).where(eq(contentWorkflowRevisions.workspaceId, input.workspaceId)) : [],
       requested.has("prompt") ? db.select().from(savedPrompts).where(and(eq(savedPrompts.workspaceId, input.workspaceId), isNull(savedPrompts.deletedAt))) : [],
       requested.has("brand_source") ? db.select().from(brandSources).where(eq(brandSources.workspaceId, input.workspaceId)) : [],
-      requested.has("calendar_plan") || requested.has("platform_export_metadata")
+      requested.has("calendar_plan") || requested.has("caption") || requested.has("platform_export_metadata")
         ? db.select({ post: socialPosts, platform: socialAccounts.platform }).from(socialPosts)
           .innerJoin(socialAccounts, and(eq(socialAccounts.workspaceId, socialPosts.workspaceId), eq(socialAccounts.id, socialPosts.socialAccountId)))
           .where(and(eq(socialPosts.workspaceId, input.workspaceId), requested.has("platform_export_metadata") && !requested.has("calendar_plan") ? isNotNull(socialPosts.publishedAt) : undefined))
         : [],
+      requested.has("platform_observation") ? db.select({ id: socialEvents.id, eventType: socialEvents.eventType, severity: socialEvents.severity, userFacing: socialEvents.userFacing, postId: socialEvents.postId, accountId: socialEvents.accountId, provider: socialEvents.provider, createdAt: socialEvents.createdAt }).from(socialEvents).where(eq(socialEvents.workspaceId, input.workspaceId)) : [],
     ]);
     const raw: Array<{ kind: GovernancePortableKind; sourceId: string; payload: Record<string, unknown> }> = [];
     if (requested.has("media")) for (const row of mediaRows) raw.push({ kind: "media", sourceId: row.id, payload: { schema: "portable-media/v1", id: row.id, type: row.type, storageProvider: row.storageProvider, storageBucket: row.storageBucket, storageKey: row.storageKey, mimeType: row.mimeType, sizeBytes: row.sizeBytes, width: row.width, height: row.height, durationSeconds: row.durationSeconds, checksum: row.checksum, metadata: row.metadata, createdAt: row.createdAt.toISOString() } });
@@ -97,6 +103,8 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
     if (requested.has("prompt")) for (const row of promptRows) raw.push({ kind: "prompt", sourceId: row.id, payload: { schema: "portable-prompt/v1", id: row.id, mode: row.mode, name: row.name, promptText: row.promptText, formConfig: row.formConfig, isPublic: row.isPublic, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } });
     if (requested.has("brand_source")) for (const row of brandRows) raw.push({ kind: "brand_source", sourceId: row.id, payload: { schema: "portable-brand-source/v1", id: row.id, revision: row.revision, kind: row.kind, submittedUrl: row.submittedUrl, finalUrl: row.finalUrl, submittedDescription: row.submittedDescription, cleanedText: row.cleanedText, contentHash: row.contentHash, sourceLanguage: row.sourceLanguage, extractedBytes: row.extractedBytes, fetchedAt: row.fetchedAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString() } });
     if (requested.has("calendar_plan")) for (const { post } of postRows) raw.push({ kind: "calendar_plan", sourceId: post.id, payload: { schema: "portable-calendar-plan/v1", id: post.id, sourceChannelId: post.socialAccountId, status: post.status, kind: post.kind, content: post.content, media: post.mediaUrls ?? [], platformSettings: post.platformSettings ?? {}, scheduledAt: post.scheduledAt?.toISOString() ?? null, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
+    if (requested.has("caption")) for (const { post } of postRows.filter(({ post }) => Boolean(post.content))) raw.push({ kind: "caption", sourceId: post.id, payload: { schema: "portable-caption/v1", id: `caption:${post.id}`, sourcePostId: post.id, text: post.content!, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
+    if (requested.has("platform_observation")) for (const row of observationRows) raw.push({ kind: "platform_observation", sourceId: row.id, payload: { schema: "portable-platform-observation/v1", id: row.id, eventType: row.eventType, severity: row.severity, userFacing: row.userFacing, sourcePostId: row.postId, sourceChannelId: row.accountId, provider: row.provider, createdAt: row.createdAt.toISOString() } });
     if (requested.has("platform_export_metadata")) for (const { post, platform } of postRows.filter(({ post }) => post.publishedAt)) raw.push({ kind: "platform_export_metadata", sourceId: post.id, payload: { schema: "portable-platform-export-metadata/v1", id: post.id, platform, sourceChannelId: post.socialAccountId, platformPostId: post.platformPostId, platformPostUrl: post.platformPostUrl, publishedAt: post.publishedAt?.toISOString() ?? null, createdAt: post.createdAt.toISOString() } });
     return raw.flatMap((item) => {
       const payload = validatePortablePayload(item.kind, item.payload);
@@ -146,6 +154,8 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
       case "brand_source": return this.materializeBrandSource(input, payload as z.infer<typeof schemas.brand_source>);
       case "media": return this.materializeMedia(input, payload as z.infer<typeof schemas.media>);
       case "calendar_plan": return this.materializeCalendarPlan(input, payload as z.infer<typeof schemas.calendar_plan>);
+      case "caption": return this.materializeCaption(input, payload as z.infer<typeof schemas.caption>);
+      case "platform_observation": return this.materializePlatformObservation(input, payload as z.infer<typeof schemas.platform_observation>);
       case "content_revision": return this.materializeContentRevision(input, payload as z.infer<typeof schemas.content_revision>);
       case "platform_export_metadata":
         // Remote posts are evidence, not credentials or publishing authority. The
@@ -244,6 +254,32 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
       ? { kind: "matched" as const, destinationId: existing[0].id }
       : { kind: "conflict" as const, reason: "CALENDAR_PLAN_DESTINATION_CONFLICT" };
     await db.insert(socialPosts).values({ id: input.destinationId, workspaceId: input.workspaceId, socialAccountId: destinationChannelId, status: "draft", kind: payload.kind, content: payload.content, mediaUrls: payload.media, platformSettings: payload.platformSettings, scheduledAt: payload.scheduledAt ? new Date(payload.scheduledAt) : null, triggerSource: `workspace-import:${input.digest}`, createdByUserId: input.requestedByUserId, createdAt: new Date(payload.createdAt), updatedAt: new Date(payload.updatedAt) });
+    return { kind: "created" as const, destinationId: input.destinationId };
+  }
+
+  private async materializeCaption(input: Parameters<GovernancePortableDataPort["materialize"]>[0], payload: z.infer<typeof schemas.caption>) {
+    const destinationPostId = input.mapping?.destinationPostId;
+    if (!destinationPostId) return { kind: "waiting_user" as const, reason: "DESTINATION_POST_MAPPING_REQUIRED", requiredMappings: ["destinationPostId"] };
+    const db = this.database();
+    const [post] = await db.select().from(socialPosts).where(and(eq(socialPosts.workspaceId, input.workspaceId), eq(socialPosts.id, destinationPostId))).limit(1);
+    if (!post || post.status !== "draft") return { kind: "invalid" as const, reason: "DESTINATION_POST_NOT_EDITABLE" };
+    if (post.content === payload.text && post.triggerSource === `workspace-import-caption:${input.digest}`) return { kind: "matched" as const, destinationId: post.id };
+    if (post.content) return { kind: "conflict" as const, reason: "DESTINATION_CAPTION_CONFLICT" };
+    await db.update(socialPosts).set({ content: payload.text, triggerSource: `workspace-import-caption:${input.digest}`, updatedAt: new Date(payload.updatedAt) }).where(and(eq(socialPosts.workspaceId, input.workspaceId), eq(socialPosts.id, destinationPostId)));
+    return { kind: "created" as const, destinationId: post.id };
+  }
+
+  private async materializePlatformObservation(input: Parameters<GovernancePortableDataPort["materialize"]>[0], payload: z.infer<typeof schemas.platform_observation>) {
+    const db = this.database();
+    const [existing] = await db.select({ id: socialEvents.id, workspaceId: socialEvents.workspaceId, metadata: socialEvents.metadata }).from(socialEvents).where(eq(socialEvents.id, input.destinationId)).limit(1);
+    if (existing) return existing.workspaceId === input.workspaceId && (existing.metadata as { importDigest?: string } | null)?.importDigest === input.digest
+      ? { kind: "matched" as const, destinationId: existing.id }
+      : { kind: "conflict" as const, reason: "PLATFORM_OBSERVATION_DESTINATION_CONFLICT" };
+    const destinationPostId = input.mapping?.destinationPostId ?? null;
+    const destinationChannelId = input.mapping?.destinationChannelId ?? null;
+    if (destinationPostId && !(await db.select({ id: socialPosts.id }).from(socialPosts).where(and(eq(socialPosts.workspaceId, input.workspaceId), eq(socialPosts.id, destinationPostId))).limit(1))[0]) return { kind: "invalid" as const, reason: "DESTINATION_POST_UNAVAILABLE" };
+    if (destinationChannelId && !(await db.select({ id: socialAccounts.id }).from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), eq(socialAccounts.id, destinationChannelId))).limit(1))[0]) return { kind: "invalid" as const, reason: "DESTINATION_CHANNEL_UNAVAILABLE" };
+    await db.insert(socialEvents).values({ id: input.destinationId, workspaceId: input.workspaceId, eventType: payload.eventType, severity: payload.severity, message: "Imported platform observation", userFacing: payload.userFacing, postId: destinationPostId, accountId: destinationChannelId, provider: payload.provider, metadata: { importDigest: input.digest, source: input.provenance.source, sourceId: input.sourceId, sourceManifestDigest: input.provenance.sourceManifestDigest }, createdByUserId: input.requestedByUserId, createdAt: new Date(payload.createdAt) });
     return { kind: "created" as const, destinationId: input.destinationId };
   }
 
