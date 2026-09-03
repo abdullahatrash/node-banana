@@ -1,11 +1,21 @@
 import Link from "next/link";
-import { KeyRoundIcon, PlugZapIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, BriefcaseBusinessIcon, FileClockIcon, KeyRoundIcon, PlugZapIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { ApiTokensSettings } from "@/components/social/ApiTokensSettings";
 import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
 import { SettingsSheet } from "@/components/product-shell/SettingsSheet";
+import { GovernanceSettingsSurface, type GovernanceSettingsSection } from "@/components/governance/GovernanceSettingsSurface";
 
 const sections = [
+  { key: "members", icon: UsersIcon },
+  { key: "roles", icon: ShieldCheckIcon },
+  { key: "approval", icon: ScaleIcon },
+  { key: "portfolios", icon: BriefcaseBusinessIcon },
+  { key: "audit", icon: FileClockIcon },
+  { key: "data", icon: ArchiveIcon },
+  { key: "safety", icon: ShieldAlertIcon },
+  { key: "bulk", icon: WaypointsIcon },
+  { key: "portability", icon: ArchiveIcon },
   { key: "api", icon: KeyRoundIcon },
   { key: "providers", icon: PlugZapIcon },
 ] as const;
@@ -13,7 +23,10 @@ const sections = [
 type SettingsSection = (typeof sections)[number]["key"];
 
 function readSection(value: string | string[] | undefined): SettingsSection {
-  return value === "providers" ? "providers" : "api";
+  const selected = Array.isArray(value) ? value[0] : value;
+  return sections.some((section) => section.key === selected)
+    ? (selected as SettingsSection)
+    : "members";
 }
 
 export default async function SettingsPage({
@@ -89,13 +102,15 @@ export default async function SettingsPage({
               ))}
             </nav>
           </aside>
-          <main className="min-w-0 flex-1 overflow-y-auto">
+          <div className="min-w-0 flex-1 overflow-y-auto">
             {activeSection === "providers" ? (
               <ProviderKeysSettings />
-            ) : (
+            ) : activeSection === "api" ? (
               <ApiTokensSettings />
+            ) : (
+              <GovernanceSettingsSurface section={activeSection as GovernanceSettingsSection} />
             )}
-          </main>
+          </div>
         </div>
       </section>
     </SettingsSheet>

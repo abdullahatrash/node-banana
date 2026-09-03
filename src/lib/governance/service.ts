@@ -146,6 +146,21 @@ function newId(prefix: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "")}`;
 }
 
+export function encodeReviewToken(workspaceId: string, grantId: string, secret: string): string {
+  return `${Buffer.from(workspaceId, "utf8").toString("base64url")}.${grantId}.${secret}`;
+}
+
+export function decodeReviewToken(value: string): { workspaceId: string; grantId: string; secret: string } | null {
+  const parts = value.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const workspaceId = Buffer.from(parts[0], "base64url").toString("utf8");
+    return ID.test(workspaceId) && ID.test(parts[1]) && /^[A-Za-z0-9_-]{32,100}$/.test(parts[2])
+      ? { workspaceId, grantId: parts[1], secret: parts[2] }
+      : null;
+  } catch { return null; }
+}
+
 function resource<T>(input: {
   id: string;
   workspaceId: string;
@@ -380,7 +395,7 @@ export class GovernanceService {
         const code = String(Math.floor(100000 + Math.random() * 900000));
         const salt = randomBytes(16).toString("hex");
         mutations = [create("review_guest_grant", id, "pending_verification", { email: command.email.trim().toLowerCase(), tokenDigest: secretDigest(token), codeDigest: codeDigest(code, salt), codeSalt: salt, failedAttempts: 0, purpose: command.purpose, resourceKind: command.resourceKind, resourceId: safeId(command.resourceId, "Review resource"), revisionDigest: command.revisionDigest, expiresAt: expiry.toISOString(), revokedAt: null, decision: null })];
-        result = { grantId: id, token, verificationCode: code, expiresAt: expiry.toISOString() };
+        result = { grantId: id, reviewToken: encodeReviewToken(actor.workspaceId, id, token), verificationCode: code, expiresAt: expiry.toISOString() };
         target = { kind: "review_guest_grant", id };
         break;
       }

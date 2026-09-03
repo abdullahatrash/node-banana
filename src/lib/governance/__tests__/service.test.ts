@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { BUILT_IN_ROLE_CAPABILITIES } from "../roles";
-import { GovernanceError, GovernanceService } from "../service";
+import { decodeReviewToken, GovernanceError, GovernanceService } from "../service";
 import { RETENTION_CLASSES, type GovernanceActor, type RetentionRule } from "../types";
 
 const NOW = new Date("2026-09-03T12:00:00.000Z");
@@ -62,8 +62,9 @@ describe("GovernanceService", () => {
 
   it("binds a Review Guest to one expiring revision and never authorizes execution", async () => {
     const { service } = setup();
-    const issued = await service.execute(owner, { type: "issue_review_guest", email: "reviewer@example.com", purpose: "approve_publishing", resourceKind: "plan_revision", resourceId: "plan-revision-1", revisionDigest: digest, expiresAt: "2026-09-04T12:00:00.000Z" }, "issue-review-key") as { grantId: string; token: string; verificationCode: string };
-    const verified = await service.verifyReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, token: issued.token, code: issued.verificationCode, idempotencyKey: "verify-review-key" }) as { sessionId: string; sessionToken: string };
+    const issued = await service.execute(owner, { type: "issue_review_guest", email: "reviewer@example.com", purpose: "approve_publishing", resourceKind: "plan_revision", resourceId: "plan-revision-1", revisionDigest: digest, expiresAt: "2026-09-04T12:00:00.000Z" }, "issue-review-key") as { grantId: string; reviewToken: string; verificationCode: string };
+    const decoded = decodeReviewToken(issued.reviewToken)!;
+    const verified = await service.verifyReviewGuest({ workspaceId: decoded.workspaceId, grantId: decoded.grantId, token: decoded.secret, code: issued.verificationCode, idempotencyKey: "verify-review-key" }) as { sessionId: string; sessionToken: string };
     await expect(service.decideReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, sessionId: verified.sessionId, sessionToken: verified.sessionToken, resourceId: "plan-revision-2", revisionDigest: digest, decision: "approve", comment: null, idempotencyKey: "wrong-review-key" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     const decision = await service.decideReviewGuest({ workspaceId: owner.workspaceId, grantId: issued.grantId, sessionId: verified.sessionId, sessionToken: verified.sessionToken, resourceId: "plan-revision-1", revisionDigest: digest, decision: "approve", comment: "Looks good", idempotencyKey: "decide-review-key" }) as { authorizesExecution: boolean };
     expect(decision.authorizesExecution).toBe(false);
