@@ -9,6 +9,7 @@ import {
 } from "@/lib/byok/resolveInferenceKey";
 import { generateWithGoogle, generateWithOpenAI, generateWithAnthropic } from "./core";
 import { admitProductionGovernanceRegionRoute } from "@/lib/governance/production";
+import { authorizeStudioRequest, authzErrorResponse } from "@/lib/studio/authz";
 
 export const maxDuration = 60; // 1 minute timeout
 
@@ -21,6 +22,9 @@ export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
 
   try {
+    const authz = await authorizeStudioRequest(request, { route: "/api/llm", action: "write" });
+    if (!authz.authorized) return authzErrorResponse(authz);
+    const workspaceId = authz.workspaceId;
     // Get user-provided API keys from headers (override env variables)
     const geminiApiKey = request.headers.get("X-Gemini-API-Key");
     const openaiApiKey = request.headers.get("X-OpenAI-API-Key");
@@ -37,7 +41,6 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // Resolve asset references (asset_xxx → base64) when S3 is configured
-    const workspaceId = request.headers.get("x-workspace-id");
     if (isS3Configured() && workspaceId && images && images.length > 0) {
       const resolved = await resolveAssetRefsInPayload({ images, workspaceId });
       images = resolved.images;
@@ -62,12 +65,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (workspaceId) {
-      const routeId = `provider:${provider}`;
-      const configuredRegion = process.env[`PROVIDER_REGION_${provider.toUpperCase().replaceAll("-", "_")}`] ?? "unconfigured";
-      const admission = await admitProductionGovernanceRegionRoute({ workspaceId, kind: "processing", routeId, configuredRegion });
-      if (!admission.allowed) return NextResponse.json({ success: false, error: "The selected provider route is not admitted by the Workspace Data Region Policy.", code: admission.reason }, { status: 409 });
-    }
+    const routeId = `provider:${provider}`;
+    const configuredRegion = process.env[`PROVIDER_REGION_${provider.toUpperCase().replaceAll("-", "_")}`] ?? "unconfigured";
+    const admission = await admitProductionGovernanceRegionRoute({ workspaceId, kind: "processing", routeId, configuredRegion });
+    if (!admission.allowed) return NextResponse.json({ success: false, error: "The selected provider route is not admitted by the Workspace Data Region Policy.", code: admission.reason }, { status: 409 });
 
     let text: string;
 

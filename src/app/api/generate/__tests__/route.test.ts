@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 // Use vi.hoisted to define mocks that work with hoisted vi.mock
 const { mockGenerateContent, MockGoogleGenAI } = vi.hoisted(() => {
@@ -59,6 +59,14 @@ vi.mock("@/lib/byok/repository", () => ({
 
 vi.mock("@/lib/governance/production", () => ({
   admitProductionGovernanceRegionRoute: vi.fn(async () => ({ allowed: true, policyApplied: false })),
+}));
+
+vi.mock("@/lib/studio/authz", () => ({
+  authorizeStudioRequest: vi.fn(async (request: NextRequest) => {
+    const workspaceId = request.headers.get("x-workspace-id");
+    return workspaceId === "ws-test" ? { authorized: true, workspaceId, userId: "user-test", role: "owner" } : { authorized: false, reason: workspaceId ? "workspace_mismatch" : "workspace_required" };
+  }),
+  authzErrorResponse: vi.fn((result: { reason: string }) => NextResponse.json({ success: false, code: result.reason }, { status: 403 })),
 }));
 
 import { resolveProviderKey } from "@/lib/byok/repository";
@@ -136,6 +144,14 @@ describe("/api/generate route", () => {
 
   afterEach(() => {
     process.env = originalEnv;
+  });
+
+  it.each(["", "ws-spoofed"])("fails closed before generation when exact Workspace authority is missing (%s)", async (workspaceId) => {
+    process.env.GEMINI_API_KEY = "test-gemini-key";
+    const response = await POST(createMockPostRequest({ prompt: "test" }, { "x-workspace-id": workspaceId }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ success: false, code: workspaceId ? "workspace_mismatch" : "workspace_required" });
+    expect(mockGenerateContent).not.toHaveBeenCalled();
   });
 
   describe("Gemini provider", () => {
