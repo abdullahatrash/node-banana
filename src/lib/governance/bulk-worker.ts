@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { authorizationContractDigestFor } from "@/lib/agent-tools/registry";
 import { getDb } from "@/lib/db";
-import { workspaceGovernanceResources, workspaceMembers } from "@/lib/db/schema";
+import { assets, contentWorkflows, runtimePublishingDeliveries, socialAccounts, socialPosts, workspaceGovernanceResources, workspaceMembers } from "@/lib/db/schema";
 import type {
   BulkOperationItem,
   GovernanceAuditEvent,
   GovernanceBulkAuthorizationPort,
   GovernanceBulkCapabilityPort,
+  GovernanceBulkPreviewPort,
   GovernanceRepository,
   GovernanceResource,
 } from "./types";
@@ -144,5 +146,60 @@ export class ApplicationGovernanceBulkCapabilityPort implements GovernanceBulkCa
     const response = await dispatchCapability({ capability: input.capability, input: input.capabilityInput }, { securityContext: { kind: "human", workspaceId: input.actor.workspaceId, userId: input.actor.userId, role: input.actor.legacyRole, authContextId: input.actor.authContextId, idempotencyKey: input.idempotencyKey } });
     if (response.type === "capability_error") return { type: "failed_known" as const, code: response.code };
     return { type: "succeeded" as const, output: response.output };
+  }
+}
+
+/** Production preview admission: exact target state + registry schema + current
+ * composite human authorization. Spend-capable capabilities remain fail-closed
+ * until a domain quote can be verified; caller-provided quote references are
+ * never treated as authoritative. */
+export class ProductionGovernanceBulkPreviewPort implements GovernanceBulkPreviewPort {
+  constructor(private readonly authorization = new DrizzleGovernanceBulkAuthorizationPort()) {}
+
+  async inspect(input: Parameters<GovernanceBulkPreviewPort["inspect"]>[0]): Promise<Awaited<ReturnType<GovernanceBulkPreviewPort["inspect"]>>> {
+    const actor = await this.authorization.resolveActor({ sourceWorkspaceId: input.sourceWorkspaceId, targetWorkspaceId: input.targetWorkspaceId, userId: input.requestedByUserId, capability: input.capability, targetKind: input.targetKind, targetId: input.targetId, evaluatedAt: input.evaluatedAt });
+    if (!actor) return { type: "blocked", code: "TARGET_WORKSPACE_FORBIDDEN" };
+    const targetState = await this.targetState(input);
+    if (!targetState) return { type: "blocked", code: "TARGET_NOT_FOUND_OR_UNSUPPORTED" };
+    const [{ parseCapabilityIdentity }, runtime] = await Promise.all([import("@/lib/agent-tools/dispatcher"), import("@/lib/agent-runtime/server-dispatcher")]);
+    const identity = parseCapabilityIdentity(input.capability);
+    if (!identity) return { type: "blocked", code: "CAPABILITY_IDENTITY_INVALID" };
+    const registration = runtime.PRODUCTION_CAPABILITY_REGISTRY.getRegistration(identity);
+    const definition = runtime.PRODUCTION_CAPABILITY_REGISTRY.getDefinition(identity);
+    if (!registration || !definition || definition.lifecycle.status === "retired") return { type: "blocked", code: "CAPABILITY_NOT_EXECUTABLE" };
+    if (!registration.input.safeParse(input.capabilityInput).success) return { type: "blocked", code: "CAPABILITY_INPUT_INVALID" };
+    if (definition.effect.maySpendProviderBudget) return { type: "blocked", code: "AUTHORITATIVE_BULK_QUOTE_REQUIRED" };
+    if (input.quoteRef) return { type: "blocked", code: "UNVERIFIED_QUOTE_REFERENCE" };
+    const authorizationContractDigest = authorizationContractDigestFor(identity, registration.authorization);
+    const admission = await runtime.PRODUCTION_CAPABILITY_AUTHORIZER.authorize({ securityContext: { kind: "human", workspaceId: actor.workspaceId, userId: actor.userId, role: actor.legacyRole, authContextId: actor.authContextId }, audience: registration.audience ?? "agent", capability: identity, authorizationContractDigest, resources: [], resourceExtractionValid: true, effect: definition.effect });
+    if (!admission.allowed) return { type: "blocked", code: admission.code ?? "CAPABILITY_NOT_AUTHORIZED" };
+    if (!admission.operatorTraceRef) return { type: "blocked", code: "AUTHORIZATION_EVIDENCE_UNAVAILABLE" };
+    const quote = { required: false as const, amount: "0" as const, currency: "USD" as const, source: "capability_effect_contract" as const, digest: canonicalDigest({ capability: identity, contractDigest: definition.contractDigest, maySpendProviderBudget: false, amount: "0", currency: "USD" }) };
+    return { type: "ready", authorizationEvidenceRef: admission.operatorTraceRef, authorizationContractDigest, targetStateDigest: canonicalDigest(targetState), entitlement: "exact_capability_granted", quote };
+  }
+
+  private async targetState(input: Parameters<GovernanceBulkPreviewPort["inspect"]>[0]): Promise<Record<string, unknown> | null> {
+    const db = getDb();
+    if (input.targetKind === "content") {
+      const [row] = await db.select({ id: contentWorkflows.id, currentRevision: contentWorkflows.currentRevision, updatedAt: contentWorkflows.updatedAt }).from(contentWorkflows).where(and(eq(contentWorkflows.workspaceId, input.targetWorkspaceId), eq(contentWorkflows.id, input.targetId))).limit(1);
+      return row ?? null;
+    }
+    if (input.targetKind === "asset") {
+      const [row] = await db.select({ id: assets.id, checksum: assets.checksum, deletedAt: assets.deletedAt, updatedAt: assets.updatedAt }).from(assets).where(and(eq(assets.workspaceId, input.targetWorkspaceId), eq(assets.id, input.targetId), isNull(assets.deletedAt))).limit(1);
+      return row ?? null;
+    }
+    if (input.targetKind === "social_post") {
+      const [row] = await db.select({ id: socialPosts.id, status: socialPosts.status, updatedAt: socialPosts.updatedAt }).from(socialPosts).where(and(eq(socialPosts.workspaceId, input.targetWorkspaceId), eq(socialPosts.id, input.targetId))).limit(1);
+      return row ?? null;
+    }
+    if (input.targetKind === "channel") {
+      const [row] = await db.select({ id: socialAccounts.id, disabled: socialAccounts.disabled, requiresReauth: socialAccounts.requiresReauth, updatedAt: socialAccounts.updatedAt }).from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.targetWorkspaceId), eq(socialAccounts.id, input.targetId))).limit(1);
+      return row && !row.disabled && !row.requiresReauth ? row : null;
+    }
+    if (input.targetKind === "publishing_delivery") {
+      const [row] = await db.select({ id: runtimePublishingDeliveries.id, state: runtimePublishingDeliveries.state, updatedAt: runtimePublishingDeliveries.updatedAt }).from(runtimePublishingDeliveries).where(and(eq(runtimePublishingDeliveries.workspaceId, input.targetWorkspaceId), eq(runtimePublishingDeliveries.id, input.targetId))).limit(1);
+      return row ?? null;
+    }
+    return null;
   }
 }

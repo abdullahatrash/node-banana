@@ -14,6 +14,7 @@ const owner: GovernanceActor = { workspaceId: "workspace-a", userId: "owner-a", 
 const creator: GovernanceActor = { workspaceId: "workspace-a", userId: "creator-a", legacyRole: "member", authContextId: "session-creator-a" };
 const digest = canonicalDigest({ revision: 1 });
 const regionKey = Buffer.alloc(32, 7);
+const bulkPreview = { inspect: async () => ({ type: "ready" as const, authorizationEvidenceRef: "test-authorization", authorizationContractDigest: canonicalDigest({ contract: 1 }), targetStateDigest: canonicalDigest({ target: 1 }), entitlement: "exact_capability_granted" as const, quote: { required: false as const, amount: "0" as const, currency: "USD" as const, source: "capability_effect_contract" as const, digest: canonicalDigest({ amount: 0 }) } }) };
 
 function regionEvidence(validSignature = true): GovernanceRegionDeploymentEvidence {
   const payload = {
@@ -33,6 +34,7 @@ function setup() {
     undefined,
     undefined,
     { verify: () => true },
+    bulkPreview,
   );
   return { repository, service };
 }
@@ -424,6 +426,16 @@ describe("GovernanceService", () => {
     await service.execute(owner, { type: "start_bulk", operationId: preview.operationId }, "bulk-start-key");
     const operation = await repository.getResource<{ items: Array<{ id: string; state: string }> }>({ workspaceId: owner.workspaceId, kind: "bulk_operation", id: preview.operationId });
     expect(operation?.body.items.map((item) => item.state)).toEqual(["queued", "queued"]);
+  });
+
+  it("refuses to create a Bulk preview until exact target authorization, state, entitlement, and quote preflight succeed", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const inspect = vi.fn(async () => ({ type: "blocked" as const, code: "TARGET_STATE_CONFLICT" }));
+    const service = new GovernanceService(repository, { now: () => new Date(NOW) }, undefined, undefined, { verify: () => true }, { inspect });
+    await expect(service.execute(owner, { type: "preview_bulk", operationCapability: "content.archive@1", concurrency: 1, quoteRef: null, items: [{ targetWorkspaceId: owner.workspaceId, targetKind: "content", targetId: "content-1" }] }, "blocked-bulk-preview"))
+      .rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await repository.listResources({ workspaceId: owner.workspaceId, kinds: ["bulk_operation"] })).toHaveLength(0);
+    expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ sourceWorkspaceId: owner.workspaceId, targetWorkspaceId: owner.workspaceId, requestedByUserId: owner.userId, capability: "content.archive@1", quoteRef: null }));
   });
 
   it("previews provenance-preserving imports and explicitly omits non-transferable items", async () => {

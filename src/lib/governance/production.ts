@@ -3,7 +3,7 @@ import { DrizzleGovernanceRepository } from "./postgres-repository";
 import { GovernanceService } from "./service";
 import { GovernanceExportWorker, S3GovernanceExportStore } from "./export-worker";
 import { DrizzleGovernanceMembershipPort } from "./membership-postgres";
-import { ApplicationGovernanceBulkCapabilityPort, DrizzleGovernanceBulkAuthorizationPort, GovernanceBulkWorker } from "./bulk-worker";
+import { ApplicationGovernanceBulkCapabilityPort, DrizzleGovernanceBulkAuthorizationPort, GovernanceBulkWorker, ProductionGovernanceBulkPreviewPort } from "./bulk-worker";
 import { GovernanceImportWorker } from "./import-worker";
 import { GovernanceApprovalDeadlineWorker } from "./approval-worker";
 import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionRouteKind } from "./region-policy";
@@ -53,6 +53,7 @@ export const PRODUCTION_GOVERNANCE_SERVICE = new GovernanceService(
   new DrizzleGovernanceMembershipPort(getDb),
   new ConfiguredGovernanceRegionVerifier(regionTrustKeys()),
   new HmacGovernanceImportManifestVerifier(importTrustKeys()),
+  new ProductionGovernanceBulkPreviewPort(),
 );
 
 export async function admitProductionGovernanceRegionRoute(input: { workspaceId: string; kind: GovernanceRegionRouteKind; routeId: string; configuredRegion: string }) {

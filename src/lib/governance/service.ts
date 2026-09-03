@@ -24,6 +24,7 @@ import type {
   RetentionRule,
   WorkspaceRoleBinding,
   GovernanceMembershipPort,
+  GovernanceBulkPreviewPort,
 } from "./types";
 import { GOVERNANCE_CAPABILITIES, RETENTION_CLASSES } from "./types";
 import { BUILT_IN_WORKSPACE_ROLES } from "./types";
@@ -328,6 +329,7 @@ export class GovernanceService {
     },
     private readonly regionVerification: GovernanceRegionVerificationPort = UNCONFIGURED_GOVERNANCE_REGION_VERIFIER,
     private readonly importManifestVerification: GovernanceImportManifestVerificationPort = UNCONFIGURED_GOVERNANCE_IMPORT_MANIFEST_VERIFIER,
+    private readonly bulkPreview: GovernanceBulkPreviewPort = { inspect: async () => ({ type: "blocked", code: "BULK_PREVIEW_ADAPTER_NOT_CONFIGURED" }) },
   ) {}
 
   private async roleBinding(actor: GovernanceActor): Promise<WorkspaceRoleBinding> {
@@ -914,16 +916,32 @@ export class GovernanceService {
         if (command.items.length < 1 || command.items.length > 1000 || command.concurrency < 1 || command.concurrency > 20) throw new GovernanceError("INVALID_INPUT", "Bulk bounds are invalid.");
         if (!/^[a-z][a-z0-9_.]*@[1-9][0-9]*$/.test(command.operationCapability) || command.operationCapability === "bulk.execute@1") throw new GovernanceError("INVALID_INPUT", "Bulk Application Capability is invalid.");
         const id = newId("bulk");
-        const items: BulkOperationItem[] = command.items.map((item, index) => ({ id: `${id}:${index + 1}`, targetWorkspaceId: safeId(item.targetWorkspaceId, "Target Workspace"), targetKind: text(item.targetKind, "Target kind", 100), targetId: safeId(item.targetId, "Target"), capability: command.operationCapability, input: item.input ?? { targetKind: item.targetKind, targetId: item.targetId }, idempotencyKey: `${id}:${index + 1}`, state: "previewed", outcome: null }));
-        mutations = [create("bulk_operation", id, "previewed", { capability: command.operationCapability, dryRun: true, concurrency: command.concurrency, quoteRef: command.quoteRef, requestedByUserId: actor.userId, items, cancellationRequestedAt: null, lease: null })];
-        result = { operationId: id, dryRun: true, itemCount: items.length };
+        const inspections = await Promise.all(command.items.map(async (item) => {
+          const targetWorkspaceId = safeId(item.targetWorkspaceId, "Target Workspace");
+          const targetKind = text(item.targetKind, "Target kind", 100);
+          const targetId = safeId(item.targetId, "Target");
+          const capabilityInput = item.input ?? { targetKind, targetId };
+          const inspection = await this.bulkPreview.inspect({ sourceWorkspaceId: actor.workspaceId, requestedByUserId: actor.userId, capability: command.operationCapability, targetWorkspaceId, targetKind, targetId, capabilityInput, quoteRef: command.quoteRef, evaluatedAt: now });
+          if (inspection.type === "blocked") throw new GovernanceError(inspection.code.includes("CONFLICT") ? "CONFLICT" : "FORBIDDEN", `Bulk preview blocked: ${inspection.code}`);
+          return { targetWorkspaceId, targetKind, targetId, capabilityInput, inspection };
+        }));
+        const items: BulkOperationItem[] = inspections.map((item, index) => ({ id: `${id}:${index + 1}`, targetWorkspaceId: item.targetWorkspaceId, targetKind: item.targetKind, targetId: item.targetId, capability: command.operationCapability, input: item.capabilityInput, idempotencyKey: `${id}:${index + 1}`, state: "previewed", outcome: { preview: item.inspection } }));
+        const previewSnapshot = { capability: command.operationCapability, concurrency: command.concurrency, quoteRef: command.quoteRef, items: inspections.map(({ targetWorkspaceId, targetKind, targetId, inspection }) => ({ targetWorkspaceId, targetKind, targetId, ...inspection })) };
+        const previewDigest = canonicalDigest(previewSnapshot);
+        mutations = [create("bulk_operation", id, "previewed", { capability: command.operationCapability, dryRun: true, concurrency: command.concurrency, quoteRef: command.quoteRef, quoteSnapshots: inspections.map((item) => item.inspection.quote), previewSnapshot, previewDigest, requestedByUserId: actor.userId, items, cancellationRequestedAt: null, lease: null })];
+        result = { operationId: id, dryRun: true, itemCount: items.length, previewDigest };
         target = { kind: "bulk_operation", id };
         break;
       }
       case "start_bulk": {
         const operation = await this.required("bulk_operation", command.operationId, actor.workspaceId);
-        const body = operation.body as { capability: string; items: BulkOperationItem[]; [key: string]: unknown };
+        const body = operation.body as { capability: string; quoteRef: string | null; items: BulkOperationItem[]; [key: string]: unknown };
         if (operation.status !== "previewed") throw new GovernanceError("CONFLICT", "Only a previewed Bulk Operation may start.");
+        for (const item of body.items) {
+          const pinned = (item.outcome as { preview?: { authorizationContractDigest?: string; targetStateDigest?: string; quote?: { digest?: string } } } | null)?.preview;
+          const current = await this.bulkPreview.inspect({ sourceWorkspaceId: actor.workspaceId, requestedByUserId: actor.userId, capability: item.capability, targetWorkspaceId: item.targetWorkspaceId, targetKind: item.targetKind, targetId: item.targetId, capabilityInput: item.input, quoteRef: body.quoteRef, evaluatedAt: now });
+          if (current.type === "blocked" || !pinned || current.authorizationContractDigest !== pinned.authorizationContractDigest || current.targetStateDigest !== pinned.targetStateDigest || current.quote.digest !== pinned.quote?.digest) throw new GovernanceError("CONFLICT", "Bulk preview evidence changed; create a fresh preview.");
+        }
         if (body.capability.includes("publish") || body.capability.includes("release")) {
           if (!command.stepUpToken) throw new GovernanceError("STEP_UP_REQUIRED", "Bulk public release requires step-up.");
           await this.requireStepUp(actor, "bulk.public_release", operation.id, command.stepUpToken);

@@ -6,11 +6,13 @@ import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
 const actor = { workspaceId: "portfolio-workspace", userId: "owner-a", legacyRole: "owner" as const, authContextId: "session-owner-a" };
+const previewPort = { inspect: async () => ({ type: "ready" as const, authorizationEvidenceRef: "test-authorization", authorizationContractDigest: canonicalDigest({ contract: 1 }), targetStateDigest: canonicalDigest({ target: 1 }), entitlement: "exact_capability_granted" as const, quote: { required: false as const, amount: "0" as const, currency: "USD" as const, source: "capability_effect_contract" as const, digest: canonicalDigest({ amount: 0 }) } }) };
+const serviceFor = (repository: InMemoryGovernanceRepository, clock = { now: () => new Date(now) }) => new GovernanceService(repository, clock, undefined, undefined, undefined, previewPort);
 
 describe("GovernanceBulkWorker", () => {
   it("reauthorizes every pinned target Workspace and records independent outcomes", async () => {
     const repository = new InMemoryGovernanceRepository();
-    const service = new GovernanceService(repository, { now: () => new Date(now) });
+    const service = serviceFor(repository);
     const preview = await service.execute(actor, {
       type: "preview_bulk", operationCapability: "content.archive@1", concurrency: 2, quoteRef: "quote-1",
       items: [
@@ -38,7 +40,7 @@ describe("GovernanceBulkWorker", () => {
 
   it("turns items left running by an interrupted worker into ambiguity instead of replaying", async () => {
     const repository = new InMemoryGovernanceRepository();
-    const service = new GovernanceService(repository, { now: () => new Date(now) });
+    const service = serviceFor(repository);
     const preview = await service.execute(actor, { type: "preview_bulk", operationCapability: "content.archive@1", concurrency: 1, quoteRef: null, items: [{ targetWorkspaceId: "workspace-a", targetKind: "content", targetId: "content-a" }] }, "preview-interrupted-bulk") as { operationId: string };
     await service.execute(actor, { type: "start_bulk", operationId: preview.operationId }, "start-interrupted-bulk");
     const queued = await repository.getResource({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId });
@@ -51,7 +53,7 @@ describe("GovernanceBulkWorker", () => {
 
   it("claims an exclusive lease so concurrent workers dispatch each item once", async () => {
     const repository = new InMemoryGovernanceRepository();
-    const service = new GovernanceService(repository, { now: () => new Date(now) });
+    const service = serviceFor(repository);
     const preview = await service.execute(actor, { type: "preview_bulk", operationCapability: "content.archive@1", concurrency: 1, quoteRef: null, items: [{ targetWorkspaceId: "workspace-a", targetKind: "content", targetId: "content-a" }] }, "preview-concurrent-bulk") as { operationId: string };
     await service.execute(actor, { type: "start_bulk", operationId: preview.operationId }, "start-concurrent-bulk");
     const execute = vi.fn(async () => ({ type: "succeeded" as const, output: { archived: true } }));
@@ -68,7 +70,7 @@ describe("GovernanceBulkWorker", () => {
   it("provides a sweeper entry point for expired leases", async () => {
     let current = new Date(now);
     const repository = new InMemoryGovernanceRepository();
-    const service = new GovernanceService(repository, { now: () => new Date(now) });
+    const service = serviceFor(repository);
     const preview = await service.execute(actor, { type: "preview_bulk", operationCapability: "content.archive@1", concurrency: 1, quoteRef: null, items: [{ targetWorkspaceId: "workspace-a", targetKind: "content", targetId: "content-a" }] }, "preview-expired-bulk") as { operationId: string };
     await service.execute(actor, { type: "start_bulk", operationId: preview.operationId }, "start-expired-bulk");
     const queued = await repository.getResource({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId });

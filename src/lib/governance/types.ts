@@ -368,3 +368,20 @@ export interface GovernanceBulkCapabilityPort {
     | { type: "outcome_unknown"; safeReason: string }
   >;
 }
+
+export interface GovernanceBulkPreviewPort {
+  inspect(input: {
+    sourceWorkspaceId: string;
+    requestedByUserId: string;
+    capability: string;
+    targetWorkspaceId: string;
+    targetKind: string;
+    targetId: string;
+    capabilityInput: Record<string, unknown>;
+    quoteRef: string | null;
+    evaluatedAt: Date;
+  }): Promise<
+    | { type: "ready"; authorizationEvidenceRef: string; authorizationContractDigest: string; targetStateDigest: string; entitlement: "exact_capability_granted"; quote: { required: false; amount: "0"; currency: "USD"; source: "capability_effect_contract"; digest: string } }
+    | { type: "blocked"; code: string }
+  >;
+}
