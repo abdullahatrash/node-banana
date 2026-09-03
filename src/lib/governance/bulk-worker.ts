@@ -77,7 +77,7 @@ export class GovernanceBulkWorker {
           }
         }
         try {
-          return { item, result: await this.capabilities.execute({ actor, capability: item.capability, capabilityInput: item.input, idempotencyKey: item.idempotencyKey }) };
+          return { item, result: await this.capabilities.execute({ actor, capability: item.capability, capabilityInput: item.input, idempotencyKey: item.idempotencyKey, acceptedQuoteRef: pinned?.type === "ready" && pinned.quote.required ? pinned.quote.ref : null }) };
         } catch {
           return { item, result: { type: "outcome_unknown" as const, safeReason: "dispatcher_transport_interrupted" } };
         }
@@ -152,17 +152,26 @@ export class DrizzleGovernanceBulkAuthorizationPort implements GovernanceBulkAut
 export class ApplicationGovernanceBulkCapabilityPort implements GovernanceBulkCapabilityPort {
   async execute(input: Parameters<GovernanceBulkCapabilityPort["execute"]>[0]) {
     const { dispatchCapability } = await import("@/lib/agent-runtime/server-dispatcher");
-    const response = await dispatchCapability({ capability: input.capability, input: input.capabilityInput }, { securityContext: { kind: "human", workspaceId: input.actor.workspaceId, userId: input.actor.userId, role: input.actor.legacyRole, authContextId: input.actor.authContextId, idempotencyKey: input.idempotencyKey } });
+    const delegated = delegatedAgent(input.capabilityInput);
+    const capabilityInput = withoutDelegatedAgent(input.capabilityInput);
+    if (input.capability === "workflow_runs.start@2" && (!delegated || !input.acceptedQuoteRef)) {
+      return { type: "failed_known" as const, code: "DELEGATED_AGENT_QUOTE_REQUIRED" };
+    }
+    const response = delegated && input.capability === "workflow_runs.start@2" && input.acceptedQuoteRef
+      ? await dispatchCapability({ capability: input.capability, input: { ...capabilityInput, idempotencyKey: `bulk-quote:${canonicalDigest(input.acceptedQuoteRef)}` } }, { securityContext: { kind: "agent", workspaceId: input.actor.workspaceId, principalId: delegated.principalId, keyId: delegated.keyId } })
+      : await dispatchCapability({ capability: input.capability, input: capabilityInput }, { securityContext: { kind: "human", workspaceId: input.actor.workspaceId, userId: input.actor.userId, role: input.actor.legacyRole, authContextId: input.actor.authContextId, idempotencyKey: input.idempotencyKey } });
     if (response.type === "capability_error") return { type: "failed_known" as const, code: response.code };
     return { type: "succeeded" as const, output: response.output };
   }
 }
 
 interface SignedWorkflowBulkQuote {
-  schema: "governance-workflow-bulk-quote/v1";
+  schema: "governance-workflow-bulk-quote/v2";
   sourceWorkspaceId: string;
   targetWorkspaceId: string;
   requestedByUserId: string;
+  delegatedPrincipalId: string;
+  delegatedKeyId: string;
   capability: "workflow_runs.start@2";
   workflowId: string;
   workflowRevisionId: string;
@@ -173,6 +182,26 @@ interface SignedWorkflowBulkQuote {
   providerModels: Array<{ provider: string; model: string; pricePerAttempt: string; automaticAttempts: number; pricingSnapshotIds: string[] }>;
   quotedAt: string;
   expiresAt: string;
+}
+
+interface DelegatedBulkAgent {
+  principalId: string;
+  keyId: string;
+}
+
+function delegatedAgent(value: Record<string, unknown>): DelegatedBulkAgent | null {
+  const raw = value.delegatedAgent;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const principalId = (raw as Record<string, unknown>).principalId;
+  const keyId = (raw as Record<string, unknown>).keyId;
+  return typeof principalId === "string" && principalId.length > 0 && typeof keyId === "string" && keyId.length > 0
+    ? { principalId, keyId }
+    : null;
+}
+
+function withoutDelegatedAgent(value: Record<string, unknown>): Record<string, unknown> {
+  const { delegatedAgent: _delegatedAgent, ...runtimeInput } = value;
+  return runtimeInput;
 }
 
 type WorkflowPreviewService = { preview(input: { workspaceId: string; workflowId: string; revisionId: string; inputs: Record<string, unknown>; principalId: string; inputArtifactIds: string[] }): Promise<import("@/lib/agent-runtime/budgets/types").RunAdmissionPreview> };
@@ -187,12 +216,15 @@ export class WorkflowRunGovernanceBulkQuotePort {
 
   async quote(input: Parameters<GovernanceBulkPreviewPort["inspect"]>[0] & { targetStateDigest: string }) {
     if (input.capability !== "workflow_runs.start@2" || input.targetKind !== "content" || !this.key) return null;
-    const workflowId = typeof input.capabilityInput.workflowId === "string" ? input.capabilityInput.workflowId : "";
-    const revisionId = typeof input.capabilityInput.revisionId === "string" ? input.capabilityInput.revisionId : "";
-    const inputs = input.capabilityInput.inputs;
-    const artifactIds = input.capabilityInput.inputArtifactIds;
+    const delegated = delegatedAgent(input.capabilityInput);
+    const runtimeInput = withoutDelegatedAgent(input.capabilityInput);
+    if (!delegated) return null;
+    const workflowId = typeof runtimeInput.workflowId === "string" ? runtimeInput.workflowId : "";
+    const revisionId = typeof runtimeInput.revisionId === "string" ? runtimeInput.revisionId : "";
+    const inputs = runtimeInput.inputs;
+    const artifactIds = runtimeInput.inputArtifactIds;
     if (workflowId !== input.targetId || !revisionId || !inputs || typeof inputs !== "object" || Array.isArray(inputs) || !Array.isArray(artifactIds) || artifactIds.some((id) => typeof id !== "string")) return null;
-    const preview = await this.service.preview({ workspaceId: input.targetWorkspaceId, workflowId, revisionId, inputs: inputs as Record<string, unknown>, principalId: input.requestedByUserId, inputArtifactIds: artifactIds as string[] });
+    const preview = await this.service.preview({ workspaceId: input.targetWorkspaceId, workflowId, revisionId, inputs: inputs as Record<string, unknown>, principalId: delegated.principalId, inputArtifactIds: artifactIds as string[] });
     if (!preview.admissible || !preview.ceiling.amount || !preview.ceiling.currency || preview.ceiling.certainty !== "conservative") return null;
     const providerModels = preview.stepExposures.map((exposure) => ({
       provider: exposure.provider,
@@ -212,15 +244,18 @@ export class WorkflowRunGovernanceBulkQuotePort {
       if (
         payload.sourceWorkspaceId !== input.sourceWorkspaceId || payload.targetWorkspaceId !== input.targetWorkspaceId ||
         payload.requestedByUserId !== input.requestedByUserId || payload.workflowId !== workflowId ||
+        payload.delegatedPrincipalId !== delegated.principalId || payload.delegatedKeyId !== delegated.keyId ||
         payload.workflowRevisionId !== revisionId || payload.inputDigest !== inputDigest ||
         payload.targetStateDigest !== input.targetStateDigest || canonicalDigest(current) !== canonicalDigest({ amount: payload.amount, currency: payload.currency, providerModels: payload.providerModels })
       ) return null;
     } else {
       payload = {
-        schema: "governance-workflow-bulk-quote/v1",
+        schema: "governance-workflow-bulk-quote/v2",
         sourceWorkspaceId: input.sourceWorkspaceId,
         targetWorkspaceId: input.targetWorkspaceId,
         requestedByUserId: input.requestedByUserId,
+        delegatedPrincipalId: delegated.principalId,
+        delegatedKeyId: delegated.keyId,
         capability: "workflow_runs.start@2",
         workflowId,
         workflowRevisionId: revisionId,
@@ -248,7 +283,7 @@ export class WorkflowRunGovernanceBulkQuotePort {
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
     try {
       const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as SignedWorkflowBulkQuote;
-      return value.schema === "governance-workflow-bulk-quote/v1" && value.capability === "workflow_runs.start@2" ? value : null;
+      return value.schema === "governance-workflow-bulk-quote/v2" && value.capability === "workflow_runs.start@2" ? value : null;
     } catch { return null; }
   }
 }
@@ -274,10 +309,19 @@ export class ProductionGovernanceBulkPreviewPort implements GovernanceBulkPrevie
     const registration = runtime.PRODUCTION_CAPABILITY_REGISTRY.getRegistration(identity);
     const definition = runtime.PRODUCTION_CAPABILITY_REGISTRY.getDefinition(identity);
     if (!registration || !definition || definition.lifecycle.status === "retired") return { type: "blocked", code: "CAPABILITY_NOT_EXECUTABLE" };
-    if (!registration.input.safeParse(input.capabilityInput).success) return { type: "blocked", code: "CAPABILITY_INPUT_INVALID" };
+    const delegated = delegatedAgent(input.capabilityInput);
+    const runtimeInput = withoutDelegatedAgent(input.capabilityInput);
+    if (!registration.input.safeParse(runtimeInput).success) return { type: "blocked", code: "CAPABILITY_INPUT_INVALID" };
     if (!definition.effect.maySpendProviderBudget && input.quoteRef) return { type: "blocked", code: "UNVERIFIED_QUOTE_REFERENCE" };
     const authorizationContractDigest = authorizationContractDigestFor(identity, registration.authorization);
-    const admission = await runtime.PRODUCTION_CAPABILITY_AUTHORIZER.authorize({ securityContext: { kind: "human", workspaceId: actor.workspaceId, userId: actor.userId, role: actor.legacyRole, authContextId: actor.authContextId }, audience: registration.audience ?? "agent", capability: identity, authorizationContractDigest, resources: [], resourceExtractionValid: true, effect: definition.effect });
+    if (definition.effect.maySpendProviderBudget && !delegated) return { type: "blocked", code: "DELEGATED_AGENT_AUTHORITY_REQUIRED" };
+    const resources = delegated
+      ? [{ kind: "workflow" as const, id: input.targetId }, ...((runtimeInput.inputArtifactIds as string[] | undefined) ?? []).map((id) => ({ kind: "artifact" as const, id }))]
+      : [];
+    const securityContext = delegated
+      ? { kind: "agent" as const, workspaceId: actor.workspaceId, principalId: delegated.principalId, keyId: delegated.keyId }
+      : { kind: "human" as const, workspaceId: actor.workspaceId, userId: actor.userId, role: actor.legacyRole, authContextId: actor.authContextId };
+    const admission = await runtime.PRODUCTION_CAPABILITY_AUTHORIZER.authorize({ securityContext, audience: registration.audience ?? "agent", capability: identity, authorizationContractDigest, resources, resourceExtractionValid: true, effect: definition.effect });
     if (!admission.allowed) return { type: "blocked", code: admission.code ?? "CAPABILITY_NOT_AUTHORIZED" };
     if (!admission.operatorTraceRef) return { type: "blocked", code: "AUTHORIZATION_EVIDENCE_UNAVAILABLE" };
     const quote = definition.effect.maySpendProviderBudget

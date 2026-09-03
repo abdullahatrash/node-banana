@@ -374,6 +374,7 @@ export interface GovernanceBulkCapabilityPort {
     capability: string;
     capabilityInput: Record<string, unknown>;
     idempotencyKey: string;
+    acceptedQuoteRef?: string | null;
   }): Promise<
     | { type: "succeeded"; output: unknown }
     | { type: "failed_known"; code: string }

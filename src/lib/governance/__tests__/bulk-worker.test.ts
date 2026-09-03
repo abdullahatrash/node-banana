@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { GovernanceBulkWorker, WorkflowRunGovernanceBulkQuotePort } from "../bulk-worker";
+import { ApplicationGovernanceBulkCapabilityPort, GovernanceBulkWorker, WorkflowRunGovernanceBulkQuotePort } from "../bulk-worker";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
 const actor = { workspaceId: "portfolio-workspace", userId: "owner-a", legacyRole: "owner" as const, authContextId: "session-owner-a" };
+const dispatchCapability = vi.fn();
+vi.mock("@/lib/agent-runtime/server-dispatcher", () => ({ dispatchCapability: (...args: unknown[]) => dispatchCapability(...args) }));
 const previewPort = { inspect: async () => ({ type: "ready" as const, authorizationEvidenceRef: "test-authorization", authorizationContractDigest: canonicalDigest({ contract: 1 }), targetStateDigest: canonicalDigest({ target: 1 }), entitlement: "exact_capability_granted" as const, quote: { required: false as const, amount: "0" as const, currency: "USD" as const, source: "capability_effect_contract" as const, digest: canonicalDigest({ amount: 0 }) } }) };
 const serviceFor = (repository: InMemoryGovernanceRepository, clock = { now: () => new Date(now) }) => new GovernanceService(repository, clock, undefined, undefined, undefined, previewPort);
 
@@ -18,13 +20,26 @@ describe("GovernanceBulkWorker", () => {
       stepExposures: [{ stepId: "generate", provider: "replicate", providerOperation: "predict", model: "owner/model@version", serviceTier: "standard", automaticAttempts: 1, credentialSlotId: "replicate", credentialProfileId: null, amountPerAttempt: "1.250000", currency: "USD", pricingSnapshotIds: ["price-1"], pricingSource: "builtin_catalog" }],
     });
     const port = new WorkflowRunGovernanceBulkQuotePort({ preview }, Buffer.alloc(32, 4));
-    const request = { sourceWorkspaceId: "portfolio-workspace", requestedByUserId: "owner-a", capability: "workflow_runs.start@2", targetWorkspaceId: "workspace-a", targetKind: "content", targetId: "workflow-a", capabilityInput: { workflowId: "workflow-a", revisionId: "revision-a", idempotencyKey: "run-key-1", inputs: { prompt: "مرحبا" }, inputArtifactIds: [] }, quoteRef: null, evaluatedAt: now, targetStateDigest: canonicalDigest({ workflow: "a" }) };
+    const request = { sourceWorkspaceId: "portfolio-workspace", requestedByUserId: "owner-a", capability: "workflow_runs.start@2", targetWorkspaceId: "workspace-a", targetKind: "content", targetId: "workflow-a", capabilityInput: { workflowId: "workflow-a", revisionId: "revision-a", idempotencyKey: "run-key-1", inputs: { prompt: "مرحبا" }, inputArtifactIds: [], delegatedAgent: { principalId: "agent-a", keyId: "key-a" } }, quoteRef: null, evaluatedAt: now, targetStateDigest: canonicalDigest({ workflow: "a" }) };
     const issued = await port.quote(request);
     expect(issued).toMatchObject({ required: true, amount: "1.250000", currency: "USD", providerModels: [{ provider: "replicate", model: "owner/model@version", pricingSnapshotIds: ["price-1"] }] });
     const replay = await port.quote({ ...request, quoteRef: issued!.ref, evaluatedAt: new Date("2026-09-03T12:04:00.000Z") });
     expect(replay?.digest).toBe(issued?.digest);
     await expect(port.quote({ ...request, quoteRef: issued!.ref, targetStateDigest: canonicalDigest({ workflow: "changed" }), evaluatedAt: new Date("2026-09-03T12:04:00.000Z") })).resolves.toBeNull();
     await expect(port.quote({ ...request, quoteRef: issued!.ref, evaluatedAt: new Date("2026-09-03T12:06:00.000Z") })).resolves.toBeNull();
+  });
+
+  it("executes spending runs only as the delegated Agent and consumes a quote through stable Run idempotency", async () => {
+    dispatchCapability.mockResolvedValue({ type: "capability_result", output: { runId: "run-1" } });
+    const port = new ApplicationGovernanceBulkCapabilityPort();
+    const capabilityInput = { workflowId: "workflow-a", revisionId: "revision-a", idempotencyKey: "caller-key", inputs: {}, inputArtifactIds: [], delegatedAgent: { principalId: "agent-a", keyId: "key-a" } };
+    await expect(port.execute({ actor, capability: "workflow_runs.start@2", capabilityInput, idempotencyKey: "bulk-item", acceptedQuoteRef: "signed-quote" })).resolves.toMatchObject({ type: "succeeded" });
+    expect(dispatchCapability).toHaveBeenCalledWith(
+      { capability: "workflow_runs.start@2", input: expect.objectContaining({ idempotencyKey: expect.stringMatching(/^bulk-quote:sha256:/) }) },
+      { securityContext: { kind: "agent", workspaceId: actor.workspaceId, principalId: "agent-a", keyId: "key-a" } },
+    );
+    expect(dispatchCapability.mock.calls[0]?.[0].input).not.toHaveProperty("delegatedAgent");
+    await expect(port.execute({ actor, capability: "workflow_runs.start@2", capabilityInput, idempotencyKey: "bulk-item-2", acceptedQuoteRef: null })).resolves.toEqual({ type: "failed_known", code: "DELEGATED_AGENT_QUOTE_REQUIRED" });
   });
 
   it("reauthorizes every pinned target Workspace and records independent outcomes", async () => {
