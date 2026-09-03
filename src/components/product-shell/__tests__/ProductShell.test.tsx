@@ -72,6 +72,9 @@ describe("ProductShell", () => {
     expect(screen.getByRole("link", { name: "Copilot" })).toHaveAttribute("href", "/social/copilot");
     expect(screen.getByRole("link", { name: "Webhooks" })).toHaveAttribute("href", "/social/plugs");
     expect(screen.getByText("route content")).toBeInTheDocument();
+    expect(document.querySelector('[data-slot="sidebar-inset"]')?.tagName).toBe(
+      "DIV",
+    );
   });
 
   it("marks legacy descendants active under the canonical link", () => {
@@ -81,6 +84,20 @@ describe("ProductShell", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("gives an exact contextual destination sole current-page ownership", () => {
+    pathname.mockReturnValue("/social/posts/post-1");
+    renderShell();
+
+    expect(screen.getByRole("link", { name: "Posts" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Content" })).not.toHaveAttribute(
+      "aria-current",
+    );
+    expect(document.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   });
 
   it("shows later-slice destinations honestly instead of linking dead routes", () => {
@@ -109,6 +126,25 @@ describe("ProductShell", () => {
       expect(window.localStorage.getItem("node-banana-active-workspace-id")).toBe(
         "workspace-1",
       ),
+    );
+  });
+
+  it("does not silently select the first authorized workspace", async () => {
+    render(
+      <I18nTestProvider locale="en">
+        <ProductShell context={{ ...context, initialWorkspaceId: null }}>
+          <p>route content</p>
+        </ProductShell>
+      </I18nTestProvider>,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Select workspace/ }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        window.localStorage.getItem("node-banana-active-workspace-id"),
+      ).toBeNull(),
     );
   });
 

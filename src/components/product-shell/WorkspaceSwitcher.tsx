@@ -45,7 +45,7 @@ export function WorkspaceSwitcher({
     window.location.reload();
   }
 
-  if (!activeWorkspace) {
+  if (workspaces.length === 0) {
     return (
       <SidebarMenu>
         <SidebarMenuItem>
@@ -63,17 +63,24 @@ export function WorkspaceSwitcher({
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<SidebarMenuButton size="lg" tooltip={activeWorkspace.name} />}
+            render={
+              <SidebarMenuButton
+                size="lg"
+                tooltip={activeWorkspace?.name ?? t("selectionRequired")}
+              />
+            }
           >
             <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <PanelsTopLeftIcon className="size-4" />
             </span>
             <span className="min-w-0 flex-1 text-start">
               <span className="block truncate text-sm font-semibold">
-                {activeWorkspace.name}
+                {activeWorkspace?.name ?? t("select")}
               </span>
               <span className="block truncate text-xs text-muted-foreground">
-                {t(activeWorkspace.role)}
+                {activeWorkspace
+                  ? t(activeWorkspace.role)
+                  : t("selectionRequired")}
               </span>
             </span>
             <ChevronsUpDownIcon className="ms-auto size-4" />
@@ -91,7 +98,7 @@ export function WorkspaceSwitcher({
                     {t(workspace.role)}
                   </span>
                 </span>
-                {workspace.id === activeWorkspace.id ? (
+                {workspace.id === activeWorkspace?.id ? (
                   <CheckIcon className="ms-auto size-4" />
                 ) : null}
               </DropdownMenuItem>

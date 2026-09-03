@@ -3,6 +3,7 @@ import { KeyRoundIcon, PlugZapIcon, XIcon } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { ApiTokensSettings } from "@/components/social/ApiTokensSettings";
 import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
+import { SettingsSheet } from "@/components/product-shell/SettingsSheet";
 
 const sections = [
   { key: "api", icon: KeyRoundIcon },
@@ -27,17 +28,20 @@ export default async function SettingsPage({
   const activeSection = readSection(section);
 
   return (
-    <div className="fixed inset-0 z-40 bg-background/70 backdrop-blur-[2px]">
+    <SettingsSheet>
       <section
         aria-labelledby="settings-title"
-        className="absolute inset-y-0 end-0 flex w-full flex-col bg-background shadow-2xl md:w-[min(52rem,calc(100vw-3rem))] md:border-s"
+        className="flex min-h-0 flex-1 flex-col bg-background"
       >
         <header className="flex min-h-16 items-center gap-3 border-b px-4 sm:px-6">
           <div className="min-w-0 flex-1">
             <h2 id="settings-title" className="truncate text-lg font-semibold">
               {t("title")}
             </h2>
-            <p className="truncate text-xs text-muted-foreground">
+            <p
+              id="settings-description"
+              className="truncate text-xs text-muted-foreground"
+            >
               {t("description")}
             </p>
           </div>
@@ -94,6 +98,6 @@ export default async function SettingsPage({
           </main>
         </div>
       </section>
-    </div>
+    </SettingsSheet>
   );
 }

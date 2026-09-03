@@ -47,7 +47,7 @@ export async function getProductShellContext(
     (workspace) => workspace.id === authorizedWorkspaceId,
   )
     ? authorizedWorkspaceId ?? null
-    : rows[0]?.id ?? null;
+    : null;
 
   return {
     user: {

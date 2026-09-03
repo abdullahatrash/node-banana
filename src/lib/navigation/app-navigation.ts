@@ -148,8 +148,15 @@ export function isNavigationItemActive(
 }
 
 export function findNavigationItem(pathname: string): NavigationItem | null {
+  const directMatch = allNavigationItems.find((item) =>
+    pathMatches(pathname, item.href),
+  );
+  if (directMatch) return directMatch;
+
   return (
-    allNavigationItems.find((item) => isNavigationItemActive(pathname, item)) ??
+    allNavigationItems.find((item) =>
+      item.aliases.some((alias) => pathMatches(pathname, alias)),
+    ) ??
     null
   );
 }

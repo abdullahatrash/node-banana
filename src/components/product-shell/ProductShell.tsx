@@ -117,6 +117,7 @@ function ShellLink({
   const pathname = usePathname() || "/";
   const { isMobile, setOpenMobile } = useSidebar();
   const active = isNavigationItemActive(pathname, item);
+  const current = findNavigationItem(pathname)?.key === item.key;
 
   return (
     <SidebarMenuItem>
@@ -126,7 +127,7 @@ function ShellLink({
         render={
           <Link
             href={item.href}
-            aria-current={active ? "page" : undefined}
+            aria-current={current ? "page" : undefined}
             onClick={() => {
               if (isMobile) setOpenMobile(false);
             }}

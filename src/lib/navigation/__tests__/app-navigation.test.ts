@@ -41,6 +41,8 @@ describe("app navigation registry", () => {
     expect(findNavigationItem("/studio/publishing-deliveries/delivery-1")?.key).toBe(
       "deliveries",
     );
+    expect(findNavigationItem("/social/posts/post-1")?.key).toBe("posts");
+    expect(findNavigationItem("/social/media/asset-1")?.key).toBe("socialMedia");
   });
 
   it("maps canonical adapters only to live legacy capabilities", () => {

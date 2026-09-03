@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getServerAuthSession } from "@/lib/auth/session";
@@ -9,7 +10,7 @@ import { PostgresOnboardingRepository } from "./postgres-repository";
 import { shouldRequireOnboarding } from "./features";
 import { ensurePersonalWorkspaceForUser } from "@/lib/studio/repository";
 
-export async function requireOnboardingComplete(requestedPath: string) {
+export const requireOnboardingComplete = cache(async (requestedPath: string) => {
   const requestHeaders = await headers();
   const headerPath = requestHeaders.get("x-interface-route");
   const resolvedPath =
@@ -54,4 +55,4 @@ export async function requireOnboardingComplete(requestedPath: string) {
   });
   if (destination !== resolvedPath) redirect(destination);
   return { session, aggregate, repository };
-}
+});
