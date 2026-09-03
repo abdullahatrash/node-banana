@@ -1,0 +1,3 @@
+# Partners Receive Bounded Channel Onboarding Assignments
+
+The compliant counterpart to Fastlane's warmed-account flow is a Workspace-owned **Channel Onboarding Order** with explicit quote, payment, customer action, partner action, readiness, connection, blocking, cancellation, refund, and failure states. A vetted regional provider receives only a time-bounded **Partner Service Assignment** for declared order work: it cannot read reusable credentials, publish, impersonate the customer, or retain authority after completion or expiry; any later operational access requires its own Principal, grants, and normal Publishing Approval policy.

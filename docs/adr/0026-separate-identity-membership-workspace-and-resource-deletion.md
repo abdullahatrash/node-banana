@@ -1,0 +1,3 @@
+# Separate Identity, Membership, Workspace, and Resource Deletion
+
+Tasmeemai treats identity deletion, Workspace membership departure, Workspace Closure, and individual resource deletion as distinct processes. The final Owner must transfer ownership before leaving; Workspace Closure enters a recoverable cooling-off period, blocks new effects, settles Subscription and refund obligations, supports required export, and later erases eligible content while retaining only minimal legal, financial, anti-fraud, idempotency, consent, and public-delivery evidence. This avoids both unsafe immediate cascades and indefinite soft deletion disguised as erasure.

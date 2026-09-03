@@ -20,6 +20,18 @@ _Avoid_: Account, organization, tenant, project
 The Workspace-owned commercial agreement that grants plan Entitlements and recurring Generation Credit allowances. Human roles govern purchase and administration, but the subscription never belongs to an individual identity.
 _Avoid_: User plan, billing account, membership tier
 
+**Plan Definition**:
+A versioned commercial catalog entry that composes Entitlements, recurring Generation Credit allowance, storage, seats, Channels, Automations, API and Agent access, analytics, and support level. Product enforcement resolves these stable components rather than hardcoded plan labels or marketing prices.
+_Avoid_: Pricing page, plan name, feature flags, subscription row
+
+**Trial Grant**:
+A temporary Workspace entitlement and expiring-credit grant whose abuse eligibility is evaluated across verified customer or payment identity. Creating another Workspace does not reset or multiply the underlying trial benefit.
+_Avoid_: User trial, free plan, signup credits, workspace loophole
+
+**Merchant-of-Record Adapter**:
+A replaceable commercial integration that performs payment collection, tax calculation, compliant invoicing, refunds, and disputes where contracted to do so. Tasmeemai retains provider-neutral Subscription, Entitlement, Generation Credit, and invoice projections rather than delegating product authority to the merchant.
+_Avoid_: Billing source of truth, payment database, Stripe wrapper, tax authority
+
 **Entitlement**:
 A Workspace Subscription-derived allowance to access a product capability or bounded capacity. It is distinct from authorization, Budget Policy, Quota Policy, and a Generation Credit balance, all of which must independently permit the operation.
 _Avoid_: Permission, feature flag, quota, credit balance
@@ -84,6 +96,14 @@ _Avoid_: Integration, social account, provider account
 A compliant service that helps a Workspace establish, prepare, and connect a publish-ready **Channel** it is authorized to control. It never sells aged identities or simulates activity intended to evade a Platform's enforcement.
 _Avoid_: Warmed account, aged account, burner account, account farming
 
+**Channel Onboarding Order**:
+A Workspace-owned commercial request to establish and connect one compliant publish-ready Channel, pinning Platform, region, service scope, quote, partner, timing, customer actions, and compliance evidence. Its lifecycle covers draft, quote, payment, accepted work, customer and partner action, readiness review, connection, blocking, cancellation, refund, and failure.
+_Avoid_: Warmed-account purchase, Channel, support ticket, provisioning job
+
+**Partner Service Assignment**:
+A time-bounded, purpose-specific authorization for a vetted provider to perform declared work on one Channel Onboarding Order without receiving reusable customer credentials or implicit publishing authority. It ends automatically when the order completes or expires.
+_Avoid_: Partner account access, shared login, outsourced publishing, admin role
+
 **Platform**:
 An external social network or publishing surface, such as YouTube, TikTok, Reddit, Instagram, X, or LinkedIn.
 _Avoid_: Provider
@@ -135,6 +155,26 @@ _Avoid_: Privacy setting, audience
 **Tasmeemai Copilot**:
 The single in-product, Workspace- and route-aware conversational assistant that advises across the product and invokes the same **Application Capabilities** as other clients. Its conversations and durable mutations are persisted against canonical resources; it never creates hidden state or substitutes conversational confirmation for required authorization or Approval.
 _Avoid_: Social Copilot, second assistant, AI agent, copilot bot, support bot
+
+**Notification Preference**:
+A person's Workspace-specific choice of delivery channel, quiet hours, Interface Language, digest cadence, and optional event categories. It changes delivery of eligible notifications, not whether operational events exist, and cannot suppress mandatory security, billing, consent-expiry, or public-delivery-failure notice obligations.
+_Avoid_: Workspace notification settings, event policy, mute all, email toggle
+
+**Feedback Case**:
+A trackable support resource containing the reporter, Workspace, category, description, consented attachments, product/version context, correspondence, state, and retention policy. It gives the reporter a stable reference and observable resolution instead of acting as an untracked email submission.
+_Avoid_: Feedback email, issue, contact form, attachment upload
+
+**Roadmap Item**:
+A non-binding, status-bearing communication of a planned product outcome. It is distinct from a Release Note and never makes an estimated date contractual.
+_Avoid_: Promise, release, changelog item, delivery commitment
+
+**Release Note**:
+A localized record of shipped behavior tied to an exact product version and affected routes or capabilities. It describes released facts rather than planned intent.
+_Avoid_: Roadmap item, update toast, marketing announcement
+
+**Guide Entry**:
+A versioned learning resource bound to exact feature and route identifiers, Interface Language, media and transcript versions, minimum product version, and review status. It is current only while those references remain valid.
+_Avoid_: Help video, tooltip, static documentation link, onboarding step
 
 **External Agent**:
 A BYO-agent harness running on the customer's own machine/infra (e.g., Claude Code, Codex, OpenClaw, Hermes) that supplies goals, judgment, and orchestration through the **Agent Interface**. It can define, validate, start, inspect, and resume content workflows and manage publishing work; durable execution belongs to the **Content Operations Runtime**. Distinct from **Tasmeemai Copilot** (in-product and human-directed) and from **Automation** (trigger and policy rules).
@@ -371,6 +411,14 @@ _Avoid_: support role, admin access, observability permission, debug mode
 **Workspace Retention Policy**:
 The immutable versioned durations and expiry rules for canonical resources, Durable Contract Evidence, Operational Metrics, Diagnostic Traces, orchestrator history, Support Bundles, and acceptance evidence in one Workspace. It may shorten inactive history but never remove evidence required by active safety, idempotency, approval, delivery, reservation, or reconciliation obligations.
 _Avoid_: log retention, cleanup schedule, data lifecycle config, TTL settings
+
+**Workspace Closure**:
+The recoverable process that blocks new Workspace effects, settles subscriptions and refunds, permits required ownership transfer or export, and later erases eligible content under retention policy. It is distinct from deleting a person's identity, leaving a membership, or deleting one resource.
+_Avoid_: Delete account, leave team, drop tenant, cascade delete
+
+**Parity Matrix**:
+The versioned verification record keyed by reference route, capability, role, Entitlement, viewport, direction, and state. Each required cell links sanitized observation evidence, Tasmeemai behavior, acceptance tests, screenshots, capability contracts, deliberate adaptations, and sign-off.
+_Avoid_: Feature checklist, QA spreadsheet, screenshot folder, parity claim
 
 **Retention Tombstone**:
 The minimal non-content identity, digest, terminal state, and idempotency evidence preserved after an eligible canonical resource expires or is deleted. It prevents identity reuse and duplicate effects without retaining prompts, generated content, Artifact bytes, diagnostics, or secrets.
@@ -792,6 +840,8 @@ _Avoid_: rank tracking, brand monitoring, mentions
 
 - A **Workspace** has zero or more **Channels**.
 - A **Workspace** owns its Workspace Subscription, Entitlements, recurring and purchased Generation Credits, storage allowance, and commercial history; a Human Principal's identity does not own or carry them between Workspaces.
+- A Workspace Subscription references an exact Plan Definition; a Trial Grant is Workspace-scoped but anti-abuse eligibility is not reset by creating another Workspace.
+- Merchant-of-Record callbacks are commercial evidence, while Tasmeemai's provider-neutral projections and idempotent application capabilities remain authoritative for Subscription, Entitlement, credit, invoice, refund, and dispute state.
 - Changing the active **Workspace** never rebinds an upload, conversation, Workflow Run, Content Piece, Creator Persona, Channel, Generation Credit, Publishing Plan, Approval, or Delivery that began in another Workspace.
 - A **Content Piece** has immutable Content Piece Revisions; a Publishing Plan that distributes it references one exact revision.
 - A Content Piece Draft is editor-owned mutable work based on an exact Revision; optimistic conflicts must be resolved before promotion, and a Publishing Plan can never reference the Draft.
@@ -809,6 +859,10 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - A Platform Metric Refresh advances each source independently, retains prior observations, and never makes one unavailable Platform fail the entire Analytics view.
 - Entitlement visibility never grants authorization: gated capabilities remain discoverable with requirements and upgrade paths, while server-side policy independently enforces every operation.
 - Channel credentials enter only through official OAuth, app-password, API-credential, supported device-authorization, or vetted partner Credential Handoff; Tasmeemai never captures platform passwords or covertly automates interactive sessions.
+- A Channel Onboarding Order may assign bounded partner work, but a Partner Service Assignment grants neither reusable credentials nor publishing authority and ends with the order.
+- API and Agent Entitlements change discoverability or capacity only; every transport still invokes the same Application Capabilities and authorization, Approval, idempotency, and audit rules.
+- Notification Preferences are personal and Workspace-specific; mandatory security, billing, consent-expiry, and public-delivery-failure notices remain deliverable under legally safe channel rules.
+- Identity deletion, membership departure, Workspace Closure, and resource deletion are separate processes; a final Owner must transfer ownership before leaving, and closure preserves minimal legal, financial, anti-fraud, idempotency, and public-delivery evidence after eligible content erasure.
 - A **Channel** belongs to exactly one **Platform**.
 - A **Provider Adapter** supports exactly one **Platform**.
 - A **Post** has **Publishing Settings** for each selected **Channel** when that platform needs extra publishing choices.
