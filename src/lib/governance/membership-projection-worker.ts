@@ -1,9 +1,8 @@
-import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
-import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import { auth } from "@/lib/auth/server";
+import { createHmac, randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { member, workspaceSettings } from "@/lib/db/schema";
+import { workspaceSettings } from "@/lib/db/schema";
 import type {
   GovernanceAuditEvent,
   GovernanceRepository,
@@ -28,6 +27,7 @@ interface ProjectionBody {
   nextAttemptAt?: string | null;
   lastErrorCode?: string | null;
   completedAt?: string | null;
+  operatorAlertRequired?: boolean;
   userId?: string;
   role?: "admin" | "member";
   currentOwnerUserId?: string;
@@ -127,7 +127,7 @@ export class GovernanceMembershipProjectionWorker {
       const known = error instanceof GovernanceMembershipProjectionError
         ? error
         : new GovernanceMembershipProjectionError("BETTER_AUTH_PROJECTION_UNAVAILABLE", true);
-      const exhausted = !known.retryable || body.attempts >= MAX_ATTEMPTS;
+      const exhausted = !known.retryable;
       const status = exhausted ? "dead_letter" : "retry_pending";
       const delayMs = Math.min(60 * 60_000, 60_000 * (2 ** Math.max(0, body.attempts - 1)));
       await this.transition(claimed, status, {
@@ -136,6 +136,7 @@ export class GovernanceMembershipProjectionWorker {
         nextAttemptAt: exhausted ? null : new Date(this.clock.now().getTime() + delayMs).toISOString(),
         lastErrorCode: known.code,
         completedAt: exhausted ? this.clock.now().toISOString() : null,
+        operatorAlertRequired: known.retryable && body.attempts >= MAX_ATTEMPTS,
       }, exhausted ? "dead_letter_membership_projection" : "retry_membership_projection", "failed");
       return status;
     }
@@ -200,92 +201,39 @@ export class GovernanceMembershipProjectionWorker {
 }
 
 /**
- * Better Auth organization mutations run only after a dedicated, current
- * admin session is validated for the exact mapped organization. This avoids
- * granting a broad owner service actor; Workspace authority remains canonical
- * in workspace_members and these rows are an access projection only.
+ * A scoped non-human integration signs one exact organization projection for
+ * a dedicated Better Auth projection service. No expiring human cookie or
+ * broad owner identity is stored in this process.
  */
 export class BetterAuthOrganizationMembershipProjectionPort implements GovernanceMembershipProjectionPort {
   private async context(workspaceId: string) {
-    const cookie = process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_COOKIE?.trim();
-    const configuredUserId = process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_USER_ID?.trim();
-    if (!cookie || !configuredUserId) throw new GovernanceMembershipProjectionError("PROJECTION_CREDENTIAL_NOT_CONFIGURED", false);
-    const headers = new Headers({ cookie });
-    const session = await auth.api.getSession({ headers });
-    if (!session || session.user.id !== configuredUserId) {
-      throw new GovernanceMembershipProjectionError("PROJECTION_CREDENTIAL_INVALID", false);
-    }
+    const endpoint = process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_URL?.trim();
+    const keyId = process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_KEY_ID?.trim();
+    const secret = process.env.GOVERNANCE_MEMBERSHIP_PROJECTION_SIGNING_KEY?.trim();
+    if (!endpoint || !keyId || !secret || Buffer.byteLength(secret, "utf8") < 32) throw new GovernanceMembershipProjectionError("PROJECTION_CREDENTIAL_NOT_CONFIGURED", true);
+    let url: URL;
+    try { url = new URL("/v1/better-auth/organization-membership", endpoint); }
+    catch { throw new GovernanceMembershipProjectionError("PROJECTION_ENDPOINT_INVALID", true); }
+    if (url.protocol !== "https:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") throw new GovernanceMembershipProjectionError("PROJECTION_ENDPOINT_INSECURE", true);
     const [settings] = await getDb().select({ organizationId: workspaceSettings.organizationId })
       .from(workspaceSettings).where(eq(workspaceSettings.workspaceId, workspaceId)).limit(1);
-    if (!settings?.organizationId) throw new GovernanceMembershipProjectionError("WORKSPACE_ORGANIZATION_UNMAPPED", false);
-    const [serviceMember] = await getDb().select({ role: member.role }).from(member).where(and(
-      eq(member.organizationId, settings.organizationId),
-      eq(member.userId, configuredUserId),
-    )).limit(1);
-    if (serviceMember?.role !== "admin") {
-      throw new GovernanceMembershipProjectionError("PROJECTION_ACTOR_NOT_LEAST_PRIVILEGED_ADMIN", false);
-    }
-    return { headers, organizationId: settings.organizationId, configuredUserId };
+    if (!settings?.organizationId) throw new GovernanceMembershipProjectionError("WORKSPACE_ORGANIZATION_UNMAPPED", true);
+    return { url, keyId, secret, organizationId: settings.organizationId };
   }
 
   async apply(input: { workspaceId: string; operation: ProjectionOperation }): Promise<void> {
     const context = await this.context(input.workspaceId);
+    const issuedAt = new Date().toISOString();
+    const payload = { schema: "better-auth-membership-projection/v1", workspaceId: input.workspaceId, organizationId: context.organizationId, operation: input.operation, issuedAt, nonce: randomUUID() };
+    const signature = createHmac("sha256", context.secret).update(canonicalJson(payload)).digest("base64url");
     try {
-      if (input.operation.operation === "upsert" || input.operation.operation === "update_role") {
-        await this.upsert(context, input.operation.userId, input.operation.role);
-        return;
-      }
-      if (input.operation.operation === "remove") {
-        await this.remove(context, input.operation.userId);
-        return;
-      }
-      if (input.operation.operation === "transfer_ownership") {
-        // Better Auth roles grant no Workspace business authority. Both humans
-        // retain only admin/member access projection; canonical ownership lives
-        // exclusively in workspace_members.
-        await this.upsert(context, input.operation.currentOwnerUserId, "admin");
-        await this.upsert(context, input.operation.newOwnerUserId, "admin");
-        return;
-      }
-      const rows = await getDb().select({ id: member.id, userId: member.userId }).from(member)
-        .where(eq(member.organizationId, context.organizationId));
-      for (const row of rows) {
-        if (row.userId !== context.configuredUserId) await this.remove(context, row.userId);
-      }
+      const response = await fetch(context.url, { method: "POST", headers: { "content-type": "application/json", "x-governance-key-id": context.keyId, "x-governance-signature": signature, "x-governance-issued-at": issuedAt }, body: canonicalJson(payload), signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) throw new GovernanceMembershipProjectionError(`PROJECTION_SERVICE_HTTP_${response.status}`, true);
+      const result = await response.json() as { success?: boolean };
+      if (result.success !== true) throw new GovernanceMembershipProjectionError("PROJECTION_SERVICE_RESPONSE_INVALID", true);
     } catch (error) {
       if (error instanceof GovernanceMembershipProjectionError) throw error;
-      throw new GovernanceMembershipProjectionError("BETTER_AUTH_ORGANIZATION_MUTATION_FAILED", true);
+      throw new GovernanceMembershipProjectionError("BETTER_AUTH_PROJECTION_UNAVAILABLE", true);
     }
-  }
-
-  private async upsert(
-    context: { headers: Headers; organizationId: string; configuredUserId: string },
-    userId: string,
-    role: "admin" | "member",
-  ) {
-    if (userId === context.configuredUserId) throw new GovernanceMembershipProjectionError("PROJECTION_SERVICE_ACTOR_TARGET_FORBIDDEN", false);
-    const [existing] = await getDb().select({ id: member.id, role: member.role }).from(member).where(and(
-      eq(member.organizationId, context.organizationId),
-      eq(member.userId, userId),
-    )).limit(1);
-    if (!existing) {
-      await auth.api.addMember({ headers: context.headers, body: { organizationId: context.organizationId, userId, role } });
-      return;
-    }
-    if (existing.role === role) return;
-    await auth.api.updateMemberRole({ headers: context.headers, body: { organizationId: context.organizationId, memberId: existing.id, role } });
-  }
-
-  private async remove(
-    context: { headers: Headers; organizationId: string; configuredUserId: string },
-    userId: string,
-  ) {
-    if (userId === context.configuredUserId) throw new GovernanceMembershipProjectionError("PROJECTION_SERVICE_ACTOR_TARGET_FORBIDDEN", false);
-    const [existing] = await getDb().select({ id: member.id }).from(member).where(and(
-      eq(member.organizationId, context.organizationId),
-      eq(member.userId, userId),
-    )).limit(1);
-    if (!existing) return;
-    await auth.api.removeMember({ headers: context.headers, body: { organizationId: context.organizationId, memberIdOrEmail: existing.id } });
   }
 }
