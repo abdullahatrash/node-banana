@@ -764,8 +764,10 @@ export class GovernanceService {
       case "resolve_safety_appeal": {
         const appeal = await this.required("safety_appeal", command.appealId, actor.workspaceId);
         if (appeal.status !== "pending") throw new GovernanceError("CONFLICT", "Appeal is already resolved.");
-        mutations = [update(appeal, "resolved", { ...appeal.body, outcome: command.outcome, resolvedAt: now.toISOString(), currentRevalidationRequired: true, canBypassPolicy: false })];
-        result = { appealId: appeal.id, outcome: command.outcome, currentRevalidationRequired: true };
+        const revalidate = command.outcome === "reevaluate_exact_intent";
+        const status = revalidate ? "revalidation_queued" : "resolved_upheld";
+        mutations = [update(appeal, status, { ...appeal.body, outcome: command.outcome, resolvedAt: revalidate ? null : now.toISOString(), currentRevalidationRequired: revalidate, canBypassPolicy: false, canResume: false, revalidation: null })];
+        result = { appealId: appeal.id, outcome: command.outcome, status, currentRevalidationRequired: revalidate, canResume: false };
         target = { kind: appeal.kind, id: appeal.id };
         break;
       }

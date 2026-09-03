@@ -8,6 +8,7 @@ import { GovernanceImportWorker } from "./import-worker";
 import { GovernanceApprovalDeadlineWorker } from "./approval-worker";
 import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionRouteKind } from "./region-policy";
 import { GovernanceDeletionWorker } from "./deletion-worker";
+import { GovernanceSafetyAppealWorker } from "./safety-appeal-worker";
 
 function regionTrustKeys(): Map<string, Uint8Array> {
   const keys = new Map<string, Uint8Array>();
@@ -67,4 +68,8 @@ export function getProductionGovernanceApprovalDeadlineWorker(): GovernanceAppro
 
 export function getProductionGovernanceDeletionWorker(): GovernanceDeletionWorker {
   return new GovernanceDeletionWorker(PRODUCTION_GOVERNANCE_REPOSITORY);
+}
+
+export function getProductionGovernanceSafetyAppealWorker(): GovernanceSafetyAppealWorker {
+  return new GovernanceSafetyAppealWorker(PRODUCTION_GOVERNANCE_REPOSITORY);
 }

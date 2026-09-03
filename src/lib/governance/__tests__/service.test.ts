@@ -249,7 +249,7 @@ describe("GovernanceService", () => {
     const { service } = setup();
     const decision = await service.execute(owner, { type: "create_safety_decision", intentRef: "run-1", reasonCode: "DECEPTIVE_IDENTITY", policyVersion: "safety-2026-09", safeExplanation: "Identity evidence is missing", evidenceRef: "evidence-1", remediation: "Provide consent evidence", appealEligible: true }, "safety-decision-key") as { decisionId: string };
     const appeal = await service.execute(owner, { type: "appeal_safety_decision", decisionId: decision.decisionId, explanation: "Consent evidence is now available" }, "safety-appeal-key") as { appealId: string };
-    expect(await service.execute(owner, { type: "resolve_safety_appeal", appealId: appeal.appealId, outcome: "reevaluate_exact_intent", currentRevalidationRequired: true }, "safety-resolve-key")).toMatchObject({ currentRevalidationRequired: true });
+    expect(await service.execute(owner, { type: "resolve_safety_appeal", appealId: appeal.appealId, outcome: "reevaluate_exact_intent", currentRevalidationRequired: true }, "safety-resolve-key")).toMatchObject({ status: "revalidation_queued", currentRevalidationRequired: true, canResume: false });
   });
 
   it("keeps Bulk Operation outcomes per item and forbids blind retry of ambiguity", async () => {
