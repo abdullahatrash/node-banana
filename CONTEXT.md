@@ -1,12 +1,20 @@
-# Node Banana
+# Tasmeemai
 
-Node Banana includes a Social Hub for planning, composing, and publishing generated media and written posts to external social platforms.
+Tasmeemai is the customer-facing product for planning, creating, reviewing, and publishing content. Node Banana is its legacy repository codename and is not used as a product name in new customer-facing language.
 
 ## Language
 
 **Reference Feature Parity**:
 A commitment that every user-observable capability, state, interaction, and supporting workflow in an adopted reference surface has a Tasmeemai counterpart. It preserves Tasmeemai's product identity, domain language, and architecture rather than copying proprietary wording, branding, assets, or implementation.
 _Avoid_: Clone, pixel parity, MVP parity, screen copy
+
+**Parity Baseline**:
+A dated, versioned inventory of the reference capabilities and states committed under **Reference Feature Parity**. Later reference-product changes enter a deliberate parity-change review rather than silently moving the accepted destination.
+_Avoid_: Latest Fastlane, moving target, feature checklist
+
+**Inspiration Item**:
+A rights-aware reference to externally successful content and its time-stamped metadata, used to inform original Tasmeemai content. It retains source, capture time, metric freshness, rights status, and permitted remix behavior without pretending the referenced media is a Workspace-owned Artifact.
+_Avoid_: Scraped video, viral asset, template, copied post
 
 **Brand Source**:
 User-approved source material used to derive a Workspace's Brand Profile, such as a public website or a manual company description. It is evidence for the profile, not the canonical profile itself.
@@ -17,12 +25,16 @@ The Workspace-owned, user-reviewable structured understanding of a brand that gu
 _Avoid_: Brand kit, company profile, AI output, scraped profile
 
 **Interface Language**:
-The language and reading direction used by Node Banana's product interface for a person. It does not determine the language of generated content.
+The language and reading direction used by Tasmeemai's product interface for a person. It does not determine the language of generated content.
 _Avoid_: App language, content locale, prompt language
 
 **Content Language**:
 The Workspace's default language for generated content, overridable for a specific brief or generation. Arabic is the product default for MENA onboarding, not a restriction on English or other output languages.
 _Avoid_: Interface language, detected language, Arabic mode
+
+**Arabic Variety**:
+The requested regional variety for Arabic generation, speech, captions, and persona expression, separate from the broader **Content Language**. A provider may support MSA or only specific regional varieties, and any fallback must be explicit.
+_Avoid_: Arabic accent, locale, dialect mode, language
 
 **Channel**:
 A connected social publishing destination inside a workspace, backed by one platform account, page, or channel and its auth credentials.
@@ -329,7 +341,7 @@ The submission payload an **External Agent** sends through the **Agent Interface
 _Avoid_: payload, submission, content blob
 
 **Agency Recipe**:
-A distributable agent-company package (e.g., a Paperclip `COMPANY.md`) defining a team of **External Agents** and their goals, configured to target a Node Banana **Workspace** through the **Agent Interface**. This is what a customer means by "a marketing agency" — the importable recipe, not Node Banana itself and not the harness that runs it.
+A distributable agent-company package (e.g., a Paperclip `COMPANY.md`) defining a team of **External Agents** and their goals, configured to target a Tasmeemai **Workspace** through the **Agent Interface**. This is what a customer means by "a marketing agency" — the importable recipe, not Tasmeemai itself and not the harness that runs it.
 _Avoid_: company, marketing agency (for the hub), template
 
 **Auto-publish Grant**:
@@ -345,7 +357,7 @@ The human-facing surface adjacent to the **Content Operations Runtime**. It lets
 _Avoid_: dashboard, the app, frontend
 
 **Content Operations Runtime**:
-Node Banana's headless, durable execution core. It owns versioned workflow definitions, workflow runs, artifacts, approval gates, publishing plans, and scheduling. The **Agent Interface** and **Cockpit** are equal clients of this runtime; an **External Agent** supplies intent and judgment but does not replace the runtime.
+Tasmeemai's headless, durable execution core. It owns versioned workflow definitions, workflow runs, artifacts, approval gates, publishing plans, and scheduling. The **Agent Interface** and **Cockpit** are equal clients of this runtime; an **External Agent** supplies intent and judgment but does not replace the runtime.
 _Avoid_: Content Engine, backend, workflow UI, the engine
 
 **Runtime Kernel**:
@@ -365,7 +377,7 @@ A replaceable infrastructure adapter that durably schedules and resumes Runtime 
 _Avoid_: workflow authority, run database, domain runtime, job owner
 
 **Workflow SDK Adapter**:
-The initial **Durable Orchestrator** implementation. It uses Vercel World for hosted production, Local World for development only, and Postgres World only for a self-hosted deployment with its required long-lived worker. Its exact SDK version is pinned, all SDK imports remain outside `packages/runtime`, and its run identifiers, deployment history, and event history never enter public Node Banana contracts.
+The initial **Durable Orchestrator** implementation. It uses Vercel World for hosted production, Local World for development only, and Postgres World only for a self-hosted deployment with its required long-lived worker. Its exact SDK version is pinned, all SDK imports remain outside `packages/runtime`, and its run identifiers, deployment history, and event history never enter public Tasmeemai contracts.
 _Avoid_: Workflow Run, Runtime Kernel, canonical scheduler, product event log
 
 **Content Workflow**:
@@ -513,16 +525,20 @@ A stable, Workspace-scoped, human-managed identity for provider access whose sec
 _Avoid_: API key, environment variable, provider setting, secret record
 
 **BYOK Provider Execution**:
-A provider effect performed with a credential supplied and owned by the Workspace operator through a Credential Profile. The external provider bills the operator's account directly; Node Banana meters and constrains execution but does not buy, resell, or mark up inference.
-_Avoid_: managed inference, platform credits, included AI, Node Banana billing
+A provider effect performed with a credential supplied and owned by the Workspace operator through a Credential Profile. The external provider bills the operator's account directly; Tasmeemai meters and constrains execution but does not buy, resell, or mark up inference.
+_Avoid_: managed inference, platform credits, included AI, Tasmeemai billing
 
 **Managed Provider Execution**:
 A provider effect performed through a provider account funded and controlled by Tasmeemai, with the customer charged under Tasmeemai's own commercial contract. It is a distinct execution and billing mode from **BYOK Provider Execution**, even when both use the same provider operation.
 _Avoid_: BYOK, free generation, provider pass-through, estimated external spend
 
 **External Provider Spend**:
-The provider usage cost attributable to BYOK Provider Execution under provider evidence or a Pricing Snapshot. It is an operational estimate or reported external charge for guardrails and analysis, never a Node Banana invoice, wallet debit, or promise of the provider's final bill.
+The provider usage cost attributable to BYOK Provider Execution under provider evidence or a Pricing Snapshot. It is an operational estimate or reported external charge for guardrails and analysis, never a Tasmeemai invoice, wallet debit, or promise of the provider's final bill.
 _Avoid_: platform charge, inference revenue, credits, customer billing
+
+**Generation Credit**:
+A non-cash consumption unit for **Managed Provider Execution**, held in separate expiring plan-allowance and non-expiring purchased buckets. Reservations, debits, releases, refunds, and audited adjustments reconcile to managed provider usage evidence, while purchase prices remain currency-denominated and separate from the credit balance.
+_Avoid_: Currency, cash balance, External Provider Spend, Usage Record, token
 
 **Credential Spend Grant**:
 The explicit human decision allowing one Agent Principal to cause BYOK Provider Execution through one Credential Profile in bounded or deliberately unbounded mode. A bounded grant names applicable per-Run and calendar-period Budget Policies; absence of a grant permits inspection but no provider effect.
@@ -541,7 +557,7 @@ A human-action flow through which a model key, OAuth consent, account selection,
 _Avoid_: agent-provided key, credential tool argument, OAuth tool
 
 **Artifact**:
-An immutable, typed content resource produced by a **Content Workflow** step or imported from outside Node Banana. Postgres is authoritative for its Workspace ownership, media type, content hash, immutable storage reference, explicit origin, and lineage; the bytes live behind the **Artifact Store** port. Imported Artifacts record import provenance and never invent a Workflow Run; generated Artifacts record the Run, step, attempt, and output port that produced them.
+An immutable, typed content resource produced by a **Content Workflow** step or imported from outside Tasmeemai. Postgres is authoritative for its Workspace ownership, media type, content hash, immutable storage reference, explicit origin, and lineage; the bytes live behind the **Artifact Store** port. Imported Artifacts record import provenance and never invent a Workflow Run; generated Artifacts record the Run, step, attempt, and output port that produced them.
 _Avoid_: output blob, generated file, media item, fake run output
 
 **Artifact Store**:
@@ -571,6 +587,10 @@ _Avoid_: channel list, multi-channel post, destination config
 **Publishing Approval**:
 A durable, bounded-lifetime, single-use decision that authorizes a specific scheduling or publishing action against one exact **Publishing Plan Revision**. Its decision basis is either the real human approver or an exact policy version and evaluation; policy authorization never impersonates a human. It may be revoked, expire, or be superseded by a newer Plan Revision before release. Releasing the approved work consumes the decision while atomically creating the corresponding **Publishing Deliveries**; a consumed Approval remains immutable audit history and never expires or becomes superseded retroactively. Repeating the same release returns the existing Deliveries, and retries never consume approval again. Approval never transfers to a later revision, even when the edit appears minor.
 _Avoid_: approval flag, confirmation prompt, approved post
+
+**Content Acceptance**:
+A creator's decision to keep a proposed content concept or Artifact revision and make it available for editing, planning, or reuse. It never authorizes scheduling or public distribution and is distinct from **Publishing Approval**.
+_Avoid_: Approve, publish approval, accepted post, release
 
 **Publishing Delivery**:
 A durable per-target record of scheduled and provider-facing publishing work created from one consumed **Publishing Approval**. It retains the exact approved **Publishing Plan Revision** and owns scheduling, cancellation, blocking, dispatch, retries, and provider outcome for one **Channel**. Readiness drift before provider publishing makes it blocked with a structured reason; restoring external readiness may resume the same Delivery without new Approval. It may be cancelled before provider publishing begins; afterward cancellation is not guaranteed.
@@ -705,7 +725,7 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - Every runtime-calculated Cost Valuation binds to the exact **Pricing Snapshot** used; later pricing changes never rewrite historical usage or valuation.
 - Pricing Snapshots use exact decimal rates, an ISO currency, source reference, effective time, exact model or operation version, service tier, and applicable unit rules.
 - A Workflow Run pins its Pricing Snapshots when its Run Cost Ceiling is reserved; pricing updates affect only new reservations.
-- Node Banana's built-in provider-pricing catalog is versioned, source-referenced, and updated only by a product release or signed catalog update, never by scraping a pricing page during execution.
+- Tasmeemai's built-in provider-pricing catalog is versioned, source-referenced, and updated only by a product release or signed catalog update, never by scraping a pricing page during execution.
 - Monetary precedence is exact provider-reported cost, then **Workspace Pricing Override**, then built-in catalog valuation, then explicit unknown.
 - A Workspace Pricing Override is an immutable audited human revision for an exact provider, operation, model or version, service tier, or credit conversion and affects new Run previews and reservations only.
 - Human-only `pricing_overrides.get/list/create/revoke@1` capabilities manage Workspace Pricing Overrides through the shared Capability Entrypoint.
@@ -715,9 +735,9 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - A later exact provider-reported charge appends a superseding Cost Valuation and explicit variance without deleting the earlier estimate.
 - Actual provider spend above the reserved ceiling remains honestly recorded, releases no fictional capacity, and blocks subsequent effects even though the runtime cannot undo the external charge.
 - Runtime v1 uses **BYOK Provider Execution** only: the Workspace operator supplies each model-provider credential and the provider bills that external account directly.
-- **External Provider Spend** is recorded for transparency, planning, and enforcement guardrails; it never creates a Node Banana invoice, credit balance, markup, or billing obligation.
+- **External Provider Spend** is recorded for transparency, planning, and enforcement guardrails; it never creates a Tasmeemai invoice, credit balance, markup, or billing obligation.
 - A Budget Reservation reserves internal authorization to cause bounded External Provider Spend and never reserves funds or credits with the provider.
-- The provider's billing system remains final invoice authority; when exact billed cost is unavailable, Node Banana retains a clearly labeled valuation rather than claiming an actual charge.
+- The provider's billing system remains final invoice authority; when exact billed cost is unavailable, Tasmeemai retains a clearly labeled valuation rather than claiming an actual charge.
 - Hosted storage, bandwidth, and concurrency capacity remain Quota dimensions and are not disguised as BYOK inference spend.
 - The product supports both **BYOK Provider Execution** and **Managed Provider Execution** as explicit modes; managed execution has a separate commercial contract and never reinterprets BYOK usage as a Tasmeemai charge.
 - Granting an Agent Principal visibility of a Credential Profile never implies permission to cause External Provider Spend.
@@ -1113,7 +1133,7 @@ _Avoid_: rank tracking, brand monitoring, mentions
 > **Domain expert:** "Yes. A draft **Post** can be incomplete, but scheduling or publishing it must pass **Publish Validation**."
 >
 > **Dev:** "Should YouTube default to public because Postiz does?"
-> **Domain expert:** "No. Node Banana uses **Safe Defaults** so generated or experimental work is not published publicly by accident."
+> **Domain expert:** "No. Tasmeemai uses **Safe Defaults** so generated or experimental work is not published publicly by accident."
 >
 > **Dev:** "If a post targets YouTube and Reddit, can one readiness state cover both?"
 > **Domain expert:** "No. Each selected **Channel** has its own **Publishing Readiness** because each may require different **Publishing Settings**."
@@ -1126,4 +1146,4 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - "integration" was used to mean a connected publishing destination; resolved: use **Channel** for the destination and reserve "integration" for broader third-party product integrations.
 - "settings" was used broadly; resolved: use **Publishing Settings** for platform-specific options attached to publishing a **Post** through a **Channel**.
 - Existing code and database fields may still use `socialAccountId` and `platformSettings`; resolved: keep those implementation names for now while using **Channel** and **Publishing Settings** in product/domain language and new domain-facing code.
-- Node Banana was previously described as only a **Cockpit** backed by a separate Flowleap **Content Engine**; resolved: Node Banana owns the **Content Operations Runtime**, while the **Cockpit** and **Agent Interface** are clients of it.
+- Tasmeemai was previously described as only a **Cockpit** backed by a separate Flowleap **Content Engine**; resolved: Tasmeemai owns the **Content Operations Runtime**, while the **Cockpit** and **Agent Interface** are clients of it.

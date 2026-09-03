@@ -1,0 +1,3 @@
+# Use Rights-Aware Sources for Inspiration
+
+Tasmeemai's Inspiration library will acquire trends through official APIs, licensed datasets, user-submitted links, lawful public metadata, and embeddable source media rather than covert or terms-violating scraping. Every **Inspiration Item** retains its source, capture time, metric freshness, rights status, and permitted remix behavior, and referenced media does not become a Workspace-owned Artifact merely because it is displayed; this trades unrestricted collection breadth for defensible provenance, platform compliance, and a trustworthy Arabic-first remix workflow.
