@@ -14,6 +14,10 @@ const migration = readFileSync(
   resolve(process.cwd(), "drizzle/0047_runtime_publishing_approvals.sql"),
   "utf8",
 );
+const governanceMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0063_governance_publishing_policy.sql"),
+  "utf8",
+);
 
 describe("Publishing Approval migration contract", () => {
   it("creates the complete append-only approval ledger", () => {
@@ -135,5 +139,13 @@ describe("Publishing Approval migration contract", () => {
     ]) expect(snapshot.tables).toHaveProperty(`public.${table}`);
     expect(snapshot.tables).toHaveProperty("public.runtime_publishing_plan_revisions");
     expect(journal).toContain('"tag": "0047_runtime_publishing_approvals"');
+  });
+
+  it("adds a closed exact Governance Publishing Policy binding", () => {
+    expect(governanceMigration).toContain('ADD COLUMN "governance_policy" jsonb');
+    expect(governanceMigration).toContain("publishing-approval-governance-binding/v1");
+    expect(governanceMigration).toContain("policyRevision");
+    expect(governanceMigration).toContain("policyDigest");
+    expect(governanceMigration).toContain("governanceRequestId");
   });
 });

@@ -442,6 +442,13 @@
       "when": 1788471600000,
       "tag": "0062_explicit_member_publishing_authority",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1788475200000,
+      "tag": "0063_governance_publishing_policy",
+      "breakpoints": true
     }
   ]
 }

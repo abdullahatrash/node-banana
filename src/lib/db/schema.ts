@@ -68,6 +68,7 @@ import type {
   NormalizedPublishingPlanDefinition,
   PublishingPlanSuccessfulValidationEvidence,
 } from "@/lib/agent-runtime/publishing-plans/types";
+import type { PublishingApprovalGovernanceBinding } from "@/lib/agent-runtime/publishing-approvals/types";
 import type {
   PublishingDeliveryAcceptedRef,
   PublishingDeliveryEvent,
@@ -2861,6 +2862,8 @@ export const runtimePublishingApprovalRequests = pgTable(
     validationRuntimePolicyContractDigest: text(
       "validation_runtime_policy_contract_digest",
     ).notNull(),
+    governancePolicy: jsonb("governance_policy")
+      .$type<PublishingApprovalGovernanceBinding>(),
     decisionPolicyMode: text("decision_policy_mode").notNull(),
     decisionPolicyExpiresAt: timestamp("decision_policy_expires_at", {
       withTimezone: true,
@@ -3001,6 +3004,16 @@ export const runtimePublishingApprovalRequests = pgTable(
         and ${table.validationRuntimePolicyIdentity} = 'publishing-runtime-policy/default@1'
         and ${table.validationRuntimePolicyContractDigest} = 'sha256:c372d0a34f6b1ca086ef4cad760db2bbffab1ac5c668fede7f256106305b7cf1'
         and ${table.validationExpiresAt} > ${table.validationEvaluatedAt}`,
+    ),
+    governancePolicyCheck: check(
+      "runtime_publishing_approval_requests_governance_policy_check",
+      sql`${table.governancePolicy} is null or (
+        ${table.governancePolicy}->>'schema' = 'publishing-approval-governance-binding/v1'
+        and (${table.governancePolicy}->>'policyRevision')::integer > 0
+        and ${table.governancePolicy}->>'policyDigest' ~ '^sha256:[a-f0-9]{64}$'
+        and length(${table.governancePolicy}->>'governanceRequestId') between 1 and 200
+        and length(${table.governancePolicy}->>'policyId') between 1 and 200
+      )`,
     ),
     requestAuthorizationCheck: check(
       "runtime_publishing_approval_requests_request_authorization_check",

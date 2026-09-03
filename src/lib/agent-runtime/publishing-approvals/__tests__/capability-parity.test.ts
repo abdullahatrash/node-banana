@@ -40,6 +40,8 @@ function requestInput(revisionId: string) {
   return {
     idempotencyKey: "approval-capability-request",
     revisionId,
+    policyId: "policy_publishing",
+    policyRevision: 1,
     action: "publish",
     targetIds: ["target_1"],
     channelIds: ["channel_linkedin"],

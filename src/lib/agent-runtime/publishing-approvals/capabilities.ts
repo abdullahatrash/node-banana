@@ -52,6 +52,13 @@ const validation = z.object({
   runtimePolicyIdentity: z.literal(PUBLISHING_PLAN_RUNTIME_POLICY_IDENTITY),
   runtimePolicyContractDigest: z.literal(publishingPlanRuntimePolicyContractDigest()),
 }).strict();
+const governancePolicy = z.object({
+  schema: z.literal("publishing-approval-governance-binding/v1"),
+  governanceRequestId: id,
+  policyId: id,
+  policyRevision: z.number().int().positive(),
+  policyDigest: digest,
+}).strict();
 const authorityGrant = z.object({ channelId: id, grantId: id }).strict();
 const decision = z.object({
   id,
@@ -102,6 +109,7 @@ const approval = z.object({
     resources,
   }).strict(),
   validation,
+  governancePolicy: governancePolicy.nullable(),
   decisionPolicy: z.object({ mode: z.literal("expires_at"), expiresAt: iso }).strict(),
   createdAt: iso,
   decision: decision.nullable(),
@@ -115,7 +123,7 @@ const agentApproval = z.object({
   id, workspaceId: id, planId: id, planRevisionId: id, planRevision: z.number().int().min(1), planRevisionDigest: digest,
   action: z.literal("publish"), targetIds: z.array(id).min(1).max(50), channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200),
   retrySource: z.object({ deliveryId: id, evidenceDigest: digest }).strict().nullable(),
-  validation, decisionPolicy: z.object({ mode: z.literal("expires_at"), expiresAt: iso }).strict(),
+  validation, governancePolicy: governancePolicy.nullable(), decisionPolicy: z.object({ mode: z.literal("expires_at"), expiresAt: iso }).strict(),
   status: z.enum(["pending", "approved", "denied", "consumed", "expired"]), decision: agentDecision.nullable(),
   consumption: z.object({ consumed: z.literal(true), consumedAt: iso }).strict().nullable(), createdAt: iso, authorizesExecution: z.literal(false),
 }).strict();
@@ -214,6 +222,7 @@ export function createPublishingApprovalRegistrations(
       lifecycle,
       input: z.object({
         idempotencyKey: z.string().min(8).max(200), revisionId: id,
+        policyId: id, policyRevision: z.number().int().positive(),
         action: z.literal("publish"), targetIds: z.array(id).min(1).max(50),
         channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200),
         retrySource: z.object({ deliveryId: id, evidenceDigest: digest }).strict().optional(), expiresAt: iso,

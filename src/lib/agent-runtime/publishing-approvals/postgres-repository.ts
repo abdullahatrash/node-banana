@@ -37,6 +37,7 @@ import {
   socialAccounts,
   user,
   workspaceMembers,
+  workspaceGovernanceResources,
 } from "@/lib/db/schema";
 import { readLinkedInAuthorKind } from "@/lib/social/linkedin-author-kind";
 import {
@@ -66,6 +67,7 @@ import type {
   PublishingApprovalConsumptionPort,
   PublishingApprovalConsumptionRecord,
   PublishingApprovalDecisionRecord,
+  PublishingApprovalGovernanceBinding,
   PublishingApprovalMutationReceiptRecord,
   PublishingApprovalRepository,
   PublishingApprovalRequestRecord,
@@ -223,6 +225,21 @@ function authorizedResources(value: unknown): {
   return channelIds && artifactIds ? { channelIds, artifactIds } : null;
 }
 
+function governanceBinding(value: unknown): PublishingApprovalGovernanceBinding | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (
+    Object.keys(row).sort().join(",") !==
+      "governanceRequestId,policyDigest,policyId,policyRevision,schema" ||
+    row.schema !== "publishing-approval-governance-binding/v1" ||
+    typeof row.governanceRequestId !== "string" || !ID.test(row.governanceRequestId) ||
+    typeof row.policyId !== "string" || !ID.test(row.policyId) ||
+    typeof row.policyRevision !== "number" || !Number.isInteger(row.policyRevision) || row.policyRevision < 1 ||
+    typeof row.policyDigest !== "string" || !DIGEST.test(row.policyDigest)
+  ) return null;
+  return row as unknown as PublishingApprovalGovernanceBinding;
+}
+
 function consumptionRecord(row: ConsumptionRow | null): PublishingApprovalConsumptionRecord | null {
   if (!row) return null;
   const resources = authorizedResources(row.authorizedResources);
@@ -266,10 +283,12 @@ function requestRecord(input: {
   const artifactIds = safeArtifactIds(row.artifactIds, true);
   const decision = decisionRecord(input.decision);
   const consumption = consumptionRecord(input.consumption);
+  const policy = row.governancePolicy == null ? null : governanceBinding(row.governancePolicy);
   if (
     !targetIds ||
     !channelIds ||
     !artifactIds ||
+    (row.governancePolicy != null && !policy) ||
     !/^par_[A-Za-z0-9_-]+$/.test(row.id) || !ID.test(row.workspaceId) ||
     !ID.test(row.planId) || !ID.test(row.planRevisionId) || row.planRevision < 1 ||
     !ID.test(row.requestingPrincipalId) || !ID.test(row.requestingKeyId) ||
@@ -335,6 +354,7 @@ function requestRecord(input: {
       runtimePolicyIdentity: row.validationRuntimePolicyIdentity,
       runtimePolicyContractDigest: row.validationRuntimePolicyContractDigest,
     },
+    governancePolicy: policy,
     decisionPolicy: { mode: "expires_at", expiresAt: row.decisionPolicyExpiresAt },
     createdAt: row.createdAt,
     decision,
@@ -883,6 +903,7 @@ export class DrizzlePublishingApprovalRepository
           validationExpiresAt: new Date(request.validation.expiresAt),
           validationRuntimePolicyIdentity: request.validation.runtimePolicyIdentity,
           validationRuntimePolicyContractDigest: request.validation.runtimePolicyContractDigest,
+          governancePolicy: request.governancePolicy,
           decisionPolicyMode: request.decisionPolicy.mode,
           decisionPolicyExpiresAt: request.decisionPolicy.expiresAt,
           authorizesExecution: false, createdAt: request.createdAt,
@@ -1042,6 +1063,27 @@ export class DrizzlePublishingApprovalRepository
           consumption.authorizationContractDigest !== publishingApprovalReleaseAuthorizationContractDigest() ||
           !sameSet(consumption.authorizedResources.channelIds, request.channelIds) ||
           !sameSet(consumption.authorizedResources.artifactIds, request.artifactIds)) return "invalid" as const;
+        if (!request.governancePolicy) return "invalid" as const;
+        const governanceRows = await tx.select({
+          status: workspaceGovernanceResources.status,
+          body: workspaceGovernanceResources.body,
+        }).from(workspaceGovernanceResources).where(and(
+          eq(workspaceGovernanceResources.workspaceId, request.workspaceId),
+          eq(workspaceGovernanceResources.kind, "approval_request"),
+          eq(workspaceGovernanceResources.id, request.governancePolicy.governanceRequestId),
+        )).limit(1).for("share");
+        const governance = governanceRows[0];
+        const governanceBody = governance?.body as Record<string, unknown> | undefined;
+        if (
+          governance?.status !== "accepted" ||
+          governanceBody?.purpose !== "publishing_approval" ||
+          governanceBody.runtimeApprovalRequestId !== request.id ||
+          governanceBody.planRevisionId !== request.planRevisionId ||
+          governanceBody.planRevisionDigest !== request.planRevisionDigest ||
+          governanceBody.policyId !== request.governancePolicy.policyId ||
+          governanceBody.policyRevision !== request.governancePolicy.policyRevision ||
+          governanceBody.policyDigest !== request.governancePolicy.policyDigest
+        ) return "invalid" as const;
         const authRows = await tx.select({
           decision: agentAuthorizationDecisions,
           principalStatus: agentPrincipals.status, principalRevokedAt: agentPrincipals.revokedAt,

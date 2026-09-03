@@ -57,6 +57,13 @@ function validRequestRow() {
     validationExpiresAt: new Date("2026-08-08T13:00:00.000Z"),
     validationRuntimePolicyIdentity: "publishing-runtime-policy/default@1",
     validationRuntimePolicyContractDigest: publishingPlanRuntimePolicyContractDigest(),
+    governancePolicy: {
+      schema: "publishing-approval-governance-binding/v1",
+      governanceRequestId: "gpar_request_1",
+      policyId: "policy_1",
+      policyRevision: 2,
+      policyDigest: `sha256:${"5".repeat(64)}`,
+    },
     decisionPolicyMode: "expires_at",
     decisionPolicyExpiresAt: new Date("2026-08-08T12:30:00.000Z"),
     authorizesExecution: false,
@@ -75,6 +82,11 @@ describe("Postgres Publishing Approval repository contract", () => {
     await expect(repositoryReturning({
       ...valid,
       validationRuntimePolicyIdentity: "attacker-policy@1",
+    }).getRequest({ workspaceId: "workspace_1", approvalRequestId: valid.id }))
+      .resolves.toBeNull();
+    await expect(repositoryReturning({
+      ...valid,
+      governancePolicy: { ...valid.governancePolicy, policyRevision: 0 },
     }).getRequest({ workspaceId: "workspace_1", approvalRequestId: valid.id }))
       .resolves.toBeNull();
     await expect(repositoryReturning({
@@ -183,6 +195,8 @@ describe("Postgres Publishing Approval repository contract", () => {
     expect(source).toContain("publishingApprovalReleaseAuthorizationContractDigest()");
     expect(source).toContain("request.decision.decision !== \"approved\"");
     expect(source).toContain("return \"already_consumed\" as const");
+    expect(source).toContain('governance?.status !== "accepted"');
+    expect(source).toContain("governanceBody.planRevisionDigest !== request.planRevisionDigest");
     expect(source).toContain("finalNow >= consumption.authorizationExpiresAt");
   });
 });

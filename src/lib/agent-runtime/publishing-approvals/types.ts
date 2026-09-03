@@ -26,6 +26,15 @@ export interface PublishingApprovalDecisionPolicy {
   expiresAt: Date;
 }
 
+/** Immutable link to the Workspace's versioned Publishing Approval Policy. */
+export interface PublishingApprovalGovernanceBinding {
+  schema: "publishing-approval-governance-binding/v1";
+  governanceRequestId: string;
+  policyId: string;
+  policyRevision: number;
+  policyDigest: string;
+}
+
 export interface PublishingApprovalAuthorityGrantRecord {
   id: string;
   workspaceId: string;
@@ -105,6 +114,8 @@ export interface PublishingApprovalRequestRecord {
     resources: { channelIds: string[]; artifactIds: string[] };
   };
   validation: PublishingApprovalValidationBinding;
+  /** Null only for retained pre-policy history; new production requests require it. */
+  governancePolicy?: PublishingApprovalGovernanceBinding | null;
   decisionPolicy: PublishingApprovalDecisionPolicy;
   createdAt: Date;
   decision: PublishingApprovalDecisionRecord | null;
@@ -164,6 +175,7 @@ export interface PublishingApprovalAgentDto {
   artifactIds: string[];
   retrySource: { deliveryId: string; evidenceDigest: string } | null;
   validation: PublishingApprovalValidationBinding;
+  governancePolicy: PublishingApprovalGovernanceBinding | null;
   decisionPolicy: { mode: "expires_at"; expiresAt: string };
   status: PublishingApprovalStatus;
   decision: {
@@ -315,6 +327,37 @@ export interface PublishingApprovalPresentationPort {
     actorUserId: string;
     presentedAt: Date;
   }): Promise<PublishingApprovalPresentationTarget[]>;
+}
+
+export interface PublishingApprovalGovernancePolicyPort {
+  bind(input: {
+    workspaceId: string;
+    runtimeApprovalRequestId: string;
+    requestingPrincipalId: string;
+    planId: string;
+    planRevisionId: string;
+    planRevision: number;
+    planRevisionDigest: string;
+    policyId: string;
+    policyRevision: number;
+    expiresAt: Date;
+    requestedAt: Date;
+  }): Promise<PublishingApprovalGovernanceBinding | null>;
+  decide(input: {
+    workspaceId: string;
+    binding: PublishingApprovalGovernanceBinding;
+    runtimeApprovalRequestId: string;
+    userId: string;
+    legacyRole: "owner" | "admin" | "member";
+    decision: "approve" | "reject";
+    idempotencyKey: string;
+    decidedAt: Date;
+  }): Promise<"pending" | "accepted" | "rejected" | "expired" | "forbidden" | "conflict" | "unavailable">;
+  verifyAccepted(input: {
+    workspaceId: string;
+    runtimeApprovalRequestId: string;
+    binding: PublishingApprovalGovernanceBinding;
+  }): Promise<boolean>;
 }
 
 export interface PublishingApprovalAuthorityAdminPort {

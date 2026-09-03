@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { publishingApprovalAgentDtoFromDto } from "../service";
 import { exactPublishingApprovalSelection, publishingApprovalValidationBinding } from "../validation";
 import { setupPublishingApprovals } from "./fixtures";
+import type { PublishingApprovalGovernancePolicyPort } from "../types";
 
 describe("PublishingApprovalService", () => {
   it("binds one exact current revision, action, target/resource manifests, requester, validation, and bounded expiry", async () => {
@@ -187,5 +188,38 @@ describe("PublishingApprovalService", () => {
     const revision = structuredClone(setup.revision);
     revision.validationEvidence.runtimePolicy.identity = "publishing-runtime-policy/other@1";
     expect(() => publishingApprovalValidationBinding({ revision, targetIds: ["target_1"] })).toThrow(expect.objectContaining({ code: "PUBLISHING_APPROVAL_STALE_VALIDATION" }));
+  });
+
+  it("keeps runtime approval pending until the pinned Workspace policy reaches acceptance", async () => {
+    let decisionCount = 0;
+    const binding = {
+      schema: "publishing-approval-governance-binding/v1" as const,
+      governanceRequestId: "gpar_request_1",
+      policyId: "policy_publishing",
+      policyRevision: 1,
+      policyDigest: `sha256:${"9".repeat(64)}`,
+    };
+    const policyPort: PublishingApprovalGovernancePolicyPort = {
+      bind: async () => binding,
+      decide: async () => ++decisionCount === 1 ? "pending" : "accepted",
+      verifyAccepted: async () => decisionCount > 1,
+    };
+    const setup = await setupPublishingApprovals(policyPort);
+    const requested = await setup.service.request(setup.requestInput());
+    expect(requested.governancePolicy).toEqual(binding);
+
+    const first = await setup.service.decide({
+      workspaceId: "workspace_1", userId: "member_a", idempotencyKey: "policy-stage-one",
+      approvalRequestId: requested.id, expectedInspectionDigest: requested.inspectionDigest,
+      decision: "approved",
+    });
+    expect(first).toMatchObject({ status: "pending", decision: null });
+
+    const second = await setup.service.decide({
+      workspaceId: "workspace_1", userId: "member_b", idempotencyKey: "policy-stage-two",
+      approvalRequestId: requested.id, expectedInspectionDigest: requested.inspectionDigest,
+      decision: "approved",
+    });
+    expect(second).toMatchObject({ status: "approved", decision: { decidedByUserId: "member_b" } });
   });
 });
