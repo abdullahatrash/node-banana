@@ -77,6 +77,23 @@ export class GovernanceExportWorker {
     }
   }
 
+  private async listAllFederatedAudit(workspaceId: string): Promise<GovernanceAuditEvent[]> {
+    const events: GovernanceAuditEvent[] = [];
+    let before: { occurredAt: Date; id: string } | undefined;
+    for (;;) {
+      const page = await this.auditFederation.list({ workspaceId, before, limit: 500 });
+      events.push(...page);
+      if (page.length < 500) return events;
+      const last = page.at(-1);
+      if (!last) return events;
+      const next = { occurredAt: last.occurredAt, id: last.id };
+      if (before && next.occurredAt.getTime() === before.occurredAt.getTime() && next.id === before.id) {
+        throw new Error("Federated audit export cursor did not advance.");
+      }
+      before = next;
+    }
+  }
+
   async process(input: { workspaceId: string; kind: "audit_export" | "workspace_export"; exportId: string }): Promise<void> {
     const found = await this.repository.getResource({ workspaceId: input.workspaceId, kind: input.kind, id: input.exportId });
     if (!found || found.status === "succeeded") return;
@@ -91,7 +108,7 @@ export class GovernanceExportWorker {
       if (job.createdByUserId !== jobBody.requestedByUserId || jobBody.authoritySnapshot.requestedByUserId !== jobBody.requestedByUserId || jobBody.authoritySnapshot.capability !== requiredCapability || !jobBody.authoritySnapshot.actorCapabilities.includes(requiredCapability.slice(0, -2)) || canonicalDigest(jobBody.authoritySnapshot) !== jobBody.authoritySnapshotDigest) throw new Error("ExportAuthoritySnapshotInvalid");
       const from = jobBody.from ? new Date(jobBody.from) : null;
       const to = jobBody.to ? new Date(jobBody.to) : null;
-      const federatedAudit = await this.auditFederation.list({ workspaceId: input.workspaceId, limit: 10_000 });
+      const federatedAudit = await this.listAllFederatedAudit(input.workspaceId);
       const auditEvents = [...await this.listAllAudit(input.workspaceId), ...federatedAudit]
         .filter((event) => (!from || event.occurredAt >= from) && (!to || event.occurredAt <= to))
         .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime() || a.id.localeCompare(b.id))

@@ -166,4 +166,44 @@ describe("GovernanceExportWorker", () => {
       limit: 500,
     });
   });
+
+  it("paginates the federated domain trail with a stable timestamp and id cursor", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const requested = await createWorkspaceExport(repository);
+    const events = Array.from({ length: 501 }, (_, index) => ({
+      schema: "workspace-audit-event/v1" as const,
+      id: `federated:generation:${String(501 - index).padStart(4, "0")}`,
+      workspaceId: actor.workspaceId,
+      actor: { kind: "system" as const, id: null },
+      capability: "workflow_runs.audit@1",
+      action: "run.completed",
+      resource: { kind: "workflow_run", id: `run-${index}` },
+      outcome: "completed" as const,
+      redactedDetails: { source: "generation" },
+      occurredAt: new Date(now.getTime() - index),
+    }));
+    const list = vi.fn(async ({ before, limit }: { before?: { occurredAt: Date; id: string }; limit: number }) => {
+      const eligible = before
+        ? events.filter((item) => item.occurredAt < before.occurredAt || (item.occurredAt.getTime() === before.occurredAt.getTime() && item.id < before.id))
+        : events;
+      return eligible.slice(0, limit);
+    });
+    const worker = new GovernanceExportWorker(repository, new MemoryStore(), {
+      encryptionKeyBase64: Buffer.alloc(32, 1).toString("base64"),
+      signingKeyBase64: Buffer.alloc(32, 2).toString("base64"),
+    }, undefined, undefined, undefined, { list });
+
+    await worker.process({ workspaceId: actor.workspaceId, kind: "workspace_export", exportId: requested.exportId });
+
+    expect(list).toHaveBeenNthCalledWith(1, {
+      workspaceId: actor.workspaceId,
+      before: undefined,
+      limit: 500,
+    });
+    expect(list).toHaveBeenNthCalledWith(2, {
+      workspaceId: actor.workspaceId,
+      before: { occurredAt: events[499].occurredAt, id: events[499].id },
+      limit: 500,
+    });
+  });
 });
