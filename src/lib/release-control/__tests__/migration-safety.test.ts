@@ -19,4 +19,11 @@ describe("release-quality migration safety", () => {
     expect(sql).toContain('"failure_count" = "failure_count" + 1');
     expect(sql).toContain("backfill_product_telemetry_privacy_fields");
   });
+
+  it("schedules telemetry retention through a cron-compatible handler", () => {
+    const config = JSON.parse(fs.readFileSync(path.join(root, "vercel.json"), "utf8")) as { crons: Array<{ path: string }> };
+    const route = fs.readFileSync(path.join(root, "src/app/api/studio/internal/product-telemetry-retention/route.ts"), "utf8");
+    expect(config.crons).toContainEqual(expect.objectContaining({ path: "/api/studio/internal/product-telemetry-retention?limit=500" }));
+    expect(route).toContain("export const GET = POST");
+  });
 });

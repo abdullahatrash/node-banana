@@ -17,3 +17,6 @@ export async function POST(request: NextRequest) {
   }
   catch (error) { if (error instanceof TypeError) return noStoreJson({ success: false, code: error.message }, { status: 400 }); throw error; }
 }
+
+// Vercel Cron invokes configured paths with GET. POST remains available to operators.
+export const GET = POST;
