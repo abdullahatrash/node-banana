@@ -4,6 +4,7 @@ import type { getDb } from "@/lib/db";
 import {
   agentSecurityEvents,
   workspaceMembers,
+  workspaceGovernanceResources,
   workspaces,
 } from "@/lib/db/schema";
 import type {
@@ -105,5 +106,50 @@ export class CompositeCapabilityAuthorizer implements CapabilityAuthorizer {
       (request.audience === "agent" || request.audience === "shared")
       ? this.agent.authorize(request)
       : this.human.authorize(request);
+  }
+}
+
+const CLOSURE_CONTINUATION_CAPABILITIES = new Set([
+  "governance.view",
+  "workspace.close",
+  "workspace.transfer_ownership",
+  "exports.manage",
+  "audit.export",
+  "retention.manage",
+  "publishing_deliveries.cancel",
+  "spend_controls.suspend",
+]);
+
+export function closureAllowsCapability(request: CapabilityAuthorizationRequest): boolean {
+  return request.effect?.mutation === "none" || CLOSURE_CONTINUATION_CAPABILITIES.has(request.capability.name);
+}
+
+/** Blocks every new human or Agent effect while a Workspace closure cools off. */
+export class WorkspaceClosureAwareAuthorizer implements CapabilityAuthorizer {
+  constructor(private readonly delegate: CapabilityAuthorizer, private readonly database: () => Db) {}
+
+  async authorize(request: CapabilityAuthorizationRequest): Promise<CapabilityAuthorizationAdmission> {
+    if (closureAllowsCapability(request)) return this.delegate.authorize(request);
+    const [closure] = await this.database().select({ id: workspaceGovernanceResources.id }).from(workspaceGovernanceResources).where(and(eq(workspaceGovernanceResources.workspaceId, request.securityContext.workspaceId), eq(workspaceGovernanceResources.kind, "workspace_closure"), eq(workspaceGovernanceResources.status, "cooling_off"))).limit(1);
+    if (!closure) return this.delegate.authorize(request);
+    const trace = `otr_${randomUUID().replaceAll("-", "")}`;
+    const context = request.securityContext;
+    await this.database().insert(agentSecurityEvents).values({
+      id: randomUUID(),
+      workspaceId: context.workspaceId,
+      principalId: context.kind === "agent" ? context.principalId : null,
+      keyId: context.kind === "agent" ? context.keyId : null,
+      actorUserId: context.kind === "human" ? context.userId : null,
+      eventType: "authorization.denied",
+      capabilityName: request.capability.name,
+      capabilityVersion: request.capability.version,
+      reason: "workspace_closure_effects_blocked",
+      resourceKinds: [...new Set(request.resources.map((resource) => resource.kind))],
+      changeRef: trace,
+      revision: null,
+      principalStatus: null,
+      createdAt: new Date(),
+    });
+    return { allowed: false, code: "CAPABILITY_NOT_AUTHORIZED", message: "Workspace Closure blocks new effects during the cooling-off period.", operatorTraceRef: trace };
   }
 }

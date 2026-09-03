@@ -4,6 +4,7 @@ import type {
   CapabilityAuthorizer,
 } from "@/types/agentAuthorization";
 import {
+  closureAllowsCapability,
   CompositeCapabilityAuthorizer,
   HumanCapabilityAuthorizer,
 } from "../composite-authorizer";
@@ -48,6 +49,56 @@ function database(role: "owner" | "admin" | "member" | undefined) {
 }
 
 describe("unified capability authorization", () => {
+  it("allows reads and only explicit closure continuations during cooling off", () => {
+    expect(closureAllowsCapability({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "owner",
+      }),
+      effect: {
+        mutation: "none",
+        visibility: "private",
+        timing: "immediate",
+        reversibility: "reversible",
+        maySpendProviderBudget: false,
+      },
+    })).toBe(true);
+    expect(closureAllowsCapability({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "owner",
+      }),
+      capability: { name: "workspace.close", version: 1 },
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "immediate",
+        reversibility: "conditional",
+        maySpendProviderBudget: false,
+      },
+    })).toBe(true);
+    expect(closureAllowsCapability({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "owner",
+      }),
+      capability: { name: "artifacts.create", version: 1 },
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "immediate",
+        reversibility: "conditional",
+        maySpendProviderBudget: false,
+      },
+    })).toBe(false);
+  });
+
   it("persists an allowed human manager decision", async () => {
     const db = database("admin");
     const authorizer = new HumanCapabilityAuthorizer(db.getDb);

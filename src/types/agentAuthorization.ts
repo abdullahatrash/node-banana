@@ -1,9 +1,5 @@
-import type {
-  AgentKeyRecord,
-  AgentPrincipalRecord,
-  AgentSecurityContext,
-} from "./agentAuth";
-import type { CapabilityIdentity } from "./capabilities";
+import type { AgentKeyRecord } from "./agentAuth";
+import type { CapabilityEffect, CapabilityIdentity } from "./capabilities";
 import type { ResolvedSecurityContext } from "./capabilities";
 
 export type AgentResourceKind =
@@ -201,6 +197,8 @@ export interface CapabilityAuthorizationRequest {
   authorizationContractDigest: string;
   resources: AgentResourceRef[];
   resourceExtractionValid?: boolean;
+  /** Server-owned effect metadata used for Workspace lifecycle admission. */
+  effect?: CapabilityEffect;
 }
 
 export interface CapabilityAuthorizationAdmission {
