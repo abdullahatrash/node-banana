@@ -43,6 +43,7 @@ import {
   projectGovernanceResource,
 } from "./projection";
 import { TRUSTED_RETENTION_LEGAL_FLOORS, trustedRetentionRule } from "./retention-policy";
+import { EMPTY_GOVERNANCE_AUDIT_FEDERATION, type GovernanceAuditFederationPort } from "./audit-federation";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const IDEMPOTENCY = /^[\x20-\x7e]{8,200}$/;
@@ -330,6 +331,7 @@ export class GovernanceService {
     private readonly regionVerification: GovernanceRegionVerificationPort = UNCONFIGURED_GOVERNANCE_REGION_VERIFIER,
     private readonly importManifestVerification: GovernanceImportManifestVerificationPort = UNCONFIGURED_GOVERNANCE_IMPORT_MANIFEST_VERIFIER,
     private readonly bulkPreview: GovernanceBulkPreviewPort = { inspect: async () => ({ type: "blocked", code: "BULK_PREVIEW_ADAPTER_NOT_CONFIGURED" }) },
+    private readonly auditFederation: GovernanceAuditFederationPort = EMPTY_GOVERNANCE_AUDIT_FEDERATION,
   ) {}
 
   private async roleBinding(actor: GovernanceActor): Promise<WorkspaceRoleBinding> {
@@ -359,10 +361,13 @@ export class GovernanceService {
   async snapshot(actor: GovernanceActor): Promise<GovernanceSnapshot> {
     const capabilities = await this.capabilities(actor);
     if (!capabilities.includes("governance.view")) throw new GovernanceError("FORBIDDEN", "Governance access denied.");
-    const [resources, audit] = await Promise.all([
+    const [resources, audit, federatedAudit] = await Promise.all([
       this.repository.listResources({ workspaceId: actor.workspaceId }),
       capabilities.includes("audit.view")
         ? this.repository.listAudit({ workspaceId: actor.workspaceId, limit: 100 })
+        : Promise.resolve([]),
+      capabilities.includes("audit.view")
+        ? this.auditFederation.list({ workspaceId: actor.workspaceId, limit: 100 })
         : Promise.resolve([]),
     ]);
     const visible = resources
@@ -374,7 +379,7 @@ export class GovernanceService {
       workspaceId: actor.workspaceId,
       actorCapabilities: capabilities,
       resources: grouped,
-      audit: audit.map(projectGovernanceAuditEvent),
+      audit: [...audit, ...federatedAudit].sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime() || b.id.localeCompare(a.id)).slice(0, 100).map(projectGovernanceAuditEvent),
     };
   }
 

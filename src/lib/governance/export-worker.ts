@@ -9,6 +9,7 @@ import {
   type GovernancePortableKind,
 } from "./portability";
 import { governanceImportManifestPayload } from "./import-manifest";
+import { EMPTY_GOVERNANCE_AUDIT_FEDERATION, type GovernanceAuditFederationPort } from "./audit-federation";
 
 export interface GovernanceExportStore {
   put(input: { key: string; bytes: Uint8Array }): Promise<void>;
@@ -54,6 +55,7 @@ export class GovernanceExportWorker {
     private readonly clock: { now(): Date } = { now: () => new Date() },
     private readonly admitStorageRoute?: (input: { workspaceId: string; routeId: string; configuredRegion: string }) => Promise<{ allowed: boolean; reason?: string }>,
     private readonly portableData?: GovernancePortableDataPort,
+    private readonly auditFederation: GovernanceAuditFederationPort = EMPTY_GOVERNANCE_AUDIT_FEDERATION,
   ) {}
 
   private async listAllAudit(workspaceId: string): Promise<GovernanceAuditEvent[]> {
@@ -89,8 +91,10 @@ export class GovernanceExportWorker {
       if (job.createdByUserId !== jobBody.requestedByUserId || jobBody.authoritySnapshot.requestedByUserId !== jobBody.requestedByUserId || jobBody.authoritySnapshot.capability !== requiredCapability || !jobBody.authoritySnapshot.actorCapabilities.includes(requiredCapability.slice(0, -2)) || canonicalDigest(jobBody.authoritySnapshot) !== jobBody.authoritySnapshotDigest) throw new Error("ExportAuthoritySnapshotInvalid");
       const from = jobBody.from ? new Date(jobBody.from) : null;
       const to = jobBody.to ? new Date(jobBody.to) : null;
-      const auditEvents = (await this.listAllAudit(input.workspaceId))
+      const federatedAudit = await this.auditFederation.list({ workspaceId: input.workspaceId, limit: 10_000 });
+      const auditEvents = [...await this.listAllAudit(input.workspaceId), ...federatedAudit]
         .filter((event) => (!from || event.occurredAt >= from) && (!to || event.occurredAt <= to))
+        .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime() || a.id.localeCompare(b.id))
         .map(projectGovernanceAuditEvent);
       const includeKinds = new Set(jobBody.includeKinds ?? []);
       const resources = input.kind === "workspace_export"

@@ -14,6 +14,7 @@ import { DrizzleGovernancePortableDataPort } from "./portability";
 import { ProductionGovernanceDeletionAdapter, ProductionGovernanceSafetyRevalidationAdapter } from "./production-adapters";
 import { BetterAuthOrganizationMembershipProjectionPort, GovernanceMembershipProjectionWorker } from "./membership-projection-worker";
 import { GovernanceSecretDeliverySweeper } from "./secret-delivery-sweeper";
+import { DrizzleGovernanceAuditFederation } from "./audit-federation";
 
 function regionTrustKeys(): Map<string, Uint8Array> {
   const keys = new Map<string, Uint8Array>();
@@ -54,6 +55,7 @@ export const PRODUCTION_GOVERNANCE_SERVICE = new GovernanceService(
   new ConfiguredGovernanceRegionVerifier(regionTrustKeys()),
   new HmacGovernanceImportManifestVerifier(importTrustKeys()),
   new ProductionGovernanceBulkPreviewPort(),
+  new DrizzleGovernanceAuditFederation(getDb),
 );
 
 export async function admitProductionGovernanceRegionRoute(input: { workspaceId: string; kind: GovernanceRegionRouteKind; routeId: string; configuredRegion: string }) {
@@ -71,6 +73,7 @@ export function getProductionGovernanceExportWorker(): GovernanceExportWorker {
     undefined,
     ({ workspaceId, routeId, configuredRegion }) => admitProductionGovernanceRegionRoute({ workspaceId, kind: "primary_storage", routeId, configuredRegion }),
     new DrizzleGovernancePortableDataPort(getDb),
+    new DrizzleGovernanceAuditFederation(getDb),
   );
 }
 

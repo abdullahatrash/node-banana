@@ -215,6 +215,16 @@ describe("GovernanceService", () => {
     expect(serialized).not.toContain("codeSalt");
   });
 
+  it("merges Workspace-isolated authoritative domain audit events into the customer trail", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const list = vi.fn(async ({ workspaceId }: { workspaceId: string }) => [{ schema: "workspace-audit-event/v1" as const, id: "federated:generation:event-1", workspaceId, actor: { kind: "system" as const, id: "agent-1" }, capability: "workflow_runs.audit@1", action: "run.completed", resource: { kind: "workflow_run", id: "run-1" }, outcome: "completed" as const, redactedDetails: { source: "generation", tokenDigest: "must-not-render" }, occurredAt: new Date(NOW) }]);
+    const service = new GovernanceService(repository, { now: () => new Date(NOW) }, undefined, undefined, { verify: () => true }, bulkPreview, { list });
+    const snapshot = await service.snapshot(owner);
+    expect(list).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, limit: 100 });
+    expect(snapshot.audit).toContainEqual(expect.objectContaining({ id: "federated:generation:event-1", workspaceId: owner.workspaceId, action: "run.completed" }));
+    expect(JSON.stringify(snapshot.audit)).not.toContain("must-not-render");
+  });
+
   it("revokes a pending invitation so it can no longer be accepted", async () => {
     const { service } = setup();
     const invitation = await service.execute(owner, { type: "create_invitation", email: "revoked@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "create-revoked-invite") as { invitationId: string; invitationToken: string };
