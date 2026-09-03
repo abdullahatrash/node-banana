@@ -145,7 +145,7 @@ export async function duplicateDraftForWorkspace(
 ): Promise<CopilotDraft> {
   const source = (await getSocialPost(ctx.workspaceId, postId)) as SocialPostRow & {
     mediaUrls: Array<{ type: string; url: string; alt?: string }> | null;
-    stableMediaRefs: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number }>;
+    stableMediaRefs?: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number }>;
     platformSettings: Record<string, unknown> | null;
   };
 
@@ -154,7 +154,7 @@ export async function duplicateDraftForWorkspace(
     socialAccountId: opts?.channelId ?? source.socialAccountId,
     content: source.content ?? undefined,
     mediaUrls: source.mediaUrls ?? undefined,
-    mediaReferences: source.stableMediaRefs.sort((left, right) => left.order - right.order).map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset" as const, id: reference.assetId, digest: reference.assetDigest })),
+    ...((source.stableMediaRefs?.length ?? 0) > 0 ? { mediaReferences: [...source.stableMediaRefs!].sort((left, right) => left.order - right.order).map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset" as const, id: reference.assetId, digest: reference.assetDigest })) } : {}),
     platformSettings: source.platformSettings ?? undefined,
     createdByUserId: ctx.userId,
   });

@@ -99,6 +99,15 @@ export interface SocialPostStableMediaReference {
   alt?: string;
 }
 
+function socialStorageKeyMatchesUrl(storageKey: string, url: string): boolean {
+  if (storageKey === url) return true;
+  try {
+    return decodeURIComponent(new URL(url).pathname).endsWith(`/${storageKey}`);
+  } catch {
+    return false;
+  }
+}
+
 function socialAssetDigest(asset: {
   type: string;
   mimeType: string | null;
@@ -822,20 +831,28 @@ async function resolveStableSocialMedia(input: {
 }): Promise<SocialPostStableMediaReference[]> {
   if (input.mediaUrls.length === 0 && input.references.length === 0) return [];
   const db = getDb();
+  const deriveLegacyReferences = input.references.length === 0;
   const assetIds = input.references.filter((reference) => reference.resourceKind === "studio_asset").map((reference) => reference.id);
   const artifactIds = input.references.filter((reference) => reference.resourceKind === "artifact").map((reference) => reference.id);
   const [assetRows, artifactRows] = await Promise.all([
-    assetIds.length
-      ? db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, assetIds), isNull(assets.deletedAt)))
+    deriveLegacyReferences || assetIds.length
+      ? db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), deriveLegacyReferences ? undefined : inArray(assets.id, assetIds), isNull(assets.deletedAt)))
       : [],
-    artifactIds.length
-      ? db.select({ artifact: artifacts, content: artifactContents }).from(artifacts).innerJoin(artifactContents, and(eq(artifactContents.workspaceId, artifacts.workspaceId), eq(artifactContents.digest, artifacts.contentDigest))).where(and(eq(artifacts.workspaceId, input.workspaceId), inArray(artifacts.id, artifactIds), isNull(artifacts.deletedAt)))
+    deriveLegacyReferences || artifactIds.length
+      ? db.select({ artifact: artifacts, content: artifactContents }).from(artifacts).innerJoin(artifactContents, and(eq(artifactContents.workspaceId, artifacts.workspaceId), eq(artifactContents.digest, artifacts.contentDigest))).where(and(eq(artifacts.workspaceId, input.workspaceId), deriveLegacyReferences ? eq(artifactContents.kind, "image") : inArray(artifacts.id, artifactIds), isNull(artifacts.deletedAt)))
       : [],
   ]);
-  const resources = new Map<string, { resourceKind: "studio_asset" | "artifact"; id: string; digest: string; type: string }>();
-  for (const asset of assetRows) resources.set(`studio_asset:${asset.id}`, { resourceKind: "studio_asset", id: asset.id, digest: socialAssetDigest(asset), type: asset.type });
-  for (const { artifact, content } of artifactRows) resources.set(`artifact:${artifact.id}`, { resourceKind: "artifact", id: artifact.id, digest: content.digest, type: content.kind });
-  return bindStableSocialMedia({ mediaUrls: input.mediaUrls, references: input.references, resources });
+  const resources = new Map<string, { resourceKind: "studio_asset" | "artifact"; id: string; digest: string; type: string; storageKey: string }>();
+  for (const asset of assetRows) resources.set(`studio_asset:${asset.id}`, { resourceKind: "studio_asset", id: asset.id, digest: socialAssetDigest(asset), type: asset.type, storageKey: asset.storageKey });
+  for (const { artifact, content } of artifactRows) if (content.storageKey) resources.set(`artifact:${artifact.id}`, { resourceKind: "artifact", id: artifact.id, digest: content.digest, type: content.kind, storageKey: content.storageKey });
+  const references = deriveLegacyReferences
+    ? input.mediaUrls.map((media, order) => {
+        const candidates = [...resources.values()].filter((resource) => resource.type === media.type && socialStorageKeyMatchesUrl(resource.storageKey, media.url));
+        if (candidates.length !== 1) throw new SocialPostMediaBindingError(`Legacy social media relation cannot be resolved unambiguously at position ${order}.`);
+        return { resourceKind: candidates[0].resourceKind, id: candidates[0].id, digest: candidates[0].digest };
+      })
+    : input.references;
+  return bindStableSocialMedia({ mediaUrls: input.mediaUrls, references, resources });
 }
 
 export async function createSocialPost(input: {
