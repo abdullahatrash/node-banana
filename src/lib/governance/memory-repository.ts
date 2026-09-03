@@ -68,6 +68,26 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
       .map(copy);
   }
 
+  async listClaimableGovernanceJobs(input: { evaluatedAt: Date; after?: import("./types").GovernanceJobCursor; limit: number }) {
+    const terminalLease = (resource: GovernanceResource) => {
+      const lease = (resource.body as { lease?: { expiresAt?: string } }).lease;
+      return !lease?.expiresAt || new Date(lease.expiresAt) <= input.evaluatedAt;
+    };
+    const claimable = (resource: GovernanceResource) => {
+      if (["audit_export", "workspace_export", "workspace_import"].includes(resource.kind)) return resource.status === "queued" || (resource.status === "running" && terminalLease(resource));
+      if (resource.kind === "bulk_operation") return ["queued", "cancelling"].includes(resource.status) || (resource.status === "running" && terminalLease(resource));
+      if (resource.kind === "deletion_receipt") {
+        if (resource.status === "delayed") return Object.values((resource.body as { outcomes?: Record<string, { state: string; retryAt?: string }> }).outcomes ?? {}).some((outcome) => outcome.state === "delayed" && outcome.retryAt && new Date(outcome.retryAt) <= input.evaluatedAt);
+        return resource.status === "queued" || (resource.status === "running" && terminalLease(resource));
+      }
+      if (resource.kind === "safety_appeal") return resource.status === "revalidation_queued" || (resource.status === "revalidation_running" && terminalLease(resource));
+      return resource.kind === "approval_request" && ["pending", "escalated"].includes(resource.status);
+    };
+    const compare = (left: GovernanceResource, right: GovernanceResource) => left.updatedAt.getTime() - right.updatedAt.getTime() || left.workspaceId.localeCompare(right.workspaceId) || left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id);
+    const after = input.after;
+    return [...this.resources.values()].filter(claimable).sort(compare).filter((resource) => !after || compare(resource, { ...resource, updatedAt: after.updatedAt, workspaceId: after.workspaceId, kind: after.kind, id: after.id }) > 0).slice(0, input.limit).map(copy);
+  }
+
   async getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;
     kind: GovernanceResourceKind;

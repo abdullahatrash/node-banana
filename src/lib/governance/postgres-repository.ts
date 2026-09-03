@@ -218,6 +218,27 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
     return rows.map((row) => fromResourceRow<Record<string, unknown>>(row));
   }
 
+  async listClaimableGovernanceJobs(input: { evaluatedAt: Date; after?: import("./types").GovernanceJobCursor; limit: number }) {
+    const evaluatedAt = input.evaluatedAt.toISOString();
+    const cursor = input.after
+      ? sql`(${workspaceGovernanceResources.updatedAt}, ${workspaceGovernanceResources.workspaceId}, ${workspaceGovernanceResources.kind}, ${workspaceGovernanceResources.id}) > (${input.after.updatedAt}, ${input.after.workspaceId}, ${input.after.kind}, ${input.after.id})`
+      : undefined;
+    const rows = await this.database().select().from(workspaceGovernanceResources).where(and(
+      cursor,
+      or(
+        and(inArray(workspaceGovernanceResources.kind, ["audit_export", "workspace_export", "workspace_import"]), inArray(workspaceGovernanceResources.status, ["queued", "running"])),
+        and(eq(workspaceGovernanceResources.kind, "bulk_operation"), inArray(workspaceGovernanceResources.status, ["queued", "running", "cancelling"])),
+        and(eq(workspaceGovernanceResources.kind, "deletion_receipt"), inArray(workspaceGovernanceResources.status, ["queued", "delayed", "running"])),
+        and(eq(workspaceGovernanceResources.kind, "safety_appeal"), inArray(workspaceGovernanceResources.status, ["revalidation_queued", "revalidation_running"])),
+        and(eq(workspaceGovernanceResources.kind, "approval_request"), inArray(workspaceGovernanceResources.status, ["pending", "escalated"])),
+      ),
+      sql`(${workspaceGovernanceResources.status} <> 'running' and ${workspaceGovernanceResources.status} <> 'revalidation_running') or coalesce(${workspaceGovernanceResources.body}->'lease'->>'expiresAt', '') <= ${evaluatedAt}`,
+      sql`${workspaceGovernanceResources.status} <> 'delayed' or exists (select 1 from jsonb_each(${workspaceGovernanceResources.body}->'outcomes') value where value->>'state' = 'delayed' and value->>'retryAt' <= ${evaluatedAt})`,
+    )).orderBy(asc(workspaceGovernanceResources.updatedAt), asc(workspaceGovernanceResources.workspaceId), asc(workspaceGovernanceResources.kind), asc(workspaceGovernanceResources.id))
+      .limit(Math.min(Math.max(input.limit, 1), 1_000));
+    return rows.map((row) => fromResourceRow<Record<string, unknown>>(row));
+  }
+
   async getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;
     kind: GovernanceResourceKind;

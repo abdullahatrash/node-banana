@@ -210,6 +210,11 @@ export interface GovernanceRepository {
     evaluatedAt: Date;
     limit: number;
   }): Promise<GovernanceResource[]>;
+  listClaimableGovernanceJobs(input: {
+    evaluatedAt: Date;
+    after?: GovernanceJobCursor;
+    limit: number;
+  }): Promise<GovernanceResource[]>;
   getResource<T = Record<string, unknown>>(input: {
     workspaceId: string;
     kind: GovernanceResourceKind;
@@ -226,6 +231,13 @@ export interface GovernanceRepository {
     limit: number;
   }): Promise<GovernanceAuditEvent[]>;
   commit(input: GovernanceCommit): Promise<GovernanceCommitResult>;
+}
+
+export interface GovernanceJobCursor {
+  updatedAt: Date;
+  workspaceId: string;
+  kind: GovernanceResourceKind;
+  id: string;
 }
 
 export type ApprovalPolicyMode =

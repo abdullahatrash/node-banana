@@ -1,7 +1,4 @@
-import { isNull } from "drizzle-orm";
-import { getDb } from "@/lib/db";
-import { workspaces } from "@/lib/db/schema";
-import type { GovernanceRepository, GovernanceResource } from "./types";
+import { GOVERNANCE_RESOURCE_KINDS, type GovernanceJobCursor, type GovernanceRepository, type GovernanceResource } from "./types";
 import {
   getProductionGovernanceApprovalDeadlineWorker,
   getProductionGovernanceBulkWorker,
@@ -33,6 +30,22 @@ export interface GovernanceSweepSummary {
   deadlinesAdvanced: number;
   membershipProjection: { scanned: number; succeeded: number; retryPending: number; deadLetter: number };
   expiredSecretDeliveriesPurged: number;
+  nextCursor: GovernanceJobCursor | null;
+}
+
+export function encodeGovernanceJobCursor(cursor: GovernanceJobCursor): string {
+  return Buffer.from(JSON.stringify({ ...cursor, updatedAt: cursor.updatedAt.toISOString() }), "utf8").toString("base64url");
+}
+
+export function decodeGovernanceJobCursor(value: string): GovernanceJobCursor | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
+    const updatedAt = new Date(String(parsed.updatedAt));
+    if (!Number.isFinite(updatedAt.getTime()) || typeof parsed.workspaceId !== "string" || typeof parsed.id !== "string" || typeof parsed.kind !== "string" || !GOVERNANCE_RESOURCE_KINDS.includes(parsed.kind as never)) return null;
+    return { updatedAt, workspaceId: parsed.workspaceId, kind: parsed.kind as GovernanceJobCursor["kind"], id: parsed.id };
+  } catch {
+    return null;
+  }
 }
 
 /** Durable recovery entry point; individual workers acquire their own fenced leases. */
@@ -42,14 +55,15 @@ export class GovernanceRecoverySweep {
     private readonly workers: GovernanceSweepWorkers,
   ) {}
 
-  async run(input: { workspaceIds: string[]; maxJobsPerWorkspace: number }): Promise<GovernanceSweepSummary> {
-    const summary: GovernanceSweepSummary = { workspaces: 0, examined: 0, dispatched: 0, failed: 0, deadlinesAdvanced: 0, membershipProjection: { scanned: 0, succeeded: 0, retryPending: 0, deadLetter: 0 }, expiredSecretDeliveriesPurged: 0 };
-    for (const workspaceId of input.workspaceIds) {
-      summary.workspaces += 1;
-      const resources = (await this.repository.listResources({ workspaceId })).slice(0, input.maxJobsPerWorkspace);
-      summary.examined += resources.length;
-      for (const resource of resources) {
-        const dispatch = this.dispatchFor(workspaceId, resource);
+  async run(input: { maxJobs: number; after?: GovernanceJobCursor; evaluatedAt?: Date }): Promise<GovernanceSweepSummary> {
+    const evaluatedAt = input.evaluatedAt ?? new Date();
+    const resources = await this.repository.listClaimableGovernanceJobs({ evaluatedAt, after: input.after, limit: input.maxJobs });
+    const workspaceIds = [...new Set(resources.map((resource) => resource.workspaceId))];
+    const last = resources.at(-1);
+    const summary: GovernanceSweepSummary = { workspaces: workspaceIds.length, examined: resources.length, dispatched: 0, failed: 0, deadlinesAdvanced: 0, membershipProjection: { scanned: 0, succeeded: 0, retryPending: 0, deadLetter: 0 }, expiredSecretDeliveriesPurged: 0, nextCursor: resources.length === input.maxJobs && last ? { updatedAt: last.updatedAt, workspaceId: last.workspaceId, kind: last.kind, id: last.id } : null };
+    for (const workspaceId of workspaceIds) {
+      for (const resource of resources.filter((candidate) => candidate.workspaceId === workspaceId)) {
+        const dispatch = this.dispatchFor(resource);
         if (!dispatch) continue;
         try {
           await dispatch();
@@ -66,19 +80,20 @@ export class GovernanceRecoverySweep {
       }
     }
     try {
-      summary.membershipProjection = await this.workers.membership.sweep({ limit: input.maxJobsPerWorkspace });
+      summary.membershipProjection = await this.workers.membership.sweep({ limit: input.maxJobs });
     } catch {
       summary.failed += 1;
     }
     try {
-      summary.expiredSecretDeliveriesPurged = await this.workers.secrets.purge({ limit: input.maxJobsPerWorkspace });
+      summary.expiredSecretDeliveriesPurged = await this.workers.secrets.purge({ limit: input.maxJobs });
     } catch {
       summary.failed += 1;
     }
     return summary;
   }
 
-  private dispatchFor(workspaceId: string, resource: GovernanceResource): (() => Promise<void>) | null {
+  private dispatchFor(resource: GovernanceResource): (() => Promise<void>) | null {
+    const workspaceId = resource.workspaceId;
     if ((resource.kind === "audit_export" || resource.kind === "workspace_export") && ["queued", "running"].includes(resource.status)) {
       const kind = resource.kind;
       return () => this.workers.export.process({ workspaceId, kind, exportId: resource.id });
@@ -99,9 +114,7 @@ export class GovernanceRecoverySweep {
   }
 }
 
-export async function runProductionGovernanceSweep(input: { workspaceLimit: number; maxJobsPerWorkspace: number }) {
-  const workspaceRows = await getDb().select({ id: workspaces.id }).from(workspaces)
-    .where(isNull(workspaces.deletedAt)).limit(input.workspaceLimit);
+export async function runProductionGovernanceSweep(input: { maxJobs: number; after?: GovernanceJobCursor }) {
   return new GovernanceRecoverySweep(PRODUCTION_GOVERNANCE_REPOSITORY, {
     export: getProductionGovernanceExportWorker(),
     bulk: getProductionGovernanceBulkWorker(),
@@ -111,5 +124,5 @@ export async function runProductionGovernanceSweep(input: { workspaceLimit: numb
     approvals: getProductionGovernanceApprovalDeadlineWorker(),
     membership: getProductionGovernanceMembershipProjectionWorker(),
     secrets: getProductionGovernanceSecretDeliverySweeper(),
-  }).run({ workspaceIds: workspaceRows.map((row) => row.id), maxJobsPerWorkspace: input.maxJobsPerWorkspace });
+  }).run(input);
 }
