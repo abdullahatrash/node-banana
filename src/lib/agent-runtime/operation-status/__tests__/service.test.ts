@@ -46,6 +46,7 @@ describe("OperationStatusService", () => {
     if (queued.kind !== "applied") throw new Error("create failed");
     const cancelled = await service.requestCancellation({ workspaceId: "ws", operationId: queued.operation.id, expectedRevision: 1, actor, idempotencyKey: "cancel-003" });
     expect(cancelled.kind === "applied" && cancelled.operation.state).toBe("cancelled");
+    if (cancelled.kind === "applied") expect(cancelled.operation.metadata).toMatchObject({ providerState: "not_submitted", nextAction: "none", reasonCode: "pre_start_cancelled" });
     expect(cancel).toHaveBeenCalledWith(queued.operation);
   });
 

@@ -45,7 +45,7 @@ export class OperationStatusService {
     const dispatched = await adapter.cancel(current);
     if (dispatched.kind === "conflict" || dispatched.kind === "unavailable") return { kind: dispatched.kind };
     if (dispatched.kind === "outcome_unknown") return this.transition({ ...input, to: "outcome_unknown", reasonCode: "operation.cancel_outcome_unknown", idempotencyDigest });
-    if (immediate && dispatched.kind === "confirmed_cancelled") return this.transition({ ...input, to: "cancelled", reasonCode: "operation.cancellation_confirmed", idempotencyDigest });
+    if (immediate && dispatched.kind === "confirmed_cancelled") return this.transition({ ...input, to: "cancelled", reasonCode: "operation.pre_start_cancelled", metadata: { providerState: "not_submitted", nextAction: "none", reasonCode: "pre_start_cancelled", releasedAmountUsd: typeof current.metadata.quoteAmountUsd === "number" && typeof current.metadata.quoteQuantity === "number" ? current.metadata.quoteAmountUsd * current.metadata.quoteQuantity : null }, idempotencyDigest });
     const cancelling = await this.transition({ ...input, idempotencyKey: `${input.idempotencyKey}:dispatch`, to: "cancelling", reasonCode: "operation.cancellation_dispatched" });
     if (dispatched.kind === "accepted" || (cancelling.kind !== "applied" && cancelling.kind !== "replayed")) return cancelling;
     return this.transition({ ...input, expectedRevision: cancelling.operation.revision, to: "cancelled", reasonCode: "operation.cancellation_confirmed", idempotencyDigest });
