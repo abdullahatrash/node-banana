@@ -191,9 +191,39 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
       : { kind: "conflict" as const, reason: "MEDIA_DESTINATION_CONFLICT" };
     }
     const configuredBucket = process.env.S3_BUCKET_NAME;
-    const directSource = payload.storageProvider === "s3" && configuredBucket && (!payload.storageBucket || payload.storageBucket === configuredBucket) ? payload.storageKey : null;
-    const sourceKey = input.mapping?.sourceStorageKey ?? directSource;
-    if (!sourceKey) return { kind: "waiting_user" as const, reason: "MEDIA_STORAGE_COPY_MAPPING_REQUIRED", requiredMappings: ["sourceStorageKey"] };
+    const sourceWorkspaceId = workspaceIdFromExportSource(input.provenance.source);
+    const destinationUploadedAssetId = input.mapping?.destinationUploadedAssetId;
+    if (!sourceWorkspaceId) {
+      if (!destinationUploadedAssetId) {
+        return { kind: "waiting_user" as const, reason: "DESTINATION_MEDIA_UPLOAD_REQUIRED", requiredMappings: ["destinationUploadedAssetId"] };
+      }
+      const uploaded = await db.select().from(assets).where(and(
+        eq(assets.workspaceId, input.workspaceId),
+        eq(assets.id, destinationUploadedAssetId),
+        isNull(assets.deletedAt),
+      )).limit(1);
+      if (!uploaded[0] || (payload.checksum && uploaded[0].checksum !== payload.checksum)) {
+        return { kind: "invalid" as const, reason: "DESTINATION_MEDIA_UPLOAD_MISMATCH" };
+      }
+      return { kind: "matched" as const, destinationId: uploaded[0].id };
+    }
+    const sourceRows = await db.select().from(assets).where(and(
+      eq(assets.workspaceId, sourceWorkspaceId),
+      eq(assets.id, input.sourceId),
+      isNull(assets.deletedAt),
+    )).limit(1);
+    const source = sourceRows[0];
+    const signedSourceMatches = source
+      && source.storageProvider === payload.storageProvider
+      && source.storageBucket === payload.storageBucket
+      && source.storageKey === payload.storageKey
+      && source.checksum === payload.checksum;
+    if (!signedSourceMatches) return { kind: "invalid" as const, reason: "SIGNED_SOURCE_MEDIA_PROVENANCE_MISMATCH" };
+    const sourceKey = source.storageProvider === "s3" && configuredBucket
+      && (!source.storageBucket || source.storageBucket === configuredBucket)
+      ? source.storageKey
+      : null;
+    if (!sourceKey) return { kind: "unavailable" as const, reason: "SOURCE_STORAGE_ROUTE_UNAVAILABLE" };
     if (!configuredBucket) return { kind: "unavailable" as const, reason: "DESTINATION_STORAGE_NOT_CONFIGURED" };
     if (!safeStorageKey(sourceKey)) return { kind: "invalid" as const, reason: "INVALID_SOURCE_STORAGE_KEY" };
     const destinationKey = input.mapping?.destinationStorageKey ?? `workspace-imports/${input.workspaceId}/${input.digest.slice(7, 39)}/${fileName(payload.storageKey)}`;
@@ -252,6 +282,12 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
     });
     return { kind: "created" as const, destinationId: input.destinationId };
   }
+}
+
+/** Only first-party Workspace exports may authorize a server-side object copy. */
+export function workspaceIdFromExportSource(source: string): string | null {
+  const match = /^workspace-export:([A-Za-z0-9][A-Za-z0-9_-]{0,199})$/.exec(source);
+  return match?.[1] ?? null;
 }
 
 function safeStorageKey(value: string): boolean {

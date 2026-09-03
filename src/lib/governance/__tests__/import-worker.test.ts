@@ -4,6 +4,7 @@ import { GovernanceImportWorker } from "../import-worker";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
 import type { GovernancePortableDataPort, GovernancePortableKind } from "../portability";
+import { workspaceIdFromExportSource } from "../portability";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
 const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const };
@@ -22,6 +23,13 @@ function payload(kind: GovernancePortableKind): Record<string, unknown> {
 }
 
 describe("GovernanceImportWorker", () => {
+  it("derives server-copy authority only from an exact first-party Workspace export source", () => {
+    expect(workspaceIdFromExportSource("workspace-export:source-workspace")).toBe("source-workspace");
+    expect(workspaceIdFromExportSource("workspace-export:../workspace-b")).toBeNull();
+    expect(workspaceIdFromExportSource("platform-export:workspace-b")).toBeNull();
+    expect(workspaceIdFromExportSource("workspace-export:workspace-b/object-key")).toBeNull();
+  });
+
   it("materializes every canonical portable surface through its exact adapter with provenance", async () => {
     const repository = new InMemoryGovernanceRepository();
     const service = new GovernanceService(repository, { now: () => new Date(now) }, undefined, undefined, { verify: () => true });
@@ -91,6 +99,8 @@ describe("GovernanceImportWorker", () => {
     expect(job?.body.items[0]).toMatchObject({ state: "waiting_user", outcome: { requiredMappings: ["destinationChannelId"] } });
 
     await expect(service.execute(actor, { type: "provide_import_mapping", importId: preview.importId, itemId: job!.body.items[0].id, mapping: {} }, "missing-import-mapping"))
+      .rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(service.execute(actor, { type: "provide_import_mapping", importId: preview.importId, itemId: job!.body.items[0].id, mapping: { destinationChannelId: "channel-target", sourceStorageKey: "another-workspace/private.png" } }, "untrusted-import-mapping"))
       .rejects.toMatchObject({ code: "INVALID_INPUT" });
     await service.execute(actor, { type: "provide_import_mapping", importId: preview.importId, itemId: job!.body.items[0].id, mapping: { destinationChannelId: "channel-target" } }, "provide-import-mapping");
     await worker.process({ workspaceId: actor.workspaceId, importId: preview.importId });

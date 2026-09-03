@@ -884,6 +884,9 @@ export class GovernanceService {
         if (item.state !== "waiting_user") throw new GovernanceError("CONFLICT", "Import item is not waiting for a mapping.");
         const requiredMappings = Array.isArray(item.outcome?.requiredMappings) ? item.outcome.requiredMappings.filter((value): value is string => typeof value === "string") : [];
         if (requiredMappings.some((key) => !command.mapping[key])) throw new GovernanceError("INVALID_INPUT", "All required import mappings must be supplied.");
+        if (Object.keys(command.mapping).some((key) => !requiredMappings.includes(key))) {
+          throw new GovernanceError("INVALID_INPUT", "Import mapping contains a field that was not requested by the trusted destination adapter.");
+        }
         mutations = [update(imported, "queued", {
           ...importBody,
           queuedAt: now.toISOString(),
