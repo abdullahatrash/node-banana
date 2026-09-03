@@ -20,6 +20,7 @@ export const GOVERNANCE_RESOURCE_KINDS = [
   "safety_decision",
   "safety_appeal",
   "bulk_operation",
+  "workspace_closure",
 ] as const;
 
 export type GovernanceResourceKind = (typeof GOVERNANCE_RESOURCE_KINDS)[number];
@@ -215,4 +216,26 @@ export interface GovernanceSnapshot {
   actorCapabilities: GovernanceCapability[];
   resources: Partial<Record<GovernanceResourceKind, GovernanceResource[]>>;
   audit: GovernanceAuditEvent[];
+}
+
+export interface GovernanceMembershipPort {
+  provisionAcceptedMembership(input: {
+    workspaceId: string;
+    userId: string;
+    binding: WorkspaceRoleBinding;
+  }): Promise<void>;
+  removeMembership(input: {
+    workspaceId: string;
+    userId: string;
+  }): Promise<"removed" | "not_found" | "owner_forbidden">;
+  transferOwnership(input: {
+    workspaceId: string;
+    currentOwnerUserId: string;
+    newOwnerUserId: string;
+  }): Promise<"transferred" | "target_not_member" | "not_current_owner">;
+  closeWorkspace(input: {
+    workspaceId: string;
+    currentOwnerUserId: string;
+    closedAt: Date;
+  }): Promise<"closed" | "not_current_owner">;
 }

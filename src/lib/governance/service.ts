@@ -21,8 +21,10 @@ import type {
   GovernanceSnapshot,
   RetentionRule,
   WorkspaceRoleBinding,
+  GovernanceMembershipPort,
 } from "./types";
 import { GOVERNANCE_CAPABILITIES, RETENTION_CLASSES } from "./types";
+import { BUILT_IN_WORKSPACE_ROLES } from "./types";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const IDEMPOTENCY = /^[\x20-\x7e]{8,200}$/;
@@ -53,6 +55,12 @@ export type GovernanceCommand =
   | { type: "revise_custom_role"; roleId: string; expectedVersion: number; name: string; description: string; capabilities: GovernanceCapability[] }
   | { type: "assign_role"; userId: string; binding: WorkspaceRoleBinding }
   | { type: "create_invitation"; email: string; binding: WorkspaceRoleBinding; expiresAt: string }
+  | { type: "revoke_invitation"; invitationId: string }
+  | { type: "remove_member"; userId: string }
+  | { type: "transfer_ownership"; newOwnerUserId: string; stepUpToken: string }
+  | { type: "request_workspace_closure"; reason: string; coolingOffDays: number; stepUpToken: string }
+  | { type: "cancel_workspace_closure"; closureId: string }
+  | { type: "execute_workspace_closure"; closureId: string; stepUpToken: string }
   | { type: "create_portfolio"; name: string }
   | { type: "assign_portfolio"; portfolioId: string; targetWorkspaceId: string; permissions: Array<"navigate" | "report" | "templates" | "bulk">; expiresAt: string | null }
   | { type: "issue_review_guest"; email: string; purpose: "inspect" | "comment" | "accept_content" | "approve_publishing" | "reject"; resourceKind: "render_proof" | "plan_revision"; resourceId: string; revisionDigest: string; expiresAt: string }
@@ -81,6 +89,12 @@ const CAPABILITY_BY_COMMAND: Record<GovernanceCommand["type"], GovernanceCapabil
   revise_custom_role: "roles.manage",
   assign_role: "members.manage",
   create_invitation: "members.invite",
+  revoke_invitation: "members.invite",
+  remove_member: "members.manage",
+  transfer_ownership: "workspace.transfer_ownership",
+  request_workspace_closure: "workspace.close",
+  cancel_workspace_closure: "workspace.close",
+  execute_workspace_closure: "workspace.close",
   create_portfolio: "portfolios.manage",
   assign_portfolio: "portfolios.manage",
   issue_review_guest: "reviews.create",
@@ -161,6 +175,12 @@ export function decodeReviewToken(value: string): { workspaceId: string; grantId
   } catch { return null; }
 }
 
+export const encodeInvitationToken = encodeReviewToken;
+export function decodeInvitationToken(value: string): { workspaceId: string; invitationId: string; secret: string } | null {
+  const decoded = decodeReviewToken(value);
+  return decoded ? { workspaceId: decoded.workspaceId, invitationId: decoded.grantId, secret: decoded.secret } : null;
+}
+
 function resource<T>(input: {
   id: string;
   workspaceId: string;
@@ -193,6 +213,12 @@ export class GovernanceService {
   constructor(
     private readonly repository: GovernanceRepository,
     private readonly clock: { now(): Date } = { now: () => new Date() },
+    private readonly memberships: GovernanceMembershipPort = {
+      provisionAcceptedMembership: async () => {},
+      removeMembership: async () => "removed",
+      transferOwnership: async () => "transferred",
+      closeWorkspace: async () => "closed",
+    },
   ) {}
 
   private async capabilities(actor: GovernanceActor): Promise<GovernanceCapability[]> {
@@ -346,6 +372,7 @@ export class GovernanceService {
       }
       case "assign_role": {
         const userId = safeId(command.userId, "User");
+        await this.validateRoleBinding(actor.workspaceId, command.binding);
         if (command.binding.kind === "built_in" && command.binding.role === "owner" && actor.legacyRole !== "owner") throw new GovernanceError("FORBIDDEN", "Only an Owner may assign Owner.");
         if (command.binding.kind === "custom") {
           const binding = command.binding;
@@ -362,13 +389,86 @@ export class GovernanceService {
       case "create_invitation": {
         const email = command.email.trim().toLowerCase();
         if (!/^\S+@\S+\.\S+$/.test(email)) throw new GovernanceError("INVALID_INPUT", "Email is invalid.");
+        await this.validateRoleBinding(actor.workspaceId, command.binding);
+        if (command.binding.kind === "built_in" && command.binding.role === "owner" && actor.legacyRole !== "owner") throw new GovernanceError("FORBIDDEN", "Only an Owner may invite another Owner.");
         const expiry = exactDate(command.expiresAt, "Invitation expiry");
         if (expiry <= now || expiry.getTime() - now.getTime() > 30 * 86_400_000) throw new GovernanceError("INVALID_INPUT", "Invitation expiry is outside the allowed window.");
         const id = newId("invite");
         const token = randomBytes(32).toString("base64url");
         mutations = [create("invitation_binding", id, "pending", { email, tokenDigest: secretDigest(token), binding: command.binding, expiresAt: expiry.toISOString(), acceptedAt: null, revokedAt: null })];
-        result = { invitationId: id, token, expiresAt: expiry.toISOString() };
+        result = { invitationId: id, invitationToken: encodeInvitationToken(actor.workspaceId, id, token), expiresAt: expiry.toISOString() };
         target = { kind: "invitation_binding", id };
+        break;
+      }
+      case "revoke_invitation": {
+        const invitation = await this.required("invitation_binding", command.invitationId, actor.workspaceId);
+        if (invitation.status !== "pending") throw new GovernanceError("CONFLICT", "Only a pending invitation may be revoked.");
+        mutations = [update(invitation, "revoked", { ...invitation.body, revokedAt: now.toISOString() })];
+        result = { invitationId: invitation.id, revoked: true };
+        target = { kind: invitation.kind, id: invitation.id };
+        break;
+      }
+      case "remove_member": {
+        const userId = safeId(command.userId, "User");
+        const removed = await this.memberships.removeMembership({ workspaceId: actor.workspaceId, userId });
+        if (removed === "owner_forbidden") throw new GovernanceError("FORBIDDEN", "Transfer ownership before removing the Workspace Owner.");
+        if (removed === "not_found") throw new GovernanceError("NOT_FOUND", "Workspace member unavailable.");
+        const assignment = await this.repository.getResource({ workspaceId: actor.workspaceId, kind: "member_role_assignment", id: userId });
+        mutations = assignment ? [update(assignment, "revoked", { ...assignment.body, revokedAt: now.toISOString() })] : [];
+        result = { userId, removed: true };
+        target = { kind: "workspace_member", id: userId };
+        break;
+      }
+      case "transfer_ownership": {
+        if (actor.legacyRole !== "owner") throw new GovernanceError("FORBIDDEN", "Only the current Workspace Owner may transfer ownership.");
+        const newOwnerUserId = safeId(command.newOwnerUserId, "New Owner");
+        if (newOwnerUserId === actor.userId) throw new GovernanceError("INVALID_INPUT", "The new Owner must be another current member.");
+        await this.requireStepUp(actor, "workspace.transfer_ownership", newOwnerUserId, command.stepUpToken);
+        const transferred = await this.memberships.transferOwnership({ workspaceId: actor.workspaceId, currentOwnerUserId: actor.userId, newOwnerUserId });
+        if (transferred === "target_not_member") throw new GovernanceError("NOT_FOUND", "The new Owner must be a current Workspace member.");
+        if (transferred === "not_current_owner") throw new GovernanceError("FORBIDDEN", "Ownership changed before this transfer completed.");
+        const oldAssignment = await this.repository.getResource({ workspaceId: actor.workspaceId, kind: "member_role_assignment", id: actor.userId });
+        const newAssignment = await this.repository.getResource({ workspaceId: actor.workspaceId, kind: "member_role_assignment", id: newOwnerUserId });
+        const oldBody = { userId: actor.userId, binding: { kind: "built_in" as const, role: "admin" as const }, assignedByUserId: actor.userId, assignedAt: now.toISOString(), ownershipTransfer: true };
+        const newBody = { userId: newOwnerUserId, binding: { kind: "built_in" as const, role: "owner" as const }, assignedByUserId: actor.userId, assignedAt: now.toISOString(), ownershipTransfer: true };
+        mutations = [oldAssignment ? update(oldAssignment, "active", oldBody) : create("member_role_assignment", actor.userId, "active", oldBody), newAssignment ? update(newAssignment, "active", newBody) : create("member_role_assignment", newOwnerUserId, "active", newBody)];
+        result = { previousOwnerUserId: actor.userId, newOwnerUserId, transferred: true };
+        target = { kind: "workspace", id: actor.workspaceId };
+        break;
+      }
+      case "request_workspace_closure": {
+        if (actor.legacyRole !== "owner") throw new GovernanceError("FORBIDDEN", "Only the Workspace Owner may request closure.");
+        if (!Number.isInteger(command.coolingOffDays) || command.coolingOffDays < 7 || command.coolingOffDays > 30) throw new GovernanceError("INVALID_INPUT", "Closure cooling-off must be between 7 and 30 days.");
+        await this.requireStepUp(actor, "workspace.close", null, command.stepUpToken);
+        const pending = await this.repository.listResources({ workspaceId: actor.workspaceId, kinds: ["workspace_closure"], status: "cooling_off" });
+        if (pending.length) throw new GovernanceError("CONFLICT", "A Workspace closure is already cooling off.");
+        const id = newId("closure");
+        const executeAfter = new Date(now.getTime() + command.coolingOffDays * 86_400_000).toISOString();
+        mutations = [create("workspace_closure", id, "cooling_off", { reason: text(command.reason, "Closure reason", 1000), requestedByUserId: actor.userId, requestedAt: now.toISOString(), executeAfter, cancelledAt: null, executedAt: null })];
+        result = { closureId: id, status: "cooling_off", executeAfter };
+        target = { kind: "workspace_closure", id };
+        break;
+      }
+      case "cancel_workspace_closure": {
+        const closure = await this.required("workspace_closure", command.closureId, actor.workspaceId);
+        if (closure.status !== "cooling_off") throw new GovernanceError("CONFLICT", "Only a cooling-off closure may be cancelled.");
+        mutations = [update(closure, "cancelled", { ...closure.body, cancelledAt: now.toISOString() })];
+        result = { closureId: closure.id, status: "cancelled" };
+        target = { kind: closure.kind, id: closure.id };
+        break;
+      }
+      case "execute_workspace_closure": {
+        if (actor.legacyRole !== "owner") throw new GovernanceError("FORBIDDEN", "Only the Workspace Owner may complete closure.");
+        const closure = await this.required("workspace_closure", command.closureId, actor.workspaceId);
+        const closureBody = closure.body as { executeAfter: string; [key: string]: unknown };
+        if (closure.status !== "cooling_off") throw new GovernanceError("CONFLICT", "Workspace closure is not pending.");
+        if (exactDate(closureBody.executeAfter, "Closure execution time") > now) throw new GovernanceError("CONFLICT", "Workspace closure is still cooling off.");
+        await this.requireStepUp(actor, "workspace.close", closure.id, command.stepUpToken);
+        const closed = await this.memberships.closeWorkspace({ workspaceId: actor.workspaceId, currentOwnerUserId: actor.userId, closedAt: now });
+        if (closed === "not_current_owner") throw new GovernanceError("FORBIDDEN", "Only the current Workspace Owner may complete closure.");
+        mutations = [update(closure, "closed", { ...closureBody, executedAt: now.toISOString() })];
+        result = { closureId: closure.id, status: "closed", closedAt: now.toISOString() };
+        target = { kind: closure.kind, id: closure.id };
         break;
       }
       case "create_portfolio": {
@@ -635,6 +735,30 @@ export class GovernanceService {
     return outcome.result;
   }
 
+  async acceptInvitation(input: {
+    workspaceId: string;
+    invitationId: string;
+    token: string;
+    userId: string;
+    verifiedEmail: string;
+    idempotencyKey: string;
+  }): Promise<unknown> {
+    const now = this.clock.now();
+    const invitation = await this.required("invitation_binding", input.invitationId, input.workspaceId);
+    const body = invitation.body as { email: string; tokenDigest: string; binding: WorkspaceRoleBinding; expiresAt: string; acceptedAt: string | null; revokedAt: string | null };
+    if (invitation.status !== "pending" || body.revokedAt || exactDate(body.expiresAt, "Invitation expiry") <= now) throw new GovernanceError("EXPIRED", "Invitation expired or was revoked.");
+    if (secretDigest(input.token) !== body.tokenDigest || body.email !== input.verifiedEmail.trim().toLowerCase()) throw new GovernanceError("NOT_FOUND", "Invitation unavailable.");
+    await this.memberships.provisionAcceptedMembership({ workspaceId: input.workspaceId, userId: input.userId, binding: body.binding });
+    const currentAssignment = await this.repository.getResource({ workspaceId: input.workspaceId, kind: "member_role_assignment", id: input.userId });
+    const invitationNext = resource({ id: invitation.id, workspaceId: invitation.workspaceId, kind: invitation.kind, version: invitation.version + 1, status: "accepted", body: { ...body, acceptedAt: now.toISOString() }, actor: invitation.createdByUserId, createdAt: invitation.createdAt, now });
+    const assignmentBody = { userId: input.userId, binding: body.binding, assignedByUserId: invitation.createdByUserId, assignedAt: now.toISOString(), sourceInvitationId: invitation.id };
+    const assignmentNext = resource({ id: input.userId, workspaceId: input.workspaceId, kind: "member_role_assignment", version: (currentAssignment?.version ?? 0) + 1, status: "active", body: assignmentBody, actor: invitation.createdByUserId, createdAt: currentAssignment?.createdAt, now });
+    const result = { invitationId: invitation.id, workspaceId: input.workspaceId, userId: input.userId, binding: body.binding, accepted: true };
+    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: "members.invitations.accept@1", idempotencyKey: input.idempotencyKey, requestDigest: canonicalDigest({ invitationId: invitation.id, userId: input.userId, tokenDigest: secretDigest(input.token) }), result, createdAt: now }, mutations: [{ type: "update", expectedVersion: invitation.version, resource: invitationNext }, { type: currentAssignment ? "update" : "create", expectedVersion: currentAssignment?.version ?? null, resource: assignmentNext }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "human", id: input.userId }, capability: "members.invitations.accept@1", action: "accept_invitation", resource: { kind: "invitation_binding", id: invitation.id }, outcome: "completed", redactedDetails: { roleBindingKind: body.binding.kind }, occurredAt: now } });
+    if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Invitation acceptance changed.");
+    return outcome.result;
+  }
+
   /** Guest decisions bind one immutable revision and never become execution authority. */
   async decideReviewGuest(input: {
     workspaceId: string;
@@ -671,6 +795,17 @@ export class GovernanceService {
     const item = await this.repository.getResource({ workspaceId, kind, id: safeId(id, "Resource") });
     if (!item) throw new GovernanceError("NOT_FOUND", "Resource unavailable.");
     return item;
+  }
+
+  private async validateRoleBinding(workspaceId: string, binding: WorkspaceRoleBinding) {
+    if (!binding || typeof binding !== "object") throw new GovernanceError("INVALID_INPUT", "Role binding is invalid.");
+    if (binding.kind === "built_in") {
+      if (!(BUILT_IN_WORKSPACE_ROLES as readonly string[]).includes(binding.role)) throw new GovernanceError("INVALID_INPUT", "Built-in role is invalid.");
+      return;
+    }
+    if (binding.kind !== "custom" || !Number.isInteger(binding.roleRevision) || binding.roleRevision < 1) throw new GovernanceError("INVALID_INPUT", "Custom Role binding is invalid.");
+    const role = await this.repository.getResource<{ revisions: CustomRoleRevision[] }>({ workspaceId, kind: "custom_role", id: safeId(binding.roleId, "Role") });
+    if (!role?.body.revisions.some((item) => item.revision === binding.roleRevision)) throw new GovernanceError("NOT_FOUND", "The exact Custom Role revision is unavailable.");
   }
 
   private validateApprovalPolicy(policy: Omit<ApprovalPolicyRevision, "schema" | "revision" | "createdByUserId" | "createdAt">) {

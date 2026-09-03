@@ -414,6 +414,13 @@
       "when": 1788452542491,
       "tag": "0058_overconfident_rockslide",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1788454052990,
+      "tag": "0059_modern_slayback",
+      "breakpoints": true
     }
   ]
 }

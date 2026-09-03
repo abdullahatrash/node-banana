@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { BUILT_IN_ROLE_CAPABILITIES } from "../roles";
-import { decodeReviewToken, GovernanceError, GovernanceService } from "../service";
+import { decodeInvitationToken, decodeReviewToken, GovernanceError, GovernanceService } from "../service";
 import { RETENTION_CLASSES, type GovernanceActor, type RetentionRule } from "../types";
 
 const NOW = new Date("2026-09-03T12:00:00.000Z");
@@ -50,6 +50,67 @@ describe("GovernanceService", () => {
     await expect(service.execute(owner, { ...command, name: "Different" }, "portfolio-key")).rejects.toMatchObject({ code: "CONFLICT" });
     expect((await repository.listResources({ workspaceId: owner.workspaceId, kinds: ["portfolio"] }))).toHaveLength(1);
     expect(await repository.listAudit({ workspaceId: owner.workspaceId, limit: 100 })).toHaveLength(1);
+  });
+
+  it("accepts invitations only for the verified recipient and provisions canonical membership", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const provision = vi.fn().mockResolvedValue(undefined);
+    const service = new GovernanceService(repository, { now: () => new Date(NOW) }, {
+      provisionAcceptedMembership: provision,
+      removeMembership: vi.fn().mockResolvedValue("removed"),
+      transferOwnership: vi.fn().mockResolvedValue("transferred"),
+      closeWorkspace: vi.fn().mockResolvedValue("closed"),
+    });
+    const invitation = await service.execute(owner, { type: "create_invitation", email: "new@example.com", binding: { kind: "built_in", role: "approver" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "create-invitation-key") as { invitationId: string; invitationToken: string };
+    const decoded = decodeInvitationToken(invitation.invitationToken)!;
+    await expect(service.acceptInvitation({ ...decoded, token: decoded.secret, userId: "new-user", verifiedEmail: "other@example.com", idempotencyKey: "wrong-email-key" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const accepted = await service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "new-user", verifiedEmail: "new@example.com", idempotencyKey: "accept-invite-key" });
+    expect(accepted).toMatchObject({ accepted: true, userId: "new-user", binding: { kind: "built_in", role: "approver" } });
+    expect(provision).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, userId: "new-user", binding: { kind: "built_in", role: "approver" } });
+    expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "member_role_assignment", id: "new-user" })).toBeTruthy();
+  });
+
+  it("revokes a pending invitation so it can no longer be accepted", async () => {
+    const { service } = setup();
+    const invitation = await service.execute(owner, { type: "create_invitation", email: "revoked@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "create-revoked-invite") as { invitationId: string; invitationToken: string };
+    await service.execute(owner, { type: "revoke_invitation", invitationId: invitation.invitationId }, "revoke-invite-key");
+    const decoded = decodeInvitationToken(invitation.invitationToken)!;
+    await expect(service.acceptInvitation({ workspaceId: decoded.workspaceId, invitationId: decoded.invitationId, token: decoded.secret, userId: "revoked-user", verifiedEmail: "revoked@example.com", idempotencyKey: "accept-revoked-key" })).rejects.toMatchObject({ code: "EXPIRED" });
+  });
+
+  it("requires exact step-up for ownership transfer and enforces cancellable Workspace closure cooling-off", async () => {
+    let current = new Date(NOW);
+    const repository = new InMemoryGovernanceRepository();
+    const transferOwnership = vi.fn().mockResolvedValue("transferred");
+    const closeWorkspace = vi.fn().mockResolvedValue("closed");
+    const service = new GovernanceService(repository, { now: () => new Date(current) }, {
+      provisionAcceptedMembership: vi.fn(), removeMembership: vi.fn().mockResolvedValue("removed"), transferOwnership, closeWorkspace,
+    });
+    await expect(service.execute(owner, { type: "transfer_ownership", newOwnerUserId: "member-b", stepUpToken: "not-valid" }, "transfer-without-stepup")).rejects.toMatchObject({ code: "STEP_UP_REQUIRED" });
+    const transferChallenge = await service.execute(owner, { type: "begin_step_up", purpose: "workspace.transfer_ownership", resourceId: "member-b" }, "begin-owner-transfer") as { challengeId: string; verificationCode: string };
+    const transferSession = await service.execute(owner, { type: "verify_step_up", challengeId: transferChallenge.challengeId, code: transferChallenge.verificationCode }, "verify-owner-transfer") as { stepUpToken: string };
+    await service.execute(owner, { type: "transfer_ownership", newOwnerUserId: "member-b", stepUpToken: transferSession.stepUpToken }, "complete-owner-transfer");
+    expect(transferOwnership).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, currentOwnerUserId: owner.userId, newOwnerUserId: "member-b" });
+
+    const closureRepository = new InMemoryGovernanceRepository();
+    const closureService = new GovernanceService(closureRepository, { now: () => new Date(current) }, {
+      provisionAcceptedMembership: vi.fn(), removeMembership: vi.fn().mockResolvedValue("removed"), transferOwnership: vi.fn().mockResolvedValue("transferred"), closeWorkspace,
+    });
+    const closureChallenge = await closureService.execute(owner, { type: "begin_step_up", purpose: "workspace.close", resourceId: null }, "begin-close-request") as { challengeId: string; verificationCode: string };
+    const closureSession = await closureService.execute(owner, { type: "verify_step_up", challengeId: closureChallenge.challengeId, code: closureChallenge.verificationCode }, "verify-close-request") as { stepUpToken: string };
+    const requested = await closureService.execute(owner, { type: "request_workspace_closure", reason: "Contract ended", coolingOffDays: 7, stepUpToken: closureSession.stepUpToken }, "request-close-workspace") as { closureId: string };
+    await closureService.execute(owner, { type: "cancel_workspace_closure", closureId: requested.closureId }, "cancel-close-workspace");
+    expect(closeWorkspace).not.toHaveBeenCalled();
+
+    current = new Date("2026-09-20T12:00:00.000Z");
+    const challenge2 = await closureService.execute(owner, { type: "begin_step_up", purpose: "workspace.close", resourceId: null }, "begin-close-request-2") as { challengeId: string; verificationCode: string };
+    const session2 = await closureService.execute(owner, { type: "verify_step_up", challengeId: challenge2.challengeId, code: challenge2.verificationCode }, "verify-close-request-2") as { stepUpToken: string };
+    const requested2 = await closureService.execute(owner, { type: "request_workspace_closure", reason: "Closure confirmed", coolingOffDays: 7, stepUpToken: session2.stepUpToken }, "request-close-workspace-2") as { closureId: string };
+    current = new Date("2026-09-27T12:01:00.000Z");
+    const executionChallenge = await closureService.execute(owner, { type: "begin_step_up", purpose: "workspace.close", resourceId: requested2.closureId }, "begin-close-execute") as { challengeId: string; verificationCode: string };
+    const executionSession = await closureService.execute(owner, { type: "verify_step_up", challengeId: executionChallenge.challengeId, code: executionChallenge.verificationCode }, "verify-close-execute") as { stepUpToken: string };
+    await closureService.execute(owner, { type: "execute_workspace_closure", closureId: requested2.closureId, stepUpToken: executionSession.stepUpToken }, "execute-close-workspace");
+    expect(closeWorkspace).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, currentOwnerUserId: owner.userId, closedAt: current });
   });
 
   it("makes Portfolio assignments explicit, revocable by resource state, and non-authoritative", async () => {
