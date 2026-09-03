@@ -7,6 +7,7 @@ import {
   PRODUCTION_PUBLISHING_APPROVAL_REVISIONS,
 } from "@/lib/agent-runtime/publishing-approvals/production";
 import type { PublishingApprovalPresentationTarget } from "@/lib/agent-runtime/publishing-approvals/types";
+import { GOVERNANCE_REGION_ROUTES, requireGovernanceRegionRoute } from "@/lib/governance/region-enforcement";
 
 export interface SocialPublishingApprovalEvidence {
   approvalRequestId: string;
@@ -53,6 +54,11 @@ function exactTimestamp(value: string): Date | null {
 export const PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION:
   SocialPublishingApprovalAdmissionPort = {
   async inspect(input) {
+    await requireGovernanceRegionRoute({
+      workspaceId: input.workspaceId,
+      route: GOVERNANCE_REGION_ROUTES.publishing,
+      configuredRegion: process.env.SOCIAL_PROCESSING_REGION ?? process.env.APP_DATA_REGION,
+    });
     const request = await PRODUCTION_PUBLISHING_APPROVAL_REPOSITORY.getRequest({
       workspaceId: input.workspaceId,
       approvalRequestId: input.evidence.approvalRequestId,

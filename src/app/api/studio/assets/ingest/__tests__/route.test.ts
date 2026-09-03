@@ -10,6 +10,9 @@ const mockStreamUploadToS3 = vi.fn();
 const mockDeleteObjectFromS3 = vi.fn();
 const mockBuildAssetObjectKey = vi.fn();
 const mockCreatePresignedDownload = vi.fn();
+const mockRequireRegion = vi.fn(async () => undefined);
+
+vi.mock("@/lib/governance/region-enforcement", () => ({ GOVERNANCE_REGION_ROUTES: { assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" }, assetProcessing: { kind: "processing", routeId: "processing:asset-ingestion" } }, requireGovernanceRegionRoute: (...args: unknown[]) => mockRequireRegion(...args) }));
 
 const { MockStudioAssetQuotaExceededError } = vi.hoisted(() => {
   class StudioAssetQuotaExceededError extends Error {

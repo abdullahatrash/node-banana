@@ -78,6 +78,7 @@ async function publishSinglePostWorkflow(
   postId: string,
   workspaceId: string,
 ) {
+  await assertPublishingRegionStep(workspaceId);
   // Step 1: Load the post and transition to "publishing"
   let post = await loadPost(postId, workspaceId);
 
@@ -116,6 +117,20 @@ async function publishSinglePostWorkflow(
   );
 
   return result;
+}
+
+async function assertPublishingRegionStep(workspaceId: string): Promise<void> {
+  "use step";
+  const {
+    GOVERNANCE_REGION_ROUTES,
+    requireGovernanceRegionRoute,
+  } = await import("@/lib/governance/region-enforcement");
+  await requireGovernanceRegionRoute({
+    workspaceId,
+    route: GOVERNANCE_REGION_ROUTES.publishing,
+    configuredRegion:
+      process.env.SOCIAL_PROCESSING_REGION ?? process.env.APP_DATA_REGION,
+  });
 }
 
 async function waitForPublishWindow(

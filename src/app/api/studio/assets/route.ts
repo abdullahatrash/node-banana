@@ -7,6 +7,7 @@ import {
   recordAsset,
 } from "@/lib/studio/repository";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import { GOVERNANCE_REGION_ROUTES, requireGovernanceRegionRoute } from "@/lib/governance/region-enforcement";
 
 interface AssetsGetResponse {
   success: boolean;
@@ -52,6 +53,11 @@ export const GET = withStudioAuth<undefined>(
 export const POST = withStudioAuth<undefined>(
   { route: "/api/studio/assets", action: "write" },
   async (request: NextRequest, authz): Promise<NextResponse<AssetsPostResponse>> => {
+    await requireGovernanceRegionRoute({
+      workspaceId: authz.workspaceId,
+      route: GOVERNANCE_REGION_ROUTES.assetStorage,
+      configuredRegion: process.env.S3_REGION ?? process.env.APP_DATA_REGION,
+    });
     const body = (await request.json()) as AssetsPostRequest;
     if (!body.storageKey?.trim()) {
       return NextResponse.json(

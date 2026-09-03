@@ -10,6 +10,9 @@ const mockPresignUploadPart = vi.fn();
 const mockCompleteMultipartUpload = vi.fn();
 const mockAbortMultipartUpload = vi.fn();
 const mockBuildAssetObjectKey = vi.fn();
+const mockRequireRegion = vi.fn(async () => undefined);
+
+vi.mock("@/lib/governance/region-enforcement", () => ({ GOVERNANCE_REGION_ROUTES: { assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" } }, requireGovernanceRegionRoute: (...args: unknown[]) => mockRequireRegion(...args) }));
 
 const { MockStudioAssetQuotaExceededError } = vi.hoisted(() => {
   class StudioAssetQuotaExceededError extends Error {

@@ -16,6 +16,7 @@ import {
   StudioAssetQuotaExceededError,
 } from "@/lib/studio/repository";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import { GOVERNANCE_REGION_ROUTES, requireGovernanceRegionRoute } from "@/lib/governance/region-enforcement";
 
 interface IngestRequest {
   projectId?: string | null;
@@ -174,6 +175,17 @@ export const POST = withStudioAuth<undefined>(
         { status: 400 },
       );
     }
+
+    await requireGovernanceRegionRoute({
+      workspaceId: authz.workspaceId,
+      route: GOVERNANCE_REGION_ROUTES.assetStorage,
+      configuredRegion: process.env.S3_REGION ?? process.env.APP_DATA_REGION,
+    });
+    await requireGovernanceRegionRoute({
+      workspaceId: authz.workspaceId,
+      route: GOVERNANCE_REGION_ROUTES.assetProcessing,
+      configuredRegion: process.env.ASSET_PROCESSING_REGION ?? process.env.APP_DATA_REGION,
+    });
 
     let createdAssetId: string | null = null;
     let uploadMimeType: string | null = null;
