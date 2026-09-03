@@ -1,4 +1,4 @@
-import { authorizationContractDigestFor } from "@/lib/agent-tools/registry";
+import { authorizationContractDigestFor } from "@/lib/agent-tools/authorization-contract-digest";
 import type { CapabilityRegistration } from "@/types/capabilities";
 
 export const PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES = {

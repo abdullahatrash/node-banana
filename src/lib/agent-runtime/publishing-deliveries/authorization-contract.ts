@@ -1,5 +1,5 @@
 import type { CapabilityRegistration } from "@/types/capabilities";
-import { authorizationContractDigestFor } from "@/lib/agent-tools/registry";
+import { authorizationContractDigestFor } from "@/lib/agent-tools/authorization-contract-digest";
 import {
   PUBLISHING_APPROVAL_RELEASE_AUTHORIZATION,
   publishingApprovalReleaseAuthorizationContractDigest,
