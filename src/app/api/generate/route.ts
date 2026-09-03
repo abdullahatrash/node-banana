@@ -108,6 +108,7 @@ export async function POST(request: NextRequest) {
   safeGenerationLog.log(`\n[API:${requestId}] ========== NEW GENERATE REQUEST ==========`);
 
   try {
+    if (!request.headers.get("x-workspace-id")?.trim()) return NextResponse.json({ success: false, error: "An explicit Workspace is required.", code: "WORKSPACE_REQUIRED" }, { status: 400 });
     const authz = await authorizeStudioRequest(request, { route: "/api/generate", action: "write" });
     if (!authz.authorized) return authzErrorResponse(authz);
     const workspaceId = authz.workspaceId;

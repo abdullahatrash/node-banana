@@ -149,8 +149,8 @@ describe("/api/generate route", () => {
   it.each(["", "ws-spoofed"])("fails closed before generation when exact Workspace authority is missing (%s)", async (workspaceId) => {
     process.env.GEMINI_API_KEY = "test-gemini-key";
     const response = await POST(createMockPostRequest({ prompt: "test" }, { "x-workspace-id": workspaceId }));
-    expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({ success: false, code: workspaceId ? "workspace_mismatch" : "workspace_required" });
+    expect(response.status).toBe(workspaceId ? 403 : 400);
+    expect(await response.json()).toMatchObject({ success: false, code: workspaceId ? "workspace_mismatch" : "WORKSPACE_REQUIRED" });
     expect(mockGenerateContent).not.toHaveBeenCalled();
   });
 
