@@ -1,4 +1,4 @@
-const SAFE_KEY = /^(count|attempt|durationMs|progress|providerFamily|modelFamily|region|language|arabicVariety|format|aspectRatio)$/;
+const SAFE_KEY = /^(count|attempt|durationMs|progress|providerFamily|modelFamily|region|language|arabicVariety|format|aspectRatio|sourceAdapter|sourceUpdatedAt)$/;
 
 export function redactOperationMetadata(value: Record<string, unknown>): Record<string, string | number | boolean | null> {
   return Object.fromEntries(Object.entries(value).flatMap(([key, item]) => {

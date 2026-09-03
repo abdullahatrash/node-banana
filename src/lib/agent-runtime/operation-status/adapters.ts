@@ -17,10 +17,11 @@ export interface OperationProjectionAdapter {
 
 function mapState(state: string): OperationState {
   const exact: Record<string, OperationState> = {
-    queued: "queued", pending: "queued", admitted: "admitted", running: "running", processing: "running",
+    queued: "queued", pending: "queued", accepted: "admitted", admitted: "admitted", running: "running", processing: "running", dispatching: "running",
     waiting_user: "waiting_user", waiting_provider: "waiting_provider", waiting_quota: "waiting_quota", waiting_time: "waiting_time",
-    blocked: "blocked", cancelling: "cancelling", cancelled: "cancelled", aborted: "cancelled",
-    succeeded: "succeeded", completed: "succeeded", published: "succeeded", failed: "failed_known", failed_known: "failed_known", outcome_unknown: "outcome_unknown",
+    waiting: "waiting_time", scheduled: "waiting_time", confirmation_pending: "waiting_provider",
+    blocked: "blocked", cancelling: "cancelling", cancelled: "cancelled", aborted: "cancelled", skipped: "cancelled",
+    succeeded: "succeeded", completed: "succeeded", ready: "succeeded", published: "succeeded", failed: "failed_known", failed_retryable: "failed_known", failed_terminal: "failed_known", failed_transient: "failed_known", failed_known: "failed_known", outcome_unknown: "outcome_unknown",
   };
   return exact[state] ?? "blocked";
 }
