@@ -8,6 +8,9 @@ import { create } from "zustand";
 import {
   createStudioAssetPresign,
   finalizeStudioAssetUpload,
+  getActiveWorkspaceId,
+  getStudioAssetDownloadUrl,
+  ingestStudioAsset,
 } from "@/lib/studio/client";
 
 // ---------------------------------------------------------------------------
@@ -53,7 +56,9 @@ export interface SimpleStudioState {
   selectedModelId: string | null;
   selectedModelProvider: string | null;
   selectedModelName: string | null;
-  setSelectedModel: (id: string | null, provider?: string | null, name?: string | null) => void;
+  selectedModelVersion: string | null;
+  selectedModelSchemaDigest: string | null;
+  setSelectedModel: (id: string | null, provider?: string | null, name?: string | null, version?: string | null, schemaDigest?: string | null) => void;
   setSelectedModelId: (id: string | null) => void;
   aspectRatio: string;
   setAspectRatio: (ratio: string) => void;
@@ -79,6 +84,14 @@ export interface SimpleStudioState {
   setPlatform: (platform: string) => void;
   outputLanguage: "ar" | "en" | "both";
   setOutputLanguage: (lang: "ar" | "en" | "both") => void;
+  arabicVariety: "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other";
+  setArabicVariety: (value: SimpleStudioState["arabicVariety"]) => void;
+  rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
+  setRightsBasis: (value: SimpleStudioState["rightsBasis"]) => void;
+  permittedRemix: "reference_only" | "transform" | "derivative";
+  setPermittedRemix: (value: SimpleStudioState["permittedRemix"]) => void;
+  rightsConfirmed: boolean;
+  setRightsConfirmed: (value: boolean) => void;
 
   // Generation (per-mode)
   isGenerating: boolean;
@@ -111,6 +124,39 @@ let abortController: AbortController | null = null;
 
 const CONCURRENT_LIMIT = 4;
 
+const hasArabic = (value: string) => /[\u0600-\u06ff]/.test(value);
+const terminalOperationStates = new Set(["cancelled", "succeeded", "failed_known", "outcome_unknown"]);
+
+async function waitForAdmittedGeneration(input: { response: Record<string, unknown>; signal: AbortSignal }): Promise<{ result: string | null; assetId: string | null }> {
+  const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new Error("Select a Workspace before generating.");
+  let operation = input.response.operation as Record<string, unknown> | undefined;
+  const provider = input.response.provider as Record<string, unknown> | undefined;
+  const cancelProviderWork = () => { if (!operation?.id || typeof operation.revision !== "number" || terminalOperationStates.has(String(operation.state))) return; void fetch(`/api/studio/operations/${encodeURIComponent(String(operation.id))}`, { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": `simple-cancel:${String(operation.id)}:${crypto.randomUUID()}` }, body: JSON.stringify({ action: "cancel", expectedRevision: operation.revision }), keepalive: true }).catch(() => {}); };
+  input.signal.addEventListener("abort", cancelProviderWork, { once: true });
+  for (let attempt = 0; attempt < 150 && operation && !terminalOperationStates.has(String(operation.state)); attempt++) {
+    await new Promise<void>((resolve, reject) => { const timer = window.setTimeout(resolve, 2_000); input.signal.addEventListener("abort", () => { window.clearTimeout(timer); reject(new DOMException("Cancelled", "AbortError")); }, { once: true }); });
+    const response = await fetch(`/api/studio/operations/${encodeURIComponent(String(operation.id))}`, { headers: { "x-workspace-id": workspaceId }, cache: "no-store", signal: input.signal });
+    const body = await response.json() as Record<string, unknown>; if (!response.ok || !body.success) throw new Error(typeof body.error === "string" ? body.error : "Operation status is unavailable."); operation = body.operation as Record<string, unknown>;
+  }
+  input.signal.removeEventListener("abort", cancelProviderWork);
+  if (!operation || operation.state !== "succeeded") throw new Error(operation?.state === "outcome_unknown" ? "Provider outcome is unknown. Check Operations before retrying." : `Generation ended in ${String(operation?.state ?? "an unknown state")}.`);
+  const metadata = operation.metadata as Record<string, unknown> | undefined;
+  const ids = Array.isArray(metadata?.artifactIds) ? metadata.artifactIds.filter((item): item is string => typeof item === "string") : Array.isArray(provider?.artifactIds) ? provider.artifactIds.filter((item): item is string => typeof item === "string") : [];
+  const assetId = ids[0] ?? null; if (!assetId) throw new Error("Generation succeeded without a canonical artifact receipt.");
+  const download = await getStudioAssetDownloadUrl(assetId); return { result: download.downloadUrl, assetId };
+}
+
+async function submitAdmittedGeneration(input: { state: SimpleStudioState; prompt: string; mode: "photo" | "video"; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
+  const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new Error("Select a Workspace before generating.");
+  if (!input.state.selectedModelId || input.state.selectedModelProvider !== "replicate" || !input.state.selectedModelVersion || !input.state.selectedModelSchemaDigest) throw new Error("Choose an executable Replicate model from the admitted catalog.");
+  if (!input.state.rightsConfirmed) throw new Error("Confirm that the selected inspiration rights are accurate.");
+  const capability = input.mode === "video" ? (input.sourceAssetIds.length ? "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image");
+  const contentLanguage = hasArabic(input.prompt) ? "ar" : "en";
+  const response = await fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify({ prompt: input.prompt, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, capability, contentLanguage, arabicVariety: contentLanguage === "ar" ? input.state.arabicVariety : null, quantity: input.mode === "video" ? input.state.videoDuration : 1, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : ["composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] } }), signal: input.signal });
+  const body = await response.json() as Record<string, unknown>; if (!response.ok || !body.success) { const actions = Array.isArray(body.nextActions) ? body.nextActions as Array<Record<string, unknown>> : []; const next = actions[0]?.label; throw new Error(`${typeof body.error === "string" ? body.error : "Generation admission failed."}${typeof next === "string" ? ` Next: ${next}.` : ""}`); }
+  return waitForAdmittedGeneration({ response: body, signal: input.signal });
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -135,8 +181,8 @@ async function processInChunks<T>(
 async function persistToR2(
   dataUrl: string,
   mode: SimpleStudioMode,
-  prompt: string,
-  batchId: string,
+  _prompt: string,
+  _batchId: string,
 ): Promise<string | null> {
   try {
     // Convert data URL or remote URL to blob
@@ -223,10 +269,12 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   selectedModelId: null,
   selectedModelProvider: null,
   selectedModelName: null,
-  setSelectedModel: (id, provider = null, name = null) =>
-    set({ selectedModelId: id, selectedModelProvider: provider, selectedModelName: name }),
-  setSelectedModelId: (id) => set({ selectedModelId: id, selectedModelProvider: null, selectedModelName: null }),
-  aspectRatio: "1:1",
+  selectedModelVersion: null,
+  selectedModelSchemaDigest: null,
+  setSelectedModel: (id, provider = null, name = null, version = null, schemaDigest = null) =>
+    set({ selectedModelId: id, selectedModelProvider: provider, selectedModelName: name, selectedModelVersion: version, selectedModelSchemaDigest: schemaDigest }),
+  setSelectedModelId: (id) => set({ selectedModelId: id, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null }),
+  aspectRatio: "9:16",
   setAspectRatio: (ratio) => set({ aspectRatio: ratio }),
   batchCount: 4,
   setBatchCount: (count) => set({ batchCount: count }),
@@ -250,6 +298,14 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setPlatform: (platform) => set({ platform }),
   outputLanguage: "en",
   setOutputLanguage: (lang) => set({ outputLanguage: lang }),
+  arabicVariety: "msa",
+  setArabicVariety: (arabicVariety) => set({ arabicVariety }),
+  rightsBasis: "owned",
+  setRightsBasis: (rightsBasis) => set({ rightsBasis, rightsConfirmed: false }),
+  permittedRemix: "transform",
+  setPermittedRemix: (permittedRemix) => set({ permittedRemix, rightsConfirmed: false }),
+  rightsConfirmed: false,
+  setRightsConfirmed: (rightsConfirmed) => set({ rightsConfirmed }),
 
   // Generation
   isGenerating: false,
@@ -321,6 +377,18 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
     setGenerations(set, genMode, (prev) => [...entries, ...prev]);
     set({ currentBatchId: batchId });
 
+    let sourceAssetIds: string[] = [];
+    if (genMode !== "copy") {
+      const sources = genMode === "photo" ? state.referenceImages : state.sourceImage ? [state.sourceImage] : [];
+      try {
+        sourceAssetIds = await Promise.all(sources.map(async (source, index) => source.startsWith("asset:") ? source.slice(6) : (await ingestStudioAsset({ assetType: "image", sourceDataUrl: source.startsWith("data:") ? source : undefined, sourceUrl: source.startsWith("http") ? source : undefined, fileName: `inspiration-${batchId}-${index}.png` })).assetId));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Inspiration media could not be stored safely.";
+        setGenerations(set, genMode, (prev) => prev.map((generation) => generation.batchId === batchId ? { ...generation, status: "failed" as const, error: message } : generation));
+        set({ isGenerating: false, currentBatchId: null }); abortController = null; return;
+      }
+    }
+
     const processGeneration = async (entry: Generation, sig: AbortSignal) => {
       if (sig.aborted) return;
 
@@ -331,136 +399,22 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
 
       try {
         let result: string | null = null;
+        let canonicalAssetId: string | null = null;
 
-        if (state.mode === "copy") {
-          // Use /api/studio/copy streaming endpoint
-          const langDirective = state.outputLanguage === "ar"
-            ? "Write in Arabic only."
-            : state.outputLanguage === "both"
-              ? "Write in both Arabic and English."
-              : "Write in English only.";
-          const systemPrompt = `You are a professional copywriter. ${langDirective} Platform: ${state.platform}. Tone: ${state.tone}. Return ONLY the copy text, no explanations or meta-commentary.`;
-
-          const res = await fetch("/api/studio/copy", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              messages: [{ id: entry.id, role: "user", parts: [{ type: "text", text: finalPrompt }] }],
-              model: state.copyModelId,
-              system: systemPrompt,
-            }),
-            signal: sig,
-          });
-
-          if (!res.ok) {
-            let errMsg = "Copy generation failed";
-            try {
-              const errData = await res.json();
-              errMsg = errData.error || errMsg;
-            } catch {
-              errMsg = (await res.text()) || errMsg;
-            }
-            throw new Error(errMsg);
-          }
-
-          // Read AI SDK v6 UI message stream to completion
-          // Format: lines of `data: {"type":"text-delta","id":"0","delta":"..."}`
-          const reader = res.body?.getReader();
-          if (!reader) throw new Error("No response body");
-          const decoder = new TextDecoder();
-          let buffer = "";
-          let fullText = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (sig.aborted) { reader.cancel(); break; }
-            buffer += decoder.decode(value, { stream: true });
-
-            // Process complete lines
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed.startsWith("data: ")) continue;
-              const payload = trimmed.slice(6);
-              if (payload === "[DONE]") continue;
-              try {
-                const parsed = JSON.parse(payload);
-                if (parsed.type === "text-delta" && parsed.delta) {
-                  fullText += parsed.delta;
-                }
-              } catch {
-                // skip unparseable lines
-              }
-            }
-          }
-
-          result = fullText;
+        if (genMode === "copy") {
+          throw new Error("Copy providers are paused until their brand-aware intent, exact quote, reservation, provenance, and Operation adapters are qualified.");
         } else {
-          // Use /api/generate for photo/video
-          const images = state.mode === "photo"
-            ? state.referenceImages
-            : state.sourceImage ? [state.sourceImage] : [];
-          const hasSourceImage = state.mode === "video" && images.length > 0;
-
-          let modelId = state.selectedModelId;
-          let modelProvider = state.selectedModelProvider;
-          let modelName = state.selectedModelName;
-
-          // Auto-switch to image-to-video variant when source image is provided
-          if (hasSourceImage && modelId?.includes("/text-to-video")) {
-            modelId = modelId.replace("/text-to-video", "/image-to-video");
-          }
-
-          // Default to Veo when in video mode with no model selected
-          if (state.mode === "video" && !modelId) {
-            modelId = hasSourceImage ? "veo-3.1/image-to-video" : "veo-3.1/text-to-video";
-            modelProvider = null;
-            modelName = "Veo 3.1";
-          }
-
-          const body: Record<string, unknown> = {
-            prompt: finalPrompt,
-            images,
-            selectedModel: modelId
-              ? {
-                  modelId,
-                  provider: modelProvider || undefined,
-                  displayName: modelName || modelId,
-                }
-              : undefined,
-            mediaType: state.mode === "video" ? "video" : undefined,
-            parameters: {
-              aspectRatio: state.aspectRatio,
-              ...(state.mode === "video" ? { duration: state.videoDuration } : {}),
-            },
-          };
-
-          const res = await fetch("/api/generate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-            signal: sig,
-          });
-          const data = await res.json();
-          if (!data.success) throw new Error(data.error || "Generation failed");
-          // For video: prefer video (base64) or videoUrl (remote URL)
-          // For other modes: image, audio
-          if (state.mode === "video") {
-            result = data.video || data.videoUrl || null;
-          } else {
-            result = data.image || data.audio || null;
-          }
+          const admitted = await submitAdmittedGeneration({ state, prompt: finalPrompt, mode: genMode, sourceAssetIds, idempotencyKey: `simple-studio:${entry.id}`, signal: sig });
+          result = admitted.result; canonicalAssetId = admitted.assetId;
         }
 
         setGenerations(set, genMode, (prev) =>
-          prev.map((g) => g.id === entry.id ? { ...g, status: "complete" as const, result } : g),
+          prev.map((g) => g.id === entry.id ? { ...g, status: "complete" as const, result, assetId: canonicalAssetId } : g),
         );
 
         // Persist image/video results to R2 in the background (non-blocking)
         // Results can be base64 data URLs or remote URLs (for large videos)
-        if (result && genMode !== "copy" && (result.startsWith("data:") || result.startsWith("http"))) {
+        if (!canonicalAssetId && result && (result.startsWith("data:") || result.startsWith("http"))) {
           persistToR2(result, genMode, finalPrompt, batchId).then((assetId) => {
             if (assetId) {
               setGenerations(set, genMode, (prev) =>
@@ -525,96 +479,21 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
 
     try {
       let result: string | null = null;
+      let canonicalAssetId: string | null = null;
 
       if (genMode === "copy") {
-        const langDirective = state.outputLanguage === "ar"
-          ? "Write in Arabic only."
-          : state.outputLanguage === "both"
-            ? "Write in both Arabic and English."
-            : "Write in English only.";
-        const systemPrompt = `You are a professional copywriter. ${langDirective} Platform: ${state.platform}. Tone: ${state.tone}. Return ONLY the copy text, no explanations or meta-commentary.`;
-
-        const res = await fetch("/api/studio/copy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: [{ id, role: "user", parts: [{ type: "text", text: gen.prompt }] }],
-            model: state.copyModelId,
-            system: systemPrompt,
-          }),
-          signal: sig,
-        });
-
-        if (!res.ok) {
-          let errMsg = "Copy generation failed";
-          try { const errData = await res.json(); errMsg = errData.error || errMsg; } catch { errMsg = (await res.text()) || errMsg; }
-          throw new Error(errMsg);
-        }
-
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("No response body");
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let fullText = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (sig.aborted) { reader.cancel(); break; }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith("data: ")) continue;
-            const payload = trimmed.slice(6);
-            if (payload === "[DONE]") continue;
-            try { const parsed = JSON.parse(payload); if (parsed.type === "text-delta" && parsed.delta) fullText += parsed.delta; } catch { /* skip */ }
-          }
-        }
-        result = fullText;
+        throw new Error("Copy providers are paused until their admitted execution adapters are qualified.");
       } else {
-        const images = genMode === "photo"
-          ? state.referenceImages
-          : state.sourceImage ? [state.sourceImage] : [];
-        const hasSourceImage = genMode === "video" && images.length > 0;
-
-        let modelId = state.selectedModelId;
-        let modelProvider = state.selectedModelProvider;
-        let modelName = state.selectedModelName;
-
-        if (hasSourceImage && modelId?.includes("/text-to-video")) {
-          modelId = modelId.replace("/text-to-video", "/image-to-video");
-        }
-        if (genMode === "video" && !modelId) {
-          modelId = hasSourceImage ? "veo-3.1/image-to-video" : "veo-3.1/text-to-video";
-          modelProvider = null;
-          modelName = "Veo 3.1";
-        }
-
-        const body: Record<string, unknown> = {
-          prompt: gen.prompt,
-          images,
-          selectedModel: modelId ? { modelId, provider: modelProvider || undefined, displayName: modelName || modelId } : undefined,
-          mediaType: genMode === "video" ? "video" : undefined,
-          parameters: { aspectRatio: gen.aspectRatio, ...(genMode === "video" ? { duration: state.videoDuration } : {}) },
-        };
-
-        const res = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: sig,
-        });
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error || "Generation failed");
-        result = genMode === "video" ? (data.video || data.videoUrl || null) : (data.image || data.audio || null);
+        const sources = genMode === "photo" ? state.referenceImages : state.sourceImage ? [state.sourceImage] : [];
+        const sourceAssetIds = await Promise.all(sources.map(async (source, index) => source.startsWith("asset:") ? source.slice(6) : (await ingestStudioAsset({ assetType: "image", sourceDataUrl: source.startsWith("data:") ? source : undefined, sourceUrl: source.startsWith("http") ? source : undefined, fileName: `retry-inspiration-${id}-${index}.png` })).assetId));
+        const admitted = await submitAdmittedGeneration({ state, prompt: gen.prompt, mode: genMode, sourceAssetIds, idempotencyKey: `simple-studio-retry:${id}:${crypto.randomUUID()}`, signal: sig }); result = admitted.result; canonicalAssetId = admitted.assetId;
       }
 
       setGenerations(set, genMode, (prev) =>
-        prev.map((g) => g.id === id ? { ...g, status: "complete" as const, result } : g),
+        prev.map((g) => g.id === id ? { ...g, status: "complete" as const, result, assetId: canonicalAssetId } : g),
       );
 
-      if (result && genMode !== "copy" && (result.startsWith("data:") || result.startsWith("http"))) {
+      if (!canonicalAssetId && result && (result.startsWith("data:") || result.startsWith("http"))) {
         persistToR2(result, genMode, gen.prompt, gen.batchId).then((assetId) => {
           if (assetId) {
             setGenerations(set, genMode, (prev) =>
@@ -636,30 +515,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   },
 
   rewritePrompt: async () => {
-    const { prompt } = get();
-    if (!prompt.trim()) return;
-
-    set({ isRewriting: true });
-
-    try {
-      const res = await fetch("/api/llm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: `Rewrite this prompt for better AI image/video generation results. Keep the same intent but make it more descriptive and detailed. Return ONLY the rewritten prompt, no explanations:\n\n${prompt}`,
-          provider: "google",
-          model: "gemini-2.5-flash",
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        set({ rewrittenPrompt: data.text || data.response || null });
-      }
-    } catch {
-      // Silently fail — user can still generate with original prompt
-    } finally {
-      set({ isRewriting: false });
-    }
+    set({ isRewriting: false, rewrittenPrompt: null });
   },
 
   // Gallery

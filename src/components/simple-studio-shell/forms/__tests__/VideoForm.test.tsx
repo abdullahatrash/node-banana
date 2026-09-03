@@ -3,13 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { VideoForm } from "../VideoForm";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
+vi.mock("next-intl", () => ({ useTranslations: () => (key: string) => key }));
 
 describe("VideoForm", () => {
   beforeEach(() => {
     useSimpleStudioStore.setState({
       mode: "video",
       prompt: "",
-      aspectRatio: "16:9",
+      aspectRatio: "9:16",
       batchCount: 1,
       videoDuration: 5,
       isGenerating: false,
@@ -20,6 +21,8 @@ describe("VideoForm", () => {
       dialogueEnabled: false,
       dialogueLanguage: "en",
       dialogueText: "",
+      selectedModelId: "qualified-model",
+      rightsConfirmed: true,
     });
     // Stub fetch so ModelSelect's /api/models call doesn't race with test teardown
     global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
@@ -70,12 +73,13 @@ describe("VideoForm", () => {
     expect(useSimpleStudioStore.getState().sourceImage).toBeNull();
   });
 
-  it("toggles AI Prompt Enhance via the store", async () => {
+  it("keeps unadmitted AI Prompt Enhance disabled", async () => {
     render(<VideoForm />);
     const toggle = screen.getByRole("switch", { name: /ai prompt enhance/i });
     expect(toggle).toHaveAttribute("aria-checked", "false");
     await userEvent.click(toggle);
-    expect(useSimpleStudioStore.getState().rewriteEnabled).toBe(true);
+    expect(toggle).toBeDisabled();
+    expect(useSimpleStudioStore.getState().rewriteEnabled).toBe(false);
   });
 
   it("toggles dialogue and reveals language + text controls", async () => {

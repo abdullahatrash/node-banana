@@ -34,12 +34,13 @@ describe("CopyForm", () => {
     expect(screen.getByRole("button", { name: /generate/i })).toBeInTheDocument();
   });
 
-  it("clicking Generate calls generate", async () => {
+  it("keeps generation disabled while text adapters are unadmitted", async () => {
     const generateSpy = vi.fn().mockResolvedValue(undefined);
     useSimpleStudioStore.setState({ prompt: "Ad copy", generate: generateSpy });
     render(<CopyForm />);
     await userEvent.click(screen.getByRole("button", { name: /generate/i }));
-    expect(generateSpy).toHaveBeenCalled();
+    expect(generateSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(/paused/i);
   });
 
   it("Generate is disabled with empty prompt", () => {

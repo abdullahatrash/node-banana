@@ -7,9 +7,9 @@ import { FormInfoPanel } from "./FormInfoPanel";
 import { ModelSelect } from "./ModelSelect";
 import { LatestResultsInline } from "./LatestResultsInline";
 import { GenerateProgress } from "./GenerateProgress";
+import { GenerationAdmissionPanel } from "./GenerationAdmissionPanel";
 
 const ASPECT_RATIOS = [
-  { value: "16:9", label: "16:9" },
   { value: "9:16", label: "9:16" },
 ];
 
@@ -44,8 +44,10 @@ export function VideoForm() {
   const setDialogueLanguage = useSimpleStudioStore((s) => s.setDialogueLanguage);
   const dialogueText = useSimpleStudioStore((s) => s.dialogueText);
   const setDialogueText = useSimpleStudioStore((s) => s.setDialogueText);
+  const selectedModelId = useSimpleStudioStore((s) => s.selectedModelId);
+  const rightsConfirmed = useSimpleStudioStore((s) => s.rightsConfirmed);
 
-  const disabled = isGenerating || isRewriting || prompt.trim().length === 0;
+  const disabled = isGenerating || isRewriting || prompt.trim().length === 0 || !selectedModelId || !rightsConfirmed;
 
   const handleSourceImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -101,6 +103,8 @@ export function VideoForm() {
             type="button"
             role="switch"
             aria-checked={rewriteEnabled}
+            disabled
+            title="Prompt enhancement is paused until its admitted text adapter is qualified."
             onClick={() => setRewriteEnabled(!rewriteEnabled)}
             className={`relative h-5 w-9 rounded-full transition-colors ${
               rewriteEnabled ? "bg-primary" : "bg-muted"
@@ -258,6 +262,8 @@ export function VideoForm() {
           </label>
           <ModelSelect mode="video" id="video-model" />
         </div>
+
+        <GenerationAdmissionPanel />
 
         {isGenerating ? (
           <GenerateProgress />

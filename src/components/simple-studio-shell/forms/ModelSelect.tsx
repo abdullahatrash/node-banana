@@ -2,30 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
+import { getActiveWorkspaceId } from "@/lib/studio/client";
 
 interface ProviderModel {
-  id: string;
-  name: string;
+  model: string;
+  label: string;
   provider: string;
   capabilities?: string[];
+  qualification: { status: "unqualified" } | { status: "qualified"; version: string; inputSchemaDigest: string; executionPriceUsd: { basis: string; amount: number } };
 }
-
-const RECOMMENDED_IMAGE_MODELS = new Set([
-  "nano-banana",
-  "nano-banana-pro",
-  "nano-banana-2",
-  "flux-2/pro-text-to-image",
-  "seedream/4.5-text-to-image",
-  "gpt-image/1.5-text-to-image",
-]);
-
-const RECOMMENDED_VIDEO_MODELS = new Set([
-  "veo-3.1/text-to-video",
-  "veo-3.1-fast/text-to-video",
-  "kling-2.6/text-to-video",
-  "veo3/text-to-video",
-  "wan/2-6-text-to-video",
-]);
 
 interface ModelSelectProps {
   mode: "photo" | "video";
@@ -45,12 +30,10 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
     setIsLoading(true);
     setHasError(false);
 
-    const capabilities =
-      mode === "video"
-        ? "text-to-video,image-to-video"
-        : "text-to-image,image-to-image";
-
-    fetch(`/api/models?capabilities=${capabilities}`, {
+    const workspaceId = getActiveWorkspaceId();
+    if (!workspaceId) { setModels([]); setHasError(true); setIsLoading(false); return () => controller.abort(); }
+    fetch("/api/studio/model-routing/catalog", {
+      headers: { "x-workspace-id": workspaceId },
       signal: controller.signal,
     })
       .then((r) => r.json())
@@ -58,9 +41,10 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
         if (controller.signal.aborted) return;
         if (data.success) {
           const seen = new Set<string>();
-          const unique = (data.models || []).filter((m: ProviderModel) => {
-            if (seen.has(m.id)) return false;
-            seen.add(m.id);
+          const unique = (data.items || []).filter((m: ProviderModel) => {
+            const supported = mode === "video" ? m.capabilities?.some((capability) => capability === "text_to_video" || capability === "image_to_video") : m.capabilities?.some((capability) => capability === "text_to_image" || capability === "image_to_image");
+            if (m.provider !== "replicate" || m.qualification.status !== "qualified" || !supported || seen.has(m.model)) return false;
+            seen.add(m.model);
             return true;
           });
           setModels(unique);
@@ -80,17 +64,7 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
     return () => controller.abort();
   }, [mode]);
 
-  const recommendedSet =
-    mode === "video" ? RECOMMENDED_VIDEO_MODELS : RECOMMENDED_IMAGE_MODELS;
-
-  // Sort: recommended first (alphabetical within group), then others (alphabetical)
-  const sorted = [...models].sort((a, b) => {
-    const aRec = recommendedSet.has(a.id);
-    const bRec = recommendedSet.has(b.id);
-    if (aRec && !bRec) return -1;
-    if (!aRec && bRec) return 1;
-    return a.name.localeCompare(b.name);
-  });
+  const sorted = [...models].sort((a, b) => a.label.localeCompare(b.label));
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
@@ -98,9 +72,9 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
       setSelectedModel(null, null, null);
       return;
     }
-    const model = models.find((m) => m.id === value);
-    if (model) {
-      setSelectedModel(model.id, model.provider, model.name);
+    const model = models.find((m) => m.model === value);
+    if (model?.qualification.status === "qualified") {
+      setSelectedModel(model.model, model.provider, model.label, model.qualification.version, model.qualification.inputSchemaDigest);
     }
   };
 
@@ -112,17 +86,17 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
       onChange={handleChange}
       disabled={isLoading && models.length === 0}
     >
-      <option value="">Auto (default)</option>
+      <option value="">Select an admitted model</option>
       {isLoading && models.length === 0 && (
         <option disabled>Loading models…</option>
       )}
       {hasError && !isLoading && (
-        <option disabled>Failed to load models</option>
+        <option disabled>Select a Workspace to load models</option>
       )}
+      {!hasError && !isLoading && sorted.length === 0 && <option disabled>No qualified models configured</option>}
       {sorted.map((m) => (
-        <option key={m.id} value={m.id}>
-          {m.name} ({m.provider})
-          {recommendedSet.has(m.id) ? " — recommended" : ""}
+        <option key={m.model} value={m.model}>
+          {m.label} · ${m.qualification.status === "qualified" ? m.qualification.executionPriceUsd.amount : "—"}/{m.qualification.status === "qualified" ? m.qualification.executionPriceUsd.basis : "—"}
         </option>
       ))}
     </select>

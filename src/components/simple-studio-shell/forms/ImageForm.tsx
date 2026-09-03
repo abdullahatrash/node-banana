@@ -7,12 +7,10 @@ import { FormInfoPanel } from "./FormInfoPanel";
 import { ModelSelect } from "./ModelSelect";
 import { LatestResultsInline } from "./LatestResultsInline";
 import { GenerateProgress } from "./GenerateProgress";
+import { GenerationAdmissionPanel } from "./GenerationAdmissionPanel";
 
 const ASPECT_RATIOS = [
-  { value: "1:1", label: "1:1" },
-  { value: "16:9", label: "16:9" },
   { value: "9:16", label: "9:16" },
-  { value: "4:5", label: "4:5" },
 ];
 
 const BATCH_PRESETS = [1, 4, 8, 12];
@@ -34,8 +32,10 @@ export function ImageForm() {
   const rewriteEnabled = useSimpleStudioStore((s) => s.rewriteEnabled);
   const setRewriteEnabled = useSimpleStudioStore((s) => s.setRewriteEnabled);
   const rewrittenPrompt = useSimpleStudioStore((s) => s.rewrittenPrompt);
+  const selectedModelId = useSimpleStudioStore((s) => s.selectedModelId);
+  const rightsConfirmed = useSimpleStudioStore((s) => s.rightsConfirmed);
 
-  const disabled = isGenerating || isRewriting || prompt.trim().length === 0;
+  const disabled = isGenerating || isRewriting || prompt.trim().length === 0 || !selectedModelId || !rightsConfirmed;
 
   const handleReferenceImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -91,6 +91,8 @@ export function ImageForm() {
             type="button"
             role="switch"
             aria-checked={rewriteEnabled}
+            disabled
+            title="Prompt enhancement is paused until its admitted text adapter is qualified."
             onClick={() => setRewriteEnabled(!rewriteEnabled)}
             className={`relative h-5 w-9 rounded-full transition-colors ${
               rewriteEnabled ? "bg-primary" : "bg-muted"
@@ -167,6 +169,8 @@ export function ImageForm() {
           </label>
           <ModelSelect mode="photo" id="image-model" />
         </div>
+
+        <GenerationAdmissionPanel />
 
         {isGenerating ? (
           <GenerateProgress />

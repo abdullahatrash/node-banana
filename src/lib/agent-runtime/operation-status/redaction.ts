@@ -1,5 +1,5 @@
-const SAFE_KEY = /^(count|attempt|durationMs|progress|providerFamily|modelFamily|provider|model|version|inputSchemaDigest|region|language|contentLanguage|arabicVariety|format|aspectRatio|sourceAdapter|sourceUpdatedAt|intentId|predictionId|providerState|providerCode|nextAction|brandRevision|quoteAmountUsd|quoteQuantity|quoteBasis|reservationIds|rightsEvidenceRefs|provenanceRefs|artifactCount)$/;
-const SAFE_ARRAY_KEY = /^(reservationIds|rightsEvidenceRefs|provenanceRefs)$/;
+const SAFE_KEY = /^(count|attempt|durationMs|progress|providerFamily|modelFamily|provider|model|version|inputSchemaDigest|region|regionPolicyId|regionPolicyVersion|regionEvidenceDigest|language|contentLanguage|arabicVariety|format|aspectRatio|width|height|fps|sourceAdapter|sourceUpdatedAt|intentId|predictionId|providerState|providerCode|nextAction|brandProfileId|brandRevision|quoteAmountUsd|quoteQuantity|quoteBasis|actualAmountUsd|releasedAmountUsd|reservationIds|rightsSnapshotId|rightsSnapshotRevision|rightsEvidenceRefs|provenanceRefs|artifactIds|artifactCount)$/;
+const SAFE_ARRAY_KEY = /^(reservationIds|rightsEvidenceRefs|provenanceRefs|artifactIds)$/;
 
 export function redactOperationMetadata(value: Record<string, unknown>): Record<string, string | number | boolean | null | string[]> {
   const safe: Array<[string, string | number | boolean | null | string[]]> = [];

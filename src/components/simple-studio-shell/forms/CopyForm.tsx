@@ -43,7 +43,7 @@ export function CopyForm() {
   const outputLanguage = useSimpleStudioStore((s) => s.outputLanguage);
   const setOutputLanguage = useSimpleStudioStore((s) => s.setOutputLanguage);
 
-  const disabled = isGenerating || prompt.trim().length === 0;
+  const disabled = true;
 
   return (
     <FormPageLayout
@@ -58,6 +58,7 @@ export function CopyForm() {
       }
     >
       <div className="space-y-4">
+        <div role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">Copy generation is paused until Google, OpenAI, and Anthropic implement the same accepted Brand Profile, Arabic language, rights/provenance, exact quote, budget reservation, and durable Operation admission required for media. · تم إيقاف توليد النص مؤقتًا حتى يكتمل مسار الاعتماد الآمن.</div>
         <div>
           <label htmlFor="copy-prompt" className="mb-2 block text-sm font-medium">
             Prompt
@@ -137,6 +138,7 @@ export function CopyForm() {
             id="copy-model"
             className="w-full rounded-md border bg-background p-2 text-sm"
             value={copyModelId}
+            disabled
             onChange={(e) => setCopyModelId(e.target.value)}
           >
             {LLM_MODELS.map((m) => (

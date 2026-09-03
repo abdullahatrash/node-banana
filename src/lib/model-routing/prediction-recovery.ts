@@ -34,7 +34,7 @@ export async function recoverReplicatePredictions(input: { database: Db; operati
       const [operation] = await input.database.select().from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, row.workspaceId), eq(runtimeOperations.kind, "generation"), eq(runtimeOperations.resourceId, row.intentId))).limit(1);
       if (operation && operation.state !== "succeeded" && operation.state !== "failed_known" && operation.state !== "cancelled") {
         const target = recoveryDisposition(result).operationState; const actor = { type: "system" as const, service: "replicate-recovery" };
-        await input.operations.transition({ workspaceId: row.workspaceId, operationId: operation.id, expectedRevision: operation.revision, to: target, reasonCode: `generation.provider_reconciled_${target}`, actor, metadata: { predictionId: row.predictionId, providerState: result.state, nextAction: result.state === "waiting_provider" ? "poll_provider" : "none" }, idempotencyKey: `replicate-recovery:${row.intentId}:${row.pollAttempts + 1}:${target}` });
+        await input.operations.transition({ workspaceId: row.workspaceId, operationId: operation.id, expectedRevision: operation.revision, to: target, reasonCode: `generation.provider_reconciled_${target}`, actor, metadata: { predictionId: row.predictionId, providerState: result.state, nextAction: result.state === "waiting_provider" ? "poll_provider" : result.state === "outcome_unknown" ? "reconcile_provider" : "none", ...(result.state === "succeeded" ? { artifactIds: result.artifactIds, artifactCount: result.artifactIds.length } : {}) }, idempotencyKey: `replicate-recovery:${row.intentId}:${row.pollAttempts + 1}:${target}` });
       }
       if (result.state === "waiting_provider") {
         summary.waiting++;
