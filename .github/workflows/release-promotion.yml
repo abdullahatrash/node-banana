@@ -1,0 +1,65 @@
+name: Release promotion gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      gate_url:
+        description: Production application origin
+        required: true
+        type: string
+      workspace_id:
+        description: Release-control workspace ID
+        required: true
+        type: string
+      build_id:
+        description: Exact immutable build or commit ID in the signed server manifest
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      gate_url:
+        required: true
+        type: string
+      workspace_id:
+        required: true
+        type: string
+      build_id:
+        required: true
+        type: string
+    secrets:
+      deployment_gate_secret:
+        required: true
+      readiness_signing_secret:
+        required: true
+      readiness_signing_key_id:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  signed-readiness:
+    name: signed release readiness
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify signed manifest-bound readiness
+        env:
+          RELEASE_GATE_URL: ${{ inputs.gate_url }}
+          RELEASE_GATE_WORKSPACE_ID: ${{ inputs.workspace_id }}
+          RELEASE_EXPECTED_BUILD_ID: ${{ inputs.build_id }}
+          RELEASE_DEPLOYMENT_GATE_SECRET: ${{ secrets.deployment_gate_secret }}
+          RELEASE_READINESS_SIGNING_SECRET: ${{ secrets.readiness_signing_secret }}
+          RELEASE_READINESS_SIGNING_KEY_ID: ${{ secrets.readiness_signing_key_id }}
+        run: node scripts/verify-release-promotion.mjs
+
+  promotion-authorized:
+    name: promotion authorized
+    runs-on: ubuntu-latest
+    needs: signed-readiness
+    steps:
+      - run: echo "Signed release readiness passed; downstream deployment may promote this exact build."

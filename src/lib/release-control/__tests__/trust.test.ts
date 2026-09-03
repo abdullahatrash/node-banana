@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { signReleaseAttestation, verifyReleaseAttestation } from "../attestation";
 import { loadReleaseManifest, signReleaseManifest, type ReleaseManifest } from "../manifest";
+import { signReleaseReadiness, verifyReleaseReadiness } from "../readiness-attestation";
+import type { ReleaseReadinessDecision } from "../types";
 
 const NOW = new Date("2026-09-03T12:00:00.000Z"); const FUTURE = "2026-09-04T12:00:00.000Z"; const SECRET = "a-secure-test-secret-with-at-least-32-bytes";
 
@@ -34,4 +36,13 @@ describe("server-owned release manifest", () => {
   it("accepts only a current signature bound to the exact workspace inventory", () => { const signature = signReleaseManifest(manifest, SECRET); expect(loadReleaseManifest({ raw: JSON.stringify(manifest), signature, secret: SECRET, workspaceId: "workspace-1", now: NOW })).toEqual(manifest); const tampered = { ...manifest, performanceRequirements: manifest.performanceRequirements.map((item, index) => index === 0 ? { ...item, budget: item.budget + 1 } : item) }; expect(() => loadReleaseManifest({ raw: JSON.stringify(tampered), signature, secret: SECRET, workspaceId: "workspace-1", now: NOW })).toThrow("RELEASE_MANIFEST_SIGNATURE_INVALID"); });
   it("fails closed for absent configuration", () => expect(() => loadReleaseManifest({ raw: undefined, signature: undefined, secret: undefined, workspaceId: "workspace-1", now: NOW })).toThrow("RELEASE_MANIFEST_MISSING"));
   it("rejects a manifest that omits a parity cross-product cell", () => { const incomplete = { ...manifest, parityMatrix: { ...manifest.parityMatrix, cells: manifest.parityMatrix.cells.slice(0, 1) } }; expect(() => loadReleaseManifest({ raw: JSON.stringify(incomplete), signature: signReleaseManifest(incomplete as ReleaseManifest, SECRET), secret: SECRET, workspaceId: "workspace-1", now: NOW })).toThrow("enumerate every required parity cell"); });
+});
+
+describe("signed deployment readiness", () => {
+  it("binds a fresh decision to its build and blockers", () => {
+    const decision: ReleaseReadinessDecision = { schema: "release-readiness-decision/v1", buildId: "build-1", evaluatedAt: NOW, releasable: true, parityClaimAllowed: true, parityMatrix: { requiredCells: 2, passingCells: 2 }, blockers: [] };
+    const attestation = signReleaseReadiness(decision, "release-key", SECRET);
+    expect(verifyReleaseReadiness(decision, attestation, "release-key", SECRET, NOW)).toEqual(attestation);
+    expect(() => verifyReleaseReadiness({ ...decision, releasable: false }, attestation, "release-key", SECRET, NOW)).toThrow("RELEASE_READINESS_SIGNATURE_INVALID");
+  });
 });

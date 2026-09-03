@@ -10,4 +10,9 @@ describe("ServiceStatusBanner", () => {
     render(<I18nTestProvider locale="en"><ServiceStatusBanner /></I18nTestProvider>);
     expect(await screen.findByRole("link", { name: /Some services are degraded/ })).toHaveAttribute("href", "/en/status");
   });
+  it("renders critical outages without collapsing their severity", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: "criticalOutage", incidents: [{ summary: "Publishing outcome unknown" }] }), { status: 200 })));
+    render(<I18nTestProvider locale="en"><ServiceStatusBanner /></I18nTestProvider>);
+    expect(await screen.findByRole("link", { name: /Critical service outage/ })).toHaveAttribute("href", "/en/status");
+  });
 });

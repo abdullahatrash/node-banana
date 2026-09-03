@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ReleaseControlRepository } from "../repository";
-import { ReleaseControlService } from "../service";
+import { derivePublicServiceStatus, ReleaseControlService } from "../service";
 
 const NOW = new Date("2026-09-03T12:00:00.000Z");
 function repository() {
@@ -19,6 +19,12 @@ function repository() {
 }
 
 describe("ReleaseControlService", () => {
+  it("preserves minor, major, and critical public incident severity", () => {
+    expect(derivePublicServiceStatus([{ severity: "minor", status: "monitoring" }])).toBe("degraded");
+    expect(derivePublicServiceStatus([{ severity: "major", status: "identified" }])).toBe("majorOutage");
+    expect(derivePublicServiceStatus([{ severity: "critical", status: "investigating" }])).toBe("criticalOutage");
+    expect(derivePublicServiceStatus([{ severity: "critical", status: "resolved" }])).toBe("operational");
+  });
   it("binds owner-controlled records to the authenticated operator", async () => {
     const service = new ReleaseControlService(repository(), "test-secret");
     await expect(service.append("workspace-1", "owner-1", { recordKind: "flag", document: { id: "flag-safe", buildId: "build-1", ownerUserId: "other-user", hypothesis: "A sufficiently explicit hypothesis", createdAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 1000).toISOString(), rolloutPercent: 0, safeDefault: "off", status: "active", evidenceIds: ["evidence-1"], eligibility: { roles: ["owner"], entitlements: ["pro"], locales: ["ar", "en"] }, dependencyFlagIds: [], telemetryEventName: "release_flag_evaluated", rollback: { mode: "automatic", triggerMetric: "error_rate", threshold: 0.1, windowMinutes: 15, ownerUserId: "other-user" } } }, "request-key-1", NOW)).rejects.toThrow("RELEASE_OWNER_MISMATCH");
