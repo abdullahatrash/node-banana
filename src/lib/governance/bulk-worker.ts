@@ -1,9 +1,15 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
-import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { authorizationContractDigestFor } from "@/lib/agent-tools/registry";
 import { getDb } from "@/lib/db";
 import { assets, contentWorkflows, runtimePublishingDeliveries, socialAccounts, socialPosts, workspaceGovernanceResources, workspaceMembers } from "@/lib/db/schema";
+import {
+  WorkflowRunSpendQuoteCodec,
+  workflowRunQuoteCeilingDigest,
+  workflowRunQuoteInputDigest,
+  type WorkflowRunAcceptedSpendQuote,
+} from "@/lib/agent-runtime/runs/spend-quote";
 import type {
   BulkOperationItem,
   GovernanceAuditEvent,
@@ -158,30 +164,11 @@ export class ApplicationGovernanceBulkCapabilityPort implements GovernanceBulkCa
       return { type: "failed_known" as const, code: "DELEGATED_AGENT_QUOTE_REQUIRED" };
     }
     const response = delegated && input.capability === "workflow_runs.start@2" && input.acceptedQuoteRef
-      ? await dispatchCapability({ capability: input.capability, input: { ...capabilityInput, idempotencyKey: `bulk-quote:${canonicalDigest(input.acceptedQuoteRef)}` } }, { securityContext: { kind: "agent", workspaceId: input.actor.workspaceId, principalId: delegated.principalId, keyId: delegated.keyId } })
+      ? await dispatchCapability({ capability: input.capability, input: { ...capabilityInput, acceptedSpendQuoteRef: input.acceptedQuoteRef, idempotencyKey: `bulk-quote:${canonicalDigest(input.acceptedQuoteRef)}` } }, { securityContext: { kind: "agent", workspaceId: input.actor.workspaceId, principalId: delegated.principalId, keyId: delegated.keyId } })
       : await dispatchCapability({ capability: input.capability, input: capabilityInput }, { securityContext: { kind: "human", workspaceId: input.actor.workspaceId, userId: input.actor.userId, role: input.actor.legacyRole, authContextId: input.actor.authContextId, idempotencyKey: input.idempotencyKey } });
     if (response.type === "capability_error") return { type: "failed_known" as const, code: response.code };
     return { type: "succeeded" as const, output: response.output };
   }
-}
-
-interface SignedWorkflowBulkQuote {
-  schema: "governance-workflow-bulk-quote/v2";
-  sourceWorkspaceId: string;
-  targetWorkspaceId: string;
-  requestedByUserId: string;
-  delegatedPrincipalId: string;
-  delegatedKeyId: string;
-  capability: "workflow_runs.start@2";
-  workflowId: string;
-  workflowRevisionId: string;
-  inputDigest: string;
-  targetStateDigest: string;
-  amount: string;
-  currency: string;
-  providerModels: Array<{ provider: string; model: string; pricePerAttempt: string; automaticAttempts: number; pricingSnapshotIds: string[] }>;
-  quotedAt: string;
-  expiresAt: string;
 }
 
 interface DelegatedBulkAgent {
@@ -209,10 +196,12 @@ type WorkflowPreviewService = { preview(input: { workspaceId: string; workflowId
 /** Issues and revalidates signed, actor/target/input-bound quotes from the
  * actual Workflow Run budget preview. No caller-authored price is accepted. */
 export class WorkflowRunGovernanceBulkQuotePort {
+  private readonly codec: WorkflowRunSpendQuoteCodec;
+
   constructor(
     private readonly service: WorkflowPreviewService,
     private readonly key: Uint8Array | null = (() => { const value = Buffer.from(process.env.GOVERNANCE_BULK_QUOTE_SIGNING_KEY ?? "", "base64"); return value.length === 32 ? value : null; })(),
-  ) {}
+  ) { this.codec = new WorkflowRunSpendQuoteCodec(this.key); }
 
   async quote(input: Parameters<GovernanceBulkPreviewPort["inspect"]>[0] & { targetStateDigest: string }) {
     if (input.capability !== "workflow_runs.start@2" || input.targetKind !== "content" || !this.key) return null;
@@ -234,23 +223,25 @@ export class WorkflowRunGovernanceBulkQuotePort {
       pricingSnapshotIds: [...exposure.pricingSnapshotIds].sort(),
     }));
     if (providerModels.some((item) => !item.pricePerAttempt || item.pricingSnapshotIds.length === 0)) return null;
-    const inputDigest = canonicalDigest({ workflowId, revisionId, inputs, inputArtifactIds: [...(artifactIds as string[])].sort() });
-    let payload: SignedWorkflowBulkQuote;
+    const inputDigest = workflowRunQuoteInputDigest({ workflowId, revisionId, inputs: inputs as Record<string, unknown>, inputArtifactIds: artifactIds as string[] });
+    const pricingSnapshotIds = [...new Set(providerModels.flatMap((item) => item.pricingSnapshotIds))].sort();
+    let payload: WorkflowRunAcceptedSpendQuote;
     if (input.quoteRef) {
       const opened = this.open(input.quoteRef);
       if (!opened || opened.expiresAt <= input.evaluatedAt.toISOString()) return null;
       payload = opened;
-      const current = { amount: preview.ceiling.amount, currency: preview.ceiling.currency, providerModels };
+      const current = { amount: preview.ceiling.amount, currency: preview.ceiling.currency, providerModels, pricingSnapshotIds };
       if (
         payload.sourceWorkspaceId !== input.sourceWorkspaceId || payload.targetWorkspaceId !== input.targetWorkspaceId ||
         payload.requestedByUserId !== input.requestedByUserId || payload.workflowId !== workflowId ||
         payload.delegatedPrincipalId !== delegated.principalId || payload.delegatedKeyId !== delegated.keyId ||
         payload.workflowRevisionId !== revisionId || payload.inputDigest !== inputDigest ||
-        payload.targetStateDigest !== input.targetStateDigest || canonicalDigest(current) !== canonicalDigest({ amount: payload.amount, currency: payload.currency, providerModels: payload.providerModels })
+        payload.targetStateDigest !== input.targetStateDigest || workflowRunQuoteCeilingDigest(current) !== payload.ceilingDigest
       ) return null;
     } else {
       payload = {
-        schema: "governance-workflow-bulk-quote/v2",
+        schema: "workflow-run-accepted-spend-quote/v1",
+        quoteId: `quote_${randomUUID().replaceAll("-", "")}`,
         sourceWorkspaceId: input.sourceWorkspaceId,
         targetWorkspaceId: input.targetWorkspaceId,
         requestedByUserId: input.requestedByUserId,
@@ -264,28 +255,17 @@ export class WorkflowRunGovernanceBulkQuotePort {
         amount: preview.ceiling.amount,
         currency: preview.ceiling.currency,
         providerModels,
+        pricingSnapshotIds,
+        ceilingDigest: workflowRunQuoteCeilingDigest({ amount: preview.ceiling.amount, currency: preview.ceiling.currency, providerModels, pricingSnapshotIds }),
         quotedAt: input.evaluatedAt.toISOString(),
         expiresAt: new Date(input.evaluatedAt.getTime() + 5 * 60_000).toISOString(),
       };
     }
-    const encoded = Buffer.from(canonicalJson(payload), "utf8").toString("base64url");
-    const ref = `${encoded}.${createHmac("sha256", this.key).update(encoded).digest("base64url")}`;
+    const ref = this.codec.seal(payload);
     return { required: true as const, ref, amount: payload.amount, currency: payload.currency, source: "workflow_run_budget_preview" as const, providerModels: payload.providerModels, quotedAt: payload.quotedAt, expiresAt: payload.expiresAt, targetStateDigest: payload.targetStateDigest, digest: canonicalDigest(payload) };
   }
 
-  private open(ref: string): SignedWorkflowBulkQuote | null {
-    if (!this.key) return null;
-    const [encoded, signature, extra] = ref.split(".");
-    if (!encoded || !signature || extra) return null;
-    const expected = createHmac("sha256", this.key).update(encoded).digest();
-    let supplied: Buffer;
-    try { supplied = Buffer.from(signature, "base64url"); } catch { return null; }
-    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
-    try {
-      const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as SignedWorkflowBulkQuote;
-      return value.schema === "governance-workflow-bulk-quote/v2" && value.capability === "workflow_runs.start@2" ? value : null;
-    } catch { return null; }
-  }
+  private open(ref: string): WorkflowRunAcceptedSpendQuote | null { return this.codec.open(ref); }
 }
 
 /** Production preview admission: exact target state + registry schema + current

@@ -835,6 +835,7 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
         .orderBy(asc(runtimeBudgetPeriods.id))
         .for("update");
       const rows = await tx.select().from(runtimeBudgetReservations).where(and(eq(runtimeBudgetReservations.workspaceId, plan.workspaceId), eq(runtimeBudgetReservations.runId, plan.runId))).orderBy(asc(runtimeBudgetReservations.id)).for("update");
+      const [admissionRow] = await tx.select({ admission: runtimeBudgetAdmissions.admission }).from(runtimeBudgetAdmissions).where(and(eq(runtimeBudgetAdmissions.workspaceId, plan.workspaceId), eq(runtimeBudgetAdmissions.runId, plan.runId))).limit(1);
       const currencylessKnownZero = plan.amount !== null &&
         compareDecimals(plan.amount, "0") === 0 &&
         plan.currency === null;
@@ -921,6 +922,7 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
         const settled = heldUnknown || plan.amount === null
           ? withoutPrior
           : addDecimals(withoutPrior, plan.amount);
+        if (admissionRow?.admission.acceptedSpendQuote && !heldUnknown && compareDecimals(settled, admissionRow.admission.acceptedSpendQuote.amount) > 0) return "unavailable";
         const held = !heldUnknown && plan.runTerminal
           ? "0"
           : !heldUnknown && heldAmount !== null

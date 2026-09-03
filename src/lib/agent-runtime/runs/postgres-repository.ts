@@ -12,6 +12,7 @@ import {
 import type { getDb } from "@/lib/db";
 import {
   agentAuthorizationDecisions,
+  contentWorkflows,
   contentWorkflowRevisions,
   workflowRunEvents,
   workflowRunExecutionLeases,
@@ -20,6 +21,7 @@ import {
   workflowRuns,
   workflowStepAttempts,
   runtimeQuotaWaits,
+  runtimeWorkflowRunSpendQuoteRedemptions,
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import {
@@ -56,6 +58,7 @@ import type {
   WorkflowRunStartSnapshot,
   WorkflowStepAttemptRecord,
 } from "./types";
+import { WorkflowRunSpendQuoteCodec, workflowRunQuoteCeilingDigest, type WorkflowRunAcceptedSpendQuote } from "./spend-quote";
 
 function sameQuotaResumeActor(
   left: QuotaWait["resumedBy"],
@@ -406,6 +409,37 @@ function validStartInput(
   );
 }
 
+function quoteMatchesAdmission(input: {
+  quote: WorkflowRunAcceptedSpendQuote;
+  run: WorkflowRunRecord;
+  receipt: WorkflowRunMutationReceiptRecord;
+  budgetAdmissionPlan: import("../budgets/types").BudgetAdmissionPlan | null | undefined;
+}): boolean {
+  const plan = input.budgetAdmissionPlan;
+  if (!plan || !input.run.startSnapshot.acceptedSpendQuote) return false;
+  const providerModels = plan.stepExposures.map((exposure) => ({
+    provider: exposure.provider,
+    model: exposure.model,
+    pricePerAttempt: exposure.amountPerAttempt ?? "",
+    automaticAttempts: exposure.automaticAttempts,
+    pricingSnapshotIds: [...exposure.pricingSnapshotIds].sort(),
+  }));
+  const pricingSnapshotIds = [...new Set(providerModels.flatMap((item) => item.pricingSnapshotIds))].sort();
+  return canonicalDigest(input.quote) === canonicalDigest(input.run.startSnapshot.acceptedSpendQuote) &&
+    input.quote.targetWorkspaceId === input.run.workspaceId &&
+    input.quote.delegatedPrincipalId === input.receipt.principalId &&
+    input.quote.delegatedKeyId === input.receipt.keyId &&
+    input.quote.workflowId === input.run.workflowId &&
+    input.quote.workflowRevisionId === input.run.workflowRevisionId &&
+    input.quote.expiresAt > input.run.acceptedAt.toISOString() &&
+    input.quote.quotedAt <= input.run.acceptedAt.toISOString() &&
+    input.quote.pricingSnapshotIds.length === pricingSnapshotIds.length &&
+    input.quote.pricingSnapshotIds.every((id, index) => id === pricingSnapshotIds[index]) &&
+    plan.reservations.length > 0 &&
+    plan.reservations.every((reservation) => reservation.currency === input.quote.currency && reservation.reservedAmount === input.quote.amount) &&
+    workflowRunQuoteCeilingDigest({ amount: input.quote.amount, currency: input.quote.currency, providerModels, pricingSnapshotIds }) === input.quote.ceilingDigest;
+}
+
 async function findRun(
   database: Db | Tx,
   input: { workspaceId: string; workflowId?: string; runId: string },
@@ -458,6 +492,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
     private readonly usageWriter?: UsageCommitWriter<Tx>,
     private readonly budgetWriter?: BudgetCommitWriter<Tx>,
     private readonly quotaWriter?: QuotaCommitWriter<Tx>,
+    private readonly spendQuotes: WorkflowRunSpendQuoteCodec = new WorkflowRunSpendQuoteCodec(null),
   ) {}
 
   private async commitQuotaClaim(tx: Tx, plan: QuotaClaimPlan | null | undefined) {
@@ -700,6 +735,20 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             : { kind: "unavailable" as const };
         }
 
+        const quote = input.acceptedSpendQuoteRef ? this.spendQuotes.open(input.acceptedSpendQuoteRef) : null;
+        if (
+          Boolean(input.acceptedSpendQuoteRef) !== Boolean(input.acceptedSpendQuote) ||
+          (input.acceptedSpendQuote && (!quote || !quoteMatchesAdmission({ quote, run: input.run, receipt: input.receipt, budgetAdmissionPlan: input.budgetAdmissionPlan })))
+        ) return { kind: "unavailable" as const };
+        if (quote) {
+          const redeemed = await tx.select({ runId: runtimeWorkflowRunSpendQuoteRedemptions.runId })
+            .from(runtimeWorkflowRunSpendQuoteRedemptions)
+            .where(eq(runtimeWorkflowRunSpendQuoteRedemptions.quoteId, quote.quoteId))
+            .limit(1)
+            .for("update");
+          if (redeemed[0]) return { kind: "unavailable" as const };
+        }
+
         const revisionRows = await tx
           .select({
             revision: contentWorkflowRevisions.revision,
@@ -740,6 +789,14 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             revision.definitionDigest
         ) {
           return { kind: "unavailable" as const };
+        }
+        if (quote) {
+          const [workflow] = await tx.select({ id: contentWorkflows.id, currentRevision: contentWorkflows.currentRevision, updatedAt: contentWorkflows.updatedAt })
+            .from(contentWorkflows)
+            .where(and(eq(contentWorkflows.workspaceId, input.run.workspaceId), eq(contentWorkflows.id, input.run.workflowId)))
+            .limit(1)
+            .for("share");
+          if (!workflow || canonicalDigest(workflow) !== quote.targetStateDigest) return { kind: "unavailable" as const };
         }
 
         const evidenceRows = await tx
@@ -796,6 +853,20 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           keyId: input.run.startSnapshot.authorization.keyId,
           authorizationEvidenceRef:
             input.run.startSnapshot.authorization.evidenceRef,
+        });
+        if (quote) await tx.insert(runtimeWorkflowRunSpendQuoteRedemptions).values({
+          quoteId: quote.quoteId,
+          workspaceId: input.run.workspaceId,
+          runId: input.run.id,
+          principalId: input.receipt.principalId,
+          keyId: input.receipt.keyId,
+          amount: quote.amount,
+          currency: quote.currency,
+          pricingSnapshotIds: quote.pricingSnapshotIds,
+          targetStateDigest: quote.targetStateDigest,
+          ceilingDigest: quote.ceilingDigest,
+          quote,
+          redeemedAt: input.run.acceptedAt,
         });
         await appendRunContractEvidence(tx, {
           workspaceId: input.run.workspaceId,

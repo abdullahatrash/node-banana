@@ -24,6 +24,7 @@ import type {
   WorkflowStepAttemptInput,
   WorkflowStepAttemptRecord,
 } from "@/lib/agent-runtime/runs/types";
+import type { WorkflowRunAcceptedSpendQuote } from "@/lib/agent-runtime/runs/spend-quote";
 import type {
   CostValuation,
   FxSnapshot,
@@ -7897,6 +7898,34 @@ export const runtimeBudgetAdmissions = pgTable(
     principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_budget_admissions_principal_fk" }).onDelete("restrict"),
     principalCreatedIdx: index("runtime_budget_admissions_principal_created_idx").on(table.workspaceId, table.principalId, table.createdAt),
     digestCheck: check("runtime_budget_admissions_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+/** One atomic redemption per signed fixed provider-spend quote. */
+export const runtimeWorkflowRunSpendQuoteRedemptions = pgTable(
+  "runtime_workflow_run_spend_quote_redemptions",
+  {
+    quoteId: text("quote_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    principalId: text("principal_id").notNull(),
+    keyId: text("key_id").notNull(),
+    amount: text("amount").notNull(),
+    currency: text("currency").notNull(),
+    pricingSnapshotIds: jsonb("pricing_snapshot_ids").$type<string[]>().notNull(),
+    targetStateDigest: text("target_state_digest").notNull(),
+    ceilingDigest: text("ceiling_digest").notNull(),
+    quote: jsonb("quote").$type<WorkflowRunAcceptedSpendQuote>().notNull(),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    runUnique: uniqueIndex("runtime_workflow_run_spend_quote_redemptions_run_unique").on(table.workspaceId, table.runId),
+    runFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "runtime_workflow_run_spend_quote_redemptions_run_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_workflow_run_spend_quote_redemptions_principal_fk" }).onDelete("restrict"),
+    amountCheck: check("runtime_workflow_run_spend_quote_redemptions_amount_check", sql`${table.amount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$'`),
+    currencyCheck: check("runtime_workflow_run_spend_quote_redemptions_currency_check", sql`${table.currency} ~ '^[A-Z]{3}$'`),
+    targetDigestCheck: check("runtime_workflow_run_spend_quote_redemptions_target_digest_check", sql`${table.targetStateDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    ceilingDigestCheck: check("runtime_workflow_run_spend_quote_redemptions_ceiling_digest_check", sql`${table.ceilingDigest} ~ '^sha256:[a-f0-9]{64}$'`),
   }),
 );
 

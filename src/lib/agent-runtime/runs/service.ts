@@ -29,7 +29,7 @@ import type {
   WorkflowRunBudgetPort,
   WorkflowRunQuotaPort,
 } from "./types";
-import type { BudgetAdmissionInput, RunStepExposure } from "../budgets/types";
+import type { BudgetAdmissionInput, BudgetAdmissionPlan, RunStepExposure } from "../budgets/types";
 import type { RunAdmissionPreview } from "../budgets/types";
 import { BudgetServiceError } from "../budgets/service";
 import type {
@@ -46,6 +46,12 @@ import {
   providerFamily,
   quotaReasonFamily,
 } from "../operational-metrics";
+import {
+  WorkflowRunSpendQuoteCodec,
+  workflowRunQuoteCeilingDigest,
+  workflowRunQuoteInputDigest,
+  type WorkflowRunAcceptedSpendQuote,
+} from "./spend-quote";
 
 const ID = /^[a-zA-Z0-9_-]{1,200}$/;
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{8,200}$/;
@@ -98,6 +104,20 @@ function usageQuotaSubjectId(input: {
     schema: "workflow-run-usage-quota-subject/v1",
     ...input,
   }).slice(7, 39)}`;
+}
+
+function matchesAcceptedSpendQuote(quote: WorkflowRunAcceptedSpendQuote, plan: BudgetAdmissionPlan): boolean {
+  const providerModels = plan.stepExposures.map((exposure) => ({
+    provider: exposure.provider,
+    model: exposure.model,
+    pricePerAttempt: exposure.amountPerAttempt ?? "",
+    automaticAttempts: exposure.automaticAttempts,
+    pricingSnapshotIds: [...exposure.pricingSnapshotIds].sort(),
+  }));
+  const pricingSnapshotIds = [...new Set(providerModels.flatMap((item) => item.pricingSnapshotIds))].sort();
+  return plan.reservations.length > 0 &&
+    plan.reservations.every((reservation) => reservation.currency === quote.currency && reservation.reservedAmount === quote.amount) &&
+    workflowRunQuoteCeilingDigest({ amount: quote.amount, currency: quote.currency, providerModels, pricingSnapshotIds }) === quote.ceilingDigest;
 }
 
 function usageQuotaReconciliationId(input: {
@@ -582,6 +602,7 @@ export class WorkflowRunService {
     private readonly usage?: UsageSettlementPort,
     private readonly budgets?: WorkflowRunBudgetPort,
     private readonly quotas?: WorkflowRunQuotaPort,
+    private readonly spendQuotes: WorkflowRunSpendQuoteCodec = new WorkflowRunSpendQuoteCodec(null),
   ) {}
 
   private quotaRunClaim(input: {
@@ -952,6 +973,7 @@ export class WorkflowRunService {
     idempotencyKey: string;
     inputArtifactIds?: string[];
     capability?: "workflow_runs.start@1" | "workflow_runs.start@2";
+    acceptedSpendQuoteRef?: string;
   }): Promise<WorkflowRunAcceptedDto> {
     const capability = input.capability ?? "workflow_runs.start@1";
     const workflowId = identifier(input.workflowId, "Workflow ID");
@@ -1082,6 +1104,25 @@ export class WorkflowRunService {
       );
     }
 
+    const acceptedSpendQuote = input.acceptedSpendQuoteRef
+      ? this.spendQuotes.open(input.acceptedSpendQuoteRef)
+      : null;
+    if (input.acceptedSpendQuoteRef && !acceptedSpendQuote) {
+      throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", "The accepted provider-spend quote is invalid.");
+    }
+    if (acceptedSpendQuote) {
+      const quoteInputDigest = workflowRunQuoteInputDigest({ workflowId, revisionId, inputs, inputArtifactIds: resolvedArtifactIds });
+      if (
+        capability !== "workflow_runs.start@2" ||
+        acceptedSpendQuote.targetWorkspaceId !== input.workspaceId ||
+        acceptedSpendQuote.delegatedPrincipalId !== principalId ||
+        acceptedSpendQuote.delegatedKeyId !== keyId ||
+        acceptedSpendQuote.workflowId !== workflowId ||
+        acceptedSpendQuote.workflowRevisionId !== revisionId ||
+        acceptedSpendQuote.inputDigest !== quoteInputDigest
+      ) throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", "The provider-spend quote does not match this exact Run request.");
+    }
+
     const snapshot: WorkflowRunStartSnapshot = {
       schema: "workflow-run-start-snapshot/v2",
       workflowId,
@@ -1114,6 +1155,7 @@ export class WorkflowRunService {
         keyId,
         evidenceRef,
       },
+      ...(acceptedSpendQuote ? { acceptedSpendQuote } : {}),
     };
     // Admission evidence is deliberately outside the caller-intent
     // fingerprint: a retry receives fresh evidence but must replay the same
@@ -1130,6 +1172,7 @@ export class WorkflowRunService {
       })),
       inputs: normalizedInputs,
       inputArtifactIds: resolvedArtifactIds,
+      acceptedSpendQuoteId: acceptedSpendQuote?.quoteId ?? null,
     });
     const replay = await this.repository.getMutationReceipt({
       workspaceId: input.workspaceId,
@@ -1147,6 +1190,12 @@ export class WorkflowRunService {
       return acceptance(replay.run, replay.receipt.initialEventCursor);
     }
     const now = this.clock.now();
+    if (acceptedSpendQuote && (
+      !Number.isFinite(new Date(acceptedSpendQuote.expiresAt).getTime()) ||
+      new Date(acceptedSpendQuote.expiresAt) <= now ||
+      !Number.isFinite(new Date(acceptedSpendQuote.quotedAt).getTime()) ||
+      new Date(acceptedSpendQuote.quotedAt) > now
+    )) throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", "The accepted provider-spend quote is stale.");
     const runId = `run_${randomUUID().replaceAll("-", "")}`;
     const run: WorkflowRunRecord = {
       id: runId,
@@ -1204,6 +1253,16 @@ export class WorkflowRunService {
             : "BUDGET_LIMIT_EXCEEDED";
       throw new WorkflowRunError(code, message);
     }
+    if (acceptedSpendQuote && (!budgetAdmissionPlan || !matchesAcceptedSpendQuote(acceptedSpendQuote, budgetAdmissionPlan))) {
+      throw new WorkflowRunError("RUN_COST_UNKNOWN", "The current provider-spend reservation no longer matches the accepted fixed quote.");
+    }
+    if (acceptedSpendQuote && budgetAdmissionPlan) {
+      budgetAdmissionPlan = {
+        ...budgetAdmissionPlan,
+        acceptedSpendQuote,
+        requestDigest: canonicalDigest({ baseAdmissionDigest: budgetAdmissionPlan.requestDigest, acceptedSpendQuote }),
+      };
+    }
     const initialEventCursor = this.cursors.seal({
       workspaceId: input.workspaceId,
       principalId,
@@ -1256,6 +1315,8 @@ export class WorkflowRunService {
       budgetAdmissionPlan,
       quotaAdmissionPlan,
       quotaWaitEventId: quotaAdmissionPlan ? randomUUID() : null,
+      acceptedSpendQuote,
+      acceptedSpendQuoteRef: input.acceptedSpendQuoteRef ?? null,
     });
     if (result.kind === "conflict") {
       throw new WorkflowRunError(

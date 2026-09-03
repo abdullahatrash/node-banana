@@ -16,6 +16,7 @@ import type { ResolvedWorkflowDefinition } from "../../workflows/types";
 import type { WorkflowRunBudgetPort } from "../types";
 import { InMemoryQuotaRepository } from "../../quotas/memory";
 import { QuotaService } from "../../quotas/service";
+import { WorkflowRunSpendQuoteCodec, workflowRunQuoteCeilingDigest, workflowRunQuoteInputDigest, type WorkflowRunAcceptedSpendQuote } from "../spend-quote";
 
 function definition(
   operation = GOLDEN_WORKFLOW_OPERATION_REGISTRY.get(
@@ -599,6 +600,35 @@ describe("WorkflowRunService", () => {
     await expect(service.start({ ...request, authorizationEvidenceRef: "trace_2" }))
       .resolves.toEqual(accepted);
     expect(budgetRepository.reservations.size).toBe(1);
+  });
+
+  it("verifies, pins, atomically redeems, and caps one accepted provider-spend quote", async () => {
+    const at = new Date("2026-07-25T12:00:00.000Z");
+    const budgetRepository = new InMemoryBudgetRepository();
+    const budgets = new BudgetService(budgetRepository);
+    await budgets.createPolicyRevision({ workspaceId: "workspace_1", principalId: null, currency: "USD", period: "calendar_day", timezone: "UTC", warningThreshold: "5", hardLimit: "10", unknownPriceTreatment: "deny", unknownPriceAllowance: null, actorUserId: "user_1", idempotencyKey: "quoted_policy_1", recordedAt: at });
+    const base = setup();
+    const repository = new InMemoryWorkflowRunRepository(undefined, budgetRepository);
+    const codec = new WorkflowRunSpendQuoteCodec(Buffer.alloc(32, 9));
+    const service = new WorkflowRunService(repository, base.revisions, base.queue, createDeterministicWorkflowRunExecutorRegistry(GOLDEN_WORKFLOW_OPERATION_REGISTRY), base.cursor, { now: () => at }, undefined, undefined, budgets, undefined, codec);
+    const request = { workspaceId: "workspace_1", workflowId: "workflow_1", revisionId: "revision_1", inputs: { text: "hello" }, inputArtifactIds: [], principalId: "principal_1", keyId: "key_1", authorizationEvidenceRef: "trace_quote", idempotencyKey: "quoted_start_1", capability: "workflow_runs.start@2" as const };
+    const preview = await service.preview(request);
+    const providerModels = preview.stepExposures.map((exposure) => ({ provider: exposure.provider, model: exposure.model, pricePerAttempt: exposure.amountPerAttempt ?? "", automaticAttempts: exposure.automaticAttempts, pricingSnapshotIds: [...exposure.pricingSnapshotIds].sort() }));
+    const pricingSnapshotIds = [...new Set(providerModels.flatMap((item) => item.pricingSnapshotIds))].sort();
+    const quote: WorkflowRunAcceptedSpendQuote = {
+      schema: "workflow-run-accepted-spend-quote/v1", quoteId: "quote_fixed_1", sourceWorkspaceId: "portfolio_1", targetWorkspaceId: request.workspaceId, requestedByUserId: "owner_1", delegatedPrincipalId: request.principalId, delegatedKeyId: request.keyId, capability: "workflow_runs.start@2", workflowId: request.workflowId, workflowRevisionId: request.revisionId,
+      inputDigest: workflowRunQuoteInputDigest(request), targetStateDigest: canonicalDigest({ workflowId: request.workflowId, revisionId: request.revisionId }), amount: preview.ceiling.amount!, currency: preview.ceiling.currency!, providerModels, pricingSnapshotIds, ceilingDigest: "", quotedAt: at.toISOString(), expiresAt: new Date(at.getTime() + 300_000).toISOString(),
+    };
+    quote.ceilingDigest = workflowRunQuoteCeilingDigest(quote);
+    const acceptedSpendQuoteRef = codec.seal(quote);
+    const accepted = await service.start({ ...request, acceptedSpendQuoteRef });
+    expect((await repository.getById({ workspaceId: request.workspaceId, runId: accepted.run.id }))?.startSnapshot.acceptedSpendQuote).toMatchObject({ quoteId: quote.quoteId, amount: quote.amount, currency: quote.currency, pricingSnapshotIds: quote.pricingSnapshotIds });
+    expect(repository.spendQuoteRedemptions.get(quote.quoteId)).toMatchObject({ runId: accepted.run.id, principalId: request.principalId });
+    await expect(service.start({ ...request, idempotencyKey: "quoted_start_2", acceptedSpendQuoteRef })).rejects.toMatchObject({ code: "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE" });
+    await expect(service.start({ ...request, idempotencyKey: "quoted_start_3", principalId: "principal_other", acceptedSpendQuoteRef })).rejects.toMatchObject({ code: "WORKFLOW_RUN_INVALID_INPUT" });
+    const stale = { ...quote, quoteId: "quote_stale_1", expiresAt: new Date(at.getTime() - 1).toISOString() };
+    stale.ceilingDigest = workflowRunQuoteCeilingDigest(stale);
+    await expect(service.start({ ...request, idempotencyKey: "quoted_start_4", acceptedSpendQuoteRef: codec.seal(stale) })).rejects.toMatchObject({ code: "WORKFLOW_RUN_INVALID_INPUT" });
   });
 
   it("applies the same Workflow eligibility gate to preview and start", async () => {

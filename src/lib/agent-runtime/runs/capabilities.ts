@@ -1381,6 +1381,7 @@ export function createWorkflowRunRegistrations(
           idempotencyKey,
           inputs: z.record(z.string(), z.unknown()),
           inputArtifactIds,
+          acceptedSpendQuoteRef: z.string().min(64).max(16_384).optional(),
         })
         .strict(),
       outputSchema: acceptedSchema,

@@ -575,6 +575,13 @@
       "when": 1788540000000,
       "tag": "0081_generation_rights_and_provider_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1788543600000,
+      "tag": "0082_workflow_run_spend_quote_redemptions",
+      "breakpoints": true
     }
   ]
 }

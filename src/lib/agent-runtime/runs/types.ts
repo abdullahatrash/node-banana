@@ -24,6 +24,7 @@ import type {
   QuotaWait,
   QuotaReservation,
 } from "../quotas/types";
+import type { WorkflowRunAcceptedSpendQuote } from "./spend-quote";
 
 export interface WorkflowRunQuotaPort {
   getEffectiveCapacity(input: {
@@ -111,6 +112,7 @@ interface WorkflowRunStartSnapshotBase {
     keyId: string;
     evidenceRef: string;
   };
+  acceptedSpendQuote?: WorkflowRunAcceptedSpendQuote;
 }
 
 export type WorkflowRunStartSnapshot =
@@ -568,6 +570,8 @@ export interface WorkflowRunRepository {
     budgetAdmissionPlan?: BudgetAdmissionPlan | null;
     quotaAdmissionPlan?: QuotaClaimPlan | null;
     quotaWaitEventId?: string | null;
+    acceptedSpendQuote?: WorkflowRunAcceptedSpendQuote | null;
+    acceptedSpendQuoteRef?: string | null;
   }): Promise<StartWorkflowRunResult>;
   get(input: {
     workspaceId: string;

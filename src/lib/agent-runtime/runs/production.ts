@@ -25,6 +25,7 @@ import {
   PRODUCTION_BUDGET_SERVICE,
 } from "../budgets/production";
 import { getQuotaCommitWriter, getQuotaService } from "../quotas/production";
+import { productionWorkflowRunSpendQuoteCodec } from "./spend-quote";
 
 export const PRODUCTION_WORKFLOW_RUN_SERVICE = new WorkflowRunService(
   new DrizzleWorkflowRunRepository(
@@ -32,6 +33,7 @@ export const PRODUCTION_WORKFLOW_RUN_SERVICE = new WorkflowRunService(
     PRODUCTION_USAGE_REPOSITORY,
     PRODUCTION_BUDGET_REPOSITORY,
     getQuotaCommitWriter(),
+    productionWorkflowRunSpendQuoteCodec(),
   ),
   new DrizzleWorkflowRevisionRepository(getDb),
   new DurableWorkflowRunQueue(),
@@ -50,6 +52,7 @@ export const PRODUCTION_WORKFLOW_RUN_SERVICE = new WorkflowRunService(
   PRODUCTION_USAGE_SERVICE,
   PRODUCTION_BUDGET_SERVICE,
   getQuotaService(),
+  productionWorkflowRunSpendQuoteCodec(),
 );
 
 export async function executeProductionWorkflowRun(input: {
