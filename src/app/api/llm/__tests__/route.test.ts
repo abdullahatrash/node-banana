@@ -62,6 +62,10 @@ vi.mock("@/lib/byok/repository", () => ({
   ),
 }));
 
+vi.mock("@/lib/governance/production", () => ({
+  admitProductionGovernanceRegionRoute: vi.fn(async () => ({ allowed: true, policyApplied: false })),
+}));
+
 import { resolveProviderKey } from "@/lib/byok/repository";
 import { POST } from "../route";
 

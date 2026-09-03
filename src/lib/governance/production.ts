@@ -6,13 +6,34 @@ import { DrizzleGovernanceMembershipPort } from "./membership-postgres";
 import { ApplicationGovernanceBulkCapabilityPort, DrizzleGovernanceBulkAuthorizationPort, GovernanceBulkWorker } from "./bulk-worker";
 import { GovernanceImportWorker } from "./import-worker";
 import { GovernanceApprovalDeadlineWorker } from "./approval-worker";
+import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionRouteKind } from "./region-policy";
+
+function regionTrustKeys(): Map<string, Uint8Array> {
+  const keys = new Map<string, Uint8Array>();
+  try {
+    const configured = JSON.parse(process.env.GOVERNANCE_REGION_TRUST_KEYS ?? "{}") as Record<string, string>;
+    for (const [keyId, encoded] of Object.entries(configured)) {
+      const key = Buffer.from(encoded, "base64");
+      if (key.length >= 32) keys.set(keyId, key);
+    }
+  } catch {
+    // Invalid or absent configuration intentionally leaves verification fail-closed.
+  }
+  return keys;
+}
 
 export const PRODUCTION_GOVERNANCE_REPOSITORY = new DrizzleGovernanceRepository(getDb);
+const PRODUCTION_GOVERNANCE_REGION_ADMISSION = new GovernanceRegionAdmissionService(PRODUCTION_GOVERNANCE_REPOSITORY);
 export const PRODUCTION_GOVERNANCE_SERVICE = new GovernanceService(
   PRODUCTION_GOVERNANCE_REPOSITORY,
   undefined,
   new DrizzleGovernanceMembershipPort(getDb),
+  new ConfiguredGovernanceRegionVerifier(regionTrustKeys()),
 );
+
+export async function admitProductionGovernanceRegionRoute(input: { workspaceId: string; kind: GovernanceRegionRouteKind; routeId: string; configuredRegion: string }) {
+  return PRODUCTION_GOVERNANCE_REGION_ADMISSION.admit({ ...input, evaluatedAt: new Date() });
+}
 
 export function getProductionGovernanceExportWorker(): GovernanceExportWorker {
   return new GovernanceExportWorker(
@@ -22,6 +43,8 @@ export function getProductionGovernanceExportWorker(): GovernanceExportWorker {
       encryptionKeyBase64: process.env.GOVERNANCE_EXPORT_ENCRYPTION_KEY ?? "",
       signingKeyBase64: process.env.GOVERNANCE_EXPORT_SIGNING_KEY ?? "",
     },
+    undefined,
+    ({ workspaceId, routeId, configuredRegion }) => admitProductionGovernanceRegionRoute({ workspaceId, kind: "primary_storage", routeId, configuredRegion }),
   );
 }
 

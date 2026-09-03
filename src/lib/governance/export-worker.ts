@@ -32,6 +32,7 @@ export class GovernanceExportWorker {
     private readonly store: GovernanceExportStore,
     private readonly keys: { encryptionKeyBase64: string; signingKeyBase64: string },
     private readonly clock: { now(): Date } = { now: () => new Date() },
+    private readonly admitStorageRoute?: (input: { workspaceId: string; routeId: string; configuredRegion: string }) => Promise<{ allowed: boolean; reason?: string }>,
   ) {}
 
   private async listAllAudit(workspaceId: string): Promise<GovernanceAuditEvent[]> {
@@ -88,6 +89,10 @@ export class GovernanceExportWorker {
       const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
       const envelope = { schema: "governance-encrypted-export/v1", algorithm: "AES-256-GCM", keyId: "workspace-export-v1", iv: iv.toString("base64url"), tag: cipher.getAuthTag().toString("base64url"), ciphertext: ciphertext.toString("base64url") };
       const bytes = Buffer.from(canonicalJson(envelope), "utf8");
+      if (this.admitStorageRoute) {
+        const admission = await this.admitStorageRoute({ workspaceId: input.workspaceId, routeId: "storage:governance-export", configuredRegion: process.env.GOVERNANCE_EXPORT_STORAGE_REGION ?? "unconfigured" });
+        if (!admission.allowed) throw new Error(admission.reason ?? "REGION_ROUTE_NOT_ALLOWLISTED");
+      }
       const storageKey = `governance/${input.workspaceId}/${job.id}.encrypted.json`;
       await this.store.put({ key: storageKey, bytes });
       const manifestUnsigned = {

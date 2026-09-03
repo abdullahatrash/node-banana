@@ -8,6 +8,7 @@ import {
   isInferenceKeyError,
 } from "@/lib/byok/resolveInferenceKey";
 import { generateWithGoogle, generateWithOpenAI, generateWithAnthropic } from "./core";
+import { admitProductionGovernanceRegionRoute } from "@/lib/governance/production";
 
 export const maxDuration = 60; // 1 minute timeout
 
@@ -59,6 +60,13 @@ export async function POST(request: NextRequest) {
         { success: false, error: "Prompt is required" },
         { status: 400 }
       );
+    }
+
+    if (workspaceId) {
+      const routeId = `provider:${provider}`;
+      const configuredRegion = process.env[`PROVIDER_REGION_${provider.toUpperCase().replaceAll("-", "_")}`] ?? "unconfigured";
+      const admission = await admitProductionGovernanceRegionRoute({ workspaceId, kind: "processing", routeId, configuredRegion });
+      if (!admission.allowed) return NextResponse.json({ success: false, error: "The selected provider route is not admitted by the Workspace Data Region Policy.", code: admission.reason }, { status: 409 });
     }
 
     let text: string;

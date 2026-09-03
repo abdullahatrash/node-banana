@@ -1,14 +1,27 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { BUILT_IN_ROLE_CAPABILITIES } from "../roles";
 import { decodeInvitationToken, decodeReviewToken, GovernanceError, GovernanceService } from "../service";
+import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionDeploymentEvidence } from "../region-policy";
 import { RETENTION_CLASSES, type GovernanceActor, type RetentionRule } from "../types";
 
 const NOW = new Date("2026-09-03T12:00:00.000Z");
 const owner: GovernanceActor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" };
 const creator: GovernanceActor = { workspaceId: "workspace-a", userId: "creator-a", legacyRole: "member" };
 const digest = canonicalDigest({ revision: 1 });
+const regionKey = Buffer.alloc(32, 7);
+
+function regionEvidence(validSignature = true): GovernanceRegionDeploymentEvidence {
+  const payload = {
+    schema: "governance-region-deployment-evidence/v1" as const,
+    keyId: "deployment-key-1", deploymentId: "deployment-1", region: "me-central-1",
+    issuedAt: "2026-09-03T11:00:00.000Z", expiresAt: "2026-10-03T12:00:00.000Z",
+    routes: (["primary_storage", "processing", "backup", "logging", "deletion"] as const).map((kind) => ({ kind, routeId: `${kind}-me-1`, region: "me-central-1" })),
+  };
+  return { ...payload, signature: validSignature ? createHmac("sha256", regionKey).update(canonicalJson(payload)).digest("base64url") : Buffer.alloc(32, 1).toString("base64url") };
+}
 
 function setup() {
   const repository = new InMemoryGovernanceRepository();
@@ -195,13 +208,27 @@ describe("GovernanceService", () => {
   });
 
   it("requires exact-purpose step-up for region, retention, and exports", async () => {
-    const { service } = setup();
+    const { repository, service } = setup();
     const wrong = await stepUp(service, "audit.export");
-    await expect(service.execute(owner, { type: "set_region_policy", region: "me-central-1", verificationEvidence: ["storage", "processing", "backups", "logging", "deletion", "contracts"], stepUpToken: wrong.stepUpToken }, "region-wrong-stepup")).rejects.toMatchObject({ code: "STEP_UP_REQUIRED" });
+    await expect(service.execute(owner, { type: "set_region_policy", region: "me-central-1", verificationEvidence: regionEvidence(), stepUpToken: wrong.stepUpToken }, "region-wrong-stepup")).rejects.toMatchObject({ code: "STEP_UP_REQUIRED" });
     const regionAuth = await stepUp(service, "regions.manage");
-    expect(await service.execute(owner, { type: "set_region_policy", region: "me-central-1", verificationEvidence: ["storage", "processing", "backups", "logging", "deletion", "contracts"], stepUpToken: regionAuth.stepUpToken }, "region-policy-key")).toMatchObject({ verified: true });
+    const verifiedService = new GovernanceService(repository, { now: () => new Date(NOW) }, undefined, new ConfiguredGovernanceRegionVerifier(new Map([["deployment-key-1", regionKey]])));
+    expect(await verifiedService.execute(owner, { type: "set_region_policy", region: "me-central-1", verificationEvidence: regionEvidence(), stepUpToken: regionAuth.stepUpToken }, "region-policy-key")).toMatchObject({ verified: true, status: "active" });
+    const admission = new GovernanceRegionAdmissionService(repository);
+    await expect(admission.admit({ workspaceId: owner.workspaceId, kind: "processing", routeId: "processing-me-1", configuredRegion: "me-central-1", evaluatedAt: NOW })).resolves.toMatchObject({ allowed: true, policyApplied: true });
+    await expect(admission.admit({ workspaceId: owner.workspaceId, kind: "processing", routeId: "provider-global", configuredRegion: "global", evaluatedAt: NOW })).resolves.toEqual({ allowed: false, reason: "REGION_ROUTE_NOT_ALLOWLISTED" });
     const exportAuth = await stepUp(service, "exports.manage");
     expect(await service.execute(owner, { type: "request_workspace_export", includeKinds: ["content", "media", "plans"], stepUpToken: exportAuth.stepUpToken }, "workspace-export-key")).toMatchObject({ status: "queued", omissions: expect.arrayContaining(["secrets", "non_transferable_licensed_media"]) });
+  });
+
+  it("never turns caller-asserted or invalid region evidence into a residency claim", async () => {
+    const { repository, service } = setup();
+    const auth = await stepUp(service, "regions.manage");
+    await expect(service.execute(owner, { type: "set_region_policy", region: "me-central-1", verificationEvidence: regionEvidence(false), stepUpToken: auth.stepUpToken }, "region-untrusted-key")).resolves.toMatchObject({ verified: false, status: "pending_verification", reason: "UNCONFIGURED_TRUST_ROOT" });
+    const policy = await repository.getResource<{ verified: boolean; verifiedEvidence: null }>({ workspaceId: owner.workspaceId, kind: "data_region_policy", id: "active" });
+    expect(policy).toMatchObject({ status: "pending_verification", body: { verified: false, verifiedEvidence: null } });
+    await expect(new GovernanceRegionAdmissionService(repository).admit({ workspaceId: owner.workspaceId, kind: "processing", routeId: "processing-me-1", configuredRegion: "me-central-1", evaluatedAt: NOW })).resolves.toEqual({ allowed: false, reason: "REGION_POLICY_UNVERIFIED" });
+    await expect(new ConfiguredGovernanceRegionVerifier(new Map([["deployment-key-1", regionKey]])).verify({ workspaceId: owner.workspaceId, region: "me-central-1", evidence: regionEvidence(false), evaluatedAt: NOW })).resolves.toEqual({ status: "pending", reason: "INVALID_SIGNATURE" });
   });
 
   it("enforces Retention Class completeness, legal floors, holds, receipts, and tombstones", async () => {

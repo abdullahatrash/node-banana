@@ -27,6 +27,7 @@ import type {
 import { GOVERNANCE_CAPABILITIES, RETENTION_CLASSES } from "./types";
 import { BUILT_IN_WORKSPACE_ROLES } from "./types";
 import { advanceApprovalDeadline, ApprovalPolicyError, createContentAcceptanceProgress, decideContentAcceptance } from "./approval-policy";
+import { UNCONFIGURED_GOVERNANCE_REGION_VERIFIER, type GovernanceRegionDeploymentEvidence, type GovernanceRegionVerificationPort } from "./region-policy";
 import {
   canViewGovernanceResource,
   projectGovernanceAuditEvent,
@@ -38,7 +39,6 @@ const IDEMPOTENCY = /^[\x20-\x7e]{8,200}$/;
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
 const MAX_GUEST_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_STEP_UP_LIFETIME_MS = 15 * 60 * 1_000;
-const VERIFIED_REGIONS = new Set(["eu-central-1", "me-central-1"]);
 
 export class GovernanceError extends Error {
   constructor(
@@ -80,7 +80,7 @@ export type GovernanceCommand =
   | { type: "begin_step_up"; purpose: string; resourceId: string | null }
   | { type: "verify_step_up"; challengeId: string; code: string }
   | { type: "request_audit_export"; from: string | null; to: string | null; stepUpToken: string }
-  | { type: "set_region_policy"; region: string; verificationEvidence: string[]; expectedVersion?: number; stepUpToken: string }
+  | { type: "set_region_policy"; region: string; verificationEvidence: GovernanceRegionDeploymentEvidence; expectedVersion?: number; stepUpToken: string }
   | { type: "publish_retention_policy"; rules: RetentionRule[]; expectedVersion?: number; stepUpToken: string }
   | { type: "create_retention_hold"; retentionClasses: string[]; reason: string; expiresAt: string | null; stepUpToken: string }
   | { type: "release_retention_hold"; holdId: string; reason: string; stepUpToken: string }
@@ -254,6 +254,7 @@ export class GovernanceService {
       transferOwnership: async () => "transferred",
       closeWorkspace: async () => "closed",
     },
+    private readonly regionVerification: GovernanceRegionVerificationPort = UNCONFIGURED_GOVERNANCE_REGION_VERIFIER,
   ) {}
 
   private async roleBinding(actor: GovernanceActor): Promise<WorkspaceRoleBinding> {
@@ -691,13 +692,16 @@ export class GovernanceService {
       }
       case "set_region_policy": {
         await this.requireStepUp(actor, "regions.manage", null, command.stepUpToken);
-        if (!VERIFIED_REGIONS.has(command.region) || command.verificationEvidence.length < 4) throw new GovernanceError("INVALID_INPUT", "Region is not verified across the required lifecycle.");
         const id = "active";
         const current = await this.repository.getResource({ workspaceId: actor.workspaceId, kind: "data_region_policy", id });
         if (current && command.expectedVersion !== current.version) throw new GovernanceError("CONFLICT", "Region policy changed.");
-        const body = { region: command.region, verificationEvidence: unique(command.verificationEvidence.map((value) => text(value, "Region evidence", 300))), verified: true, pinnedAt: now.toISOString(), incompatibleRoutesExcluded: true };
-        mutations = [current ? update(current, "active", body) : create("data_region_policy", id, "active", body)];
-        result = { policyId: id, region: command.region, verified: true };
+        const verification = await this.regionVerification.verify({ workspaceId: actor.workspaceId, region: safeId(command.region, "Region"), evidence: command.verificationEvidence, evaluatedAt: now });
+        const body = verification.status === "verified"
+          ? { region: command.region, verified: true, verifiedEvidence: verification.evidence, verificationFailureReason: null, pinnedAt: now.toISOString(), incompatibleRoutesExcluded: true }
+          : { region: command.region, verified: false, verifiedEvidence: null, verificationFailureReason: verification.reason, pinnedAt: now.toISOString(), incompatibleRoutesExcluded: false };
+        const status = verification.status === "verified" ? "active" : "pending_verification";
+        mutations = [current ? update(current, status, body) : create("data_region_policy", id, status, body)];
+        result = { policyId: id, region: command.region, verified: verification.status === "verified", status, ...(verification.status === "pending" ? { reason: verification.reason } : { evidenceDigest: verification.evidence.evidenceDigest }) };
         target = { kind: "data_region_policy", id };
         break;
       }

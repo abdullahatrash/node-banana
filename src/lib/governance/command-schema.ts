@@ -17,6 +17,12 @@ const approvalMode = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("quorum"), eligibleRoleIds: z.array(id).min(1), required: z.number().int().positive() }).strict(),
 ]);
 const policy = z.object({ purpose: z.enum(["content_acceptance", "publishing_approval"]), mode: approvalMode, separationOfDuty: z.boolean(), deadlineSeconds: z.number().int().positive(), escalationRoleIds: z.array(id), expiresAfterSeconds: z.number().int().positive() }).strict();
+const regionEvidence = z.object({
+  schema: z.literal("governance-region-deployment-evidence/v1"), keyId: id, deploymentId: id,
+  region: id, issuedAt: timestamp, expiresAt: timestamp,
+  routes: z.array(z.object({ kind: z.enum(["primary_storage", "processing", "backup", "logging", "deletion"]), routeId: id, region: id }).strict()).min(5),
+  signature: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
+}).strict();
 
 export const governanceCommandSchema: z.ZodType<GovernanceCommand> = z.discriminatedUnion("type", [
   z.object({ type: z.literal("create_custom_role"), name: text.max(80), description: text.max(500), capabilities: z.array(z.enum(GOVERNANCE_CAPABILITIES)).min(1) }).strict(),
@@ -41,7 +47,7 @@ export const governanceCommandSchema: z.ZodType<GovernanceCommand> = z.discrimin
   z.object({ type: z.literal("begin_step_up"), purpose: id, resourceId: id.nullable() }).strict(),
   z.object({ type: z.literal("verify_step_up"), challengeId: id, code: z.string().regex(/^\d{6}$/) }).strict(),
   z.object({ type: z.literal("request_audit_export"), from: timestamp.nullable(), to: timestamp.nullable(), stepUpToken: id }).strict(),
-  z.object({ type: z.literal("set_region_policy"), region: id, verificationEvidence: z.array(text.max(500)).min(1), expectedVersion: z.number().int().positive().optional(), stepUpToken: id }).strict(),
+  z.object({ type: z.literal("set_region_policy"), region: id, verificationEvidence: regionEvidence, expectedVersion: z.number().int().positive().optional(), stepUpToken: id }).strict(),
   z.object({ type: z.literal("publish_retention_policy"), rules: z.array(z.object({ retentionClass: z.enum(RETENTION_CLASSES), durationDays: z.number().int().nonnegative(), recoverableDays: z.number().int().nonnegative(), legalFloorDays: z.number().int().nonnegative() }).strict()), expectedVersion: z.number().int().positive().optional(), stepUpToken: id }).strict(),
   z.object({ type: z.literal("create_retention_hold"), retentionClasses: z.array(z.enum(RETENTION_CLASSES)).min(1), reason: text.max(1_000), expiresAt: timestamp.nullable(), stepUpToken: id }).strict(),
   z.object({ type: z.literal("release_retention_hold"), holdId: id, reason: text.max(1_000), stepUpToken: id }).strict(),

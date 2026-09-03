@@ -27,6 +27,7 @@ import { generateWithFalQueue } from "./providers/fal";
 import { generateWithKie } from "./providers/kie";
 import { generateWithWaveSpeed } from "./providers/wavespeed";
 import { safeGenerationLog } from "./providers/safe-generation-log";
+import { admitProductionGovernanceRegionRoute } from "@/lib/governance/production";
 
 export const maxDuration = 300; // 5 minute timeout (Vercel hobby plan limit)
 export const dynamic = 'force-dynamic'; // Ensure this route is always dynamic
@@ -158,6 +159,12 @@ export async function POST(request: NextRequest) {
 
     // Determine which provider to use
     const provider: ProviderType = selectedModel?.provider || "gemini";
+    if (workspaceId) {
+      const routeId = `provider:${provider}`;
+      const configuredRegion = process.env[`PROVIDER_REGION_${provider.toUpperCase().replaceAll("-", "_")}`] ?? "unconfigured";
+      const admission = await admitProductionGovernanceRegionRoute({ workspaceId, kind: "processing", routeId, configuredRegion });
+      if (!admission.allowed) return NextResponse.json({ success: false, error: "The selected provider route is not admitted by the Workspace Data Region Policy.", code: admission.reason }, { status: 409 });
+    }
     safeGenerationLog.log(`[API:${requestId}] Provider: ${provider}, Model: ${selectedModel?.modelId || model}`);
 
     // Route to appropriate provider
