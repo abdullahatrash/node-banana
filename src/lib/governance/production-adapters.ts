@@ -39,7 +39,27 @@ async function configuredAdapterRequest(input: {
 }
 
 /** Concrete first-party deletion plus a configured adapter for backup/log systems. */
+export interface GovernanceEvidenceDeletionPort {
+  delete(input: { workspaceId: string; resourceKind: string; resourceId: string; idempotencyKey: string }): Promise<GovernanceDeletionSystemOutcome>;
+}
+
+export class ConfiguredGovernanceEvidenceDeletionPort implements GovernanceEvidenceDeletionPort {
+  async delete(input: { workspaceId: string; resourceKind: string; resourceId: string; idempotencyKey: string }): Promise<GovernanceDeletionSystemOutcome> {
+    const response = await configuredAdapterRequest({
+      url: process.env.GOVERNANCE_PRIMARY_EVIDENCE_DELETION_URL,
+      secret: process.env.GOVERNANCE_PRIMARY_EVIDENCE_DELETION_SECRET,
+      path: "/v1/evidence/delete",
+      body: input,
+    });
+    if (!response) return { state: "failed_known", reason: "PRIMARY_EVIDENCE_DELETION_ADAPTER_NOT_CONFIGURED" };
+    const parsed = deletionOutcome.safeParse(response);
+    return parsed.success ? parsed.data : { state: "outcome_unknown", reason: "PRIMARY_EVIDENCE_DELETION_RESPONSE_INVALID" };
+  }
+}
+
 export class ProductionGovernanceDeletionAdapter implements GovernanceDeletionAdapter {
+  constructor(private readonly evidence: GovernanceEvidenceDeletionPort = new ConfiguredGovernanceEvidenceDeletionPort()) {}
+
   async delete(input: Parameters<GovernanceDeletionAdapter["delete"]>[0]): Promise<GovernanceDeletionSystemOutcome> {
     await requireGovernanceRegionRoute({
       workspaceId: input.workspaceId,
@@ -80,6 +100,13 @@ export class ProductionGovernanceDeletionAdapter implements GovernanceDeletionAd
         return { state: "deleted", evidenceRef: `primary:${input.idempotencyKey}:social-post` };
       } catch (error) {
         return { state: "failed_known", reason: error instanceof Error ? error.name : "SOCIAL_POST_DELETE_FAILED" };
+      }
+    }
+    if (["consent_evidence", "security_evidence", "billing_tax_evidence", "provider_diagnostic", "support_attachment"].includes(input.resourceKind)) {
+      try {
+        return await this.evidence.delete({ workspaceId: input.workspaceId, resourceKind: input.resourceKind, resourceId: input.resourceId, idempotencyKey: input.idempotencyKey });
+      } catch (error) {
+        return { state: "failed_known", reason: error instanceof Error ? error.name : "EVIDENCE_DELETE_FAILED" };
       }
     }
     return { state: "failed_known", reason: "PRIMARY_RESOURCE_KIND_UNSUPPORTED" };

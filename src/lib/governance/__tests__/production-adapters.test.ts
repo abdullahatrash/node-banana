@@ -35,4 +35,18 @@ describe("production governance effect adapters", () => {
     await expect(new ProductionGovernanceSafetyRevalidationAdapter().revalidate({ workspaceId: "workspace-a", intentRef: "intent-1", originalDecisionId: "decision-1", originalPolicyVersion: "v1", originalEvidenceRef: "evidence-1", idempotencyKey: "appeal-1" }))
       .resolves.toMatchObject({ outcome: "blocked", currentPolicyVersion: "unconfigured" });
   });
+
+  it.each(["consent_evidence", "security_evidence", "billing_tax_evidence", "provider_diagnostic", "support_attachment"])("deletes the exact %s through its canonical primary adapter", async (resourceKind) => {
+    const remove = vi.fn().mockResolvedValue({ state: "deleted", evidenceRef: `primary:delete-${resourceKind}` });
+    const result = await new ProductionGovernanceDeletionAdapter({ delete: remove }).delete({
+      workspaceId: "workspace-a",
+      system: "primary",
+      resourceKind,
+      resourceId: "evidence-1",
+      retentionClass: resourceKind as never,
+      idempotencyKey: `delete-${resourceKind}`,
+    });
+    expect(remove).toHaveBeenCalledWith({ workspaceId: "workspace-a", resourceKind, resourceId: "evidence-1", idempotencyKey: `delete-${resourceKind}` });
+    expect(result).toMatchObject({ state: "deleted" });
+  });
 });
