@@ -4,10 +4,7 @@ import { COMMON_DISCOVERY_ERRORS, defineCapability, QUERY_EFFECT } from "@/lib/a
 import type { CapabilityErrorContract, CapabilityRegistration, JsonSchema, ResolvedSecurityContext } from "@/types/capabilities";
 import type { GovernanceActor } from "./types";
 import { GOVERNANCE_COMMAND_CAPABILITIES, GovernanceError, type GovernanceCommand, type GovernanceService } from "./service";
-
-const commandTypes = Object.keys(GOVERNANCE_COMMAND_CAPABILITIES) as GovernanceCommand["type"][];
-const commandSchema = z.object({ type: z.enum(commandTypes) }).passthrough();
-const invocationSchema = z.object({ command: commandSchema }).strict();
+import { governanceInvocationSchema } from "./command-schema";
 const emptySchema = z.object({}).strict();
 const queryOutputSchema = z.object({ snapshot: z.unknown() }).strict();
 const mutationOutputSchema = z.object({ result: z.unknown() }).strict();
@@ -64,7 +61,7 @@ export function createGovernanceRegistrations(service: GovernanceService): Capab
       audience: "shared",
       summary: `Execute ${capability} within one explicitly selected Workspace.`,
       lifecycle,
-      input: invocationSchema,
+      input: governanceInvocationSchema,
       outputSchema: jsonSchema(mutationOutputSchema),
       effect: { mutation: "runtime-state", visibility: "private", timing: capability === "bulk.execute" || capability === "imports.manage" || capability === "exports.manage" || capability === "audit.export" ? "durable-async" : "immediate", reversibility: "conditional", maySpendProviderBudget: false },
       approval: { mode: capability === "reviews.decide_publishing" ? "manages-approval" : "none" },

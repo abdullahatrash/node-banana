@@ -8,10 +8,14 @@ import { getProductionGovernanceApprovalDeadlineWorker, getProductionGovernanceB
 import { getEmailSender } from "@/lib/auth/email-sender";
 import { deliverGovernanceSecret, redactGovernanceSecrets } from "@/lib/governance/notifications";
 import type { GovernanceCommand } from "@/lib/governance/service";
+import { governanceCommandSchema } from "@/lib/governance/command-schema";
 
 const bodySchema = z.object({
   capability: z.string().regex(/^(?:governance\.snapshot\.get|governance\.view|members\.(?:invite|manage)|roles\.manage|portfolios\.manage|reviews\.(?:create|decide_content|decide_publishing)|approval_policies\.manage|audit\.(?:view|export)|regions\.manage|retention\.manage|safety\.(?:decide|appeal)|bulk\.(?:preview|execute)|imports\.manage|exports\.manage|workspace\.(?:transfer_ownership|close))@1$/),
-  input: z.record(z.string(), z.unknown()).default({}),
+  input: z.union([
+    z.object({}).strict(),
+    z.object({ command: governanceCommandSchema }).strict(),
+  ]).default({}),
 }).strict();
 
 function status(category: string): number {

@@ -5,7 +5,7 @@ const authorize = vi.fn();
 const dispatch = vi.fn();
 const send = vi.fn();
 
-vi.mock("@/lib/db", () => ({ isDatabaseConfigured: vi.fn(() => true) }));
+vi.mock("@/lib/db", () => ({ isDatabaseConfigured: vi.fn(() => true), getDb: vi.fn(() => ({})) }));
 vi.mock("@/lib/studio/authz", () => ({
   authorizeStudioRequest: (...args: unknown[]) => authorize(...args),
   authzErrorResponse: (result: { status: number; error: string }) => NextResponse.json({ success: false, error: result.error }, { status: result.status }),
@@ -43,12 +43,19 @@ describe("governance capability route", () => {
 
   it("pins server-owned Workspace context, delivers invitation secret, and redacts it from HTTP output", async () => {
     dispatch.mockResolvedValue({ type: "capability_result", capability: { name: "members.invite", version: 1 }, output: { result: { invitationId: "invite-1", invitationToken: "opaque-secret", expiresAt: "2026-09-10T12:00:00.000Z" } } });
-    const response = await POST(request({ origin: "http://localhost:3000", workspace: "workspace-a", idempotency: "stable-key-2", body: { capability: "members.invite@1", input: { workspaceId: "workspace-spoofed", command: { type: "create_invitation", email: "new@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" } } } }));
+    const response = await POST(request({ origin: "http://localhost:3000", workspace: "workspace-a", idempotency: "stable-key-2", body: { capability: "members.invite@1", input: { command: { type: "create_invitation", email: "new@example.com", binding: { kind: "built_in", role: "viewer" }, expiresAt: "2026-09-10T12:00:00.000Z" } } } }));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ success: true, result: { invitationId: "invite-1" } });
     expect(dispatch).toHaveBeenCalledWith(expect.anything(), { securityContext: { kind: "human", workspaceId: "workspace-a", userId: "owner-a", role: "owner", idempotencyKey: "stable-key-2" } });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: "new@example.com", text: expect.stringContaining("opaque-secret") }));
     expect(JSON.stringify(await (async () => ({ invitationId: "invite-1" }))())).not.toContain("opaque-secret");
+  });
+
+  it("rejects malformed or unknown command fields at the HTTP boundary", async () => {
+    const response = await POST(request({ origin: "http://localhost:3000", workspace: "workspace-a", idempotency: "stable-key-malformed", body: { capability: "members.invite@1", input: { command: { type: "create_invitation", email: "not-an-email", binding: { kind: "built_in", role: "viewer" }, expiresAt: "not-a-date", workspaceId: "workspace-spoofed" } } } }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ success: false, code: "INVALID_INPUT" });
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("requires the exact authorized Workspace header", async () => {
