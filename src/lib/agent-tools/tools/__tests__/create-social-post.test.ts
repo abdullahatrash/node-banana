@@ -69,6 +69,7 @@ vi.mock("@/lib/social/publishing-settings", () => ({
 
 vi.mock("@/lib/agent-tools/social-publishing-approval", () => ({
     exactApprovedSocialPostInput: () => true,
+    governedPublishingMarker: (input: unknown) => `approved:${JSON.stringify(input)}`,
     PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION: {
       inspect: (...args: unknown[]) => mockInspectPublishingApproval(...args),
       consume: (...args: unknown[]) => mockConsumePublishingApproval(...args),

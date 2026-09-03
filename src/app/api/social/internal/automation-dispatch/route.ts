@@ -9,9 +9,15 @@ import {
   getSocialAccount,
   getAutomationRule,
   incrementAutomationRuleRunCount,
+  listSocialPosts,
   updateAutomationTask,
   updatePostStatus,
 } from "@/lib/social/repository";
+import {
+  governedPublishingMarker,
+  PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION,
+  socialPublishingApprovalEvidenceSchema,
+} from "@/lib/agent-tools/social-publishing-approval";
 import {
   validateAutomationRulePayload,
   validateAutomationTaskPayload,
@@ -51,25 +57,6 @@ function getBatchSize(request: NextRequest): number {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function readMediaUrls(
-  value: unknown,
-): Array<{ type: string; url: string; alt?: string }> | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const media = value
-    .map((item) => {
-      if (!isRecord(item)) return null;
-      const type = readString(item.type);
-      const url = readString(item.url);
-      if (!type || !url) return null;
-      const alt = readString(item.alt);
-      return alt ? { type, url, alt } : { type, url };
-    })
-    .filter(
-      (item): item is { type: string; url: string; alt?: string } => item !== null,
-    );
-  return media.length > 0 ? media : undefined;
 }
 
 async function handleAutomationDispatch(
@@ -204,32 +191,80 @@ async function handleAutomationDispatch(
           readString(taskInput.content) ??
           readString(actionConfig.content) ??
           `Automated post run #${task.runIndex}`;
-        const mediaUrls =
-          readMediaUrls(taskInput.mediaUrls) ??
-          readMediaUrls(actionConfig.mediaUrls);
-        const platformSettings = isRecord(actionConfig.platformSettings)
-          ? actionConfig.platformSettings
-          : undefined;
+        const approvalResult = socialPublishingApprovalEvidenceSchema.safeParse(
+          taskInput.publishingApproval ?? actionConfig.publishingApproval,
+        );
+        if (!approvalResult.success || approvalResult.data.consumingPrincipalId !== rule.createdByUserId) {
+          await updateAutomationTask(task.workspaceId, task.id, {
+            state: "failed",
+            errorMessage: "Automation publishing requires fresh exact Plan Revision Approval evidence scoped to the rule owner.",
+            completedAt: new Date(),
+          });
+          failed += 1;
+          continue;
+        }
+        const approval = approvalResult.data;
+        const idempotencyKey = `automation:${task.workspaceId}:${rule.createdByUserId}:${task.taskKey}`;
+        const marker = governedPublishingMarker({
+          schema: "governed-social-publishing/v1",
+          approvalRequestId: approval.approvalRequestId,
+          targetId: approval.targetId,
+          targetEvidenceDigest: approval.targetEvidenceDigest,
+          consumingPrincipalId: approval.consumingPrincipalId,
+          idempotencyKey,
+        });
+        const replay = (await listSocialPosts(task.workspaceId, { triggerSource: marker, limit: 2 }))
+          .find((candidate) => candidate.createdByUserId === rule.createdByUserId);
+        if (replay) {
+          const validReplay = await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.verifyConsumed({
+            workspaceId: task.workspaceId,
+            socialAccountId: replay.socialAccountId,
+            actorUserId: rule.createdByUserId,
+            triggerSource: replay.triggerSource,
+            content: replay.content,
+            mediaUrls: replay.mediaUrls,
+            platformSettings: replay.platformSettings,
+            scheduledAt: replay.scheduledAt,
+          });
+          if (!validReplay) throw new Error("Automation idempotency record exists without valid governed publishing evidence.");
+          await updateAutomationTask(task.workspaceId, task.id, {
+            state: "succeeded",
+            result: { postId: replay.id, socialAccountId, ruleId: rule.id, runIndex: task.runIndex, replayed: true },
+            errorMessage: null,
+            completedAt: new Date(),
+          });
+          succeeded += 1;
+          queuedPosts += 1;
+          continue;
+        }
+        const inspected = await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.inspect({
+          workspaceId: task.workspaceId,
+          socialAccountId,
+          evidence: approval,
+        });
+        if (!inspected) throw new Error("Automation Publishing Approval is stale, consumed, or not exact for this Channel.");
+        if (
+          content.trim() !== inspected.target.content.text ||
+          (task.dueAt ?? now).toISOString() !== inspected.target.timing.publishAt
+        ) throw new Error("Automation content or due time does not match the approved Plan Revision target.");
 
         const post = await createSocialPost({
           workspaceId: task.workspaceId,
           socialAccountId,
-          content,
-          mediaUrls,
-          platformSettings: {
-            ...(platformSettings ?? {}),
-            automation: {
-              ruleId: rule.id,
-              taskId: task.id,
-              runIndex: task.runIndex,
-              taskKey: task.taskKey,
-            },
-          },
-          scheduledAt: task.dueAt ?? now,
-          triggerSource: "automation",
+          content: inspected.target.content.text,
+          mediaUrls: inspected.target.media.map((item) => ({ type: "image", url: item.previewUrl })),
+          platformSettings: inspected.target.settings,
+          scheduledAt: new Date(inspected.target.timing.publishAt),
+          triggerSource: marker,
           kind: "post",
           createdByUserId: rule.createdByUserId,
         });
+
+        const consumption = await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.consume({
+          workspaceId: task.workspaceId,
+          inspected,
+        });
+        if (consumption !== "consumed") throw new Error("Automation Publishing Approval release authorization could not be consumed.");
 
         await updatePostStatus(post.id, "queued", {
           errorMessage: null,

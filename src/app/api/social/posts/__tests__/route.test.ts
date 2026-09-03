@@ -16,6 +16,8 @@ const mockCountSocialPostsCreatedInRange = vi.fn();
 const mockWorkflowStart = vi.fn();
 const mockEmitSocialEvent = vi.fn();
 const mockRequiresGovernedPublishingPlan = vi.fn();
+const mockInspectPublishingApproval = vi.fn();
+const mockConsumePublishingApproval = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -68,6 +70,11 @@ vi.mock("@/utils/logger", () => ({
 
 vi.mock("@/lib/governance/publishing-route-guard", () => ({
   requiresGovernedPublishingPlan: mockRequiresGovernedPublishingPlan,
+}));
+vi.mock("@/lib/agent-tools/social-publishing-approval", () => ({
+  governedPublishingMarker: (input: unknown) => `approved:${JSON.stringify(input)}`,
+  socialPublishingApprovalEvidenceSchema: { safeParse: (value: unknown) => value ? { success: true, data: value } : { success: false } },
+  PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION: { inspect: mockInspectPublishingApproval, consume: mockConsumePublishingApproval },
 }));
 
 const mockSession = {
@@ -302,18 +309,20 @@ describe("/api/social/posts/[postId]/publish", () => {
     );
     mockFinalizeSocialDispatchRun.mockResolvedValue({});
     mockRequiresGovernedPublishingPlan.mockResolvedValue(false);
+    mockConsumePublishingApproval.mockResolvedValue("consumed");
   });
 
   it("refuses legacy direct dispatch when the Workspace requires governed Publishing Approval", async () => {
     authorized();
     mockRequiresGovernedPublishingPlan.mockResolvedValue(true);
+    mockGetSocialPost.mockResolvedValue({ id: "spost_1", workspaceId: "ws_1", socialAccountId: "sacct_1", status: "draft" });
     const { POST } = await import("../../posts/[postId]/publish/route");
     const response = await POST(
       createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
       { params: Promise.resolve({ postId: "spost_1" }) },
     );
     expect(response.status).toBe(409);
-    expect(mockGetSocialPost).not.toHaveBeenCalled();
+    expect(mockGetSocialPost).toHaveBeenCalledWith("ws_1", "spost_1");
     expect(mockWorkflowStart).not.toHaveBeenCalled();
   });
 

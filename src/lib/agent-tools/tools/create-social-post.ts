@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { canonicalDigest } from "../canonical";
 
 import type { SocialPlatform } from "@/lib/db/schema";
 import { emitSocialEvent } from "@/lib/social/events";
@@ -18,6 +19,7 @@ import { ToolError } from "../errors";
 import type { ToolContext, ToolDefinition } from "../types";
 import {
   exactApprovedSocialPostInput,
+  governedPublishingMarker,
   PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION,
 } from "../social-publishing-approval";
 
@@ -295,7 +297,19 @@ export const createSocialPostTool: ToolDefinition<
         : mediaUrls.length > 0 ? mediaUrls : undefined,
       platformSettings: approvedTarget?.settings ?? input.platformSettings,
       studioAssetId: assetIds[0],
-      triggerSource: inspectedApproval ? `approved-plan:${inspectedApproval.requestId}:${inspectedApproval.target.targetId}` : undefined,
+      triggerSource: inspectedApproval ? governedPublishingMarker({
+        schema: "governed-social-publishing/v1",
+        approvalRequestId: inspectedApproval.requestId,
+        targetId: inspectedApproval.target.targetId,
+        targetEvidenceDigest: inspectedApproval.target.targetEvidenceDigest,
+        consumingPrincipalId: inspectedApproval.evidence.consumingPrincipalId,
+        idempotencyKey: canonicalDigest({
+          actor: inspectedApproval.evidence.consumingPrincipalId,
+          authorizationEvidenceRef: inspectedApproval.evidence.authorizationEvidenceRef,
+          approvalRequestId: inspectedApproval.requestId,
+          targetId: inspectedApproval.target.targetId,
+        }),
+      }) : undefined,
       createdByUserId: ctx.session.user.id,
     });
 

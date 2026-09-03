@@ -21,6 +21,8 @@ import {
   publishPostWorkflow,
 } from "@/../workflows/social-publish";
 import { logger } from "@/utils/logger";
+import { requiresGovernedPublishingPlan } from "@/lib/governance/publishing-route-guard";
+import { parseGovernedPublishingMarker, PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION } from "@/lib/agent-tools/social-publishing-approval";
 
 interface DispatchResponse {
   success: boolean;
@@ -116,6 +118,29 @@ async function handleDispatch(
     const activeByProvider = new Map<string, number>();
 
     for (const post of duePosts) {
+      if (await requiresGovernedPublishingPlan(post.workspaceId)) {
+        const publishingMarker = parseGovernedPublishingMarker(post.triggerSource);
+        const governed = publishingMarker !== null && await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.verifyConsumed({
+          workspaceId: post.workspaceId,
+          socialAccountId: post.socialAccountId,
+          actorUserId: publishingMarker.consumingPrincipalId,
+          triggerSource: post.triggerSource,
+          content: post.content,
+          mediaUrls: post.mediaUrls,
+          platformSettings: post.platformSettings,
+          scheduledAt: post.scheduledAt,
+        });
+        if (!governed) {
+          await updatePostStatus(post.id, "failed", {
+            dispatchStatus: "failed",
+            errorMessage: "Governed Publishing Approval evidence is missing, stale, or does not match this exact post.",
+            lastDispatchError: "governed_publishing_evidence_invalid",
+            lockedAt: null,
+          });
+          failed += 1;
+          continue;
+        }
+      }
       const claimed = await claimPostForDispatch({
         postId: post.id,
         now,
@@ -127,7 +152,8 @@ async function handleDispatch(
       }
 
       const attempts = claimed.dispatchAttempts ?? 1;
-      const dispatchKey = `publish:${claimed.id}:${attempts}`;
+      const publishingActor = parseGovernedPublishingMarker(claimed.triggerSource)?.consumingPrincipalId ?? claimed.createdByUserId ?? "system";
+      const dispatchKey = `publish:${publishingActor}:${claimed.id}:${attempts}`;
       const dispatchClaimToken = randomUUID();
       let providerKey: string | null = null;
 

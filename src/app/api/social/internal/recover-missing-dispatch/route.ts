@@ -21,6 +21,8 @@ import {
   publishPostWorkflow,
 } from "@/../workflows/social-publish";
 import { logger } from "@/utils/logger";
+import { requiresGovernedPublishingPlan } from "@/lib/governance/publishing-route-guard";
+import { parseGovernedPublishingMarker, PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION } from "@/lib/agent-tools/social-publishing-approval";
 
 interface RecoverMissingDispatchResponse {
   success: boolean;
@@ -95,6 +97,29 @@ async function handleRecover(
     const activeByProvider = new Map<string, number>();
 
     for (const post of duePosts) {
+      if (await requiresGovernedPublishingPlan(post.workspaceId)) {
+        const publishingMarker = parseGovernedPublishingMarker(post.triggerSource);
+        const governed = publishingMarker !== null && await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.verifyConsumed({
+          workspaceId: post.workspaceId,
+          socialAccountId: post.socialAccountId,
+          actorUserId: publishingMarker.consumingPrincipalId,
+          triggerSource: post.triggerSource,
+          content: post.content,
+          mediaUrls: post.mediaUrls,
+          platformSettings: post.platformSettings,
+          scheduledAt: post.scheduledAt,
+        });
+        if (!governed) {
+          if (!dryRun) await updatePostStatus(post.id, "failed", {
+            dispatchStatus: "failed",
+            errorMessage: "Governed Publishing Approval evidence is missing, stale, or does not match this exact post.",
+            lastDispatchError: "governed_publishing_evidence_invalid",
+            lockedAt: null,
+          });
+          failed += 1;
+          continue;
+        }
+      }
       const claimed = await claimQueuedDispatchedPostForRecovery({
         postId: post.id,
         now,
@@ -106,7 +131,8 @@ async function handleRecover(
       }
 
       const attempt = claimed.dispatchAttempts ?? 1;
-      const dispatchKey = `recover:${claimed.id}:${attempt}`;
+      const publishingActor = parseGovernedPublishingMarker(claimed.triggerSource)?.consumingPrincipalId ?? claimed.createdByUserId ?? "system";
+      const dispatchKey = `recover:${publishingActor}:${claimed.id}:${attempt}`;
       recovered += 1;
 
       let providerKey: string | null = null;

@@ -236,6 +236,28 @@ interface PostData {
   socialAccountId: string;
   scheduledAt: string | null;
   status: string;
+  triggerSource: string | null;
+  createdByUserId: string | null;
+}
+
+async function assertGovernedPublishingStep(post: PostData): Promise<void> {
+  "use step";
+  const { requiresGovernedPublishingPlan } = await import("@/lib/governance/publishing-route-guard");
+  if (!(await requiresGovernedPublishingPlan(post.workspaceId))) return;
+  const { parseGovernedPublishingMarker, PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION } = await import("@/lib/agent-tools/social-publishing-approval");
+  const marker = parseGovernedPublishingMarker(post.triggerSource);
+  if (!marker) throw new FatalError("Governed Publishing Approval is missing its actor binding.");
+  const valid = await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.verifyConsumed({
+    workspaceId: post.workspaceId,
+    socialAccountId: post.socialAccountId,
+    actorUserId: marker.consumingPrincipalId,
+    triggerSource: post.triggerSource,
+    content: post.content,
+    mediaUrls: post.mediaUrls,
+    platformSettings: post.platformSettings,
+    scheduledAt: post.scheduledAt,
+  });
+  if (!valid) throw new FatalError("Governed Publishing Approval is missing, stale, or does not match this exact Plan Revision target.");
 }
 
 async function loadPost(
@@ -263,6 +285,20 @@ async function loadPost(
     throw new FatalError(`Social post is not publishable from "${post.status}".`);
   }
 
+  const candidate: PostData = {
+    id: post.id,
+    workspaceId,
+    content: post.content,
+    mediaUrls: post.mediaUrls,
+    platformSettings: post.platformSettings,
+    socialAccountId: post.socialAccountId,
+    scheduledAt: post.scheduledAt?.toISOString() ?? null,
+    status: post.status,
+    triggerSource: post.triggerSource,
+    createdByUserId: post.createdByUserId,
+  };
+  await assertGovernedPublishingStep(candidate);
+
   // Transition to "publishing"
   await updatePostStatus(postId, "publishing");
   await emitSocialEvent({
@@ -274,16 +310,7 @@ async function loadPost(
     accountId: post.socialAccountId,
   });
 
-  return {
-    id: post.id,
-    workspaceId,
-    content: post.content,
-    mediaUrls: post.mediaUrls,
-    platformSettings: post.platformSettings,
-    socialAccountId: post.socialAccountId,
-    scheduledAt: post.scheduledAt?.toISOString() ?? null,
-    status: "publishing",
-  };
+  return { ...candidate, status: "publishing" };
 }
 
 async function reloadPostBeforePublish(
@@ -311,6 +338,20 @@ async function reloadPostBeforePublish(
     throw new FatalError(`Social post is not publishable from "${post.status}".`);
   }
 
+  const candidate: PostData = {
+    id: post.id,
+    workspaceId,
+    content: post.content,
+    mediaUrls: post.mediaUrls,
+    platformSettings: post.platformSettings,
+    socialAccountId: post.socialAccountId,
+    scheduledAt: post.scheduledAt?.toISOString() ?? null,
+    status: post.status,
+    triggerSource: post.triggerSource,
+    createdByUserId: post.createdByUserId,
+  };
+  await assertGovernedPublishingStep(candidate);
+
   if (post.status !== "publishing") {
     await updatePostStatus(postId, "publishing");
     await emitSocialEvent({
@@ -323,16 +364,7 @@ async function reloadPostBeforePublish(
     });
   }
 
-  return {
-    id: post.id,
-    workspaceId,
-    content: post.content,
-    mediaUrls: post.mediaUrls,
-    platformSettings: post.platformSettings,
-    socialAccountId: post.socialAccountId,
-    scheduledAt: post.scheduledAt?.toISOString() ?? null,
-    status: "publishing",
-  };
+  return { ...candidate, status: "publishing" };
 }
 
 interface AccountData {

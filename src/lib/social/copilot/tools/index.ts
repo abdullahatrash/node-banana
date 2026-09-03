@@ -27,6 +27,16 @@ export const DRAFT_CONTEXT_TOOL_NAMES = [
 
 /** Irreversible commit tools, gated behind needsApproval + staged until a draft exists. */
 export const COMMIT_TOOL_NAMES = ["scheduleDraft", "publishNow"];
+const publishingApprovalSchema = z.object({
+  approvalRequestId: z.string().min(1).max(200),
+  targetId: z.string().min(1).max(200),
+  targetEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  consumingPrincipalId: z.string().min(1).max(200),
+  consumingKeyId: z.string().min(1).max(200),
+  authorizationEvidenceRef: z.string().min(1).max(500),
+  authorizationIssuedAt: z.string().datetime({ offset: true }),
+  authorizationExpiresAt: z.string().datetime({ offset: true }),
+}).strict();
 import type { SocialPlatform } from "@/lib/db/schema";
 
 /**
@@ -184,10 +194,12 @@ export function createCopilotTools(ctx: CopilotContext) {
       inputSchema: z.object({
         postId: z.string().describe("The draft post id"),
         scheduledAt: z.string().describe("ISO 8601 time to publish"),
+        publishingApproval: publishingApprovalSchema.describe("Fresh exact Plan Revision Publishing Approval release evidence"),
+        idempotencyKey: z.string().min(8).max(200).describe("Stable key reused for every retry of this logical commit"),
       }),
       needsApproval: true,
-      execute: async ({ postId, scheduledAt }) =>
-        scheduleDraftForWorkspace(ctx, postId, scheduledAt),
+      execute: async ({ postId, scheduledAt, publishingApproval, idempotencyKey }) =>
+        scheduleDraftForWorkspace(ctx, postId, scheduledAt, { publishingApproval, idempotencyKey }),
     }),
 
     publishNow: tool({
@@ -195,9 +207,12 @@ export function createCopilotTools(ctx: CopilotContext) {
         "Publish a draft immediately. Requires the user's explicit approval. Re-validates the draft server-side and refuses if it isn't ready.",
       inputSchema: z.object({
         postId: z.string().describe("The draft post id"),
+        publishingApproval: publishingApprovalSchema.describe("Fresh exact Plan Revision Publishing Approval release evidence"),
+        idempotencyKey: z.string().min(8).max(200).describe("Stable key reused for every retry of this logical commit"),
       }),
       needsApproval: true,
-      execute: async ({ postId }) => publishNowForWorkspace(ctx, postId),
+      execute: async ({ postId, publishingApproval, idempotencyKey }) =>
+        publishNowForWorkspace(ctx, postId, { publishingApproval, idempotencyKey }),
     }),
   };
 }

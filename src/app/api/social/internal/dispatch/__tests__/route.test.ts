@@ -13,6 +13,8 @@ const mockWorkflowStart = vi.fn();
 const mockEmitSocialEvent = vi.fn();
 const mockGetProvider = vi.fn();
 const mockRegisterProvider = vi.fn();
+const mockRequiresGovernedPublishingPlan = vi.fn();
+const mockVerifyConsumed = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: mockIsDatabaseConfigured,
@@ -40,6 +42,8 @@ vi.mock("workflow/api", () => ({
 vi.mock("@/lib/social/events", () => ({
   emitSocialEvent: mockEmitSocialEvent,
 }));
+vi.mock("@/lib/governance/publishing-route-guard", () => ({ requiresGovernedPublishingPlan: mockRequiresGovernedPublishingPlan }));
+vi.mock("@/lib/agent-tools/social-publishing-approval", () => ({ parseGovernedPublishingMarker: () => null, PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION: { verifyConsumed: mockVerifyConsumed } }));
 
 vi.mock("@/utils/logger", () => ({
   logger: {
@@ -77,6 +81,8 @@ describe("/api/social/internal/dispatch POST", () => {
       maxConcurrentJobs: 5,
     });
     mockHasChainChildren.mockResolvedValue(false);
+    mockRequiresGovernedPublishingPlan.mockResolvedValue(false);
+    mockVerifyConsumed.mockResolvedValue(true);
   });
 
   it("returns 401 for unauthorized request", async () => {
@@ -126,6 +132,18 @@ describe("/api/social/internal/dispatch POST", () => {
     });
   });
 
+  it("never claims a queued post without exact governed evidence when policy is active", async () => {
+    mockRequiresGovernedPublishingPlan.mockResolvedValue(true);
+    mockVerifyConsumed.mockResolvedValue(false);
+    mockListDueQueuedPosts.mockResolvedValue([{ id: "spost_1", workspaceId: "ws_1", socialAccountId: "ch_1", createdByUserId: "u_1" }]);
+    mockUpdatePostStatus.mockResolvedValue({});
+    const { POST } = await import("../route");
+    const response = await POST(createRequest());
+    expect(response.status).toBe(200);
+    expect(mockClaimPostForDispatch).not.toHaveBeenCalled();
+    expect(mockUpdatePostStatus).toHaveBeenCalledWith("spost_1", "failed", expect.objectContaining({ lastDispatchError: "governed_publishing_evidence_invalid" }));
+  });
+
   it("schedules retry when workflow dispatch fails", async () => {
     mockListDueQueuedPosts.mockResolvedValue([{ id: "spost_1", workspaceId: "ws_1" }]);
     mockClaimPostForDispatch.mockResolvedValue({
@@ -156,7 +174,7 @@ describe("/api/social/internal/dispatch POST", () => {
       severity: "warn",
       message: "Dispatch failed and was scheduled for retry.",
       postId: "spost_1",
-      dispatchKey: "publish:spost_1:1",
+      dispatchKey: "publish:system:spost_1:1",
       metadata: expect.objectContaining({
         attempts: 1,
         error: "workflow start failed",
@@ -197,7 +215,7 @@ describe("/api/social/internal/dispatch POST", () => {
       message: "Post failed after repeated dispatch failures.",
       userFacing: true,
       postId: "spost_1",
-      dispatchKey: "publish:spost_1:2",
+      dispatchKey: "publish:system:spost_1:2",
       metadata: {
         attempts: 2,
         error: "workflow start failed",
@@ -222,7 +240,7 @@ describe("/api/social/internal/dispatch POST", () => {
     expect(response.status).toBe(200);
     expect(mockUpdatePostStatus).toHaveBeenCalledWith("spost_1", "queued", {
       dispatchStatus: "dispatched",
-      workflowRunRef: "publish:spost_1:1:1700000000000",
+      workflowRunRef: "publish:system:spost_1:1:1700000000000",
       nextDispatchAt: null,
       lastDispatchError: null,
       lockedAt: null,
