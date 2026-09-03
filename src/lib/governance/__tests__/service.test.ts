@@ -72,6 +72,14 @@ describe("GovernanceService", () => {
     expect(provision).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, userId: "new-user", binding: { kind: "built_in", role: "approver" } });
     expect(provision).toHaveBeenCalledTimes(1);
     expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "member_role_assignment", id: "new-user" })).toBeTruthy();
+    expect(repository.canonicalEffects).toContainEqual(expect.objectContaining({ type: "membership_upsert", workspaceId: owner.workspaceId, userId: "new-user", role: "member" }));
+    expect(await repository.listResources({ workspaceId: owner.workspaceId, kinds: ["membership_projection"], status: "queued" })).toHaveLength(1);
+  });
+
+  it("prohibits parallel Owner assignment and invitation paths", async () => {
+    const { service } = setup();
+    await expect(service.execute(owner, { type: "assign_role", userId: "member-b", binding: { kind: "built_in", role: "owner" } }, "assign-owner-directly")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(service.execute(owner, { type: "create_invitation", email: "owner@example.com", binding: { kind: "built_in", role: "owner" }, expiresAt: "2026-09-10T12:00:00.000Z" }, "invite-owner-directly")).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
   it("never persists plaintext bearer secrets in append-only receipts", async () => {
@@ -126,6 +134,7 @@ describe("GovernanceService", () => {
     const transferSession = await service.execute(owner, { type: "verify_step_up", challengeId: transferChallenge.challengeId, code: transferChallenge.verificationCode }, "verify-owner-transfer") as { stepUpToken: string };
     await service.execute(owner, { type: "transfer_ownership", newOwnerUserId: "member-b", stepUpToken: transferSession.stepUpToken }, "complete-owner-transfer");
     expect(transferOwnership).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, currentOwnerUserId: owner.userId, newOwnerUserId: "member-b" });
+    expect(repository.canonicalEffects).toContainEqual(expect.objectContaining({ type: "ownership_transfer", workspaceId: owner.workspaceId, currentOwnerUserId: owner.userId, newOwnerUserId: "member-b" }));
 
     const closureRepository = new InMemoryGovernanceRepository();
     const closureService = new GovernanceService(closureRepository, { now: () => new Date(current) }, {
@@ -146,6 +155,7 @@ describe("GovernanceService", () => {
     const executionSession = await closureService.execute(owner, { type: "verify_step_up", challengeId: executionChallenge.challengeId, code: executionChallenge.verificationCode }, "verify-close-execute") as { stepUpToken: string };
     await closureService.execute(owner, { type: "execute_workspace_closure", closureId: requested2.closureId, stepUpToken: executionSession.stepUpToken }, "execute-close-workspace");
     expect(closeWorkspace).toHaveBeenCalledWith({ workspaceId: owner.workspaceId, currentOwnerUserId: owner.userId, closedAt: current });
+    expect(closureRepository.canonicalEffects).toContainEqual(expect.objectContaining({ type: "workspace_close", workspaceId: owner.workspaceId, currentOwnerUserId: owner.userId }));
   });
 
   it("makes Portfolio assignments explicit, revocable by resource state, and non-authoritative", async () => {

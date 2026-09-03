@@ -8605,7 +8605,7 @@ export const workspaceGovernanceResources = pgTable(
     ),
     kindCheck: check(
       "workspace_governance_resources_kind_check",
-      sql`${table.kind} in ('custom_role','member_role_assignment','invitation_binding','portfolio','portfolio_assignment','review_guest_grant','review_guest_session','approval_policy','approval_request','step_up_challenge','step_up_session','audit_export','workspace_export','workspace_import','data_region_policy','retention_policy','retention_hold','deletion_receipt','tombstone','safety_decision','safety_appeal','bulk_operation','workspace_closure')`,
+      sql`${table.kind} in ('custom_role','member_role_assignment','invitation_binding','portfolio','portfolio_assignment','review_guest_grant','review_guest_session','approval_policy','approval_request','step_up_challenge','step_up_session','audit_export','workspace_export','workspace_import','data_region_policy','retention_policy','retention_hold','deletion_receipt','tombstone','safety_decision','safety_appeal','bulk_operation','workspace_closure','membership_projection')`,
     ),
     bodySizeCheck: check(
       "workspace_governance_resources_body_size_check",

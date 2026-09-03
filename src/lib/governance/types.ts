@@ -22,6 +22,7 @@ export const GOVERNANCE_RESOURCE_KINDS = [
   "safety_appeal",
   "bulk_operation",
   "workspace_closure",
+  "membership_projection",
 ] as const;
 
 export type GovernanceResourceKind = (typeof GOVERNANCE_RESOURCE_KINDS)[number];
@@ -123,7 +124,43 @@ export interface GovernanceCommit {
   receipt: GovernanceReceipt;
   mutations: GovernanceMutation[];
   audit: GovernanceAuditEvent;
+  canonicalEffects?: GovernanceCanonicalEffect[];
 }
+
+export type GovernanceCanonicalEffect =
+  | {
+      type: "membership_upsert";
+      workspaceId: string;
+      userId: string;
+      role: "admin" | "member";
+      occurredAt: Date;
+    }
+  | {
+      type: "membership_remove";
+      workspaceId: string;
+      userId: string;
+      occurredAt: Date;
+    }
+  | {
+      type: "membership_role_update";
+      workspaceId: string;
+      userId: string;
+      role: "admin" | "member";
+      occurredAt: Date;
+    }
+  | {
+      type: "ownership_transfer";
+      workspaceId: string;
+      currentOwnerUserId: string;
+      newOwnerUserId: string;
+      occurredAt: Date;
+    }
+  | {
+      type: "workspace_close";
+      workspaceId: string;
+      currentOwnerUserId: string;
+      occurredAt: Date;
+    };
 
 export type GovernanceCommitResult =
   | { type: "committed"; result: unknown }

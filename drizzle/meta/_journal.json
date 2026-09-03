@@ -428,6 +428,13 @@
       "when": 1788454973821,
       "tag": "0060_green_grandmaster",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1788468000000,
+      "tag": "0061_atomic_governance_membership",
+      "breakpoints": true
     }
   ]
 }

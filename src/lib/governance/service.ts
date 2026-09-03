@@ -14,6 +14,7 @@ import type {
   CustomRoleRevision,
   GovernanceActor,
   GovernanceAuditEvent,
+  GovernanceCanonicalEffect,
   GovernanceCapability,
   GovernanceRepository,
   GovernanceResource,
@@ -351,6 +352,7 @@ export class GovernanceService {
     result: unknown;
     target: { kind: string; id: string } | null;
     now: Date;
+    canonicalEffects?: GovernanceCanonicalEffect[];
   }): Promise<unknown> {
     if (!IDEMPOTENCY.test(input.idempotencyKey)) throw new GovernanceError("INVALID_INPUT", "A stable idempotency key is required.");
     const requestDigest = canonicalDigest(input.command);
@@ -364,6 +366,7 @@ export class GovernanceService {
         createdAt: input.now,
       },
       mutations: input.mutations,
+      canonicalEffects: input.canonicalEffects,
       audit: this.audit({ actor: input.actor, capability: input.capability, command: input.command, target: input.target, now: input.now }),
     });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "The resource or idempotency key conflicts with current state.");
@@ -411,6 +414,7 @@ export class GovernanceService {
     let mutations: Parameters<GovernanceRepository["commit"]>[0]["mutations"] = [];
     let result: Record<string, unknown>;
     let target: { kind: string; id: string } | null = null;
+    let canonicalEffects: GovernanceCanonicalEffect[] = [];
 
     switch (command.type) {
       case "create_custom_role": {
@@ -441,7 +445,7 @@ export class GovernanceService {
       case "assign_role": {
         const userId = safeId(command.userId, "User");
         await this.validateRoleBinding(actor.workspaceId, command.binding);
-        if (command.binding.kind === "built_in" && command.binding.role === "owner" && actor.legacyRole !== "owner") throw new GovernanceError("FORBIDDEN", "Only an Owner may assign Owner.");
+        if (command.binding.kind === "built_in" && command.binding.role === "owner") throw new GovernanceError("INVALID_INPUT", "Owner may only change through the ownership-transfer lifecycle.");
         if (command.binding.kind === "custom") {
           const binding = command.binding;
           const role = await this.repository.getResource<{ revisions: CustomRoleRevision[] }>({ workspaceId: actor.workspaceId, kind: "custom_role", id: safeId(binding.roleId, "Role") });
@@ -449,7 +453,12 @@ export class GovernanceService {
         }
         const current = await this.repository.getResource({ workspaceId: actor.workspaceId, kind: "member_role_assignment", id: userId });
         const body = { userId, binding: command.binding, assignedByUserId: actor.userId, assignedAt: now.toISOString() };
-        mutations = [current ? update(current, "active", body) : create("member_role_assignment", userId, "active", body)];
+        const projectionRole = command.binding.kind === "built_in" && command.binding.role === "admin" ? "admin" : "member";
+        mutations = [
+          current ? update(current, "active", body) : create("member_role_assignment", userId, "active", body),
+          create("membership_projection", newId("membership_projection"), "queued", { operation: "update_role", userId, role: projectionRole, requestedAt: now.toISOString(), attempts: 0 }),
+        ];
+        canonicalEffects = [{ type: "membership_role_update", workspaceId: actor.workspaceId, userId, role: projectionRole, occurredAt: now }];
         result = { userId, binding: command.binding };
         target = { kind: "member_role_assignment", id: userId };
         break;
@@ -458,7 +467,7 @@ export class GovernanceService {
         const email = command.email.trim().toLowerCase();
         if (!/^\S+@\S+\.\S+$/.test(email)) throw new GovernanceError("INVALID_INPUT", "Email is invalid.");
         await this.validateRoleBinding(actor.workspaceId, command.binding);
-        if (command.binding.kind === "built_in" && command.binding.role === "owner" && actor.legacyRole !== "owner") throw new GovernanceError("FORBIDDEN", "Only an Owner may invite another Owner.");
+        if (command.binding.kind === "built_in" && command.binding.role === "owner") throw new GovernanceError("INVALID_INPUT", "Owner may only change through the ownership-transfer lifecycle.");
         const expiry = exactDate(command.expiresAt, "Invitation expiry");
         if (expiry <= now || expiry.getTime() - now.getTime() > 30 * 86_400_000) throw new GovernanceError("INVALID_INPUT", "Invitation expiry is outside the allowed window.");
         const id = newId("invite");
@@ -482,7 +491,9 @@ export class GovernanceService {
         if (removed === "owner_forbidden") throw new GovernanceError("FORBIDDEN", "Transfer ownership before removing the Workspace Owner.");
         if (removed === "not_found") throw new GovernanceError("NOT_FOUND", "Workspace member unavailable.");
         const assignment = await this.repository.getResource({ workspaceId: actor.workspaceId, kind: "member_role_assignment", id: userId });
-        mutations = assignment ? [update(assignment, "revoked", { ...assignment.body, revokedAt: now.toISOString() })] : [];
+        const projection = create("membership_projection", newId("membership_projection"), "queued", { operation: "remove", userId, requestedAt: now.toISOString(), attempts: 0 });
+        mutations = [...(assignment ? [update(assignment, "revoked", { ...assignment.body, revokedAt: now.toISOString() })] : []), projection];
+        canonicalEffects = [{ type: "membership_remove", workspaceId: actor.workspaceId, userId, occurredAt: now }];
         result = { userId, removed: true };
         target = { kind: "workspace_member", id: userId };
         break;
@@ -500,6 +511,8 @@ export class GovernanceService {
         const oldBody = { userId: actor.userId, binding: { kind: "built_in" as const, role: "admin" as const }, assignedByUserId: actor.userId, assignedAt: now.toISOString(), ownershipTransfer: true };
         const newBody = { userId: newOwnerUserId, binding: { kind: "built_in" as const, role: "owner" as const }, assignedByUserId: actor.userId, assignedAt: now.toISOString(), ownershipTransfer: true };
         mutations = [oldAssignment ? update(oldAssignment, "active", oldBody) : create("member_role_assignment", actor.userId, "active", oldBody), newAssignment ? update(newAssignment, "active", newBody) : create("member_role_assignment", newOwnerUserId, "active", newBody)];
+        mutations.push(create("membership_projection", newId("membership_projection"), "queued", { operation: "transfer_ownership", currentOwnerUserId: actor.userId, newOwnerUserId, requestedAt: now.toISOString(), attempts: 0 }));
+        canonicalEffects = [{ type: "ownership_transfer", workspaceId: actor.workspaceId, currentOwnerUserId: actor.userId, newOwnerUserId, occurredAt: now }];
         result = { previousOwnerUserId: actor.userId, newOwnerUserId, transferred: true };
         target = { kind: "workspace", id: actor.workspaceId };
         break;
@@ -534,7 +547,11 @@ export class GovernanceService {
         await this.requireStepUp(actor, "workspace.close", closure.id, command.stepUpToken);
         const closed = await this.memberships.closeWorkspace({ workspaceId: actor.workspaceId, currentOwnerUserId: actor.userId, closedAt: now });
         if (closed === "not_current_owner") throw new GovernanceError("FORBIDDEN", "Only the current Workspace Owner may complete closure.");
-        mutations = [update(closure, "closed", { ...closureBody, executedAt: now.toISOString() })];
+        mutations = [
+          update(closure, "closed", { ...closureBody, executedAt: now.toISOString() }),
+          create("membership_projection", newId("membership_projection"), "queued", { operation: "close_workspace", requestedAt: now.toISOString(), attempts: 0 }),
+        ];
+        canonicalEffects = [{ type: "workspace_close", workspaceId: actor.workspaceId, currentOwnerUserId: actor.userId, occurredAt: now }];
         result = { closureId: closure.id, status: "closed", closedAt: now.toISOString() };
         target = { kind: closure.kind, id: closure.id };
         break;
@@ -825,7 +842,7 @@ export class GovernanceService {
       }
     }
 
-    return this.commit({ actor, command, capability, idempotencyKey, mutations, result, target, now });
+    return this.commit({ actor, command, capability, idempotencyKey, mutations, result, target, now, canonicalEffects });
   }
 
   /** Resolve and verify a guest grant without creating Workspace browsing authority. */
@@ -891,13 +908,16 @@ export class GovernanceService {
     const body = invitation.body as { email: string; tokenDigest: string; binding: WorkspaceRoleBinding; expiresAt: string; acceptedAt: string | null; revokedAt: string | null };
     if (invitation.status !== "pending" || body.revokedAt || exactDate(body.expiresAt, "Invitation expiry") <= now) throw new GovernanceError("EXPIRED", "Invitation expired or was revoked.");
     if (secretDigest(input.token) !== body.tokenDigest || body.email !== input.verifiedEmail.trim().toLowerCase()) throw new GovernanceError("NOT_FOUND", "Invitation unavailable.");
+    await this.validateRoleBinding(input.workspaceId, body.binding);
+    if (body.binding.kind === "built_in" && body.binding.role === "owner") throw new GovernanceError("INVALID_INPUT", "Owner may only change through the ownership-transfer lifecycle.");
     await this.memberships.provisionAcceptedMembership({ workspaceId: input.workspaceId, userId: input.userId, binding: body.binding });
     const currentAssignment = await this.repository.getResource({ workspaceId: input.workspaceId, kind: "member_role_assignment", id: input.userId });
     const invitationNext = resource({ id: invitation.id, workspaceId: invitation.workspaceId, kind: invitation.kind, version: invitation.version + 1, status: "accepted", body: { ...body, acceptedAt: now.toISOString() }, actor: invitation.createdByUserId, createdAt: invitation.createdAt, now });
     const assignmentBody = { userId: input.userId, binding: body.binding, assignedByUserId: invitation.createdByUserId, assignedAt: now.toISOString(), sourceInvitationId: invitation.id };
     const assignmentNext = resource({ id: input.userId, workspaceId: input.workspaceId, kind: "member_role_assignment", version: (currentAssignment?.version ?? 0) + 1, status: "active", body: assignmentBody, actor: invitation.createdByUserId, createdAt: currentAssignment?.createdAt, now });
+    const projection = resource({ id: newId("membership_projection"), workspaceId: input.workspaceId, kind: "membership_projection", version: 1, status: "queued", body: { operation: "upsert", userId: input.userId, role: body.binding.kind === "built_in" && body.binding.role === "admin" ? "admin" : "member", requestedAt: now.toISOString(), attempts: 0 }, actor: invitation.createdByUserId, now });
     const result = { invitationId: invitation.id, workspaceId: input.workspaceId, userId: input.userId, binding: body.binding, accepted: true };
-    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: invitation.version, resource: invitationNext }, { type: currentAssignment ? "update" : "create", expectedVersion: currentAssignment?.version ?? null, resource: assignmentNext }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "human", id: input.userId }, capability: receiptCapability, action: "accept_invitation", resource: { kind: "invitation_binding", id: invitation.id }, outcome: "completed", redactedDetails: { roleBindingKind: body.binding.kind }, occurredAt: now } });
+    const outcome = await this.repository.commit({ receipt: { workspaceId: input.workspaceId, capability: receiptCapability, idempotencyKey: input.idempotencyKey, requestDigest, result, createdAt: now }, mutations: [{ type: "update", expectedVersion: invitation.version, resource: invitationNext }, { type: currentAssignment ? "update" : "create", expectedVersion: currentAssignment?.version ?? null, resource: assignmentNext }, { type: "create", expectedVersion: null, resource: projection }], canonicalEffects: [{ type: "membership_upsert", workspaceId: input.workspaceId, userId: input.userId, role: body.binding.kind === "built_in" && body.binding.role === "admin" ? "admin" : "member", occurredAt: now }], audit: { schema: "workspace-audit-event/v1", id: newId("audit"), workspaceId: input.workspaceId, actor: { kind: "human", id: input.userId }, capability: receiptCapability, action: "accept_invitation", resource: { kind: "invitation_binding", id: invitation.id }, outcome: "completed", redactedDetails: { roleBindingKind: body.binding.kind }, occurredAt: now } });
     if (outcome.type === "conflict") throw new GovernanceError("CONFLICT", "Invitation acceptance changed.");
     return outcome.type === "committed" ? result : outcome.result;
   }

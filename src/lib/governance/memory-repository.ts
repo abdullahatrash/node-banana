@@ -1,6 +1,7 @@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type {
   GovernanceAuditEvent,
+  GovernanceCanonicalEffect,
   GovernanceCommit,
   GovernanceCommitResult,
   GovernanceRepository,
@@ -25,6 +26,7 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
   readonly resources = new Map<string, GovernanceResource>();
   readonly receipts = new Map<string, GovernanceReceipt>();
   readonly audit: GovernanceAuditEvent[] = [];
+  readonly canonicalEffects: GovernanceCanonicalEffect[] = [];
   private tail: Promise<void> = Promise.resolve();
 
   async findReceipt(input: {
@@ -101,6 +103,7 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
           copy(mutation.resource),
         );
       }
+      this.canonicalEffects.push(...copy(input.canonicalEffects ?? []));
       const audit = copy(input.audit);
       audit.sequence = this.audit.length + 1;
       this.audit.push(audit);

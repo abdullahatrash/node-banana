@@ -1,12 +1,15 @@
-import { and, asc, desc, eq, gt, inArray, max, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, max, ne, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import {
   workspaceAuditTrailEvents,
   workspaceGovernanceMutationReceipts,
   workspaceGovernanceResources,
+  workspaceMembers,
+  workspaces,
 } from "@/lib/db/schema";
 import type {
   GovernanceAuditEvent,
+  GovernanceCanonicalEffect,
   GovernanceCommit,
   GovernanceCommitResult,
   GovernanceRepository,
@@ -18,6 +21,89 @@ import type {
 type Db = ReturnType<typeof getDb>;
 
 class GovernanceCommitConflict extends Error {}
+
+async function applyCanonicalEffect(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  effect: GovernanceCanonicalEffect,
+): Promise<void> {
+  if (effect.type === "membership_upsert") {
+    await tx.insert(workspaceMembers).values({
+      workspaceId: effect.workspaceId,
+      userId: effect.userId,
+      role: effect.role,
+      updatedAt: effect.occurredAt,
+    }).onConflictDoNothing();
+    await tx.update(workspaceMembers).set({
+      role: effect.role,
+      updatedAt: effect.occurredAt,
+    }).where(and(
+      eq(workspaceMembers.workspaceId, effect.workspaceId),
+      eq(workspaceMembers.userId, effect.userId),
+      ne(workspaceMembers.role, "owner"),
+    ));
+    return;
+  }
+  if (effect.type === "membership_remove") {
+    const [workspace] = await tx.select({ ownerUserId: workspaces.ownerUserId })
+      .from(workspaces)
+      .where(eq(workspaces.id, effect.workspaceId))
+      .limit(1);
+    if (!workspace || workspace.ownerUserId === effect.userId) throw new GovernanceCommitConflict();
+    const removed = await tx.delete(workspaceMembers).where(and(
+      eq(workspaceMembers.workspaceId, effect.workspaceId),
+      eq(workspaceMembers.userId, effect.userId),
+    )).returning({ userId: workspaceMembers.userId });
+    if (!removed.length) throw new GovernanceCommitConflict();
+    return;
+  }
+  if (effect.type === "membership_role_update") {
+    const updated = await tx.update(workspaceMembers).set({
+      role: effect.role,
+      updatedAt: effect.occurredAt,
+    }).where(and(
+      eq(workspaceMembers.workspaceId, effect.workspaceId),
+      eq(workspaceMembers.userId, effect.userId),
+      ne(workspaceMembers.role, "owner"),
+    )).returning({ userId: workspaceMembers.userId });
+    if (!updated.length) throw new GovernanceCommitConflict();
+    return;
+  }
+  if (effect.type === "ownership_transfer") {
+    const target = await tx.select({ userId: workspaceMembers.userId })
+      .from(workspaceMembers)
+      .where(and(
+        eq(workspaceMembers.workspaceId, effect.workspaceId),
+        eq(workspaceMembers.userId, effect.newOwnerUserId),
+      ))
+      .limit(1);
+    if (!target.length) throw new GovernanceCommitConflict();
+    const changed = await tx.update(workspaces).set({
+      ownerUserId: effect.newOwnerUserId,
+      updatedAt: effect.occurredAt,
+    }).where(and(
+      eq(workspaces.id, effect.workspaceId),
+      eq(workspaces.ownerUserId, effect.currentOwnerUserId),
+    )).returning({ id: workspaces.id });
+    if (!changed.length) throw new GovernanceCommitConflict();
+    await tx.update(workspaceMembers).set({ role: "admin", updatedAt: effect.occurredAt }).where(and(
+      eq(workspaceMembers.workspaceId, effect.workspaceId),
+      eq(workspaceMembers.userId, effect.currentOwnerUserId),
+    ));
+    await tx.update(workspaceMembers).set({ role: "owner", updatedAt: effect.occurredAt }).where(and(
+      eq(workspaceMembers.workspaceId, effect.workspaceId),
+      eq(workspaceMembers.userId, effect.newOwnerUserId),
+    ));
+    return;
+  }
+  const closed = await tx.update(workspaces).set({
+    deletedAt: effect.occurredAt,
+    updatedAt: effect.occurredAt,
+  }).where(and(
+    eq(workspaces.id, effect.workspaceId),
+    eq(workspaces.ownerUserId, effect.currentOwnerUserId),
+  )).returning({ id: workspaces.id });
+  if (!closed.length) throw new GovernanceCommitConflict();
+}
 
 function fromResourceRow<T>(
   row: typeof workspaceGovernanceResources.$inferSelect,
@@ -123,7 +209,11 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
   }
 
   async commit(input: GovernanceCommit): Promise<GovernanceCommitResult> {
-    if (input.audit.workspaceId !== input.receipt.workspaceId || input.mutations.some((mutation) => mutation.resource.workspaceId !== input.receipt.workspaceId)) {
+    if (
+      input.audit.workspaceId !== input.receipt.workspaceId ||
+      input.mutations.some((mutation) => mutation.resource.workspaceId !== input.receipt.workspaceId) ||
+      input.canonicalEffects?.some((effect) => effect.workspaceId !== input.receipt.workspaceId)
+    ) {
       return { type: "conflict" };
     }
     try {
@@ -186,6 +276,13 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
               .returning({ id: workspaceGovernanceResources.id });
             if (!updated.length) throw new GovernanceCommitConflict();
           }
+        }
+
+        for (const effect of input.canonicalEffects ?? []) {
+          if (effect.workspaceId !== input.receipt.workspaceId) {
+            throw new GovernanceCommitConflict();
+          }
+          await applyCanonicalEffect(tx, effect);
         }
 
         await tx.execute(
