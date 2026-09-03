@@ -4,6 +4,18 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 import { CopyForm } from "../CopyForm";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 
+vi.mock("next-intl", () => ({
+  useTranslations: (namespace: string) => (key: string) =>
+    namespace === "simpleStudio.generation"
+      ? ({
+          generating: "Generating…",
+          cancel: "Cancel",
+          progress: "Generation progress",
+          viewAsset: "View asset",
+        })[key] ?? key
+      : key,
+}));
+
 describe("CopyForm", () => {
   beforeEach(() => {
     useSimpleStudioStore.setState({
