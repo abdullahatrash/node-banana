@@ -59,7 +59,6 @@
   "src/components/social/compose/previews/MastodonPreview.tsx",
   "src/components/social/compose/previews/XPreview.tsx",
   "src/components/social/compose/previews/YouTubePreview.tsx",
-  "src/components/social/copilot/CopilotChat.tsx",
   "src/components/social/posts/PostRow.tsx",
   "src/components/social/shared/PlatformIcon.tsx",
   "src/components/ui/breadcrumb.tsx",

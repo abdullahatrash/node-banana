@@ -1,6 +1,4 @@
 import { resolveAssetRefsInPayload } from "@/app/api/generate/assetResolver";
-import { generateWithGemini } from "@/app/api/generate/providers/gemini";
-import { generateLlmText } from "@/app/api/llm/core";
 import { resolveInferenceKeyOptional } from "@/lib/byok/resolveInferenceKey";
 import {
   buildAssetObjectKey,
@@ -9,7 +7,6 @@ import {
   putObjectToS3,
 } from "@/lib/storage/s3";
 import { recordAsset } from "@/lib/studio/repository";
-import type { LLMModelType, ModelType } from "@/types";
 
 import type { ProviderKeyResolver, RunnerDeps } from "./types";
 
@@ -115,42 +112,12 @@ export function defaultRunnerDeps(options: DefaultDepsOptions): RunnerDeps {
   return {
     resolveKey: makeRequestKeyResolver(keys),
 
-    async generateImage(args) {
-      const response = await generateWithGemini(
-        `run-${projectId}`,
-        args.apiKey,
-        args.prompt,
-        args.images,
-        args.model as ModelType,
-        args.aspectRatio,
-        args.resolution,
-      );
-      const body = (await response.json()) as {
-        success: boolean;
-        image?: string;
-        error?: string;
-      };
-      if (!body.success || !body.image) {
-        throw new Error(body.error || "Image generation failed");
-      }
-      return { dataUrl: body.image };
+    async generateImage() {
+      throw new Error("WORKFLOW_ADMITTED_IMAGE_GENERATION_UNAVAILABLE");
     },
 
-    async generateText(args) {
-      const text = await generateLlmText({
-        provider: args.provider,
-        model: args.model as LLMModelType,
-        prompt: args.prompt,
-        images: args.images,
-        temperature: args.temperature,
-        maxTokens: args.maxTokens,
-        keys: {
-          google: keys.gemini ?? keys.google ?? null,
-          openai: keys.openai ?? null,
-          anthropic: keys.anthropic ?? null,
-        },
-      });
-      return { text };
+    async generateText() {
+      throw new Error("WORKFLOW_ADMITTED_TEXT_GENERATION_UNAVAILABLE");
     },
 
     async saveImageAsset(args) {
