@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { ProductTelemetryEventSchema, evaluateReleaseReadiness } from "./policy";
+import { evaluateReleaseReadiness, parseProductTelemetryEvent } from "./policy";
 import { releaseRecordInputSchema, type ReleaseRecordInput } from "./schemas";
 import type { ReleaseControlRepository, StoredReleaseRecord } from "./repository";
 import type { AccessibilityEvidence, ContractMigrationEvidence, ParityRequirement, PerformanceEvidence, PublicIncident, RecoveryObjective, ReleaseEvidence, ReleaseFlag, ReleaseReadinessDecision, RestoreDrillEvidence } from "./types";
@@ -64,7 +64,7 @@ export class ReleaseControlService {
     const workspacePseudonym = `wsp_${createHmac("sha256", this.telemetrySecret).update(`workspace:${epoch}:${workspaceId}`).digest("hex")}`;
     const sessionPseudonym = `ses_${createHmac("sha256", this.telemetrySecret).update(`session:${epoch}:${authContextId}`).digest("hex")}`;
     const consentRevision = `consent_r${String(consent.revision).padStart(4, "0")}`;
-    const event = ProductTelemetryEventSchema.parse({ ...value, workspacePseudonym, sessionPseudonym, consentRevision, consentPurpose: consent.purpose });
+    const event = parseProductTelemetryEvent({ ...value, workspacePseudonym, sessionPseudonym, consentRevision, consentPurpose: consent.purpose });
     if (event.occurredAt.getTime() > now.getTime() + 60_000 || event.occurredAt.getTime() < now.getTime() - 7 * 86_400_000) throw new TypeError("TELEMETRY_TIME_INVALID");
     return this.repository.appendTelemetry({ workspaceId, event: event as unknown as Record<string, unknown>, idempotencyKey, now });
   }

@@ -32,6 +32,7 @@ describe("ReleaseControlService", () => {
     expect(repo.appendTelemetry).toHaveBeenCalledWith(expect.objectContaining({ event: expect.objectContaining({ workspacePseudonym: expect.stringMatching(/^wsp_[a-f0-9]{64}$/), sessionPseudonym: expect.stringMatching(/^ses_[a-f0-9]{64}$/), consentRevision: "consent_r0002", consentPurpose: "product_analytics" }) }));
     await expect(service.telemetry("workspace-1", "owner-1", "session-auth-context", { ...safe, sessionPseudonym: `ses_${"a".repeat(32)}` }, "request-key-4", NOW)).rejects.toThrow("TELEMETRY_NOT_ALLOWLISTED");
     await expect(service.telemetry("workspace-1", "owner-1", "session-auth-context", { ...safe, properties: { ...safe.properties, prompt: "private" } }, "request-key-5", NOW)).rejects.toThrow();
+    await expect(service.telemetry("workspace-1", "owner-1", "session-auth-context", { ...safe, direction: "ltr" }, "request-key-direction", NOW)).rejects.toThrow("locale direction");
   });
 
   it("rejects trusted release evidence on the generic Workspace endpoint", async () => {
