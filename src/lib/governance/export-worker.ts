@@ -25,6 +25,20 @@ function audit(input: { workspaceId: string; job: GovernanceResource; outcome: "
 }
 
 const OMITTED_RESOURCE_KINDS = new Set(["step_up_challenge", "step_up_session", "review_guest_session", "invitation_binding"]);
+const EXPORT_LEASE_MS = 5 * 60_000;
+
+interface ExportJobBody {
+  from: string | null;
+  to: string | null;
+  expiresAt: string;
+  includeKinds?: string[];
+  omissions?: string[];
+  requestedByUserId: string;
+  authoritySnapshot: { schema: string; requestedByUserId: string; capability: string; actorCapabilities: string[]; scope: Record<string, unknown>; capturedAt: string };
+  authoritySnapshotDigest: string;
+  lease: { id: string; claimedAt: string; expiresAt: string; attempt: number } | null;
+  [key: string]: unknown;
+}
 
 export class GovernanceExportWorker {
   constructor(
@@ -55,14 +69,17 @@ export class GovernanceExportWorker {
   }
 
   async process(input: { workspaceId: string; kind: "audit_export" | "workspace_export"; exportId: string }): Promise<void> {
-    const job = await this.repository.getResource({ workspaceId: input.workspaceId, kind: input.kind, id: input.exportId });
-    if (!job || job.status === "succeeded") return;
-    if (job.status !== "queued") throw new Error("Export job is not queued.");
+    const found = await this.repository.getResource({ workspaceId: input.workspaceId, kind: input.kind, id: input.exportId });
+    if (!found || found.status === "succeeded") return;
+    const job = await this.claim(found);
+    if (!job) return;
     const now = this.clock.now();
     try {
       const encryptionKey = keyFromBase64(this.keys.encryptionKeyBase64, "GOVERNANCE_EXPORT_ENCRYPTION_KEY");
       const signingKey = keyFromBase64(this.keys.signingKeyBase64, "GOVERNANCE_EXPORT_SIGNING_KEY");
-      const jobBody = job.body as { from: string | null; to: string | null; expiresAt: string; includeKinds?: string[]; omissions?: string[] };
+      const jobBody = job.body as ExportJobBody;
+      const requiredCapability = input.kind === "audit_export" ? "audit.export@1" : "exports.manage@1";
+      if (job.createdByUserId !== jobBody.requestedByUserId || jobBody.authoritySnapshot.requestedByUserId !== jobBody.requestedByUserId || jobBody.authoritySnapshot.capability !== requiredCapability || !jobBody.authoritySnapshot.actorCapabilities.includes(requiredCapability.slice(0, -2)) || canonicalDigest(jobBody.authoritySnapshot) !== jobBody.authoritySnapshotDigest) throw new Error("ExportAuthoritySnapshotInvalid");
       const from = jobBody.from ? new Date(jobBody.from) : null;
       const to = jobBody.to ? new Date(jobBody.to) : null;
       const auditEvents = (await this.listAllAudit(input.workspaceId))
@@ -93,7 +110,7 @@ export class GovernanceExportWorker {
         const admission = await this.admitStorageRoute({ workspaceId: input.workspaceId, routeId: "storage:governance-export", configuredRegion: process.env.GOVERNANCE_EXPORT_STORAGE_REGION ?? "unconfigured" });
         if (!admission.allowed) throw new Error(admission.reason ?? "REGION_ROUTE_NOT_ALLOWLISTED");
       }
-      const storageKey = `governance/${input.workspaceId}/${job.id}.encrypted.json`;
+      const storageKey = `governance/${input.workspaceId}/${job.id}/${jobBody.lease!.id}.encrypted.json`;
       await this.store.put({ key: storageKey, bytes });
       const manifestUnsigned = {
         schema: "governance-export-manifest/v1",
@@ -116,6 +133,24 @@ export class GovernanceExportWorker {
       await this.fail(job, error instanceof Error ? error.name : "ExportFailure", now);
       throw error;
     }
+  }
+
+  async recoverExpired(input: { workspaceId: string }): Promise<number> {
+    const jobs = await this.repository.listResources<ExportJobBody>({ workspaceId: input.workspaceId, kinds: ["audit_export", "workspace_export"], status: "running" });
+    const expired = jobs.filter((job) => job.body.lease && new Date(job.body.lease.expiresAt) <= this.clock.now());
+    for (const job of expired) await this.process({ workspaceId: input.workspaceId, kind: job.kind as "audit_export" | "workspace_export", exportId: job.id });
+    return expired.length;
+  }
+
+  private async claim(job: GovernanceResource): Promise<GovernanceResource | null> {
+    const now = this.clock.now();
+    const body = job.body as ExportJobBody;
+    if (job.status === "running" && body.lease && new Date(body.lease.expiresAt) > now) return null;
+    if (job.status !== "queued" && job.status !== "running") throw new Error("Export job is not claimable.");
+    const lease = { id: `lease_${randomUUID().replaceAll("-", "")}`, claimedAt: now.toISOString(), expiresAt: new Date(now.getTime() + EXPORT_LEASE_MS).toISOString(), attempt: (body.lease?.attempt ?? 0) + 1 };
+    const next: GovernanceResource = { ...job, version: job.version + 1, status: "running", body: { ...body, status: "running", lease }, updatedAt: now };
+    const outcome = await this.repository.commit({ receipt: { workspaceId: job.workspaceId, capability: "governance_exports.claim@1", idempotencyKey: `export-claim-${job.id}-${job.version}-${lease.id}`, requestDigest: canonicalDigest({ jobId: job.id, version: job.version, lease }), result: { exportId: job.id, status: "running", leaseId: lease.id }, createdAt: now }, mutations: [{ type: "update", expectedVersion: job.version, resource: next }], audit: audit({ workspaceId: job.workspaceId, job, outcome: "completed", now }) });
+    return outcome.type === "committed" ? next : null;
   }
 
   private async fail(job: GovernanceResource, failureCode: string, now: Date) {

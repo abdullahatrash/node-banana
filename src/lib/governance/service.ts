@@ -677,7 +677,7 @@ export class GovernanceService {
       case "request_audit_export": {
         await this.requireStepUp(actor, "audit.export", null, command.stepUpToken);
         const id = newId("audit_export");
-        mutations = [create("audit_export", id, "queued", this.exportJobBody("audit", command.from, command.to, now))];
+        mutations = [create("audit_export", id, "queued", await this.exportJobBody(actor, "audit", command.from, command.to, now, { from: command.from, to: command.to }))];
         result = { exportId: id, status: "queued" };
         target = { kind: "audit_export", id };
         break;
@@ -838,7 +838,8 @@ export class GovernanceService {
         await this.requireStepUp(actor, "exports.manage", null, command.stepUpToken);
         const id = newId("workspace_export");
         const omissions = ["secrets", "credential_material", "non_transferable_licensed_media", "legally_retained_internal_evidence"];
-        mutations = [create("workspace_export", id, "queued", { ...this.exportJobBody("workspace", null, null, now), includeKinds: unique(command.includeKinds.map((item) => text(item, "Export kind", 100))), omissions })];
+        const includeKinds = unique(command.includeKinds.map((item) => text(item, "Export kind", 100)));
+        mutations = [create("workspace_export", id, "queued", { ...await this.exportJobBody(actor, "workspace", null, null, now, { includeKinds }), includeKinds, omissions })];
         result = { exportId: id, status: "queued", omissions };
         target = { kind: "workspace_export", id };
         break;
@@ -994,10 +995,11 @@ export class GovernanceService {
     }
   }
 
-  private exportJobBody(kind: "audit" | "workspace", from: string | null, to: string | null, now: Date) {
+  private async exportJobBody(actor: GovernanceActor, kind: "audit" | "workspace", from: string | null, to: string | null, now: Date, scope: Record<string, unknown>) {
     if (from) exactDate(from, "Export start");
     if (to) exactDate(to, "Export end");
-    return { schema: "governance-export-job/v1", kind, from, to, encrypted: true, signedManifestRequired: true, status: "queued", expiresAt: new Date(now.getTime() + 24 * 60 * 60_000).toISOString(), artifactRef: null, manifest: null };
+    const authoritySnapshot = { schema: "governance-export-authority-snapshot/v1", requestedByUserId: actor.userId, capability: kind === "audit" ? "audit.export@1" : "exports.manage@1", actorCapabilities: await this.capabilities(actor), scope, capturedAt: now.toISOString() };
+    return { schema: "governance-export-job/v1", kind, from, to, requestedByUserId: actor.userId, authoritySnapshot, authoritySnapshotDigest: canonicalDigest(authoritySnapshot), encrypted: true, signedManifestRequired: true, status: "queued", expiresAt: new Date(now.getTime() + 24 * 60 * 60_000).toISOString(), artifactRef: null, manifest: null, lease: null };
   }
 }
 

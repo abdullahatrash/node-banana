@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
 import { GovernanceExportWorker, type GovernanceExportStore } from "../export-worker";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
 const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const };
@@ -47,6 +48,35 @@ describe("GovernanceExportWorker", () => {
     await expect(worker.process({ workspaceId: actor.workspaceId, kind: "workspace_export", exportId: requested.exportId })).rejects.toThrow(/32 bytes/);
     expect((await repository.getResource({ workspaceId: actor.workspaceId, kind: "workspace_export", id: requested.exportId }))?.status).toBe("failed_known");
     expect(store.values.size).toBe(0);
+  });
+
+  it("enforces the immutable requesting principal, authority snapshot, and scope before export", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const store = new MemoryStore();
+    const requested = await createWorkspaceExport(repository);
+    const job = await repository.getResource({ workspaceId: actor.workspaceId, kind: "workspace_export", id: requested.exportId });
+    const next = { ...job!, version: job!.version + 1, body: { ...job!.body, requestedByUserId: "attacker" }, updatedAt: now };
+    await repository.commit({ receipt: { workspaceId: actor.workspaceId, capability: "test.tamper@1", idempotencyKey: "tamper-export-authority", requestDigest: canonicalDigest({ id: job!.id }), result: {}, createdAt: now }, mutations: [{ type: "update", expectedVersion: job!.version, resource: next }], audit: { schema: "workspace-audit-event/v1", id: "audit-tamper", workspaceId: actor.workspaceId, actor: { kind: "system", id: null }, capability: "test.tamper@1", action: "tamper", resource: null, outcome: "completed", redactedDetails: {}, occurredAt: now } });
+    const worker = new GovernanceExportWorker(repository, store, { encryptionKeyBase64: Buffer.alloc(32, 1).toString("base64"), signingKeyBase64: Buffer.alloc(32, 2).toString("base64") });
+    await expect(worker.process({ workspaceId: actor.workspaceId, kind: "workspace_export", exportId: requested.exportId })).rejects.toThrow("ExportAuthoritySnapshotInvalid");
+    expect(store.values.size).toBe(0);
+    expect((await repository.getResource({ workspaceId: actor.workspaceId, kind: "workspace_export", id: requested.exportId }))?.status).toBe("failed_known");
+  });
+
+  it("uses an exclusive lease so concurrent workers cannot overwrite one artifact", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const store = new MemoryStore();
+    const put = vi.spyOn(store, "put");
+    const requested = await createWorkspaceExport(repository);
+    const keys = { encryptionKeyBase64: Buffer.alloc(32, 1).toString("base64"), signingKeyBase64: Buffer.alloc(32, 2).toString("base64") };
+    await Promise.all([
+      new GovernanceExportWorker(repository, store, keys).process({ workspaceId: actor.workspaceId, kind: "workspace_export", exportId: requested.exportId }),
+      new GovernanceExportWorker(repository, store, keys).process({ workspaceId: actor.workspaceId, kind: "workspace_export", exportId: requested.exportId }),
+    ]);
+    expect(put).toHaveBeenCalledTimes(1);
+    const job = await repository.getResource<{ artifactRef: string; lease: { id: string } }>({ workspaceId: actor.workspaceId, kind: "workspace_export", id: requested.exportId });
+    expect(job?.status).toBe("succeeded");
+    expect(job?.body.artifactRef).toContain(job!.body.lease.id);
   });
 
   it("paginates through the complete append-only audit trail", async () => {
