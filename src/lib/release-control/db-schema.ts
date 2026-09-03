@@ -1,4 +1,4 @@
-import { check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { user, workspaces } from "@/lib/db/schema";
 
@@ -25,14 +25,14 @@ export const productTelemetryEvents = pgTable("product_telemetry_events", {
   eventId: text("event_id").notNull(),
   workspacePseudonym: text("workspace_pseudonym").notNull(),
   sessionPseudonym: text("session_pseudonym").notNull(),
-  subjectPseudonym: text("subject_pseudonym").notNull(),
-  regionClassification: text("region_classification").notNull(),
+  subjectPseudonym: text("subject_pseudonym"),
+  regionClassification: text("region_classification"),
   name: text("name").notNull(),
   experimentId: text("experiment_id"),
   assignmentRevision: integer("assignment_revision"),
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
   event: jsonb("event").$type<Record<string, unknown>>().notNull(),
 }, (table) => ({
   pk: primaryKey({ name: "product_telemetry_events_pk", columns: [table.workspaceId, table.eventId] }),
@@ -40,7 +40,54 @@ export const productTelemetryEvents = pgTable("product_telemetry_events", {
   nameTimeIdx: index("product_telemetry_events_name_time_idx").on(table.name, table.occurredAt),
   expiryIdx: index("product_telemetry_events_expiry_idx").on(table.expiresAt),
   experimentIdx: index("product_telemetry_events_experiment_idx").on(table.workspaceId, table.experimentId, table.subjectPseudonym, table.assignmentRevision, table.name),
-  workspacePseudonymCheck: check("product_telemetry_events_workspace_pseudonym_check", sql`${table.workspacePseudonym} ~ '^wsp_[a-f0-9]{32,64}$' and ${table.sessionPseudonym} ~ '^ses_[a-f0-9]{32,64}$' and ${table.subjectPseudonym} ~ '^sub_[a-f0-9]{64}$' and ${table.regionClassification} in ('mena','non_mena','unknown') and ${table.expiresAt} > ${table.receivedAt} and octet_length(${table.event}::text) <= 8192`),
+  workspacePseudonymCheck: check("product_telemetry_events_workspace_pseudonym_check", sql`${table.workspacePseudonym} ~ '^wsp_[a-f0-9]{32,64}$' and ${table.sessionPseudonym} ~ '^ses_[a-f0-9]{32,64}$' and ((${table.subjectPseudonym} is null and ${table.regionClassification} is null and ${table.expiresAt} is null) or (${table.subjectPseudonym} ~ '^sub_[a-f0-9]{64}$' and ${table.regionClassification} in ('mena','non_mena','unknown') and ${table.expiresAt} > ${table.receivedAt})) and octet_length(${table.event}::text) <= 8192`),
+}));
+
+export const productTelemetryBackfillProgress = pgTable("product_telemetry_backfill_progress", {
+  jobKey: text("job_key").primaryKey(),
+  status: text("status").notNull(),
+  processedCount: bigint("processed_count", { mode: "number" }).notNull(),
+  remainingCount: bigint("remaining_count", { mode: "number" }),
+  failureCount: integer("failure_count").notNull(),
+  lastWorkspaceId: text("last_workspace_id"),
+  lastEventId: text("last_event_id"),
+  lastErrorCode: text("last_error_code"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
+export const releaseFlagAssignments = pgTable("release_flag_assignments", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  flagId: text("flag_id").notNull(),
+  subjectPseudonym: text("subject_pseudonym").notNull(),
+  flagRevision: integer("flag_revision").notNull(),
+  eligible: boolean("eligible").notNull(),
+  enabled: boolean("enabled").notNull(),
+  cohortBucket: integer("cohort_bucket").notNull(),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "release_flag_assignments_pk", columns: [table.workspaceId, table.flagId, table.subjectPseudonym, table.flagRevision] }),
+  activeIdx: index("release_flag_assignments_active_idx").on(table.workspaceId, table.flagId, table.subjectPseudonym, table.expiresAt),
+}));
+
+export const releaseFlagEvaluations = pgTable("release_flag_evaluations", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  evaluationId: text("evaluation_id").notNull(),
+  flagId: text("flag_id").notNull(),
+  subjectPseudonym: text("subject_pseudonym").notNull(),
+  flagRevision: integer("flag_revision").notNull(),
+  entryPoint: text("entry_point").notNull(),
+  role: text("role").notNull(),
+  entitlement: text("entitlement").notNull(),
+  locale: text("locale").notNull(),
+  eligible: boolean("eligible").notNull(),
+  enabled: boolean("enabled").notNull(),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "release_flag_evaluations_pk", columns: [table.workspaceId, table.evaluationId] }),
+  flagIdx: index("release_flag_evaluations_flag_idx").on(table.workspaceId, table.flagId, table.subjectPseudonym, table.evaluatedAt),
 }));
 
 export const experimentAssignments = pgTable("experiment_assignments", {

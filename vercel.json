@@ -47,6 +47,9 @@
     },
     "src/app/api/studio/internal/replicate-recovery/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/studio/internal/product-telemetry-retention/route.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -73,6 +76,10 @@
     {
       "path": "/api/studio/internal/replicate-recovery",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/product-telemetry-retention?limit=500",
+      "schedule": "0 2 * * *"
     },
     {
       "path": "/api/social/internal/dispatch",
