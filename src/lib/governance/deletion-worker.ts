@@ -74,6 +74,7 @@ export class GovernanceDeletionWorker {
   private async claim(job: GovernanceResource<DeletionJobBody>): Promise<GovernanceResource<DeletionJobBody> | null> {
     const now = this.clock.now();
     if (job.status === "running" && job.body.lease && new Date(job.body.lease.expiresAt) > now) return null;
+    if (job.status === "delayed" && Object.values(job.body.outcomes).every((outcome) => outcome.state === "delayed" && new Date(outcome.retryAt) > now)) return null;
     if (!["queued", "delayed", "running"].includes(job.status)) return null;
     const lease: DeletionLease = { id: `lease_${randomUUID().replaceAll("-", "")}`, fence: (job.body.lease?.fence ?? 0) + 1, expiresAt: new Date(now.getTime() + 5 * 60_000).toISOString() };
     const next: GovernanceResource<DeletionJobBody> = { ...job, version: job.version + 1, status: "running", body: { ...job.body, lease }, updatedAt: now };

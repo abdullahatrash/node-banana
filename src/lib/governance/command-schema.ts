@@ -55,7 +55,7 @@ export const governanceCommandSchema: z.ZodType<GovernanceCommand> = z.discrimin
   z.object({ type: z.literal("publish_retention_policy"), rules: z.array(z.object({ retentionClass: z.enum(RETENTION_CLASSES), durationDays: z.number().int().nonnegative(), recoverableDays: z.number().int().nonnegative(), legalFloorDays: z.number().int().nonnegative() }).strict()), expectedVersion: z.number().int().positive().optional(), stepUpToken: id }).strict(),
   z.object({ type: z.literal("create_retention_hold"), retentionClasses: z.array(z.enum(RETENTION_CLASSES)).min(1), reason: text.max(1_000), expiresAt: timestamp.nullable(), stepUpToken: id }).strict(),
   z.object({ type: z.literal("release_retention_hold"), holdId: id, reason: text.max(1_000), stepUpToken: id }).strict(),
-  z.object({ type: z.literal("record_deletion"), resourceKind: id, resourceId: id, retentionClass: z.enum(RETENTION_CLASSES), systems: z.array(id).min(1).max(32), stepUpToken: id }).strict(),
+  z.object({ type: z.literal("record_deletion"), resourceKind: id, resourceId: id, stepUpToken: id }).strict(),
   z.object({ type: z.literal("create_safety_decision"), intentRef: id, reasonCode: id, policyVersion: id, safeExplanation: text, evidenceRef: id, remediation: text, appealEligible: z.boolean() }).strict(),
   z.object({ type: z.literal("appeal_safety_decision"), decisionId: id, explanation: text }).strict(),
   z.object({ type: z.literal("resolve_safety_appeal"), appealId: id, outcome: z.enum(["upheld", "reevaluate_exact_intent"]), currentRevalidationRequired: z.literal(true) }).strict(),

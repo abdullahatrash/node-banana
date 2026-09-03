@@ -15,6 +15,7 @@ import { ProductionGovernanceDeletionAdapter, ProductionGovernanceSafetyRevalida
 import { BetterAuthOrganizationMembershipProjectionPort, GovernanceMembershipProjectionWorker } from "./membership-projection-worker";
 import { GovernanceSecretDeliverySweeper } from "./secret-delivery-sweeper";
 import { DrizzleGovernanceAuditFederation } from "./audit-federation";
+import { DrizzleGovernanceRetentionResourcePort } from "./retention-resource";
 
 function regionTrustKeys(): Map<string, Uint8Array> {
   const keys = new Map<string, Uint8Array>();
@@ -56,6 +57,7 @@ export const PRODUCTION_GOVERNANCE_SERVICE = new GovernanceService(
   new HmacGovernanceImportManifestVerifier(importTrustKeys()),
   new ProductionGovernanceBulkPreviewPort(),
   new DrizzleGovernanceAuditFederation(getDb),
+  new DrizzleGovernanceRetentionResourcePort(getDb),
 );
 
 export async function admitProductionGovernanceRegionRoute(input: { workspaceId: string; kind: GovernanceRegionRouteKind; routeId: string; configuredRegion: string }) {

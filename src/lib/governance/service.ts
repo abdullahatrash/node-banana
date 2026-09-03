@@ -44,6 +44,7 @@ import {
 } from "./projection";
 import { TRUSTED_RETENTION_LEGAL_FLOORS, trustedRetentionRule } from "./retention-policy";
 import { EMPTY_GOVERNANCE_AUDIT_FEDERATION, type GovernanceAuditFederationPort } from "./audit-federation";
+import { UNCONFIGURED_GOVERNANCE_RETENTION_RESOURCE_PORT, type GovernanceRetentionResourcePort } from "./retention-resource";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const IDEMPOTENCY = /^[\x20-\x7e]{8,200}$/;
@@ -96,7 +97,7 @@ export type GovernanceCommand =
   | { type: "publish_retention_policy"; rules: RetentionRule[]; expectedVersion?: number; stepUpToken: string }
   | { type: "create_retention_hold"; retentionClasses: string[]; reason: string; expiresAt: string | null; stepUpToken: string }
   | { type: "release_retention_hold"; holdId: string; reason: string; stepUpToken: string }
-  | { type: "record_deletion"; resourceKind: string; resourceId: string; retentionClass: string; systems: string[]; stepUpToken: string }
+  | { type: "record_deletion"; resourceKind: string; resourceId: string; stepUpToken: string }
   | { type: "create_safety_decision"; intentRef: string; reasonCode: string; policyVersion: string; safeExplanation: string; evidenceRef: string; remediation: string; appealEligible: boolean }
   | { type: "appeal_safety_decision"; decisionId: string; explanation: string }
   | { type: "resolve_safety_appeal"; appealId: string; outcome: "upheld" | "reevaluate_exact_intent"; currentRevalidationRequired: true }
@@ -332,6 +333,7 @@ export class GovernanceService {
     private readonly importManifestVerification: GovernanceImportManifestVerificationPort = UNCONFIGURED_GOVERNANCE_IMPORT_MANIFEST_VERIFIER,
     private readonly bulkPreview: GovernanceBulkPreviewPort = { inspect: async () => ({ type: "blocked", code: "BULK_PREVIEW_ADAPTER_NOT_CONFIGURED" }) },
     private readonly auditFederation: GovernanceAuditFederationPort = EMPTY_GOVERNANCE_AUDIT_FEDERATION,
+    private readonly retentionResources: GovernanceRetentionResourcePort = UNCONFIGURED_GOVERNANCE_RETENTION_RESOURCE_PORT,
   ) {}
 
   private async roleBinding(actor: GovernanceActor): Promise<WorkspaceRoleBinding> {
@@ -876,18 +878,31 @@ export class GovernanceService {
         break;
       }
       case "record_deletion": {
-        if (!(RETENTION_CLASSES as readonly string[]).includes(command.retentionClass)) throw new GovernanceError("INVALID_INPUT", "Deletion Retention Class is invalid.");
         await this.requireStepUp(actor, "retention.delete", safeId(command.resourceId, "Resource"), command.stepUpToken);
+        const descriptor = await this.retentionResources.resolve({ workspaceId: actor.workspaceId, resourceKind: command.resourceKind, resourceId: command.resourceId });
+        if (!descriptor) throw new GovernanceError("NOT_FOUND", "The exact Workspace resource is unavailable for deletion.");
+        const policy = await this.repository.getResource<{ revisions: Array<{ revision: number; rules: RetentionRule[] }>; activeRevision: number }>({ workspaceId: actor.workspaceId, kind: "retention_policy", id: "active" });
+        const activeRevision = policy?.body.revisions.find((revision) => revision.revision === policy.body.activeRevision);
+        const rule = activeRevision?.rules.find((candidate) => candidate.retentionClass === descriptor.retentionClass);
+        if (!policy || policy.status !== "active" || !activeRevision || !rule) throw new GovernanceError("FORBIDDEN", "An active Retention Policy is required before deletion.");
+        const eligibleAt = new Date(descriptor.createdAt.getTime() + Math.max(rule.durationDays, rule.legalFloorDays, rule.recoverableDays) * 86_400_000);
         const activeHolds = await this.repository.listResources<{ retentionClasses: string[]; expiresAt: string | null }>({ workspaceId: actor.workspaceId, kinds: ["retention_hold"], status: "active" });
-        const applicableHolds = activeHolds.filter((hold) => hold.body.retentionClasses.includes(command.retentionClass) && (!hold.body.expiresAt || exactDate(hold.body.expiresAt, "Hold expiry") > now));
-        const systems = unique(command.systems.map((item) => text(item, "Deletion system", 120))).sort();
+        const applicableHolds = activeHolds.filter((hold) => hold.body.retentionClasses.includes(descriptor.retentionClass) && (!hold.body.expiresAt || exactDate(hold.body.expiresAt, "Hold expiry") > now));
+        const systems = unique(descriptor.authoritativeSystems.map((item) => text(item, "Deletion system", 120))).sort();
         if (!systems.length) throw new GovernanceError("INVALID_INPUT", "At least one authoritative deletion system is required.");
         const id = newId("deletion");
-        const receiptBody = { schema: "deletion-receipt/v2", retentionClass: command.retentionClass, resourceKind: text(command.resourceKind, "Resource kind", 100), resourceId: safeId(command.resourceId, "Resource"), systems, outcomes: Object.fromEntries(applicableHolds.length ? systems.map((system) => [system, { state: "retained", evidenceRef: applicableHolds.map((hold) => hold.id).join(","), reason: "ACTIVE_RETENTION_HOLD" }]) : []), holdIds: applicableHolds.map((hold) => hold.id), requestedAt: now.toISOString() };
+        const delayed = applicableHolds.length === 0 && eligibleAt > now;
+        const outcomes = applicableHolds.length
+          ? Object.fromEntries(systems.map((system) => [system, { state: "retained", evidenceRef: applicableHolds.map((hold) => hold.id).join(","), reason: "ACTIVE_RETENTION_HOLD" }]))
+          : delayed
+            ? Object.fromEntries(systems.map((system) => [system, { state: "delayed", retryAt: eligibleAt.toISOString(), reason: "RETENTION_PERIOD_ACTIVE" }]))
+            : {};
+        const receiptBody = { schema: "deletion-receipt/v2", retentionClass: descriptor.retentionClass, resourceKind: descriptor.resourceKind, resourceId: descriptor.resourceId, systems, outcomes, holdIds: applicableHolds.map((hold) => hold.id), policyRevision: activeRevision.revision, policyRuleDigest: canonicalDigest(rule), resourceCreatedAt: descriptor.createdAt.toISOString(), eligibleAt: eligibleAt.toISOString(), requestedAt: now.toISOString() };
         const tombstoneId = `${receiptBody.resourceKind}:${receiptBody.resourceId}`;
-        mutations = [create("deletion_receipt", id, applicableHolds.length ? "completed_hold" : "queued", receiptBody)];
+        const deletionStatus = applicableHolds.length ? "completed_hold" : delayed ? "delayed" : "queued";
+        mutations = [create("deletion_receipt", id, deletionStatus, receiptBody)];
         if (applicableHolds.length) mutations.push(create("tombstone", tombstoneId, "active", { resourceKind: receiptBody.resourceKind, resourceId: receiptBody.resourceId, deletionReceiptId: id, systemOutcomes: receiptBody.outcomes, retainedEvidenceOnly: true }));
-        result = { deletionReceiptId: id, status: applicableHolds.length ? "completed_hold" : "queued", tombstoneId: applicableHolds.length ? tombstoneId : null };
+        result = { deletionReceiptId: id, status: deletionStatus, tombstoneId: applicableHolds.length ? tombstoneId : null, eligibleAt: eligibleAt.toISOString() };
         target = { kind: "deletion_receipt", id };
         break;
       }

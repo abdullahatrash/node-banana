@@ -35,6 +35,8 @@ function setup() {
     undefined,
     { verify: () => true },
     bulkPreview,
+    undefined,
+    { resolve: async ({ resourceKind, resourceId }) => ({ resourceKind: resourceKind as "media", resourceId, retentionClass: "security_evidence", createdAt: new Date(NOW), authoritativeSystems: ["primary", "replica"] }) },
   );
   return { repository, service };
 }
@@ -407,7 +409,8 @@ describe("GovernanceService", () => {
     expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "retention_policy", id: "active" })).toMatchObject({ body: { revisions: [{ legalFloorSource: "deployment_trusted/v1", rules }] } });
     const hold = await service.execute(owner, { type: "create_retention_hold", retentionClasses: ["security_evidence"], reason: "Active legal preservation", expiresAt: null, stepUpToken: authorization.stepUpToken }, "retention-hold-key") as { holdId: string };
     const deletionAuthorization = await stepUp(service, "retention.delete", "media-1");
-    const deleted = await service.execute(owner, { type: "record_deletion", resourceKind: "media", resourceId: "media-1", retentionClass: "security_evidence", systems: ["primary", "replica"], stepUpToken: deletionAuthorization.stepUpToken }, "deletion-record-key") as { tombstoneId: string };
+    const deleted = await service.execute(owner, { type: "record_deletion", resourceKind: "media", resourceId: "media-1", stepUpToken: deletionAuthorization.stepUpToken }, "deletion-record-key") as { deletionReceiptId: string; tombstoneId: string };
+    expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "deletion_receipt", id: deleted.deletionReceiptId })).toMatchObject({ body: { retentionClass: "security_evidence", resourceKind: "media", systems: ["primary", "replica"], policyRevision: 1 } });
     expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "tombstone", id: deleted.tombstoneId })).toBeTruthy();
     const releaseAuthorization = await stepUp(service, "retention.hold.release", hold.holdId);
     await service.execute(owner, { type: "release_retention_hold", holdId: hold.holdId, reason: "Legal matter closed", stepUpToken: releaseAuthorization.stepUpToken }, "release-hold-key");
