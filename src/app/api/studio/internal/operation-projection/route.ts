@@ -5,12 +5,18 @@ import { synchronizeOperationProjections } from "@/lib/agent-runtime/operation-s
 import { readSourceOperationProjections } from "@/lib/agent-runtime/operation-status/source-reader";
 import { getDb, isDatabaseConfigured } from "@/lib/db";
 import { ensureInternalStudioOrCronAuth } from "@/lib/studio/internal-auth";
+import { randomUUID } from "node:crypto";
+import { claimOperationProjectionWorkspaces, completeOperationProjectionLease } from "@/lib/agent-runtime/operation-status/projection-leases";
 async function handle(request: NextRequest) {
   if (!isDatabaseConfigured()) return noStoreJson({ success: false, code: "DATABASE_REQUIRED" }, { status: 503 });
   const denied = ensureInternalStudioOrCronAuth(request); if (denied) return denied;
-  const workspaceId = request.nextUrl.searchParams.get("workspaceId")?.trim();
-  if (!workspaceId || !/^[A-Za-z0-9._:-]{1,200}$/.test(workspaceId)) return noStoreJson({ success: false, code: "WORKSPACE_REQUIRED" }, { status: 400 });
-  const sources = await readSourceOperationProjections(getDb(), workspaceId, 500);
-  return noStoreJson({ success: true, summary: await synchronizeOperationProjections(PRODUCTION_OPERATION_STATUS, sources) });
+  const database = getDb(); const at = new Date(); const owner = randomUUID();
+  const workspaceIds = await claimOperationProjectionWorkspaces(database, { owner, at, limit: 25, leaseMs: 55_000 });
+  const summaries = [];
+  for (const workspaceId of workspaceIds) {
+    try { const sources = await readSourceOperationProjections(database, workspaceId, 500); summaries.push({ workspaceId, ...(await synchronizeOperationProjections(PRODUCTION_OPERATION_STATUS, sources)) }); }
+    finally { await completeOperationProjectionLease(database, { workspaceId, owner, at: new Date() }); }
+  }
+  return noStoreJson({ success: true, claimed: workspaceIds.length, summaries });
 }
 export const GET = handle; export const POST = handle;

@@ -36,3 +36,9 @@ export const runtimeOperationMutationReceipts = pgTable("runtime_operation_mutat
   pk: primaryKey({ name: "runtime_operation_mutation_receipts_pk", columns: [table.workspaceId, table.idempotencyKey] }),
   digestCheck: check("runtime_operation_mutation_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.idempotencyKey}) between 8 and 200`),
 }));
+
+export const runtimeOperationProjectionLeases = pgTable("runtime_operation_projection_leases", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
+  leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }).notNull(),
+  lastProjectedAt: timestamp("last_projected_at", { withTimezone: true }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ dueIdx: index("runtime_operation_projection_leases_due_idx").on(table.leaseExpiresAt, table.workspaceId) }));

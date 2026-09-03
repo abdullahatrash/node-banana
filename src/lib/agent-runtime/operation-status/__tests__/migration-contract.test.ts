@@ -10,3 +10,4 @@ describe("operation status migration", () => {
     expect(sql).toContain("runtime_operations_workspace_state_time_idx");
   });
 });
+describe("operation projection lease migration", () => { it("registers durable per-workspace leases", () => { const sql = readFileSync("drizzle/0074_operation_projection_leases.sql", "utf8"); expect(sql).toContain("runtime_operation_projection_leases"); expect(sql).toContain("lease_expires_at"); }); });
