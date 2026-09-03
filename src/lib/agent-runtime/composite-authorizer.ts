@@ -13,9 +13,10 @@ import type {
   CapabilityAuthorizer,
 } from "@/types/agentAuthorization";
 import {
+  applicationCapabilityKey,
+  BUILT_IN_ROLE_APPLICATION_CAPABILITIES,
   BUILT_IN_ROLE_CAPABILITIES,
   governanceCapabilityForApplicationCapability,
-  legacyRoleBinding,
 } from "@/lib/governance/roles";
 import type {
   CustomRoleRevision,
@@ -60,8 +61,8 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
       const governanceCapability = governanceCapabilityForApplicationCapability(
         request.capability.name,
       );
-      let governanceAllowed = false;
-      if (isHumanAdmission && role && governanceCapability) {
+      let roleCapabilityAllowed = false;
+      if (isHumanAdmission && role) {
         const [assignment] = await tx
           .select({
             status: workspaceGovernanceResources.status,
@@ -76,18 +77,16 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
             ),
           )
           .limit(1);
-        const storedBinding = assignment?.status === "active"
+        const binding = assignment?.status === "active"
           ? (assignment.body as { binding?: WorkspaceRoleBinding }).binding
           : undefined;
-        const binding = storedBinding ?? {
-          kind: "built_in" as const,
-          role: legacyRoleBinding(role),
-        };
-        if (binding.kind === "built_in") {
-          governanceAllowed = (
-            BUILT_IN_ROLE_CAPABILITIES[binding.role] as readonly GovernanceCapability[]
-          ).includes(governanceCapability);
-        } else if (governanceCapability !== "reviews.decide_publishing") {
+        if (binding?.kind === "built_in") {
+          roleCapabilityAllowed = governanceCapability
+            ? (BUILT_IN_ROLE_CAPABILITIES[binding.role] as readonly GovernanceCapability[])
+              .includes(governanceCapability)
+            : BUILT_IN_ROLE_APPLICATION_CAPABILITIES[binding.role]
+              .some((capability) => applicationCapabilityKey(capability) === applicationCapabilityKey(request.capability));
+        } else if (binding?.kind === "custom" && governanceCapability !== "reviews.decide_publishing") {
           const [customRole] = await tx
             .select({
               status: workspaceGovernanceResources.status,
@@ -106,17 +105,17 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
             ? (customRole.body as { revisions?: CustomRoleRevision[] }).revisions
               ?.find((candidate) => candidate.revision === binding.roleRevision)
             : undefined;
-          governanceAllowed = revision?.capabilities.includes(governanceCapability) ?? false;
+          roleCapabilityAllowed = governanceCapability
+            ? revision?.capabilities.includes(governanceCapability) ?? false
+            : revision?.applicationCapabilities?.some(
+              (capability) => applicationCapabilityKey(capability) === applicationCapabilityKey(request.capability),
+            ) ?? false;
         }
       }
       const allowed =
         isHumanAdmission &&
         role === context.role &&
-        (governanceCapability
-          ? governanceAllowed
-          : request.audience === "shared"
-            ? role === "owner" || role === "admin" || role === "member"
-            : role === "owner" || role === "admin");
+        roleCapabilityAllowed;
       const reason = !isHumanAdmission
         ? "security_context_mismatch"
         : allowed
@@ -145,10 +144,7 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
         : {
             allowed: false,
             code: "CAPABILITY_NOT_AUTHORIZED" as const,
-            message:
-              request.audience === "shared"
-                ? "This Workspace read requires an active membership."
-                : "Workspace administration requires an active owner or admin membership.",
+            message: "This exact Application Capability is not present in the active versioned Workspace Role binding.",
             operatorTraceRef: trace,
           };
     });

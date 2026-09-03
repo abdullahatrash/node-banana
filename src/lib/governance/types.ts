@@ -65,12 +65,19 @@ export const GOVERNANCE_CAPABILITIES = [
 
 export type GovernanceCapability = (typeof GOVERNANCE_CAPABILITIES)[number];
 
+/** Exact stable Application Capability reference carried by a role revision. */
+export interface ApplicationCapabilityReference {
+  name: string;
+  version: number;
+}
+
 export interface CustomRoleRevision {
   schema: "custom-role-revision/v1";
   revision: number;
   name: string;
   description: string;
   capabilities: GovernanceCapability[];
+  applicationCapabilities: ApplicationCapabilityReference[];
   createdByUserId: string;
   createdAt: string;
 }

@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { InMemoryGovernanceRepository } from "../memory-repository";
-import { BUILT_IN_ROLE_CAPABILITIES } from "../roles";
+import { BUILT_IN_ROLE_APPLICATION_CAPABILITIES, BUILT_IN_ROLE_CAPABILITIES } from "../roles";
 import { decodeInvitationToken, decodeReviewToken, GovernanceError, GovernanceService } from "../service";
 import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionDeploymentEvidence } from "../region-policy";
 import { RETENTION_CLASSES, type GovernanceActor, type RetentionRule } from "../types";
@@ -48,15 +48,26 @@ describe("GovernanceService", () => {
       expect(capabilities).not.toContain("publishing.approve");
       expect(capabilities).not.toContain("reviews.decide_publishing");
     }
+    for (const capabilities of Object.values(BUILT_IN_ROLE_APPLICATION_CAPABILITIES)) {
+      const names = capabilities.map((item) => item.name);
+      expect(names.some((item) => item.startsWith("credentials.profiles."))).toBe(false);
+      expect(names.some((item) => item.startsWith("credentials.spend_grants."))).toBe(false);
+      expect(names).not.toContain("publishing_approvals.decide");
+      expect(names).not.toContain("publishing_plan_revisions.release");
+      expect(names).not.toContain("workflow_runs.start");
+    }
   });
 
   it("versions Custom Roles, rejects reserved authority, and pins assignments to one revision", async () => {
     const { repository, service } = setup();
     await expect(service.execute(owner, { type: "create_custom_role", name: "Unsafe", description: "Unsafe role", capabilities: ["workspace.close"] }, "unsafe-role-key")).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(service.execute(owner, { type: "create_custom_role", name: "Implicit publisher", description: "Unsafe role", capabilities: ["reviews.decide_publishing"] }, "unsafe-publishing-role-key")).rejects.toMatchObject({ code: "INVALID_INPUT" });
-    const created = await service.execute(owner, { type: "create_custom_role", name: "Reviewer", description: "Content reviewer", capabilities: ["governance.view", "reviews.decide_content"] }, "create-role-key") as { roleId: string };
-    const revised = await service.execute(owner, { type: "revise_custom_role", roleId: created.roleId, expectedVersion: 1, name: "Senior reviewer", description: "Reviews content and audit", capabilities: ["governance.view", "reviews.decide_content", "audit.view"] }, "revise-role-key") as { revision: { revision: number } };
+    await expect(service.execute(owner, { type: "create_custom_role", name: "Unsafe app", description: "Unsafe role", capabilities: ["governance.view"], applicationCapabilities: [{ name: "publishing_plan_revisions.release", version: 1 }] }, "unsafe-app-role-key")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    const created = await service.execute(owner, { type: "create_custom_role", name: "Reviewer", description: "Content reviewer", capabilities: ["governance.view", "reviews.decide_content"], applicationCapabilities: [{ name: "artifacts.list", version: 1 }] }, "create-role-key") as { roleId: string; revision: { applicationCapabilities: Array<{ name: string; version: number }> } };
+    expect(created.revision.applicationCapabilities).toEqual([{ name: "artifacts.list", version: 1 }]);
+    const revised = await service.execute(owner, { type: "revise_custom_role", roleId: created.roleId, expectedVersion: 1, name: "Senior reviewer", description: "Reviews content and audit", capabilities: ["governance.view", "reviews.decide_content", "audit.view"], applicationCapabilities: [{ name: "publishing_approvals.get", version: 2 }] }, "revise-role-key") as { revision: { revision: number; applicationCapabilities: Array<{ name: string; version: number }> } };
     expect(revised.revision.revision).toBe(2);
+    expect(revised.revision.applicationCapabilities).toEqual([{ name: "publishing_approvals.get", version: 2 }]);
     await service.execute(owner, { type: "assign_role", userId: creator.userId, binding: { kind: "custom", roleId: created.roleId, roleRevision: 1 } }, "assign-role-key");
     const assigned = await repository.getResource<{ binding: { roleRevision: number } }>({ workspaceId: owner.workspaceId, kind: "member_role_assignment", id: creator.userId });
     expect(assigned?.body.binding.roleRevision).toBe(1);

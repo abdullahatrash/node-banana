@@ -8,6 +8,7 @@ import {
   CompositeCapabilityAuthorizer,
   HumanCapabilityAuthorizer,
 } from "../composite-authorizer";
+import { legacyRoleBinding } from "@/lib/governance/roles";
 
 function request(
   securityContext: CapabilityAuthorizationRequest["securityContext"],
@@ -16,7 +17,7 @@ function request(
   return {
     audience,
     securityContext,
-    capability: { name: "credentials.profile.list", version: 1 },
+    capability: { name: "artifacts.list", version: 1 },
     authorizationContractDigest: `sha256:${"a".repeat(64)}`,
     resources: [],
     resourceExtractionValid: true,
@@ -28,12 +29,17 @@ function database(
   governance?: {
     assignment?: { status: string; body: Record<string, unknown> };
     customRole?: { status: string; body: Record<string, unknown> };
+    unbound?: boolean;
   },
 ) {
   const values = vi.fn(async () => undefined);
   const selections = [
     role ? [{ role }] : [],
-    governance?.assignment ? [governance.assignment] : [],
+    governance?.assignment
+      ? [governance.assignment]
+      : role && !governance?.unbound
+        ? [{ status: "active", body: { binding: { kind: "built_in", role: legacyRoleBinding(role) } } }]
+        : [],
     governance?.customRole ? [governance.customRole] : [],
   ];
   let selection = 0;
@@ -152,6 +158,20 @@ describe("unified capability authorization", () => {
     expect(admission.allowed).toBe(true);
   });
 
+  it("fails closed when canonical membership has no active versioned role binding", async () => {
+    const db = database("owner", { unbound: true });
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize(
+      request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "owner",
+      }, "shared"),
+    );
+    expect(admission.allowed).toBe(false);
+  });
+
   it("uses the pinned active Custom Role revision for governance authorization", async () => {
     const db = database("member", {
       assignment: {
@@ -162,8 +182,8 @@ describe("unified capability authorization", () => {
         status: "active",
         body: {
           revisions: [
-            { revision: 1, capabilities: ["governance.view"] },
-            { revision: 2, capabilities: ["governance.view", "audit.export"] },
+            { revision: 1, capabilities: ["governance.view"], applicationCapabilities: [] },
+            { revision: 2, capabilities: ["governance.view", "audit.export"], applicationCapabilities: [] },
           ],
         },
       },
@@ -182,6 +202,34 @@ describe("unified capability authorization", () => {
     expect(admission.allowed).toBe(true);
   });
 
+  it("uses exact versioned Application Capability refs from a Custom Role", async () => {
+    const db = database("member", {
+      assignment: {
+        status: "active",
+        body: { binding: { kind: "custom", roleId: "role-1", roleRevision: 2 } },
+      },
+      customRole: {
+        status: "active",
+        body: {
+          revisions: [{ revision: 2, capabilities: ["governance.view"], applicationCapabilities: [{ name: "artifacts.list", version: 1 }] }],
+        },
+      },
+    });
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const context = { kind: "human" as const, workspaceId: "workspace-1", userId: "user-1", role: "member" as const };
+    expect((await authorizer.authorize({ ...request(context, "shared"), capability: { name: "artifacts.list", version: 1 } })).allowed).toBe(true);
+    expect((await authorizer.authorize({ ...request(context, "shared"), capability: { name: "artifacts.list", version: 2 } })).allowed).toBe(false);
+  });
+
+  it("never authorizes a revoked role assignment", async () => {
+    const db = database("owner", {
+      assignment: { status: "revoked", body: { binding: { kind: "built_in", role: "owner" } } },
+    });
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize(request({ kind: "human", workspaceId: "workspace-1", userId: "owner-1", role: "owner" }, "shared"));
+    expect(admission.allowed).toBe(false);
+  });
+
   it("never derives Publishing Approval from a built-in Workspace Role", async () => {
     const db = database("owner");
     const authorizer = new HumanCapabilityAuthorizer(db.getDb);
@@ -198,16 +246,19 @@ describe("unified capability authorization", () => {
     expect(admission.allowed).toBe(false);
   });
 
-  it("denies a Workspace member access to human administration capabilities", async () => {
+  it("denies a Workspace member access to a capability outside the active role bundle", async () => {
     const db = database("member");
     const authorizer = new HumanCapabilityAuthorizer(db.getDb);
     const admission = await authorizer.authorize(
-      request({
+      {
+        ...request({
         kind: "human",
         workspaceId: "workspace-1",
         userId: "user-1",
         role: "member",
-      }),
+        }),
+        capability: { name: "usage_records.list", version: 1 },
+      },
     );
     expect(admission.allowed).toBe(false);
     expect(db.values).toHaveBeenCalledWith(

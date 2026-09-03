@@ -7,8 +7,9 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import { BUILT_IN_ROLE_CAPABILITIES, legacyRoleBinding, RESERVED_ROLE_CAPABILITIES } from "./roles";
+import { applicationCapabilityKey, BUILT_IN_ROLE_CAPABILITIES, CUSTOM_ROLE_APPLICATION_CAPABILITIES, legacyRoleBinding, RESERVED_ROLE_CAPABILITIES } from "./roles";
 import type {
+  ApplicationCapabilityReference,
   ApprovalPolicyRevision,
   BulkOperationItem,
   CustomRoleRevision,
@@ -66,8 +67,8 @@ export class GovernanceError extends Error {
 }
 
 export type GovernanceCommand =
-  | { type: "create_custom_role"; name: string; description: string; capabilities: GovernanceCapability[] }
-  | { type: "revise_custom_role"; roleId: string; expectedVersion: number; name: string; description: string; capabilities: GovernanceCapability[] }
+  | { type: "create_custom_role"; name: string; description: string; capabilities: GovernanceCapability[]; applicationCapabilities?: ApplicationCapabilityReference[] }
+  | { type: "revise_custom_role"; roleId: string; expectedVersion: number; name: string; description: string; capabilities: GovernanceCapability[]; applicationCapabilities?: ApplicationCapabilityReference[] }
   | { type: "assign_role"; userId: string; binding: WorkspaceRoleBinding }
   | { type: "create_invitation"; email: string; binding: WorkspaceRoleBinding; expiresAt: string }
   | { type: "revoke_invitation"; invitationId: string }
@@ -293,6 +294,27 @@ function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
+const CUSTOM_APPLICATION_CAPABILITY_KEYS = new Set(
+  CUSTOM_ROLE_APPLICATION_CAPABILITIES.map(applicationCapabilityKey),
+);
+
+function exactApplicationCapabilities(
+  values: ApplicationCapabilityReference[] | undefined,
+): ApplicationCapabilityReference[] {
+  const byKey = new Map<string, ApplicationCapabilityReference>();
+  for (const capability of values ?? []) {
+    if (!capability || typeof capability.name !== "string" || !Number.isInteger(capability.version)) {
+      throw new GovernanceError("INVALID_INPUT", "Application Capability references must pin a name and positive version.");
+    }
+    const key = applicationCapabilityKey(capability);
+    if (!CUSTOM_APPLICATION_CAPABILITY_KEYS.has(key)) {
+      throw new GovernanceError("INVALID_INPUT", `Application Capability ${key} is unavailable or reserved.`);
+    }
+    byKey.set(key, { name: capability.name, version: capability.version });
+  }
+  return [...byKey.values()].sort((left, right) => applicationCapabilityKey(left).localeCompare(applicationCapabilityKey(right)));
+}
+
 export class GovernanceService {
   constructor(
     private readonly repository: GovernanceRepository,
@@ -500,11 +522,12 @@ export class GovernanceService {
     switch (command.type) {
       case "create_custom_role": {
         const capabilities = unique(command.capabilities);
+        const applicationCapabilities = exactApplicationCapabilities(command.applicationCapabilities);
         if (!capabilities.length || capabilities.some((item) => !GOVERNANCE_CAPABILITIES.includes(item)) || capabilities.some((item) => RESERVED_ROLE_CAPABILITIES.has(item))) {
           throw new GovernanceError("INVALID_INPUT", "Custom Role capabilities are invalid or reserved.");
         }
         const id = newId("role");
-        const revision: CustomRoleRevision = { schema: "custom-role-revision/v1", revision: 1, name: text(command.name, "Role name", 80), description: text(command.description, "Role description", 500), capabilities, createdByUserId: actor.userId, createdAt: now.toISOString() };
+        const revision: CustomRoleRevision = { schema: "custom-role-revision/v1", revision: 1, name: text(command.name, "Role name", 80), description: text(command.description, "Role description", 500), capabilities, applicationCapabilities, createdByUserId: actor.userId, createdAt: now.toISOString() };
         mutations = [create("custom_role", id, "active", { revisions: [revision], activeRevision: 1 })];
         result = { roleId: id, revision };
         target = { kind: "custom_role", id };
@@ -516,8 +539,9 @@ export class GovernanceService {
         if (!current) throw new GovernanceError("NOT_FOUND", "Custom Role unavailable.");
         if (current.version !== command.expectedVersion) throw new GovernanceError("CONFLICT", "Custom Role changed.");
         const capabilities = unique(command.capabilities);
+        const applicationCapabilities = exactApplicationCapabilities(command.applicationCapabilities);
         if (!capabilities.length || capabilities.some((item) => !GOVERNANCE_CAPABILITIES.includes(item)) || capabilities.some((item) => RESERVED_ROLE_CAPABILITIES.has(item))) throw new GovernanceError("INVALID_INPUT", "Custom Role capabilities are invalid or reserved.");
-        const revision: CustomRoleRevision = { schema: "custom-role-revision/v1", revision: current.body.revisions.length + 1, name: text(command.name, "Role name", 80), description: text(command.description, "Role description", 500), capabilities, createdByUserId: actor.userId, createdAt: now.toISOString() };
+        const revision: CustomRoleRevision = { schema: "custom-role-revision/v1", revision: current.body.revisions.length + 1, name: text(command.name, "Role name", 80), description: text(command.description, "Role description", 500), capabilities, applicationCapabilities, createdByUserId: actor.userId, createdAt: now.toISOString() };
         mutations = [update(current, "active", { revisions: [...current.body.revisions, revision], activeRevision: revision.revision })];
         result = { roleId: id, revision };
         target = { kind: "custom_role", id };

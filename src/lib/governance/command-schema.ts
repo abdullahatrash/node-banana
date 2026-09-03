@@ -6,6 +6,10 @@ const id = z.string().trim().min(1).max(200);
 const text = z.string().trim().min(1).max(2_000);
 const timestamp = z.string().datetime({ offset: true });
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const applicationCapability = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_.]*$/),
+  version: z.number().int().positive(),
+}).strict();
 const binding = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("built_in"), role: z.enum(BUILT_IN_WORKSPACE_ROLES) }).strict(),
   z.object({ kind: z.literal("custom"), roleId: id, roleRevision: z.number().int().positive() }).strict(),
@@ -25,8 +29,8 @@ const regionEvidence = z.object({
 }).strict();
 
 export const governanceCommandSchema: z.ZodType<GovernanceCommand> = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("create_custom_role"), name: text.max(80), description: text.max(500), capabilities: z.array(z.enum(GOVERNANCE_CAPABILITIES)).min(1) }).strict(),
-  z.object({ type: z.literal("revise_custom_role"), roleId: id, expectedVersion: z.number().int().positive(), name: text.max(80), description: text.max(500), capabilities: z.array(z.enum(GOVERNANCE_CAPABILITIES)).min(1) }).strict(),
+  z.object({ type: z.literal("create_custom_role"), name: text.max(80), description: text.max(500), capabilities: z.array(z.enum(GOVERNANCE_CAPABILITIES)).min(1), applicationCapabilities: z.array(applicationCapability).max(100).optional() }).strict(),
+  z.object({ type: z.literal("revise_custom_role"), roleId: id, expectedVersion: z.number().int().positive(), name: text.max(80), description: text.max(500), capabilities: z.array(z.enum(GOVERNANCE_CAPABILITIES)).min(1), applicationCapabilities: z.array(applicationCapability).max(100).optional() }).strict(),
   z.object({ type: z.literal("assign_role"), userId: id, binding }).strict(),
   z.object({ type: z.literal("create_invitation"), email: z.string().trim().email(), binding, expiresAt: timestamp }).strict(),
   z.object({ type: z.literal("revoke_invitation"), invitationId: id }).strict(),
