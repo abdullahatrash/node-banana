@@ -1245,30 +1245,26 @@ export async function updateSocialPost(
   const canRescheduleQueued =
     onlyScheduledAtUpdate &&
     (existing.status === "queued" ||
-      existing.status === "failed" ||
-      existing.status === "publishing");
+      existing.status === "failed");
 
   if (!canEditAsDraft && !canRescheduleQueued) {
     throw new SocialPostStateTransitionError(existing.status, "draft");
   }
 
   const isCalendarReschedule = onlyScheduledAtUpdate && data.scheduledAt;
-  const shouldRequeuePublishing =
-    isCalendarReschedule && existing.status === "publishing";
   const shouldRefreshQueuedDispatch =
     isCalendarReschedule && existing.status === "queued";
 
   const [row] = await db
     .update(socialPosts)
     .set({
-      ...(shouldRequeuePublishing && { status: "queued" as const }),
       ...(data.content !== undefined && { content: data.content }),
       ...(data.mediaUrls !== undefined && { mediaUrls: data.mediaUrls }),
       ...(data.platformSettings !== undefined && {
         platformSettings: data.platformSettings,
       }),
       ...(data.scheduledAt !== undefined && { scheduledAt: data.scheduledAt }),
-      ...(shouldRequeuePublishing || shouldRefreshQueuedDispatch
+      ...(shouldRefreshQueuedDispatch
         ? {
             dispatchStatus: "pending" as const,
             workflowRunRef: null,
@@ -1301,6 +1297,42 @@ export async function updateSocialPost(
     .returning();
 
   return row;
+}
+
+/**
+ * Re-reads and fences the exact row immediately before the irreversible
+ * provider effect. Normal editors cannot mutate a publishing row, while the
+ * refreshed lock prevents the stuck-run sweeper from requeueing this active
+ * provider attempt.
+ */
+export async function claimSocialPostProviderEffect(
+  workspaceId: string,
+  postId: string,
+) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [post] = await tx
+      .select()
+      .from(socialPosts)
+      .where(and(eq(socialPosts.workspaceId, workspaceId), eq(socialPosts.id, postId)))
+      .for("update");
+    if (!post) throw new SocialPostNotFoundError(postId);
+    if (post.status !== "publishing") {
+      throw new SocialPostStateTransitionError(post.status, "publishing");
+    }
+    const claimedAt = new Date();
+    const [claimed] = await tx
+      .update(socialPosts)
+      .set({ lockedAt: claimedAt, updatedAt: claimedAt })
+      .where(and(
+        eq(socialPosts.workspaceId, workspaceId),
+        eq(socialPosts.id, postId),
+        eq(socialPosts.status, "publishing"),
+      ))
+      .returning();
+    if (!claimed) throw new SocialPostStateTransitionError(post.status, "publishing");
+    return claimed;
+  });
 }
 
 /**

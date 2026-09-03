@@ -242,6 +242,10 @@ interface PostData {
 
 async function assertGovernedPublishingStep(post: PostData): Promise<void> {
   "use step";
+  return verifyGovernedPublishing(post);
+}
+
+async function verifyGovernedPublishing(post: PostData): Promise<void> {
   const { requiresGovernedPublishingPlan } = await import("@/lib/governance/publishing-route-guard");
   if (!(await requiresGovernedPublishingPlan(post.workspaceId))) return;
   const { parseGovernedPublishingMarker, PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION } = await import("@/lib/agent-tools/social-publishing-approval");
@@ -535,7 +539,7 @@ async function publishStep(
 ): Promise<PublishResultData> {
   "use step";
 
-  const { updatePostStatus, markRequiresReauth } = await import(
+  const { updatePostStatus, markRequiresReauth, claimSocialPostProviderEffect } = await import(
     "@/lib/social/repository"
   );
   const { emitSocialEvent } = await import("@/lib/social/events");
@@ -576,6 +580,27 @@ async function publishStep(
     ? decryptToken(account.accessTokenSecret)
     : undefined;
 
+  const current = await claimSocialPostProviderEffect(account.workspaceId, postId);
+  if (current.socialAccountId !== account.id) {
+    throw new FatalError("Social account changed before the provider effect.");
+  }
+  const currentPost: PostData = {
+    id: current.id,
+    workspaceId: current.workspaceId,
+    content: current.content,
+    mediaUrls: current.mediaUrls,
+    platformSettings: current.platformSettings,
+    socialAccountId: current.socialAccountId,
+    scheduledAt: current.scheduledAt?.toISOString() ?? null,
+    status: current.status,
+    triggerSource: current.triggerSource,
+    createdByUserId: current.createdByUserId,
+  };
+  await verifyGovernedPublishing(currentPost);
+  if (current.content !== content || JSON.stringify(current.platformSettings) !== JSON.stringify(platformSettings)) {
+    throw new FatalError("The publishing target changed before the provider effect.");
+  }
+
   try {
     const results = await provider.post(
       account.platformUserId,
@@ -583,9 +608,9 @@ async function publishStep(
       [
         {
           postId,
-          content: content || "",
+          content: current.content || "",
           media: media.length > 0 ? media : undefined,
-          platformSettings: platformSettings ?? undefined,
+          platformSettings: current.platformSettings ?? undefined,
         },
       ],
       { accessTokenSecret },
