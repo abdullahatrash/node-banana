@@ -6,11 +6,13 @@ const {
   mockIsDatabaseConfigured,
   mockSelectRows,
   mockWithApiPermission,
+  mockResolvePermissions,
 } = vi.hoisted(() => ({
   mockResolveWorkspaceIdByRawToken: vi.fn(),
   mockIsDatabaseConfigured: vi.fn(() => true),
   mockSelectRows: vi.fn(),
   mockWithApiPermission: vi.fn(),
+  mockResolvePermissions: vi.fn(() => ["workspaces:read"]),
 }));
 
 const mockDb = {
@@ -33,6 +35,10 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/api-tokens/repository", () => ({
+  resolveApiTokenAuthorityByRawToken: async (...args: unknown[]) => {
+    const workspaceId = await mockResolveWorkspaceIdByRawToken(...args);
+    return workspaceId ? { workspaceId, createdByUserId: "owner-scoped" } : null;
+  },
   resolveWorkspaceIdByRawToken: (...args: unknown[]) =>
     mockResolveWorkspaceIdByRawToken(...args),
 }));
@@ -46,6 +52,7 @@ vi.mock("@/lib/studio/authz", async () => {
   return {
     ...actual,
     withApiPermission: (...args: unknown[]) => mockWithApiPermission(...args),
+    resolveWorkspaceMemberPermissions: (...args: unknown[]) => mockResolvePermissions(...args),
   };
 });
 

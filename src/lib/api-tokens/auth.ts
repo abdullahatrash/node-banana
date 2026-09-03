@@ -2,13 +2,13 @@ import { NextResponse } from "next/server";
 
 import {
   authzErrorResponse,
-  getPermissionsForRole,
+  resolveWorkspaceMemberPermissions,
   withApiPermission,
   type ContentOSPermission,
   type ContentOSSession,
 } from "@/lib/studio/authz";
 
-import { resolveWorkspaceIdByRawToken } from "./repository";
+import { resolveApiTokenAuthorityByRawToken } from "./repository";
 import { API_TOKEN_PREFIX } from "./tokens";
 
 const BEARER_SCHEME = "Bearer ";
@@ -22,7 +22,7 @@ const BEARER_SCHEME = "Bearer ";
  * least-privilege roles would require a `scopes` column and are deliberately
  * deferred; the workspace boundary is the security-critical guarantee here.
  */
-const API_TOKEN_ROLE = "owner" as const;
+const API_TOKEN_ROLE = "member" as const;
 
 /**
  * Extract a raw Node Banana API token from an `Authorization: Bearer nb_...`
@@ -57,22 +57,23 @@ export async function resolveApiTokenSession(
   const raw = extractBearerToken(request);
   if (!raw) return null;
 
-  const workspaceId = await resolveWorkspaceIdByRawToken(raw);
-  if (!workspaceId) return null;
+  const authority = await resolveApiTokenAuthorityByRawToken(raw);
+  if (!authority) return null;
+  const permissions = await resolveWorkspaceMemberPermissions({ workspaceId: authority.workspaceId, userId: authority.createdByUserId });
 
   return {
     user: {
-      id: `apitoken:${workspaceId}`,
+      id: authority.createdByUserId,
       name: null,
       email: null,
     },
     workspace: {
-      id: workspaceId,
+      id: authority.workspaceId,
       organizationId: null,
     },
     role: API_TOKEN_ROLE,
     planTier: "free",
-    permissions: getPermissionsForRole(API_TOKEN_ROLE),
+    permissions,
   };
 }
 

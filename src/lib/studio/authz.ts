@@ -12,6 +12,7 @@ import {
 import { getDb } from "@/lib/db";
 import {
   workspaceMembers,
+  workspaceGovernanceResources,
   workspaceSettings,
   workspaces,
   onboardingSessions,
@@ -25,6 +26,12 @@ import {
 } from "@/lib/studio/repository";
 import { logger } from "@/utils/logger";
 import { shouldRequireOnboarding } from "@/lib/onboarding/features";
+import {
+  applicationCapabilityKey,
+  BUILT_IN_ROLE_APPLICATION_CAPABILITIES,
+  CONTENT_OS_PERMISSION_CAPABILITIES,
+} from "@/lib/governance/roles";
+import type { CustomRoleRevision, WorkspaceRoleBinding } from "@/lib/governance/types";
 
 export type ContentOSPlanTier = "free" | "pro" | "enterprise";
 
@@ -131,6 +138,44 @@ const SOCIAL_ROLE_PERMISSIONS: Record<WorkspaceRole, SocialPermission[]> = {
 
 export function getPermissionsForRole(role: WorkspaceRole): ContentOSPermission[] {
   return [...STUDIO_ROLE_PERMISSIONS[role], ...SOCIAL_ROLE_PERMISSIONS[role]];
+}
+
+export function permissionsFromCapabilityKeys(keys: ReadonlySet<string>): ContentOSPermission[] {
+  return (Object.entries(CONTENT_OS_PERMISSION_CAPABILITIES) as Array<[ContentOSPermission, { name: string; version: number }]>)
+    .filter(([, capability]) => keys.has(applicationCapabilityKey(capability)))
+    .map(([permission]) => permission);
+}
+
+/** Resolves legacy HTTP permissions only from the active, pinned Workspace Role. */
+export async function resolveWorkspaceMemberPermissions(input: {
+  workspaceId: string;
+  userId: string;
+}): Promise<ContentOSPermission[]> {
+  const db = getDb();
+  const [assignment] = await db.select({ status: workspaceGovernanceResources.status, body: workspaceGovernanceResources.body })
+    .from(workspaceGovernanceResources)
+    .where(and(
+      eq(workspaceGovernanceResources.workspaceId, input.workspaceId),
+      eq(workspaceGovernanceResources.kind, "member_role_assignment"),
+      eq(workspaceGovernanceResources.id, input.userId),
+    )).limit(1);
+  if (assignment?.status !== "active") return [];
+  const binding = (assignment.body as { binding?: WorkspaceRoleBinding }).binding;
+  if (!binding) return [];
+  if (binding.kind === "built_in") {
+    return permissionsFromCapabilityKeys(new Set(BUILT_IN_ROLE_APPLICATION_CAPABILITIES[binding.role].map(applicationCapabilityKey)));
+  }
+  const [customRole] = await db.select({ status: workspaceGovernanceResources.status, body: workspaceGovernanceResources.body })
+    .from(workspaceGovernanceResources)
+    .where(and(
+      eq(workspaceGovernanceResources.workspaceId, input.workspaceId),
+      eq(workspaceGovernanceResources.kind, "custom_role"),
+      eq(workspaceGovernanceResources.id, binding.roleId),
+    )).limit(1);
+  if (customRole?.status !== "active") return [];
+  const revision = (customRole.body as { revisions?: CustomRoleRevision[] }).revisions
+    ?.find((candidate) => candidate.revision === binding.roleRevision);
+  return permissionsFromCapabilityKeys(new Set((revision?.applicationCapabilities ?? []).map(applicationCapabilityKey)));
 }
 
 function authFailure(
@@ -314,7 +359,7 @@ export async function getContentOSSession(
       },
       role: "owner",
       planTier: "free",
-      permissions: getPermissionsForRole("owner"),
+      permissions: await resolveWorkspaceMemberPermissions({ workspaceId, userId }),
     };
 
     return contentSession;
@@ -425,7 +470,7 @@ export async function getContentOSSession(
     },
     role: resolved.role,
     planTier: resolved.planTier,
-    permissions: getPermissionsForRole(resolved.role),
+    permissions: await resolveWorkspaceMemberPermissions({ workspaceId: resolved.workspaceId, userId }),
   };
 
   return contentSession;

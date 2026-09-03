@@ -109,6 +109,46 @@ const SAFE_CREATION = [
   ref("publishing_plan_revisions.create"),
 ] as const;
 
+/** Stable product HTTP permissions mirrored as versioned capabilities. */
+export const CONTENT_OS_PERMISSION_CAPABILITIES = Object.freeze({
+  "workspaces:read": ref("studio.workspaces.read"),
+  "workspaces:write": ref("studio.workspaces.write"),
+  "workspaces:delete": ref("studio.workspaces.delete"),
+  "projects:read": ref("studio.projects.read"),
+  "projects:write": ref("studio.projects.write"),
+  "projects:delete": ref("studio.projects.delete"),
+  "assets:read": ref("studio.assets.read"),
+  "assets:write": ref("studio.assets.write"),
+  "assets:delete": ref("studio.assets.delete"),
+  "social:view": ref("social.content.read"),
+  "social:connect": ref("social.channels.manage"),
+  // Submission still requires exact Publishing Approval at release time.
+  "social:publish": ref("social.posts.submit"),
+  "social:manage": ref("social.content.manage"),
+});
+
+const PRODUCT_READ = [
+  CONTENT_OS_PERMISSION_CAPABILITIES["workspaces:read"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["projects:read"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["assets:read"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["social:view"],
+] as const;
+const PRODUCT_CREATE = [
+  ...PRODUCT_READ,
+  CONTENT_OS_PERMISSION_CAPABILITIES["projects:write"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["assets:write"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["social:publish"],
+] as const;
+const PRODUCT_ADMIN = [
+  ...PRODUCT_CREATE,
+  CONTENT_OS_PERMISSION_CAPABILITIES["workspaces:write"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["workspaces:delete"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["projects:delete"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["assets:delete"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["social:connect"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["social:manage"],
+] as const;
+
 const FINANCIAL_READ = [
   ref("usage_records.get"),
   ref("usage_records.list"),
@@ -135,13 +175,13 @@ const ANALYTICS_READ = [
  * publishing release, provider-spending runs, payouts, and refunds.
  */
 export const BUILT_IN_ROLE_APPLICATION_CAPABILITIES = Object.freeze({
-  owner: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...FINANCIAL_READ, ...ANALYTICS_READ]),
-  admin: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...FINANCIAL_READ, ...ANALYTICS_READ]),
-  billing_admin: Object.freeze([...FINANCIAL_READ, ref("credentials.audit.list")]),
-  creator: Object.freeze([...CORE_READ, ...SAFE_CREATION]),
-  approver: Object.freeze([...CORE_READ]),
-  analyst: Object.freeze([...CORE_READ, ...FINANCIAL_READ, ...ANALYTICS_READ]),
-  viewer: Object.freeze([...CORE_READ]),
+  owner: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...FINANCIAL_READ, ...ANALYTICS_READ, ...PRODUCT_ADMIN]),
+  admin: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...FINANCIAL_READ, ...ANALYTICS_READ, ...PRODUCT_ADMIN]),
+  billing_admin: Object.freeze([...FINANCIAL_READ, ref("credentials.audit.list"), CONTENT_OS_PERMISSION_CAPABILITIES["workspaces:read"]]),
+  creator: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...PRODUCT_CREATE]),
+  approver: Object.freeze([...CORE_READ, ...PRODUCT_READ]),
+  analyst: Object.freeze([...CORE_READ, ...FINANCIAL_READ, ...ANALYTICS_READ, ...PRODUCT_READ]),
+  viewer: Object.freeze([...CORE_READ, ...PRODUCT_READ]),
 } satisfies Record<BuiltInWorkspaceRole, readonly ApplicationCapabilityReference[]>);
 
 export const CUSTOM_ROLE_APPLICATION_CAPABILITIES = Object.freeze(
