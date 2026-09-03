@@ -12,6 +12,16 @@ import type {
   CapabilityAuthorizationRequest,
   CapabilityAuthorizer,
 } from "@/types/agentAuthorization";
+import {
+  BUILT_IN_ROLE_CAPABILITIES,
+  governanceCapabilityForApplicationCapability,
+  legacyRoleBinding,
+} from "@/lib/governance/roles";
+import type {
+  CustomRoleRevision,
+  GovernanceCapability,
+  WorkspaceRoleBinding,
+} from "@/lib/governance/types";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -47,14 +57,66 @@ export class HumanCapabilityAuthorizer implements CapabilityAuthorizer {
             .limit(1)
         : [];
       const role = rows[0]?.role;
+      const governanceCapability = governanceCapabilityForApplicationCapability(
+        request.capability.name,
+      );
+      let governanceAllowed = false;
+      if (isHumanAdmission && role && governanceCapability) {
+        const [assignment] = await tx
+          .select({
+            status: workspaceGovernanceResources.status,
+            body: workspaceGovernanceResources.body,
+          })
+          .from(workspaceGovernanceResources)
+          .where(
+            and(
+              eq(workspaceGovernanceResources.workspaceId, context.workspaceId),
+              eq(workspaceGovernanceResources.kind, "member_role_assignment"),
+              eq(workspaceGovernanceResources.id, context.userId),
+            ),
+          )
+          .limit(1);
+        const storedBinding = assignment?.status === "active"
+          ? (assignment.body as { binding?: WorkspaceRoleBinding }).binding
+          : undefined;
+        const binding = storedBinding ?? {
+          kind: "built_in" as const,
+          role: legacyRoleBinding(role),
+        };
+        if (binding.kind === "built_in") {
+          governanceAllowed = (
+            BUILT_IN_ROLE_CAPABILITIES[binding.role] as readonly GovernanceCapability[]
+          ).includes(governanceCapability);
+        } else if (governanceCapability !== "reviews.decide_publishing") {
+          const [customRole] = await tx
+            .select({
+              status: workspaceGovernanceResources.status,
+              body: workspaceGovernanceResources.body,
+            })
+            .from(workspaceGovernanceResources)
+            .where(
+              and(
+                eq(workspaceGovernanceResources.workspaceId, context.workspaceId),
+                eq(workspaceGovernanceResources.kind, "custom_role"),
+                eq(workspaceGovernanceResources.id, binding.roleId),
+              ),
+            )
+            .limit(1);
+          const revision = customRole?.status === "active"
+            ? (customRole.body as { revisions?: CustomRoleRevision[] }).revisions
+              ?.find((candidate) => candidate.revision === binding.roleRevision)
+            : undefined;
+          governanceAllowed = revision?.capabilities.includes(governanceCapability) ?? false;
+        }
+      }
       const allowed =
         isHumanAdmission &&
-        (
-          request.audience === "shared"
+        role === context.role &&
+        (governanceCapability
+          ? governanceAllowed
+          : request.audience === "shared"
             ? role === "owner" || role === "admin" || role === "member"
-            : role === "owner" || role === "admin"
-        ) &&
-        role === context.role;
+            : role === "owner" || role === "admin");
       const reason = !isHumanAdmission
         ? "security_context_mismatch"
         : allowed

@@ -2,6 +2,7 @@ import type {
   BuiltInWorkspaceRole,
   GovernanceCapability,
 } from "./types";
+import { GOVERNANCE_CAPABILITIES } from "./types";
 
 const ALL_ADMINISTRATIVE = [
   "governance.view",
@@ -46,7 +47,6 @@ export const BUILT_IN_ROLE_CAPABILITIES = Object.freeze({
   approver: Object.freeze([
     "governance.view",
     "reviews.decide_content",
-    "reviews.decide_publishing",
     "audit.view",
     "safety.appeal",
   ]),
@@ -65,6 +65,16 @@ export function legacyRoleBinding(
 }
 
 export const RESERVED_ROLE_CAPABILITIES = new Set<GovernanceCapability>([
+  "reviews.decide_publishing",
   "workspace.transfer_ownership",
   "workspace.close",
 ]);
+
+export function governanceCapabilityForApplicationCapability(
+  capabilityName: string,
+): GovernanceCapability | null {
+  if (capabilityName === "governance.snapshot.get") return "governance.view";
+  return (GOVERNANCE_CAPABILITIES as readonly string[]).includes(capabilityName)
+    ? capabilityName as GovernanceCapability
+    : null;
+}

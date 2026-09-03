@@ -23,19 +23,34 @@ function request(
   };
 }
 
-function database(role: "owner" | "admin" | "member" | undefined) {
+function database(
+  role: "owner" | "admin" | "member" | undefined,
+  governance?: {
+    assignment?: { status: string; body: Record<string, unknown> };
+    customRole?: { status: string; body: Record<string, unknown> };
+  },
+) {
   const values = vi.fn(async () => undefined);
-  const selectChain = {
-    from: vi.fn(),
-    innerJoin: vi.fn(),
-    where: vi.fn(),
-    limit: vi.fn(async () => (role ? [{ role }] : [])),
-  };
-  selectChain.from.mockReturnValue(selectChain);
-  selectChain.innerJoin.mockReturnValue(selectChain);
-  selectChain.where.mockReturnValue(selectChain);
+  const selections = [
+    role ? [{ role }] : [],
+    governance?.assignment ? [governance.assignment] : [],
+    governance?.customRole ? [governance.customRole] : [],
+  ];
+  let selection = 0;
   const tx = {
-    select: vi.fn(() => selectChain),
+    select: vi.fn(() => {
+      const rows = selections[selection++] ?? [];
+      const selectChain = {
+        from: vi.fn(),
+        innerJoin: vi.fn(),
+        where: vi.fn(),
+        limit: vi.fn(async () => rows),
+      };
+      selectChain.from.mockReturnValue(selectChain);
+      selectChain.innerJoin.mockReturnValue(selectChain);
+      selectChain.where.mockReturnValue(selectChain);
+      return selectChain;
+    }),
     insert: vi.fn(() => ({ values })),
   };
   return {
@@ -135,6 +150,52 @@ describe("unified capability authorization", () => {
       }, "shared"),
     );
     expect(admission.allowed).toBe(true);
+  });
+
+  it("uses the pinned active Custom Role revision for governance authorization", async () => {
+    const db = database("member", {
+      assignment: {
+        status: "active",
+        body: { binding: { kind: "custom", roleId: "role-1", roleRevision: 2 } },
+      },
+      customRole: {
+        status: "active",
+        body: {
+          revisions: [
+            { revision: 1, capabilities: ["governance.view"] },
+            { revision: 2, capabilities: ["governance.view", "audit.export"] },
+          ],
+        },
+      },
+    });
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "member",
+      }, "shared"),
+      capability: { name: "audit.export", version: 1 },
+    });
+
+    expect(admission.allowed).toBe(true);
+  });
+
+  it("never derives Publishing Approval from a built-in Workspace Role", async () => {
+    const db = database("owner");
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "owner-1",
+        role: "owner",
+      }, "shared"),
+      capability: { name: "reviews.decide_publishing", version: 1 },
+    });
+
+    expect(admission.allowed).toBe(false);
   });
 
   it("denies a Workspace member access to human administration capabilities", async () => {

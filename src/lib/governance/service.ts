@@ -237,7 +237,7 @@ export class GovernanceService {
       kind: "member_role_assignment",
       id: actor.userId,
     });
-    return assignment?.body.binding ?? {
+    return assignment?.status === "active" ? assignment.body.binding : {
       kind: "built_in" as const,
       role: legacyRoleBinding(actor.legacyRole),
     };

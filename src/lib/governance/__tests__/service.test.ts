@@ -27,12 +27,14 @@ describe("GovernanceService", () => {
       expect(capabilities.some((item) => item.includes("credential"))).toBe(false);
       expect(capabilities.some((item) => item.includes("spend"))).toBe(false);
       expect(capabilities).not.toContain("publishing.approve");
+      expect(capabilities).not.toContain("reviews.decide_publishing");
     }
   });
 
   it("versions Custom Roles, rejects reserved authority, and pins assignments to one revision", async () => {
     const { repository, service } = setup();
     await expect(service.execute(owner, { type: "create_custom_role", name: "Unsafe", description: "Unsafe role", capabilities: ["workspace.close"] }, "unsafe-role-key")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(service.execute(owner, { type: "create_custom_role", name: "Implicit publisher", description: "Unsafe role", capabilities: ["reviews.decide_publishing"] }, "unsafe-publishing-role-key")).rejects.toMatchObject({ code: "INVALID_INPUT" });
     const created = await service.execute(owner, { type: "create_custom_role", name: "Reviewer", description: "Content reviewer", capabilities: ["governance.view", "reviews.decide_content"] }, "create-role-key") as { roleId: string };
     const revised = await service.execute(owner, { type: "revise_custom_role", roleId: created.roleId, expectedVersion: 1, name: "Senior reviewer", description: "Reviews content and audit", capabilities: ["governance.view", "reviews.decide_content", "audit.view"] }, "revise-role-key") as { revision: { revision: number } };
     expect(revised.revision.revision).toBe(2);
