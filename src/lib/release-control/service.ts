@@ -3,6 +3,8 @@ import { ProductTelemetryEventSchema, evaluateReleaseReadiness } from "./policy"
 import { releaseRecordInputSchema, type ReleaseRecordInput } from "./schemas";
 import type { ReleaseControlRepository, StoredReleaseRecord } from "./repository";
 import type { AccessibilityEvidence, ContractMigrationEvidence, ParityRequirement, PerformanceEvidence, PublicIncident, RecoveryObjective, ReleaseEvidence, ReleaseFlag, ReleaseReadinessDecision, RestoreDrillEvidence } from "./types";
+import { verifyReleaseAttestation, type ReleaseAttestationKeyring } from "./attestation";
+import type { ReleaseManifest } from "./manifest";
 
 const dates = (value: Record<string, unknown>, keys: string[]): Record<string, unknown> => { const copy: Record<string, unknown> = { ...value }; for (const key of keys) if (typeof copy[key] === "string") copy[key] = new Date(copy[key] as string); return copy; };
 const evidence = (value: Record<string, unknown>): ReleaseEvidence => dates(value, ["collectedAt", "expiresAt"]) as unknown as PerformanceEvidence | AccessibilityEvidence;
@@ -20,8 +22,8 @@ function validateRecordSemantics(input: ReleaseRecordInput, userId: string): voi
     case "evidence": if (new Date(input.document.expiresAt) <= new Date(input.document.collectedAt)) throw new TypeError("EVIDENCE_TIME_INVALID"); break;
     case "flag": if (input.document.ownerUserId !== userId) throw new TypeError("RELEASE_OWNER_MISMATCH"); if (new Date(input.document.expiresAt) <= new Date(input.document.createdAt)) throw new TypeError("FLAG_TIME_INVALID"); break;
     case "incident": if ((input.document.status === "resolved") !== Boolean(input.document.resolvedAt)) throw new TypeError("INCIDENT_STATE_INVALID"); break;
-    case "recovery_objective": if (input.document.ownerUserId !== userId) throw new TypeError("RELEASE_OWNER_MISMATCH"); break;
-    case "restore_drill": if (input.document.executedByUserId !== userId) throw new TypeError("RESTORE_DRILL_ACTOR_MISMATCH"); if (new Date(input.document.completedAt) < new Date(input.document.startedAt) || new Date(input.document.expiresAt) <= new Date(input.document.completedAt)) throw new TypeError("RESTORE_DRILL_TIME_INVALID"); break;
+    case "recovery_objective": break;
+    case "restore_drill": if (new Date(input.document.completedAt) < new Date(input.document.startedAt) || new Date(input.document.expiresAt) <= new Date(input.document.completedAt)) throw new TypeError("RESTORE_DRILL_TIME_INVALID"); break;
     case "contract_migration": if (new Date(input.document.expiresAt) <= new Date(input.document.observedAt)) throw new TypeError("MIGRATION_TIME_INVALID"); break;
     case "parity_requirement": if (new Date(input.document.expiresAt) <= new Date(input.document.evaluatedAt)) throw new TypeError("PARITY_TIME_INVALID"); break;
     case "experiment": if (input.document.ownerUserId !== userId) throw new TypeError("RELEASE_OWNER_MISMATCH"); if (new Date(input.document.expiresAt) <= new Date(input.document.startsAt)) throw new TypeError("EXPERIMENT_TIME_INVALID"); break;
@@ -29,10 +31,21 @@ function validateRecordSemantics(input: ReleaseRecordInput, userId: string): voi
 }
 
 export class ReleaseControlService {
-  constructor(private readonly repository: ReleaseControlRepository, private readonly telemetrySecret: string) {}
+  constructor(private readonly repository: ReleaseControlRepository, private readonly telemetrySecret: string, private readonly trust: { keyring?: ReleaseAttestationKeyring; manifest?: (workspaceId: string, now: Date) => ReleaseManifest; automationUserId?: string } = {}) {}
   async append(workspaceId: string, userId: string, value: unknown, idempotencyKey: string, now = new Date()) {
     const input = releaseRecordInputSchema.parse(value);
+    if (["evidence", "recovery_objective", "restore_drill", "contract_migration", "parity_requirement"].includes(input.recordKind)) throw new TypeError("TRUSTED_ATTESTATION_REQUIRED");
     validateRecordSemantics(input, userId);
+    return this.appendRecord(workspaceId, userId, input, idempotencyKey, now);
+  }
+  async appendAttested(value: unknown, idempotencyKey: string, now = new Date()) {
+    if (!this.trust.automationUserId) throw new TypeError("RELEASE_AUTOMATION_USER_MISSING");
+    const attestation = verifyReleaseAttestation(value, this.trust.keyring ?? {}, now); const input = attestation.record;
+    validateRecordSemantics(input, this.trust.automationUserId);
+    const document = { ...input.document, _attestation: attestation } as unknown as typeof input.document;
+    return this.appendRecord(attestation.workspaceId, this.trust.automationUserId, { ...input, document } as ReleaseRecordInput, idempotencyKey, now);
+  }
+  private async appendRecord(workspaceId: string, userId: string, input: ReleaseRecordInput, idempotencyKey: string, now: Date) {
     if (input.recordKind === "contract_migration") {
       const requiredPredecessorPhase = input.document.phase === "migrate" ? "expand" : input.document.phase === "contract" ? "migrate" : null;
       if (!requiredPredecessorPhase && input.document.predecessorId) throw new TypeError("MIGRATION_PREDECESSOR_INVALID");
@@ -44,17 +57,27 @@ export class ReleaseControlService {
     }
     return this.repository.append({ workspaceId, kind: input.recordKind, id: documentId(input), buildId: documentBuild(input), document: input.document, expiresAt: documentExpiry(input), userId, idempotencyKey, now });
   }
-  async telemetry(workspaceId: string, value: unknown, idempotencyKey: string, now = new Date()) {
-    if (!value || typeof value !== "object" || Array.isArray(value) || "workspacePseudonym" in value) throw new TypeError("TELEMETRY_NOT_ALLOWLISTED");
-    const workspacePseudonym = `wsp_${createHmac("sha256", this.telemetrySecret).update(workspaceId).digest("hex")}`;
-    const event = ProductTelemetryEventSchema.parse({ ...value, workspacePseudonym });
+  async telemetry(workspaceId: string, userId: string, authContextId: string, value: unknown, idempotencyKey: string, now = new Date()) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || ["workspacePseudonym", "sessionPseudonym", "consentRevision", "consentPurpose"].some((key) => key in value)) throw new TypeError("TELEMETRY_NOT_ALLOWLISTED");
+    const consent = await this.repository.getTelemetryConsent(workspaceId, userId); if (!consent || consent.status !== "active" || consent.purpose !== "product_analytics" || consent.expiresAt <= now) throw new TypeError("TELEMETRY_CONSENT_REQUIRED");
+    const epoch = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+    const workspacePseudonym = `wsp_${createHmac("sha256", this.telemetrySecret).update(`workspace:${epoch}:${workspaceId}`).digest("hex")}`;
+    const sessionPseudonym = `ses_${createHmac("sha256", this.telemetrySecret).update(`session:${epoch}:${authContextId}`).digest("hex")}`;
+    const consentRevision = `consent_r${String(consent.revision).padStart(4, "0")}`;
+    const event = ProductTelemetryEventSchema.parse({ ...value, workspacePseudonym, sessionPseudonym, consentRevision, consentPurpose: consent.purpose });
     if (event.occurredAt.getTime() > now.getTime() + 60_000 || event.occurredAt.getTime() < now.getTime() - 7 * 86_400_000) throw new TypeError("TELEMETRY_TIME_INVALID");
     return this.repository.appendTelemetry({ workspaceId, event: event as unknown as Record<string, unknown>, idempotencyKey, now });
   }
+  getTelemetryConsent(workspaceId: string, userId: string) { return this.repository.getTelemetryConsent(workspaceId, userId); }
+  setTelemetryConsent(workspaceId: string, userId: string, status: "active" | "revoked", requestedExpiry: Date, idempotencyKey: string, now = new Date()) { const max = new Date(now.getTime() + 366 * 86_400_000); if (!Number.isFinite(requestedExpiry.getTime()) || status === "active" && (requestedExpiry <= now || requestedExpiry > max)) throw new TypeError("TELEMETRY_CONSENT_EXPIRY_INVALID"); const expiresAt = status === "revoked" ? new Date(now.getTime() + 1) : requestedExpiry; return this.repository.setTelemetryConsent({ workspaceId, userId, status, expiresAt, idempotencyKey, now }); }
   async snapshot(workspaceId: string) { const records = await this.repository.listLatest(workspaceId); return this.snapshotFrom(records); }
-  async readiness(workspaceId: string, buildId: string, requiredRoutes: string[], supportedClients: string[], now = new Date()): Promise<ReleaseReadinessDecision> {
-    const snapshot = await this.snapshot(workspaceId);
-    return evaluateReleaseReadiness({ buildId, evaluatedAt: now, requiredRoutes, supportedClients, evidence: snapshot.evidence, flags: snapshot.flags, incidents: snapshot.incidents, recoveryObjectives: snapshot.recoveryObjectives, restoreDrills: snapshot.restoreDrills, contractMigrations: snapshot.contractMigrations, parity: snapshot.parity });
+  async readiness(workspaceId: string, now = new Date()): Promise<ReleaseReadinessDecision> {
+    let manifest: ReleaseManifest; try { if (!this.trust.manifest) throw new TypeError("RELEASE_MANIFEST_MISSING"); manifest = this.trust.manifest(workspaceId, now); } catch (cause) { return { schema: "release-readiness-decision/v1", buildId: "unconfigured", evaluatedAt: now, releasable: false, parityClaimAllowed: false, blockers: [{ code: "RELEASE_MANIFEST_INVALID", subject: workspaceId, detail: cause instanceof Error ? cause.message : "RELEASE_MANIFEST_INVALID" }] }; }
+    const records = await this.repository.listLatest(workspaceId); const trustedKinds = new Set(["evidence", "recovery_objective", "restore_drill", "contract_migration", "parity_requirement"]); const invalid: string[] = [];
+    const admitted = records.filter((record) => { if (!trustedKinds.has(record.kind)) return true; try { const attestation = verifyReleaseAttestation(record.document._attestation, this.trust.keyring ?? {}, now); return attestation.workspaceId === workspaceId && attestation.record.recordKind === record.kind && attestation.record.document.id === record.id; } catch { invalid.push(`${record.kind}:${record.id}`); return false; } });
+    const snapshot = this.snapshotFrom(admitted); const decision = evaluateReleaseReadiness({ buildId: manifest.buildId, evaluatedAt: now, requiredRoutes: manifest.requiredRoutes, supportedClients: manifest.supportedClients, requiredDataClasses: manifest.dataClasses, requiredContracts: manifest.contracts, requiredParityRequirementIds: manifest.parityRequirementIds, evidence: snapshot.evidence, flags: snapshot.flags, incidents: snapshot.incidents, recoveryObjectives: snapshot.recoveryObjectives, restoreDrills: snapshot.restoreDrills, contractMigrations: snapshot.contractMigrations, parity: snapshot.parity });
+    if (invalid.length) { decision.blockers.unshift(...invalid.map((subject) => ({ code: "ATTESTATION_INVALID" as const, subject, detail: "Trusted evidence has no valid current cryptographic attestation." }))); decision.releasable = false; decision.parityClaimAllowed = false; }
+    return decision;
   }
   async publicIncidents(locale: "ar" | "en", statusWorkspaceId: string) { const rows = await this.repository.listPublicIncidents(statusWorkspaceId); return rows.map((row) => incident(row.document)).filter((item) => item.status !== "resolved" || (item.resolvedAt && item.resolvedAt.getTime() > Date.now() - 7 * 86_400_000)).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime()).map((item) => ({ id: item.id, severity: item.severity, status: item.status, impactedServices: item.impactedServices, startedAt: item.startedAt, resolvedAt: item.resolvedAt, summary: item.publicSummary[locale] })); }
   private snapshotFrom(records: StoredReleaseRecord[]) { return { records, evidence: records.filter((r) => r.kind === "evidence").map((r) => evidence(r.document)), flags: records.filter((r) => r.kind === "flag").map((r) => flag(r.document)), incidents: records.filter((r) => r.kind === "incident").map((r) => incident(r.document)), recoveryObjectives: records.filter((r) => r.kind === "recovery_objective").map((r) => r.document as unknown as RecoveryObjective), restoreDrills: records.filter((r) => r.kind === "restore_drill").map((r) => drill(r.document)), contractMigrations: records.filter((r) => r.kind === "contract_migration").map((r) => migration(r.document)), parity: records.filter((r) => r.kind === "parity_requirement").map((r) => dates(r.document, ["evaluatedAt", "expiresAt"]) as unknown as ParityRequirement) }; }

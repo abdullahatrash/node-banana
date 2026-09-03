@@ -11,24 +11,27 @@ function readyInput(): ReleaseReadinessInput {
   for (const locale of ["ar", "en"] as const) {
     const direction = locale === "ar" ? "rtl" : "ltr";
     evidence.push(
-      { id: `perf-${locale}-lcp`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "largest_contentful_paint_ms", measured: 1_900, budget: 2_500 },
-      { id: `perf-${locale}-inp`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "interaction_to_next_paint_ms", measured: 160, budget: 200 },
-      { id: `perf-${locale}-cls`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "cumulative_layout_shift_milli", measured: 80, budget: 100 },
+      { id: `perf-${locale}-lcp`, artifactDigest: `sha256:${"a".repeat(64)}`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "largest_contentful_paint_ms", measured: 1_900, budget: 2_500 },
+      { id: `perf-${locale}-inp`, artifactDigest: `sha256:${"a".repeat(64)}`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "interaction_to_next_paint_ms", measured: 160, budget: 200 },
+      { id: `perf-${locale}-cls`, artifactDigest: `sha256:${"a".repeat(64)}`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "cumulative_layout_shift_milli", measured: 80, budget: 100 },
     );
-    for (const criterion of criteria) evidence.push({ id: `a11y-${locale}-${criterion}`, kind: "accessibility", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", criterion, standard: "WCAG_2_2_AA" });
+    for (const criterion of criteria) evidence.push({ id: `a11y-${locale}-${criterion}`, artifactDigest: `sha256:${"b".repeat(64)}`, kind: "accessibility", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", criterion, standard: "WCAG_2_2_AA" });
   }
   return {
     buildId: "build-1",
     evaluatedAt: NOW,
     requiredRoutes: ["/simple-studio/copy"],
     supportedClients: ["chromium"],
+    requiredDataClasses: ["workspace-content"],
+    requiredContracts: ["generation-intent"],
+    requiredParityRequirementIds: ["parity-copy"],
     evidence,
     flags: [{ id: "flag-1", ownerUserId: "owner-1", hypothesis: "Safer composer", createdAt: NOW, expiresAt: FUTURE, rolloutPercent: 10, safeDefault: "off", status: "active", evidenceIds: ["perf-ar-lcp", "perf-en-lcp"] }],
     incidents: [{ id: "incident-1", severity: "minor", status: "resolved", impactedServices: ["copy"], startedAt: NOW, resolvedAt: NOW, publicSummary: { ar: "تم الحل", en: "Resolved" } }],
-    recoveryObjectives: [{ dataClass: "workspace-content", rpoSeconds: 300, rtoSeconds: 3_600 }],
-    restoreDrills: [{ id: "drill-1", dataClass: "workspace-content", buildId: "build-1", startedAt: NOW, completedAt: NOW, observedDataLossSeconds: 30, observedRecoverySeconds: 600, outcome: "passed", expiresAt: FUTURE }],
-    contractMigrations: [{ id: "migration-1", contract: "generation-intent", buildId: "build-1", phase: "expand", status: "verified", compatibilityVerified: true, rollbackVerified: true, observedAt: NOW, expiresAt: FUTURE }],
-    parity: [{ id: "parity-copy", feature: "Brand-aware copy", buildId: "build-1", evaluatedAt: NOW, expiresAt: FUTURE, requiredLocales: ["ar", "en"], evidenceIds: ["perf-ar-lcp", "perf-en-lcp"], productSignoffUserId: "product-1", engineeringSignoffUserId: "engineer-1", status: "passed" }],
+    recoveryObjectives: [{ dataClass: "workspace-content", rpoSeconds: 300, rtoSeconds: 3_600, artifactDigest: `sha256:${"c".repeat(64)}` }],
+    restoreDrills: [{ id: "drill-1", dataClass: "workspace-content", buildId: "build-1", startedAt: NOW, completedAt: NOW, observedDataLossSeconds: 30, observedRecoverySeconds: 600, outcome: "passed", expiresAt: FUTURE, artifactDigest: `sha256:${"d".repeat(64)}` }],
+    contractMigrations: (["expand", "migrate", "contract"] as const).map((phase, index) => ({ id: `migration-${index}`, contract: "generation-intent", buildId: "build-1", phase, status: "verified", compatibilityVerified: true, rollbackVerified: true, observedAt: NOW, expiresAt: FUTURE, artifactDigest: `sha256:${"e".repeat(64)}` })),
+    parity: [{ id: "parity-copy", feature: "Brand-aware copy", buildId: "build-1", evaluatedAt: NOW, expiresAt: FUTURE, artifactDigest: `sha256:${"f".repeat(64)}`, requiredLocales: ["ar", "en"], evidenceIds: ["perf-ar-lcp", "perf-en-lcp"], productSignoffUserId: "product-1", engineeringSignoffUserId: "engineer-1", status: "passed" }],
   };
 }
 
@@ -55,7 +58,7 @@ describe("release readiness policy", () => {
 });
 
 describe("privacy-safe product telemetry", () => {
-  const base = { schema: "product-telemetry-event/v1", eventId: "pte_abcdefgh", workspacePseudonym: `wsp_${"a".repeat(32)}`, sessionPseudonym: `ses_${"b".repeat(32)}`, occurredAt: NOW, locale: "ar", direction: "rtl", consentRevision: "consent_rev1", buildId: "build-1" } as const;
+  const base = { schema: "product-telemetry-event/v1", eventId: "pte_abcdefgh", workspacePseudonym: `wsp_${"a".repeat(32)}`, sessionPseudonym: `ses_${"b".repeat(32)}`, occurredAt: NOW, locale: "ar", direction: "rtl", consentRevision: "consent_rev1", consentPurpose: "product_analytics", buildId: "build-1" } as const;
 
   it("accepts only enumerated low-cardinality product facts", () => {
     expect(parseProductTelemetryEvent({ ...base, name: "generation_requested", properties: { mediaKind: "video", aspectRatio: "9:16", providerFamily: "replicate", brandProfileAttached: true } })).toMatchObject({ name: "generation_requested", locale: "ar", direction: "rtl" });

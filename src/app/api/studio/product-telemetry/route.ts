@@ -9,7 +9,7 @@ export const POST = withStudioAuth<undefined>({ route: "/api/studio/product-tele
   const key = request.headers.get("idempotency-key")?.trim() || "";
   if (key.length < 8 || key.length > 200) return noStoreJson({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED" }, { status: 400 });
   try {
-    const result = await getReleaseControlService().telemetry(authz.workspaceId, await request.json(), key);
+    const result = await getReleaseControlService().telemetry(authz.workspaceId, authz.userId, authz.authContextId, await request.json(), key);
     return noStoreJson({ success: true, ...result }, { status: result.replayed ? 200 : 202 });
   } catch (error) {
     if (error instanceof ReleaseControlConflictError) return noStoreJson({ success: false, code: "IDEMPOTENCY_CONFLICT" }, { status: 409 });

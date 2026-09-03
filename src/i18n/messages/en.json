@@ -161,6 +161,7 @@
     "title": "Release quality",
     "description": "A fail-closed release decision across performance, WCAG 2.2 AA, flags, incidents, recovery, migrations, and Arabic/English parity.",
     "buildId": "Build ID",
+    "manifestBuild": "Server manifest build: {build}",
     "refresh": "Evaluate",
     "ready": "Release gates passed",
     "blocked": "Release is blocked",

@@ -8,6 +8,7 @@ export interface EvidenceEnvelope {
   buildId: string;
   collectedAt: Date;
   expiresAt: Date;
+  artifactDigest: string;
   outcome: EvidenceOutcome;
   locale: SupportedLocale;
   direction: LayoutDirection;
@@ -75,6 +76,7 @@ export interface RecoveryObjective {
   dataClass: string;
   rpoSeconds: number;
   rtoSeconds: number;
+  artifactDigest: string;
 }
 
 export interface RestoreDrillEvidence {
@@ -87,6 +89,7 @@ export interface RestoreDrillEvidence {
   observedRecoverySeconds: number;
   outcome: EvidenceOutcome;
   expiresAt: Date;
+  artifactDigest: string;
 }
 
 export interface ContractMigrationEvidence {
@@ -99,6 +102,7 @@ export interface ContractMigrationEvidence {
   rollbackVerified: boolean;
   observedAt: Date;
   expiresAt: Date;
+  artifactDigest: string;
 }
 
 export interface ParityRequirement {
@@ -107,6 +111,7 @@ export interface ParityRequirement {
   buildId: string;
   evaluatedAt: Date;
   expiresAt: Date;
+  artifactDigest: string;
   requiredLocales: SupportedLocale[];
   evidenceIds: string[];
   productSignoffUserId: string | null;
@@ -121,6 +126,9 @@ export interface ReleaseReadinessInput {
   evaluatedAt: Date;
   requiredRoutes: string[];
   supportedClients: string[];
+  requiredDataClasses: string[];
+  requiredContracts: string[];
+  requiredParityRequirementIds: string[];
   evidence: ReleaseEvidence[];
   flags: ReleaseFlag[];
   incidents: PublicIncident[];
@@ -131,6 +139,9 @@ export interface ReleaseReadinessInput {
 }
 
 export type ReleaseBlockerCode =
+  | "RELEASE_MANIFEST_INVALID"
+  | "RELEASE_INVENTORY_MISSING"
+  | "ATTESTATION_INVALID"
   | "EVIDENCE_MISSING"
   | "EVIDENCE_STALE"
   | "EVIDENCE_FAILED"

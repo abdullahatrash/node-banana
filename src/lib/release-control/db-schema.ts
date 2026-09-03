@@ -36,6 +36,20 @@ export const productTelemetryEvents = pgTable("product_telemetry_events", {
   workspacePseudonymCheck: check("product_telemetry_events_workspace_pseudonym_check", sql`${table.workspacePseudonym} ~ '^wsp_[a-f0-9]{32,64}$' and ${table.sessionPseudonym} ~ '^ses_[a-f0-9]{32,64}$' and octet_length(${table.event}::text) <= 8192`),
 }));
 
+export const productTelemetryConsents = pgTable("product_telemetry_consents", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  revision: integer("revision").notNull(),
+  purpose: text("purpose").notNull(),
+  status: text("status").notNull(),
+  issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "product_telemetry_consents_pk", columns: [table.workspaceId, table.userId, table.revision] }),
+  activeIdx: index("product_telemetry_consents_active_idx").on(table.workspaceId, table.userId, table.status, table.expiresAt),
+  valuesCheck: check("product_telemetry_consents_values_check", sql`${table.revision} > 0 and ${table.purpose} = 'product_analytics' and ${table.status} in ('active','revoked') and ${table.expiresAt} > ${table.issuedAt}`),
+}));
+
 export const releaseControlMutationReceipts = pgTable("release_control_mutation_receipts", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
   idempotencyKey: text("idempotency_key").notNull(),

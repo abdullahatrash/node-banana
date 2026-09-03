@@ -5,17 +5,11 @@ import { ReleaseControlConflictError } from "@/lib/release-control/repository";
 import { getReleaseControlService } from "@/lib/release-control/production";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
-const querySchema = z.object({ buildId: z.string().min(1).max(120), routes: z.string().min(1), clients: z.string().min(1) }).strict();
 const idempotencyKey = (request: NextRequest) => request.headers.get("idempotency-key")?.trim() || "";
 
 export const GET = withStudioAuth<undefined>({ route: "/api/studio/release-control", action: "read" }, async (request: NextRequest, authz) => {
-  const query = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
-  if (!query.success) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
-  const routes = query.data.routes.split(",").map((item) => item.trim()).filter((item) => item.startsWith("/"));
-  const clients = query.data.clients.split(",").map((item) => item.trim()).filter(Boolean);
-  if (!routes.length || !clients.length) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
   const service = getReleaseControlService();
-  const [snapshot, readiness] = await Promise.all([service.snapshot(authz.workspaceId), service.readiness(authz.workspaceId, query.data.buildId, routes, clients)]);
+  const [snapshot, readiness] = await Promise.all([service.snapshot(authz.workspaceId), service.readiness(authz.workspaceId)]);
   return noStoreJson({ success: true, snapshot, readiness });
 });
 

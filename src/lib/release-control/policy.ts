@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   AccessibilityCriterion,
+  ContractMigrationEvidence,
   EvidenceEnvelope,
   ReleaseBlocker,
   ReleaseEvidence,
@@ -48,6 +49,8 @@ function pushEvidenceOutcome(blockers: ReleaseBlocker[], evidence: ReleaseEviden
 export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseReadinessDecision {
   const blockers: ReleaseBlocker[] = [];
   const liveEvidence = new Map<string, ReleaseEvidence>();
+
+  if (!input.requiredRoutes.length || !input.supportedClients.length || !input.requiredDataClasses.length || !input.requiredContracts.length || !input.requiredParityRequirementIds.length) blockers.push({ code: "RELEASE_MANIFEST_INVALID", subject: input.buildId, detail: "The server-owned release inventory must be non-empty." });
 
   for (const item of input.evidence) {
     if (item.buildId !== input.buildId || item.collectedAt > input.evaluatedAt || item.expiresAt <= input.evaluatedAt) {
@@ -104,10 +107,15 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
       blockers.push({ code: "RESTORE_DRILL_FAILED", subject: objective.dataClass, detail: "No current restore drill meets the recovery objective." });
     }
   }
+  for (const dataClass of input.requiredDataClasses) if (!input.recoveryObjectives.some((item) => item.dataClass === dataClass)) blockers.push({ code: "RELEASE_INVENTORY_MISSING", subject: `recovery:${dataClass}`, detail: "The manifest requires a recovery objective and passing restore evidence." });
 
   for (const migration of input.contractMigrations) {
     const safe = migration.buildId === input.buildId && migration.expiresAt > input.evaluatedAt && migration.status === "verified" && migration.compatibilityVerified && migration.rollbackVerified;
     if (!safe) blockers.push({ code: "CONTRACT_MIGRATION_UNSAFE", subject: migration.id, detail: `${migration.contract} ${migration.phase} is not verified and reversible for this build.` });
+  }
+  for (const contract of input.requiredContracts) {
+    const phases = new Set(input.contractMigrations.filter((item) => item.contract === contract).map((item) => item.phase));
+    if (!["expand", "migrate", "contract"].every((phase) => phases.has(phase as ContractMigrationEvidence["phase"]))) blockers.push({ code: "RELEASE_INVENTORY_MISSING", subject: `contract:${contract}`, detail: "The manifest requires verified expand, migrate, and contract evidence." });
   }
 
   for (const requirement of input.parity) {
@@ -118,6 +126,7 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
       blockers.push({ code: "PARITY_UNVERIFIED", subject: requirement.id, detail: "Parity requires current evidence, Arabic and English coverage, and independent product and engineering sign-off." });
     }
   }
+  for (const id of input.requiredParityRequirementIds) if (!input.parity.some((item) => item.id === id)) blockers.push({ code: "RELEASE_INVENTORY_MISSING", subject: `parity:${id}`, detail: "The manifest requires a current bilingual parity decision." });
 
   return {
     schema: "release-readiness-decision/v1",
@@ -138,6 +147,7 @@ const commonTelemetry = {
   locale: z.enum(["ar", "en"]),
   direction: z.enum(["rtl", "ltr"]),
   consentRevision: z.string().regex(/^consent_[a-zA-Z0-9_-]{4,80}$/),
+  consentPurpose: z.literal("product_analytics"),
   buildId: z.string().min(1).max(120),
 };
 

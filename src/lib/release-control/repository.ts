@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
-import { productTelemetryEvents, releaseControlMutationReceipts, releaseControlRecords } from "./db-schema";
+import { productTelemetryConsents, productTelemetryEvents, releaseControlMutationReceipts, releaseControlRecords } from "./db-schema";
 
 type Db = ReturnType<typeof getDb>;
 export type ReleaseRecordKind = "evidence" | "flag" | "incident" | "recovery_objective" | "restore_drill" | "contract_migration" | "parity_requirement" | "experiment";
 export interface StoredReleaseRecord { workspaceId: string; kind: ReleaseRecordKind; id: string; revision: number; buildId: string | null; document: Record<string, unknown>; createdByUserId: string; createdAt: Date; expiresAt: Date | null }
+export interface TelemetryConsent { schema: "product-telemetry-consent/v1"; workspaceId: string; userId: string; revision: number; purpose: "product_analytics"; status: "active" | "revoked"; issuedAt: Date; expiresAt: Date }
 
 function digest(value: unknown): string { return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`; }
 
@@ -53,6 +54,23 @@ export class ReleaseControlRepository {
       await tx.insert(productTelemetryEvents).values({ workspaceId: input.workspaceId, eventId: String(input.event.eventId), workspacePseudonym: String(input.event.workspacePseudonym), sessionPseudonym: String(input.event.sessionPseudonym), name: String(input.event.name), occurredAt: new Date(String(input.event.occurredAt)), receivedAt: input.now, event: input.event }).onConflictDoNothing();
       await tx.insert(releaseControlMutationReceipts).values({ workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest, response: { accepted: true }, createdAt: input.now });
       return { replayed: false };
+    });
+  }
+
+  async getTelemetryConsent(workspaceId: string, userId: string): Promise<TelemetryConsent | null> {
+    const [row] = await this.database().select().from(productTelemetryConsents).where(and(eq(productTelemetryConsents.workspaceId, workspaceId), eq(productTelemetryConsents.userId, userId))).orderBy(desc(productTelemetryConsents.revision)).limit(1);
+    return row ? { schema: "product-telemetry-consent/v1", workspaceId: row.workspaceId, userId: row.userId, revision: row.revision, purpose: "product_analytics", status: row.status as "active" | "revoked", issuedAt: new Date(row.issuedAt), expiresAt: new Date(row.expiresAt) } : null;
+  }
+
+  async setTelemetryConsent(input: { workspaceId: string; userId: string; status: "active" | "revoked"; expiresAt: Date; idempotencyKey: string; now: Date }): Promise<{ consent: TelemetryConsent; replayed: boolean }> {
+    const requestDigest = digest({ type: "telemetry_consent", userId: input.userId, status: input.status, expiresAt: input.expiresAt.toISOString() });
+    return this.database().transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`telemetry-consent:${input.workspaceId}:${input.userId}`}, 0))`);
+      const [receipt] = await tx.select().from(releaseControlMutationReceipts).where(and(eq(releaseControlMutationReceipts.workspaceId, input.workspaceId), eq(releaseControlMutationReceipts.idempotencyKey, input.idempotencyKey))).limit(1);
+      if (receipt) { if (receipt.requestDigest !== requestDigest) throw new ReleaseControlConflictError(); return { consent: receipt.response as unknown as TelemetryConsent, replayed: true }; }
+      const [current] = await tx.select({ revision: productTelemetryConsents.revision }).from(productTelemetryConsents).where(and(eq(productTelemetryConsents.workspaceId, input.workspaceId), eq(productTelemetryConsents.userId, input.userId))).orderBy(desc(productTelemetryConsents.revision)).limit(1);
+      const consent: TelemetryConsent = { schema: "product-telemetry-consent/v1", workspaceId: input.workspaceId, userId: input.userId, revision: (current?.revision ?? 0) + 1, purpose: "product_analytics", status: input.status, issuedAt: input.now, expiresAt: input.expiresAt };
+      await tx.insert(productTelemetryConsents).values(consent); await tx.insert(releaseControlMutationReceipts).values({ workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest, response: consent as unknown as Record<string, unknown>, createdAt: input.now }); return { consent, replayed: false };
     });
   }
 }

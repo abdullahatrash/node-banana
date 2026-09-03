@@ -498,6 +498,13 @@
       "when": 1788500400000,
       "tag": "0070_release_quality_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1788504000000,
+      "tag": "0071_product_telemetry_consent",
+      "breakpoints": true
     }
   ]
 }
