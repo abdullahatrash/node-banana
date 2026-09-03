@@ -1,5 +1,9 @@
 import type { GovernanceRegionRouteKind } from "./region-policy";
-import { admitProductionGovernanceRegionRoute } from "./production";
+import { GovernanceRegionAdmissionService } from "./region-policy";
+import { DrizzleGovernanceRepository } from "./postgres-repository";
+import { getDb } from "@/lib/db";
+
+const REGION_ADMISSION = new GovernanceRegionAdmissionService(new DrizzleGovernanceRepository(getDb));
 
 export const GOVERNANCE_REGION_ROUTES = {
   assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" },
@@ -22,10 +26,11 @@ export async function requireGovernanceRegionRoute(input: {
   route: (typeof GOVERNANCE_REGION_ROUTES)[keyof typeof GOVERNANCE_REGION_ROUTES];
   configuredRegion: string | undefined;
 }): Promise<void> {
-  const admission = await admitProductionGovernanceRegionRoute({
+  const admission = await REGION_ADMISSION.admit({
     workspaceId: input.workspaceId,
     ...input.route,
     configuredRegion: input.configuredRegion?.trim() || "unconfigured",
+    evaluatedAt: new Date(),
   });
   if (!admission.allowed) throw new GovernanceRegionRouteDeniedError(admission.reason);
 }
