@@ -52,6 +52,7 @@ export function ReviewGuestClient({ reviewToken }: { reviewToken: string }) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const verifyKey = useRef(crypto.randomUUID());
+  const decisionKeys = useRef(new Map<string, string>());
 
   function verify(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -70,10 +71,19 @@ export function ReviewGuestClient({ reviewToken }: { reviewToken: string }) {
 
   function decide(decision: "comment" | "accept" | "approve" | "reject", comment: string | null) {
     if (!verified) return;
+    const logicalSubmission = JSON.stringify({
+      sessionId: verified.sessionId,
+      resourceId: verified.resourceId,
+      revisionDigest: verified.revisionDigest,
+      decision,
+      comment,
+    });
+    const idempotencyKey = decisionKeys.current.get(logicalSubmission) ?? crypto.randomUUID();
+    decisionKeys.current.set(logicalSubmission, idempotencyKey);
     startTransition(async () => {
       setError(null);
       try {
-        await postReview(reviewToken, { action: "decide", sessionId: verified.sessionId, sessionToken: verified.sessionToken, resourceId: verified.resourceId, revisionDigest: verified.revisionDigest, decision, comment, idempotencyKey: crypto.randomUUID() });
+        await postReview(reviewToken, { action: "decide", sessionId: verified.sessionId, sessionToken: verified.sessionToken, resourceId: verified.resourceId, revisionDigest: verified.revisionDigest, decision, comment, idempotencyKey });
         setCompleted(true);
       } catch (failure) { setError(failure instanceof Error ? failure.message : "UNAVAILABLE"); }
     });
