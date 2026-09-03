@@ -12,7 +12,9 @@ export async function POST(request: NextRequest) {
   const rawLimit = new URL(request.url).searchParams.get("limit"); const limit = rawLimit ? Number(rawLimit) : 500;
   try {
     const service = getReleaseControlService();
-    const [backfill, deleted] = await Promise.all([service.backfillTelemetryPrivacyFields(limit), service.deleteExpiredTelemetry(new Date(), Math.min(limit, 1000))]);
+    const backfill = await service.backfillTelemetryPrivacyFields(limit);
+    if (backfill.status === "failed") return noStoreJson({ success: false, code: "TELEMETRY_BACKFILL_FAILED", backfill }, { status: 500 });
+    const deleted = await service.deleteExpiredTelemetry(new Date(), Math.min(limit, 1000));
     return noStoreJson({ success: true, deleted, backfill });
   }
   catch (error) { if (error instanceof TypeError) return noStoreJson({ success: false, code: error.message }, { status: 400 }); throw error; }

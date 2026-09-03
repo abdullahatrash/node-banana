@@ -589,6 +589,13 @@
       "when": 1788547200000,
       "tag": "0083_social_post_stable_media_refs",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1788550800000,
+      "tag": "0084_durable_telemetry_backfill_failures",
+      "breakpoints": true
     }
   ]
 }

@@ -89,11 +89,11 @@ export class ReleaseControlRepository {
     return rows.length;
   }
 
-  async backfillTelemetryPrivacyFields(limit: number): Promise<{ processed: number; remaining: number; status: "running" | "completed" }> {
-    const result = await this.database().execute(sql`select * from backfill_product_telemetry_privacy_fields(${limit})`);
+  async backfillTelemetryPrivacyFields(limit: number): Promise<{ processed: number; remaining: number; status: "running" | "completed" | "failed" }> {
+    const result = await this.database().execute(sql`select * from run_product_telemetry_privacy_backfill(${limit})`);
     const row = (result as unknown as { rows?: Array<Record<string, unknown>> }).rows?.[0] ?? (result as unknown as Array<Record<string, unknown>>)[0];
     if (!row) throw new Error("TELEMETRY_BACKFILL_RESULT_MISSING");
-    const status = row.status === "completed" ? "completed" : "running";
+    const status = row.status === "completed" ? "completed" : row.status === "failed" ? "failed" : "running";
     return { processed: Number(row.processed), remaining: Number(row.remaining), status };
   }
 
