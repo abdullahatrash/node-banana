@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { evaluateReleaseReadiness, parseProductTelemetryEvent } from "./policy";
-import { experimentSchema, releaseRecordInputSchema, type ReleaseRecordInput } from "./schemas";
+import { experimentSchema, releaseFlagSchema, releaseRecordInputSchema, type ReleaseRecordInput } from "./schemas";
 import type { ReleaseControlRepository, StoredReleaseRecord } from "./repository";
 import type { AccessibilityEvidence, ContractMigrationEvidence, ParityRequirement, PerformanceEvidence, PublicIncident, RecoveryObjective, ReleaseEvidence, ReleaseFlag, ReleaseReadinessDecision, RestoreDrillEvidence } from "./types";
 import { verifyReleaseAttestation, type ReleaseAttestationKeyring } from "./attestation";
@@ -76,6 +76,10 @@ export class ReleaseControlService {
     const consentRevision = `consent_r${String(consent.revision).padStart(4, "0")}`;
     const event = parseProductTelemetryEvent({ ...value, workspacePseudonym, sessionPseudonym, consentRevision, consentPurpose: consent.purpose, regionClassification });
     if (event.occurredAt.getTime() > now.getTime() + 60_000 || event.occurredAt.getTime() < now.getTime() - 7 * 86_400_000) throw new TypeError("TELEMETRY_TIME_INVALID");
+    if (event.name === "release_flag_evaluated") {
+      const records = await this.repository.listLatest(workspaceId, "flag"); const row = records.find((item) => item.id === event.properties.flagId); if (!row) throw new TypeError("RELEASE_FLAG_NOT_ACTIVE");
+      const releaseFlag = releaseFlagSchema.parse(row.document); if (releaseFlag.status !== "active" || releaseFlag.buildId !== event.buildId || new Date(releaseFlag.expiresAt) <= now || event.properties.rolloutRevision !== row.revision || event.properties.enabled && !event.properties.eligible) throw new TypeError("RELEASE_FLAG_EVALUATION_INVALID");
+    }
     if (event.name === "experiment_exposed" || event.name === "experiment_outcome") {
       const records = await this.repository.listLatest(workspaceId, "experiment"); const row = records.find((item) => item.id === event.properties.experimentId); if (!row) throw new TypeError("EXPERIMENT_NOT_ACTIVE");
       const experiment = experimentSchema.parse(row.document); if (experiment.status !== "active" || new Date(experiment.startsAt) > now || new Date(experiment.expiresAt) <= now) throw new TypeError("EXPERIMENT_NOT_ACTIVE");
@@ -91,11 +95,12 @@ export class ReleaseControlService {
     return this.repository.appendTelemetry({ workspaceId, subjectPseudonym, event: event as unknown as Record<string, unknown>, idempotencyKey, now, expiresAt });
   }
   async assignExperiment(workspaceId: string, userId: string, experimentId: string, idempotencyKey: string, now = new Date()) {
+    const consent = await this.repository.getTelemetryConsent(workspaceId, userId); if (!consent || consent.status !== "active" || consent.purpose !== "product_analytics" || consent.expiresAt <= now) throw new TypeError("TELEMETRY_CONSENT_REQUIRED");
     const records = await this.repository.listLatest(workspaceId, "experiment"); const row = records.find((item) => item.id === experimentId); if (!row) throw new TypeError("EXPERIMENT_NOT_ACTIVE");
     const experiment = experimentSchema.parse(row.document); const manifest = this.trust.manifest?.(workspaceId, now); if (!manifest || experiment.buildId !== manifest.buildId || experiment.status !== "active" || new Date(experiment.startsAt) > now || new Date(experiment.expiresAt) <= now) throw new TypeError("EXPERIMENT_NOT_ACTIVE");
     const subjectPseudonym = this.subjectPseudonym(workspaceId, userId); const bucket = Number.parseInt(createHmac("sha256", this.telemetrySecret).update(`experiment:${experiment.id}:${subjectPseudonym}:${row.revision}`).digest("hex").slice(0, 8), 16) % 10_000;
     const treatments = experiment.variants.filter((variant) => variant !== "control"); const variant = bucket < experiment.allocationPercent * 100 ? treatments[bucket % treatments.length]! : "control";
-    return this.repository.assignExperiment({ workspaceId, experimentId, subjectPseudonym, assignmentRevision: row.revision, variant, expiresAt: new Date(experiment.expiresAt), idempotencyKey, now });
+    return this.repository.assignExperiment({ workspaceId, experimentId, subjectPseudonym, assignmentRevision: row.revision, variant, expiresAt: new Date(Math.min(new Date(experiment.expiresAt).getTime(), consent.expiresAt.getTime())), idempotencyKey, now });
   }
   deleteExpiredTelemetry(now = new Date(), limit = 500) { if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new TypeError("TELEMETRY_RETENTION_LIMIT_INVALID"); return this.repository.deleteExpiredTelemetry(now, limit); }
   getTelemetryConsent(workspaceId: string, userId: string) { return this.repository.getTelemetryConsent(workspaceId, userId); }

@@ -97,6 +97,8 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
     if (flag.evidenceIds.length === 0 || flag.evidenceIds.some((id) => !liveEvidence.has(id))) blockers.push({ code: "FLAG_EVIDENCE_MISSING", subject: flag.id, detail: "Active release flag lacks current evidence." });
     if (!flag.eligibility.roles.length || !flag.eligibility.entitlements.length || !flag.eligibility.locales.length || flag.telemetryEventName !== "release_flag_evaluated" || !flag.rollback.ownerUserId) blockers.push({ code: "FLAG_UNSAFE_DEFAULT", subject: flag.id, detail: "Release flag eligibility, evaluation telemetry, and rollback controls are mandatory." });
     if (flag.dependencyFlagIds.some((id) => !input.flags.some((dependency) => dependency.id === id && dependency.status === "active" && dependency.buildId === input.buildId && dependency.expiresAt > input.evaluatedAt))) blockers.push({ code: "FLAG_DEPENDENCY_INVALID", subject: flag.id, detail: "A release-flag dependency is missing, retired, stale, or belongs to another build." });
+    const visit = (id: string, path: Set<string>): boolean => { if (path.has(id)) return true; const next = input.flags.find((item) => item.id === id); if (!next) return false; const extended = new Set(path).add(id); return next.dependencyFlagIds.some((dependency) => visit(dependency, extended)); };
+    if (visit(flag.id, new Set())) blockers.push({ code: "FLAG_DEPENDENCY_INVALID", subject: flag.id, detail: "Release-flag dependencies contain a cycle." });
   }
 
   for (const incident of input.incidents) {
