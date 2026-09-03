@@ -4,7 +4,7 @@ import { OperationStatusService } from "@/lib/agent-runtime/operation-status/ser
 import { MemoryModelRoutingRepository } from "../memory-repository";
 import { ReplicatePredictionAdapter } from "../replicate-contract";
 import { GenerationExecutionService } from "../execution";
-import { resolveTestModel, testOutputContract, testRef, TEST_RIGHTS } from "./fixtures";
+import { resolveTestModel, testOutputContract, testRef, TEST_CREDENTIAL_REF, TEST_RIGHTS } from "./fixtures";
 import type { GenerationIntent } from "../types";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
@@ -15,11 +15,11 @@ describe("GenerationExecutionService", () => {
   it("requires the sealed prompt and projects admitted provider work durably", async () => {
     const routing = new MemoryModelRoutingRepository();
     await routing.createIntent(intent, "intent-seed", "sha256:seed");
-    const create = vi.fn(async () => ({ id: "prediction", status: "processing" as const }));
+    const create = vi.fn(async () => ({ id: "prediction", status: "processing" as const, version: intent.selectedModel.version }));
     const provider = new ReplicatePredictionAdapter(
       { create, get: vi.fn(), cancel: vi.fn() },
       { claim: vi.fn(async () => ({ kind: "claimed" as const })), bindPrediction: vi.fn(async () => "bound" as const), markOutcomeUnknown: vi.fn() },
-      { ingest: vi.fn() }, () => at, resolveTestModel,
+      { ingest: vi.fn() }, TEST_CREDENTIAL_REF, () => at, resolveTestModel,
     );
     const service = new GenerationExecutionService(routing, new OperationStatusService(new MemoryOperationStatusRepository(), () => at), provider, () => at, resolveTestModel);
     const rejected = await service.execute({ workspaceId: "ws", userId: "user", intentId: "intent", rawPrompt: "wrong", sourceUrls: [], idempotencyKey: "execute-wrong" });

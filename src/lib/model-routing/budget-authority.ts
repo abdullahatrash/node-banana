@@ -22,15 +22,16 @@ export const DENYING_GENERATION_BUDGET_AUTHORITY: GenerationBudgetAuthority = {
 
 /** Test-only in-memory authority; production uses the runtime BudgetService adapter. */
 export class MemoryGenerationBudgetAuthority implements GenerationBudgetAuthority {
-  readonly reservations = new Map<string, { amount: number; reservationIds: string[] }>();
+  readonly reservations = new Map<string, { quotedAmount: number; actualAmount: number | null; releasedAmount: number; status: "held" | "settled" | "released" | "outcome_unknown"; reservationIds: string[] }>();
   constructor(private readonly ceilingUsd = Number.POSITIVE_INFINITY) {}
   async reserve(input: Parameters<GenerationBudgetAuthority["reserve"]>[0]) {
     const existing = this.reservations.get(`${input.workspaceId}:${input.intentId}`);
-    if (existing) return { kind: "reserved" as const, reservationIds: [...existing.reservationIds] };
+    if (existing) return existing.status !== "released" && existing.quotedAmount === input.quote.amount * input.quote.quantity ? { kind: "reserved" as const, reservationIds: [...existing.reservationIds] } : { kind: "unavailable" as const, code: "BUDGET_RESERVATION_CONFLICT" };
     const amount = input.quote.amount * input.quote.quantity;
-    if (amount > this.ceilingUsd) return { kind: "denied" as const, code: "BUDGET_LIMIT_EXCEEDED" };
+    const consumed = [...this.reservations.values()].reduce((sum, row) => sum + (row.status === "settled" ? row.actualAmount ?? row.quotedAmount : row.status === "released" ? 0 : row.quotedAmount), 0);
+    if (consumed + amount > this.ceilingUsd) return { kind: "denied" as const, code: "BUDGET_LIMIT_EXCEEDED" };
     const reservationIds = [`generation:${input.workspaceId}:${input.intentId}`];
-    this.reservations.set(`${input.workspaceId}:${input.intentId}`, { amount, reservationIds });
+    this.reservations.set(`${input.workspaceId}:${input.intentId}`, { quotedAmount: amount, actualAmount: null, releasedAmount: 0, status: "held", reservationIds });
     return { kind: "reserved" as const, reservationIds };
   }
 }

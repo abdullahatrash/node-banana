@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
-import { resolveInferenceKey, isInferenceKeyError } from "@/lib/byok/resolveInferenceKey";
+import { resolveDurableProviderKey } from "@/lib/byok/repository";
 import { getDb } from "@/lib/db";
 import { assets, brandProfiles } from "@/lib/db/schema";
 import { productionGenerationExecution } from "@/lib/model-routing/execution-production";
@@ -26,7 +26,7 @@ export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>(
   if (!intent) return noStoreJson({ success: false, code: "GENERATION_INTENT_NOT_FOUND" }, { status: 404 });
   const [brand] = await getDb().select({ acceptedAt: brandProfiles.acceptedAt, profile: brandProfiles.profile }).from(brandProfiles).where(and(eq(brandProfiles.workspaceId, authz.workspaceId), eq(brandProfiles.id, intent.brand.profileId), eq(brandProfiles.revision, intent.brand.revision), eq(brandProfiles.status, "active"))).limit(1);
   if (!brand?.acceptedAt || canonicalDigest(brand.profile) !== intent.brand.digest) return noStoreJson({ success: false, code: "BRAND_REVISION_NOT_ACCEPTED" }, { status: 409 });
-  const [budget] = await getDb().select({ status: modelGenerationBudgetReservations.status, amount: modelGenerationBudgetReservations.amountUsd }).from(modelGenerationBudgetReservations).where(and(eq(modelGenerationBudgetReservations.workspaceId, authz.workspaceId), eq(modelGenerationBudgetReservations.intentId, intent.id))).limit(1);
+  const [budget] = await getDb().select({ status: modelGenerationBudgetReservations.status, amount: modelGenerationBudgetReservations.quotedAmountUsd }).from(modelGenerationBudgetReservations).where(and(eq(modelGenerationBudgetReservations.workspaceId, authz.workspaceId), eq(modelGenerationBudgetReservations.intentId, intent.id))).limit(1);
   if (!budget || budget.status !== "held" || Number(budget.amount) !== intent.quote.amount * intent.quote.quantity) return noStoreJson({ success: false, code: "AUTHORITATIVE_BUDGET_RESERVATION_UNAVAILABLE" }, { status: 409 });
   const [rights] = await getDb().select({ digest: inspirationRightsSnapshots.digest, permittedRemix: inspirationRightsSnapshots.permittedRemix }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, authz.workspaceId), eq(inspirationRightsSnapshots.id, intent.rights.snapshotId), eq(inspirationRightsSnapshots.revision, intent.rights.revision))).limit(1);
   if (!rights || rights.digest !== intent.rights.digest || rights.permittedRemix !== intent.rights.permittedRemix) return noStoreJson({ success: false, code: "RIGHTS_SNAPSHOT_MISMATCH" }, { status: 409 });
@@ -35,10 +35,9 @@ export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>(
   const sourceRows = sourceIds.length ? await getDb().select({ id: assets.id, storageKey: assets.storageKey }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
   if (sourceRows.length !== sourceIds.length || sourceRows.some((asset) => !asset.storageKey)) return noStoreJson({ success: false, code: "SOURCE_ASSET_UNAVAILABLE" }, { status: 409 });
   const sourceUrls = await Promise.all(sourceRows.map(async (asset) => (await createPresignedDownload({ key: asset.storageKey! })).downloadUrl));
-  let token: string;
-  try { token = await resolveInferenceKey({ headerKey: request.headers.get("x-replicate-api-key"), workspaceId: authz.workspaceId, provider: "replicate" }); }
-  catch (error) { if (isInferenceKeyError(error)) return noStoreJson({ success: false, code: error.code, error: error.message }, { status: 401 }); throw error; }
-  const result = await productionGenerationExecution(token).execute({ workspaceId: authz.workspaceId, userId: authz.userId, intentId, rawPrompt: parsed.data.prompt, sourceUrls, idempotencyKey: key });
+  const credential = await resolveDurableProviderKey(authz.workspaceId, "replicate");
+  if (!credential) return noStoreJson({ success: false, code: "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", error: "Async generation requires a Workspace-stored Replicate key; transient request headers are not accepted." }, { status: 409 });
+  const result = await productionGenerationExecution(credential).execute({ workspaceId: authz.workspaceId, userId: authz.userId, intentId, rawPrompt: parsed.data.prompt, sourceUrls, idempotencyKey: key });
   const status = result.kind === "accepted" ? 202 : result.kind === "not_found" ? 404 : result.kind === "invalid" || result.kind === "expired" ? 409 : 503;
   return noStoreJson({ success: result.kind === "accepted", result }, { status });
 });

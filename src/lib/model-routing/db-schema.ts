@@ -2,6 +2,7 @@ import { check, index, integer, jsonb, numeric, pgTable, primaryKey, text, times
 import { sql } from "drizzle-orm";
 import { user, workspaces } from "@/lib/db/schema";
 import type { ExactModelRef, FallbackAuthorization, GenerationIntent, InspirationRightsSnapshot } from "./types";
+import type { DurableProviderCredentialRef } from "@/lib/byok/repository";
 
 export const modelFallbackAuthorizations = pgTable("model_fallback_authorizations", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), revision: integer("revision").notNull(),
@@ -22,17 +23,17 @@ export const modelRoutingMutationReceipts = pgTable("model_routing_mutation_rece
 }, (table) => ({ pk: primaryKey({ name: "model_routing_mutation_receipts_pk", columns: [table.workspaceId, table.idempotencyKey] }), digestCheck: check("model_routing_mutation_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.resourceKind} in ('fallback_authorization','generation_intent') and length(${table.idempotencyKey}) between 8 and 200`) }));
 
 export const replicatePredictionIdentities = pgTable("replicate_prediction_identities", {
-  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), intentId: text("intent_id").notNull(), predictionId: text("prediction_id").notNull(), model: jsonb("model").$type<ExactModelRef>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), intentId: text("intent_id").notNull(), predictionId: text("prediction_id").notNull(), model: jsonb("model").$type<ExactModelRef>().notNull(), executedVersion: text("executed_version"), credentialRef: jsonb("credential_ref").$type<DurableProviderCredentialRef>(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 }, (table) => ({ pk: primaryKey({ name: "replicate_prediction_identities_pk", columns: [table.workspaceId, table.intentId] }), predictionUnique: uniqueIndex("replicate_prediction_identities_prediction_unique").on(table.predictionId), predictionCheck: check("replicate_prediction_identities_prediction_check", sql`length(${table.predictionId}) between 1 and 200`) }));
 
 export const modelFallbackSpendReservations = pgTable("model_fallback_spend_reservations", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
   authorizationId: text("authorization_id").notNull(), intentId: text("intent_id").notNull(),
-  amountUsd: numeric("amount_usd", { precision: 12, scale: 6 }).notNull(), status: text("status").notNull(),
+  amountUsd: numeric("amount_usd", { precision: 12, scale: 6 }).notNull(), quotedAmountUsd: numeric("quoted_amount_usd", { precision: 12, scale: 6 }).notNull(), actualAmountUsd: numeric("actual_amount_usd", { precision: 12, scale: 6 }), releasedAmountUsd: numeric("released_amount_usd", { precision: 12, scale: 6 }).notNull(), status: text("status").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(), releasedAt: timestamp("released_at", { withTimezone: true }),
 }, (table) => ({
   pk: primaryKey({ name: "model_fallback_spend_reservations_pk", columns: [table.workspaceId, table.authorizationId, table.intentId] }),
-  grantFk: check("model_fallback_spend_reservations_status_check", sql`${table.amountUsd}::numeric > 0 and ${table.status} in ('held','released')`),
+  grantFk: check("model_fallback_spend_reservations_status_check", sql`${table.amountUsd}::numeric > 0 and ${table.quotedAmountUsd}::numeric > 0 and ${table.releasedAmountUsd}::numeric >= 0 and (${table.actualAmountUsd} is null or ${table.actualAmountUsd}::numeric >= 0) and ${table.status} in ('held','released','settled','outcome_unknown')`),
   activeIdx: index("model_fallback_spend_reservations_active_idx").on(table.workspaceId, table.authorizationId, table.status),
 }));
 
@@ -40,7 +41,7 @@ export const modelProviderEffectClaims = pgTable("model_provider_effect_claims",
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
   intentId: text("intent_id").notNull(), provider: text("provider").notNull(), state: text("state").notNull(),
   claimToken: text("claim_token").notNull(), predictionId: text("prediction_id"),
-  providerStatus: text("provider_status").notNull(), nextPollAt: timestamp("next_poll_at", { withTimezone: true }).notNull(), pollAttempts: integer("poll_attempts").notNull(), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  providerStatus: text("provider_status").notNull(), nextPollAt: timestamp("next_poll_at", { withTimezone: true }).notNull(), pollAttempts: integer("poll_attempts").notNull(), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }).notNull(), credentialRef: jsonb("credential_ref").$type<DurableProviderCredentialRef>(), executedVersion: text("executed_version"),
   claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 }, (table) => ({
   pk: primaryKey({ name: "model_provider_effect_claims_pk", columns: [table.workspaceId, table.intentId] }),
@@ -58,10 +59,10 @@ export const modelGenerationBudgetReservations = pgTable("model_generation_budge
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
   intentId: text("intent_id").notNull(), policyId: text("policy_id").notNull(), policyRevisionId: text("policy_revision_id").notNull(),
   periodStartsAt: timestamp("period_starts_at", { withTimezone: true }).notNull(), periodEndsAt: timestamp("period_ends_at", { withTimezone: true }),
-  amountUsd: numeric("amount_usd", { precision: 12, scale: 6 }).notNull(), status: text("status").notNull(),
+  amountUsd: numeric("amount_usd", { precision: 12, scale: 6 }).notNull(), quotedAmountUsd: numeric("quoted_amount_usd", { precision: 12, scale: 6 }).notNull(), actualAmountUsd: numeric("actual_amount_usd", { precision: 12, scale: 6 }), releasedAmountUsd: numeric("released_amount_usd", { precision: 12, scale: 6 }).notNull(), status: text("status").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 }, (table) => ({
   pk: primaryKey({ name: "model_generation_budget_reservations_pk", columns: [table.workspaceId, table.intentId] }),
   periodIdx: index("model_generation_budget_reservations_period_idx").on(table.workspaceId, table.policyId, table.periodStartsAt, table.status),
-  valueCheck: check("model_generation_budget_reservations_value_check", sql`${table.amountUsd}::numeric > 0 and ${table.status} in ('held','released','settled','outcome_unknown')`),
+  valueCheck: check("model_generation_budget_reservations_value_check", sql`${table.amountUsd}::numeric > 0 and ${table.quotedAmountUsd}::numeric > 0 and ${table.releasedAmountUsd}::numeric >= 0 and (${table.actualAmountUsd} is null or ${table.actualAmountUsd}::numeric >= 0) and ${table.status} in ('held','released','settled','outcome_unknown')`),
 }));

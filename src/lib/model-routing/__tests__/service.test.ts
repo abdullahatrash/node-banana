@@ -5,6 +5,13 @@ import { ModelRoutingService } from "../service";
 import { resolveTestModel, testRef, TEST_REMIX_BRIEF, TEST_RIGHTS } from "./fixtures";
 const at = new Date("2026-09-03T00:00:00Z");
 describe("ModelRoutingService", () => {
+  it("counts settled actual spend toward the hard generation ceiling", async () => {
+    const budget = new MemoryGenerationBudgetAuthority(1);
+    const quote = { currency: "USD" as const, amount: 0.1, basis: "second" as const, quantity: 6, quotedAt: at, expiresAt: new Date(at.getTime() + 60_000) };
+    expect((await budget.reserve({ workspaceId: "ws", principalId: "u", intentId: "one", model: testRef(5), quote, at })).kind).toBe("reserved");
+    const first = budget.reservations.get("ws:one")!; budget.reservations.set("ws:one", { ...first, status: "settled", actualAmount: 0.6 });
+    expect(await budget.reserve({ workspaceId: "ws", principalId: "u", intentId: "two", model: testRef(5), quote: { ...quote, quantity: 5 }, at })).toMatchObject({ kind: "denied", code: "BUDGET_LIMIT_EXCEEDED" });
+  });
   it("requires explicit authorization and pins brand, locale, rights, model, quote and reservation", async () => {
     const repo = new MemoryModelRoutingRepository(); const service = new ModelRoutingService(repo, () => at, resolveTestModel, new MemoryGenerationBudgetAuthority()); const source = testRef(4); const target = testRef(5);
     const issued = await service.issueAuthorization({ workspaceId: "ws", source, targets: [target], capability: "text_to_video", minimumQuality: "standard", contentLanguage: "ar", arabicVariety: "gulf", verifiedRegion: "replicate-us", executionMode: "async", maxTotalCostUsd: 0.5, expiresAt: new Date("2026-09-04T00:00:00Z"), userId: "u", idempotencyKey: "grant-0001" });

@@ -4,7 +4,7 @@ import { ReplicateHttpClient } from "../replicate-http-client";
 describe("ReplicateHttpClient", () => {
   it("uses the pinned version and bearer credential without a live call", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response(
-      JSON.stringify({ id: "prediction", status: "starting" }),
+      JSON.stringify({ id: "prediction", status: "starting", version: "exact-version" }),
       { status: 201, headers: { "Content-Type": "application/json" } },
     ));
     const client = new ReplicateHttpClient(
@@ -24,13 +24,6 @@ describe("ReplicateHttpClient", () => {
     );
     const headers = fetcher.mock.calls[0]?.[1]?.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer test-token");
-  });
-
-  it("supports an explicitly qualified official-model endpoint", async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id: "p", status: "starting" }), { status: 201, headers: { "Content-Type": "application/json" } }));
-    const client = new ReplicateHttpClient(() => "test-token", fetcher, "https://replicate.invalid/v1");
-    await client.create({ endpoint: "official_model", model: "owner/model", version: "configured-revision", input: { prompt: "x" } });
-    expect(fetcher).toHaveBeenCalledWith("https://replicate.invalid/v1/models/owner/model/predictions", expect.objectContaining({ body: JSON.stringify({ input: { prompt: "x" } }) }));
   });
 
   it("fails closed without a credential", async () => {

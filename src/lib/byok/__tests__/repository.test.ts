@@ -196,4 +196,20 @@ describe("byok/repository", () => {
       expect(resolved).toBeNull();
     });
   });
+
+  describe("durable async credential resolution", () => {
+    it("returns the exact stored key revision as a non-secret reference", async () => {
+      const { resolveDurableProviderKey } = await loadRepository();
+      const { encryptProviderKey } = await import("../crypto");
+      const updatedAt = new Date("2026-09-04T00:00:00.000Z");
+      mockLimit.mockResolvedValue([{ id: "provkey_1", keyEncrypted: encryptProviderKey("r8_test_secret"), updatedAt }]);
+      await expect(resolveDurableProviderKey("ws_1", "replicate")).resolves.toEqual({ key: "r8_test_secret", ref: { id: "provkey_1", provider: "replicate", updatedAt: updatedAt.toISOString() } });
+    });
+
+    it("fails closed when the exact stored revision no longer exists", async () => {
+      const { resolveProviderKeyByRef } = await loadRepository();
+      mockLimit.mockResolvedValue([]);
+      await expect(resolveProviderKeyByRef("ws_1", { id: "provkey_1", provider: "replicate", updatedAt: "2026-09-04T00:00:00.000Z" })).resolves.toBeNull();
+    });
+  });
 });

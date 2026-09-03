@@ -36,6 +36,13 @@ export interface ProviderKeySummary {
   updatedAt: Date;
 }
 
+export interface DurableProviderCredentialRef {
+  id: string;
+  provider: ByokProvider;
+  /** Exact vault-row revision. Rotation deliberately invalidates in-flight resolution. */
+  updatedAt: string;
+}
+
 interface ProviderKeyRow {
   provider: string;
   keyHint: string;
@@ -189,4 +196,36 @@ export async function resolveProviderKey(
 
   if (!row) return null;
   return decryptProviderKey(row.keyEncrypted);
+}
+
+/** Resolve a stored key and pin the exact durable vault revision used by async work. */
+export async function resolveDurableProviderKey(
+  workspaceId: string,
+  provider: ByokProvider,
+): Promise<{ key: string; ref: DurableProviderCredentialRef } | null> {
+  const [row] = await getDb()
+    .select({ id: workspaceProviderKeys.id, keyEncrypted: workspaceProviderKeys.keyEncrypted, updatedAt: workspaceProviderKeys.updatedAt })
+    .from(workspaceProviderKeys)
+    .where(and(eq(workspaceProviderKeys.workspaceId, workspaceId), eq(workspaceProviderKeys.provider, provider)))
+    .limit(1);
+  if (!row) return null;
+  return { key: decryptProviderKey(row.keyEncrypted), ref: { id: row.id, provider, updatedAt: row.updatedAt.toISOString() } };
+}
+
+/** Re-resolve only the exact credential revision admitted for an async effect. */
+export async function resolveProviderKeyByRef(
+  workspaceId: string,
+  ref: DurableProviderCredentialRef,
+): Promise<string | null> {
+  const [row] = await getDb()
+    .select({ keyEncrypted: workspaceProviderKeys.keyEncrypted })
+    .from(workspaceProviderKeys)
+    .where(and(
+      eq(workspaceProviderKeys.workspaceId, workspaceId),
+      eq(workspaceProviderKeys.id, ref.id),
+      eq(workspaceProviderKeys.provider, ref.provider),
+      eq(workspaceProviderKeys.updatedAt, new Date(ref.updatedAt)),
+    ))
+    .limit(1);
+  return row ? decryptProviderKey(row.keyEncrypted) : null;
 }

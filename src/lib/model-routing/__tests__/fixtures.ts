@@ -6,7 +6,7 @@ export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.
   ...model,
   qualification: {
     status: "qualified" as const,
-    endpoint: index % 2 ? "official_model" as const : "versioned" as const,
+    endpoint: "versioned" as const,
     version: `test-immutable-version-${index}`,
     inputSchemaDigest: `sha256:${(index + 1).toString(16).padStart(64, "0")}` as `sha256:${string}`,
     executionPriceUsd: { basis: model.priceUsd.basis, amount: model.priceUsd.basis === "second" ? 0.05 : model.priceUsd.amount },
@@ -30,3 +30,4 @@ export const testOutputContract = (index: number) => {
 };
 export const TEST_RIGHTS = { snapshotId: "rights", revision: 1, digest: `sha256:${"d".repeat(64)}` as `sha256:${string}`, basis: "owned" as const, permittedRemix: "transform" as const, evidenceRefs: ["asset-1"], sourceUrls: [] };
 export const TEST_REMIX_BRIEF = { preserve: ["brand palette"], transform: ["composition"], avoid: ["logos from source"] };
+export const TEST_CREDENTIAL_REF = { id: "provider-key-1", provider: "replicate" as const, updatedAt: "2026-09-03T00:00:00.000Z" };

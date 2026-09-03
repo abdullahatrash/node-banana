@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ReplicatePredictionAdapter } from "../replicate-contract";
 import type { GenerationIntent } from "../types";
-import { resolveTestModel, testOutputContract, testRef, TEST_RIGHTS } from "./fixtures";
+import { resolveTestModel, testOutputContract, testRef, TEST_CREDENTIAL_REF, TEST_RIGHTS } from "./fixtures";
 
 const intent: GenerationIntent = {
   schema: "generation-intent/v1", id: "intent", workspaceId: "ws",
@@ -26,9 +26,10 @@ describe("ReplicatePredictionAdapter mocked contract", () => {
   it("persists prediction identity before canonical artifact ingestion", async () => {
     const order: string[] = [];
     const adapter = new ReplicatePredictionAdapter(
-      { create: vi.fn(async () => ({ id: "pred", status: "succeeded" as const, output: ["url"] })), get: vi.fn(), cancel: vi.fn() },
+      { create: vi.fn(async () => ({ id: "pred", status: "succeeded" as const, version: intent.selectedModel.version, output: ["url"] })), get: vi.fn(), cancel: vi.fn() },
       effectClaims(order),
       { ingest: vi.fn(async () => { order.push("ingest"); return { artifactIds: ["artifact"] }; }) },
+      TEST_CREDENTIAL_REF,
       undefined,
       resolveTestModel,
     );
@@ -38,10 +39,10 @@ describe("ReplicatePredictionAdapter mocked contract", () => {
   });
 
   it("maps aborted to cancelled and transport loss to outcome_unknown without retry", async () => {
-    const create = vi.fn(async () => ({ id: "p", status: "aborted" as const }));
+    const create = vi.fn(async () => ({ id: "p", status: "aborted" as const, version: intent.selectedModel.version }));
     const adapter = new ReplicatePredictionAdapter(
       { create, get: vi.fn(async () => { throw new Error("network"); }), cancel: vi.fn() },
-      effectClaims(), { ingest: vi.fn() }, undefined, resolveTestModel,
+      effectClaims(), { ingest: vi.fn() }, TEST_CREDENTIAL_REF, undefined, resolveTestModel,
     );
     expect(await adapter.submit(intent, {})).toEqual({ state: "cancelled", predictionId: "p" });
     expect((await adapter.poll(intent, "p")).state).toBe("outcome_unknown");
@@ -50,9 +51,9 @@ describe("ReplicatePredictionAdapter mocked contract", () => {
 
   it("claims before create and concurrent/retry submissions never create twice", async () => {
     const effects = effectClaims();
-    const create = vi.fn(async () => ({ id: "p", status: "processing" as const }));
+    const create = vi.fn(async () => ({ id: "p", status: "processing" as const, version: intent.selectedModel.version }));
     const adapter = new ReplicatePredictionAdapter(
-      { create, get: vi.fn(), cancel: vi.fn() }, effects, { ingest: vi.fn() }, undefined, resolveTestModel,
+      { create, get: vi.fn(), cancel: vi.fn() }, effects, { ingest: vi.fn() }, TEST_CREDENTIAL_REF, undefined, resolveTestModel,
     );
     expect((await adapter.submit(intent, {})).state).toBe("waiting_provider");
     expect(await adapter.submit(intent, {})).toEqual({ state: "waiting_provider", predictionId: "p", code: "SUBMISSION_ALREADY_EXISTS" });
@@ -64,10 +65,20 @@ describe("ReplicatePredictionAdapter mocked contract", () => {
     const effects = effectClaims();
     const create = vi.fn(async () => { throw new Error("transport lost"); });
     const adapter = new ReplicatePredictionAdapter(
-      { create, get: vi.fn(), cancel: vi.fn() }, effects, { ingest: vi.fn() }, undefined, resolveTestModel,
+      { create, get: vi.fn(), cancel: vi.fn() }, effects, { ingest: vi.fn() }, TEST_CREDENTIAL_REF, undefined, resolveTestModel,
     );
     expect((await adapter.submit(intent, {})).state).toBe("outcome_unknown");
     expect((await adapter.submit(intent, {})).state).toBe("outcome_unknown");
     expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("never treats an unreported or different executed version as the pinned model", async () => {
+    const effects = effectClaims();
+    const adapter = new ReplicatePredictionAdapter(
+      { create: vi.fn(async () => ({ id: "p-version", status: "processing" as const, version: "different-version" })), get: vi.fn(), cancel: vi.fn() },
+      effects, { ingest: vi.fn() }, TEST_CREDENTIAL_REF, undefined, resolveTestModel,
+    );
+    expect(await adapter.submit(intent, {})).toMatchObject({ state: "outcome_unknown", predictionId: "p-version", code: "EXECUTED_VERSION_UNVERIFIED" });
+    expect(effects.bindPrediction).toHaveBeenCalledWith(expect.objectContaining({ executedVersion: "different-version", credentialRef: TEST_CREDENTIAL_REF }));
   });
 });

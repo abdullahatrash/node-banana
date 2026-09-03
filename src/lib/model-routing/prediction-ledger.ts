@@ -23,12 +23,19 @@ export class PostgresProviderEffectClaims implements ProviderEffectClaimPort {
         pollAttempts: 0,
         leaseOwner: null,
         leaseExpiresAt: null,
+        claimExpiresAt: new Date(input.at.getTime() + 2 * 60_000),
+        credentialRef: input.credentialRef,
+        executedVersion: null,
         claimedAt: input.at,
         updatedAt: input.at,
       }).onConflictDoNothing().returning({ claimToken: modelProviderEffectClaims.claimToken });
       if (inserted.length) return { kind: "claimed" as const };
       const [current] = await tx.select().from(modelProviderEffectClaims).where(and(eq(modelProviderEffectClaims.workspaceId, input.workspaceId), eq(modelProviderEffectClaims.intentId, input.intentId))).limit(1);
       if (!current) throw new Error("PROVIDER_EFFECT_CLAIM_UNAVAILABLE");
+      if (current.state === "claimed" && current.claimExpiresAt <= input.at) {
+        await tx.update(modelProviderEffectClaims).set({ state: "outcome_unknown", providerStatus: "submit_identity_lost", nextPollAt: input.at, updatedAt: input.at }).where(and(eq(modelProviderEffectClaims.workspaceId, input.workspaceId), eq(modelProviderEffectClaims.intentId, input.intentId), eq(modelProviderEffectClaims.state, "claimed")));
+        return { kind: "existing" as const, state: "outcome_unknown" as const, predictionId: null };
+      }
       return { kind: "existing" as const, state: current.state as "claimed" | "submitted" | "outcome_unknown", predictionId: current.predictionId };
     });
   }
@@ -39,14 +46,14 @@ export class PostgresProviderEffectClaims implements ProviderEffectClaimPort {
       if (!claim || claim.claimToken !== input.claimToken) return "conflict" as const;
       if (claim.state === "submitted") return claim.predictionId === input.predictionId ? "replayed" as const : "conflict" as const;
       if (claim.state !== "claimed") return "conflict" as const;
-      await tx.insert(replicatePredictionIdentities).values({ workspaceId: input.workspaceId, intentId: input.intentId, predictionId: input.predictionId, model: input.model, createdAt: input.at }).onConflictDoNothing();
-      const updated = await tx.update(modelProviderEffectClaims).set({ state: "submitted", predictionId: input.predictionId, providerStatus: "starting", nextPollAt: input.at, updatedAt: input.at }).where(and(eq(modelProviderEffectClaims.workspaceId, input.workspaceId), eq(modelProviderEffectClaims.intentId, input.intentId), eq(modelProviderEffectClaims.claimToken, input.claimToken), eq(modelProviderEffectClaims.state, "claimed"))).returning({ intentId: modelProviderEffectClaims.intentId });
+      await tx.insert(replicatePredictionIdentities).values({ workspaceId: input.workspaceId, intentId: input.intentId, predictionId: input.predictionId, model: input.model, executedVersion: input.executedVersion, credentialRef: input.credentialRef, createdAt: input.at }).onConflictDoNothing();
+      const updated = await tx.update(modelProviderEffectClaims).set({ state: "submitted", predictionId: input.predictionId, providerStatus: "starting", executedVersion: input.executedVersion, nextPollAt: input.at, updatedAt: input.at }).where(and(eq(modelProviderEffectClaims.workspaceId, input.workspaceId), eq(modelProviderEffectClaims.intentId, input.intentId), eq(modelProviderEffectClaims.claimToken, input.claimToken), eq(modelProviderEffectClaims.state, "claimed"))).returning({ intentId: modelProviderEffectClaims.intentId });
       return updated.length ? "bound" as const : "conflict" as const;
     });
   }
 
   async markOutcomeUnknown(input: Parameters<ProviderEffectClaimPort["markOutcomeUnknown"]>[0]) {
-    await this.database().update(modelProviderEffectClaims).set({ state: "outcome_unknown", updatedAt: input.at }).where(and(eq(modelProviderEffectClaims.workspaceId, input.workspaceId), eq(modelProviderEffectClaims.intentId, input.intentId), eq(modelProviderEffectClaims.claimToken, input.claimToken), eq(modelProviderEffectClaims.state, "claimed")));
+    await this.database().update(modelProviderEffectClaims).set({ state: "outcome_unknown", providerStatus: "submit_transport_lost", nextPollAt: input.at, updatedAt: input.at }).where(and(eq(modelProviderEffectClaims.workspaceId, input.workspaceId), eq(modelProviderEffectClaims.intentId, input.intentId), eq(modelProviderEffectClaims.claimToken, input.claimToken), eq(modelProviderEffectClaims.state, "claimed")));
   }
 }
 
