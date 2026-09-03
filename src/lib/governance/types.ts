@@ -193,6 +193,7 @@ export interface BulkOperationItem {
   targetKind: string;
   targetId: string;
   capability: string;
+  input: Record<string, unknown>;
   idempotencyKey: string;
   state:
     | "previewed"
@@ -238,4 +239,24 @@ export interface GovernanceMembershipPort {
     currentOwnerUserId: string;
     closedAt: Date;
   }): Promise<"closed" | "not_current_owner">;
+}
+
+export interface GovernanceBulkAuthorizationPort {
+  resolveActor(input: {
+    workspaceId: string;
+    userId: string;
+  }): Promise<GovernanceActor | null>;
+}
+
+export interface GovernanceBulkCapabilityPort {
+  execute(input: {
+    actor: GovernanceActor;
+    capability: string;
+    capabilityInput: Record<string, unknown>;
+    idempotencyKey: string;
+  }): Promise<
+    | { type: "succeeded"; output: unknown }
+    | { type: "failed_known"; code: string }
+    | { type: "outcome_unknown"; safeReason: string }
+  >;
 }

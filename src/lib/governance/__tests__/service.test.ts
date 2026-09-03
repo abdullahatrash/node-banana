@@ -176,7 +176,8 @@ describe("GovernanceService", () => {
 
   it("previews provenance-preserving imports and explicitly omits non-transferable items", async () => {
     const { service } = setup();
-    const result = await service.execute(owner, { type: "preview_import", source: "platform-export", sourceManifestDigest: digest, items: [{ kind: "media", sourceId: "source-1", digest, transferable: true }, { kind: "licensed_media", sourceId: "source-2", digest, transferable: false, omissionReason: "license" }] }, "import-preview-key") as { dryRun: boolean; items: Array<{ action: string; provenancePreserved: boolean }> };
+    const payload = { revisions: [], activeRevision: 0 };
+    const result = await service.execute(owner, { type: "preview_import", source: "platform-export", sourceManifestDigest: digest, items: [{ kind: "custom_role", sourceId: "source-1", digest: canonicalDigest(payload), transferable: true, payload }, { kind: "licensed_media", sourceId: "source-2", digest, transferable: false, omissionReason: "license" }] }, "import-preview-key") as { dryRun: boolean; items: Array<{ action: string; provenancePreserved: boolean }> };
     expect(result.dryRun).toBe(true);
     expect(result.items).toEqual([expect.objectContaining({ action: "create_or_match", provenancePreserved: true }), expect.objectContaining({ action: "omit", provenancePreserved: true })]);
   });

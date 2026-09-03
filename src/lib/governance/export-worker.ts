@@ -42,9 +42,12 @@ export class GovernanceExportWorker {
       const encryptionKey = keyFromBase64(this.keys.encryptionKeyBase64, "GOVERNANCE_EXPORT_ENCRYPTION_KEY");
       const signingKey = keyFromBase64(this.keys.signingKeyBase64, "GOVERNANCE_EXPORT_SIGNING_KEY");
       const jobBody = job.body as { from: string | null; to: string | null; expiresAt: string; includeKinds?: string[]; omissions?: string[] };
-      const auditEvents = await this.repository.listAudit({ workspaceId: input.workspaceId, limit: 500 });
+      const from = jobBody.from ? new Date(jobBody.from) : null;
+      const to = jobBody.to ? new Date(jobBody.to) : null;
+      const auditEvents = (await this.repository.listAudit({ workspaceId: input.workspaceId, limit: 500 })).filter((event) => (!from || event.occurredAt >= from) && (!to || event.occurredAt <= to));
+      const includeKinds = new Set(jobBody.includeKinds ?? []);
       const resources = input.kind === "workspace_export"
-        ? (await this.repository.listResources({ workspaceId: input.workspaceId })).filter((item) => !OMITTED_RESOURCE_KINDS.has(item.kind))
+        ? (await this.repository.listResources({ workspaceId: input.workspaceId })).filter((item) => !OMITTED_RESOURCE_KINDS.has(item.kind) && (includeKinds.size === 0 || includeKinds.has(item.kind)))
         : [];
       const payload = {
         schema: input.kind === "audit_export" ? "workspace-audit-export/v1" : "workspace-export/v1",

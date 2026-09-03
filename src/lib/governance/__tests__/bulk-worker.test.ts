@@ -1,0 +1,50 @@
+import { describe, expect, it, vi } from "vitest";
+import { GovernanceBulkWorker } from "../bulk-worker";
+import { InMemoryGovernanceRepository } from "../memory-repository";
+import { GovernanceService } from "../service";
+
+const now = new Date("2026-09-03T12:00:00.000Z");
+const actor = { workspaceId: "portfolio-workspace", userId: "owner-a", legacyRole: "owner" as const };
+
+describe("GovernanceBulkWorker", () => {
+  it("reauthorizes every pinned target Workspace and records independent outcomes", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => new Date(now) });
+    const preview = await service.execute(actor, {
+      type: "preview_bulk", operationCapability: "content.archive@1", concurrency: 2, quoteRef: "quote-1",
+      items: [
+        { targetWorkspaceId: "workspace-authorized", targetKind: "content", targetId: "content-1", input: { contentId: "content-1" } },
+        { targetWorkspaceId: "workspace-forbidden", targetKind: "content", targetId: "content-2", input: { contentId: "content-2" } },
+        { targetWorkspaceId: "workspace-uncertain", targetKind: "content", targetId: "content-3", input: { contentId: "content-3" } },
+      ],
+    }, "preview-bulk-worker") as { operationId: string };
+    await service.execute(actor, { type: "start_bulk", operationId: preview.operationId }, "start-bulk-worker");
+    const execute = vi.fn().mockImplementation(async ({ actor: targetActor }: { actor: { workspaceId: string } }) => targetActor.workspaceId === "workspace-uncertain"
+      ? { type: "outcome_unknown", safeReason: "provider_timeout" }
+      : { type: "succeeded", output: { archived: true } });
+    const worker = new GovernanceBulkWorker(repository, {
+      resolveActor: vi.fn().mockImplementation(async ({ workspaceId, userId }) => workspaceId === "workspace-forbidden" ? null : ({ workspaceId, userId, legacyRole: "admin" })),
+    }, { execute }, { now: () => new Date("2026-09-03T12:01:00.000Z") });
+    await worker.process({ workspaceId: actor.workspaceId, operationId: preview.operationId });
+
+    const operation = await repository.getResource<{ items: Array<{ state: string; outcome: Record<string, unknown> }> }>({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId });
+    expect(operation?.status).toBe("outcome_unknown");
+    expect(operation?.body.items.map((item) => item.state)).toEqual(["succeeded", "failed_known", "outcome_unknown"]);
+    expect(operation?.body.items[1].outcome).toEqual({ code: "TARGET_WORKSPACE_FORBIDDEN" });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0][0]).toMatchObject({ actor: { workspaceId: "workspace-authorized" }, capability: "content.archive@1", idempotencyKey: expect.stringContaining(preview.operationId) });
+  });
+
+  it("turns items left running by an interrupted worker into ambiguity instead of replaying", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => new Date(now) });
+    const preview = await service.execute(actor, { type: "preview_bulk", operationCapability: "content.archive@1", concurrency: 1, quoteRef: null, items: [{ targetWorkspaceId: "workspace-a", targetKind: "content", targetId: "content-a" }] }, "preview-interrupted-bulk") as { operationId: string };
+    await service.execute(actor, { type: "start_bulk", operationId: preview.operationId }, "start-interrupted-bulk");
+    const queued = await repository.getResource({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId });
+    await repository.commit({ receipt: { workspaceId: actor.workspaceId, capability: "test.bulk@1", idempotencyKey: "simulate-interrupted-bulk", requestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", result: {}, createdAt: now }, mutations: [{ type: "update", expectedVersion: queued!.version, resource: { ...queued!, version: queued!.version + 1, status: "running", body: { ...queued!.body, items: (queued!.body as { items: Array<Record<string, unknown>> }).items.map((item) => ({ ...item, state: "running" })) }, updatedAt: now } }], audit: { schema: "workspace-audit-event/v1", id: "audit-interrupted", workspaceId: actor.workspaceId, actor: { kind: "system", id: null }, capability: "test.bulk@1", action: "interrupt", resource: null, outcome: "failed", redactedDetails: {}, occurredAt: now } });
+    const execute = vi.fn();
+    await new GovernanceBulkWorker(repository, { resolveActor: vi.fn() }, { execute }).process({ workspaceId: actor.workspaceId, operationId: preview.operationId });
+    expect((await repository.getResource({ workspaceId: actor.workspaceId, kind: "bulk_operation", id: preview.operationId }))?.status).toBe("outcome_unknown");
+    expect(execute).not.toHaveBeenCalled();
+  });
+});

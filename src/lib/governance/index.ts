@@ -5,3 +5,5 @@ export * from "./memory-repository";
 export * from "./postgres-repository";
 export * from "./export-worker";
 export * from "./membership-postgres";
+export * from "./bulk-worker";
+export * from "./import-worker";

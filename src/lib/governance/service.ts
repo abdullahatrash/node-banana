@@ -76,11 +76,11 @@ export type GovernanceCommand =
   | { type: "create_safety_decision"; intentRef: string; reasonCode: string; policyVersion: string; safeExplanation: string; evidenceRef: string; remediation: string; appealEligible: boolean }
   | { type: "appeal_safety_decision"; decisionId: string; explanation: string }
   | { type: "resolve_safety_appeal"; appealId: string; outcome: "upheld" | "reevaluate_exact_intent"; currentRevalidationRequired: true }
-  | { type: "preview_bulk"; operationCapability: string; items: Array<{ targetWorkspaceId: string; targetKind: string; targetId: string }>; concurrency: number; quoteRef: string | null }
+  | { type: "preview_bulk"; operationCapability: string; items: Array<{ targetWorkspaceId: string; targetKind: string; targetId: string; input?: Record<string, unknown> }>; concurrency: number; quoteRef: string | null }
   | { type: "start_bulk"; operationId: string; stepUpToken?: string }
   | { type: "cancel_bulk"; operationId: string }
   | { type: "retry_bulk_item"; operationId: string; itemId: string }
-  | { type: "preview_import"; source: string; sourceManifestDigest: string; items: Array<{ kind: string; sourceId: string; digest: string; transferable: boolean; omissionReason?: string }> }
+  | { type: "preview_import"; source: string; sourceManifestDigest: string; items: Array<{ kind: string; sourceId: string; destinationId?: string; digest: string; transferable: boolean; omissionReason?: string; payload?: Record<string, unknown> }> }
   | { type: "execute_import"; importId: string }
   | { type: "request_workspace_export"; includeKinds: string[]; stepUpToken: string };
 
@@ -624,9 +624,10 @@ export class GovernanceService {
       }
       case "preview_bulk": {
         if (command.items.length < 1 || command.items.length > 1000 || command.concurrency < 1 || command.concurrency > 20) throw new GovernanceError("INVALID_INPUT", "Bulk bounds are invalid.");
+        if (!/^[a-z][a-z0-9_.]*@[1-9][0-9]*$/.test(command.operationCapability) || command.operationCapability === "bulk.execute@1") throw new GovernanceError("INVALID_INPUT", "Bulk Application Capability is invalid.");
         const id = newId("bulk");
-        const items: BulkOperationItem[] = command.items.map((item, index) => ({ id: `${id}:${index + 1}`, targetWorkspaceId: safeId(item.targetWorkspaceId, "Target Workspace"), targetKind: text(item.targetKind, "Target kind", 100), targetId: safeId(item.targetId, "Target"), capability: text(command.operationCapability, "Capability", 160), idempotencyKey: `${id}:${index + 1}`, state: "previewed", outcome: null }));
-        mutations = [create("bulk_operation", id, "previewed", { capability: command.operationCapability, dryRun: true, concurrency: command.concurrency, quoteRef: command.quoteRef, items, cancellationRequestedAt: null })];
+        const items: BulkOperationItem[] = command.items.map((item, index) => ({ id: `${id}:${index + 1}`, targetWorkspaceId: safeId(item.targetWorkspaceId, "Target Workspace"), targetKind: text(item.targetKind, "Target kind", 100), targetId: safeId(item.targetId, "Target"), capability: command.operationCapability, input: item.input ?? { targetKind: item.targetKind, targetId: item.targetId }, idempotencyKey: `${id}:${index + 1}`, state: "previewed", outcome: null }));
+        mutations = [create("bulk_operation", id, "previewed", { capability: command.operationCapability, dryRun: true, concurrency: command.concurrency, quoteRef: command.quoteRef, requestedByUserId: actor.userId, items, cancellationRequestedAt: null })];
         result = { operationId: id, dryRun: true, itemCount: items.length };
         target = { kind: "bulk_operation", id };
         break;
@@ -667,7 +668,11 @@ export class GovernanceService {
       case "preview_import": {
         if (!SHA256.test(command.sourceManifestDigest) || !command.items.length) throw new GovernanceError("INVALID_INPUT", "Import manifest is invalid.");
         const id = `import_${canonicalDigest({ source: command.source, digest: command.sourceManifestDigest }).slice(7, 39)}`;
-        const items = command.items.map((item) => ({ ...item, sourceId: safeId(item.sourceId, "Source item"), digest: SHA256.test(item.digest) ? item.digest : (() => { throw new GovernanceError("INVALID_INPUT", "Import item digest is invalid."); })(), action: item.transferable ? "create_or_match" : "omit", provenancePreserved: true }));
+        const items = command.items.map((item, index) => {
+          if (!item.transferable && !item.omissionReason) throw new GovernanceError("INVALID_INPUT", "Every omitted import item requires an explicit reason.");
+          if (item.transferable && (!item.payload || canonicalDigest(item.payload) !== item.digest)) throw new GovernanceError("INVALID_INPUT", "Transferable import payload does not match its signed digest.");
+          return { ...item, id: `${id}:${index + 1}`, sourceId: safeId(item.sourceId, "Source item"), destinationId: item.destinationId ? safeId(item.destinationId, "Destination item") : undefined, digest: SHA256.test(item.digest) ? item.digest : (() => { throw new GovernanceError("INVALID_INPUT", "Import item digest is invalid."); })(), action: item.transferable ? "create_or_match" : "omit", state: item.transferable ? "previewed" : "omitted", outcome: item.transferable ? null : { omissionReason: text(item.omissionReason!, "Omission reason", 500) }, provenancePreserved: true };
+        });
         mutations = [create("workspace_import", id, "previewed", { source: text(command.source, "Import source", 300), sourceManifestDigest: command.sourceManifestDigest, dryRun: true, items })];
         result = { importId: id, dryRun: true, items };
         target = { kind: "workspace_import", id };
@@ -676,7 +681,8 @@ export class GovernanceService {
       case "execute_import": {
         const imported = await this.required("workspace_import", command.importId, actor.workspaceId);
         if (imported.status !== "previewed") throw new GovernanceError("CONFLICT", "Import is not previewable.");
-        mutations = [update(imported, "queued", { ...imported.body, dryRun: false, queuedAt: now.toISOString() })];
+        const importBody = imported.body as { items: Array<{ state: string; [key: string]: unknown }>; [key: string]: unknown };
+        mutations = [update(imported, "queued", { ...importBody, dryRun: false, queuedAt: now.toISOString(), requestedByUserId: actor.userId, items: importBody.items.map((item) => item.state === "previewed" ? { ...item, state: "queued" } : item) })];
         result = { importId: imported.id, status: "queued" };
         target = { kind: imported.kind, id: imported.id };
         break;
