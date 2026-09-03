@@ -41,6 +41,28 @@ describe("GovernanceImportWorker", () => {
     const body = payload("calendar_plan");
     expect(validatePortablePayload("calendar_plan", { ...body, media: [{ type: "image", url: "https://source.example/private.png" }] })).toBeNull();
     expect(validatePortablePayload("calendar_plan", { ...body, media: [{ type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}` }] })).not.toBeNull();
+    expect(validatePortablePayload("calendar_plan", { ...body, media: [
+      { type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}` },
+      { type: "image", sourceAssetId: "asset-2", assetDigest: `sha256:${"b".repeat(64)}` },
+    ] })).toBeNull();
+    expect(validatePortablePayload("calendar_plan", { ...body, media: [{ type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}` }], omittedRawMediaCount: 1 })).toBeNull();
+  });
+
+  it("rejects unsupported calendar media multiplicity before creating an import preview", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const service = new GovernanceService(repository, { now: () => new Date(now) }, undefined, undefined, { verify: () => true });
+    const body = {
+      ...payload("calendar_plan"),
+      media: [
+        { type: "image", sourceAssetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}` },
+        { type: "image", sourceAssetId: "asset-2", assetDigest: `sha256:${"b".repeat(64)}` },
+      ],
+    };
+    await expect(service.execute(actor, {
+      type: "preview_import", source: "workspace-export", sourceManifestDigest: canonicalDigest({ manifest: 6 }), manifestKeyId: "trusted-test-key", manifestSignature: signature,
+      items: [{ kind: "calendar_plan", sourceId: "post-source", digest: canonicalDigest(body), transferable: true, payload: body }],
+    }, "preview-multi-media-calendar")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(repository.listResources({ workspaceId: actor.workspaceId, kinds: ["workspace_import"] })).resolves.toHaveLength(0);
   });
 
   it("derives server-copy authority only from an exact first-party Workspace export source", () => {
