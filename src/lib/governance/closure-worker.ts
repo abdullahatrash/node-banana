@@ -13,7 +13,7 @@ import type {
 
 const LEASE_MS = 5 * 60_000;
 const TERMINAL_DELETION_STATUSES = new Set(["completed", "completed_hold"]);
-const PROVEN_EXTERNAL_EFFECT_STATES = new Set(["deleted", "not_found", "retained"]);
+const PROVEN_ERASURE_STATES = new Set(["deleted", "not_found"]);
 
 export interface WorkspaceClosureEffectOutcome {
   kind: "social_disconnect" | "provider_credential_revoke" | "workspace_hard_erasure";
@@ -24,6 +24,11 @@ export interface WorkspaceClosureEffectOutcome {
   state: "deleted" | "not_found" | "retained" | "failed_known" | "outcome_unknown";
   evidenceRef?: string;
   reason?: string;
+  legalHoldEvidence?: {
+    holdIds: string[];
+    policyRevision: number;
+    evidenceRef: string;
+  };
 }
 
 export interface WorkspaceHardErasureEvidence {
@@ -35,8 +40,19 @@ export interface WorkspaceHardErasureEvidence {
   evidenceRef: string;
 }
 
-function hasTerminalProof(effect: WorkspaceClosureEffectOutcome): boolean {
-  return PROVEN_EXTERNAL_EFFECT_STATES.has(effect.state) && Boolean(effect.evidenceRef?.trim());
+function hasErasureProof(effect: WorkspaceClosureEffectOutcome): boolean {
+  return PROVEN_ERASURE_STATES.has(effect.state) && Boolean(effect.evidenceRef?.trim());
+}
+
+function hasLegalRetentionProof(
+  effect: WorkspaceClosureEffectOutcome,
+  retainedResources: Array<{ holdIds: string[] }>,
+): boolean {
+  if (effect.state !== "retained" || !effect.evidenceRef?.trim()) return false;
+  const evidence = effect.legalHoldEvidence;
+  if (!evidence || evidence.policyRevision < 1 || !evidence.evidenceRef.trim() || evidence.holdIds.length === 0) return false;
+  const activeHoldIds = new Set(retainedResources.flatMap((resource) => resource.holdIds));
+  return evidence.holdIds.every((holdId) => activeHoldIds.has(holdId));
 }
 
 interface ClosureBody {
@@ -123,7 +139,7 @@ export class GovernanceWorkspaceClosureWorker {
 
   async process(input: { workspaceId: string; closureId: string }): Promise<void> {
     const found = await this.repository.getResource<ClosureBody>({ workspaceId: input.workspaceId, kind: "workspace_closure", id: input.closureId });
-    if (!found || ["closed", "cancelled", "failed_known"].includes(found.status)) return;
+    if (!found || ["closed", "closed_retained", "cancelled", "failed_known"].includes(found.status)) return;
     const job = await this.claim(found);
     if (!job) return;
     const now = this.clock.now();
@@ -141,7 +157,9 @@ export class GovernanceWorkspaceClosureWorker {
       })),
     };
     revocation.evidenceRef = canonicalDigest({ ...revocation, evidenceRef: undefined });
-    if (revocation.externalEffects.some((effect) => !hasTerminalProof(effect))) {
+    // Access-bearing effects have no lawful "retained" success state: provider
+    // credentials and social grants must be proven unusable.
+    if (revocation.externalEffects.some((effect) => !hasErasureProof(effect))) {
       await this.release(job, "waiting_erasure", { ...job.body, accessRevocationEvidence: revocation }, now, "closure_waiting_external_revocation");
       return;
     }
@@ -285,15 +303,19 @@ export class GovernanceWorkspaceClosureWorker {
       hardErasure.effects.length !== hardErasure.surfaces.length ||
       new Set(hardErasure.effects.map((effect) => effect.targetId)).size !== hardErasure.surfaces.length ||
       hardErasure.effects.some((effect) => effect.kind !== "workspace_hard_erasure" || !hardErasure.surfaces.includes(effect.targetId)) ||
-      hardErasure.effects.some((effect) => !hasTerminalProof(effect))
+      hardErasure.effects.some((effect) => !hasErasureProof(effect) && !hasLegalRetentionProof(effect, retainedResources))
     ) {
       await this.release(job, "waiting_erasure", { ...job.body, accessRevocationEvidence: revocation, hardErasureEvidence: hardErasure }, now, "closure_waiting_hard_erasure");
       return;
     }
     const tombstoneId = `workspace:${job.workspaceId}`;
     const existingTombstone = await this.repository.getResource({ workspaceId: job.workspaceId, kind: "tombstone", id: tombstoneId });
+    const legallyRetainedEffects = hardErasure.effects.filter((effect) => effect.state === "retained");
+    const fullyErased = retainedResources.length === 0 && legallyRetainedEffects.length === 0;
+    const finalStatus = fullyErased ? "closed" : "closed_retained";
     const completionEvidence = {
       schema: "workspace-closure-completion-evidence/v2",
+      fullyErased,
       exportId: exportJob.id,
       exportManifestDigest: canonicalDigest((exportJob.body as { manifest?: unknown }).manifest ?? null),
       accessRevocationEvidence: revocation,
@@ -305,6 +327,12 @@ export class GovernanceWorkspaceClosureWorker {
         outcomes: (receipt.body as { outcomes?: Record<string, unknown> }).outcomes ?? {},
       })).sort((left, right) => left.id.localeCompare(right.id)),
       holds: deletions.flatMap((receipt) => (receipt.body as { holdIds?: string[] }).holdIds ?? []).sort(),
+      legalHoldEvidence: legallyRetainedEffects.map((effect) => ({
+        surface: effect.targetId,
+        holdIds: [...(effect.legalHoldEvidence?.holdIds ?? [])].sort(),
+        policyRevision: effect.legalHoldEvidence?.policyRevision,
+        evidenceRef: effect.legalHoldEvidence?.evidenceRef,
+      })),
       omissions: [
         ...(((exportJob.body as { manifest?: { omissions?: string[] } }).manifest?.omissions) ?? []),
         ...hardErasure.omissions,
@@ -312,7 +340,7 @@ export class GovernanceWorkspaceClosureWorker {
       unknowns: [],
       completedAt: now.toISOString(),
     };
-    const next = updated(job, "closed", { ...job.body, lease: null, completionEvidence, closedAt: now.toISOString() }, now);
+    const next = updated(job, finalStatus, { ...job.body, lease: null, completionEvidence, closedAt: now.toISOString() }, now);
     const mutations: GovernanceMutation[] = [{ type: "update", expectedVersion: job.version, resource: next }];
     if (!existingTombstone) mutations.push({
       type: "create",
@@ -321,7 +349,7 @@ export class GovernanceWorkspaceClosureWorker {
     });
     const effects: GovernanceCanonicalEffect[] = [{ type: "workspace_close", workspaceId: job.workspaceId, currentOwnerUserId: job.body.requestedByUserId, occurredAt: now }];
     const outcome = await this.repository.commit({
-      receipt: { workspaceId: job.workspaceId, capability: "workspace_closures.process@1", idempotencyKey: `closure-complete-${job.id}`, requestDigest: canonicalDigest(completionEvidence), result: { closureId: job.id, status: "closed", tombstoneId }, createdAt: now },
+      receipt: { workspaceId: job.workspaceId, capability: "workspace_closures.process@1", idempotencyKey: `closure-complete-${job.id}`, requestDigest: canonicalDigest(completionEvidence), result: { closureId: job.id, status: finalStatus, fullyErased, tombstoneId }, createdAt: now },
       mutations,
       canonicalEffects: effects,
       audit: audit(job, "complete_workspace_closure", "completed", now),

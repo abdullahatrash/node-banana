@@ -55,6 +55,7 @@ export const CLOSURE_CANONICAL_SURFACES = [
   "social_accounts_tokens_automation_and_publish_receipts",
   "credential_profiles_versions_tokens_agents_and_keys",
   "model_routes_intents_predictions_effects_and_ingestion_receipts",
+  "inspiration_rights_evidence_and_snapshots",
   "budgets_quotas_reservations_usage_and_settlements",
   "diagnostics_support_bundles_telemetry_and_experiments",
   "release_attestations_manifests_flags_and_audit_lineage",
@@ -64,6 +65,11 @@ const externalEffectOutcome = z.object({
   state: z.enum(["deleted", "not_found", "retained", "failed_known", "outcome_unknown"]),
   evidenceRef: z.string().min(1).max(500).optional(),
   reason: z.string().min(1).max(500).optional(),
+  legalHoldEvidence: z.object({
+    holdIds: z.array(z.string().min(1).max(200)).min(1).max(1_000),
+    policyRevision: z.number().int().positive(),
+    evidenceRef: z.string().min(1).max(500),
+  }).strict().optional(),
 }).strict();
 
 async function runClosureEffect(input: {

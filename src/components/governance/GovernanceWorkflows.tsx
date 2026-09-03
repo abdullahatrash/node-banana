@@ -41,7 +41,7 @@ function lines(input: string): string[] { return [...new Set(input.split(/[\n,]+
 function futureIso(days: number): string { return new Date(Date.now() + days * 86_400_000).toISOString(); }
 function number(form: FormData, key: string, fallback = 0): number { const parsed = Number(value(form, key)); return Number.isFinite(parsed) ? parsed : fallback; }
 function checked(form: FormData, key: string): boolean { return form.get(key) === "on"; }
-const LOCALIZED_STATES = new Set(["active", "pending", "pending_verification", "previewed", "queued", "running", "waiting_user", "cancelling", "cancelled", "completed", "completed_hold", "decided", "verified", "locked", "revoked", "resolved", "succeeded", "failed_known", "outcome_unknown", "approved", "denied", "expired", "consumed", "escalated", "released", "cooling_off", "ready", "revalidation_queued", "revalidation_running", "revalidated_allowed", "resolved_upheld"]);
+const LOCALIZED_STATES = new Set(["active", "pending", "pending_verification", "previewed", "queued", "running", "waiting_user", "cancelling", "cancelled", "completed", "completed_hold", "decided", "verified", "locked", "revoked", "resolved", "succeeded", "failed_known", "outcome_unknown", "approved", "denied", "expired", "consumed", "escalated", "released", "cooling_off", "ready", "closed", "closed_retained", "revalidation_queued", "revalidation_running", "revalidated_allowed", "resolved_upheld"]);
 
 function localizedState(t: ReturnType<typeof useTranslations<"governance">>, state: string): string {
   return t(`states.${LOCALIZED_STATES.has(state) ? state : "unknown"}` as never);
