@@ -45,3 +45,15 @@ export const modelProviderEffectClaims = pgTable("model_provider_effect_claims",
   stateCheck: check("model_provider_effect_claims_state_check", sql`${table.provider} = 'replicate' and ${table.state} in ('claimed','submitted','outcome_unknown') and length(${table.claimToken}) between 16 and 200`),
   predictionUnique: uniqueIndex("model_provider_effect_claims_prediction_unique").on(table.predictionId),
 }));
+
+export const modelGenerationBudgetReservations = pgTable("model_generation_budget_reservations", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  intentId: text("intent_id").notNull(), policyId: text("policy_id").notNull(), policyRevisionId: text("policy_revision_id").notNull(),
+  periodStartsAt: timestamp("period_starts_at", { withTimezone: true }).notNull(), periodEndsAt: timestamp("period_ends_at", { withTimezone: true }),
+  amountUsd: numeric("amount_usd", { precision: 12, scale: 6 }).notNull(), status: text("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "model_generation_budget_reservations_pk", columns: [table.workspaceId, table.intentId] }),
+  periodIdx: index("model_generation_budget_reservations_period_idx").on(table.workspaceId, table.policyId, table.periodStartsAt, table.status),
+  valueCheck: check("model_generation_budget_reservations_value_check", sql`${table.amountUsd}::numeric > 0 and ${table.status} in ('held','released','settled','outcome_unknown')`),
+}));

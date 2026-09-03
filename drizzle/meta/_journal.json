@@ -512,6 +512,13 @@
       "when": 1788507600000,
       "tag": "0072_model_routing_effect_claims",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1788511200000,
+      "tag": "0073_generation_budget_reservations",
+      "breakpoints": true
     }
   ]
 }

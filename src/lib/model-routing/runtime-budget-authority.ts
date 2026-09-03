@@ -1,41 +1,38 @@
-import { BudgetServiceError, type BudgetService } from "@/lib/agent-runtime/budgets/service";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import type { getDb } from "@/lib/db";
+import { runtimeBudgetPeriods, runtimeBudgetPolicies, runtimeBudgetPolicyRevisions, runtimeBudgetReservations, runtimeSpendControls } from "@/lib/db/schema";
+import { budgetPeriodWindow } from "@/lib/agent-runtime/budgets/period";
+import { modelGenerationBudgetReservations } from "./db-schema";
 import type { GenerationBudgetAuthority } from "./budget-authority";
 
-/** Admits each paid generation through the same durable budget authority as workflow runs. */
+type Db = ReturnType<typeof getDb>;
+
+/**
+ * Generation-specific admission on the Workspace budget mutex. Workflow budget
+ * rows cannot be reused because their FK deliberately requires a workflow run.
+ */
 export class RuntimeGenerationBudgetAuthority implements GenerationBudgetAuthority {
-  constructor(private readonly budgets: BudgetService) {}
+  constructor(private readonly database: () => Db) {}
   async reserve(input: Parameters<GenerationBudgetAuthority["reserve"]>[0]) {
     try {
-      const amount = String(input.quote.amount * input.quote.quantity);
-      const plan = await this.budgets.planAdmission({
-        workspaceId: input.workspaceId,
-        principalId: input.principalId,
-        workflowId: "studio-generation",
-        workflowRevisionId: `model:${input.model.provider}:${input.model.model}:${input.model.version}`,
-        runId: input.intentId,
-        at: input.at,
-        stepExposures: [{
-          stepId: "generate",
-          provider: input.model.provider,
-          providerOperation: "generate",
-          model: input.model.model,
-          serviceTier: "default",
-          automaticAttempts: 1,
-          credentialSlotId: null,
-          credentialProfileId: null,
-          amountPerAttempt: amount,
-          currency: "USD",
-          pricingSnapshotIds: [input.model.inputSchemaDigest],
-          pricingSource: "builtin_catalog",
-        }],
+      return await this.database().transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`runtime-budget-spend:${input.workspaceId}`}, 0))`);
+        const [existing] = await tx.select().from(modelGenerationBudgetReservations).where(and(eq(modelGenerationBudgetReservations.workspaceId, input.workspaceId), eq(modelGenerationBudgetReservations.intentId, input.intentId))).limit(1);
+        if (existing) return Number(existing.amountUsd) === input.quote.amount * input.quote.quantity && existing.status === "held" ? { kind: "reserved" as const, reservationIds: [`generation-budget:${input.workspaceId}:${input.intentId}`] } : { kind: "unavailable" as const, code: "BUDGET_RESERVATION_CONFLICT" };
+        const [spendControl] = await tx.select({ suspended: runtimeSpendControls.suspended }).from(runtimeSpendControls).where(eq(runtimeSpendControls.workspaceId, input.workspaceId)).limit(1);
+        if (spendControl?.suspended) return { kind: "denied" as const, code: "EMERGENCY_SPEND_SUSPENDED" };
+        const [policy] = await tx.select({ id: runtimeBudgetPolicies.id, revisionId: runtimeBudgetPolicies.currentRevisionId, currency: runtimeBudgetPolicies.currency, period: runtimeBudgetPolicies.period, timezone: runtimeBudgetPolicies.timezone, hardLimit: runtimeBudgetPolicyRevisions.hardLimit }).from(runtimeBudgetPolicies).innerJoin(runtimeBudgetPolicyRevisions, and(eq(runtimeBudgetPolicyRevisions.workspaceId, runtimeBudgetPolicies.workspaceId), eq(runtimeBudgetPolicyRevisions.id, runtimeBudgetPolicies.currentRevisionId))).where(and(eq(runtimeBudgetPolicies.workspaceId, input.workspaceId), eq(runtimeBudgetPolicies.status, "active"), eq(runtimeBudgetPolicies.scope, "workspace"), isNull(runtimeBudgetPolicies.principalId))).limit(1);
+        if (!policy || policy.currency !== "USD") return { kind: "unavailable" as const, code: "WORKSPACE_USD_BUDGET_POLICY_UNAVAILABLE" };
+        const period = budgetPeriodWindow(policy.period as "calendar_day" | "calendar_week" | "calendar_month" | "lifetime", policy.timezone, input.at);
+        const endMatches = period.endsAt === null ? isNull(runtimeBudgetPeriods.endsAt) : eq(runtimeBudgetPeriods.endsAt, period.endsAt);
+        const [runtime] = await tx.select({ total: sql<string>`coalesce(sum(${runtimeBudgetReservations.heldAmount}::numeric), 0)::text` }).from(runtimeBudgetReservations).innerJoin(runtimeBudgetPeriods, and(eq(runtimeBudgetPeriods.workspaceId, runtimeBudgetReservations.workspaceId), eq(runtimeBudgetPeriods.id, runtimeBudgetReservations.periodId))).where(and(eq(runtimeBudgetReservations.workspaceId, input.workspaceId), eq(runtimeBudgetReservations.policyId, policy.id), eq(runtimeBudgetPeriods.startsAt, period.startsAt), endMatches, inArray(runtimeBudgetReservations.state, ["held", "outcome_unknown", "held_unknown_cost"])));
+        const modelEndMatches = period.endsAt === null ? isNull(modelGenerationBudgetReservations.periodEndsAt) : eq(modelGenerationBudgetReservations.periodEndsAt, period.endsAt);
+        const [generation] = await tx.select({ total: sql<string>`coalesce(sum(${modelGenerationBudgetReservations.amountUsd}) filter (where ${modelGenerationBudgetReservations.status} in ('held','outcome_unknown')), 0)::text` }).from(modelGenerationBudgetReservations).where(and(eq(modelGenerationBudgetReservations.workspaceId, input.workspaceId), eq(modelGenerationBudgetReservations.policyId, policy.id), eq(modelGenerationBudgetReservations.periodStartsAt, period.startsAt), modelEndMatches));
+        const amount = input.quote.amount * input.quote.quantity;
+        if (Number(runtime?.total ?? 0) + Number(generation?.total ?? 0) + amount > Number(policy.hardLimit) + Number.EPSILON) return { kind: "denied" as const, code: "BUDGET_LIMIT_EXCEEDED" };
+        await tx.insert(modelGenerationBudgetReservations).values({ workspaceId: input.workspaceId, intentId: input.intentId, policyId: policy.id, policyRevisionId: policy.revisionId, periodStartsAt: period.startsAt, periodEndsAt: period.endsAt, amountUsd: amount.toFixed(6), status: "held", createdAt: input.at, updatedAt: input.at });
+        return { kind: "reserved" as const, reservationIds: [`generation-budget:${input.workspaceId}:${input.intentId}`] };
       });
-      await this.budgets.commitAdmission(plan);
-      return { kind: "reserved" as const, reservationIds: plan.reservations.map((item) => item.id) };
-    } catch (error) {
-      if (error instanceof BudgetServiceError && error.code === "BUDGET_NOT_ADMISSIBLE") {
-        return { kind: "denied" as const, code: error.code };
-      }
-      return { kind: "unavailable" as const, code: error instanceof BudgetServiceError ? error.code : "BUDGET_UNAVAILABLE" };
-    }
+    } catch { return { kind: "unavailable" as const, code: "BUDGET_UNAVAILABLE" }; }
   }
 }
