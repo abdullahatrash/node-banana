@@ -11,7 +11,14 @@ export class ReplicateHttpClient implements ReplicateClientPort {
     private readonly fetcher: FetchPort = fetch,
     private readonly baseUrl = "https://api.replicate.com/v1",
   ) {}
-  create(input: { version: string; input: Record<string, unknown> }) { return this.call("/predictions", { method: "POST", body: JSON.stringify(input) }); }
+  create(input: { endpoint: "versioned" | "official_model"; model: string; version: string; input: Record<string, unknown> }) {
+    if (input.endpoint === "official_model") {
+      const [owner, name, ...extra] = input.model.split("/");
+      if (!owner || !name || extra.length) throw new Error("REPLICATE_MODEL_ID_INVALID");
+      return this.call(`/models/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/predictions`, { method: "POST", body: JSON.stringify({ input: input.input }) });
+    }
+    return this.call("/predictions", { method: "POST", body: JSON.stringify({ version: input.version, input: input.input }) });
+  }
   get(id: string) { return this.call(`/predictions/${encodeURIComponent(id)}`, { method: "GET" }); }
   cancel(id: string) { return this.call(`/predictions/${encodeURIComponent(id)}/cancel`, { method: "POST" }); }
   private async call(path: string, init: RequestInit): Promise<ReplicatePrediction> {

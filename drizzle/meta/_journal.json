@@ -505,6 +505,13 @@
       "when": 1788504000000,
       "tag": "0071_product_telemetry_consent",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1788507600000,
+      "tag": "0072_model_routing_effect_claims",
+      "breakpoints": true
     }
   ]
 }

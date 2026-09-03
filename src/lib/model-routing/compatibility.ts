@@ -1,11 +1,11 @@
 import { findCuratedModel } from "./catalog";
-import type { CompatibilityFailure, CostQuote, ExactModelRef, FallbackAuthorization, GenerationQuality } from "./types";
+import type { CompatibilityFailure, CostQuote, ExactModelRef, FallbackAuthorization, GenerationQuality, ModelDescriptor } from "./types";
 
 const rank: Record<GenerationQuality, number> = { preview: 0, standard: 1, premium: 2 };
 const same = (a: ExactModelRef, b: ExactModelRef) => a.provider === b.provider && a.model === b.model && a.version === b.version && a.inputSchemaDigest === b.inputSchemaDigest;
 
-export function authorizeFallback(input: { authorization: FallbackAuthorization; target: ExactModelRef; quote: CostQuote; at: Date }): { authorized: true } | { authorized: false; reasons: CompatibilityFailure[] } {
-  const { authorization: grant, target, quote, at } = input; const model = findCuratedModel(target); const reasons: CompatibilityFailure[] = [];
+export function authorizeFallback(input: { authorization: FallbackAuthorization; target: ExactModelRef; quote: CostQuote; at: Date; resolveModel?: (ref: ExactModelRef) => ModelDescriptor | null }): { authorized: true } | { authorized: false; reasons: CompatibilityFailure[] } {
+  const { authorization: grant, target, quote, at } = input; const model = (input.resolveModel ?? findCuratedModel)(target); const reasons: CompatibilityFailure[] = [];
   if (!grant.targets.some((item) => same(item, target))) reasons.push("target_not_authorized");
   if (grant.revokedAt) reasons.push("revoked");
   if (grant.expiresAt <= at) reasons.push("expired");

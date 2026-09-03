@@ -6,7 +6,17 @@ export type ArabicVariety = "msa" | "gulf" | "egyptian" | "levantine" | "maghreb
 
 export interface ExactModelRef { provider: "replicate" | "google" | "kie" | "openai" | "fal" | "wavespeed"; model: string; version: string; inputSchemaDigest: string; }
 export interface CostQuote { currency: "USD"; amount: number; basis: "image" | "second" | "run"; quantity: number; quotedAt: Date; expiresAt: Date; }
-export interface ModelDescriptor extends ExactModelRef { label: string; capabilities: readonly GenerationCapability[]; quality: GenerationQuality; contentLanguages: readonly ContentLanguage[]; arabicVarieties: readonly ArabicVariety[]; verifiedRegions: readonly string[]; executionModes: readonly ExecutionMode[]; aspectRatios: readonly string[]; priceUsd: { basis: CostQuote["basis"]; amount: number }; lane: "preview" | "brand" | "final" | "canary"; }
+export type ModelExecutionQualification =
+  | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
+  | { status: "qualified"; endpoint: "versioned" | "official_model"; version: string; inputSchemaDigest: `sha256:${string}` };
+export interface ModelDescriptor {
+  provider: ExactModelRef["provider"]; model: string; label: string;
+  capabilities: readonly GenerationCapability[]; quality: GenerationQuality;
+  contentLanguages: readonly ContentLanguage[]; arabicVarieties: readonly ArabicVariety[];
+  verifiedRegions: readonly string[]; executionModes: readonly ExecutionMode[];
+  aspectRatios: readonly string[]; priceUsd: { basis: CostQuote["basis"]; amount: number };
+  lane: "preview" | "brand" | "final" | "canary"; qualification: ModelExecutionQualification;
+}
 
 export interface FallbackAuthorization {
   schema: "model-fallback-authorization/v1"; id: string; workspaceId: string; revision: number; source: ExactModelRef;
@@ -21,7 +31,7 @@ export interface GenerationIntent {
   promptDigest: `sha256:${string}`; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
   rights: { basis: "owned" | "licensed" | "public_domain" | "consented"; evidenceRefs: string[]; sourceUrls: string[] };
   requestedModel: ExactModelRef; selectedModel: ExactModelRef; fallbackAuthorizationId: string | null;
-  quote: CostQuote; reservationId: string; createdByUserId: string; createdAt: Date;
+  quote: CostQuote; reservationIds: string[]; createdByUserId: string; createdAt: Date;
 }
 
 export type CompatibilityFailure = "target_not_authorized" | "expired" | "revoked" | "capability" | "quality" | "content_language" | "arabic_variety" | "region" | "execution_mode" | "quote_expired" | "cost_ceiling";

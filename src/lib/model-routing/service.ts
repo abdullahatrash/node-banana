@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { findCuratedModel } from "./catalog";
 import { authorizeFallback } from "./compatibility";
+import { DENYING_GENERATION_BUDGET_AUTHORITY, type GenerationBudgetAuthority } from "./budget-authority";
 import type { ModelRoutingRepository } from "./repository";
 import type {
   ArabicVariety, ContentLanguage, CostQuote, ExactModelRef,
   FallbackAuthorization, GenerationCapability, GenerationIntent,
-  GenerationQuality, ExecutionMode,
+  GenerationQuality, ExecutionMode, ModelDescriptor,
 } from "./types";
 
 const digest = (value: unknown) => canonicalDigest(value) as `sha256:${string}`;
@@ -22,6 +23,8 @@ export class ModelRoutingService {
   constructor(
     private readonly repository: ModelRoutingRepository,
     private readonly now = () => new Date(),
+    private readonly resolveModel: (ref: ExactModelRef) => ModelDescriptor | null = findCuratedModel,
+    private readonly budgets: GenerationBudgetAuthority = DENYING_GENERATION_BUDGET_AUTHORITY,
   ) {}
 
   async issueAuthorization(input: {
@@ -32,8 +35,8 @@ export class ModelRoutingService {
     expiresAt: Date; userId: string; idempotencyKey: string; id?: string;
   }) {
     const at = this.now();
-    const source = findCuratedModel(input.source);
-    const targets = input.targets.map(findCuratedModel);
+    const source = this.resolveModel(input.source);
+    const targets = input.targets.map(this.resolveModel);
     const targetCompatible = targets.every((target) => target &&
       target.capabilities.includes(input.capability) &&
       target.contentLanguages.includes(input.contentLanguage) &&
@@ -77,12 +80,13 @@ export class ModelRoutingService {
     capability: GenerationCapability; contentLanguage: ContentLanguage;
     arabicVariety: ArabicVariety | null; rights: GenerationIntent["rights"];
     requestedModel: ExactModelRef; selectedModel: ExactModelRef;
-    fallbackAuthorizationId: string | null; quote: CostQuote; reservationId: string;
+    fallbackAuthorizationId: string | null; quantity: number;
     userId: string; idempotencyKey: string; id?: string;
   }) {
     const at = this.now();
-    const requested = findCuratedModel(input.requestedModel);
-    const selected = findCuratedModel(input.selectedModel);
+    const id = input.id ?? stableId("intent", input.workspaceId, input.idempotencyKey);
+    const requested = this.resolveModel(input.requestedModel);
+    const selected = this.resolveModel(input.selectedModel);
     const localeCompatible = selected?.contentLanguages.includes(input.contentLanguage) &&
       (!input.arabicVariety || selected.arabicVarieties.includes(input.arabicVariety));
     const rightsHaveEvidence = input.rights.basis === "owned" ||
@@ -90,21 +94,31 @@ export class ModelRoutingService {
     if (!requested || !selected || !requested.capabilities.includes(input.capability) ||
       !selected.capabilities.includes(input.capability) || !localeCompatible ||
       !input.rawPrompt.trim() || input.brand.revision < 1 || input.brand.acceptedAt > at ||
-      !/^sha256:[a-f0-9]{64}$/.test(input.brand.digest) || input.quote.expiresAt <= at ||
-      input.quote.quotedAt > at || input.quote.amount < 0 || input.quote.quantity <= 0 ||
-      input.quote.basis !== selected.priceUsd.basis || !input.reservationId || !rightsHaveEvidence ||
+      !/^sha256:[a-f0-9]{64}$/.test(input.brand.digest) || !Number.isFinite(input.quantity) || input.quantity <= 0 ||
+      !rightsHaveEvidence ||
       (input.contentLanguage !== "en" && !input.arabicVariety)) {
       return { kind: "invalid" as const };
     }
+    let fallbackReservation: { authorizationId: string } | null = null;
     if (!sameModel(input.requestedModel, input.selectedModel)) {
       if (!input.fallbackAuthorizationId) return { kind: "fallback_not_authorized" as const };
       const grant = await this.repository.getAuthorization(input.workspaceId, input.fallbackAuthorizationId);
       if (!grant || !sameModel(grant.source, input.requestedModel)) return { kind: "fallback_not_authorized" as const };
-      const compatibility = authorizeFallback({ authorization: grant, target: input.selectedModel, quote: input.quote, at });
+      const quote: CostQuote = { currency: "USD", amount: selected.priceUsd.amount, basis: selected.priceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
+      const compatibility = authorizeFallback({ authorization: grant, target: input.selectedModel, quote, at, resolveModel: this.resolveModel });
       if (!compatibility.authorized) return { kind: "fallback_incompatible" as const, reasons: compatibility.reasons };
+      const grantReservation = await this.repository.reserveFallbackSpend({ workspaceId: input.workspaceId, authorizationId: grant.id, intentId: id, amountUsd: quote.amount * quote.quantity, at });
+      if (grantReservation === "ceiling_exceeded") return { kind: "fallback_incompatible" as const, reasons: ["cost_ceiling" as const] };
+      if (grantReservation === "unavailable") return { kind: "unavailable" as const };
+      fallbackReservation = { authorizationId: grant.id };
     } else if (input.fallbackAuthorizationId) return { kind: "invalid" as const };
 
-    const id = input.id ?? stableId("intent", input.workspaceId, input.idempotencyKey);
+    const quote: CostQuote = { currency: "USD", amount: selected.priceUsd.amount, basis: selected.priceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
+    const reservation = await this.budgets.reserve({ workspaceId: input.workspaceId, principalId: input.userId, intentId: id, model: input.selectedModel, quote, at });
+    if (reservation.kind !== "reserved") {
+      if (fallbackReservation) await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });
+      return reservation.kind === "denied" ? { kind: "budget_denied" as const, code: reservation.code } : { kind: "budget_unavailable" as const, code: reservation.code };
+    }
     const value: GenerationIntent = {
       schema: "generation-intent/v1", id, workspaceId: input.workspaceId,
       brand: input.brand, promptDigest: digest(input.rawPrompt), capability: input.capability,
@@ -112,11 +126,12 @@ export class ModelRoutingService {
       arabicVariety: input.contentLanguage === "en" ? null : input.arabicVariety,
       rights: { ...input.rights, evidenceRefs: [...input.rights.evidenceRefs], sourceUrls: [...input.rights.sourceUrls] },
       requestedModel: input.requestedModel, selectedModel: input.selectedModel,
-      fallbackAuthorizationId: input.fallbackAuthorizationId, quote: input.quote,
-      reservationId: input.reservationId, createdByUserId: input.userId, createdAt: at,
+      fallbackAuthorizationId: input.fallbackAuthorizationId, quote,
+      reservationIds: reservation.reservationIds, createdByUserId: input.userId, createdAt: at,
     };
     const requestDigest = digest({ command: "intent", ...value, id: input.id ?? null, createdAt: undefined });
     const result = await this.repository.createIntent(value, input.idempotencyKey, requestDigest);
+    if (result === "conflict" && fallbackReservation) await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });
     const stored = result === "replayed"
       ? await this.repository.getIntent(input.workspaceId, id)
       : result === "created" ? value : null;

@@ -23,3 +23,25 @@ export const modelRoutingMutationReceipts = pgTable("model_routing_mutation_rece
 export const replicatePredictionIdentities = pgTable("replicate_prediction_identities", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), intentId: text("intent_id").notNull(), predictionId: text("prediction_id").notNull(), model: jsonb("model").$type<ExactModelRef>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 }, (table) => ({ pk: primaryKey({ name: "replicate_prediction_identities_pk", columns: [table.workspaceId, table.intentId] }), predictionUnique: uniqueIndex("replicate_prediction_identities_prediction_unique").on(table.predictionId), predictionCheck: check("replicate_prediction_identities_prediction_check", sql`length(${table.predictionId}) between 1 and 200`) }));
+
+export const modelFallbackSpendReservations = pgTable("model_fallback_spend_reservations", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  authorizationId: text("authorization_id").notNull(), intentId: text("intent_id").notNull(),
+  amountUsd: numeric("amount_usd", { precision: 12, scale: 6 }).notNull(), status: text("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(), releasedAt: timestamp("released_at", { withTimezone: true }),
+}, (table) => ({
+  pk: primaryKey({ name: "model_fallback_spend_reservations_pk", columns: [table.workspaceId, table.authorizationId, table.intentId] }),
+  grantFk: check("model_fallback_spend_reservations_status_check", sql`${table.amountUsd}::numeric > 0 and ${table.status} in ('held','released')`),
+  activeIdx: index("model_fallback_spend_reservations_active_idx").on(table.workspaceId, table.authorizationId, table.status),
+}));
+
+export const modelProviderEffectClaims = pgTable("model_provider_effect_claims", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  intentId: text("intent_id").notNull(), provider: text("provider").notNull(), state: text("state").notNull(),
+  claimToken: text("claim_token").notNull(), predictionId: text("prediction_id"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "model_provider_effect_claims_pk", columns: [table.workspaceId, table.intentId] }),
+  stateCheck: check("model_provider_effect_claims_state_check", sql`${table.provider} = 'replicate' and ${table.state} in ('claimed','submitted','outcome_unknown') and length(${table.claimToken}) between 16 and 200`),
+  predictionUnique: uniqueIndex("model_provider_effect_claims_prediction_unique").on(table.predictionId),
+}));
