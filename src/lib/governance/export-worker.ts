@@ -33,6 +33,25 @@ export class GovernanceExportWorker {
     private readonly clock: { now(): Date } = { now: () => new Date() },
   ) {}
 
+  private async listAllAudit(workspaceId: string): Promise<GovernanceAuditEvent[]> {
+    const events: GovernanceAuditEvent[] = [];
+    let afterSequence: number | undefined;
+    for (;;) {
+      const page = await this.repository.listAudit({
+        workspaceId,
+        afterSequence,
+        limit: 500,
+      });
+      events.push(...page);
+      if (page.length < 500) return events;
+      const nextSequence = page.at(-1)?.sequence;
+      if (typeof nextSequence !== "number" || nextSequence <= (afterSequence ?? 0)) {
+        throw new Error("Audit export cursor did not advance.");
+      }
+      afterSequence = nextSequence;
+    }
+  }
+
   async process(input: { workspaceId: string; kind: "audit_export" | "workspace_export"; exportId: string }): Promise<void> {
     const job = await this.repository.getResource({ workspaceId: input.workspaceId, kind: input.kind, id: input.exportId });
     if (!job || job.status === "succeeded") return;
@@ -44,7 +63,7 @@ export class GovernanceExportWorker {
       const jobBody = job.body as { from: string | null; to: string | null; expiresAt: string; includeKinds?: string[]; omissions?: string[] };
       const from = jobBody.from ? new Date(jobBody.from) : null;
       const to = jobBody.to ? new Date(jobBody.to) : null;
-      const auditEvents = (await this.repository.listAudit({ workspaceId: input.workspaceId, limit: 500 })).filter((event) => (!from || event.occurredAt >= from) && (!to || event.occurredAt <= to));
+      const auditEvents = (await this.listAllAudit(input.workspaceId)).filter((event) => (!from || event.occurredAt >= from) && (!to || event.occurredAt <= to));
       const includeKinds = new Set(jobBody.includeKinds ?? []);
       const resources = input.kind === "workspace_export"
         ? (await this.repository.listResources({ workspaceId: input.workspaceId })).filter((item) => !OMITTED_RESOURCE_KINDS.has(item.kind) && (includeKinds.size === 0 || includeKinds.has(item.kind)))

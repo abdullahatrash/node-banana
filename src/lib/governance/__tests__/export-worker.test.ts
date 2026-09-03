@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InMemoryGovernanceRepository } from "../memory-repository";
 import { GovernanceService } from "../service";
 import { GovernanceExportWorker, type GovernanceExportStore } from "../export-worker";
@@ -47,5 +47,42 @@ describe("GovernanceExportWorker", () => {
     await expect(worker.process({ workspaceId: actor.workspaceId, kind: "workspace_export", exportId: requested.exportId })).rejects.toThrow(/32 bytes/);
     expect((await repository.getResource({ workspaceId: actor.workspaceId, kind: "workspace_export", id: requested.exportId }))?.status).toBe("failed_known");
     expect(store.values.size).toBe(0);
+  });
+
+  it("paginates through the complete append-only audit trail", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    const requested = await createWorkspaceExport(repository);
+    const events = Array.from({ length: 501 }, (_, index) => ({
+      schema: "workspace-audit-event/v1" as const,
+      id: `audit-${index + 1}`,
+      sequence: index + 1,
+      workspaceId: actor.workspaceId,
+      actor: { kind: "system" as const, id: null },
+      capability: "test.audit@1",
+      action: "seed",
+      resource: { kind: "test", id: `${index + 1}` },
+      outcome: "completed" as const,
+      redactedDetails: {},
+      occurredAt: new Date(now),
+    }));
+    const listAudit = vi.spyOn(repository, "listAudit").mockImplementation(async ({ afterSequence, limit }) =>
+      events.filter((event) => event.sequence > (afterSequence ?? 0)).slice(0, limit));
+    const worker = new GovernanceExportWorker(repository, new MemoryStore(), {
+      encryptionKeyBase64: Buffer.alloc(32, 1).toString("base64"),
+      signingKeyBase64: Buffer.alloc(32, 2).toString("base64"),
+    });
+
+    await worker.process({ workspaceId: actor.workspaceId, kind: "workspace_export", exportId: requested.exportId });
+
+    expect(listAudit).toHaveBeenNthCalledWith(1, {
+      workspaceId: actor.workspaceId,
+      afterSequence: undefined,
+      limit: 500,
+    });
+    expect(listAudit).toHaveBeenNthCalledWith(2, {
+      workspaceId: actor.workspaceId,
+      afterSequence: 500,
+      limit: 500,
+    });
   });
 });
