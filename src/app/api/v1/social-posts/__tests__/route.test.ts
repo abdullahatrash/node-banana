@@ -75,6 +75,7 @@ vi.mock("@/lib/social/publishing-settings", () => ({
 
 vi.mock("@/lib/agent-tools/social-publishing-approval", () => ({
   exactApprovedSocialPostInput: () => true,
+  governedPublishingMarker: () => "governed-publishing-marker",
   PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION: {
     inspect: (...args: unknown[]) => mockInspectPublishingApproval(...args),
     consume: (...args: unknown[]) => mockConsumePublishingApproval(...args),
@@ -268,6 +269,8 @@ describe("/api/v1/social-posts POST", () => {
     expect(response.status).toBe(201);
     expect(data.status).toBe("queued");
     expect(data.scheduledAt).toBe("2026-07-10T15:00:00.000Z");
+    expect(mockInspectPublishingApproval).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "ws_1", evidence: publishingApproval() }));
+    expect(mockConsumePublishingApproval).toHaveBeenCalledTimes(1);
     expect(mockEmitSocialEvent).toHaveBeenCalled();
   });
 
