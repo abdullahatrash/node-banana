@@ -7,6 +7,7 @@ import { CREDENTIAL_HUMAN_CAPABILITIES } from "@/lib/agent-runtime/server-dispat
 import { credentialHumanContext } from "@/lib/credential-vault/http";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import { requireGovernanceStepUp } from "@/lib/governance/step-up-http";
 
 const schema = z
   .object({
@@ -62,6 +63,10 @@ export const POST = withStudioAuth<undefined>(
         { success: false, error: "Choose bounded or audited unbounded spend explicitly." },
         { status: 400 },
       );
+    }
+    if (parsed.data.mode === "audited_unbounded") {
+      const denied = await requireGovernanceStepUp({ request, workspaceId: authz.workspaceId, userId: authz.userId, purpose: "spend.unbounded", resourceId: parsed.data.profileId });
+      if (denied) return denied;
     }
     try {
       const grant = await CREDENTIAL_HUMAN_CAPABILITIES.invoke(

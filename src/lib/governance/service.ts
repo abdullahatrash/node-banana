@@ -28,6 +28,7 @@ import { GOVERNANCE_CAPABILITIES, RETENTION_CLASSES } from "./types";
 import { BUILT_IN_WORKSPACE_ROLES } from "./types";
 import { advanceApprovalDeadline, ApprovalPolicyError, createContentAcceptanceProgress, decideContentAcceptance } from "./approval-policy";
 import { UNCONFIGURED_GOVERNANCE_REGION_VERIFIER, type GovernanceRegionDeploymentEvidence, type GovernanceRegionVerificationPort } from "./region-policy";
+import { RepositoryGovernanceStepUpVerifier } from "./step-up";
 import {
   canViewGovernanceResource,
   projectGovernanceAuditEvent,
@@ -310,17 +311,8 @@ export class GovernanceService {
   }
 
   private async requireStepUp(actor: GovernanceActor, purpose: string, resourceId: string | null, token: string) {
-    const sessions = await this.repository.listResources<{
-      tokenDigest: string; userId: string; purpose: string; resourceId: string | null; expiresAt: string;
-    }>({ workspaceId: actor.workspaceId, kinds: ["step_up_session"], status: "active" });
-    const now = this.clock.now();
-    const match = sessions.find((session) =>
-      session.body.userId === actor.userId &&
-      session.body.purpose === purpose &&
-      session.body.resourceId === resourceId &&
-      session.body.tokenDigest === secretDigest(token) &&
-      exactDate(session.body.expiresAt, "Step-up expiry") > now);
-    if (!match) throw new GovernanceError("STEP_UP_REQUIRED", "A current exact-scope step-up is required.");
+    const evidence = await new RepositoryGovernanceStepUpVerifier(this.repository).verify({ workspaceId: actor.workspaceId, userId: actor.userId, purpose, resourceId, token, evaluatedAt: this.clock.now() });
+    if (!evidence) throw new GovernanceError("STEP_UP_REQUIRED", "A current exact-scope step-up is required.");
   }
 
   private audit(input: {

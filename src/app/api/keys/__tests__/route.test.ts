@@ -7,12 +7,14 @@ const {
   mockListProviderKeys,
   mockUpsertProviderKey,
   mockValidateProviderKey,
+  mockRequireGovernanceStepUp,
 } = vi.hoisted(() => ({
   mockIsDatabaseConfigured: vi.fn(() => true),
   mockAuthorizeStudioRequest: vi.fn(),
   mockListProviderKeys: vi.fn(),
   mockUpsertProviderKey: vi.fn(),
   mockValidateProviderKey: vi.fn(),
+  mockRequireGovernanceStepUp: vi.fn(async (_input: unknown): Promise<unknown> => null),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -37,6 +39,7 @@ vi.mock("@/lib/byok/repository", () => ({
 vi.mock("@/lib/byok/validation", () => ({
   validateProviderKey: (...args: unknown[]) => mockValidateProviderKey(...args),
 }));
+vi.mock("@/lib/governance/step-up-http", () => ({ requireGovernanceStepUp: (input: unknown) => mockRequireGovernanceStepUp(input) }));
 
 import { GET, POST } from "../route";
 
@@ -145,8 +148,18 @@ describe("/api/keys", () => {
         rawKey: "sk-realkeyvalue1234",
         createdByUserId: "user_1",
       });
+      expect(mockRequireGovernanceStepUp).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "ws_1", userId: "user_1", purpose: "credential.replace", resourceId: "openai" }));
       // The raw key must never appear in the response body.
       expect(JSON.stringify(data)).not.toContain("sk-realkeyvalue1234");
+    });
+
+    it("does not validate or persist a replacement without exact-scope step-up", async () => {
+      authorizedAs("ws_1");
+      mockRequireGovernanceStepUp.mockResolvedValueOnce(NextResponse.json({ success: false, code: "GOVERNANCE_STEP_UP_REQUIRED" }, { status: 403 }));
+      const response = await POST(createRequest({ provider: "openai", apiKey: "sk-realkeyvalue1234" }));
+      expect(response.status).toBe(403);
+      expect(mockValidateProviderKey).not.toHaveBeenCalled();
+      expect(mockUpsertProviderKey).not.toHaveBeenCalled();
     });
 
     it("rejects an invalid key with the provider's error, and does not persist it", async () => {

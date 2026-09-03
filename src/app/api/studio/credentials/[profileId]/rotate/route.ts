@@ -7,6 +7,7 @@ import { CREDENTIAL_HUMAN_CAPABILITIES } from "@/lib/agent-runtime/server-dispat
 import { credentialHumanContext } from "@/lib/credential-vault/http";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import { requireGovernanceStepUp } from "@/lib/governance/step-up-http";
 
 type Context = { params: Promise<{ profileId: string }> };
 const schema = z
@@ -33,6 +34,8 @@ export const POST = withStudioAuth<Context>(
     }
     try {
       const { profileId } = await context.params;
+      const stepUpDenied = await requireGovernanceStepUp({ request, workspaceId: authz.workspaceId, userId: authz.userId, purpose: "credential.replace", resourceId: profileId });
+      if (stepUpDenied) return stepUpDenied;
       const profile = await CREDENTIAL_HUMAN_CAPABILITIES.invoke(
         "credentials.profiles.rotate@1",
         { profileId, ...parsed.data },

@@ -28,6 +28,7 @@ vi.mock("@/lib/agent-auth", () => ({
       mockApprovePairingConfirmation(...args),
   },
 }));
+vi.mock("@/lib/governance/step-up-http", () => ({ requireGovernanceStepUp: vi.fn(async () => null) }));
 
 import { GET, POST } from "../[challengeId]/route";
 
