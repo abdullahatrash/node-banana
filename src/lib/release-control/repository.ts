@@ -21,9 +21,9 @@ export class ReleaseControlRepository {
     return rows.map((row) => ({ ...row, kind: row.kind as ReleaseRecordKind, document: row.document, createdAt: new Date(row.createdAt), expiresAt: row.expiresAt ? new Date(row.expiresAt) : null }));
   }
 
-  async listPublicIncidents(): Promise<Array<{ document: Record<string, unknown>; createdAt: Date }>> {
+  async listPublicIncidents(statusWorkspaceId: string): Promise<Array<{ document: Record<string, unknown>; createdAt: Date }>> {
     const rows = await this.database().selectDistinctOn([releaseControlRecords.workspaceId, releaseControlRecords.id], { document: releaseControlRecords.document, createdAt: releaseControlRecords.createdAt })
-      .from(releaseControlRecords).where(eq(releaseControlRecords.kind, "incident"))
+      .from(releaseControlRecords).where(and(eq(releaseControlRecords.workspaceId, statusWorkspaceId), eq(releaseControlRecords.kind, "incident")))
       .orderBy(releaseControlRecords.workspaceId, releaseControlRecords.id, desc(releaseControlRecords.revision));
     return rows.map((row) => ({ document: row.document, createdAt: new Date(row.createdAt) }));
   }

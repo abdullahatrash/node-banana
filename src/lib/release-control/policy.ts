@@ -22,6 +22,7 @@ const REQUIRED_ACCESSIBILITY: readonly AccessibilityCriterion[] = [
   "target_size",
   "reduced_motion",
 ];
+const REQUIRED_WEB_PERFORMANCE = ["largest_contentful_paint_ms", "interaction_to_next_paint_ms", "cumulative_layout_shift_milli"] as const;
 
 const EXPECTED_DIRECTION: Record<SupportedLocale, "rtl" | "ltr"> = {
   ar: "rtl",
@@ -66,9 +67,9 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
   for (const route of input.requiredRoutes) {
     for (const client of input.supportedClients) {
       for (const locale of ["ar", "en"] as const) {
-        const performance = input.evidence.filter((item) => item.kind === "performance" && item.route === route && item.client === client && item.locale === locale && liveForBuild(item, input));
-        if (performance.length === 0) {
-          blockers.push({ code: "EVIDENCE_MISSING", subject: key(["performance", route, client, locale]), detail: "Current performance evidence is required for every supported route, client, and locale." });
+        for (const metric of REQUIRED_WEB_PERFORMANCE) {
+          const performance = input.evidence.some((item) => item.kind === "performance" && item.route === route && item.client === client && item.locale === locale && item.metric === metric && liveForBuild(item, input));
+          if (!performance) blockers.push({ code: "EVIDENCE_MISSING", subject: key(["performance", route, client, locale, metric]), detail: "Current performance evidence is required for every metric, supported route, client, and locale." });
         }
         for (const criterion of REQUIRED_ACCESSIBILITY) {
           const accessibility = input.evidence.some((item) => item.kind === "accessibility" && item.route === route && item.client === client && item.locale === locale && item.criterion === criterion && liveForBuild(item, input));
@@ -112,7 +113,8 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
   for (const requirement of input.parity) {
     const evidenceReady = requirement.evidenceIds.length > 0 && requirement.evidenceIds.every((id) => liveEvidence.get(id)?.outcome === "passed");
     const localesReady = requirement.requiredLocales.includes("ar") && requirement.requiredLocales.includes("en");
-    if (requirement.status !== "passed" || !evidenceReady || !localesReady || !requirement.productSignoffUserId || !requirement.engineeringSignoffUserId) {
+    const current = requirement.buildId === input.buildId && requirement.evaluatedAt <= input.evaluatedAt && requirement.expiresAt > input.evaluatedAt;
+    if (!current || requirement.status !== "passed" || !evidenceReady || !localesReady || !requirement.productSignoffUserId || !requirement.engineeringSignoffUserId || requirement.productSignoffUserId === requirement.engineeringSignoffUserId) {
       blockers.push({ code: "PARITY_UNVERIFIED", subject: requirement.id, detail: "Parity requires current evidence, Arabic and English coverage, and independent product and engineering sign-off." });
     }
   }

@@ -67,6 +67,7 @@ describe("ProductShell", () => {
     expect(screen.getByRole("link", { name: "Deliveries" })).toHaveAttribute("href", "/deliveries");
     expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
     expect(screen.getByRole("link", { name: "Observability" })).toHaveAttribute("href", "/studio/observability");
+    expect(screen.getByRole("link", { name: "Release quality" })).toHaveAttribute("href", "/studio/release-quality");
     expect(screen.getByRole("link", { name: "Prompt Library" })).toHaveAttribute("href", "/simple-studio/prompt-library");
     expect(screen.getByRole("link", { name: "Events" })).toHaveAttribute("href", "/social/events");
     expect(screen.getByRole("link", { name: "Copilot" })).toHaveAttribute("href", "/social/copilot");

@@ -104,6 +104,9 @@ export interface ContractMigrationEvidence {
 export interface ParityRequirement {
   id: string;
   feature: string;
+  buildId: string;
+  evaluatedAt: Date;
+  expiresAt: Date;
   requiredLocales: SupportedLocale[];
   evidenceIds: string[];
   productSignoffUserId: string | null;

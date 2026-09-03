@@ -98,6 +98,7 @@ const contextIcons = {
   observability: ActivityIcon,
   operations: CircleGaugeIcon,
   modelRouting: WandSparklesIcon,
+  releaseQuality: FileCheck2Icon,
   promptLibrary: BookmarkIcon,
   posts: BoxesIcon,
   socialMedia: ImageIcon,

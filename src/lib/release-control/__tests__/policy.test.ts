@@ -10,7 +10,11 @@ function readyInput(): ReleaseReadinessInput {
   const evidence: ReleaseReadinessInput["evidence"] = [];
   for (const locale of ["ar", "en"] as const) {
     const direction = locale === "ar" ? "rtl" : "ltr";
-    evidence.push({ id: `perf-${locale}`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "largest_contentful_paint_ms", measured: 1_900, budget: 2_500 });
+    evidence.push(
+      { id: `perf-${locale}-lcp`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "largest_contentful_paint_ms", measured: 1_900, budget: 2_500 },
+      { id: `perf-${locale}-inp`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "interaction_to_next_paint_ms", measured: 160, budget: 200 },
+      { id: `perf-${locale}-cls`, kind: "performance", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", metric: "cumulative_layout_shift_milli", measured: 80, budget: 100 },
+    );
     for (const criterion of criteria) evidence.push({ id: `a11y-${locale}-${criterion}`, kind: "accessibility", buildId: "build-1", collectedAt: NOW, expiresAt: FUTURE, outcome: "passed", locale, direction, client: "chromium", route: "/simple-studio/copy", criterion, standard: "WCAG_2_2_AA" });
   }
   return {
@@ -19,12 +23,12 @@ function readyInput(): ReleaseReadinessInput {
     requiredRoutes: ["/simple-studio/copy"],
     supportedClients: ["chromium"],
     evidence,
-    flags: [{ id: "flag-1", ownerUserId: "owner-1", hypothesis: "Safer composer", createdAt: NOW, expiresAt: FUTURE, rolloutPercent: 10, safeDefault: "off", status: "active", evidenceIds: ["perf-ar", "perf-en"] }],
+    flags: [{ id: "flag-1", ownerUserId: "owner-1", hypothesis: "Safer composer", createdAt: NOW, expiresAt: FUTURE, rolloutPercent: 10, safeDefault: "off", status: "active", evidenceIds: ["perf-ar-lcp", "perf-en-lcp"] }],
     incidents: [{ id: "incident-1", severity: "minor", status: "resolved", impactedServices: ["copy"], startedAt: NOW, resolvedAt: NOW, publicSummary: { ar: "تم الحل", en: "Resolved" } }],
     recoveryObjectives: [{ dataClass: "workspace-content", rpoSeconds: 300, rtoSeconds: 3_600 }],
     restoreDrills: [{ id: "drill-1", dataClass: "workspace-content", buildId: "build-1", startedAt: NOW, completedAt: NOW, observedDataLossSeconds: 30, observedRecoverySeconds: 600, outcome: "passed", expiresAt: FUTURE }],
     contractMigrations: [{ id: "migration-1", contract: "generation-intent", buildId: "build-1", phase: "expand", status: "verified", compatibilityVerified: true, rollbackVerified: true, observedAt: NOW, expiresAt: FUTURE }],
-    parity: [{ id: "parity-copy", feature: "Brand-aware copy", requiredLocales: ["ar", "en"], evidenceIds: ["perf-ar", "perf-en"], productSignoffUserId: "product-1", engineeringSignoffUserId: "engineer-1", status: "passed" }],
+    parity: [{ id: "parity-copy", feature: "Brand-aware copy", buildId: "build-1", evaluatedAt: NOW, expiresAt: FUTURE, requiredLocales: ["ar", "en"], evidenceIds: ["perf-ar-lcp", "perf-en-lcp"], productSignoffUserId: "product-1", engineeringSignoffUserId: "engineer-1", status: "passed" }],
   };
 }
 
