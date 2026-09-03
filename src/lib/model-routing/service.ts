@@ -11,6 +11,7 @@ import type {
 } from "./types";
 import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } from "./generation-region";
 import { validateRightsEvidence } from "./rights-evidence";
+import { validateImmutableBrandContext } from "./brand-context";
 
 const digest = (value: unknown) => canonicalDigest(value) as `sha256:${string}`;
 const sameModel = (a: ExactModelRef, b: ExactModelRef) =>
@@ -97,7 +98,7 @@ export class ModelRoutingService {
     const rightsEvidence = validateRightsEvidence({ workspaceId: input.workspaceId, basis: input.rights.basis, permittedRemix: input.rights.permittedRemix, sourceAssetIds: input.rights.sourceAssetIds, evidence: input.rights.evidence, at });
     if (!requested || !selected || !requested.capabilities.includes(input.capability) ||
       !selected.capabilities.includes(input.capability) || !localeCompatible ||
-      !input.rawPrompt.trim() || input.brand.revision < 1 || input.brand.acceptedAt > at ||
+      !input.rawPrompt.trim() || input.brand.revision < 1 || input.brand.acceptedAt > at || !validateImmutableBrandContext(input.brand.context) || input.brand.context.profileId !== input.brand.profileId || input.brand.context.revision !== input.brand.revision ||
       !/^sha256:[a-f0-9]{64}$/.test(input.brand.digest) || !Number.isFinite(input.quantity) || input.quantity <= 0 ||
       !rightsEvidence.ok || input.rights.revision < 1 || !/^sha256:[a-f0-9]{64}$/.test(input.rights.digest) || !input.rights.snapshotId ||
       input.rights.permittedRemix === "reference_only" && input.remixBrief.transform.length > 0 ||
@@ -106,7 +107,7 @@ export class ModelRoutingService {
     }
     const region = await this.regions.admit({ workspaceId: input.workspaceId, model: input.selectedModel, at });
     if (region.kind !== "admitted") return { kind: "region_denied" as const, code: region.code };
-    let fallbackReservation: { authorizationId: string } | null = null;
+    let fallbackReservation: { authorizationId: string; disposition: "created" | "replayed" } | null = null;
     if (!sameModel(input.requestedModel, input.selectedModel)) {
       if (!input.fallbackAuthorizationId) return { kind: "fallback_not_authorized" as const };
       const grant = await this.repository.getAuthorization(input.workspaceId, input.fallbackAuthorizationId);
@@ -118,14 +119,14 @@ export class ModelRoutingService {
       const grantReservation = await this.repository.reserveFallbackSpend({ workspaceId: input.workspaceId, authorizationId: grant.id, intentId: id, amountUsd: quote.amount * quote.quantity, at });
       if (grantReservation === "ceiling_exceeded") return { kind: "fallback_incompatible" as const, reasons: ["cost_ceiling" as const] };
       if (grantReservation === "unavailable") return { kind: "unavailable" as const };
-      fallbackReservation = { authorizationId: grant.id };
+      fallbackReservation = { authorizationId: grant.id, disposition: grantReservation === "replayed" ? "replayed" : "created" };
     } else if (input.fallbackAuthorizationId) return { kind: "invalid" as const };
 
     if (selected.qualification.status !== "qualified" || input.quantity > selected.qualification.maxQuantity) return { kind: "invalid" as const };
     const quote: CostQuote = { currency: "USD", amount: selected.qualification.executionPriceUsd.amount, basis: selected.qualification.executionPriceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
     const reservation = await this.budgets.reserve({ workspaceId: input.workspaceId, principalId: input.userId, intentId: id, model: input.selectedModel, quote, at });
     if (reservation.kind !== "reserved") {
-      if (fallbackReservation) await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });
+      if (fallbackReservation?.disposition === "created") await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });
       return reservation.kind === "denied" ? { kind: "budget_denied" as const, code: reservation.code } : { kind: "budget_unavailable" as const, code: reservation.code };
     }
     const value: GenerationIntent = {
@@ -144,7 +145,10 @@ export class ModelRoutingService {
     };
     const requestDigest = digest({ command: "intent", ...value, id: input.id ?? null, createdAt: undefined });
     const result = await this.repository.createIntent(value, input.idempotencyKey, requestDigest);
-    if (result === "conflict" && fallbackReservation) await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });
+    if (result !== "created" && result !== "replayed") {
+      if (reservation.disposition === "created") await this.budgets.release({ workspaceId: input.workspaceId, intentId: id, at });
+      if (fallbackReservation?.disposition === "created") await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });
+    }
     const stored = result === "replayed"
       ? await this.repository.getIntent(input.workspaceId, id)
       : result === "created" ? value : null;

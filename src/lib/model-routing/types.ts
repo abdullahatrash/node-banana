@@ -24,9 +24,16 @@ export interface InspirationRightsEvidence {
   evidenceDocumentAssetId: string | null; sourceUrl: string | null;
   issuedAt: Date; verifiedAt: Date; expiresAt: Date | null; digest: `sha256:${string}`;
 }
+export interface ImmutableBrandContext {
+  schema: "brand-context/v1"; profileId: string; revision: number; acceptedAt: Date; contentLanguage: "ar" | "en" | "mixed";
+  identity: { companyName: string; coreIdentity: string }; offering: string[]; audiences: Array<{ name: string; description: string; weight: number }>;
+  benefits: string[]; differentiators: string[]; positioning: string; voice: { descriptors: string[]; do: string[]; doNot: string[] };
+  palette: string[]; constraints: { prohibitedClaims: string[]; prohibitedTopics: string[] }; contentAngles: string[];
+  referenceAssets: Array<{ assetId: string; digest: `sha256:${string}`; kind: "logo" }>; digest: `sha256:${string}`;
+}
 export type ModelExecutionQualification =
   | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
-  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number; height: number; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean }; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
+  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number; height: number; fps: number | null }; inputContract: { promptKey: string; brandContextKey: string; aspectRatioKey: string; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean }; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
 export interface ModelDescriptor {
   provider: ExactModelRef["provider"]; model: string; label: string;
   capabilities: readonly GenerationCapability[]; quality: GenerationQuality;
@@ -46,7 +53,7 @@ export interface FallbackAuthorization {
 
 export interface GenerationIntent {
   schema: "generation-intent/v1"; id: string; workspaceId: string;
-  brand: { profileId: string; revision: number; digest: `sha256:${string}`; acceptedAt: Date };
+  brand: { profileId: string; revision: number; digest: `sha256:${string}`; acceptedAt: Date; context: ImmutableBrandContext };
   promptDigest: `sha256:${string}`; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
   rights: { snapshotId: string; revision: number; digest: `sha256:${string}`; basis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; evidence: InspirationRightsEvidence[]; sourceAssetIds: string[] };
   remixBrief: { digest: `sha256:${string}`; preserve: string[]; transform: string[]; avoid: string[] };

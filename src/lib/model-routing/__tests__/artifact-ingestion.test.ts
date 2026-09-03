@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { ArtifactIngestionBusyError, ArtifactLeaseGuard, S3CanonicalArtifactIngestion, validateDecodedArtifact } from "../artifact-ingestion";
 import type { ArtifactReceiptPort } from "../artifact-receipts";
 import type { GenerationIntent } from "../types";
-import { testOutputContract, testQualification, testRef, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
+import { testBrand, testOutputContract, testQualification, testRef, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
 
 const intent: GenerationIntent = {
   schema: "generation-intent/v1", id: "intent-artifact", workspaceId: "ws",
-  brand: { profileId: "brand", revision: 4, digest: `sha256:${"a".repeat(64)}`, acceptedAt: new Date("2026-09-03T00:00:00Z") },
+  brand: testBrand("brand", 4, new Date("2026-09-03T00:00:00Z")),
   promptDigest: `sha256:${"b".repeat(64)}`, capability: "text_to_video", contentLanguage: "ar", arabicVariety: "gulf",
   rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, qualification: testQualification(5), regionAdmission: TEST_REGION_ADMISSION,
   outputContract: testOutputContract(5, 8), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null,

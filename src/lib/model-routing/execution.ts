@@ -7,6 +7,7 @@ import type { ReplicatePredictionAdapter, ReplicateExecutionResult } from "./rep
 import type { ExactModelRef, ModelDescriptor } from "./types";
 import { authorizeFallback } from "./compatibility";
 import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } from "./generation-region";
+import { validateImmutableBrandContext } from "./brand-context";
 
 export type GenerationExecutionResult =
   | { kind: "accepted"; operation: OperationRecord; provider: ReplicateExecutionResult }
@@ -22,12 +23,13 @@ export class GenerationExecutionService {
     private readonly regions: GenerationRegionAuthority = DENYING_GENERATION_REGION_AUTHORITY,
   ) {}
 
-  async execute(input: { workspaceId: string; userId: string; intentId: string; rawPrompt: string; sourceUrls: string[]; idempotencyKey: string }): Promise<GenerationExecutionResult> {
+  async execute(input: { workspaceId: string; userId: string; intentId: string; rawPrompt: string; sourceUrls: string[]; brandReferenceUrls: Array<{ assetId: string; url: string }>; idempotencyKey: string }): Promise<GenerationExecutionResult> {
     const intent = await this.routing.getIntent(input.workspaceId, input.intentId);
     if (!intent) return { kind: "not_found", code: "GENERATION_INTENT_NOT_FOUND" };
     if (intent.quote.expiresAt <= this.now()) return { kind: "expired", code: "GENERATION_QUOTE_EXPIRED" };
     if (canonicalDigest(input.rawPrompt) !== intent.promptDigest) return { kind: "invalid", code: "PROMPT_DIGEST_MISMATCH" };
     if (input.sourceUrls.length !== intent.rights.sourceAssetIds.length || input.sourceUrls.length !== intent.rights.evidence.length) return { kind: "invalid", code: "RIGHTS_EVIDENCE_REQUIRED" };
+    if (!validateImmutableBrandContext(intent.brand.context) || intent.brand.context.profileId !== intent.brand.profileId || intent.brand.context.revision !== intent.brand.revision || input.brandReferenceUrls.length !== intent.brand.context.referenceAssets.length || input.brandReferenceUrls.some((reference, index) => reference.assetId !== intent.brand.context.referenceAssets[index]?.assetId)) return { kind: "invalid", code: "BRAND_CONTEXT_MISMATCH" };
     const descriptor = this.resolveModel(intent.selectedModel);
     if (!descriptor || descriptor.qualification.status !== "qualified") return { kind: "unavailable", code: "MODEL_NOT_EXECUTABLE" };
     const qualification = descriptor.qualification.evidence;
@@ -48,13 +50,14 @@ export class GenerationExecutionService {
     const providerInput: Record<string, unknown> = {
       ...structuredClone(contract.lockedParameters),
       [contract.promptKey]: input.rawPrompt,
+      [contract.brandContextKey]: JSON.stringify({ ...intent.brand.context, referenceAssets: intent.brand.context.referenceAssets.map((reference, index) => ({ ...reference, url: input.brandReferenceUrls[index]!.url })) }),
       [contract.aspectRatioKey]: "9:16",
     };
     if (contract.quantityKey) providerInput[contract.quantityKey] = intent.quote.quantity;
     if (contract.imageKey && input.sourceUrls.length) providerInput[contract.imageKey] = contract.imageMode === "array" ? input.sourceUrls : input.sourceUrls[0];
 
     const actor = { type: "human" as const, userId: input.userId };
-    const created = await this.operations.create({ workspaceId: input.workspaceId, kind: "generation", resourceId: intent.id, actor, metadata: { provider: "replicate", intentId: intent.id, model: intent.selectedModel.model, version: intent.selectedModel.version, inputSchemaDigest: intent.selectedModel.inputSchemaDigest, brandProfileId: intent.brand.profileId, brandRevision: intent.brand.revision, contentLanguage: intent.contentLanguage, arabicVariety: intent.arabicVariety, quoteAmountUsd: intent.quote.amount, quoteQuantity: intent.quote.quantity, quoteBasis: intent.quote.basis, reservationIds: intent.reservationIds, rightsSnapshotId: intent.rights.snapshotId, rightsSnapshotRevision: intent.rights.revision, rightsEvidenceRefs: intent.rights.evidence.map((item) => item.id), provenanceRefs: intent.rights.sourceAssetIds, region: intent.regionAdmission.region, regionPolicyId: intent.regionAdmission.policyId, regionPolicyVersion: intent.regionAdmission.policyVersion, regionEvidenceDigest: intent.regionAdmission.evidenceDigest, aspectRatio: intent.outputContract.aspectRatio, width: intent.outputContract.width, height: intent.outputContract.height, fps: intent.outputContract.fps, providerState: "admitted", nextAction: "submit_provider" }, idempotencyKey: `${input.idempotencyKey}:operation` });
+    const created = await this.operations.create({ workspaceId: input.workspaceId, kind: "generation", resourceId: intent.id, actor, metadata: { provider: "replicate", intentId: intent.id, model: intent.selectedModel.model, version: intent.selectedModel.version, inputSchemaDigest: intent.selectedModel.inputSchemaDigest, brandProfileId: intent.brand.profileId, brandRevision: intent.brand.revision, brandContextDigest: intent.brand.context.digest, brandReferenceAssetIds: intent.brand.context.referenceAssets.map((item) => item.assetId), contentLanguage: intent.contentLanguage, arabicVariety: intent.arabicVariety, quoteAmountUsd: intent.quote.amount, quoteQuantity: intent.quote.quantity, quoteBasis: intent.quote.basis, reservationIds: intent.reservationIds, rightsSnapshotId: intent.rights.snapshotId, rightsSnapshotRevision: intent.rights.revision, rightsEvidenceRefs: intent.rights.evidence.map((item) => item.id), provenanceRefs: intent.rights.sourceAssetIds, region: intent.regionAdmission.region, regionPolicyId: intent.regionAdmission.policyId, regionPolicyVersion: intent.regionAdmission.policyVersion, regionEvidenceDigest: intent.regionAdmission.evidenceDigest, aspectRatio: intent.outputContract.aspectRatio, width: intent.outputContract.width, height: intent.outputContract.height, fps: intent.outputContract.fps, providerState: "admitted", nextAction: "submit_provider" }, idempotencyKey: `${input.idempotencyKey}:operation` });
     if (created.kind !== "applied" && created.kind !== "replayed") return { kind: "unavailable", code: `OPERATION_${created.kind.toUpperCase()}` };
     let operation = created.operation;
     if (operation.state === "queued") operation = await this.transition(operation, "admitted", null, actor, `${input.idempotencyKey}:admit`, "generation.intent_admitted");

@@ -1,6 +1,6 @@
 import { CURATED_MODELS, exactModelRef, findCuratedModel } from "../catalog";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import type { ExactModelRef, ModelDescriptor } from "../types";
+import type { ExactModelRef, ImmutableBrandContext, ModelDescriptor } from "../types";
 import type { GenerationRegionAuthority } from "../generation-region";
 
 export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.map((model, index) => ({
@@ -14,7 +14,7 @@ export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.
     maxQuantity: 30,
     cancelAfterSeconds: 900,
     outputShape: { width: 1080, height: 1920, fps: model.capabilities.some((capability) => capability.endsWith("video")) ? 30 : null },
-    inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: "duration", imageKey: "image", imageMode: "single" as const, safety: { parameterKey: "disable_safety_checker", safeValue: false }, lockedParameters: { disable_safety_checker: false, draft: false, resolution: "1080p", audio: false } },
+    inputContract: { promptKey: "prompt", brandContextKey: "brand_context", aspectRatioKey: "aspect_ratio", quantityKey: "duration", imageKey: "image", imageMode: "single" as const, safety: { parameterKey: "disable_safety_checker", safeValue: false }, lockedParameters: { disable_safety_checker: false, draft: false, resolution: "1080p", audio: false } },
     evidence: {
       id: `qualification-${index}`, revision: 1,
       digest: `sha256:${(index + 20).toString(16).padStart(64, "0")}` as `sha256:${string}`,
@@ -54,3 +54,15 @@ export const TEST_REMIX_BRIEF = { preserve: ["brand palette"], transform: ["comp
 export const TEST_CREDENTIAL_REF = { id: "provider-key-1", provider: "replicate" as const, updatedAt: "2026-09-03T00:00:00.000Z" };
 export const TEST_REGION_ADMISSION = { policyId: "active", policyVersion: 1, evidenceDigest: `sha256:${"9".repeat(64)}` as `sha256:${string}`, region: "replicate-us", routeId: "provider:replicate", evidenceExpiresAt: new Date("2026-09-10T00:00:00.000Z") };
 export const ALLOWING_TEST_REGION_AUTHORITY: GenerationRegionAuthority = { admit: async () => ({ kind: "admitted", evidence: structuredClone(TEST_REGION_ADMISSION) }), revalidate: async () => ({ kind: "admitted" }) };
+
+export const testBrand = (profileId = "brand", revision = 1, acceptedAt = new Date("2026-09-01T00:00:00.000Z"), profileDigest = `sha256:${"a".repeat(64)}` as `sha256:${string}`) => {
+  const value = {
+    schema: "brand-context/v1" as const, profileId, revision, acceptedAt, contentLanguage: "mixed" as const,
+    identity: { companyName: "Test brand", coreIdentity: "Trusted creative studio" }, offering: ["Creative services"],
+    audiences: [{ name: "Creators", description: "MENA creators", weight: 1 }], benefits: ["Clear stories"], differentiators: ["Arabic-first"], positioning: "Useful and precise",
+    voice: { descriptors: ["warm"], do: ["be clear"], doNot: ["make unsupported claims"] }, palette: ["#123456"],
+    constraints: { prohibitedClaims: ["guaranteed results"], prohibitedTopics: [] }, contentAngles: ["practical education"], referenceAssets: [],
+  };
+  const context: ImmutableBrandContext = { ...value, digest: canonicalDigest(value) as `sha256:${string}` };
+  return { profileId, revision, digest: profileDigest, acceptedAt, context };
+};
