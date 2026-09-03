@@ -26,7 +26,10 @@ const REQUIRED_ACCESSIBILITY: readonly AccessibilityCriterion[] = [
   "live_updates",
   "captions_transcripts",
   "arabic_screen_reader",
+  "landmarks",
+  "ai_alt_text_labeled_editable",
 ];
+const REQUIRED_PARITY_EVIDENCE = ["sanitized_reference", "tasmeemai_reference_comparison", "adaptation_rationale"] as const;
 
 const EXPECTED_DIRECTION: Record<SupportedLocale, "rtl" | "ltr"> = {
   ar: "rtl",
@@ -79,10 +82,12 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
   for (const route of input.requiredRoutes) {
     for (const client of input.supportedClients) {
       for (const locale of ["ar", "en"] as const) {
-        for (const criterion of REQUIRED_ACCESSIBILITY) {
-          const accessibility = input.evidence.some((item) => item.kind === "accessibility" && item.route === route && item.client === client.id && item.locale === locale && item.criterion === criterion && liveForBuild(item, input));
-          if (!accessibility) {
-            blockers.push({ code: "EVIDENCE_MISSING", subject: key(["accessibility", route, client.id, locale, criterion]), detail: "Current WCAG 2.2 AA evidence is missing." });
+        for (const inputMode of client.inputModes) {
+          for (const criterion of REQUIRED_ACCESSIBILITY) {
+            const accessibility = input.evidence.some((item) => item.kind === "accessibility" && item.route === route && item.client === client.id && item.locale === locale && item.criterion === criterion && item.viewportWidth >= client.minViewportWidth && item.inputMode === inputMode && liveForBuild(item, input));
+            if (!accessibility) {
+              blockers.push({ code: "EVIDENCE_MISSING", subject: key(["accessibility", route, client.id, locale, inputMode, criterion]), detail: "Current WCAG 2.2 AA evidence is missing for the required viewport and input mode." });
+            }
           }
         }
       }
@@ -106,21 +111,21 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
   }
 
   for (const objective of input.recoveryObjectives) {
-    if (!Number.isSafeInteger(objective.rpoSeconds) || objective.rpoSeconds < 0 || !Number.isSafeInteger(objective.rtoSeconds) || objective.rtoSeconds <= 0 || objective.backupRegions.length < 2 || !objective.pitrWindowSeconds || !objective.artifactReconciliation || !objective.externalEffectReconciliation) {
+    if (!Number.isSafeInteger(objective.rpoSeconds) || objective.rpoSeconds < 0 || !Number.isSafeInteger(objective.rtoSeconds) || objective.rtoSeconds <= 0 || objective.backupRegions.length < 2 || !objective.pitrWindowSeconds || !objective.backupRetentionDays || !objective.backupDeletionSlaDays || objective.backupDeletionSlaDays > objective.backupRetentionDays || !objective.immutableArtifactRecovery || !objective.artifactReconciliation || !objective.externalEffectReconciliation) {
       blockers.push({ code: "RECOVERY_OBJECTIVE_INVALID", subject: objective.dataClass, detail: "RPO and RTO must be explicit valid durations." });
       continue;
     }
     const drills = input.restoreDrills.filter((drill) => drill.dataClass === objective.dataClass && drill.buildId === input.buildId && drill.expiresAt > input.evaluatedAt && drill.completedAt <= input.evaluatedAt);
     if (drills.length === 0) {
       blockers.push({ code: "RESTORE_DRILL_MISSING", subject: objective.dataClass, detail: "A current restore drill is required." });
-    } else if (!drills.some((drill) => drill.outcome === "passed" && objective.backupRegions.includes(drill.backupRegion) && drill.pitrVerified && drill.artifactReconciliationVerified && drill.externalEffectReconciliationVerified && drill.observedDataLossSeconds <= objective.rpoSeconds && drill.observedRecoverySeconds <= objective.rtoSeconds)) {
+    } else if (!drills.some((drill) => drill.outcome === "passed" && objective.backupRegions.includes(drill.backupRegion) && drill.pitrVerified && drill.immutableArtifactRecoveryVerified && drill.artifactReconciliationVerified && drill.externalEffectReconciliationVerified && drill.observedDataLossSeconds <= objective.rpoSeconds && drill.observedRecoverySeconds <= objective.rtoSeconds)) {
       blockers.push({ code: "RESTORE_DRILL_FAILED", subject: objective.dataClass, detail: "No current restore drill meets the recovery objective." });
     }
   }
   for (const dataClass of input.requiredDataClasses) if (!input.recoveryObjectives.some((item) => item.dataClass === dataClass)) blockers.push({ code: "RELEASE_INVENTORY_MISSING", subject: `recovery:${dataClass}`, detail: "The manifest requires a recovery objective and passing restore evidence." });
 
   for (const migration of input.contractMigrations) {
-    const safe = migration.buildId === input.buildId && migration.expiresAt > input.evaluatedAt && migration.status === "verified" && migration.compatibilityVerified && migration.rollbackVerified && migration.resumable && Boolean(migration.cursorSchemaVersion) && migration.compatibilityWindowStartsAt <= input.evaluatedAt && migration.compatibilityWindowEndsAt > input.evaluatedAt;
+    const safe = migration.buildId === input.buildId && migration.expiresAt > input.evaluatedAt && migration.status === "verified" && migration.compatibilityVerified && migration.rollbackVerified && migration.resumable && Boolean(migration.cursorSchemaVersion) && migration.compatibilityWindowStartsAt <= input.evaluatedAt && migration.compatibilityWindowEndsAt > input.evaluatedAt && migration.dryRunVerified && migration.progressPercent === 100 && migration.failureCount === 0 && /^sha256:[a-f0-9]{64}$/.test(migration.pinnedDefinitionDigest);
     if (!safe) blockers.push({ code: "CONTRACT_MIGRATION_UNSAFE", subject: migration.id, detail: `${migration.contract} ${migration.phase} is not verified and reversible for this build.` });
   }
   for (const contract of input.requiredContracts) {
@@ -134,11 +139,12 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
     if (!requirement) { blockers.push({ code: "PARITY_CELL_MISSING", subject: cell.id, detail: "A signed manifest parity cell has no evidence record." }); continue; }
     const dimensionsMatch = requirement.route === cell.route && requirement.feature === cell.feature && requirement.state === cell.state && requirement.role === cell.role && requirement.entitlement === cell.entitlement && requirement.viewport === cell.viewport && requirement.direction === cell.direction;
     if (!dimensionsMatch) blockers.push({ code: "PARITY_DIMENSION_MISMATCH", subject: cell.id, detail: "Parity evidence does not match the exact signed route/feature/state/role/entitlement/viewport/direction cell." });
-    const evidenceReady = requirement.evidenceIds.length > 0 && requirement.evidenceIds.every((id) => liveEvidence.get(id)?.outcome === "passed");
+    const parityEvidence = requirement.evidenceIds.map((id) => liveEvidence.get(id));
+    const evidenceReady = requirement.evidenceIds.length === REQUIRED_PARITY_EVIDENCE.length && REQUIRED_PARITY_EVIDENCE.every((evidenceClass) => parityEvidence.some((item) => item?.kind === "parity" && item.evidenceClass === evidenceClass && item.outcome === "passed" && item.sanitized && item.route === cell.route && item.feature === cell.feature && item.state === cell.state && item.role === cell.role && item.entitlement === cell.entitlement && item.viewport === cell.viewport && item.direction === cell.direction));
     const current = requirement.buildId === input.buildId && requirement.evaluatedAt <= input.evaluatedAt && requirement.expiresAt > input.evaluatedAt;
-    const signoffs = [requirement.productSignoffUserId, requirement.designSignoffUserId, requirement.engineeringSignoffUserId, requirement.qaSignoffUserId, requirement.localizationAccessibilitySignoffUserId];
+    const signoffs = [requirement.productSignoffUserId, requirement.engineeringSignoffUserId, requirement.arabicLocalizationSignoffUserId, requirement.accessibilitySignoffUserId, requirement.securitySignoffUserId];
     const signoffsReady = signoffs.every(Boolean) && new Set(signoffs).size === 5;
-    if (!signoffsReady) blockers.push({ code: "PARITY_SIGNOFF_INVALID", subject: cell.id, detail: "Parity requires five distinct product, design, engineering, QA, and localization/accessibility sign-offs." });
+    if (!signoffsReady) blockers.push({ code: "PARITY_SIGNOFF_INVALID", subject: cell.id, detail: "Parity requires distinct product, engineering, Arabic/localization, accessibility, and security sign-offs." });
     if (!current || requirement.status !== "passed" || !evidenceReady) blockers.push({ code: "PARITY_UNVERIFIED", subject: cell.id, detail: "Unknown, stale, skipped, failing, or unevidenced parity cells block the claim." });
     if (dimensionsMatch && signoffsReady && current && requirement.status === "passed" && evidenceReady) passingCells += 1;
   }

@@ -50,12 +50,22 @@ export type AccessibilityCriterion =
   | "focus_restoration"
   | "live_updates"
   | "captions_transcripts"
-  | "arabic_screen_reader";
+  | "arabic_screen_reader"
+  | "landmarks"
+  | "ai_alt_text_labeled_editable";
+
+export type AccessibilityInputMode = "keyboard" | "touch" | "mouse" | "screen_reader";
 
 export interface SupportedClient {
   id: string;
   engine: "chromium" | "webkit" | "gecko";
+  browser: "chrome" | "safari" | "firefox" | "edge";
+  releaseChannel: "current" | "previous";
   version: string;
+  platform: "desktop" | "ios" | "android";
+  deviceClass: "desktop" | "mobile";
+  minViewportWidth: number;
+  inputModes: AccessibilityInputMode[];
   capabilities: string[];
 }
 
@@ -78,6 +88,21 @@ export interface AccessibilityEvidence extends EvidenceEnvelope {
   route: string;
   criterion: AccessibilityCriterion;
   standard: "WCAG_2_2_AA";
+  viewportWidth: number;
+  inputMode: AccessibilityInputMode;
+}
+
+export type ParityEvidenceClass = "sanitized_reference" | "tasmeemai_reference_comparison" | "adaptation_rationale";
+export interface ParityCellEvidence extends EvidenceEnvelope {
+  kind: "parity";
+  route: string;
+  feature: string;
+  state: string;
+  role: string;
+  entitlement: string;
+  viewport: "mobile" | "tablet" | "desktop";
+  evidenceClass: ParityEvidenceClass;
+  sanitized: true;
 }
 
 export interface ReleaseFlag {
@@ -118,6 +143,9 @@ export interface RecoveryObjective {
   backupEncryption: "AES_256_GCM" | "KMS_ENVELOPE";
   backupRegions: string[];
   pitrWindowSeconds: number;
+  backupRetentionDays: number;
+  backupDeletionSlaDays: number;
+  immutableArtifactRecovery: true;
   artifactReconciliation: boolean;
   externalEffectReconciliation: boolean;
 }
@@ -135,6 +163,7 @@ export interface RestoreDrillEvidence {
   artifactDigest: string;
   backupRegion: string;
   pitrVerified: boolean;
+  immutableArtifactRecoveryVerified: boolean;
   artifactReconciliationVerified: boolean;
   externalEffectReconciliationVerified: boolean;
 }
@@ -155,6 +184,10 @@ export interface ContractMigrationEvidence {
   resumeCursorEvidenceDigest: string;
   compatibilityWindowStartsAt: Date;
   compatibilityWindowEndsAt: Date;
+  dryRunVerified: boolean;
+  progressPercent: number;
+  failureCount: number;
+  pinnedDefinitionDigest: string;
 }
 
 export interface ParityManifestCell {
@@ -183,14 +216,14 @@ export interface ParityRequirement {
   artifactDigest: string;
   evidenceIds: string[];
   productSignoffUserId: string | null;
-  designSignoffUserId: string | null;
   engineeringSignoffUserId: string | null;
-  qaSignoffUserId: string | null;
-  localizationAccessibilitySignoffUserId: string | null;
+  arabicLocalizationSignoffUserId: string | null;
+  accessibilitySignoffUserId: string | null;
+  securitySignoffUserId: string | null;
   status: EvidenceOutcome;
 }
 
-export type ReleaseEvidence = PerformanceEvidence | AccessibilityEvidence;
+export type ReleaseEvidence = PerformanceEvidence | AccessibilityEvidence | ParityCellEvidence;
 
 export interface ReleaseReadinessInput {
   buildId: string;
