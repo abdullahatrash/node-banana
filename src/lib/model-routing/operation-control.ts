@@ -2,8 +2,9 @@ import { and, eq } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import { resolveProviderKeyByRef } from "@/lib/byok/repository";
 import type { OperationControlAdapter } from "@/lib/agent-runtime/operation-status/controls";
-import { modelFallbackSpendReservations, modelGenerationBudgetReservations, replicatePredictionIdentities } from "./db-schema";
+import { replicatePredictionIdentities } from "./db-schema";
 import { ReplicateHttpClient } from "./replicate-http-client";
+import { settleGenerationSpend } from "./generation-spend";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -22,11 +23,10 @@ export class GenerationOperationControlAdapter implements OperationControlAdapte
       const prediction = await new ReplicateHttpClient(() => token).cancel(identity.predictionId);
       if (prediction.status !== "canceled" && prediction.status !== "aborted") return { kind: "accepted" as const };
       const at = new Date();
-      await this.database().transaction(async (tx) => {
-        const [budget] = await tx.select({ quoted: modelGenerationBudgetReservations.quotedAmountUsd }).from(modelGenerationBudgetReservations).where(and(eq(modelGenerationBudgetReservations.workspaceId, operation.workspaceId), eq(modelGenerationBudgetReservations.intentId, operation.resourceId))).limit(1);
-        await tx.update(modelGenerationBudgetReservations).set({ status: "released", actualAmountUsd: "0", releasedAmountUsd: budget?.quoted ?? "0", updatedAt: at }).where(and(eq(modelGenerationBudgetReservations.workspaceId, operation.workspaceId), eq(modelGenerationBudgetReservations.intentId, operation.resourceId)));
-        await tx.update(modelFallbackSpendReservations).set({ status: "released", actualAmountUsd: "0", releasedAmountUsd: budget?.quoted ?? "0", releasedAt: at }).where(and(eq(modelFallbackSpendReservations.workspaceId, operation.workspaceId), eq(modelFallbackSpendReservations.intentId, operation.resourceId)));
-      });
+      // Replicate may bill work that was cancelled after it started. A provider
+      // cancellation confirms the operation state, not a zero-dollar outcome.
+      const quote = typeof operation.metadata.quoteAmountUsd === "number" && typeof operation.metadata.quoteQuantity === "number" ? operation.metadata.quoteAmountUsd * operation.metadata.quoteQuantity : 0;
+      await settleGenerationSpend({ database: this.database(), workspaceId: operation.workspaceId, intentId: operation.resourceId, outcome: { kind: "cost_unknown" }, quotedAmountUsd: quote, at });
       return { kind: "confirmed_cancelled" as const };
     } catch { return { kind: "outcome_unknown" as const }; }
   }

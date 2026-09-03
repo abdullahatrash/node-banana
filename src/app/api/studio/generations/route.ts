@@ -12,6 +12,7 @@ import { inspirationRightsSnapshots } from "@/lib/model-routing/db-schema";
 import { productionGenerationExecution } from "@/lib/model-routing/execution-production";
 import { PRODUCTION_MODEL_ROUTING } from "@/lib/model-routing/production";
 import type { InspirationRightsSnapshot } from "@/lib/model-routing/types";
+import { validateGenerationSources } from "@/lib/model-routing/source-validation";
 import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
@@ -42,9 +43,10 @@ export const POST = withStudioAuth<undefined>({ route: "/api/studio/generations"
   const [brand] = await getDb().select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, authz.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
   if (!brand?.acceptedAt) return noStoreJson({ success: false, code: "ACCEPTED_BRAND_REVISION_REQUIRED", error: "Accept a Brand Profile revision before generating brand-aware media.", nextActions: [action("accept_brand", "/onboarding/brand-review", "Review and accept Brand Profile")] }, { status: 422 });
   const sourceIds = [...new Set(input.sourceAssetIds)];
-  const sourceRows = sourceIds.length ? await getDb().select({ id: assets.id, storageKey: assets.storageKey, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
-  const sourcesReady = sourceRows.length === sourceIds.length && sourceRows.every((item) => item.storageKey && item.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata) && item.metadata.uploadState === "ready");
-  if (!sourcesReady || (input.rightsBasis !== "owned" && sourceIds.length === 0)) return noStoreJson({ success: false, code: "RIGHTS_EVIDENCE_REQUIRED", error: "Every inspiration asset must be canonical Workspace media, and non-owned rights need evidence.", nextActions: [action("review_rights", "/simple-studio/library", "Review inspiration rights")] }, { status: 422 });
+  const sourceRows = sourceIds.length ? await getDb().select({ id: assets.id, type: assets.type, storageKey: assets.storageKey, checksum: assets.checksum, width: assets.width, height: assets.height, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
+  const sourceValidation = validateGenerationSources(input.capability, sourceIds, sourceRows.map((row) => ({ ...row, metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : null })));
+  if (!sourceValidation.ok) return noStoreJson({ success: false, code: sourceValidation.code, error: sourceValidation.code === "SOURCE_9_16_REQUIRED" ? "Image-to-video requires an exact 9:16 source." : "The source must be canonical Workspace media with server-verified dimensions.", nextActions: [action("prepare_source", "/simple-studio/library", "Choose a server-verified 9:16 source")] }, { status: 422 });
+  if (input.rightsBasis !== "owned" && sourceIds.length === 0) return noStoreJson({ success: false, code: "RIGHTS_EVIDENCE_REQUIRED", error: "Non-owned rights require immutable evidence associated with every source.", nextActions: [action("review_rights", "/simple-studio/library", "Review inspiration rights")] }, { status: 422 });
   if (input.permittedRemix === "reference_only" && input.remixBrief.transform.length) return noStoreJson({ success: false, code: "REMIX_SCOPE_CONFLICT", error: "Reference-only rights cannot authorize requested transformations." }, { status: 422 });
   const at = new Date(); const rightsId = stableRightsId(authz.workspaceId, key); const evidenceRefs = sourceIds.map((id) => `asset:${id}`);
   const rightsInput = { basis: input.rightsBasis, permittedRemix: input.permittedRemix, evidenceRefs, sourceUrls: [] as string[] };

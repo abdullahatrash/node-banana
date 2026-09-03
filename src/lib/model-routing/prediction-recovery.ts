@@ -4,10 +4,11 @@ import type { getDb } from "@/lib/db";
 import { runtimeOperations } from "@/lib/agent-runtime/operation-status/db-schema";
 import type { OperationStatusService } from "@/lib/agent-runtime/operation-status/service";
 import type { OperationState } from "@/lib/agent-runtime/operation-status/types";
-import { modelFallbackSpendReservations, modelGenerationBudgetReservations, modelProviderEffectClaims } from "./db-schema";
+import { modelProviderEffectClaims } from "./db-schema";
 import { PostgresModelRoutingRepository } from "./postgres-repository";
 import type { ReplicatePredictionAdapter, ReplicateExecutionResult } from "./replicate-contract";
 import type { DurableProviderCredentialRef } from "@/lib/byok/repository";
+import { settleGenerationSpend } from "./generation-spend";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -26,39 +27,37 @@ export async function recoverReplicatePredictions(input: { database: Db; operati
       if (!row.predictionId) {
         summary.unknown++;
         await input.database.update(modelProviderEffectClaims).set({ state: "outcome_unknown", providerStatus: "submit_identity_lost", nextPollAt: new Date(at.getTime() + 24 * 60 * 60_000), leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner)));
-        await settle(input.database, row.workspaceId, row.intentId, "outcome_unknown", intent.quote.amount * intent.quote.quantity, at);
+        await projectGenerationOperation(input.database, input.operations, { workspaceId: row.workspaceId, intentId: row.intentId, predictionId: null, pollAttempt: row.pollAttempts + 1 }, { state: "outcome_unknown", predictionId: null, code: "SUBMISSION_IDENTITY_LOST" });
+        await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome: { kind: "cost_unknown" }, quotedAmountUsd: intent.quote.amount * intent.quote.quantity, at });
         continue;
       }
       if (!row.credentialRef) throw new Error("DURABLE_PROVIDER_CREDENTIAL_REF_MISSING");
       const result = await (await input.adapterFor(row.workspaceId, row.credentialRef)).poll(intent, row.predictionId);
-      const [operation] = await input.database.select().from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, row.workspaceId), eq(runtimeOperations.kind, "generation"), eq(runtimeOperations.resourceId, row.intentId))).limit(1);
-      if (operation && operation.state !== "succeeded" && operation.state !== "failed_known" && operation.state !== "cancelled") {
-        const target = recoveryDisposition(result).operationState; const actor = { type: "system" as const, service: "replicate-recovery" };
-        await input.operations.transition({ workspaceId: row.workspaceId, operationId: operation.id, expectedRevision: operation.revision, to: target, reasonCode: `generation.provider_reconciled_${target}`, actor, metadata: { predictionId: row.predictionId, providerState: result.state, nextAction: result.state === "waiting_provider" ? "poll_provider" : result.state === "outcome_unknown" ? "reconcile_provider" : "none", ...(result.state === "succeeded" ? { artifactIds: result.artifactIds, artifactCount: result.artifactIds.length } : {}) }, idempotencyKey: `replicate-recovery:${row.intentId}:${row.pollAttempts + 1}:${target}` });
-      }
+      await projectGenerationOperation(input.database, input.operations, { workspaceId: row.workspaceId, intentId: row.intentId, predictionId: row.predictionId, pollAttempt: row.pollAttempts + 1 }, result);
       if (result.state === "waiting_provider") {
         summary.waiting++;
         await input.database.update(modelProviderEffectClaims).set({ providerStatus: "processing", pollAttempts: row.pollAttempts + 1, nextPollAt: new Date(at.getTime() + Math.min(60_000, 2_000 * 2 ** Math.min(row.pollAttempts, 5))), leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner)));
       } else {
         const disposition = recoveryDisposition(result); const terminal = disposition.operationState; summary.terminal++;
         await input.database.update(modelProviderEffectClaims).set({ state: disposition.effectState, providerStatus: result.state, pollAttempts: row.pollAttempts + 1, leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner)));
-        await settle(input.database, row.workspaceId, row.intentId, terminal, intent.quote.amount * intent.quote.quantity, at);
+        await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome: terminal === "succeeded" ? { kind: "succeeded", actualAmountUsd: intent.quote.amount * intent.quote.quantity } : { kind: "cost_unknown" }, quotedAmountUsd: intent.quote.amount * intent.quote.quantity, at });
       }
-    } catch { summary.failed++; await input.database.update(modelProviderEffectClaims).set({ state: "outcome_unknown", providerStatus: "transport_lost", nextPollAt: new Date(at.getTime() + 60_000), leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner))); await settle(input.database, row.workspaceId, row.intentId, "outcome_unknown", null, at); }
+    } catch { summary.failed++; await input.database.update(modelProviderEffectClaims).set({ state: "outcome_unknown", providerStatus: "transport_lost", nextPollAt: new Date(at.getTime() + 60_000), leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner))); await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome: { kind: "cost_unknown" }, quotedAmountUsd: 0, at }); }
   }
   return summary;
+}
+
+async function projectGenerationOperation(database: Db, operations: OperationStatusService, identity: { workspaceId: string; intentId: string; predictionId: string | null; pollAttempt: number }, result: ReplicateExecutionResult) {
+  const [operation] = await database.select().from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, identity.workspaceId), eq(runtimeOperations.kind, "generation"), eq(runtimeOperations.resourceId, identity.intentId))).limit(1);
+  if (!operation || operation.state === "succeeded" || operation.state === "failed_known" || operation.state === "cancelled") return;
+  const target = recoveryDisposition(result).operationState;
+  await operations.transition({ workspaceId: identity.workspaceId, operationId: operation.id, expectedRevision: operation.revision, to: target, reasonCode: `generation.provider_reconciled_${target}`, actor: { type: "system", service: "replicate-recovery" }, metadata: { predictionId: identity.predictionId, providerState: result.state, nextAction: result.state === "waiting_provider" ? "poll_provider" : result.state === "outcome_unknown" ? "reconcile_provider" : "none", ...(result.state === "succeeded" ? { artifactIds: result.artifactIds, artifactCount: result.artifactIds.length } : {}) }, idempotencyKey: `replicate-recovery:${identity.intentId}:${identity.pollAttempt}:${target}` });
 }
 
 export function recoveryDisposition(result: ReplicateExecutionResult): { operationState: OperationState; effectState: "submitted" | "outcome_unknown" | "succeeded" | "failed_known" | "cancelled"; budgetState: "held" | "released" | "settled" | "outcome_unknown" } {
   if (result.state === "waiting_provider") return { operationState: "waiting_provider", effectState: "submitted", budgetState: "held" };
   if (result.state === "succeeded") return { operationState: "succeeded", effectState: "succeeded", budgetState: "settled" };
   if (result.state === "failed_known") return { operationState: "failed_known", effectState: "failed_known", budgetState: "outcome_unknown" };
-  if (result.state === "cancelled") return { operationState: "cancelled", effectState: "cancelled", budgetState: "released" };
+  if (result.state === "cancelled") return { operationState: "cancelled", effectState: "cancelled", budgetState: "outcome_unknown" };
   return { operationState: "outcome_unknown", effectState: "outcome_unknown", budgetState: "outcome_unknown" };
-}
-async function settle(database: Db, workspaceId: string, intentId: string, state: OperationState, quotedAmount: number | null, at: Date) {
-  const status = state === "succeeded" ? "settled" : state === "cancelled" ? "released" : state === "failed_known" || state === "outcome_unknown" ? "outcome_unknown" : "held";
-  const amounts = status === "settled" ? { actualAmountUsd: quotedAmount?.toFixed(6) ?? null, releasedAmountUsd: "0" } : status === "released" ? { actualAmountUsd: "0", releasedAmountUsd: quotedAmount?.toFixed(6) ?? "0" } : { actualAmountUsd: null, releasedAmountUsd: "0" };
-  await database.update(modelGenerationBudgetReservations).set({ status, ...amounts, updatedAt: at }).where(and(eq(modelGenerationBudgetReservations.workspaceId, workspaceId), eq(modelGenerationBudgetReservations.intentId, intentId)));
-  await database.update(modelFallbackSpendReservations).set({ status, ...amounts, releasedAt: status === "released" ? at : null }).where(and(eq(modelFallbackSpendReservations.workspaceId, workspaceId), eq(modelFallbackSpendReservations.intentId, intentId)));
 }

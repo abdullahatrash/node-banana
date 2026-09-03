@@ -27,6 +27,7 @@ import {
   runtimeWorkspacePricingOverrides,
   workflowRuns,
 } from "@/lib/db/schema";
+import { runtimeCommittedAmountSql } from "./committed-spend";
 import { addDecimals, canonicalDecimal, multiplyDecimals } from "../usage/decimal";
 import type {
   BudgetAdmissionPlan,
@@ -399,7 +400,7 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
       .where(and(eq(runtimeBudgetPolicyRevisions.workspaceId, input.workspaceId), eq(runtimeBudgetPolicyRevisions.id, input.policyRevisionId))).limit(1);
     if (!revision) return "0";
     const endPredicate = input.periodEndsAt === null ? isNull(runtimeBudgetPeriods.endsAt) : eq(runtimeBudgetPeriods.endsAt, input.periodEndsAt);
-    const [row] = await database.select({ committed: sql<string>`coalesce(sum(case when ${runtimeBudgetReservations.state} in ('held', 'outcome_unknown', 'held_unknown_cost') then ${runtimeBudgetReservations.settledAmount}::numeric + ${runtimeBudgetReservations.heldAmount}::numeric else ${runtimeBudgetReservations.settledAmount}::numeric end), 0)::text` })
+    const [row] = await database.select({ committed: runtimeCommittedAmountSql() })
       .from(runtimeBudgetReservations).innerJoin(runtimeBudgetPeriods, and(eq(runtimeBudgetPeriods.workspaceId, runtimeBudgetReservations.workspaceId), eq(runtimeBudgetPeriods.id, runtimeBudgetReservations.periodId)))
       .where(and(eq(runtimeBudgetReservations.workspaceId, input.workspaceId), eq(runtimeBudgetPeriods.policyId, revision.policyId), eq(runtimeBudgetPeriods.startsAt, input.periodStartsAt), endPredicate));
     return canonicalDecimal(row?.committed ?? "0");
@@ -648,7 +649,7 @@ export class DrizzleBudgetRepository implements BudgetRepository<Tx> {
       for (const item of periods) {
         const current = policies.find((row) => row.policy.id === item.reservation.policyId);
         if (!current || current.policy.status !== "active" || current.revision.id !== item.reservation.policyRevisionId || current.policy.currency !== item.reservation.currency || item.reservation.workspaceId !== plan.workspaceId || item.reservation.runId !== plan.runId) return "unavailable";
-        const [usage] = await tx.select({ amount: sql<string>`coalesce(sum(case when ${runtimeBudgetReservations.state} in ('held', 'outcome_unknown', 'held_unknown_cost') then ${runtimeBudgetReservations.settledAmount}::numeric + ${runtimeBudgetReservations.heldAmount}::numeric else ${runtimeBudgetReservations.settledAmount}::numeric end), 0)::text` }).from(runtimeBudgetReservations).where(and(eq(runtimeBudgetReservations.workspaceId, plan.workspaceId), eq(runtimeBudgetReservations.periodId, item.id)));
+        const [usage] = await tx.select({ amount: runtimeCommittedAmountSql() }).from(runtimeBudgetReservations).where(and(eq(runtimeBudgetReservations.workspaceId, plan.workspaceId), eq(runtimeBudgetReservations.periodId, item.id)));
         if (compareDecimals(addDecimals(usage?.amount ?? "0", item.reservation.reservedAmount), current.revision.hardLimit) > 0) return "unavailable";
       }
       const grantReservations: Array<{ grantId: string; reservedCents: number | null; currency: string | null; exposureDigest: string }> = [];

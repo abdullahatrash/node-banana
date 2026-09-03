@@ -1,7 +1,8 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import { runtimeBudgetPeriods, runtimeBudgetPolicies, runtimeBudgetPolicyRevisions, runtimeBudgetReservations, runtimeSpendControls } from "@/lib/db/schema";
 import { budgetPeriodWindow } from "@/lib/agent-runtime/budgets/period";
+import { runtimeCommittedAmountSql } from "@/lib/agent-runtime/budgets/committed-spend";
 import { modelGenerationBudgetReservations } from "./db-schema";
 import type { GenerationBudgetAuthority } from "./budget-authority";
 
@@ -25,7 +26,7 @@ export class RuntimeGenerationBudgetAuthority implements GenerationBudgetAuthori
         if (!policy || policy.currency !== "USD") return { kind: "unavailable" as const, code: "WORKSPACE_USD_BUDGET_POLICY_UNAVAILABLE" };
         const period = budgetPeriodWindow(policy.period as "calendar_day" | "calendar_week" | "calendar_month" | "lifetime", policy.timezone, input.at);
         const endMatches = period.endsAt === null ? isNull(runtimeBudgetPeriods.endsAt) : eq(runtimeBudgetPeriods.endsAt, period.endsAt);
-        const [runtime] = await tx.select({ total: sql<string>`coalesce(sum(${runtimeBudgetReservations.heldAmount}::numeric), 0)::text` }).from(runtimeBudgetReservations).innerJoin(runtimeBudgetPeriods, and(eq(runtimeBudgetPeriods.workspaceId, runtimeBudgetReservations.workspaceId), eq(runtimeBudgetPeriods.id, runtimeBudgetReservations.periodId))).where(and(eq(runtimeBudgetReservations.workspaceId, input.workspaceId), eq(runtimeBudgetReservations.policyId, policy.id), eq(runtimeBudgetPeriods.startsAt, period.startsAt), endMatches, inArray(runtimeBudgetReservations.state, ["held", "outcome_unknown", "held_unknown_cost"])));
+        const [runtime] = await tx.select({ total: runtimeCommittedAmountSql() }).from(runtimeBudgetReservations).innerJoin(runtimeBudgetPeriods, and(eq(runtimeBudgetPeriods.workspaceId, runtimeBudgetReservations.workspaceId), eq(runtimeBudgetPeriods.id, runtimeBudgetReservations.periodId))).where(and(eq(runtimeBudgetReservations.workspaceId, input.workspaceId), eq(runtimeBudgetReservations.policyId, policy.id), eq(runtimeBudgetPeriods.startsAt, period.startsAt), endMatches));
         const modelEndMatches = period.endsAt === null ? isNull(modelGenerationBudgetReservations.periodEndsAt) : eq(modelGenerationBudgetReservations.periodEndsAt, period.endsAt);
         const [generation] = await tx.select({ total: sql<string>`coalesce(sum(case when ${modelGenerationBudgetReservations.status} = 'settled' then coalesce(${modelGenerationBudgetReservations.actualAmountUsd}, ${modelGenerationBudgetReservations.quotedAmountUsd}) when ${modelGenerationBudgetReservations.status} in ('held','outcome_unknown') then ${modelGenerationBudgetReservations.quotedAmountUsd} else 0 end), 0)::text` }).from(modelGenerationBudgetReservations).where(and(eq(modelGenerationBudgetReservations.workspaceId, input.workspaceId), eq(modelGenerationBudgetReservations.policyId, policy.id), eq(modelGenerationBudgetReservations.periodStartsAt, period.startsAt), modelEndMatches));
         const amount = input.quote.amount * input.quote.quantity;
