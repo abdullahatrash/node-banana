@@ -1,0 +1,3 @@
+# Versioned Content Format Definitions Drive Guided Creation
+
+Every guided Tasmeemai format is governed by a versioned **Content Format Definition** that declares inputs, compatible Content Languages and Arabic Varieties, media constraints, preview schema, exact Workflow Revision, provider capabilities, captions, duration and aspect limits, Managed Execution Quote policy, and editor handoff. The launcher, validation, Content Piece editor, admission preview, and tests derive from this contract rather than hardcoded React behavior; formats may ship separately only when their complete state matrix passes, and the adopted Fastlane baseline is not parity-complete until all twelve observed formats and Custom are complete.

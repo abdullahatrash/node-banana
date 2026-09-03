@@ -1,0 +1,3 @@
+# Creator Personas Require Explicit Lifecycle Gates
+
+A **Creator Persona** moves through draft, consent review, ready-to-train, training, review, and active states, with explicit training-failed, suspended, consent-expired, and deleted outcomes; only active Personas may enter new Content Piece Revisions. Training and generation are durable Runs, real-person use remains bounded by recorded consent, and suspension, consent expiry, or deletion blocks future effects without rewriting historical Artifacts or required audit evidence; this makes legal authority and provider work visible instead of collapsing them into one enabled or trained flag.

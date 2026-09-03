@@ -24,6 +24,10 @@ _Avoid_: User plan, billing account, membership tier
 A Workspace Subscription-derived allowance to access a product capability or bounded capacity. It is distinct from authorization, Budget Policy, Quota Policy, and a Generation Credit balance, all of which must independently permit the operation.
 _Avoid_: Permission, feature flag, quota, credit balance
 
+**Subscription Grace Period**:
+A disclosed interval after payment failure during which existing Workspace data remains readable while new paid effects may be blocked. It preserves neither expired Entitlements nor an entitlement to new provider spend.
+_Avoid_: Free extension, retry window, suspended account
+
 **Workspace Activation**:
 A read-only projection of durable Workspace milestones such as accepted Brand context, reusable media, connected Channels, accepted Content Pieces, and scheduled publishing. It reflects operational readiness and is never a manually checked onboarding list.
 _Avoid_: Quickstart checklist, onboarding progress, user tutorial
@@ -32,6 +36,10 @@ _Avoid_: Quickstart checklist, onboarding progress, user tutorial
 A person's Workspace-specific record of viewed, completed, or dismissed product education. It never changes Workspace Activation or another member's guidance state.
 _Avoid_: Workspace readiness, onboarding status, activation checklist
 
+**Dashboard Next Action**:
+The single deterministic, explainable recommendation projected from Workspace Activation, failures, expiring approvals or consent, scheduled work, Generation Credit capacity, and stale metrics. Copilot may explain or help execute it but never secretly ranks or mutates the recommendation.
+_Avoid_: AI recommendation, next-best-action model, Copilot decision
+
 **Inspiration Item**:
 A rights-aware reference to externally successful content and its time-stamped metadata, used to inform original Tasmeemai content. It retains source, capture time, metric freshness, rights status, and permitted remix behavior without pretending the referenced media is a Workspace-owned Artifact.
 _Avoid_: Scraped video, viral asset, template, copied post
@@ -39,6 +47,10 @@ _Avoid_: Scraped video, viral asset, template, copied post
 **Remix Brief**:
 A transformation plan derived from an **Inspiration Item** that identifies reusable topic, hook, pacing, structural, and performance insights while excluding protected expression. It retains source attribution, permitted-use evidence, Brand Profile alignment, and originality constraints for the resulting Content Piece.
 _Avoid_: Copy instructions, cloned post, inspiration prompt, source asset
+
+**Blitz Queue**:
+A bounded Workspace-owned queue of Brand-aligned content proposals produced under an explicit replenishment configuration and spend ceiling. Viewing the queue creates no provider work; scheduled or manual replenishment admits durable Runs only until the configured queue capacity is satisfied.
+_Avoid_: Infinite feed, swipe feed, background generation, idea list
 
 **Brand Source**:
 User-approved source material used to derive a Workspace's Brand Profile, such as a public website or a manual company description. It is evidence for the profile, not the canonical profile itself.
@@ -568,6 +580,18 @@ _Avoid_: platform charge, inference revenue, credits, customer billing
 A non-cash consumption unit for **Managed Provider Execution**, held in separate expiring plan-allowance and non-expiring purchased buckets. Reservations, debits, releases, refunds, and audited adjustments reconcile to managed provider usage evidence, while purchase prices remain currency-denominated and separate from the credit balance.
 _Avoid_: Currency, cash balance, External Provider Spend, Usage Record, token
 
+**Managed Execution Quote**:
+The immutable Generation Credit price disclosed for one exact managed operation before Durable Acceptance. Acceptance reserves exactly that amount, success settles no more than it, known failure before usable output releases it, and an outcome-unknown effect retains the visible reservation until reconciliation.
+_Avoid_: Cost estimate, variable debit, provider price, Run Cost Ceiling
+
+**Referral Recipient**:
+The verified person or legal entity entitled to receive rewards for attributable referrals. It is distinct from the referred or referring Workspace and owns payout identity, tax documentation, and cash-payment instructions.
+_Avoid_: Referring Workspace, affiliate user, billing contact
+
+**Referral Reward**:
+An attributable benefit owed to a Referral Recipient as either Generation Credits directed to an eligible Workspace or a cash payout. It retains earning, fraud-hold, refund, clawback, availability, payment, and currency-conversion evidence in a ledger separate from Workspace billing.
+_Avoid_: Coupon, commission counter, free credits, Workspace revenue
+
 **Credential Spend Grant**:
 The explicit human decision allowing one Agent Principal to cause BYOK Provider Execution through one Credential Profile in bounded or deliberately unbounded mode. A bounded grant names applicable per-Run and calendar-period Budget Policies; absence of a grant permits inspection but no provider effect.
 _Avoid_: provider permission, billing access, API-key scope, spend setting
@@ -589,8 +613,12 @@ An immutable, typed content resource produced by a **Content Workflow** step or 
 _Avoid_: output blob, generated file, media item, fake run output
 
 **Content Piece**:
-A stable Workspace-owned creative work in one declared content format, spanning its editable configuration, revisions, source references, executions, and produced Artifacts. It is the canonical item shown in the Library's Content area and remains distinct from a Workflow Run, Artifact, Prompt, and Publishing Plan.
+A stable Workspace-owned creative work in one declared content format, spanning its editable configuration, revisions, source references, executions, and produced Artifacts. Its lifecycle is `active`, `archived`, or terminally `deleted`; it is the Library's canonical editable-content item, while execution and publishing states remain on their owning resources.
 _Avoid_: Content item, generation, project, Artifact, Post
+
+**Content Format Definition**:
+A versioned product-owned contract for one guided content format, declaring inputs, compatible languages and Arabic Varieties, media constraints, preview schema, Workflow Revision, provider capabilities, caption rules, duration and aspect limits, Managed Execution Quote policy, and editor handoff. UI controls and validation derive from it rather than re-encoding format behavior.
+_Avoid_: React form, template, workflow, format name, generation preset
 
 **Content Piece Revision**:
 An immutable snapshot of a Content Piece's authored script, scenes, format configuration, source and Creator Persona references, and selected Artifact inputs or outputs. Editing creates a new revision, and any Publishing Plan references the exact revision it distributes.
@@ -607,6 +635,10 @@ _Avoid_: Fake person, virtual account, anonymous likeness
 **Consented Likeness Persona**:
 A Creator Persona representing a real person under recorded authority, consent scope, permitted uses, and retention terms. It may not outlive or exceed that authority, and deletion revokes future use while preserving legally required audit evidence.
 _Avoid_: Face model, celebrity clone, employee avatar, uploaded person
+
+**Creator Persona State**:
+The lifecycle `draft`, `consent_review`, `ready_to_train`, `training`, `review`, `active`, `training_failed`, `suspended`, `consent_expired`, or terminally `deleted`. Only `active` Creator Personas may enter new Content Piece Revisions; suspension, expiry, and deletion never rewrite historical Artifacts.
+_Avoid_: Training status, enabled flag, model state, influencer status
 
 **Artifact Store**:
 The replaceable Runtime Kernel port that stores and retrieves immutable Artifact bytes by stable storage reference and verified content hash. A local adapter may use the filesystem and a hosted adapter may use object storage without changing Artifact or capability contracts. It never owns Artifact identity, lineage, authorization, or lifecycle.
@@ -637,7 +669,7 @@ A durable, bounded-lifetime, single-use decision that authorizes a specific sche
 _Avoid_: approval flag, confirmation prompt, approved post
 
 **Content Acceptance**:
-A creator's decision to keep a proposed content concept or Artifact revision and make it available for editing, planning, or reuse. It never authorizes scheduling or public distribution and is distinct from **Publishing Approval**.
+A creator's decision to keep a proposed content concept or Content Piece Revision and make it available for editing, planning, or reuse. It never authorizes scheduling or public distribution and is distinct from **Publishing Approval**.
 _Avoid_: Approve, publish approval, accepted post, release
 
 **Publishing Delivery**:
@@ -726,9 +758,14 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - A **Workspace** owns its Workspace Subscription, Entitlements, recurring and purchased Generation Credits, storage allowance, and commercial history; a Human Principal's identity does not own or carry them between Workspaces.
 - Changing the active **Workspace** never rebinds an upload, conversation, Workflow Run, Content Piece, Creator Persona, Channel, Generation Credit, Publishing Plan, Approval, or Delivery that began in another Workspace.
 - A **Content Piece** has immutable Content Piece Revisions; a Publishing Plan that distributes it references one exact revision.
+- Editing or regenerating a Content Piece appends a Revision, starts a distinct Workflow Run, and produces new immutable Artifacts; undo selects or derives from history rather than rewriting it.
+- Unreferenced drafts may be recoverably deleted, while active Plans, Approvals, Deliveries, Automations, Persona training, retention policy, or audit obligations block destructive removal and explain the dependency.
 - A **Creator Persona** belongs to one Workspace and may be referenced by Content Piece Revisions, but it never owns a Channel or authenticates publishing.
+- Only an `active` Creator Persona may be selected for new content; suspending, expiring, or deleting one blocks future effects without changing historical Content Pieces or Artifacts.
 - A **Remix Brief** references one or more Inspiration Items and records permitted structural influence without transferring ownership of their source media.
+- A **Blitz Queue** admits replenishment work only under its target capacity, format mix, Remix ratio, Brand constraints, language and Arabic Variety, provider mode, and spend ceiling; browsing never replenishes it.
 - Platform Metric Observations may be aggregated across Platforms only under a declared comparable definition; otherwise Analytics presents them separately with source and freshness.
+- Entitlement visibility never grants authorization: gated capabilities remain discoverable with requirements and upgrade paths, while server-side policy independently enforces every operation.
 - A **Channel** belongs to exactly one **Platform**.
 - A **Provider Adapter** supports exactly one **Platform**.
 - A **Post** has **Publishing Settings** for each selected **Channel** when that platform needs extra publishing choices.
