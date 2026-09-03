@@ -12,7 +12,7 @@ const {
   mockIsDatabaseConfigured: vi.fn(() => true),
   mockSelectRows: vi.fn(),
   mockWithApiPermission: vi.fn(),
-  mockResolvePermissions: vi.fn(() => ["workspaces:read"]),
+  mockResolvePermissions: vi.fn((_input: unknown) => ["workspaces:read"]),
 }));
 
 const mockDb = {
