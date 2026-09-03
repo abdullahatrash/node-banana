@@ -1,0 +1,41 @@
+import { NextRequest } from "next/server";
+import { z } from "zod";
+import { noStoreJson, requireAgentMutationRequest, requireExplicitAgentWorkspace } from "@/lib/agent-auth/http-request";
+import { PRODUCTION_CAPABILITY_REGISTRY, dispatchCapability } from "@/lib/agent-runtime/server-dispatcher";
+import { credentialHumanContext } from "@/lib/credential-vault/http";
+import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+
+const bodySchema = z.object({
+  capability: z.string().regex(/^(?:governance\.snapshot\.get|governance\.view|members\.(?:invite|manage)|roles\.manage|portfolios\.manage|reviews\.(?:create|decide_content|decide_publishing)|approval_policies\.manage|audit\.(?:view|export)|regions\.manage|retention\.manage|safety\.(?:decide|appeal)|bulk\.(?:preview|execute)|imports\.manage|exports\.manage|workspace\.(?:transfer_ownership|close))@1$/),
+  input: z.record(z.string(), z.unknown()).default({}),
+}).strict();
+
+function status(category: string): number {
+  if (category === "authorization") return 403;
+  if (category === "not_found") return 404;
+  if (category === "conflict") return 409;
+  if (category === "internal") return 500;
+  return 400;
+}
+
+export const POST = withStudioAuth<undefined>(
+  { route: "/api/studio/governance/capabilities", action: "read" },
+  async (request: NextRequest, authz) => {
+    let body: unknown;
+    try { body = await request.json(); } catch { return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 }); }
+    const parsed = bodySchema.safeParse(body);
+    if (!parsed.success) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
+    const mutation = parsed.data.capability !== "governance.snapshot.get@1";
+    const boundaryError = mutation
+      ? requireAgentMutationRequest(request, authz.workspaceId)
+      : requireExplicitAgentWorkspace(request, authz.workspaceId);
+    if (boundaryError) return boundaryError;
+    const context = credentialHumanContext(request, authz);
+    if (!context) return noStoreJson({ success: false, code: "WORKSPACE_REQUIRED" }, { status: 400 });
+    const definition = PRODUCTION_CAPABILITY_REGISTRY.getDefinition({ name: parsed.data.capability.slice(0, -2), version: 1 });
+    if (!definition) return noStoreJson({ success: false, code: "CAPABILITY_NOT_FOUND" }, { status: 404 });
+    const response = await dispatchCapability(parsed.data, { securityContext: context });
+    if (response.type === "capability_error") return noStoreJson({ success: false, code: response.code, operatorTraceRef: response.operatorTraceRef }, { status: status(response.category) });
+    return noStoreJson({ success: true, capability: `${response.capability.name}@${response.capability.version}`, result: response.output });
+  },
+);

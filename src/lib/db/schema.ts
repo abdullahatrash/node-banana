@@ -8568,6 +8568,110 @@ export const runtimeAutomationOccurrenceCancellations = pgTable(
   }),
 );
 
+/**
+ * Workspace governance is a versioned resource ledger. Domain validation lives
+ * in the governance service; these rows provide atomic optimistic updates,
+ * Workspace isolation, and durable lifecycle projections without turning
+ * Better Auth organization roles into business authority.
+ */
+export const workspaceGovernanceResources = pgTable(
+  "workspace_governance_resources",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    kind: text("kind").notNull(),
+    id: text("id").notNull(),
+    version: integer("version").notNull(),
+    status: text("status").notNull(),
+    body: jsonb("body").$type<Record<string, unknown>>().notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_governance_resources_pk",
+      columns: [table.workspaceId, table.kind, table.id],
+    }),
+    workspaceKindStatusIdx: index(
+      "workspace_governance_resources_workspace_kind_status_idx",
+    ).on(table.workspaceId, table.kind, table.status, table.updatedAt),
+    identityCheck: check(
+      "workspace_governance_resources_identity_check",
+      sql`${table.id} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.version} > 0 and length(${table.status}) between 1 and 80`,
+    ),
+    kindCheck: check(
+      "workspace_governance_resources_kind_check",
+      sql`${table.kind} in ('custom_role','member_role_assignment','invitation_binding','portfolio','portfolio_assignment','review_guest_grant','review_guest_session','approval_policy','step_up_challenge','step_up_session','audit_export','workspace_export','workspace_import','data_region_policy','retention_policy','retention_hold','deletion_receipt','tombstone','safety_decision','safety_appeal','bulk_operation')`,
+    ),
+    bodySizeCheck: check(
+      "workspace_governance_resources_body_size_check",
+      sql`octet_length(${table.body}::text) <= 2097152`,
+    ),
+  }),
+);
+
+/** Durable idempotency evidence for every governance mutation. */
+export const workspaceGovernanceMutationReceipts = pgTable(
+  "workspace_governance_mutation_receipts",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    result: jsonb("result").$type<unknown>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_governance_mutation_receipts_pk",
+      columns: [table.workspaceId, table.capability, table.idempotencyKey],
+    }),
+    digestCheck: check(
+      "workspace_governance_mutation_receipts_digest_check",
+      sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.capability} ~ '^[a-z][a-z0-9_.]*@[1-9][0-9]*$' and length(${table.idempotencyKey}) between 8 and 200`,
+    ),
+  }),
+);
+
+/** Customer-visible append-only evidence; sensitive payloads are redacted before insertion. */
+export const workspaceAuditTrailEvents = pgTable(
+  "workspace_audit_trail_events",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    sequence: integer("sequence").notNull(),
+    id: text("id").notNull(),
+    event: jsonb("event").$type<Record<string, unknown>>().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_audit_trail_events_pk",
+      columns: [table.workspaceId, table.sequence],
+    }),
+    idUnique: uniqueIndex("workspace_audit_trail_events_id_unique").on(
+      table.workspaceId,
+      table.id,
+    ),
+    workspaceTimeIdx: index("workspace_audit_trail_events_workspace_time_idx").on(
+      table.workspaceId,
+      table.occurredAt,
+      table.sequence,
+    ),
+    sequenceCheck: check(
+      "workspace_audit_trail_events_sequence_check",
+      sql`${table.sequence} > 0 and octet_length(${table.event}::text) <= 65536`,
+    ),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];

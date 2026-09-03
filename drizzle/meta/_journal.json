@@ -407,6 +407,13 @@
       "when": 1788191166217,
       "tag": "0057_same_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1788452542491,
+      "tag": "0058_overconfident_rockslide",
+      "breakpoints": true
     }
   ]
 }

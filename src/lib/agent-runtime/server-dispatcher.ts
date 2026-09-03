@@ -72,6 +72,8 @@ import {
   PRODUCTION_PUBLISHING_DELIVERY_CURSOR,
   PRODUCTION_PUBLISHING_DELIVERY_SERVICE,
 } from "./publishing-deliveries/production";
+import { createGovernanceRegistrations } from "@/lib/governance/capabilities";
+import { PRODUCTION_GOVERNANCE_SERVICE } from "@/lib/governance/production";
 
 export const PRODUCTION_CAPABILITY_AUTHORIZER =
   new CompositeCapabilityAuthorizer(
@@ -115,6 +117,7 @@ export const PRODUCTION_CAPABILITY_REGISTRY = createCapabilityRegistry([
     PRODUCTION_PUBLISHING_DELIVERY_SERVICE,
     PRODUCTION_PUBLISHING_DELIVERY_CURSOR,
   ),
+  ...createGovernanceRegistrations(PRODUCTION_GOVERNANCE_SERVICE),
 ]);
 
 export const CAPABILITY_DISPATCHER = new CapabilityDispatcher(
