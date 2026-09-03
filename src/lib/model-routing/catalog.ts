@@ -23,7 +23,7 @@ const inputKey = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
 const parameterValue = z.union([z.string().max(200), z.number().finite(), z.boolean()]);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const url = z.string().url().refine((value) => value.startsWith("https://"), "Evidence URLs must use HTTPS");
-const attestationSchema = z.object({
+export const modelQualificationAttestationSchema = z.object({
   schema: z.literal("model-execution-qualification/v1"), id: z.string().min(8).max(200), revision: z.number().int().positive(), provider: z.literal("replicate"), model: z.string().min(1).max(200),
   endpoint: z.literal("versioned"), version: z.string().min(8).max(200), inputSchemaDigest: digest,
   capabilities: z.array(z.enum(["text_to_image","image_to_image","text_to_video","image_to_video","video_to_video"])).min(1), contentLanguages: z.array(z.enum(["ar","en","mixed"])).min(1), arabicVarieties: z.array(z.enum(["msa","gulf","egyptian","levantine","maghrebi","other"])), verifiedRegions: z.array(z.string().min(1)).min(1), executionModes: z.array(z.enum(["sync","async"])).min(1),
@@ -33,7 +33,7 @@ const attestationSchema = z.object({
   qualificationRun: z.object({ id: z.string().min(8).max(200), digest, completedAt: z.string().datetime({ offset: true }) }).strict(),
   issuedAt: z.string().datetime({ offset: true }), expiresAt: z.string().datetime({ offset: true }),
 }).strict().superRefine((value, context) => { if (value.inputContract.lockedParameters[value.inputContract.safety.parameterKey] !== value.inputContract.safety.safeValue) context.addIssue({ code: "custom", message: "The exact provider-safe value must be locked." }); });
-const qualificationSchema = z.object({ version: z.literal(1), qualifications: z.array(z.object({ attestation: attestationSchema, signature: z.object({ algorithm: z.literal("ed25519"), keyId: z.string().min(1).max(100), value: z.string().min(40).max(500) }).strict() }).strict()).max(100) }).strict();
+const qualificationSchema = z.object({ version: z.literal(1), qualifications: z.array(z.object({ attestation: modelQualificationAttestationSchema, signature: z.object({ algorithm: z.literal("ed25519"), keyId: z.string().min(1).max(100), value: z.string().min(40).max(500) }).strict() }).strict()).max(100) }).strict();
 const keySchema = z.record(z.string().min(1).max(100), z.string().min(40).max(10_000));
 
 export function configuredCatalog(raw = process.env.REPLICATE_MODEL_QUALIFICATIONS_JSON, rawKeys = process.env.MODEL_QUALIFICATION_PUBLIC_KEYS_JSON, at = new Date()): readonly ModelDescriptor[] {
