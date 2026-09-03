@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { getDb } from "@/lib/db";
 import {
   assets,
+  artifactContents,
+  artifacts,
   agentAuthorizationDecisions,
   agentKeys,
   agentPrincipals,
@@ -38,7 +40,7 @@ const schemas = {
   content_revision: z.object({ schema: z.literal("portable-content-revision/v1"), id, workflowId: id, revision: z.number().int().positive(), definitionDigest: id, definition: z.record(z.string(), z.unknown()), operationRegistryDigest: id, createdAt: z.string().datetime({ offset: true }) }).strict(),
   prompt: z.object({ schema: z.literal("portable-prompt/v1"), id, mode: z.enum(["photo", "video", "copy"]), name: z.string().min(1), promptText: z.string(), formConfig: z.record(z.string(), z.unknown()), isPublic: z.boolean(), createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }) }).strict(),
   brand_source: z.object({ schema: z.literal("portable-brand-source/v1"), id, revision: z.number().int().positive(), kind: z.enum(["website", "description"]), submittedUrl: z.string().nullable(), finalUrl: z.string().nullable(), submittedDescription: z.string().nullable(), cleanedText: z.string().nullable(), contentHash: z.string().nullable(), sourceLanguage: z.string().nullable(), extractedBytes: z.number().int().nonnegative().nullable(), fetchedAt: timestamp, createdAt: z.string().datetime({ offset: true }) }).strict(),
-  calendar_plan: z.object({ schema: z.literal("portable-calendar-plan/v2"), id, sourceChannelId: id, status: z.enum(["draft", "queued", "publishing", "published", "failed"]), kind: id, content: z.string().nullable(), stableMediaRefs: z.array(z.object({ type: z.enum(["image", "video", "audio", "model3d", "workflow"]), sourceAssetId: id, assetDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), order: z.number().int().nonnegative(), alt: z.string().max(2_000).optional() }).strict()).superRefine((refs, context) => {
+  calendar_plan: z.object({ schema: z.literal("portable-calendar-plan/v2"), id, sourceChannelId: id, status: z.enum(["draft", "queued", "publishing", "published", "failed"]), kind: id, content: z.string().nullable(), stableMediaRefs: z.array(z.object({ type: z.enum(["image", "video", "audio", "model3d", "workflow"]), sourceKind: z.enum(["studio_asset", "artifact"]).optional(), sourceAssetId: id, assetDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), order: z.number().int().nonnegative(), alt: z.string().max(2_000).optional() }).strict()).superRefine((refs, context) => {
     const orders = refs.map((ref) => ref.order);
     if (new Set(orders).size !== orders.length || orders.some((order, index) => order !== index)) context.addIssue({ code: "custom", message: "Calendar media order must be unique, contiguous, and zero-based." });
     if (new Set(refs.map((ref) => ref.sourceAssetId)).size !== refs.length) context.addIssue({ code: "custom", message: "Each calendar asset may appear only once." });
@@ -115,8 +117,9 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
   async list(input: { workspaceId: string; kinds: GovernancePortableKind[] }) {
     const requested = new Set(input.kinds);
     const db = this.database();
-    const [mediaRows, revisionRows, promptRows, brandRows, postRows, calendarAssetRows, observationRows] = await Promise.all([
+    const [mediaRows, artifactMediaRows, revisionRows, promptRows, brandRows, postRows, calendarAssetRows, observationRows] = await Promise.all([
       requested.has("media") ? db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), isNull(assets.deletedAt))) : [],
+      requested.has("media") || requested.has("calendar_plan") ? db.select({ artifact: artifacts, content: artifactContents }).from(artifacts).innerJoin(artifactContents, and(eq(artifactContents.workspaceId, artifacts.workspaceId), eq(artifactContents.digest, artifacts.contentDigest))).where(and(eq(artifacts.workspaceId, input.workspaceId), eq(artifactContents.kind, "image"), isNull(artifacts.deletedAt))) : [],
       requested.has("content_revision") ? db.select().from(contentWorkflowRevisions).where(eq(contentWorkflowRevisions.workspaceId, input.workspaceId)) : [],
       requested.has("prompt") ? db.select().from(savedPrompts).where(and(eq(savedPrompts.workspaceId, input.workspaceId), isNull(savedPrompts.deletedAt))) : [],
       requested.has("brand_source") ? db.select().from(brandSources).where(eq(brandSources.workspaceId, input.workspaceId)) : [],
@@ -128,14 +131,20 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
       requested.has("calendar_plan") ? db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), isNull(assets.deletedAt))) : [],
       requested.has("platform_observation") ? db.select({ id: socialEvents.id, eventType: socialEvents.eventType, severity: socialEvents.severity, userFacing: socialEvents.userFacing, postId: socialEvents.postId, accountId: socialEvents.accountId, provider: socialEvents.provider, createdAt: socialEvents.createdAt }).from(socialEvents).where(eq(socialEvents.workspaceId, input.workspaceId)) : [],
     ]);
-    const calendarAssets = new Map(calendarAssetRows.map((asset) => [asset.id, asset] as const));
+    const calendarAssets = new Map<string, CalendarMediaResource>();
+    for (const asset of calendarAssetRows) calendarAssets.set(`studio_asset:${asset.id}`, { ...asset, resourceKind: "studio_asset" });
+    for (const { artifact, content } of artifactMediaRows) calendarAssets.set(`artifact:${artifact.id}`, { id: artifact.id, resourceKind: "artifact", type: "image", storageKey: content.storageKey ?? "", mimeType: content.mediaType, sizeBytes: content.sizeBytes, width: content.width, height: content.height, durationSeconds: null, checksum: content.digest });
     const raw: Array<{ kind: GovernancePortableKind; sourceId: string; payload: Record<string, unknown> }> = [];
     if (requested.has("media")) for (const row of mediaRows) raw.push({ kind: "media", sourceId: row.id, payload: { schema: "portable-media/v1", id: row.id, type: row.type, storageProvider: row.storageProvider, storageBucket: row.storageBucket, storageKey: row.storageKey, mimeType: row.mimeType, sizeBytes: row.sizeBytes, width: row.width, height: row.height, durationSeconds: row.durationSeconds, checksum: row.checksum, metadata: row.metadata, createdAt: row.createdAt.toISOString() } });
+    if (requested.has("media")) for (const { artifact, content } of artifactMediaRows) raw.push({ kind: "media", sourceId: artifact.id, payload: { schema: "portable-media/v1", id: artifact.id, type: "image", storageProvider: "s3", storageBucket: process.env.S3_BUCKET_NAME ?? null, storageKey: content.storageKey!, mimeType: content.mediaType, sizeBytes: content.sizeBytes, width: content.width, height: content.height, durationSeconds: null, checksum: content.digest, metadata: { sourceKind: "artifact", origin: artifact.origin }, createdAt: artifact.createdAt.toISOString() } });
     if (requested.has("content_revision")) for (const row of revisionRows) raw.push({ kind: "content_revision", sourceId: row.id, payload: { schema: "portable-content-revision/v1", id: row.id, workflowId: row.workflowId, revision: row.revision, definitionDigest: row.definitionDigest, definition: row.definition as unknown as Record<string, unknown>, operationRegistryDigest: row.operationRegistryDigest, createdAt: row.createdAt.toISOString() } });
     if (requested.has("prompt")) for (const row of promptRows) raw.push({ kind: "prompt", sourceId: row.id, payload: { schema: "portable-prompt/v1", id: row.id, mode: row.mode, name: row.name, promptText: row.promptText, formConfig: row.formConfig, isPublic: row.isPublic, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } });
     if (requested.has("brand_source")) for (const row of brandRows) raw.push({ kind: "brand_source", sourceId: row.id, payload: { schema: "portable-brand-source/v1", id: row.id, revision: row.revision, kind: row.kind, submittedUrl: row.submittedUrl, finalUrl: row.finalUrl, submittedDescription: row.submittedDescription, cleanedText: row.cleanedText, contentHash: row.contentHash, sourceLanguage: row.sourceLanguage, extractedBytes: row.extractedBytes, fetchedAt: row.fetchedAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString() } });
     if (requested.has("calendar_plan")) for (const { post } of postRows) {
-      const stableMediaRefs = buildPortableCalendarStableMediaRefs({ postId: post.id, stableMediaRefs: post.stableMediaRefs, studioAssetId: post.studioAssetId, legacyAlt: post.mediaUrls?.[0]?.alt, assetsById: calendarAssets });
+      const stableMediaRefs = buildPortableCalendarStableMediaRefs({ postId: post.id, stableMediaRefs: post.stableMediaRefs, studioAssetId: post.studioAssetId, legacyMediaUrls: post.mediaUrls ?? [], assetsById: calendarAssets });
+      if (post.stableMediaRefs.length === 0 && stableMediaRefs.length > 0) {
+        await db.update(socialPosts).set({ stableMediaRefs: stableMediaRefs.map((reference) => ({ resourceKind: reference.sourceKind, assetId: reference.sourceAssetId, assetDigest: reference.assetDigest, order: reference.order, ...(reference.alt ? { alt: reference.alt } : {}) })), studioAssetId: stableMediaRefs.find((reference) => reference.sourceKind === "studio_asset")?.sourceAssetId ?? null, updatedAt: post.updatedAt }).where(and(eq(socialPosts.workspaceId, input.workspaceId), eq(socialPosts.id, post.id), sql`jsonb_array_length(${socialPosts.stableMediaRefs}) = 0`));
+      }
       raw.push({ kind: "calendar_plan", sourceId: post.id, payload: { schema: "portable-calendar-plan/v2", id: post.id, sourceChannelId: post.socialAccountId, status: post.status, kind: post.kind, content: post.content, stableMediaRefs, platformSettings: post.platformSettings ?? {}, scheduledAt: post.scheduledAt?.toISOString() ?? null, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
     }
     if (requested.has("caption")) for (const { post } of postRows.filter(({ post }) => Boolean(post.content))) raw.push({ kind: "caption", sourceId: post.id, payload: { schema: "portable-caption/v1", id: `caption:${post.id}`, sourcePostId: post.id, text: post.content!, createdAt: post.createdAt.toISOString(), updatedAt: post.updatedAt.toISOString() } });
@@ -318,6 +327,7 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
       destinationAssets.push(destinationAsset);
     }
     const stableMediaRefs = destinationAssets.map((asset, index) => ({
+      resourceKind: "studio_asset" as const,
       assetId: asset.id,
       assetDigest: payload.stableMediaRefs[index].assetDigest,
       order: index,
@@ -414,23 +424,52 @@ function portableAssetDigest(input: { type: string; mimeType: string | null; siz
   return canonicalDigest({ type: input.type, mimeType: input.mimeType, sizeBytes: input.sizeBytes, width: input.width, height: input.height, durationSeconds: input.durationSeconds });
 }
 
+type CalendarMediaResource = {
+  id: string;
+  resourceKind: "studio_asset" | "artifact";
+  type: "image" | "video" | "audio" | "model3d" | "workflow";
+  storageKey: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  width: number | null;
+  height: number | null;
+  durationSeconds: number | null;
+  checksum: string | null;
+};
+
+function storageKeyMatchesUrl(storageKey: string, url: string): boolean {
+  if (storageKey === url) return true;
+  try {
+    return decodeURIComponent(new URL(url).pathname).endsWith(`/${storageKey}`);
+  } catch {
+    return false;
+  }
+}
+
 export function buildPortableCalendarStableMediaRefs(input: {
   postId: string;
-  stableMediaRefs: Array<{ assetId: string; assetDigest: string; order: number; alt?: string }>;
+  stableMediaRefs: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number; alt?: string }>;
   studioAssetId: string | null;
-  legacyAlt?: string;
-  assetsById: ReadonlyMap<string, { id: string; type: "image" | "video" | "audio" | "model3d" | "workflow"; mimeType: string | null; sizeBytes: number | null; width: number | null; height: number | null; durationSeconds: number | null; checksum: string | null }>;
+  legacyMediaUrls: Array<{ type: string; url: string; alt?: string }>;
+  assetsById: ReadonlyMap<string, CalendarMediaResource>;
 }) {
+  const mediaResources = [...input.assetsById.values()];
+  const derived = input.legacyMediaUrls.map((media, order) => {
+    const explicitId = input.legacyMediaUrls.length === 1 ? input.studioAssetId : null;
+    const candidates = mediaResources.filter((resource) => (explicitId ? resource.id === explicitId : storageKeyMatchesUrl(resource.storageKey, media.url)) && resource.type === media.type);
+    if (candidates.length !== 1) throw new Error(`CALENDAR_MEDIA_RELATION_NOT_BACKFILLED:${input.postId}:${order}`);
+    const candidate = candidates[0];
+    return { resourceKind: candidate.resourceKind, assetId: candidate.id, assetDigest: "", order, ...(media.alt ? { alt: media.alt } : {}) };
+  });
   const persisted = input.stableMediaRefs.length > 0
     ? [...input.stableMediaRefs].sort((left, right) => left.order - right.order)
-    : input.studioAssetId
-      ? [{ assetId: input.studioAssetId, assetDigest: "", order: 0, ...(input.legacyAlt ? { alt: input.legacyAlt } : {}) }]
-      : [];
+    : derived;
   return persisted.map((reference, order) => {
-    const asset = input.assetsById.get(reference.assetId);
+    const resourceKind = reference.resourceKind ?? "studio_asset";
+    const asset = input.assetsById.get(`${resourceKind}:${reference.assetId}`);
     if (!asset) throw new Error(`CALENDAR_ASSET_NOT_FOUND:${input.postId}:${reference.assetId}`);
     const assetDigest = portableAssetDigest(asset);
     if (reference.assetDigest && reference.assetDigest !== assetDigest) throw new Error(`CALENDAR_ASSET_DIGEST_MISMATCH:${input.postId}:${reference.assetId}`);
-    return { type: asset.type, sourceAssetId: asset.id, assetDigest, order, ...(reference.alt ? { alt: reference.alt } : {}) };
+    return { type: asset.type, sourceKind: asset.resourceKind, sourceAssetId: asset.id, assetDigest, order, ...(reference.alt ? { alt: reference.alt } : {}) };
   });
 }

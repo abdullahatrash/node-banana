@@ -286,7 +286,7 @@ describe("create_social_post tool", () => {
         mediaUrls: [
           { type: "image", url: "https://signed.example/media.png" },
         ],
-        studioAssetId: "asset_1",
+        mediaReferences: [{ resourceKind: "studio_asset", id: "asset_1" }],
       }),
     );
   });

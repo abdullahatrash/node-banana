@@ -80,6 +80,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
         socialAccountId: post.socialAccountId,
         content: post.content ?? undefined,
         mediaUrls: (post.mediaUrls as Array<{ type: string; url: string; alt?: string }>) ?? undefined,
+        mediaReferences: post.stableMediaRefs?.map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset", id: reference.assetId, digest: reference.assetDigest })),
       })
       showToast("Post duplicated as draft", "success")
       router.push(`/social/compose?postId=${duplicated.id}`)

@@ -295,8 +295,10 @@ export const createSocialPostTool: ToolDefinition<
       mediaUrls: approvedTarget
         ? approvedTarget.media.map((item) => ({ type: "image", url: item.previewUrl }))
         : mediaUrls.length > 0 ? mediaUrls : undefined,
+      mediaReferences: approvedTarget
+        ? approvedTarget.media.map((item) => ({ resourceKind: "artifact" as const, id: item.artifactId, digest: item.digest }))
+        : assetIds.map((id) => ({ resourceKind: "studio_asset" as const, id })),
       platformSettings: approvedTarget?.settings ?? input.platformSettings,
-      studioAssetId: assetIds[0],
       triggerSource: inspectedApproval ? governedPublishingMarker({
         schema: "governed-social-publishing/v1",
         approvalRequestId: inspectedApproval.requestId,

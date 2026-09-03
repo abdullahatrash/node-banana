@@ -5,6 +5,9 @@ import type { SocialPlatform } from "@/lib/db/schema"
 import { getPublishingSettingsDefinition } from "@/lib/social/publishing-settings"
 
 export interface ComposerMediaItem {
+  assetId?: string
+  resourceKind?: "studio_asset" | "artifact"
+  assetDigest?: string
   type: "image" | "video"
   url: string
   alt?: string
@@ -47,6 +50,7 @@ interface SocialComposerState {
     postId: string
     content?: string | null
     mediaUrls?: ComposerMediaItem[] | null
+    stableMediaRefs?: Array<{ assetId: string; assetDigest: string; order: number; resourceKind?: "studio_asset" | "artifact" }> | null
     platformSettings?: Record<string, unknown> | null
     scheduledAt?: string | null
     socialAccountId: string
@@ -166,7 +170,12 @@ export const useSocialComposerStore = create<SocialComposerState>(
         postId: draft.postId,
         editSourceAccountId: draft.socialAccountId,
         content: draft.content ?? "",
-        mediaUrls: (draft.mediaUrls as ComposerMediaItem[]) ?? [],
+        mediaUrls: (draft.mediaUrls ?? []).map((media, order) => ({
+          ...media,
+          assetId: media.assetId || draft.stableMediaRefs?.find((reference) => reference.order === order)?.assetId || "",
+          resourceKind: media.resourceKind || draft.stableMediaRefs?.find((reference) => reference.order === order)?.resourceKind || "studio_asset",
+          assetDigest: media.assetDigest || draft.stableMediaRefs?.find((reference) => reference.order === order)?.assetDigest,
+        })),
         platformSettings: draft.platformSettings
           ? { [draft.socialAccountId]: draft.platformSettings }
           : {},

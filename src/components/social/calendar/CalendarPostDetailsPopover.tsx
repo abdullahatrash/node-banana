@@ -321,6 +321,7 @@ export function CalendarPostDetailsPopover({
                 socialAccountId: post.socialAccountId,
                 content: post.content ?? undefined,
                 mediaUrls: post.mediaUrls ?? undefined,
+                mediaReferences: post.stableMediaRefs?.map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset", id: reference.assetId, digest: reference.assetDigest })),
                 platformSettings: post.platformSettings ?? undefined,
               })
               showToast("Post duplicated as draft", "success")

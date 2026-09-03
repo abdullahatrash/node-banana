@@ -5,6 +5,7 @@ import {
   desc,
   eq,
   gte,
+  inArray,
   isNotNull,
   isNull,
   lt,
@@ -13,9 +14,13 @@ import {
   sql,
 } from "drizzle-orm";
 import { getDb } from "@/lib/db";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { isRecord } from "@/lib/social/utils";
 import { preserveLinkedInAuthorKind } from "@/lib/social/linkedin-author-kind";
 import {
+  artifactContents,
+  artifacts,
+  assets,
   socialAutomationRules,
   socialAutomationTasks,
   socialAccounts,
@@ -71,6 +76,56 @@ export class SocialPostStateTransitionError extends Error {
     this.currentStatus = currentStatus;
     this.targetStatus = targetStatus;
   }
+}
+
+export class SocialPostMediaBindingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SocialPostMediaBindingError";
+  }
+}
+
+export interface SocialPostMediaReference {
+  resourceKind: "studio_asset" | "artifact";
+  id: string;
+  digest?: string;
+}
+
+export interface SocialPostStableMediaReference {
+  resourceKind: "studio_asset" | "artifact";
+  assetId: string;
+  assetDigest: string;
+  order: number;
+  alt?: string;
+}
+
+function socialAssetDigest(asset: {
+  type: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  width: number | null;
+  height: number | null;
+  durationSeconds: number | null;
+  checksum: string | null;
+}): string {
+  if (asset.checksum && /^sha256:[a-f0-9]{64}$/.test(asset.checksum)) return asset.checksum;
+  return canonicalDigest({ type: asset.type, mimeType: asset.mimeType, sizeBytes: asset.sizeBytes, width: asset.width, height: asset.height, durationSeconds: asset.durationSeconds });
+}
+
+export function bindStableSocialMedia(input: {
+  mediaUrls: Array<{ type: string; url: string; alt?: string }>;
+  references: SocialPostMediaReference[];
+  resources: ReadonlyMap<string, { resourceKind: "studio_asset" | "artifact"; id: string; digest: string; type: string }>;
+}): SocialPostStableMediaReference[] {
+  if (input.mediaUrls.length !== input.references.length) throw new SocialPostMediaBindingError("Every social media item requires one ordered canonical media reference.");
+  if (new Set(input.references.map((reference) => `${reference.resourceKind}:${reference.id}`)).size !== input.references.length) throw new SocialPostMediaBindingError("A social media resource may appear only once in a post.");
+  return input.references.map((reference, order) => {
+    const resource = input.resources.get(`${reference.resourceKind}:${reference.id}`);
+    if (!resource) throw new SocialPostMediaBindingError(`Canonical media resource is unavailable in this Workspace: ${reference.id}.`);
+    if (resource.type !== input.mediaUrls[order]?.type) throw new SocialPostMediaBindingError(`Media type does not match canonical resource ${reference.id}.`);
+    if (reference.digest && reference.digest !== resource.digest) throw new SocialPostMediaBindingError(`Media digest does not match canonical resource ${reference.id}.`);
+    return { resourceKind: reference.resourceKind, assetId: reference.id, assetDigest: resource.digest, order, ...(input.mediaUrls[order]?.alt ? { alt: input.mediaUrls[order].alt } : {}) };
+  });
 }
 
 export class OAuthStateNotFoundError extends Error {
@@ -760,6 +815,29 @@ export async function countSocialPostsForAccount(
 // Social Posts
 // ---------------------------------------------------------------------------
 
+async function resolveStableSocialMedia(input: {
+  workspaceId: string;
+  mediaUrls: Array<{ type: string; url: string; alt?: string }>;
+  references: SocialPostMediaReference[];
+}): Promise<SocialPostStableMediaReference[]> {
+  if (input.mediaUrls.length === 0 && input.references.length === 0) return [];
+  const db = getDb();
+  const assetIds = input.references.filter((reference) => reference.resourceKind === "studio_asset").map((reference) => reference.id);
+  const artifactIds = input.references.filter((reference) => reference.resourceKind === "artifact").map((reference) => reference.id);
+  const [assetRows, artifactRows] = await Promise.all([
+    assetIds.length
+      ? db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, assetIds), isNull(assets.deletedAt)))
+      : [],
+    artifactIds.length
+      ? db.select({ artifact: artifacts, content: artifactContents }).from(artifacts).innerJoin(artifactContents, and(eq(artifactContents.workspaceId, artifacts.workspaceId), eq(artifactContents.digest, artifacts.contentDigest))).where(and(eq(artifacts.workspaceId, input.workspaceId), inArray(artifacts.id, artifactIds), isNull(artifacts.deletedAt)))
+      : [],
+  ]);
+  const resources = new Map<string, { resourceKind: "studio_asset" | "artifact"; id: string; digest: string; type: string }>();
+  for (const asset of assetRows) resources.set(`studio_asset:${asset.id}`, { resourceKind: "studio_asset", id: asset.id, digest: socialAssetDigest(asset), type: asset.type });
+  for (const { artifact, content } of artifactRows) resources.set(`artifact:${artifact.id}`, { resourceKind: "artifact", id: artifact.id, digest: content.digest, type: content.kind });
+  return bindStableSocialMedia({ mediaUrls: input.mediaUrls, references: input.references, resources });
+}
+
 export async function createSocialPost(input: {
   workspaceId: string;
   socialAccountId: string;
@@ -775,12 +853,16 @@ export async function createSocialPost(input: {
   triggerSource?: string | null;
   parentPostId?: string | null;
   studioAssetId?: string;
-  stableMediaRefs?: Array<{ assetId: string; assetDigest: string; order: number; alt?: string }>;
+  mediaReferences?: SocialPostMediaReference[];
   createdByUserId: string;
 }) {
   const db = getDb();
   const id = `spost_${randomUUID()}`;
   const now = new Date();
+  const mediaUrls = input.mediaUrls ?? [];
+  const references = input.mediaReferences ?? (input.studioAssetId ? [{ resourceKind: "studio_asset" as const, id: input.studioAssetId }] : []);
+  const stableMediaRefs = await resolveStableSocialMedia({ workspaceId: input.workspaceId, mediaUrls, references });
+  const firstStudioAssetId = stableMediaRefs.find((reference) => reference.resourceKind === "studio_asset")?.assetId ?? null;
 
   const [row] = await db
     .insert(socialPosts)
@@ -791,7 +873,7 @@ export async function createSocialPost(input: {
       status: "draft",
       rootPostId: input.rootPostId ?? null,
       content: input.content ?? null,
-      mediaUrls: input.mediaUrls ?? null,
+      mediaUrls: mediaUrls.length ? mediaUrls : null,
       platformSettings: input.platformSettings ?? null,
       scheduledAt: input.scheduledAt ?? null,
       kind: input.kind ?? "post",
@@ -800,8 +882,8 @@ export async function createSocialPost(input: {
       sourceTemplatePostId: input.sourceTemplatePostId ?? null,
       triggerSource: input.triggerSource ?? null,
       parentPostId: input.parentPostId ?? null,
-      studioAssetId: input.studioAssetId ?? null,
-      stableMediaRefs: input.stableMediaRefs ?? [],
+      studioAssetId: firstStudioAssetId,
+      stableMediaRefs,
       createdByUserId: input.createdByUserId,
       createdAt: now,
       updatedAt: now,
@@ -1215,6 +1297,7 @@ export async function updateSocialPost(
   data: {
     content?: string;
     mediaUrls?: Array<{ type: string; url: string; alt?: string }>;
+    mediaReferences?: SocialPostMediaReference[];
     platformSettings?: Record<string, unknown>;
     scheduledAt?: Date | null;
     rootPostId?: string | null;
@@ -1256,12 +1339,17 @@ export async function updateSocialPost(
   const isCalendarReschedule = onlyScheduledAtUpdate && data.scheduledAt;
   const shouldRefreshQueuedDispatch =
     isCalendarReschedule && existing.status === "queued";
+  const stableMediaRefs = data.mediaUrls === undefined
+    ? undefined
+    : await resolveStableSocialMedia({ workspaceId, mediaUrls: data.mediaUrls, references: data.mediaReferences ?? [] });
+  const firstStudioAssetId = stableMediaRefs?.find((reference) => reference.resourceKind === "studio_asset")?.assetId ?? null;
 
   const [row] = await db
     .update(socialPosts)
     .set({
       ...(data.content !== undefined && { content: data.content }),
       ...(data.mediaUrls !== undefined && { mediaUrls: data.mediaUrls }),
+      ...(stableMediaRefs !== undefined && { stableMediaRefs, studioAssetId: firstStudioAssetId }),
       ...(data.platformSettings !== undefined && {
         platformSettings: data.platformSettings,
       }),

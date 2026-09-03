@@ -24,6 +24,8 @@ interface PostsPostRequest {
   platformSettings?: Record<string, unknown>;
   scheduledAt?: string;
   studioAssetId?: string;
+  mediaAssetIds?: string[];
+  mediaReferences?: Array<{ resourceKind: "studio_asset" | "artifact"; id: string; digest?: string }>;
   chain?: unknown;
   automation?: unknown;
   chainId?: string;
@@ -301,6 +303,11 @@ export async function POST(
       triggerSource,
       parentPostId,
       studioAssetId: body.studioAssetId,
+      mediaReferences: Array.isArray(body.mediaReferences)
+        ? body.mediaReferences
+        : Array.isArray(body.mediaAssetIds)
+          ? body.mediaAssetIds.map((id) => ({ resourceKind: "studio_asset" as const, id }))
+          : undefined,
       createdByUserId: result.session.user.id,
     });
     logger.info("system", "Social draft post created", {

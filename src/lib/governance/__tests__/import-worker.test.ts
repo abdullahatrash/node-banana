@@ -68,8 +68,8 @@ describe("GovernanceImportWorker", () => {
   });
 
   it("exports every persisted media relation in stable order with digest and alt text", () => {
-    const first = { id: "asset-1", type: "image" as const, mimeType: "image/png", sizeBytes: 10, width: 10, height: 10, durationSeconds: null, checksum: "first" };
-    const second = { id: "asset-2", type: "video" as const, mimeType: "video/mp4", sizeBytes: 20, width: 1080, height: 1920, durationSeconds: 12, checksum: "second" };
+    const first = { id: "asset-1", resourceKind: "studio_asset" as const, type: "image" as const, storageKey: "workspace/asset-1.png", mimeType: "image/png", sizeBytes: 10, width: 10, height: 10, durationSeconds: null, checksum: "first" };
+    const second = { id: "asset-2", resourceKind: "studio_asset" as const, type: "video" as const, storageKey: "workspace/asset-2.mp4", mimeType: "video/mp4", sizeBytes: 20, width: 1080, height: 1920, durationSeconds: 12, checksum: "second" };
     const result = buildPortableCalendarStableMediaRefs({
       postId: "post-1",
       stableMediaRefs: [
@@ -77,11 +77,31 @@ describe("GovernanceImportWorker", () => {
         { assetId: first.id, assetDigest: "", order: 0, alt: "First" },
       ],
       studioAssetId: first.id,
-      assetsById: new Map<string, typeof first | typeof second>([[first.id, first], [second.id, second]]),
+      legacyMediaUrls: [],
+      assetsById: new Map<string, typeof first | typeof second>([[`studio_asset:${first.id}`, first], [`studio_asset:${second.id}`, second]]),
     });
     expect(result).toEqual([
       expect.objectContaining({ sourceAssetId: "asset-1", order: 0, alt: "First", assetDigest: expect.stringMatching(/^sha256:/) }),
       expect.objectContaining({ sourceAssetId: "asset-2", order: 1, alt: "Second", assetDigest: expect.stringMatching(/^sha256:/) }),
+    ]);
+  });
+
+  it("derives and preserves every ordered legacy asset relation instead of falling back to the first", () => {
+    const first = { id: "asset-1", resourceKind: "studio_asset" as const, type: "image" as const, storageKey: "workspace/asset-1.png", mimeType: "image/png", sizeBytes: 10, width: 10, height: 10, durationSeconds: null, checksum: `sha256:${"a".repeat(64)}` };
+    const second = { id: "asset-2", resourceKind: "studio_asset" as const, type: "video" as const, storageKey: "workspace/asset-2.mp4", mimeType: "video/mp4", sizeBytes: 20, width: 1080, height: 1920, durationSeconds: 12, checksum: `sha256:${"b".repeat(64)}` };
+    const result = buildPortableCalendarStableMediaRefs({
+      postId: "legacy-post",
+      stableMediaRefs: [],
+      studioAssetId: first.id,
+      legacyMediaUrls: [
+        { type: "image", url: first.storageKey, alt: "Cover" },
+        { type: "video", url: `https://cdn.example/${second.storageKey}`, alt: "Demo" },
+      ],
+      assetsById: new Map<string, typeof first | typeof second>([[`studio_asset:${first.id}`, first], [`studio_asset:${second.id}`, second]]),
+    });
+    expect(result).toEqual([
+      expect.objectContaining({ sourceAssetId: first.id, order: 0, alt: "Cover" }),
+      expect.objectContaining({ sourceAssetId: second.id, order: 1, alt: "Demo" }),
     ]);
   });
 

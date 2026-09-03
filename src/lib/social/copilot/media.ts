@@ -62,6 +62,7 @@ export async function attachMedia(
 ): Promise<{ postId: string; media: CopilotMediaItem[] }> {
   const post = (await getSocialPost(ctx.workspaceId, postId)) as {
     mediaUrls: CopilotMediaItem[] | null;
+    stableMediaRefs: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number }>;
   };
 
   const newItems: CopilotMediaItem[] = [];
@@ -77,6 +78,12 @@ export async function attachMedia(
   }
 
   const media = [...(post.mediaUrls ?? []), ...newItems];
-  await updateSocialPost(ctx.workspaceId, postId, { mediaUrls: media });
+  await updateSocialPost(ctx.workspaceId, postId, {
+    mediaUrls: media,
+    mediaReferences: [
+      ...post.stableMediaRefs.sort((left, right) => left.order - right.order).map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset" as const, id: reference.assetId, digest: reference.assetDigest })),
+      ...assetIds.map((id) => ({ resourceKind: "studio_asset" as const, id })),
+    ],
+  });
   return { postId, media };
 }

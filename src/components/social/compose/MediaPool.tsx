@@ -131,6 +131,8 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
     const items: ComposerMediaItem[] = assets
       .filter((a) => selected.has(a.id))
       .map((a) => ({
+        assetId: a.id,
+        resourceKind: "studio_asset" as const,
         type: (a.type === "video" ? "video" : "image") as "image" | "video",
         url: a.storageKey,
         mimeType: a.mimeType,
@@ -182,6 +184,8 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
         })
 
         uploaded.push({
+          assetId: presign.assetId,
+          resourceKind: "studio_asset",
           type: assetType === "video" ? "video" : "image",
           url: presign.downloadUrl,
           mimeType: file.type,

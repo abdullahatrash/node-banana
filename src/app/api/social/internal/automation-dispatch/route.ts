@@ -253,6 +253,7 @@ async function handleAutomationDispatch(
           socialAccountId,
           content: inspected.target.content.text,
           mediaUrls: inspected.target.media.map((item) => ({ type: "image", url: item.previewUrl })),
+          mediaReferences: inspected.target.media.map((item) => ({ resourceKind: "artifact" as const, id: item.artifactId, digest: item.digest })),
           platformSettings: inspected.target.settings,
           scheduledAt: new Date(inspected.target.timing.publishAt),
           triggerSource: marker,

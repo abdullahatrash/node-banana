@@ -18,6 +18,8 @@ interface PostResponse {
 interface PatchRequest {
   content?: string;
   mediaUrls?: Array<{ type: string; url: string; alt?: string }>;
+  mediaAssetIds?: string[];
+  mediaReferences?: Array<{ resourceKind: "studio_asset" | "artifact"; id: string; digest?: string }>;
   platformSettings?: Record<string, unknown>;
   scheduledAt?: string | null;
 }
@@ -95,6 +97,7 @@ export async function PATCH(
       {
         content: body.content,
         mediaUrls: body.mediaUrls,
+        mediaReferences: body.mediaReferences ?? body.mediaAssetIds?.map((id) => ({ resourceKind: "studio_asset" as const, id })),
         platformSettings: body.platformSettings,
         scheduledAt:
           body.scheduledAt === null

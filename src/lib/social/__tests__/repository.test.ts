@@ -6,7 +6,9 @@ import {
   OAuthSelectionSessionNotFoundError,
   SocialAccountNotFoundError,
   SocialPostNotFoundError,
+  SocialPostMediaBindingError,
   SocialPostStateTransitionError,
+  bindStableSocialMedia,
 } from "@/lib/social/repository";
 
 // Mock the database module
@@ -112,6 +114,30 @@ describe("social/repository", () => {
     it("OAuthSelectionSessionExpiredError has correct name", () => {
       const error = new OAuthSelectionSessionExpiredError();
       expect(error.name).toBe("OAuthSelectionSessionExpiredError");
+    });
+  });
+
+  describe("stable social media binding", () => {
+    const resources = new Map([
+      ["studio_asset:asset-a", { resourceKind: "studio_asset" as const, id: "asset-a", digest: `sha256:${"a".repeat(64)}`, type: "image" }],
+      ["artifact:artifact-b", { resourceKind: "artifact" as const, id: "artifact-b", digest: `sha256:${"b".repeat(64)}`, type: "image" }],
+    ]);
+
+    it("pins every canonical resource and preserves exact order and alt text", () => {
+      expect(bindStableSocialMedia({
+        mediaUrls: [{ type: "image", url: "one", alt: "First" }, { type: "image", url: "two", alt: "Second" }],
+        references: [{ resourceKind: "studio_asset", id: "asset-a" }, { resourceKind: "artifact", id: "artifact-b", digest: `sha256:${"b".repeat(64)}` }],
+        resources,
+      })).toEqual([
+        { resourceKind: "studio_asset", assetId: "asset-a", assetDigest: `sha256:${"a".repeat(64)}`, order: 0, alt: "First" },
+        { resourceKind: "artifact", assetId: "artifact-b", assetDigest: `sha256:${"b".repeat(64)}`, order: 1, alt: "Second" },
+      ]);
+    });
+
+    it("rejects an incomplete, duplicated, or caller-digest-mismatched relation", () => {
+      expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }], references: [], resources })).toThrow(SocialPostMediaBindingError);
+      expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }, { type: "image", url: "two" }], references: [{ resourceKind: "studio_asset", id: "asset-a" }, { resourceKind: "studio_asset", id: "asset-a" }], resources })).toThrow(SocialPostMediaBindingError);
+      expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }], references: [{ resourceKind: "studio_asset", id: "asset-a", digest: `sha256:${"c".repeat(64)}` }], resources })).toThrow(SocialPostMediaBindingError);
     });
   });
 

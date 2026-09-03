@@ -58,6 +58,7 @@ export function ComposeView() {
   const canPublish = hasContent && hasChannels
   const canSchedule = canPublish && scheduledAt && scheduledAt > new Date()
   const sourceAccountId = editSourceAccountId ?? selectedAccountIds[0] ?? null
+  const mediaReferences = mediaUrls.map((media) => ({ resourceKind: media.resourceKind ?? "studio_asset" as const, id: media.assetId ?? "", ...(media.assetDigest ? { digest: media.assetDigest } : {}) }))
 
   function getAccountMaps() {
     const platformByChannelId: Record<string, SocialPlatform> = {}
@@ -100,6 +101,7 @@ export function ComposeView() {
         await updateSocialPost(postId, {
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: sourceAccountId
             ? preparedSettings[sourceAccountId]
             : undefined,
@@ -116,6 +118,7 @@ export function ComposeView() {
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: preparedSettings[accountId],
           scheduledAt: scheduledAt?.toISOString(),
         })
@@ -164,6 +167,7 @@ export function ComposeView() {
         const updated = await updateSocialPost(postId, {
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: sourceAccountId
             ? preparedSettings[sourceAccountId]
             : undefined,
@@ -181,6 +185,7 @@ export function ComposeView() {
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: preparedSettings[accountId],
           scheduledAt: scheduledAt!.toISOString(),
         })
@@ -224,6 +229,7 @@ export function ComposeView() {
         const updated = await updateSocialPost(postId, {
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: sourceAccountId
             ? preparedSettings[sourceAccountId]
             : undefined,
@@ -241,6 +247,7 @@ export function ComposeView() {
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: preparedSettings[accountId],
         })
         publishQueue.push(created.id)

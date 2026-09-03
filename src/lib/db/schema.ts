@@ -6541,6 +6541,7 @@ export const socialPosts = pgTable(
     stableMediaRefs: jsonb("stable_media_refs")
       .$type<
         Array<{
+          resourceKind?: "studio_asset" | "artifact";
           assetId: string;
           assetDigest: string;
           order: number;

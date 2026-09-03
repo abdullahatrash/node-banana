@@ -87,7 +87,7 @@ export interface SocialPost {
   status: SocialPostStatus;
   content?: string | null;
   mediaUrls?: Array<{ type: string; url: string; alt?: string }> | null;
-  stableMediaRefs?: Array<{ assetId: string; assetDigest: string; order: number; alt?: string }>;
+  stableMediaRefs?: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number; alt?: string }>;
   platformSettings?: Record<string, unknown> | null;
   scheduledAt?: string | null;
   publishedAt?: string | null;
@@ -267,7 +267,8 @@ export async function createSocialPost(input: {
   mediaUrls?: Array<{ type: string; url: string; alt?: string }>;
   platformSettings?: Record<string, unknown>;
   scheduledAt?: string;
-  studioAssetId?: string;
+  mediaAssetIds?: string[];
+  mediaReferences?: Array<{ resourceKind: "studio_asset" | "artifact"; id: string; digest?: string }>;
 }): Promise<SocialPost> {
   const data = await socialFetch("/api/social/posts", {
     method: "POST",
@@ -287,6 +288,8 @@ export async function updateSocialPost(
   input: {
     content?: string;
     mediaUrls?: Array<{ type: string; url: string; alt?: string }>;
+    mediaAssetIds?: string[];
+    mediaReferences?: Array<{ resourceKind: "studio_asset" | "artifact"; id: string; digest?: string }>;
     platformSettings?: Record<string, unknown>;
     scheduledAt?: string | null;
   },
