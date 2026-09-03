@@ -77,7 +77,7 @@ describe("GovernanceImportWorker", () => {
         { assetId: first.id, assetDigest: "", order: 0, alt: "First" },
       ],
       studioAssetId: first.id,
-      assetsById: new Map([[first.id, first], [second.id, second]]),
+      assetsById: new Map<string, typeof first | typeof second>([[first.id, first], [second.id, second]]),
     });
     expect(result).toEqual([
       expect.objectContaining({ sourceAssetId: "asset-1", order: 0, alt: "First", assetDigest: expect.stringMatching(/^sha256:/) }),
