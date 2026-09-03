@@ -4,6 +4,10 @@ Node Banana includes a Social Hub for planning, composing, and publishing genera
 
 ## Language
 
+**Reference Feature Parity**:
+A commitment that every user-observable capability, state, interaction, and supporting workflow in an adopted reference surface has a Tasmeemai counterpart. It preserves Tasmeemai's product identity, domain language, and architecture rather than copying proprietary wording, branding, assets, or implementation.
+_Avoid_: Clone, pixel parity, MVP parity, screen copy
+
 **Brand Source**:
 User-approved source material used to derive a Workspace's Brand Profile, such as a public website or a manual company description. It is evidence for the profile, not the canonical profile itself.
 _Avoid_: Scraped data, company input, website context
@@ -23,6 +27,10 @@ _Avoid_: Interface language, detected language, Arabic mode
 **Channel**:
 A connected social publishing destination inside a workspace, backed by one platform account, page, or channel and its auth credentials.
 _Avoid_: Integration, social account, provider account
+
+**Managed Channel Onboarding**:
+A compliant service that helps a Workspace establish, prepare, and connect a publish-ready **Channel** it is authorized to control. It never sells aged identities or simulates activity intended to evade a Platform's enforcement.
+_Avoid_: Warmed account, aged account, burner account, account farming
 
 **Platform**:
 An external social network or publishing surface, such as YouTube, TikTok, Reddit, Instagram, X, or LinkedIn.
@@ -508,6 +516,10 @@ _Avoid_: API key, environment variable, provider setting, secret record
 A provider effect performed with a credential supplied and owned by the Workspace operator through a Credential Profile. The external provider bills the operator's account directly; Node Banana meters and constrains execution but does not buy, resell, or mark up inference.
 _Avoid_: managed inference, platform credits, included AI, Node Banana billing
 
+**Managed Provider Execution**:
+A provider effect performed through a provider account funded and controlled by Tasmeemai, with the customer charged under Tasmeemai's own commercial contract. It is a distinct execution and billing mode from **BYOK Provider Execution**, even when both use the same provider operation.
+_Avoid_: BYOK, free generation, provider pass-through, estimated external spend
+
 **External Provider Spend**:
 The provider usage cost attributable to BYOK Provider Execution under provider evidence or a Pricing Snapshot. It is an operational estimate or reported external charge for guardrails and analysis, never a Node Banana invoice, wallet debit, or promise of the provider's final bill.
 _Avoid_: platform charge, inference revenue, credits, customer billing
@@ -707,7 +719,7 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - A Budget Reservation reserves internal authorization to cause bounded External Provider Spend and never reserves funds or credits with the provider.
 - The provider's billing system remains final invoice authority; when exact billed cost is unavailable, Node Banana retains a clearly labeled valuation rather than claiming an actual charge.
 - Hosted storage, bandwidth, and concurrency capacity remain Quota dimensions and are not disguised as BYOK inference spend.
-- Managed inference, bundled credits, resale, or markup are outside runtime v1 and require a separate future contract.
+- The product supports both **BYOK Provider Execution** and **Managed Provider Execution** as explicit modes; managed execution has a separate commercial contract and never reinterprets BYOK usage as a Tasmeemai charge.
 - Granting an Agent Principal visibility of a Credential Profile never implies permission to cause External Provider Spend.
 - Before an Agent Principal may use a Credential Profile for a provider effect, a human administrator creates a **Credential Spend Grant** in bounded or explicitly unbounded mode.
 - A bounded Credential Spend Grant applies both a maximum Run Cost Ceiling and a calendar-period Budget Policy; an unbounded grant still records complete usage and remains subject to Quota Policies and Emergency Spend Suspension.

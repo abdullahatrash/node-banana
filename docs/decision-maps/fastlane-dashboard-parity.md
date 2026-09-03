@@ -1,6 +1,6 @@
 # Fastlane Dashboard Parity Decision Map
 
-Status: ready for implementation review
+Status: under design grilling; full-parity destination accepted
 Captured: 2026-09-03
 Scope: authenticated `app.usefastlane.ai` product dashboard compared with the current Node Banana/Tasmeemai working tree
 
@@ -10,9 +10,10 @@ Scope: authenticated `app.usefastlane.ai` product dashboard compared with the cu
 - **Inference (I):** probable data, API, or job behavior suggested by the UI; it is not treated as a copied contract.
 - The inspected Fastlane workspace was an empty free-trial workspace. Paid Inspiration content, populated libraries/calendars/analytics, completed Influencers, later Automation steps, and publishing result states remain partly unknown.
 - The sample workspace name, brand content, account identity, referral code, and generated draft identifier are deliberately omitted.
-- Parity values are `existing`, `partial`, `missing`, `intentionally different`, or `unknown`.
-- Product-language decisions in `CONTEXT.md` and ADRs 0001–0013 outrank Fastlane terminology. In particular: use **Workspace**, **Brand Profile**, **Channel**, **Platform**, **Artifact**, **Publishing Plan**, **Publishing Approval**, **Publishing Delivery**, and **Content Operations Runtime**.
-- Fastlane is a product reference, not an architecture template. Node Banana keeps the shared Application Capability boundary (ADR 0013), approval-first publishing (ADR 0010), normalized Publishing Settings, safe defaults, and BYOK runtime economics.
+- Parity values are `existing`, `partial`, `missing`, `intentionally adapted`, or `unknown`.
+- **Full-parity mandate:** every observed authenticated Fastlane capability, supporting workflow, commercial/support surface, and meaningful empty, populated, loading, failure, gated, and responsive state is part of the committed destination. Delivery slices sequence this fixed scope; they do not define an MVP.
+- Product-language decisions in `CONTEXT.md` and ADRs 0001–0015 outrank Fastlane terminology. In particular: use **Workspace**, **Brand Profile**, **Channel**, **Platform**, **Artifact**, **Publishing Plan**, **Publishing Approval**, **Publishing Delivery**, and **Content Operations Runtime**.
+- Fastlane is a product-behavior reference, not an architecture, identity, or copy template. Tasmeemai keeps the shared Application Capability boundary (ADR 0013), approval-first publishing (ADR 0010), normalized Publishing Settings, safe defaults, and its existing deeper capabilities. It adds Managed Provider Execution alongside BYOK under ADR 0015.
 
 ## #1: What information architecture and shell should Tasmeemai adopt?
 
@@ -147,14 +148,14 @@ How should Fastlane AI Studio and Content map onto existing generation infrastru
 
 Decision: retain Simple Studio as the low-level generator and layer a format-driven Content launcher over versioned Workflows. Do not replace provider/model discovery with Fastlane-branded model labels.
 
-## #6: Are persistent AI Influencers in scope?
+## #6: How should persistent AI Influencers reach full parity?
 
 Blocked by: #5, #7, #10
 Type: Research
 
 ### Question
 
-Should Tasmeemai add Fastlane-style reusable AI characters now?
+What complete Tasmeemai capability should correspond to Fastlane-style reusable AI characters?
 
 ### Answer
 
@@ -162,13 +163,13 @@ Should Tasmeemai add Fastlane-style reusable AI characters now?
 
 - **O UI:** heading and help, credit balance/purchase, New influencer, first-use empty state, and three-step onboarding: create a persona and train a persistent character; generate images then videos from an image; configure social connections/content sets that feed Blitz.
 - **I behavior:** character records own traits, training source/consent, provider training Runs, status and reusable model reference; generated assets retain character lineage; content sets join characters/media to Blitz configuration.
-- **Node Banana:** no character/persona/training resource. Reference images and image-to-video are ephemeral inputs; Artifacts and provider Workflows can support a future implementation.
+- **Node Banana:** no character/persona/training resource. Reference images and image-to-video are ephemeral inputs; Artifacts and provider Workflows provide the foundation for the committed implementation.
 - **Parity:** `missing`.
 - **Arabic/English:** persona identity and generated speech language are separate; Arabic voice/dialect, consent, gender/cultural representation, disclosure, and pronunciation need explicit controls; names/handles use bidi isolation.
 - **Dependencies/risks:** consent and likeness policy, provider/model evaluation, immutable training provenance, credential/budget controls, disclosure metadata, and safe deletion/retention. High abuse, biometric, IP, and cost risk.
 - **Acceptance:** no training without explicit rights/consent evidence; training is a durable Run with failure/retry states; character use is Workspace-scoped; generated media carries lineage/disclosure; Arabic dialect and caption tests are defined before launch.
 
-Decision: defer until the content Workflow and Artifact foundations are user-facing. Treat it as a distinct bounded product slice, not an option added to the existing image form.
+Decision: persistent AI Influencers are in the full-parity destination. Implement the complete persona, consent, training, generation, connection/content-set, Blitz handoff, lifecycle, and safe-deletion experience as a distinct bounded product slice after its Workflow and Artifact prerequisites—not as an optional someday feature or a field added to the existing image form.
 
 ## #7: What is the canonical library and media model?
 
@@ -279,8 +280,8 @@ Which authenticated secondary surfaces are product requirements, and which shoul
 | Fastlane route/surface (placement) | Observed UI and inferred behavior | Node Banana/Tasmeemai mapping | Parity; locale; dependencies and acceptance |
 |---|---|---|---|
 | Settings → Account (sidebar button; overlay) | **O:** profile/security tabs, email identities, connected login accounts, update profile, add email, delete account, sign out. **I:** identity-provider and account-lifecycle APIs. | Better Auth sign-in/up/verification/session exists; no consolidated account settings. | `partial`; bilingual security copy and correct destructive confirmations; depends on Better Auth account APIs; accept with reauthentication and audit coverage. |
-| Settings → Billing | **O:** “Billing & Subscription” shell; detailed plan state did not render in the inspected trial. **I:** subscription/customer portal and entitlements. | No product billing center. Runtime BYOK spend evidence is deliberately not a subscription invoice. | `missing`; currencies/tax copy must localize without conflating provider spend; needs a commercial decision before implementation. |
-| Settings → AI Credits | **O:** balance, Buy more, monthly reset vs non-expiring add-on credits, recent ledger activity. **I:** credit ledger, reservation, settlement. | Runtime Usage Ledger, Pricing Snapshots, budgets, quotas, and `/studio/usage|budgets|quotas`; managed credits are outside runtime v1. | `intentionally different` for inference credits, `partial` for friendly usage UI; preserve unknown-not-zero and BYOK terminology. |
+| Settings → Billing | **O:** “Billing & Subscription” shell; detailed plan state did not render in the inspected trial. **I:** subscription/customer portal and entitlements. | No product billing center. Runtime BYOK spend evidence is deliberately not a subscription invoice; ADR 0015 commits a separate managed-execution commercial boundary. | `missing` and committed; currencies, tax, invoices, entitlements, payment failure, cancellation, and portal copy must localize without conflating managed charges with External Provider Spend. |
+| Settings → AI Credits | **O:** balance, Buy more, monthly reset vs non-expiring add-on credits, recent ledger activity. **I:** credit ledger, reservation, settlement. | Runtime Usage Ledger, Pricing Snapshots, budgets, quotas, and `/studio/usage|budgets|quotas` support evidence; ADR 0015 adds Managed Provider Execution alongside BYOK. | `missing` for managed credits and committed; define auditable balances, purchase, reservation, settlement, refund, expiry, and insufficient-balance states while preserving unknown-not-zero and explicit execution-mode language. |
 | Settings → Storage | **O:** used/limit progress and Upgrade. **I:** Workspace storage aggregation. | Asset storage limits, upload admission, cleanup, and Quota Cockpit exist. | `partial`; localized byte units; expose canonical quota and safe cleanup, not a fake plan counter. |
 | Settings → Integrations | **O:** four social cards, connection allowance, status/help; Website Analytics enable. | `/social/channels`, provider registry/adapters, OAuth/App Password flows, readiness/reauth. Supports more Platforms. | `existing` core, `partial` presentation; say **Channels**, not integrations, for connected destinations; retain provider-specific safe defaults. |
 | Settings → Demo Videos | **O:** MP4/MOV upload, 100 MB and 30s limits; videos feed hook formats. **I:** dedicated reusable media collection. | Workspace asset upload and Compose Media Pool; no “demo” semantic set. | `partial`; implement as a tagged/set view over assets after #7; validate duration/type server-side. |
@@ -291,10 +292,10 @@ Which authenticated secondary surfaces are product requirements, and which shoul
 | Settings → Notifications | **O:** email master switch, lead/activity/failed-post/disclosure-review digests. | social notification preferences, events/read state, automation task/rule UI, digest/internal dispatch routes. | `partial`; bilingual templates, per-user vs Workspace scope, quiet hours/timezone, and unsubscribe evidence. |
 | Settings → API | **O:** docs, downloadable agent skill, paid gate for API keys. | `/social/settings` API tokens/provider keys; `/agents` pairing and authority; `/api/v1/*`, `/api/mcp`, CLI/MCP capability registry and parity contracts. | `existing` and deeper, but fragmented; consolidate without bypassing Principal/Workspace resolution or capability authorization. |
 | Global Copilot dialog | **O:** floating launcher, new conversation, history, platform-advice prompt; mobile dialog fills the viewport. Action tools were not observed. **I:** persisted conversations and contextual product help. | `/social/copilot` operates on persisted draft Posts through transport-agnostic, approval-gated tools. | `partial`, intentionally action-scoped; global advice may be added, but publishing remains explicit and capability-backed. |
-| `/guide` (sidebar) | **O:** video tutorial buttons for Blitz, manual creation, formats, Calendar/Library/Brand/Feedback, Influencers. | Onboarding education only; no guide center. | `missing`, low dependency; localize captions/transcripts, keep docs versioned with routes, and test every CTA. |
-| `/feedback`, `/roadmap`, `/changelog` (sidebar/links) | **O:** roadmap/changelog links and categorized feedback form with up to 10 attachments/16 MB; release toast links to changelog. | No equivalent product UI. | `missing`, low priority; needs privacy-safe attachment storage and support workflow; read-only changelog can precede submissions. |
-| `/refer-and-earn` (sidebar) | **O:** referral link/QR, embedded affiliate dashboard, clicks/leads/sales/rewards/payment settings. | No referral program. | `missing`, defer until a commercial decision; never place referral identifiers or payment data in product telemetry. |
-| `/warmed-accounts` (primary nav) | **O:** purchase/management offer for warmed TikTok/Instagram accounts, monthly account charge plus per-upload fee, configuration/review flow. | Tasmeemai marketing explicitly says users connect brand accounts they own/control and the product does not sell accounts or operate fake identities. | `intentionally different`; exclude from roadmap. Acceptance is the continued absence of account-selling/provisioning language and flows. |
+| `/guide` (sidebar) | **O:** video tutorial buttons for Blitz, manual creation, formats, Calendar/Library/Brand/Feedback, Influencers. | Onboarding education only; no guide center. | `missing` and committed; localize captions/transcripts, keep docs versioned with routes, cover every parity feature, and test every CTA. |
+| `/feedback`, `/roadmap`, `/changelog` (sidebar/links) | **O:** roadmap/changelog links and categorized feedback form with up to 10 attachments/16 MB; release toast links to changelog. | No equivalent product UI. | `missing` and committed; needs privacy-safe attachment storage, a support workflow, localized release communications, and complete submission/error states. |
+| `/refer-and-earn` (sidebar) | **O:** referral link/QR, embedded affiliate dashboard, clicks/leads/sales/rewards/payment settings. | No referral program. | `missing` and committed; requires referral attribution, fraud controls, reward/payment states, tax handling, and privacy boundaries; never place referral identifiers or payment data in general product telemetry. |
+| `/warmed-accounts` (primary nav) | **O:** purchase/management offer for warmed TikTok/Instagram accounts, monthly account charge plus per-upload fee, configuration/review flow. | Tasmeemai will satisfy the publish-ready Channel outcome through **Managed Channel Onboarding**, while requiring authorization and Platform-compliant setup. | `intentionally adapted` and committed; match discovery, selection, pricing, configuration, review, provisioning progress, support, and management states without selling aged identities or simulating activity to evade enforcement. |
 
 ## #12: What implementation sequence yields reviewable vertical slices?
 
@@ -307,7 +308,7 @@ What should be built, in what order, without duplicating existing infrastructure
 
 ### Answer
 
-Each slice ends in a deployable user outcome and an atomic commit/PR. Routes are proposed; exact product naming remains reviewable.
+Every slice is a production-complete portion of a fixed full-parity destination, not an MVP experiment or permission to omit later slices. Each ends in a deployable user outcome and an atomic commit/PR; routes are proposed and exact product naming remains reviewable.
 
 | Slice | User outcome and routes | Reuse boundary | Key acceptance gate |
 |---|---|---|---|
@@ -315,16 +316,19 @@ Each slice ends in a deployable user outcome and an atomic commit/PR. Routes are
 | **S2 — Dashboard read model** | `/dashboard` shows derived activation progress, pending review/failures, next scheduled work, recent Artifacts/assets, and next-best CTA. | onboarding aggregate, assets, Channels, Posts, Runs, Approvals, Deliveries. | One read-only aggregation contract; partial failures render per card; no mutable checklist. |
 | **S3 — Brand Profile center** | `/brand` lets users inspect accepted Brand Profile, propose corrections/source refresh, review diffs, and change Interface/Content language. | existing Brand Source/Profile/revision/generation pipeline. | New revisions never rewrite accepted history; mixed RTL/LTR fields tested. |
 | **S4 — Unified Library** | `/library` tabs for publishing work, generated content/Artifacts, and uploaded media; shared picker for Studio/Compose. | asset APIs, Artifact projections, `/social/posts`, Media Pool, storage quotas. | No duplicated bytes or asset authority; search/filter URLs; origin/lineage/state visible. |
-| **S5 — Content format launcher** | `/content` selects an initial small set: Slideshow, Wall of Text, Hook + Demo, and Custom; previews inputs and admission before running. | model discovery, Simple Studio, Content Workflow Revisions/Runs, editor handoff. | Registry-driven formats; Durable Acceptance/progress; Arabic typography fixtures. |
+| **S5 — Complete content format system** | `/content` supports all observed formats: Slideshow, Wall of Text, Video Hook & Demo, Speaking Hook & Demo, Talking Head UGC, Green Screen Meme, Talking Head Green Screen, Product Spokesperson, Green Screen Mobile with App, Claymation, Character Swap, and Custom; each previews inputs and admission before running. | model discovery, Simple Studio, Content Workflow Revisions/Runs, editor handoff. | Registry-driven formats; every format has complete input, preview, progress, result, retry, and Arabic typography/caption states. |
 | **S6 — Calendar/publishing convergence** | unified `/calendar`, `/compose`, `/channels`; friendly summary counters and canonical readiness/Approval/Delivery state. | current Social Hub, Publishing Settings registry, canonical publishing capabilities. | one publish authority; validation at client/release/provider boundaries; idempotent effects. |
-| **S7 — Inspiration foundation** | `/inspiration` ingests a small rights-cleared source set, with search, niche/format tags, metrics freshness, and explicit remix provenance. | Brand Profile, Library, Artifact lineage, format launcher. | source rights and timestamps visible; no direct duplication; Arabic/MENA curation included. |
+| **S7 — Inspiration library** | `/inspiration` provides continuous rights-cleared discovery with daily ingestion, search, niche/topic/format filters, populated and gated states, metrics freshness, item details, and explicit remix provenance. | Brand Profile, Library, Artifact lineage, format launcher. | source rights and timestamps visible; no direct duplication; Arabic/MENA curation and every observed handoff included. |
 | **S8 — Blitz review queue** | `/blitz` becomes resumable Ideas-to-review with source comparison, rationale, reject, edit, accept-to-draft, and configuration. | S3/S4/S5/S7 plus review-first publishing policy. | accept never publishes; actions idempotent; queue resumes; RTL gesture semantics explicit. |
 | **S9 — Campaign Automations** | `/automations` builder for content mix, originality/remix ratio, Channels, cadence, admission preview, review, launch, and progress. | runtime Automations/Occurrences, Runs, Plans, Approvals, budgets/quotas. | immutable revisions; atomic launch; partial work and recovery visible; approval-first default. |
-| **S10 — Performance Analytics** | `/analytics` ranges, per-Post/Channel/Platform/format metrics, freshness, and Agent-readable queries; later add Website and GEO reporting. | Channel adapters, Social events, runtime capability entrypoint. | source/unknown/freshness shown; aggregates reconcile; no causal claims from correlation. |
+| **S10 — Performance Analytics** | `/analytics` provides all observed date ranges, headline metrics, social-traffic-versus-posts, cumulative/daily charts, account/Platform/content-type breakdowns, distribution/inbox-direct views, Website Analytics, GEO reporting, drilldowns, and Agent-readable queries. | Channel adapters, Social events, website measurement, runtime capability entrypoint. | source/unknown/freshness shown; aggregates reconcile; no causal claims from correlation. |
 | **S11 — Product settings consolidation** | one settings sheet/routes for Account, Workspaces, Channels, storage/usage, budgets, credentials, language, timezone, notifications, and API/Agents. | Better Auth, current social settings, Studio Cockpits, agent pairing/tokens. | role-aware sections; secrets never rendered; mobile full-screen sheet; all mutations use existing authoritative services/capabilities. |
-| **S12 — Persistent Influencers (deferred)** | consented reusable characters and training/generation status. | Artifacts, Workflows, credentials, usage, Library, disclosure. | requires separate safety/design approval and provider evaluation. |
+| **S12 — Persistent Influencers** | complete consented persona creation, training, generation, reusable character management, content sets, Channel connections, Blitz feed, lifecycle, and deletion. | Artifacts, Workflows, credentials, usage, Library, disclosure. | direct evidence for all Fastlane states plus explicit consent, abuse, disclosure, retention, and provider acceptance gates. |
+| **S13 — Billing, credits, and referrals** | subscription and entitlement center, managed-credit balance/purchase/reservation/settlement/refund history, insufficient-credit handling, customer portal, and Refer & Earn lifecycle. | Usage Ledger evidence, separate managed billing ledger, payment/tax provider, entitlements, fraud controls. | BYOK and managed charges never conflate; all money movements reconcile; MENA currencies/taxes and Arabic receipts are tested. |
+| **S14 — Managed Channel Onboarding** | compliant counterpart to `/warmed-accounts`: discover, price, configure, review, provision, connect, monitor, and support publish-ready Channels. | Channel registry, credential handoff, readiness, subscriptions/usage, support operations. | Workspace authorization and Platform compliance are evidenced; no aged-identity sale or enforcement evasion; every commercial and lifecycle state is represented. |
+| **S15 — Guide, feedback, roadmap, and release lifecycle** | complete Guide center, localized tutorials/transcripts, Feedback with attachments, public roadmap/changelog, release-update notifications, Discord/community handoff, and support states. | product metadata, privacy-safe attachments, notifications, support workflow, localization. | every parity route and CTA is covered, versioned, accessible, and tested in Arabic RTL, English LTR, desktop, and mobile. |
 
-Out of scope by decision: warmed-account sales/provisioning; copying Fastlane’s credit economy into BYOK runtime v1; replacing canonical capability/domain contracts with page-specific APIs.
+No observed Fastlane user outcome is excluded from the destination. Deliberate non-copies are proprietary branding/copy/assets, literal aged-identity trafficking or enforcement evasion, and replacement of canonical capability/domain contracts with page-specific APIs.
 
 ## #13: What remains behind the evidence frontier?
 
@@ -346,10 +350,10 @@ Which unknown Fastlane states should be revisited only if they materially affect
 - Billing portal/plan details and paid API-key lifecycle.
 - Desktop/tablet breakpoints between 390 px and the inspected desktop width.
 
-Resolution rule: investigate each unknown just before its dependent slice. Treat it as optional competitive evidence, not permission to change Node Banana’s domain model.
+Resolution rule: direct lawful evidence is an implementation-readiness gate for each dependent slice. Unknown behavior may be planned as an explicit research dependency, but never guessed into acceptance criteria or used to reduce committed scope.
 
 ## Recommended first implementation slice
 
-Start with **S1 — Dashboard IA and shell**. It is the smallest vertical slice that changes the product from disconnected tools into one coherent Workspace while reusing existing routes and avoiding database or provider changes. It also establishes the RTL/LTR, responsive, navigation, and authorization contracts every later parity slice depends on.
+Start with **S1 — Dashboard IA and shell**. It is the foundational complete slice that changes the product from disconnected tools into one coherent Workspace while reusing existing routes and avoiding premature database or provider changes. It establishes the RTL/LTR, responsive, navigation, and authorization contracts every later full-parity slice depends on.
 
-The first PR should include only the shared shell, `/dashboard` placeholder/read-only entry, nav metadata, route redirects, localization strings, and shell tests. It should not add trend ingestion, generation recipes, billing, or new domain tables.
+The complete S1 PR covers the shared shell, `/dashboard` entry and shell states, nav metadata, route redirects, localization strings, and shell tests. Trend ingestion, generation recipes, billing, and their domain tables belong to their already-committed dependency-ordered slices; their absence from S1 is sequencing, not scope reduction.
