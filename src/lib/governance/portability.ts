@@ -191,7 +191,7 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
       : { kind: "conflict" as const, reason: "MEDIA_DESTINATION_CONFLICT" };
     }
     const configuredBucket = process.env.S3_BUCKET_NAME;
-    const sourceWorkspaceId = workspaceIdFromExportSource(input.provenance.source);
+    const sourceWorkspaceId = workspaceIdentityFromExportSource(input.provenance.source)?.workspaceId ?? null;
     const destinationUploadedAssetId = input.mapping?.destinationUploadedAssetId;
     if (!sourceWorkspaceId) {
       if (!destinationUploadedAssetId) {
@@ -286,8 +286,12 @@ export class DrizzleGovernancePortableDataPort implements GovernancePortableData
 
 /** Only first-party Workspace exports may authorize a server-side object copy. */
 export function workspaceIdFromExportSource(source: string): string | null {
-  const match = /^workspace-export:([A-Za-z0-9][A-Za-z0-9_-]{0,199})$/.exec(source);
-  return match?.[1] ?? null;
+  return workspaceIdentityFromExportSource(source)?.workspaceId ?? null;
+}
+
+export function workspaceIdentityFromExportSource(source: string): { workspaceId: string; exportId: string | null } | null {
+  const match = /^workspace-export:([A-Za-z0-9][A-Za-z0-9_-]{0,199})(?::([A-Za-z0-9][A-Za-z0-9_-]{0,199}))?$/.exec(source);
+  return match ? { workspaceId: match[1], exportId: match[2] ?? null } : null;
 }
 
 function safeStorageKey(value: string): boolean {

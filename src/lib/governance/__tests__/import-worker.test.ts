@@ -7,7 +7,7 @@ import type { GovernancePortableDataPort, GovernancePortableKind } from "../port
 import { workspaceIdFromExportSource } from "../portability";
 
 const now = new Date("2026-09-03T12:00:00.000Z");
-const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const };
+const actor = { workspaceId: "workspace-a", userId: "owner-a", legacyRole: "owner" as const, authContextId: "session-owner-a" };
 const signature = "A".repeat(43);
 
 function payload(kind: GovernancePortableKind): Record<string, unknown> {
@@ -25,6 +25,7 @@ function payload(kind: GovernancePortableKind): Record<string, unknown> {
 describe("GovernanceImportWorker", () => {
   it("derives server-copy authority only from an exact first-party Workspace export source", () => {
     expect(workspaceIdFromExportSource("workspace-export:source-workspace")).toBe("source-workspace");
+    expect(workspaceIdFromExportSource("workspace-export:source-workspace:export-1")).toBe("source-workspace");
     expect(workspaceIdFromExportSource("workspace-export:../workspace-b")).toBeNull();
     expect(workspaceIdFromExportSource("platform-export:workspace-b")).toBeNull();
     expect(workspaceIdFromExportSource("workspace-export:workspace-b/object-key")).toBeNull();

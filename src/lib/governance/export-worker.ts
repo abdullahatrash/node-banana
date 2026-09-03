@@ -162,6 +162,15 @@ export class GovernanceExportWorker {
         ...next.body,
         importAuthorization: {
           ...importUnsigned,
+          items: portableItems.map((item) => ({
+            kind: item.kind,
+            sourceId: item.sourceId,
+            destinationId: null,
+            digest: item.digest,
+            transferable: true,
+            omissionReason: null,
+            payload: item.payload,
+          })),
           manifestKeyId: "workspace-export-signing-v1",
           manifestSignature: importSignature,
         },
