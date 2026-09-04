@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArchiveIcon, BellIcon, BriefcaseBusinessIcon, CircleUserRoundIcon, CreditCardIcon, FileClockIcon, Globe2Icon, HardDriveIcon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, BellIcon, BriefcaseBusinessIcon, CircleUserRoundIcon, CreditCardIcon, FileClockIcon, Globe2Icon, HardDriveIcon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, RadioTowerIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { ApiTokensSettings } from "@/components/social/ApiTokensSettings";
 import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
@@ -11,6 +11,7 @@ import { WorkspaceLanguageSettings } from "@/components/product-shell/WorkspaceL
 import { WorkspaceNotificationSettings } from "@/components/product-shell/WorkspaceNotificationSettings";
 import { AccountSettings } from "@/components/product-shell/AccountSettings";
 import { WorkspaceStorageSettings } from "@/components/product-shell/WorkspaceStorageSettings";
+import { WorkspaceChannelsSettings } from "@/components/product-shell/WorkspaceChannelsSettings";
 import { getAuthFeatureFlags } from "@/lib/auth/features";
 import { isAppLocale } from "@/i18n/config";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
@@ -32,6 +33,7 @@ const sections = [
   { key: "language", icon: LanguagesIcon },
   { key: "preferences", icon: Globe2Icon },
   { key: "notifications", icon: BellIcon },
+  { key: "channels", icon: RadioTowerIcon },
   { key: "storage", icon: HardDriveIcon },
   { key: "billing", icon: CreditCardIcon },
   { key: "api", icon: KeyRoundIcon },
@@ -68,11 +70,13 @@ export default async function SettingsPage({
   const canManageBilling = permissions.includes("product:billing:manage");
   const canPurchaseBilling = permissions.includes("product:billing:purchase");
   const canManageNotifications = permissions.includes("social:view");
+  const canReadChannels = permissions.includes("social:view");
+  const canConnectChannels = permissions.includes("social:connect");
   const canReadStorage = permissions.includes("assets:read");
   const authFeatures = getAuthFeatureFlags();
-  const visibleSections = sections.filter(({ key }) => (key !== "billing" || canReadBilling) && (key !== "notifications" || canManageNotifications) && (key !== "storage" || canReadStorage));
+  const visibleSections = sections.filter(({ key }) => (key !== "billing" || canReadBilling) && (key !== "notifications" || canManageNotifications) && (key !== "channels" || canReadChannels) && (key !== "storage" || canReadStorage));
   const requestedSection = readSection(section);
-  const activeSection = (requestedSection === "billing" && !canReadBilling) || (requestedSection === "notifications" && !canManageNotifications) || (requestedSection === "storage" && !canReadStorage) ? "members" : requestedSection;
+  const activeSection = (requestedSection === "billing" && !canReadBilling) || (requestedSection === "notifications" && !canManageNotifications) || (requestedSection === "channels" && !canReadChannels) || (requestedSection === "storage" && !canReadStorage) ? "members" : requestedSection;
 
   return (
     <SettingsSheet>
@@ -151,6 +155,8 @@ export default async function SettingsPage({
               <WorkspacePreferencesSettings initialPreferences={preferences} canManage={permissions.includes("social:publish")} />
             ) : activeSection === "notifications" && workspaceId && preferences ? (
               <WorkspaceNotificationSettings workspaceId={workspaceId} interfaceLocale={interfaceLocale} workspaceTimeZone={preferences.timezone} />
+            ) : activeSection === "channels" && workspaceId ? (
+              <WorkspaceChannelsSettings workspaceId={workspaceId} canConnect={canConnectChannels} />
             ) : activeSection === "storage" && workspaceId ? (
               <WorkspaceStorageSettings workspaceId={workspaceId} />
             ) : activeSection === "providers" ? (

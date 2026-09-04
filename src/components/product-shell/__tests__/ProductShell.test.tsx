@@ -78,6 +78,7 @@ describe("ProductShell", () => {
     expect(screen.getByRole("link", { name: "Prompt Library" })).toHaveAttribute("href", "/simple-studio/prompt-library");
     expect(screen.getByRole("link", { name: "Events" })).toHaveAttribute("href", "/social/events");
     expect(screen.getByRole("link", { name: "Copilot" })).toHaveAttribute("href", "/social/copilot");
+    expect(screen.queryByRole("link", { name: "Integrations" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Webhooks" })).toHaveAttribute("href", "/social/plugs");
     expect(screen.getByText("route content")).toBeInTheDocument();
     expect(document.querySelector('[data-slot="sidebar-inset"]')?.tagName).toBe(

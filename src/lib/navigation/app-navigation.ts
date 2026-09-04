@@ -33,7 +33,6 @@ export type ContextNavigationKey =
   | "socialMedia"
   | "events"
   | "copilot"
-  | "integrations"
   | "plugs"
   | "guide"
   | "feedback"
@@ -132,7 +131,6 @@ export const additionalToolsNavigation = [
   { key: "socialMedia", href: "/social/media", aliases: [] },
   { key: "events", href: "/social/events", aliases: [] },
   { key: "copilot", href: "/social/copilot", aliases: [] },
-  { key: "integrations", href: "/social/integrations", aliases: [] },
   { key: "plugs", href: "/social/plugs", aliases: [] },
   { key: "guide", href: "/guide", aliases: [] },
   { key: "feedback", href: "/feedback", aliases: [] },
