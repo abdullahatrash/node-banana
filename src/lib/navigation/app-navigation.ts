@@ -50,7 +50,7 @@ export interface PlannedNavigationItem<Key extends string = string> {
 export const primaryNavigation = [
   { key: "dashboard", href: "/dashboard", aliases: [] },
   { key: "blitz", href: "/blitz", aliases: [] },
-  { key: "inspiration", futureHref: "/inspiration", availability: "planned" },
+  { key: "inspiration", href: "/inspiration", aliases: [] },
   {
     key: "automations",
     href: "/automations",
