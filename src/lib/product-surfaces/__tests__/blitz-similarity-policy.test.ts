@@ -7,7 +7,7 @@ const candidateAsset = { id: "candidate", contentDigest: digest("b") };
 const measurements: BlitzSimilarityMeasurementInput[] = [
   { modality: "text", algorithm: "minhash", algorithmVersion: "1", coverage: "compared", similarityBasisPoints: 2_000, sourceFingerprintDigest: digest("c"), candidateFingerprintDigest: digest("d") },
   { modality: "frame", algorithm: "phash-sequence", algorithmVersion: "1", coverage: "compared", similarityBasisPoints: 5_000, sourceFingerprintDigest: digest("e"), candidateFingerprintDigest: digest("f") },
-  { modality: "audio", algorithm: "chromaprint", algorithmVersion: "1", coverage: "source_absent", similarityBasisPoints: null, sourceFingerprintDigest: null, candidateFingerprintDigest: digest("1") },
+  { modality: "audio", algorithm: "chromaprint", algorithmVersion: "1", coverage: "compared", similarityBasisPoints: 3_000, sourceFingerprintDigest: digest("1"), candidateFingerprintDigest: digest("2") },
 ];
 
 describe("Blitz similarity gate", () => {
@@ -24,6 +24,32 @@ describe("Blitz similarity gate", () => {
 
   it("blocks a candidate exceeding any fixed policy threshold", () => {
     const evidence = buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements: measurements.map((measurement) => measurement.modality === "audio" ? { ...measurement, coverage: "compared", similarityBasisPoints: 9_000, sourceFingerprintDigest: digest("7"), candidateFingerprintDigest: digest("8") } : measurement), evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1", qualificationDigest: digest("9") } });
+    expect(evidence.status).toBe("blocked");
+    expect(validateBlitzSimilarityGate({ evidence, sourceAsset, candidateAsset })).toMatchObject({ ok: false, code: "BLITZ_SIMILARITY_BLOCKED" });
+  });
+
+  it.each([
+    ["text", "source_absent"],
+    ["frame", "candidate_absent"],
+    ["audio", "both_absent"],
+  ] as const)("fails closed when required %s evidence has %s coverage", (modality, coverage) => {
+    const evidence = buildBlitzSimilarityGate({
+      sourceAsset,
+      candidateAsset,
+      measurements: measurements.map((measurement) => measurement.modality === modality
+        ? {
+            ...measurement,
+            coverage,
+            similarityBasisPoints: null,
+            sourceFingerprintDigest: coverage === "candidate_absent" ? measurement.sourceFingerprintDigest : null,
+            candidateFingerprintDigest: coverage === "source_absent" ? measurement.candidateFingerprintDigest : null,
+          }
+        : measurement),
+      evaluatedAt: new Date(),
+      evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1", qualificationDigest: digest("9") },
+    });
+
+    expect(evidence.measurements.find((measurement) => measurement.modality === modality)).toMatchObject({ coverage, passed: false });
     expect(evidence.status).toBe("blocked");
     expect(validateBlitzSimilarityGate({ evidence, sourceAsset, candidateAsset })).toMatchObject({ ok: false, code: "BLITZ_SIMILARITY_BLOCKED" });
   });

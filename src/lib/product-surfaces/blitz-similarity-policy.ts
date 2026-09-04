@@ -33,15 +33,13 @@ export interface BlitzSimilarityGateEvidence {
 }
 
 function measurementPassed(measurement: BlitzSimilarityMeasurementInput): boolean {
-  if (measurement.coverage === "compared") {
-    return measurement.similarityBasisPoints !== null
-      && measurement.sourceFingerprintDigest !== null
-      && measurement.candidateFingerprintDigest !== null
-      && Number.isInteger(measurement.similarityBasisPoints)
-      && measurement.similarityBasisPoints >= 0
-      && measurement.similarityBasisPoints <= THRESHOLD_BASIS_POINTS[measurement.modality];
-  }
-  return measurement.similarityBasisPoints === null;
+  if (measurement.coverage !== "compared") return false;
+  return measurement.similarityBasisPoints !== null
+    && measurement.sourceFingerprintDigest !== null
+    && measurement.candidateFingerprintDigest !== null
+    && Number.isInteger(measurement.similarityBasisPoints)
+    && measurement.similarityBasisPoints >= 0
+    && measurement.similarityBasisPoints <= THRESHOLD_BASIS_POINTS[measurement.modality];
 }
 
 export function buildBlitzSimilarityGate(input: {
