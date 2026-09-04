@@ -10,7 +10,7 @@ function qualified(model: string, capability: "image_to_video" | "text_to_video"
 describe("Content Model Policy", () => {
   it("persists an exact signed-qualified default and explicit compatible allowlist", () => {
     const policy = resolveContentModelPolicy(contentFormatDefinition("slideshow"), [qualified("prunaai/p-video", "image_to_video", "pinned-v1"), qualified("google/veo-3.1-lite", "image_to_video", "pinned-v2")]);
-    expect(policy).toMatchObject({ id: "content.slideshow.v4", revision: 4, region: "replicate-us", defaultModel: { model: "prunaai/p-video", version: "pinned-v1" }, overrides: { mode: "explicit_exact_allowlist", requireRequote: true } });
+    expect(policy).toMatchObject({ id: "content.slideshow.v5", revision: 5, region: "replicate-us", defaultModel: { model: "prunaai/p-video", version: "pinned-v1" }, overrides: { mode: "explicit_exact_allowlist", requireRequote: true } });
     expect(policy?.compatibleModels).toHaveLength(2);
   });
 
