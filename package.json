@@ -26,6 +26,7 @@
     "qualify:replicate:inspect": "tsx scripts/inspect-replicate-qualification-contract.ts",
     "qualify:replicate:review": "tsx scripts/review-replicate-qualification-artifact.ts",
     "qualify:replicate:spend": "tsx scripts/import-replicate-qualification-spend.ts",
+    "setup:replicate:qualification": "bash scripts/setup-local-replicate-qualification.sh",
     "governance:region-evidence": "tsx scripts/sign-governance-region-evidence.ts",
     "test": "vitest",
     "test:run": "vitest run",
