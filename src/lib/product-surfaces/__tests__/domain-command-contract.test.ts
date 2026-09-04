@@ -48,4 +48,25 @@ describe("typed product command contracts", () => {
     expect(source).toContain("operationOutputIds.includes(output.id)");
     expect(source).toContain("updateProductRecordInTransaction(tx");
   });
+
+  it("binds media only from canonical lineage and an immutable Render Proof", () => {
+    const source = read("src/lib/product-surfaces/domain-commands.ts");
+    expect(source).toContain("isAdmittedContentArtifact");
+    expect(source).toContain("validateContentExecutionInput");
+    expect(source).toContain("buildContentRenderProof");
+    expect(source).toContain("candidateArtifactIds: [...payload.candidateArtifactIds");
+  });
+
+  it("turns an accepted Blitz generation into passed Render Proof evidence", () => {
+    const source = read("src/lib/product-surfaces/blitz.ts");
+    expect(source).toContain("validateReadyPortraitAsset");
+    expect(source).toContain("buildContentRenderProof");
+    expect(source).toContain('renderProofStatus: "passed"');
+  });
+
+  it("links campaign runtime receipts to the central recovery cockpit", () => {
+    const source = read("src/app/automations/AutomationBuilder.tsx");
+    expect(source).toContain("/studio/operations?selected=");
+    expect(read("src/app/studio/operations/OperationsCockpit.tsx")).toContain('searchParams.get("selected")');
+  });
 });

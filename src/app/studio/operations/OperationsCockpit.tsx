@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useSearchParams } from "next/navigation";
 import { RefreshCwIcon, RotateCcwIcon, XCircleIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { inspectOperation, listOperations, mutateOperation } from "@/lib/agent-runtime/operation-status/client";
@@ -10,10 +11,12 @@ import { isTerminalOperationState } from "@/lib/agent-runtime/operation-status/s
 
 export function OperationsCockpit() {
   const t = useTranslations("operations");
+  const searchParams = useSearchParams();
   const [items, setItems] = useState<OperationRecord[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [selected, setSelected] = useState<OperationRecord | null>(null); const [controls, setControls] = useState({ cancel: false, retry: false }); const [events, setEvents] = useState<OperationEvent[]>([]); const [filter, setFilter] = useState<OperationState | "">(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   const load = useCallback(async (cursor?: string) => { setError(""); try { const page = await listOperations(filter || undefined, cursor); setItems((current) => cursor ? [...current, ...page.items] : page.items); setNextCursor(page.nextCursor); } catch (value) { setError(value instanceof Error ? value.message : "UNAVAILABLE"); } }, [filter]);
   useEffect(() => { void load(); }, [load]);
-  async function inspect(id: string) { const value = await inspectOperation(id); setSelected(value.operation); setEvents(value.events); setControls(value.controls); }
+  const inspect = useCallback(async (id: string) => { const value = await inspectOperation(id); setSelected(value.operation); setEvents(value.events); setControls(value.controls); }, []);
+  useEffect(() => { const operationId = searchParams.get("selected"); if (operationId) void inspect(operationId).catch((value) => setError(value instanceof Error ? value.message : "UNAVAILABLE")); }, [inspect, searchParams]);
   async function mutate(body: { action: "cancel"; expectedRevision: number } | { action: "retry" }) { if (!selected) return; setBusy(true); try { await mutateOperation(selected.id, body); await load(); const value = await inspectOperation(selected.id); setSelected(value.operation); setEvents(value.events); setControls(value.controls); } catch (value) { setError(value instanceof Error ? value.message : "UNAVAILABLE"); } finally { setBusy(false); } }
   return <main className="mx-auto grid w-full max-w-7xl gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_24rem] lg:p-6">
     <section aria-labelledby="operations-title"><header className="flex flex-wrap items-start justify-between gap-3"><div><h1 id="operations-title" className="text-2xl font-semibold">{t("title")}</h1><p className="mt-1 text-sm text-muted-foreground">{t("description")}</p></div><Button variant="outline" onClick={() => void load()}><RefreshCwIcon className="size-4" />{t("refresh")}</Button></header>
