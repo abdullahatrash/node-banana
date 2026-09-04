@@ -1,13 +1,55 @@
 import "server-only";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { brandProfiles, onboardingCommandReceipts, onboardingSessions } from "@/lib/db/schema";
+import { brandAnalysisRuns, brandProfiles, brandSources, onboardingAnalysisDispatchIntents, onboardingCommandReceipts, onboardingSessions } from "@/lib/db/schema";
 import { brandProfileCorrectionSchema, brandProfileV1Schema, type BrandProfileCorrection } from "@/lib/onboarding/schemas";
 
 export class BrandRevisionConflictError extends Error {}
+
+export async function refreshBrandSource(input: { workspaceId: string; userId: string; sourceId: string; expectedSourceRevision: number; idempotencyKey: string; now?: Date }) {
+  const digest = canonicalDigest({ action: "refresh_source", sourceId: input.sourceId, expectedSourceRevision: input.expectedSourceRevision });
+  const now = input.now ?? new Date();
+  return getDb().transaction(async (tx) => {
+    const [session] = await tx.select().from(onboardingSessions).where(and(eq(onboardingSessions.userId, input.userId), eq(onboardingSessions.workspaceId, input.workspaceId))).for("update").limit(1);
+    if (!session) throw new BrandRevisionConflictError("Brand Source is unavailable.");
+    const [receipt] = await tx.select().from(onboardingCommandReceipts).where(and(eq(onboardingCommandReceipts.userId, input.userId), eq(onboardingCommandReceipts.idempotencyKey, input.idempotencyKey))).limit(1);
+    if (receipt) {
+      if (receipt.requestFingerprint !== digest) throw new BrandRevisionConflictError("Idempotency key was already used.");
+      return receipt.result as { sourceId: string; sourceRevision: number; runId: string };
+    }
+    const [[source], [latest], [active]] = await Promise.all([
+      tx.select().from(brandSources).where(and(eq(brandSources.workspaceId, input.workspaceId), eq(brandSources.id, input.sourceId), eq(brandSources.revision, input.expectedSourceRevision))).limit(1),
+      tx.select().from(brandSources).where(eq(brandSources.workspaceId, input.workspaceId)).orderBy(desc(brandSources.revision)).limit(1),
+      tx.select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, input.workspaceId), eq(brandProfiles.status, "active"))).limit(1),
+    ]);
+    if (!source || !latest || latest.id !== source.id || !active) throw new BrandRevisionConflictError("Brand Source changed. Refresh before retrying.");
+    const activeProfile = brandProfileV1Schema.parse(active.profile);
+    const activeSources = await tx.select().from(brandSources).where(and(eq(brandSources.workspaceId, input.workspaceId), inArray(brandSources.id, activeProfile.sourceIds)));
+    const matchesActiveOrigin = activeSources.some((candidate) => candidate.kind === source.kind && candidate.submittedUrl === source.submittedUrl && candidate.submittedDescription === source.submittedDescription);
+    if (!matchesActiveOrigin) throw new BrandRevisionConflictError("Only the active Brand source lineage can be refreshed.");
+    const sourceId = randomUUID();
+    const runId = randomUUID();
+    const sourceRevision = source.revision + 1;
+    await tx.insert(brandSources).values({
+      id: sourceId, workspaceId: input.workspaceId, revision: sourceRevision, kind: source.kind,
+      submittedUrl: source.submittedUrl, finalUrl: null, submittedDescription: source.submittedDescription,
+      cleanedText: null, contentHash: null, sourceLanguage: null, extractedBytes: null, fetchedAt: null,
+      createdByUserId: input.userId, createdAt: now,
+    });
+    await tx.insert(brandAnalysisRuns).values({
+      id: runId, workspaceId: input.workspaceId, sourceId, retryOfRunId: null, status: "queued", stage: "queued",
+      idempotencyKey: `brand-refresh:${sourceId}`, errorCode: null, errorMessage: null, startedAt: null, finishedAt: null,
+      createdAt: now, updatedAt: now,
+    });
+    await tx.insert(onboardingAnalysisDispatchIntents).values({ runId, workspaceId: input.workspaceId, status: "pending", attempts: 0, createdAt: now, updatedAt: now });
+    const result = { sourceId, sourceRevision, runId };
+    await tx.insert(onboardingCommandReceipts).values({ userId: input.userId, idempotencyKey: input.idempotencyKey, commandType: "brand_source.refresh", requestFingerprint: digest, sessionRevision: Math.max(session.revision, 1), result, createdAt: now });
+    return result;
+  });
+}
 
 export async function createBrandRevision(input: { workspaceId: string; userId: string; expectedActiveRevision: number; correction: BrandProfileCorrection; idempotencyKey: string; now?: Date }) {
   const correction = brandProfileCorrectionSchema.parse(input.correction);
@@ -62,4 +104,3 @@ export async function activateBrandRevision(input: { workspaceId: string; userId
     return activated;
   });
 }
-
