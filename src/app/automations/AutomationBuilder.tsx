@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, LoaderCircle, Pause, Play, RefreshCw, Save } from "lucide-react";
 import { ARABIC_VARIETIES, AUTOMATION_STEPS } from "@/lib/product-surfaces/definitions";
@@ -10,20 +10,20 @@ import { productRequest } from "@/components/product-surfaces/ProductApi";
 
 type Automation = { id: string; title: string; state: string; revision: number; payload: Record<string, unknown> };
 type Occurrence = { id: string; campaignId: string; state: string; scheduledAt: string; format: string; workflowRunId: string | null; quotedAmount: string | null; currency: string | null; failureCode: string | null; updatedAt: string };
-const initialPayload = () => ({ currentStep: 1, name: "Campaign", formatMix: { slideshow: 25, wall_of_text: 25, green_screen_meme: 25, video_hook_demo: 25 }, remixRatio: 50, inspirationIds: [], contentLanguage: "ar", arabicVariety: "msa", personaIds: [], mediaSetIds: [], channelIds: [], variantsPerChannel: 1, cadence: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, startAt: null, endAt: null, postsPerWeek: 3 }, execution: { mode: "managed", modelPolicy: "workspace-default", creditCeiling: 20, budgetCents: 5000, replenishmentMode: "manual", blitzTargetCapacity: 20, blitzMaximumCreatesPerRun: 10, workflow: null }, reviewMode: "request_human", autoPublishGrantId: null, validationErrors: [], runtime: null });
+const initialPayload = (name: string) => ({ currentStep: 1, name, formatMix: { slideshow: 25, wall_of_text: 25, green_screen_meme: 25, video_hook_demo: 25 }, remixRatio: 50, inspirationIds: [], contentLanguage: "ar", arabicVariety: null, personaIds: [], mediaSetIds: [], channelIds: [], variantsPerChannel: 1, cadence: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, startAt: null, endAt: null, postsPerWeek: 3 }, execution: { mode: "managed", modelPolicy: "workspace-default", creditCeiling: 20, budgetCents: 5000, replenishmentMode: "manual", blitzTargetCapacity: 20, blitzMaximumCreatesPerRun: 10, workflow: null }, reviewMode: "request_human", autoPublishGrantId: null, validationErrors: [], runtime: null });
 const list = (value: FormDataEntryValue | null) => String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
 const jsonInputs = (value: FormDataEntryValue | null) => { const raw = String(value ?? "{}").trim(); const parsed: unknown = JSON.parse(raw || "{}"); if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.values(parsed).some((item) => typeof item !== "string")) throw new Error("CAMPAIGN_WORKFLOW_INPUTS_INVALID"); return parsed as Record<string, string>; };
 
 export function AutomationBuilder({ automations, occurrences }: { automations: Automation[]; occurrences: Occurrence[] }) {
   const t = useTranslations("product.automations") as (key: string, values?: Record<string, string | number>) => string;
   const router = useRouter(); const active = automations.find((item) => item.state === "draft") ?? automations[0] ?? null;
-  const [step, setStep] = useState(Number(active?.payload.currentStep ?? 1)); const [payload, setPayload] = useState<Record<string, unknown>>(active?.payload ?? initialPayload()); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [step, setStep] = useState(Number(active?.payload.currentStep ?? 1)); const [payload, setPayload] = useState<Record<string, unknown>>(() => active?.payload ?? initialPayload(t("defaultName"))); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data = new FormData(event.currentTarget); const next = structuredClone(payload); const set = (key: string, value: unknown) => { next[key] = value; };
     if (step === 1) set("name", String(data.get("name")));
     if (step === 2) set("formatMix", { slideshow: Number(data.get("slideshow")), wall_of_text: Number(data.get("wall")), green_screen_meme: Number(data.get("green")), video_hook_demo: Number(data.get("hook")) });
     if (step === 3) { set("remixRatio", Number(data.get("remixRatio"))); set("inspirationIds", list(data.get("inspirationIds"))); }
-    if (step === 4) { set("contentLanguage", String(data.get("language"))); set("arabicVariety", data.get("language") === "ar" ? String(data.get("variety")) : null); }
+    if (step === 4) { set("contentLanguage", String(data.get("language"))); set("arabicVariety", data.get("language") === "ar" && data.get("variety") !== "unavailable" ? String(data.get("variety")) : null); }
     if (step === 5) { set("personaIds", list(data.get("personaIds"))); set("mediaSetIds", list(data.get("mediaSetIds"))); }
     if (step === 6) { set("channelIds", list(data.get("channelIds"))); set("variantsPerChannel", Number(data.get("variants"))); }
     if (step === 7) set("cadence", { ...(next.cadence as object), timezone: String(data.get("timezone")), postsPerWeek: Number(data.get("postsPerWeek")) });
@@ -31,11 +31,11 @@ export function AutomationBuilder({ automations, occurrences }: { automations: A
     if (step === 9) { set("reviewMode", String(data.get("reviewMode"))); set("autoPublishGrantId", String(data.get("grant")) || null); }
     set("currentStep", Math.min(step + 1, 10)); setBusy(true); setError("");
     try { await productRequest("/api/product-campaigns", { action: "save_draft", ...(active ? { id: active.id, expectedRevision: active.revision } : {}), title: String(next.name), payload: next, idempotencyKey: crypto.randomUUID() }); setPayload(next); if (step < 10) setStep(step + 1); router.refresh(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : t("error")); }
+    catch { setError(t("error")); }
     finally { setBusy(false); }
   }
-  async function control(action: "activate" | "pause", item = active) { if (!item) return; setBusy(true); setError(""); try { await productRequest("/api/product-campaigns", { action, id: item.id, expectedRevision: item.revision, idempotencyKey: crypto.randomUUID() }); router.refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : t("error")); } finally { setBusy(false); } }
-  async function fillBlitz(item: Automation) { setBusy(true); setError(""); try { await productRequest("/api/blitz/replenish", { campaignId: item.id, idempotencyKey: crypto.randomUUID() }); router.refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : t("error")); } finally { setBusy(false); } }
+  async function control(action: "activate" | "pause", item = active) { if (!item) return; setBusy(true); setError(""); try { await productRequest("/api/product-campaigns", { action, id: item.id, expectedRevision: item.revision, idempotencyKey: crypto.randomUUID() }); router.refresh(); } catch { setError(t("error")); } finally { setBusy(false); } }
+  async function fillBlitz(item: Automation) { setBusy(true); setError(""); try { await productRequest("/api/blitz/replenish", { campaignId: item.id, idempotencyKey: crypto.randomUUID() }); router.refresh(); } catch { setError(t("error")); } finally { setBusy(false); } }
   const mix = payload.formatMix as Record<string, number>; const cadence = payload.cadence as Record<string, unknown>; const execution = payload.execution as Record<string, unknown>; const workflow = execution.workflow as Record<string, unknown> | null;
   return <div className="grid gap-6 xl:grid-cols-[260px_1fr_320px]">
     <aside className="rounded-3xl border bg-card p-4"><p className="px-2 text-sm font-semibold">{t("stepsTitle")}</p><ol className="mt-3 space-y-1">{AUTOMATION_STEPS.map((key, index) => <li key={key}><button onClick={() => setStep(index + 1)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start text-sm ${step === index + 1 ? "bg-amber-100 font-semibold text-amber-950" : "hover:bg-muted"}`}><span className={`flex size-6 items-center justify-center rounded-full text-xs ${index + 1 < step ? "bg-emerald-600 text-white" : "bg-muted"}`}>{index + 1 < step ? <Check className="size-3" /> : index + 1}</span>{t(`steps.${key}`)}</button></li>)}</ol></aside>
@@ -43,7 +43,7 @@ export function AutomationBuilder({ automations, occurrences }: { automations: A
       {step === 1 && <Field name="name" label={t("fields.name")} value={String(payload.name)} />}
       {step === 2 && <div className="grid gap-4 sm:grid-cols-2"><NumberField name="slideshow" label={t("mix.slideshow")} value={mix.slideshow} /><NumberField name="wall" label={t("mix.wall")} value={mix.wall_of_text} /><NumberField name="green" label={t("mix.green")} value={mix.green_screen_meme} /><NumberField name="hook" label={t("mix.hook")} value={mix.video_hook_demo} /><p className="sm:col-span-2 text-sm text-muted-foreground">{t("mixTotal", { total: Object.values(mix).reduce((a, b) => a + b, 0) })}</p></div>}
       {step === 3 && <><NumberField name="remixRatio" label={t("fields.remix")} value={Number(payload.remixRatio)} /><Field name="inspirationIds" label={t("fields.inspiration")} value={(payload.inspirationIds as string[]).join(", ")} required={false} /></>}
-      {step === 4 && <><Select name="language" label={t("fields.language")} value={String(payload.contentLanguage)} options={["ar", "en"]} t={t} prefix="languages" /><Select name="variety" label={t("fields.variety")} value={String(payload.arabicVariety ?? "msa")} options={[...ARABIC_VARIETIES]} t={t} prefix="varieties" /></>}
+      {step === 4 && <><Select name="language" label={t("fields.language")} value={String(payload.contentLanguage)} options={["ar", "en"]} t={t} prefix="languages" /><Select name="variety" label={t("fields.variety")} value={String(payload.arabicVariety ?? "unavailable")} options={["unavailable", ...ARABIC_VARIETIES]} t={t} prefix="varieties" /></>}
       {step === 5 && <><Field name="personaIds" label={t("fields.personas")} value={(payload.personaIds as string[]).join(", ")} required={false} /><Field name="mediaSetIds" label={t("fields.mediaSets")} value={(payload.mediaSetIds as string[]).join(", ")} required={false} /></>}
       {step === 6 && <><Field name="channelIds" label={t("fields.channels")} value={(payload.channelIds as string[]).join(", ")} required={false} /><NumberField name="variants" label={t("fields.variants")} value={Number(payload.variantsPerChannel)} min={1} max={10} /></>}
       {step === 7 && <><Field name="timezone" label={t("fields.timezone")} value={String(cadence.timezone)} /><NumberField name="postsPerWeek" label={t("fields.frequency")} value={Number(cadence.postsPerWeek)} min={1} max={100} /></>}
@@ -56,6 +56,7 @@ export function AutomationBuilder({ automations, occurrences }: { automations: A
 }
 
 function CampaignSummary({ item, occurrences, busy, t, control, fillBlitz }: { item: Automation; occurrences: Occurrence[]; busy: boolean; t: (key: string, values?: Record<string, string | number>) => string; control: (action: "activate" | "pause", item?: Automation) => Promise<void>; fillBlitz: (item: Automation) => Promise<void> }) {
+  const format = useFormatter();
   const runtime = item.payload.runtime && typeof item.payload.runtime === "object" && !Array.isArray(item.payload.runtime) ? item.payload.runtime as Record<string, unknown> : null;
   const runId = typeof runtime?.runId === "string" ? runtime.runId : null;
   const recent = occurrences.filter((occurrence) => occurrence.campaignId === item.id).slice(0, 5);
@@ -65,7 +66,7 @@ function CampaignSummary({ item, occurrences, busy, t, control, fillBlitz }: { i
     {runId && <Link href={`/studio/operations?selected=${encodeURIComponent(`workflow_run:${runId}`)}`} className="mt-3 block rounded-lg bg-muted p-3 text-xs"><span className="font-medium">{t("fields.workflowId")}</span><span dir="ltr" className="mt-1 block break-all font-mono text-muted-foreground">{runId}</span>{typeof runtime?.quotedAmount === "string" && typeof runtime?.currency === "string" ? <span dir="ltr" className="mt-1 block text-muted-foreground">{runtime.quotedAmount} {runtime.currency}</span> : null}</Link>}
     {item.state === "active" && <div className="mt-4 flex flex-wrap gap-3"><button type="button" disabled={busy} onClick={() => void control("pause", item)} className="inline-flex items-center gap-2 text-sm"><Pause className="size-4" />{t("pause")}</button><button type="button" disabled={busy} onClick={() => void fillBlitz(item)} className="inline-flex items-center gap-2 text-sm"><RefreshCw className="size-4" />{t("fillBlitz")}</button></div>}
     <h3 className="mt-5 text-sm font-semibold">{t("occurrencesTitle")}</h3>
-    {recent.length ? <ul className="mt-2 space-y-2">{recent.map((occurrence) => <li key={occurrence.id}><Link href={`/studio/operations?selected=${encodeURIComponent(`campaign_automation:${occurrence.id}`)}`} className="block rounded-lg bg-muted p-3 text-xs"><span className="flex justify-between gap-2"><span>{t(`occurrenceStates.${occurrence.state}`)}</span>{occurrence.quotedAmount && occurrence.currency ? <span dir="ltr">{occurrence.quotedAmount} {occurrence.currency}</span> : null}</span><time dateTime={occurrence.scheduledAt} className="mt-1 block text-muted-foreground">{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(occurrence.scheduledAt))}</time>{occurrence.failureCode ? <span dir="ltr" className="mt-1 block break-all text-destructive">{occurrence.failureCode}</span> : null}</Link></li>)}</ul> : <p className="mt-2 text-xs text-muted-foreground">{t("noOccurrences")}</p>}
+    {recent.length ? <ul className="mt-2 space-y-2">{recent.map((occurrence) => <li key={occurrence.id}><Link href={`/studio/operations?selected=${encodeURIComponent(`campaign_automation:${occurrence.id}`)}`} className="block rounded-lg bg-muted p-3 text-xs"><span className="flex justify-between gap-2"><span>{t(`occurrenceStates.${occurrence.state}`)}</span>{occurrence.quotedAmount && occurrence.currency ? <span dir="ltr">{occurrence.quotedAmount} {occurrence.currency}</span> : null}</span><time dateTime={occurrence.scheduledAt} className="mt-1 block text-muted-foreground">{format.dateTime(new Date(occurrence.scheduledAt), { dateStyle: "medium", timeStyle: "short" })}</time>{occurrence.failureCode ? <span className="mt-1 block text-destructive">{t("occurrenceFailure")}</span> : null}</Link></li>)}</ul> : <p className="mt-2 text-xs text-muted-foreground">{t("noOccurrences")}</p>}
   </div>;
 }
 

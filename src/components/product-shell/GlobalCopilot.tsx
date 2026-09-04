@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { ArrowUpRight, LoaderCircle, Sparkles, X } from "lucide-react";
 import { getActiveWorkspaceId } from "@/lib/studio/client";
 
@@ -11,7 +11,7 @@ type Suggestion = { key: string; reason: string; href: string; generatedAt: stri
 type CopilotContext = {
   suggestion: Suggestion;
   brand: { profileId: string; revision: number; digest: string; acceptedAt: string } | null;
-  language: { contentLanguage: "ar" | "en" | "mixed" | null; arabicVariety: "msa" | null; basis: "active_brand_profile" | "unavailable" };
+  language: { contentLanguage: "ar" | "en" | "mixed" | null; arabicVariety: "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other" | null; basis: "active_brand_profile" | "unavailable" };
   capabilities: Array<"explain_workspace_readiness" | "navigate_recommended_action">;
   evidence: Array<{ source: "brand" | "media" | "channels" | "content" | "publishing"; status: "ready" | "missing" | "attention"; count: number; observedAt: string | null; freshness: "current" | "stale" | "unknown"; href: string }>;
   generatedAt: string;
@@ -20,6 +20,7 @@ type CopilotContext = {
 export function GlobalCopilot() {
   const t = useTranslations("socialCopilot");
   const dashboard = useTranslations("product.dashboard");
+  const format = useFormatter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -63,7 +64,7 @@ export function GlobalCopilot() {
             <div><dt className="font-semibold text-stone-100">{t("capabilitiesTitle")}</dt><dd>{context.capabilities.map((capability) => t(`capabilities.${capability}`)).join(" · ")}</dd></div>
           </dl>
           <div className="mt-4"><h4 className="text-xs font-semibold text-stone-100">{t("evidenceTitle")}</h4><ul className="mt-2 grid grid-cols-2 gap-2">{context.evidence.map((item) => <li key={item.source}><Link href={item.href} className="block rounded-lg border border-stone-700 p-2 text-xs text-stone-300 hover:border-amber-300"><span className="block font-semibold text-white">{t(`sources.${item.source}`)}</span>{t(`freshness.${item.freshness}`)} · {item.count}</Link></li>)}</ul></div>
-          <p className="mt-3 text-[11px] text-stone-400">{t("generatedAt", { value: new Date(context.generatedAt).toLocaleString() })}</p>
+          <p className="mt-3 text-[11px] text-stone-400">{t("generatedAt", { value: format.dateTime(new Date(context.generatedAt), { dateStyle: "medium", timeStyle: "short" }) })}</p>
           <div className="mt-4 flex items-center justify-between gap-3"><button type="button" onClick={dismiss} className="text-xs text-stone-400 hover:text-white">{t("dismiss")}</button><Link href={context.suggestion.href} className="inline-flex items-center gap-2 text-sm font-semibold text-amber-300">{t("openAction")}<ArrowUpRight className="size-4" /></Link></div></article> : <div className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">{t("contextUnavailable")}</div>}
       </div>
       <p className="mt-4 text-xs leading-5 text-muted-foreground">{t("authorityBoundary")}</p>
