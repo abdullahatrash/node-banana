@@ -8934,11 +8934,28 @@ export const productAnalyticsObservations = pgTable(
     sourceId: text("source_id").notNull(),
     sourceRevision: integer("source_revision").notNull(),
     sourceKind: text("source_kind").notNull(),
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
     metric: text("metric").notNull(),
     value: integer("value").notNull(),
     windowStartedAt: timestamp("window_started_at", { withTimezone: true }).notNull(),
     windowEndedAt: timestamp("window_ended_at", { withTimezone: true }).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
     evidenceDigest: text("evidence_digest").notNull(),
+    credentialDigest: text("credential_digest").notNull(),
+    receiptSignature: text("receipt_signature").notNull(),
+    scope: jsonb("scope").$type<{
+      region: "mena" | "eu" | "other" | "unknown";
+      consentRevision: string;
+      consentPurpose: "analytics";
+      retentionUntil: string;
+      campaignTag: string | null;
+      contentType: "page" | "article" | "landing_page" | "social_post" | "video" | "image" | "other";
+      platform: "website" | "google" | "bing" | "chatgpt" | "perplexity" | "other";
+      accountRefDigest: string | null;
+      publishingState: "not_applicable" | "draft" | "queued" | "publishing" | "published" | "failed";
+    }>().notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     requestDigest: text("request_digest").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -8946,13 +8963,54 @@ export const productAnalyticsObservations = pgTable(
   (table) => ({
     pk: primaryKey({ name: "product_analytics_observations_pk", columns: [table.workspaceId, table.id] }),
     idempotencyUnique: uniqueIndex("product_analytics_observations_idempotency_unique").on(table.workspaceId, table.sourceId, table.idempotencyKey),
+    eventUnique: uniqueIndex("product_analytics_observations_event_unique").on(table.workspaceId, table.sourceId, table.eventId),
     sourceRevisionFk: foreignKey({ columns: [table.workspaceId, table.sourceId, table.sourceRevision], foreignColumns: [workspaceProductRecordRevisions.workspaceId, workspaceProductRecordRevisions.recordId, workspaceProductRecordRevisions.revision], name: "product_analytics_observations_source_revision_fk" }).onDelete("restrict"),
     rangeIdx: index("product_analytics_observations_range_idx").on(table.workspaceId, table.metric, table.windowEndedAt, table.id),
     sourceIdx: index("product_analytics_observations_source_idx").on(table.workspaceId, table.sourceId, table.windowEndedAt, table.id),
-    sourceCheck: check("product_analytics_observations_source_check", sql`(${table.sourceKind} = 'website_analytics_source' and ${table.metric} = 'websiteViews') or (${table.sourceKind} = 'geo_analytics_source' and ${table.metric} = 'geoCitations')`),
-    valueCheck: check("product_analytics_observations_value_check", sql`${table.value} >= 0 and ${table.value} <= 10000000`),
-    windowCheck: check("product_analytics_observations_window_check", sql`${table.windowEndedAt} > ${table.windowStartedAt} and ${table.windowEndedAt} <= ${table.windowStartedAt} + interval '24 hours'`),
-    digestCheck: check("product_analytics_observations_digest_check", sql`${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.idempotencyKey}) between 8 and 200`),
+    sourceCheck: check("product_analytics_observations_source_check", sql`(${table.sourceKind} = 'website_analytics_source' and ${table.metric} = 'websiteViews' and ${table.eventType} = 'page_view') or (${table.sourceKind} = 'geo_analytics_source' and ${table.metric} = 'geoCitations' and ${table.eventType} = 'citation_observed')`),
+    valueCheck: check("product_analytics_observations_value_check", sql`(${table.eventId} like 'legacy:%' and ${table.value} between 0 and 10000000) or (${table.eventId} not like 'legacy:%' and ${table.value} = 1)`),
+    windowCheck: check("product_analytics_observations_window_check", sql`${table.windowEndedAt} > ${table.windowStartedAt} and ${table.windowEndedAt} <= ${table.windowStartedAt} + interval '24 hours' and ${table.occurredAt} >= ${table.windowStartedAt} and ${table.occurredAt} < ${table.windowEndedAt}`),
+    digestCheck: check("product_analytics_observations_digest_check", sql`${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.credentialDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.receiptSignature} ~ '^hmac-sha256:[a-f0-9]{64}$' and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.eventId}) between 8 and 200 and length(${table.idempotencyKey}) between 8 and 200`),
+    scopeCheck: check("product_analytics_observations_scope_check", sql`jsonb_typeof(${table.scope}) = 'object' and ${table.scope}->>'region' in ('mena','eu','other','unknown') and ${table.scope}->>'consentPurpose' = 'analytics' and length(${table.scope}->>'consentRevision') between 1 and 100 and (${table.scope}->>'retentionUntil')::timestamptz > ${table.capturedAt}`),
+  }),
+);
+
+/** Recoverable, leased refresh work bound to one immutable Analytics source revision. */
+export const productAnalyticsRefreshJobs = pgTable(
+  "product_analytics_refresh_jobs",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceRevision: integer("source_revision").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    state: text("state").notNull(),
+    cursor: text("cursor"),
+    processedEvents: integer("processed_events").default(0).notNull(),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(8).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseEpoch: integer("lease_epoch").default(0).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    lastErrorCode: text("last_error_code"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_analytics_refresh_jobs_pk", columns: [table.workspaceId, table.id] }),
+    commandUnique: uniqueIndex("product_analytics_refresh_jobs_command_unique").on(table.workspaceId, table.idempotencyKey),
+    sourceRevisionFk: foreignKey({ columns: [table.workspaceId, table.sourceId, table.sourceRevision], foreignColumns: [workspaceProductRecordRevisions.workspaceId, workspaceProductRecordRevisions.recordId, workspaceProductRecordRevisions.revision], name: "product_analytics_refresh_jobs_source_revision_fk" }).onDelete("restrict"),
+    dueIdx: index("product_analytics_refresh_jobs_due_idx").on(table.state, table.nextAttemptAt, table.leaseExpiresAt, table.id),
+    sourceIdx: index("product_analytics_refresh_jobs_source_idx").on(table.workspaceId, table.sourceId, table.requestedAt, table.id),
+    stateCheck: check("product_analytics_refresh_jobs_state_check", sql`${table.state} in ('queued','claimed','running','succeeded','failed_known','outcome_unknown') and ${table.sourceKind} in ('website_analytics_source','geo_analytics_source') and ${table.processedEvents} >= 0 and ${table.attempt} >= 0 and ${table.attempt} <= ${table.maxAttempts} and ${table.maxAttempts} between 1 and 20 and ${table.leaseEpoch} >= 0`),
+    leaseCheck: check("product_analytics_refresh_jobs_lease_check", sql`(${table.state} in ('claimed','running') and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} not in ('claimed','running') and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`),
+    digestCheck: check("product_analytics_refresh_jobs_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.idempotencyKey}) between 8 and 200`),
   }),
 );
 

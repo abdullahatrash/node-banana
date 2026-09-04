@@ -687,6 +687,13 @@
       "when": 1788597600000,
       "tag": "0097_checkout_recovery_leases",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1788601200000,
+      "tag": "0098_analytics_event_receipts_refresh_outbox",
+      "breakpoints": true
     }
   ]
 }

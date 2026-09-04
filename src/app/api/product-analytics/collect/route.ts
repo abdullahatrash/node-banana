@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
   let body: unknown
   try { body = await request.json() } catch { return NextResponse.json({ success: false, code: "ANALYTICS_OBSERVATION_INVALID" }, { status: 400 }) }
   try {
-    const result = await service.collectWebsite({ ...(body && typeof body === "object" && !Array.isArray(body) ? body : {}), sourceKey }, origin)
+    const result = await service.collectWebsite(body, { origin, sourceKey })
     return NextResponse.json({ success: true, accepted: result.created, duplicate: !result.created, observedAt: result.observation.windowEndedAt.toISOString() }, { status: result.created ? 202 : 200, headers: cors(origin) })
   } catch (error) {
     if (error instanceof AnalyticsObservationError) return NextResponse.json({ success: false, code: error.code }, { status: error.code === "ANALYTICS_OBSERVATION_INVALID" ? 400 : 403 })

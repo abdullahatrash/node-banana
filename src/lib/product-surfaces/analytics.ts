@@ -16,7 +16,7 @@ export async function getAudienceAnalytics(input: { workspaceId: string; days: 7
   const db = getDb()
   const [posts, events, observations, accounts, sources] = await Promise.all([
     db.select().from(socialPosts).where(and(eq(socialPosts.workspaceId, input.workspaceId), gte(socialPosts.createdAt, from))).orderBy(desc(socialPosts.createdAt)),
-    db.select().from(socialEvents).where(and(eq(socialEvents.workspaceId, input.workspaceId), gte(socialEvents.createdAt, from))).orderBy(desc(socialEvents.createdAt)).limit(2_000),
+    db.select().from(socialEvents).where(and(eq(socialEvents.workspaceId, input.workspaceId), gte(socialEvents.createdAt, from))).orderBy(desc(socialEvents.createdAt)),
     listAnalyticsObservations({ workspaceId: input.workspaceId, from }),
     db.select({ id: socialAccounts.id, platform: socialAccounts.platform, name: socialAccounts.displayName }).from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), eq(socialAccounts.disabled, false))),
     listProductRecords({ workspaceId: input.workspaceId, kinds: ["website_analytics_source", "geo_analytics_source"] }),

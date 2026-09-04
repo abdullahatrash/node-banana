@@ -33,9 +33,9 @@ export class PostgresAnalyticsObservationRepository implements AnalyticsObservat
   async appendObservation(observation: AnalyticsObservation) {
     const db = getDb()
     return db.transaction(async (tx) => {
-      const [inserted] = await tx.insert(productAnalyticsObservations).values({ id: randomUUID(), ...observation, createdAt: new Date() }).onConflictDoNothing({ target: [productAnalyticsObservations.workspaceId, productAnalyticsObservations.sourceId, productAnalyticsObservations.idempotencyKey] }).returning()
+      const [inserted] = await tx.insert(productAnalyticsObservations).values({ id: randomUUID(), ...observation, createdAt: new Date() }).onConflictDoNothing({ target: [productAnalyticsObservations.workspaceId, productAnalyticsObservations.sourceId, productAnalyticsObservations.eventId] }).returning()
       if (inserted) return { created: true, observation: stored(inserted) }
-      const [existing] = await tx.select().from(productAnalyticsObservations).where(and(eq(productAnalyticsObservations.workspaceId, observation.workspaceId), eq(productAnalyticsObservations.sourceId, observation.sourceId), eq(productAnalyticsObservations.idempotencyKey, observation.idempotencyKey))).limit(1)
+      const [existing] = await tx.select().from(productAnalyticsObservations).where(and(eq(productAnalyticsObservations.workspaceId, observation.workspaceId), eq(productAnalyticsObservations.sourceId, observation.sourceId), eq(productAnalyticsObservations.eventId, observation.eventId))).limit(1)
       if (!existing || existing.requestDigest !== observation.requestDigest) throw new AnalyticsObservationError("ANALYTICS_OBSERVATION_INVALID")
       return { created: false, observation: stored(existing) }
     })
@@ -47,7 +47,7 @@ export async function listAnalyticsObservations(input: { workspaceId: string; fr
 }
 
 function stored(row: typeof productAnalyticsObservations.$inferSelect): StoredAnalyticsObservation {
-  return { ...row, sourceKind: row.sourceKind as VerifiedAnalyticsSource["kind"], metric: row.metric as AnalyticsObservation["metric"], evidenceDigest: row.evidenceDigest as `sha256:${string}`, requestDigest: row.requestDigest as `sha256:${string}` }
+  return { ...row, sourceKind: row.sourceKind as VerifiedAnalyticsSource["kind"], eventType: row.eventType as AnalyticsObservation["eventType"], metric: row.metric as AnalyticsObservation["metric"], value: row.value as 1, evidenceDigest: row.evidenceDigest as `sha256:${string}`, credentialDigest: row.credentialDigest as `sha256:${string}`, receiptSignature: row.receiptSignature as `hmac-sha256:${string}`, requestDigest: row.requestDigest as `sha256:${string}` }
 }
 
 export const PRODUCTION_ANALYTICS_OBSERVATIONS = new PostgresAnalyticsObservationRepository()

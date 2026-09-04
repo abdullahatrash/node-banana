@@ -11,24 +11,18 @@ export interface AnalyticsObservationRepository {
 export class AnalyticsObservationService {
   constructor(private readonly repository: AnalyticsObservationRepository, private readonly now: () => Date = () => new Date()) {}
 
-  async collectWebsite(input: unknown, origin: string | null) {
-    const sourceKey = readSourceKey(input)
-    const source = sourceKey ? await this.repository.findWebsiteSourceByKey(sourceKey) : null
+  async collectWebsite(input: unknown, context: { origin: string | null; sourceKey: string }) {
+    const source = context.sourceKey ? await this.repository.findWebsiteSourceByKey(context.sourceKey) : null
     if (!source) throw new AnalyticsObservationError("ANALYTICS_SOURCE_NOT_VERIFIED")
-    return this.repository.appendObservation(admitWebsiteObservation(input, { source, origin, now: this.now() }))
+    return this.repository.appendObservation(admitWebsiteObservation(input, { source, origin: context.origin, credential: context.sourceKey, now: this.now() }))
   }
 
-  async collectGeo(workspaceId: string, input: unknown) {
+  async collectGeo(workspaceId: string, input: unknown, credential: string) {
     const sourceId = readSourceId(input)
     const source = sourceId ? await this.repository.findGeoSource(workspaceId, sourceId) : null
     if (!source || source.workspaceId !== workspaceId) throw new AnalyticsObservationError("ANALYTICS_SOURCE_NOT_VERIFIED")
-    return this.repository.appendObservation(admitGeoObservation(input, { source, now: this.now() }))
+    return this.repository.appendObservation(admitGeoObservation(input, { source, credential, now: this.now() }))
   }
-}
-
-function readSourceKey(input: unknown) {
-  if (!input || typeof input !== "object" || !("sourceKey" in input) || typeof input.sourceKey !== "string") return null
-  return input.sourceKey
 }
 
 function readSourceId(input: unknown) {
