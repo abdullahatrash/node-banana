@@ -8822,6 +8822,85 @@ export const workspacePortableImportRecords = pgTable(
   }),
 );
 
+/**
+ * Workspace-owned product records back the creator-facing surfaces that do not
+ * belong to the generation or publishing runtimes. Their payloads are
+ * validated by the product-surfaces module before crossing this boundary.
+ * Revision provides optimistic concurrency; command receipts make writes
+ * idempotent across retries and devices.
+ */
+export const workspaceProductRecords = pgTable(
+  "workspace_product_records",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    state: text("state").notNull(),
+    revision: integer("revision").default(1).notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    updatedByUserId: text("updated_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "workspace_product_records_pk",
+    }),
+    workspaceKindStateIdx: index(
+      "workspace_product_records_workspace_kind_state_idx",
+    ).on(table.workspaceId, table.kind, table.state, table.updatedAt),
+    revisionCheck: check(
+      "workspace_product_records_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+  }),
+);
+
+export const workspaceProductCommandReceipts = pgTable(
+  "workspace_product_command_receipts",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    recordId: text("record_id").notNull(),
+    resultRevision: integer("result_revision").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.idempotencyKey],
+      name: "workspace_product_command_receipts_pk",
+    }),
+    recordFk: foreignKey({
+      columns: [table.workspaceId, table.recordId],
+      foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id],
+      name: "workspace_product_command_receipts_record_fk",
+    }).onDelete("restrict"),
+    digestCheck: check(
+      "workspace_product_command_receipts_digest_check",
+      sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.resultRevision} > 0`,
+    ),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
