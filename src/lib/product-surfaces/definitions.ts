@@ -36,27 +36,6 @@ export const CONTENT_FORMATS = [
 
 export type ContentFormat = (typeof CONTENT_FORMATS)[number];
 
-export const CONTENT_FORMAT_DEFINITIONS: Record<ContentFormat, {
-  aspectRatio: "9:16" | "1:1";
-  duration: readonly [number, number];
-  requiredInputs: readonly ("script" | "images" | "video" | "persona" | "app_capture")[];
-  supportsArabic: boolean;
-  renderProofRequired: boolean;
-}> = {
-  slideshow: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "images"], supportsArabic: true, renderProofRequired: true },
-  wall_of_text: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "video"], supportsArabic: true, renderProofRequired: true },
-  video_hook_demo: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "video"], supportsArabic: true, renderProofRequired: true },
-  speaking_hook_demo: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "video"], supportsArabic: true, renderProofRequired: true },
-  talking_head_ugc: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "persona"], supportsArabic: true, renderProofRequired: true },
-  green_screen_meme: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "images", "video"], supportsArabic: true, renderProofRequired: true },
-  talking_head_green_screen: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "persona", "video"], supportsArabic: true, renderProofRequired: true },
-  product_spokesperson: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "persona", "images"], supportsArabic: true, renderProofRequired: true },
-  green_screen_mobile_app: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "app_capture"], supportsArabic: true, renderProofRequired: true },
-  claymation: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "images"], supportsArabic: true, renderProofRequired: true },
-  character_swap: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["video", "persona"], supportsArabic: true, renderProofRequired: true },
-  custom_upload: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["video"], supportsArabic: true, renderProofRequired: true },
-};
-
 export const AUTOMATION_STEPS = [
   "basics",
   "format_mix",

@@ -1,5 +1,6 @@
 import type { GenerationCapability } from "@/lib/model-routing/types";
 import { CONTENT_FORMATS, type ContentFormat } from "./definitions";
+import { CONTENT_FORMAT_DEFINITIONS } from "./content-format-definition";
 
 export type ContentSourceType = "image" | "video";
 
@@ -15,20 +16,18 @@ export interface ContentExecutionPlan {
  * The format contract distinguishes all retained render inputs from the one
  * primary input supported by the qualified generation capability.
  */
-export const CONTENT_EXECUTION_PLANS = {
-  slideshow: { strategy: "admitted_generation", capability: "image_to_video", sourceTypes: ["image"], providerSourceIndex: 0, requiresPersona: false },
-  wall_of_text: { strategy: "admitted_generation", capability: "video_to_video", sourceTypes: ["video"], providerSourceIndex: 0, requiresPersona: false },
-  video_hook_demo: { strategy: "admitted_generation", capability: "video_to_video", sourceTypes: ["video"], providerSourceIndex: 0, requiresPersona: false },
-  speaking_hook_demo: { strategy: "admitted_generation", capability: "video_to_video", sourceTypes: ["video"], providerSourceIndex: 0, requiresPersona: false },
-  talking_head_ugc: { strategy: "admitted_generation", capability: "text_to_video", sourceTypes: [], providerSourceIndex: null, requiresPersona: true },
-  green_screen_meme: { strategy: "admitted_generation", capability: "video_to_video", sourceTypes: ["image", "video"], providerSourceIndex: 1, requiresPersona: false },
-  talking_head_green_screen: { strategy: "admitted_generation", capability: "video_to_video", sourceTypes: ["video"], providerSourceIndex: 0, requiresPersona: true },
-  product_spokesperson: { strategy: "admitted_generation", capability: "image_to_video", sourceTypes: ["image"], providerSourceIndex: 0, requiresPersona: true },
-  green_screen_mobile_app: { strategy: "admitted_generation", capability: "image_to_video", sourceTypes: ["image"], providerSourceIndex: 0, requiresPersona: false },
-  claymation: { strategy: "admitted_generation", capability: "image_to_video", sourceTypes: ["image"], providerSourceIndex: 0, requiresPersona: false },
-  character_swap: { strategy: "admitted_generation", capability: "video_to_video", sourceTypes: ["video"], providerSourceIndex: 0, requiresPersona: true },
-  custom_upload: { strategy: "canonical_upload", capability: null, sourceTypes: ["video"], providerSourceIndex: null, requiresPersona: false },
-} as const satisfies Record<ContentFormat, ContentExecutionPlan>;
+export const CONTENT_EXECUTION_PLANS = Object.fromEntries(CONTENT_FORMATS.map((format) => {
+  const definition = CONTENT_FORMAT_DEFINITIONS[format];
+  const sourceTypes = definition.sourceSlots.flatMap((slot) => Array.from({ length: slot.minimum }, () => slot.type));
+  const providerSourceIndex = definition.sourceSlots.findIndex((slot) => slot.providerInputIndex !== null);
+  return [format, {
+    strategy: definition.execution.strategy,
+    capability: definition.execution.capability,
+    sourceTypes,
+    providerSourceIndex: providerSourceIndex < 0 ? null : providerSourceIndex,
+    requiresPersona: definition.requiredControls.includes("persona"),
+  }];
+})) as unknown as Record<ContentFormat, ContentExecutionPlan>;
 
 export function contentExecutionPlan(format: ContentFormat): ContentExecutionPlan {
   return CONTENT_EXECUTION_PLANS[format];
