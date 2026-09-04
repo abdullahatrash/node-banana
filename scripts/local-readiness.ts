@@ -3,6 +3,7 @@ import "./_load-env";
 import { Pool } from "pg";
 import { configuredCatalog } from "@/lib/model-routing/catalog";
 import { buildLocalReadinessReport, type LocalReadinessFacts } from "@/lib/local-readiness";
+import { evaluateXAdsAttributionReadiness, loadXAdsAttributionConfig } from "@/lib/marketing-attribution/config";
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -60,6 +61,7 @@ async function run() {
   }
 
   const encryptionKey = process.env.BYOK_KEY_ENCRYPTION_KEY?.trim() || "";
+  const xAdsReadiness = evaluateXAdsAttributionReadiness(loadXAdsAttributionConfig());
   const facts: LocalReadinessFacts = {
     generatedAt: new Date(),
     workspaceId,
@@ -101,6 +103,8 @@ async function run() {
     activeCreditPacks,
     availableCredits,
     merchantConfigured: Boolean(process.env.MERCHANT_OF_RECORD_BASE_URL?.trim() && process.env.MERCHANT_OF_RECORD_API_TOKEN?.trim()),
+    xAdsAttributionAvailable: xAdsReadiness.available,
+    xAdsAttributionBlockers: xAdsReadiness.blockers,
   };
 
   const report = buildLocalReadinessReport(facts);
@@ -113,7 +117,7 @@ async function run() {
       process.stdout.write(`[${marker}] ${check.label}: ${check.detail}\n`);
       if (check.action) process.stdout.write(`          ${check.action}\n`);
     }
-    process.stdout.write(`\nCore: ${report.coreReady ? "ready" : "blocked"} · BYOK generation: ${report.byokReady ? "ready" : "blocked"} · Managed generation: ${report.managedReady ? "ready" : "blocked"}\n`);
+    process.stdout.write(`\nCore: ${report.coreReady ? "ready" : "blocked"} · BYOK generation: ${report.byokReady ? "ready" : "blocked"} · Managed generation: ${report.managedReady ? "ready" : "blocked"} · X Ads attribution: ${report.xAdsAttributionReady ? "ready" : "unavailable"}\n`);
   }
 }
 

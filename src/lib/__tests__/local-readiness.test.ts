@@ -27,6 +27,8 @@ const readyFacts = (overrides: Partial<LocalReadinessFacts> = {}): LocalReadines
   activeCreditPacks: 3,
   availableCredits: 250,
   merchantConfigured: true,
+  xAdsAttributionAvailable: true,
+  xAdsAttributionBlockers: [],
   ...overrides,
 });
 
@@ -50,6 +52,12 @@ describe("local generation readiness", () => {
     expect(report.managedReady).toBe(true);
     expect(report.checks.find((check) => check.id === "merchant")).toMatchObject({ status: "optional" });
     expect(report.checks.find((check) => check.id === "step_up_delivery")).toMatchObject({ status: "optional" });
+  });
+
+  it("keeps advertising attribution separate and fail-closed", () => {
+    const report = buildLocalReadinessReport(readyFacts({ xAdsAttributionAvailable: false, xAdsAttributionBlockers: ["OAUTH_CREDENTIALS_MISSING", "REGION_REVIEW_MISSING"] }));
+    expect(report).toMatchObject({ coreReady: true, xAdsAttributionReady: false });
+    expect(report.checks.find((check) => check.id === "x_ads_attribution")).toMatchObject({ status: "optional", detail: expect.stringContaining("OAUTH_CREDENTIALS_MISSING") });
   });
 
   it("blocks both lanes when shared admission evidence is absent", () => {

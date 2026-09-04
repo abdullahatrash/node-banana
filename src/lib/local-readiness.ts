@@ -14,6 +14,7 @@ export interface LocalReadinessReport {
   coreReady: boolean;
   byokReady: boolean;
   managedReady: boolean;
+  xAdsAttributionReady: boolean;
   checks: LocalReadinessCheck[];
 }
 
@@ -57,6 +58,8 @@ export interface LocalReadinessFacts {
   activeCreditPacks: number;
   availableCredits: number;
   merchantConfigured: boolean;
+  xAdsAttributionAvailable: boolean;
+  xAdsAttributionBlockers: string[];
 }
 
 /** Converts secret-free infrastructure facts into actionable local readiness. */
@@ -203,6 +206,15 @@ export function buildLocalReadinessReport(
           detail: "Checkout and the billing portal remain unavailable; BYOK generation is unaffected.",
           action: "Configure the Merchant-of-Record adapter when testing purchases.",
         },
+    facts.xAdsAttributionAvailable
+      ? ready("x_ads_attribution", "X Ads attribution", "The server Conversion API adapter, event IDs, public notice, and operator reviews are configured.")
+      : {
+          id: "x_ads_attribution",
+          label: "X Ads attribution",
+          status: "optional",
+          detail: `Advertising attribution is unavailable and fails closed: ${facts.xAdsAttributionBlockers.join(", ") || "configuration incomplete"}.`,
+          action: "Follow docs/operations/x-ads-attribution.md. Do not reuse customer social-publishing credentials.",
+        },
   ];
 
   const status = (id: string) => checks.find((check) => check.id === id)?.status === "ready";
@@ -215,6 +227,7 @@ export function buildLocalReadinessReport(
     coreReady: status("database") && status("storage") && status("workspace"),
     byokReady: common && status("byok_encryption") && status("byok_provider"),
     managedReady: common && status("managed_provider") && status("plans") && status("credits"),
+    xAdsAttributionReady: status("x_ads_attribution"),
     checks,
   };
 }

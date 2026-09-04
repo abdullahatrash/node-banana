@@ -9967,7 +9967,7 @@ export const merchantCheckoutSessions = pgTable("merchant_checkout_sessions", {
 }, (table) => ({ pk: primaryKey({ name: "merchant_checkout_sessions_pk", columns: [table.workspaceId, table.id] }), idUnique: uniqueIndex("merchant_checkout_sessions_id_unique").on(table.id), purposeUnique: uniqueIndex("merchant_checkout_sessions_purpose_unique").on(table.workspaceId, table.purposeKind, table.purposeRef), providerRefUnique: uniqueIndex("merchant_checkout_sessions_provider_ref_unique").on(table.merchantCheckoutRef), effectRefUnique: uniqueIndex("merchant_checkout_sessions_effect_ref_unique").on(table.merchantEffectRef), recoveryIdx: index("merchant_checkout_sessions_due_recovery_idx").on(table.state, table.nextRecoveryAt, table.id), valuesCheck: check("merchant_checkout_sessions_values_check", sql`${table.purposeKind} in ('subscription','credit_pack','channel_onboarding') and ${table.state} in ('creating','ready','completed','failed_known','expired','cancelled','outcome_unknown') and ${table.amountMinor} >= 0 and ${table.taxMinor} >= 0 and ${table.currency} ~ '^[A-Z]{3}$' and ${table.termsDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.expiresAt} > ${table.createdAt} and ${table.recoveryAttempts} >= 0`) }));
 
 export const merchantWebhookReceipts = pgTable("merchant_webhook_receipts", {
-  provider: text("provider").notNull(), eventId: text("event_id").notNull(), payloadDigest: text("payload_digest").notNull(), eventType: text("event_type").notNull(), checkoutId: text("checkout_id").notNull().references(() => merchantCheckoutSessions.id, { onDelete: "restrict" }), merchantEffectRef: text("merchant_effect_ref").notNull(), state: text("state").notNull(), failureCode: text("failure_code"), receivedAt: timestamp("received_at", { withTimezone: true }).notNull(), processedAt: timestamp("processed_at", { withTimezone: true }),
+  provider: text("provider").notNull(), eventId: text("event_id").notNull(), payloadDigest: text("payload_digest").notNull(), eventType: text("event_type").notNull(), checkoutId: text("checkout_id").notNull().references(() => merchantCheckoutSessions.id, { onDelete: "restrict" }), merchantEffectRef: text("merchant_effect_ref").notNull(), state: text("state").notNull(), failureCode: text("failure_code"), providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }).notNull(), receivedAt: timestamp("received_at", { withTimezone: true }).notNull(), processedAt: timestamp("processed_at", { withTimezone: true }),
 }, (table) => ({ pk: primaryKey({ name: "merchant_webhook_receipts_pk", columns: [table.provider, table.eventId] }), effectUnique: uniqueIndex("merchant_webhook_receipts_effect_unique").on(table.provider, table.merchantEffectRef, table.eventType), stateIdx: index("merchant_webhook_receipts_state_idx").on(table.state, table.receivedAt, table.eventId), valuesCheck: check("merchant_webhook_receipts_values_check", sql`${table.payloadDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.eventType} in ('checkout.completed','checkout.failed','checkout.expired','checkout.cancelled') and ${table.state} in ('received','processing','applied','ignored','failed_known','outcome_unknown')`) }));
 
 export const generationCreditPackVersions = pgTable("generation_credit_pack_versions", {
@@ -10130,6 +10130,88 @@ export const calendarRescheduleCommands = pgTable("calendar_reschedule_commands"
   pk: primaryKey({ name: "calendar_reschedule_commands_pk", columns: [table.workspaceId, table.idempotencyKey] }),
   sourceIdx: index("calendar_reschedule_commands_source_idx").on(table.workspaceId, table.sourceRevisionId, table.targetId, table.createdAt),
   valuesCheck: check("calendar_reschedule_commands_values_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.state} in ('pending','completed') and ${table.sourceRevision} > 0 and length(${table.idempotencyKey}) between 8 and 200 and ((${table.state} = 'pending' and ${table.result} is null and ${table.completedAt} is null) or (${table.state} = 'completed' and ${table.result} is not null and ${table.completedAt} is not null))`),
+}));
+
+/** Append-only personal consent revisions for third-party advertising measurement. */
+export const marketingAttributionConsents = pgTable("marketing_attribution_consents", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  provider: text("provider").notNull(),
+  revision: integer("revision").notNull(),
+  purpose: text("purpose").notNull(),
+  status: text("status").notNull(),
+  noticeVersion: text("notice_version").notNull(),
+  regionReviewVersion: text("region_review_version").notNull(),
+  issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "marketing_attribution_consents_pk", columns: [table.workspaceId, table.userId, table.provider, table.revision] }),
+  currentIdx: index("marketing_attribution_consents_current_idx").on(table.workspaceId, table.userId, table.provider, table.revision),
+  valuesCheck: check("marketing_attribution_consents_values_check", sql`${table.provider} = 'x_ads' and ${table.purpose} = 'advertising_attribution' and ${table.status} in ('active','revoked') and ${table.revision} > 0 and length(${table.noticeVersion}) between 1 and 100 and length(${table.regionReviewVersion}) between 1 and 100 and ${table.expiresAt} > ${table.issuedAt}`),
+}));
+
+/** Privacy-minimised server-side conversion outbox; payloads are scrubbed at terminal state. */
+export const marketingAttributionEvents = pgTable("marketing_attribution_events", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  id: text("id").notNull(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  provider: text("provider").notNull(),
+  eventName: text("event_name").notNull(),
+  conversionId: text("conversion_id").notNull(),
+  consentRevision: integer("consent_revision").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  state: text("state").notNull(),
+  attempt: integer("attempt").default(0).notNull(),
+  maxAttempts: integer("max_attempts").default(6).notNull(),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  failureCode: text("failure_code"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "marketing_attribution_events_pk", columns: [table.workspaceId, table.id] }),
+  conversionUnique: uniqueIndex("marketing_attribution_events_conversion_unique").on(table.provider, table.conversionId),
+  dueIdx: index("marketing_attribution_events_due_idx").on(table.state, table.nextAttemptAt, table.leaseExpiresAt, table.id),
+  subjectIdx: index("marketing_attribution_events_subject_idx").on(table.workspaceId, table.userId, table.provider, table.state),
+  consentFk: foreignKey({ name: "marketing_attribution_events_consent_fk", columns: [table.workspaceId, table.userId, table.provider, table.consentRevision], foreignColumns: [marketingAttributionConsents.workspaceId, marketingAttributionConsents.userId, marketingAttributionConsents.provider, marketingAttributionConsents.revision] }).onDelete("restrict"),
+  valuesCheck: check("marketing_attribution_events_values_check", sql`${table.provider} = 'x_ads' and ${table.eventName} in ('sign_up','trial_started','purchase') and ${table.id} ~ '^mae_[a-f0-9]{32}$' and ${table.conversionId} ~ '^mac_[a-f0-9]{64}$' and ${table.consentRevision} > 0 and ${table.state} in ('queued','delivering','delivered','cancelled','failed_known','outcome_unknown') and ${table.attempt} >= 0 and ${table.maxAttempts} between 1 and 12 and ${table.attempt} <= ${table.maxAttempts} and octet_length(${table.payload}::text) <= 4096 and ${table.expiresAt} > ${table.createdAt}`),
+}));
+
+/** Minimal immutable evidence for data already disclosed to an advertising provider. */
+export const marketingAttributionDeliveryReceipts = pgTable("marketing_attribution_delivery_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  eventId: text("event_id").notNull(),
+  provider: text("provider").notNull(),
+  conversionId: text("conversion_id").notNull(),
+  eventName: text("event_name").notNull(),
+  outcome: text("outcome").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  providerDebugId: text("provider_debug_id"),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "marketing_attribution_delivery_receipts_pk", columns: [table.workspaceId, table.eventId] }),
+  eventFk: foreignKey({ name: "marketing_attribution_delivery_receipts_event_fk", columns: [table.workspaceId, table.eventId], foreignColumns: [marketingAttributionEvents.workspaceId, marketingAttributionEvents.id] }).onDelete("restrict"),
+  expiryIdx: index("marketing_attribution_delivery_receipts_expiry_idx").on(table.expiresAt),
+  valuesCheck: check("marketing_attribution_delivery_receipts_values_check", sql`${table.provider} = 'x_ads' and ${table.eventName} in ('sign_up','trial_started','purchase') and ${table.outcome} in ('accepted','outcome_unknown') and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.expiresAt} > ${table.deliveredAt}`),
+}));
+
+/** Replay-safe commands for consent changes and conversion admission. */
+export const marketingAttributionMutationReceipts = pgTable("marketing_attribution_mutation_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  response: jsonb("response").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "marketing_attribution_mutation_receipts_pk", columns: [table.workspaceId, table.idempotencyKey] }),
+  expiryIdx: index("marketing_attribution_mutation_receipts_expiry_idx").on(table.expiresAt),
+  valuesCheck: check("marketing_attribution_mutation_receipts_values_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.idempotencyKey}) between 8 and 200 and ${table.expiresAt} > ${table.createdAt}`),
 }));
 
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];

@@ -25,3 +25,8 @@ for (const [label, pathname] of routes) {
   const parsed = JSON.parse(body);
   console.log(`${label}: ${JSON.stringify(parsed.summary ?? parsed)}`);
 }
+
+const attributionResponse = await fetch(new URL("/api/studio/internal/marketing-attribution?limit=20", baseUrl), { headers: { "x-studio-internal-secret": secret } });
+const attributionBody = await attributionResponse.text();
+if (!attributionResponse.ok) throw new Error(`x-ads-attribution worker failed with HTTP ${attributionResponse.status}: ${attributionBody.slice(0, 500)}`);
+console.log(`x-ads-attribution: ${JSON.stringify(JSON.parse(attributionBody).result)}`);

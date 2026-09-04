@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, lte, or, isNull, gt } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { billingPlanVersions, channelOnboardingCommercialQuotes, channelOnboardingOrders, generationCreditPackVersions, merchantCheckoutSessions, merchantWebhookReceipts } from "@/lib/db/schema";
+import { billingPlanVersions, channelOnboardingCommercialQuotes, channelOnboardingOrders, generationCreditPackVersions, merchantCheckoutSessions, merchantWebhookReceipts, user } from "@/lib/db/schema";
 import type { ChannelOnboardingRepository } from "@/lib/channel-onboarding/repository";
 import type { CommercialRepository } from "./repository";
 import type { MerchantCheckoutEvent, MerchantCheckoutPurpose, MerchantOfRecordAdapter } from "./merchant";
@@ -16,6 +16,10 @@ type Snapshot =
   | { kind: "subscription"; planId: string; planVersion: number; billingInterval: string }
   | { kind: "credit_pack"; packId: string; packVersion: number; creditUnits: number }
   | { kind: "channel_onboarding"; orderId: string; orderRevision: number; quoteId: string };
+export interface CheckoutAttributionRecorder { record(input: { workspaceId: string; userId: string; email: string; eventName: "purchase"; occurredAt: Date; value: string; currency: string; idempotencyKey: string }): Promise<unknown> }
+export function checkoutPurchaseAttribution(input: { workspaceId: string; userId: string; email: string; amountMinor: number; currency: string; occurredAt: Date; provider: string; providerEventId: string }) {
+  return { workspaceId: input.workspaceId, userId: input.userId, email: input.email, eventName: "purchase" as const, occurredAt: input.occurredAt, value: (input.amountMinor / 100).toFixed(2), currency: input.currency.toUpperCase(), idempotencyKey: `xads:purchase:${input.provider}:${input.providerEventId}` };
+}
 
 export class MerchantCheckoutError extends Error { constructor(readonly code: string) { super(code); this.name = "MerchantCheckoutError"; } }
 const purposeKey = (purpose: Purpose, idempotencyKey: string) => `${purpose.kind}:${"planId" in purpose ? `${purpose.planId}:${purpose.planVersion}` : "packId" in purpose ? `${purpose.packId}:${purpose.packVersion}` : purpose.orderId}:${idempotencyKey}`;
@@ -25,7 +29,7 @@ export function checkoutRecoveryDelayMs(attempt: number, status: "pending" | "un
 }
 
 export class MerchantCheckoutService {
-  constructor(private readonly database: Db, private readonly merchant: MerchantOfRecordAdapter, private readonly commercial: CommercialRepository, private readonly onboarding: ChannelOnboardingRepository, private readonly now = () => new Date()) {}
+  constructor(private readonly database: Db, private readonly merchant: MerchantOfRecordAdapter, private readonly commercial: CommercialRepository, private readonly onboarding: ChannelOnboardingRepository, private readonly now = () => new Date(), private readonly attribution?: CheckoutAttributionRecorder) {}
 
   async create(input: { workspaceId: string; userId: string; purpose: Purpose; idempotencyKey: string; successPath: string; cancelPath: string }) {
     const now = this.now(), purposeRef = purposeKey(input.purpose, input.idempotencyKey);
@@ -55,7 +59,7 @@ export class MerchantCheckoutService {
 
   async applyVerifiedEvent(event: MerchantCheckoutEvent) {
     const payloadDigest = canonicalDigest(serializeEvent(event)), now = this.now();
-    const inserted = await this.database.insert(merchantWebhookReceipts).values({ provider: event.provider, eventId: event.eventId, payloadDigest, eventType: event.eventType, checkoutId: event.checkoutId, merchantEffectRef: event.merchantEffectRef, state: "received", receivedAt: now }).onConflictDoNothing().returning();
+    const inserted = await this.database.insert(merchantWebhookReceipts).values({ provider: event.provider, eventId: event.eventId, payloadDigest, eventType: event.eventType, checkoutId: event.checkoutId, merchantEffectRef: event.merchantEffectRef, state: "received", providerOccurredAt: event.occurredAt, receivedAt: now }).onConflictDoNothing().returning();
     const [receipt] = inserted[0] ? inserted : await this.database.select().from(merchantWebhookReceipts).where(and(eq(merchantWebhookReceipts.provider, event.provider), eq(merchantWebhookReceipts.eventId, event.eventId))).limit(1);
     if (!receipt || receipt.payloadDigest !== payloadDigest || receipt.checkoutId !== event.checkoutId || receipt.merchantEffectRef !== event.merchantEffectRef) throw new MerchantCheckoutError("WEBHOOK_REPLAY_CONFLICT");
     if (receipt.state === "applied" || receipt.state === "ignored") return { state: receipt.state };
@@ -67,6 +71,12 @@ export class MerchantCheckoutService {
       if (state === "completed") await this.applyCompletion(checkout.workspaceId, checkout.commercialSnapshot as Snapshot, event);
       await this.database.update(merchantCheckoutSessions).set({ state, merchantCheckoutRef: event.merchantCheckoutRef, merchantEffectRef: event.merchantEffectRef, merchantCustomerRef: event.merchantCustomerRef, recoveryLeaseOwner: null, recoveryLeaseExpiresAt: null, lastRecoveryStatus: `terminal:${state}`, completedAt: state === "completed" ? now : null, updatedAt: now }).where(and(eq(merchantCheckoutSessions.workspaceId, checkout.workspaceId), eq(merchantCheckoutSessions.id, checkout.id), inArray(merchantCheckoutSessions.state, ["creating", "ready", "outcome_unknown"])));
       await this.database.update(merchantWebhookReceipts).set({ state: "applied", processedAt: now }).where(and(eq(merchantWebhookReceipts.provider, event.provider), eq(merchantWebhookReceipts.eventId, event.eventId)));
+      if (state === "completed" && this.attribution) {
+        try {
+          const [identity] = await this.database.select({ email: user.email }).from(user).where(eq(user.id, checkout.createdByUserId)).limit(1);
+          if (identity) await this.attribution.record(checkoutPurchaseAttribution({ workspaceId: checkout.workspaceId, userId: checkout.createdByUserId, email: identity.email, amountMinor: checkout.amountMinor, currency: checkout.currency, occurredAt: event.occurredAt, provider: event.provider, providerEventId: event.eventId }));
+        } catch { /* Attribution must never change a signed commercial outcome. */ }
+      }
       return { state: "applied" };
     } catch (error) {
       await this.database.update(merchantCheckoutSessions).set({ state: "outcome_unknown", recoveryLeaseOwner: null, recoveryLeaseExpiresAt: null, nextRecoveryAt: new Date(now.getTime() + 60_000), lastRecoveryStatus: "event_application_failed", updatedAt: now }).where(and(eq(merchantCheckoutSessions.workspaceId, checkout.workspaceId), eq(merchantCheckoutSessions.id, checkout.id)));
