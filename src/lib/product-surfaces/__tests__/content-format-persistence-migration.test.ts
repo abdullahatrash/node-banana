@@ -8,6 +8,7 @@ const migration = readFileSync("drizzle/0100_content_format_definitions_and_simi
 const v2 = readFileSync("drizzle/0106_content_format_workflow_v2.sql", "utf8");
 const v3 = readFileSync("drizzle/0107_content_format_typed_workflows.sql", "utf8");
 const v4 = readFileSync("drizzle/0108_content_resource_bindings.sql", "utf8");
+const v5 = readFileSync("drizzle/0111_content_workflow_operation_v2.sql", "utf8");
 const policySupersession = readFileSync("drizzle/0109_content_model_policy_supersession.sql", "utf8");
 
 describe("Content format persistence migration", () => {
@@ -41,7 +42,12 @@ describe("Content format persistence migration", () => {
     expect(v4).toContain("themeInstructions");
     expect(v4).not.toContain('"mediaSetIds"');
     expect(v4).not.toContain('"themeRevisionRefs"');
-    for (const format of CONTENT_FORMATS) expect(v4).toContain(canonicalDigest(contentFormatDefinition(format)));
+    expect(v4).toContain("runtime.dispatch_content_'||old.\"format\"||'@1");
+    expect(v5).toContain("WHERE old.\"revision\"=4");
+    expect(v5).toContain("runtime.dispatch_content_'||old.\"format\"||'@2");
+    expect(v5).not.toContain('INSERT INTO "content_model_policy_revisions"');
+    expect(v5.match(/WHERE old\."revision"=4/g)).toHaveLength(1);
+    for (const format of CONTENT_FORMATS) expect(v5).toContain(canonicalDigest(contentFormatDefinition(format)));
   });
 
   it("separates immutable policy evidence from its monotonic current pointer", () => {

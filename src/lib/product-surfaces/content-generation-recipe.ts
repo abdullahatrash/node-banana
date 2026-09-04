@@ -30,7 +30,9 @@ export function buildContentGenerationRecipe(input: {
   const orderedSources = payload.sourceAssetIds.map((id) => ({ id, type: input.sourceTypes.get(id) ?? "missing" }));
   const assignment = contentSourceSlotAssignment(input.definition, orderedSources);
   if (!assignment || payload.aspectRatio !== "9:16") throw new ContentGenerationRecipeError("CONTENT_EXECUTION_INPUTS_MISMATCH");
-  const providerInputArtifactIds = contentProviderSourceIds(payload.format, orderedSources, input.definition);
+  const retainedSources = (input.resources?.orderedAssetIds ?? payload.sourceAssetIds).map((id) => ({ id, type: input.sourceTypes.get(id) ?? "missing" }));
+  const providerInputArtifactIds = contentProviderSourceIds(payload.format, orderedSources, input.definition, retainedSources);
+  if (input.definition.execution.capability === "image_to_video" && input.definition.controls.includes("media_sets") && retainedSources.some((source) => source.type === "image") && providerInputArtifactIds.length === 0) throw new ContentGenerationRecipeError("CONTENT_EXECUTION_INPUTS_MISMATCH");
   const value = {
     schema: "content-format-execution-binding/v1" as const,
     contentPiece: { id: input.contentPieceId, revision: input.contentPieceRevision, digest: canonicalDigest(payload) as `sha256:${string}` },

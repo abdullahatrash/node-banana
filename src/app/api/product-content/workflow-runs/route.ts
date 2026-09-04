@@ -1,9 +1,11 @@
 import { NextRequest } from "next/server";
+import { and, inArray, isNull, eq } from "drizzle-orm";
 import { z } from "zod";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { WORKSPACE_SERVICE_AGENT_RESOLVER } from "@/lib/agent-auth/workspace-service-agent";
 import { authorizationContractDigestFor } from "@/lib/agent-tools/authorization-contract-digest";
 import { getDb } from "@/lib/db";
+import { assets } from "@/lib/db/schema";
 import { findCuratedModel } from "@/lib/model-routing/catalog";
 import { PostgresModelRoutingRepository } from "@/lib/model-routing/postgres-repository";
 import { resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/content-format-registry";
@@ -27,6 +29,11 @@ export const POST = withStudioAuth<undefined>({ route: "/api/product-content/wor
     if (!descriptor) return noStoreJson({ success: false, code: "CONTENT_MODEL_POLICY_MODEL_NOT_QUALIFIED" }, { status: 409 });
     const workflow = resolved.definition.execution.workflow;
     if (!workflow) return noStoreJson({ success: false, code: "CONTENT_CANONICAL_IMPORT_REQUIRED" }, { status: 409 });
+    const artifactIds = intent.contentExecution.inputArtifactIds;
+    const artifactRows = artifactIds.length ? await getDb().select({ id: assets.id, checksum: assets.checksum, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, authz.workspaceId), inArray(assets.id, artifactIds), isNull(assets.deletedAt))) : [];
+    const artifactById = new Map(artifactRows.map((row) => [row.id, row]));
+    const rightsDigestById = new Map(intent.rights.evidence.map((evidence) => [evidence.sourceAssetId, evidence.sourceDigest]));
+    if (artifactIds.some((id) => { const row = artifactById.get(id); return !row || row.checksum !== rightsDigestById.get(id) || (row.metadata as Record<string, unknown> | null)?.uploadState !== "ready"; })) return noStoreJson({ success: false, code: "CONTENT_WORKFLOW_ARTIFACT_UNAVAILABLE" }, { status: 409 });
     const contractDigest = authorizationContractDigestFor(
       { name: "workflow_runs.start", version: 2 },
       { resources: [
@@ -34,7 +41,7 @@ export const POST = withStudioAuth<undefined>({ route: "/api/product-content/wor
         { kind: "artifact", inputPath: "inputArtifactIds" },
       ] },
     );
-    const emptyResources = { channelIds: [], credentialProfileIds: [], workflowIds: [], automationIds: [], artifactIds: [] };
+    const emptyResources = { channelIds: [], credentialProfileIds: [], workflowIds: [], automationIds: [], artifactIds: [], studioAssetIds: [] };
     let actor = await WORKSPACE_SERVICE_AGENT_RESOLVER.resolve({
       workspaceId: authz.workspaceId,
       purpose: "content_workflow",
@@ -49,10 +56,10 @@ export const POST = withStudioAuth<undefined>({ route: "/api/product-content/wor
       authority: {
         capability: "workflow_runs.start@2",
         authorizationContractDigest: contractDigest,
-        resources: { ...emptyResources, workflowIds: [workflow.id] },
+        resources: { ...emptyResources, workflowIds: [workflow.id], studioAssetIds: artifactIds },
       },
     });
-    const accepted = await new ContentGenerationWorkflowService(productionContentWorkflowRuntime(actor)).start({ workspaceId: authz.workspaceId, userId: authz.userId, authContextId: authz.authContextId, role: authz.role, planTier: authz.contentSession.planTier, intent, definition: resolved.definition, descriptor, prompt: parsed.data.prompt, sourceAssetIds: parsed.data.sourceAssetIds, idempotencyKey: key, servicePrincipalId: actor.principalId, serviceKeyId: actor.keyId });
+    const accepted = await new ContentGenerationWorkflowService(productionContentWorkflowRuntime(actor)).start({ workspaceId: authz.workspaceId, userId: authz.userId, authContextId: authz.authContextId, role: authz.role, planTier: authz.contentSession.planTier, intent, definition: resolved.definition, descriptor, prompt: parsed.data.prompt, sourceAssetIds: parsed.data.sourceAssetIds, idempotencyKey: key, servicePrincipalId: actor.principalId, serviceKeyId: actor.keyId, authorizedStudioAssetIds: artifactIds });
     return noStoreJson({ success: true, workflowRun: accepted.run }, { status: 202 });
   } catch (error) {
     const code = error instanceof ContentWorkflowRuntimeError ? error.code : "CONTENT_WORKFLOW_UNAVAILABLE";

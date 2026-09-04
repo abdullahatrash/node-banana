@@ -14,6 +14,7 @@ export interface ContentWorkflowRuntimePort {
   start(input: {
     workspaceId: string; workflowId: string; revisionId: string; inputs: Record<string, unknown>;
     idempotencyKey: string; servicePrincipalId: string; serviceKeyId: string;
+    authorizedStudioAssetIds: string[];
   }): Promise<WorkflowRunAcceptedDto>;
   bind(input: {
     workspaceId: string; intent: GenerationIntent; run: WorkflowRunAcceptedDto["run"];
@@ -45,23 +46,28 @@ export class ContentGenerationWorkflowService {
     intent: GenerationIntent; definition: ContentFormatDefinition; descriptor: ModelDescriptor;
     prompt: string; sourceAssetIds: string[]; idempotencyKey: string;
     servicePrincipalId: string; serviceKeyId: string;
+    authorizedStudioAssetIds: string[];
   }): Promise<WorkflowRunAcceptedDto> {
     const binding = input.intent.contentExecution;
     if (!binding || input.definition.execution.strategy !== "admitted_generation" || !input.definition.execution.workflow) throw new ContentWorkflowRuntimeError("CONTENT_CANONICAL_IMPORT_REQUIRED");
     if (input.definition.renderProof.schema !== "content-render-proof/v2") throw new ContentWorkflowRuntimeError("CONTENT_RENDER_PROOF_V2_REQUIRED");
     if (input.intent.workspaceId !== input.workspaceId || input.intent.createdByUserId !== input.userId) throw new ContentWorkflowRuntimeError("CONTENT_WORKFLOW_FORBIDDEN");
     if (canonicalDigest(input.prompt) !== input.intent.promptDigest || canonicalDigest(input.sourceAssetIds) !== canonicalDigest(input.intent.rights.sourceAssetIds)) throw new ContentWorkflowRuntimeError("CONTENT_WORKFLOW_INPUT_MISMATCH");
+    if (canonicalDigest(input.authorizedStudioAssetIds) !== canonicalDigest(binding.inputArtifactIds)) throw new ContentWorkflowRuntimeError("CONTENT_WORKFLOW_ARTIFACT_AUTHORITY_MISMATCH");
     if (contentProviderPromptFromWorkflowInputs(binding.workflowInputs) !== input.prompt) throw new ContentWorkflowRuntimeError("CONTENT_PROVIDER_CONTROLS_MISMATCH");
     if (binding.workflow.id !== input.definition.execution.workflow.id || binding.workflow.revisionId !== input.definition.execution.workflow.revisionId || binding.workflow.operation !== input.definition.execution.workflow.operation || canonicalDigest(binding.workflow.inputs) !== canonicalDigest(input.definition.execution.workflow.inputs) || binding.formatDefinition.id !== input.definition.id || binding.formatDefinition.revision !== input.definition.revision) throw new ContentWorkflowRuntimeError("CONTENT_WORKFLOW_REVISION_MISMATCH");
     assertContentModelPolicy({ definition: input.definition, intent: input.intent, descriptor: input.descriptor, policy: { schema: "content-model-policy/v1", id: binding.modelPolicy.id, revision: binding.modelPolicy.revision, format: input.definition.format, region: binding.modelPolicy.region as "replicate-us", defaultModel: binding.modelPolicy.defaultModel as ContentModelPolicy["defaultModel"], compatibleModels: binding.modelPolicy.compatibleModels as ContentModelPolicy["compatibleModels"], overrides: { mode: binding.modelPolicy.overrideMode, allowedFields: ["model"], requireRequote: true }, digest: binding.modelPolicy.digest } });
     await this.runtime.ensureRevision({ workspaceId: input.workspaceId, definition: input.definition });
+    const evidenceByAssetId = new Map(input.intent.rights.evidence.map((evidence) => [evidence.sourceAssetId, evidence]));
+    const orderedInputArtifacts = binding.inputArtifactIds.map((artifactId) => ({ artifactId, digest: evidenceByAssetId.get(artifactId)?.sourceDigest ?? null }));
+    if (orderedInputArtifacts.some((reference) => !reference.digest)) throw new ContentWorkflowRuntimeError("CONTENT_WORKFLOW_INPUT_MISMATCH");
     const request = canonicalJson({
       schema: "content-workflow-generation-request/v1", workspaceId: input.workspaceId,
       userId: input.userId, role: input.role, planTier: input.planTier, intentId: input.intent.id,
       contentPiece: binding.contentPiece, formatDefinition: binding.formatDefinition, workflow: binding.workflow,
       modelPolicy: binding.modelPolicy, selectedModel: input.intent.selectedModel, contentExecutionDigest: binding.digest,
       workflowInputs: binding.workflowInputs,
-      prompt: input.prompt, sourceAssetIds: input.sourceAssetIds, orderedInputArtifactIds: binding.inputArtifactIds,
+      prompt: input.prompt, sourceAssetIds: input.sourceAssetIds, orderedInputArtifactIds: binding.inputArtifactIds, orderedInputArtifacts,
       providerInputArtifactIds: binding.providerInputArtifactIds, idempotencyKey: `${input.idempotencyKey}:provider`,
     });
     const encode = (value: unknown) => typeof value === "string" ? value : canonicalJson(value);
@@ -70,6 +76,7 @@ export class ContentGenerationWorkflowService {
       workspaceId: input.workspaceId, workflowId: binding.workflow.id, revisionId: binding.workflow.revisionId,
       inputs: typedInputs, idempotencyKey: `${input.idempotencyKey}:workflow`,
       servicePrincipalId: input.servicePrincipalId, serviceKeyId: input.serviceKeyId,
+      authorizedStudioAssetIds: input.authorizedStudioAssetIds,
     });
     await this.runtime.bind({
       workspaceId: input.workspaceId, intent: input.intent, run: accepted.run, initiatedByUserId: input.userId,

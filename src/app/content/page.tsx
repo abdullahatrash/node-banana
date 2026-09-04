@@ -18,13 +18,11 @@ export default async function ContentPage({ searchParams }: { searchParams: Prom
   const t = await getTranslations("product.content");
   if (!workspaceId) return null;
 
-  const [rows, options] = await Promise.all([
-    listProductRecords({ workspaceId, kinds: ["content_piece"] }),
-    loadContentEditorOptions(workspaceId),
-  ]);
+  const rows = await listProductRecords({ workspaceId, kinds: ["content_piece"] });
   const pieces = rows.map(({ id, title, revision, payload }) => ({ id, title, revision, payload }));
   const selectedPiece = pieces.find((piece) => piece.id === query.piece) ?? null;
   const selectedPayload = selectedPiece ? contentPieceSchema.parse(selectedPiece.payload) : null;
+  const options = await loadContentEditorOptions(workspaceId, new Date(), selectedPayload ? { mediaSetRevisionRefs: selectedPayload.mediaSetRevisionRefs, themeRevisionRefs: selectedPayload.themeRevisionRefs } : undefined);
   const selectedFormat = selectedPayload?.format ?? requestedFormat;
   const resolvedDefinition = selectedPayload?.formatDefinition
     ? await resolveContentFormatDefinitionReference(selectedFormat, selectedPayload.formatDefinition)

@@ -93,26 +93,26 @@ describePostgres("Content Model Policy existing-tenant upgrade", () => {
     if (migrationsFolder) await rm(migrationsFolder, { recursive: true, force: true });
   }, 30_000);
 
-  it("promotes v4 admission over immutable v3 evidence and records one append-only supersession", async () => {
+  it("keeps v4 current until first v5 admission, then records one immutable v4-to-v5 supersession", async () => {
     const journal = JSON.parse(await readFile("drizzle/meta/_journal.json", "utf8")) as {
       version: string;
       dialect: string;
       entries: Array<{ idx: number }>;
     };
     const migrationFiles = (await readdir("drizzle")).filter((name) => /^\d{4}_.+\.sql$/.test(name));
-    for (const name of migrationFiles.filter((name) => Number(name.slice(0, 4)) <= 107)) {
+    for (const name of migrationFiles.filter((name) => Number(name.slice(0, 4)) <= 109)) {
       await copyFile(join("drizzle", name), join(migrationsFolder, name));
     }
     await writeFile(join(migrationsFolder, "meta/_journal.json"), JSON.stringify({
       ...journal,
-      entries: journal.entries.filter(({ idx }) => idx <= 107),
+      entries: journal.entries.filter(({ idx }) => idx <= 109),
     }));
     await migrate(drizzle(databasePool), { migrationsFolder });
 
     const suffix = randomUUID().replaceAll("-", "");
     const userId = `user_policy_upgrade_${suffix}`;
     const workspaceId = `workspace_policy_upgrade_${suffix}`;
-    const v3 = policy("content.slideshow.v3", 3);
+    const v4 = policy("content.slideshow.v4", 4);
     await databasePool.query(
       `insert into "user" ("id","email") values ($1,$2)`,
       [userId, `${suffix}@policy-upgrade.test`],
@@ -123,38 +123,30 @@ describePostgres("Content Model Policy existing-tenant upgrade", () => {
     );
     await databasePool.query(
       `insert into "content_model_policy_revisions" ("workspace_id","id","revision","format","status","policy","policy_digest","created_at") values ($1,$2,$3,$4,'active',$5::jsonb,$6,$7)`,
-      [workspaceId, v3.id, v3.revision, v3.format, JSON.stringify(v3), v3.digest, new Date("2026-09-04T06:00:00Z")],
+      [workspaceId, v4.id, v4.revision, v4.format, JSON.stringify(v4), v4.digest, new Date("2026-09-04T09:00:00Z")],
     );
-
-    for (const name of migrationFiles.filter((name) => Number(name.slice(0, 4)) >= 108 && Number(name.slice(0, 4)) <= 109)) {
-      await copyFile(join("drizzle", name), join(migrationsFolder, name));
-    }
-    await writeFile(join(migrationsFolder, "meta/_journal.json"), JSON.stringify({
-      ...journal,
-      entries: journal.entries.filter(({ idx }) => idx <= 109),
-    }));
-    await migrate(drizzle(databasePool), { migrationsFolder });
 
     const db = drizzle(databasePool, { schema: { ...coreSchema, ...modelRoutingSchema } }) as unknown as ReturnType<typeof getDb>;
     const before = await databasePool.query(`select "policy_id","policy_revision" from "content_model_policy_currents" where "workspace_id"=$1 and "format"='slideshow'`, [workspaceId]);
-    expect(before.rows).toEqual([{ policy_id: v3.id, policy_revision: 3 }]);
+    expect(before.rows).toEqual([{ policy_id: v4.id, policy_revision: 4 }]);
 
-    const v4 = policy("content.slideshow.v4", 4);
-    await expect(persistCurrentContentModelPolicy(db, workspaceId, v4, new Date("2026-09-04T09:00:00Z"))).resolves.toBe(true);
-    await expect(persistCurrentContentModelPolicy(db, workspaceId, v4, new Date("2026-09-04T09:00:00Z"))).resolves.toBe(true);
-    await expect(persistCurrentContentModelPolicy(db, workspaceId, v3)).resolves.toBe(false);
+    const v5 = policy("content.slideshow.v5", 5);
+    await expect(persistCurrentContentModelPolicy(db, workspaceId, { ...v5, digest: `sha256:${"0".repeat(64)}` })).resolves.toBe(false);
+    await expect(persistCurrentContentModelPolicy(db, workspaceId, v5, new Date("2026-09-04T11:00:00Z"))).resolves.toBe(true);
+    await expect(persistCurrentContentModelPolicy(db, workspaceId, v5, new Date("2026-09-04T11:00:00Z"))).resolves.toBe(true);
+    await expect(persistCurrentContentModelPolicy(db, workspaceId, v4)).resolves.toBe(false);
 
     const evidence = await databasePool.query(`select "id","revision","policy_digest" from "content_model_policy_revisions" where "workspace_id"=$1 and "format"='slideshow' order by "revision"`, [workspaceId]);
     expect(evidence.rows).toEqual([
-      { id: v3.id, revision: 3, policy_digest: v3.digest },
       { id: v4.id, revision: 4, policy_digest: v4.digest },
+      { id: v5.id, revision: 5, policy_digest: v5.digest },
     ]);
     const currentPolicy = await databasePool.query(`select "policy_id","policy_revision","policy_digest" from "content_model_policy_currents" where "workspace_id"=$1 and "format"='slideshow'`, [workspaceId]);
-    expect(currentPolicy.rows).toEqual([{ policy_id: v4.id, policy_revision: 4, policy_digest: v4.digest }]);
+    expect(currentPolicy.rows).toEqual([{ policy_id: v5.id, policy_revision: 5, policy_digest: v5.digest }]);
     const supersessions = await databasePool.query(`select "predecessor_policy_id","predecessor_policy_revision","successor_policy_id","successor_policy_revision" from "content_model_policy_supersessions" where "workspace_id"=$1`, [workspaceId]);
-    expect(supersessions.rows).toEqual([{ predecessor_policy_id: v3.id, predecessor_policy_revision: 3, successor_policy_id: v4.id, successor_policy_revision: 4 }]);
+    expect(supersessions.rows).toEqual([{ predecessor_policy_id: v4.id, predecessor_policy_revision: 4, successor_policy_id: v5.id, successor_policy_revision: 5 }]);
 
-    await expect(databasePool.query(`update "content_model_policy_revisions" set "status"='retired' where "workspace_id"=$1 and "id"=$2`, [workspaceId, v3.id])).rejects.toThrow(/immutable/);
+    await expect(databasePool.query(`update "content_model_policy_revisions" set "status"='retired' where "workspace_id"=$1 and "id"=$2`, [workspaceId, v4.id])).rejects.toThrow(/immutable/);
     await expect(databasePool.query(`delete from "content_model_policy_supersessions" where "workspace_id"=$1`, [workspaceId])).rejects.toThrow(/immutable/);
   }, 120_000);
 });

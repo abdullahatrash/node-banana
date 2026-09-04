@@ -19,7 +19,7 @@ import { ContentFormatRegistryError, resolveActiveContentFormatDefinition, resol
 import type { ContentFormatDefinition } from "./content-format-definition";
 import { buildQualifiedContentRenderProof, productionContentRenderProofVerifier } from "./content-render-proof";
 import { evaluatePersonaGate, type CreatorPersona, type CreatorPersonaEvidence } from "@/lib/creator-personas/types";
-import { mediaSetMembershipDigest } from "./content-execution-resources";
+import { mediaSetMembershipDigest, orderedContentAssetIds, resolveMediaSetRevision } from "./content-execution-resources";
 
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
 type ContentPiecePayload = ReturnType<typeof contentPieceSchema.parse>;
@@ -101,10 +101,22 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
     if (validationIssues.length) throw new Error(validationIssues[0]);
     const definition = await pinnedContentDefinition(payload);
     if (!definition) throw new Error("CONTENT_FORMAT_DEFINITION_STALE");
-    const sourceRowsUnordered = payload.sourceAssetIds.length ? await tx.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, payload.sourceAssetIds), isNull(assets.deletedAt))) : [];
-    const sourceById = new Map(sourceRowsUnordered.map((row) => [row.id, row]));
+    const mediaSetIds = [...new Set(payload.mediaSetRevisionRefs.map((reference) => reference.mediaSetId))];
+    const [activeMediaSets, mediaSetSnapshots] = await Promise.all([
+      mediaSetIds.length ? tx.select({ id: workspaceProductRecords.id }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.kind, "media_set"), inArray(workspaceProductRecords.id, mediaSetIds), eq(workspaceProductRecords.state, "active"), isNull(workspaceProductRecords.archivedAt))) : [],
+      mediaSetIds.length ? tx.select().from(workspaceProductRecordRevisions).where(and(eq(workspaceProductRecordRevisions.workspaceId, input.workspaceId), inArray(workspaceProductRecordRevisions.recordId, mediaSetIds))) : [],
+    ]);
+    const activeMediaSetIds = new Set(activeMediaSets.map((row) => row.id));
+    const mediaSetSnapshotByKey = new Map(mediaSetSnapshots.map((row) => [`${row.recordId}:${row.revision}`, row]));
+    const resolvedMediaSets = payload.mediaSetRevisionRefs.map((reference) => resolveMediaSetRevision({ workspaceId: input.workspaceId, reference: { ...reference, digest: reference.digest as `sha256:${string}` }, snapshot: activeMediaSetIds.has(reference.mediaSetId) ? mediaSetSnapshotByKey.get(`${reference.mediaSetId}:${reference.revision}`) ?? null : null }));
+    const boundAssetIds = orderedContentAssetIds(payload.sourceAssetIds, resolvedMediaSets);
+    const boundRowsUnordered = boundAssetIds.length ? await tx.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, boundAssetIds), isNull(assets.deletedAt))) : [];
+    const sourceById = new Map(boundRowsUnordered.map((row) => [row.id, row]));
+    const boundRows = boundAssetIds.map((id) => sourceById.get(id)).filter((row): row is typeof assets.$inferSelect => Boolean(row));
+    if (boundRows.length !== boundAssetIds.length) throw new Error("CONTENT_RESOURCE_ASSET_NOT_READY");
     const sourceRows = payload.sourceAssetIds.map((id) => sourceById.get(id)).filter((row): row is typeof assets.$inferSelect => Boolean(row));
     const sourceAssets = sourceRows.map(assetEvidence);
+    const boundAssets = boundRows.map(assetEvidence);
     let personaState: string | null = null;
     if (payload.personaId) {
       const [persona] = await tx.select({ state: workspaceProductRecords.state }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, payload.personaId), eq(workspaceProductRecords.kind, "creator_persona"), isNull(workspaceProductRecords.archivedAt))).limit(1);
@@ -135,14 +147,14 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
       const operationMetadata = operation?.metadata && typeof operation.metadata === "object" && !Array.isArray(operation.metadata) ? operation.metadata : {};
       if (!artifactRow) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
       const binding = intentRow?.intent.contentExecution;
-      const expectedProviderInputs = contentProviderSourceIds(payload.format, sourceAssets, definition);
+      const expectedProviderInputs = contentProviderSourceIds(payload.format, sourceAssets, definition, boundAssets);
       if (!binding || binding.contentPiece.id !== record.id || binding.contentPiece.revision !== record.revision || binding.contentPiece.digest !== canonicalDigest(payload) || binding.formatDefinition.id !== payload.formatDefinition?.id || binding.formatDefinition.revision !== payload.formatDefinition?.revision || binding.formatDefinition.digest !== payload.formatDefinition?.digest || binding.workflow.id !== definition.execution.workflow?.id || binding.workflow.revisionId !== definition.execution.workflow?.revisionId || binding.modelPolicy.id !== definition.execution.modelPolicy?.id || binding.modelPolicy.revision !== definition.execution.modelPolicy?.revision || binding.inputArtifactIds.some((id, index) => id !== intentRow?.intent.rights.sourceAssetIds[index]) || binding.inputArtifactIds.length !== intentRow?.intent.rights.sourceAssetIds.length || binding.providerInputArtifactIds.some((id, index) => id !== expectedProviderInputs[index]) || binding.providerInputArtifactIds.length !== expectedProviderInputs.length) throw new Error("CONTENT_EXECUTION_RECIPE_MISMATCH");
       const dispatchReceiptArtifactId = workflowBinding?.finalSnapshot?.outputs.receipt?.artifactId;
       if (!workflowBinding || workflowBinding.runState !== "completed" || workflowBinding.binding.contentPieceId !== record.id || workflowBinding.binding.contentPieceRevision !== record.revision || workflowBinding.binding.recipeDigest !== binding.digest || !dispatchReceiptArtifactId) throw new Error("CONTENT_WORKFLOW_LINEAGE_INVALID");
       if (!workflowBinding.binding.dispatchReceiptArtifactId) await tx.update(contentWorkflowGenerationRuns).set({ dispatchReceiptArtifactId, updatedAt: now }).where(and(eq(contentWorkflowGenerationRuns.workspaceId, input.workspaceId), eq(contentWorkflowGenerationRuns.generationIntentId, input.generation.intentId)));
       artifact = assetEvidence(artifactRow);
       proofAssetRow = artifactRow;
-      if (!isAdmittedContentArtifact({ format: payload.format, definition, sourceAssets, personaState, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest, width: receipt.width, height: receipt.height, durationSeconds: receipt.durationSeconds } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifact })) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
+      if (!isAdmittedContentArtifact({ format: payload.format, definition, sourceAssets, inputAssets: boundAssets, personaState, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest, width: receipt.width, height: receipt.height, durationSeconds: receipt.durationSeconds } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifact })) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
       contentDigest = receipt!.contentDigest!;
       intentId = input.generation.intentId;
       operationId = input.generation.operationId;
@@ -158,7 +170,7 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
     const renderProof = buildQualifiedContentRenderProof({
       definition,
       definitionDigest: payload.formatDefinition.digest as `sha256:${string}`,
-      inputAssets: sourceAssets.map((asset) => ({ assetId: asset.id, type: asset.type as "image" | "video", contentDigest: asset.checksum as `sha256:${string}` })),
+      inputAssets: boundAssets.map((asset) => ({ assetId: asset.id, type: asset.type as "image" | "video", contentDigest: asset.checksum as `sha256:${string}` })),
       output: { assetId: artifact.id, contentDigest: contentDigest as `sha256:${string}` },
       intentId,
       operationId,

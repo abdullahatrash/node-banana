@@ -27,6 +27,7 @@ export function classifyContentLanguage(value: string): ContentLanguage {
 
 export interface StudioGenerationRequest {
   prompt: string; model: ExactModelRef; mode: "photo" | "video" | "copy"; sourceMediaType: "image" | "video" | null; sourceAssetIds: string[]; quantity: number;
+  capability?: GenerationCapability;
   fundingMode: "byok" | "managed";
   personaId?: string | null;
   contentExecution?: { contentPieceId: string; contentPieceRevision: number } | null;
@@ -39,11 +40,15 @@ export interface StudioGenerationRequest {
 
 export class StudioGenerationError extends Error { constructor(readonly code: string, readonly nextActionCode: string | null = null) { super(code); } }
 
+export function resolveStudioGenerationCapability(input: Pick<StudioGenerationRequest, "capability" | "mode" | "sourceAssetIds" | "sourceMediaType">): GenerationCapability {
+  return input.capability ?? (input.mode === "copy" ? "text_generation" : input.mode === "video" ? (input.sourceAssetIds.length ? input.sourceMediaType === "video" ? "video_to_video" : "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image"));
+}
+
 async function errorFrom(response: Response) { const parsed = errorSchema.safeParse(await response.json().catch(() => null)); return new StudioGenerationError(parsed.success ? parsed.data.code ?? "GENERATION_ADMISSION_FAILED" : "GENERATION_ADMISSION_FAILED", parsed.success ? parsed.data.nextActions?.[0]?.code ?? null : null); }
 
 export async function runAdmittedStudioGeneration(input: StudioGenerationRequest): Promise<{ result: string; assetId: string | null; textOutputId: string | null; intentId: string; operationId: string }> {
   const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new StudioGenerationError("WORKSPACE_REQUIRED");
-  const capability: GenerationCapability = input.mode === "copy" ? "text_generation" : input.mode === "video" ? (input.sourceAssetIds.length ? input.sourceMediaType === "video" ? "video_to_video" : "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image");
+  const capability = resolveStudioGenerationCapability(input);
   const contentLanguage = input.contentLanguage ?? classifyContentLanguage(input.prompt);
   const admissionBody = (managedQuoteAcceptance: ManagedCreditQuoteAcceptance | null) => ({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief, fundingMode: input.fundingMode, personaId: input.personaId ?? null, contentExecution: input.contentExecution ?? null, managedQuoteAcceptance });
   // Admission intentionally ignores the UI abort signal: it cannot spend, and

@@ -23,7 +23,7 @@ export const CONTENT_WORKFLOW_OPERATION_REGISTRY_DIGEST = canonicalDigest({
 export function resolvedContentWorkflowDefinition(definition: ContentFormatDefinition): ResolvedWorkflowDefinition {
   const workflow = definition.execution.workflow;
   if (!workflow || definition.execution.strategy !== "admitted_generation") throw new ContentWorkflowRuntimeError("CONTENT_CANONICAL_IMPORT_REQUIRED");
-  const dispatch = contentGenerationDispatchOperation(workflow.operation);
+  const dispatch = contentGenerationDispatchOperation(workflow.operation, workflow.inputs);
   if (!dispatch) throw new ContentWorkflowRuntimeError("CONTENT_WORKFLOW_OPERATION_UNAVAILABLE");
   const declaredInputs = Object.fromEntries(workflow.inputs.map((name) => [name, { kind: "text" as const, required: true }]));
   return {

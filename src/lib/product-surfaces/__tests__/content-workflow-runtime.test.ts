@@ -26,7 +26,7 @@ function fixture(format: Exclude<(typeof CONTENT_FORMATS)[number], "custom_uploa
   const intent = {
     id: `intent_${format}`, workspaceId: "workspace_1", createdByUserId: "user_1", promptDigest: canonicalDigest(prompt),
     selectedModel: modelRef, capability, contentLanguage: "ar", arabicVariety: "gulf",
-    outputContract: { mediaType: "video", aspectRatio: "9:16" }, quote: { quantity: 5 }, rights: { sourceAssetIds },
+    outputContract: { mediaType: "video", aspectRatio: "9:16" }, quote: { quantity: 5 }, rights: { sourceAssetIds, evidence: sourceAssetIds.map((sourceAssetId) => ({ sourceAssetId, sourceDigest: `sha256:${"e".repeat(64)}` })) },
     contentExecution: { ...unsigned, digest: canonicalDigest(unsigned) }, regionAdmission: { region: "replicate-us" },
   } as unknown as GenerationIntent;
   const descriptor = {
@@ -54,12 +54,14 @@ describe("pinned Content Workflow execution", () => {
     for (const format of generated) {
       const value = fixture(format);
       const port = runtime();
-      await new ContentGenerationWorkflowService(port).start({ workspaceId: "workspace_1", userId: "user_1", authContextId: "auth_1", role: "owner", planTier: "pro", ...value, idempotencyKey: `execute-${format}`, servicePrincipalId: "agent_content", serviceKeyId: "key_content" });
+      await new ContentGenerationWorkflowService(port).start({ workspaceId: "workspace_1", userId: "user_1", authContextId: "auth_1", role: "owner", planTier: "pro", ...value, idempotencyKey: `execute-${format}`, servicePrincipalId: "agent_content", serviceKeyId: "key_content", authorizedStudioAssetIds: value.sourceAssetIds });
       expect(port.start).toHaveBeenCalledOnce();
       const call = vi.mocked(port.start).mock.calls[0]![0];
       expect([call.workflowId, call.revisionId]).toEqual([value.definition.execution.workflow!.id, value.definition.execution.workflow!.revisionId]);
       const request = JSON.parse(call.inputs.recipe as string);
       expect(request.orderedInputArtifactIds).toEqual(value.sourceAssetIds);
+      expect(request.orderedInputArtifacts).toEqual(value.sourceAssetIds.map((artifactId) => ({ artifactId, digest: `sha256:${"e".repeat(64)}` })));
+      expect(call.authorizedStudioAssetIds).toEqual(value.sourceAssetIds);
       expect(request.selectedModel).toEqual(modelRef);
       expect(request.modelPolicy).toEqual(value.intent.contentExecution!.modelPolicy);
       expect(Object.keys(call.inputs).sort()).toEqual([...value.definition.execution.workflow!.inputs].sort());
@@ -71,13 +73,19 @@ describe("pinned Content Workflow execution", () => {
     expect(workflowSignatures.size).toBe(11);
   });
 
+  it("fails before dispatch when service authority omits or reorders a bound Studio artifact", async () => {
+    const value = fixture("slideshow"); const port = runtime();
+    await expect(new ContentGenerationWorkflowService(port).start({ workspaceId: "workspace_1", userId: "user_1", authContextId: "auth_1", role: "owner", planTier: "pro", ...value, idempotencyKey: "execute-bad-authority", servicePrincipalId: "agent", serviceKeyId: "key", authorizedStudioAssetIds: value.sourceAssetIds.slice(1) })).rejects.toMatchObject({ code: "CONTENT_WORKFLOW_ARTIFACT_AUTHORITY_MISMATCH" });
+    expect(port.ensureRevision).not.toHaveBeenCalled(); expect(port.start).not.toHaveBeenCalled();
+  });
+
   it("keeps Custom on canonical import and rejects a model outside the exact policy", async () => {
     const generated = fixture("slideshow");
     const port = runtime();
     const incompatible = { ...generated.descriptor, model: "other/model" };
-    await expect(new ContentGenerationWorkflowService(port).start({ workspaceId: "workspace_1", userId: "user_1", authContextId: "auth_1", role: "owner", planTier: "pro", ...generated, descriptor: incompatible, idempotencyKey: "execute-slideshow", servicePrincipalId: "agent", serviceKeyId: "key" })).rejects.toMatchObject({ code: "CONTENT_MODEL_POLICY_MODEL_NOT_QUALIFIED" });
+    await expect(new ContentGenerationWorkflowService(port).start({ workspaceId: "workspace_1", userId: "user_1", authContextId: "auth_1", role: "owner", planTier: "pro", ...generated, descriptor: incompatible, idempotencyKey: "execute-slideshow", servicePrincipalId: "agent", serviceKeyId: "key", authorizedStudioAssetIds: generated.sourceAssetIds })).rejects.toMatchObject({ code: "CONTENT_MODEL_POLICY_MODEL_NOT_QUALIFIED" });
     const custom = CONTENT_FORMAT_DEFINITIONS.custom_upload;
-    await expect(new ContentGenerationWorkflowService(port).start({ workspaceId: "workspace_1", userId: "user_1", authContextId: "auth_1", role: "owner", planTier: "pro", intent: generated.intent, definition: custom, descriptor: generated.descriptor, prompt: generated.prompt, sourceAssetIds: generated.sourceAssetIds, idempotencyKey: "execute-custom", servicePrincipalId: "agent", serviceKeyId: "key" })).rejects.toBeInstanceOf(ContentWorkflowRuntimeError);
+    await expect(new ContentGenerationWorkflowService(port).start({ workspaceId: "workspace_1", userId: "user_1", authContextId: "auth_1", role: "owner", planTier: "pro", intent: generated.intent, definition: custom, descriptor: generated.descriptor, prompt: generated.prompt, sourceAssetIds: generated.sourceAssetIds, idempotencyKey: "execute-custom", servicePrincipalId: "agent", serviceKeyId: "key", authorizedStudioAssetIds: generated.sourceAssetIds })).rejects.toBeInstanceOf(ContentWorkflowRuntimeError);
     expect(port.start).not.toHaveBeenCalled();
   });
 });

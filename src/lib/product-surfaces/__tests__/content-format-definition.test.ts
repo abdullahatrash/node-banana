@@ -14,7 +14,7 @@ describe("versioned Content Format Definitions", () => {
     expect(definition).toMatchObject({
       schema: "content-format-definition/v1",
       format,
-      revision: 4,
+      revision: 5,
       status: "active",
       languages: { unsupportedFallback: "block" },
       layout: { aspectRatios: ["9:16"], approximatePreview: true },
@@ -23,7 +23,7 @@ describe("versioned Content Format Definitions", () => {
       editorHandoff: { enabled: true, requiresPassedRenderProof: true },
     });
     if (format === "custom_upload") expect(definition.execution).toMatchObject({ strategy: "canonical_upload", workflow: null, modelPolicy: null });
-    else expect(definition.execution).toMatchObject({ strategy: "admitted_generation", workflow: { revisionId: "builtin-2026-09-04-4", operation: `runtime.dispatch_content_${format}@1` }, modelPolicy: { revision: 4, qualifiedModelsOnly: true } });
+    else expect(definition.execution).toMatchObject({ strategy: "admitted_generation", workflow: { revisionId: "builtin-2026-09-04-5", operation: `runtime.dispatch_content_${format}@2` }, modelPolicy: { revision: 5, qualifiedModelsOnly: true } });
   });
 
   it("keeps format-specific controls and provider inputs in the definition", () => {

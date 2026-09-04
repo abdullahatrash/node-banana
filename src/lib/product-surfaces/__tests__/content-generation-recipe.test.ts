@@ -65,7 +65,17 @@ describe("Content generation recipes", () => {
       resources: { mediaSets: [{ mediaSetId: "set_1", revision: 5, digest: mediaDigest, orderedAssetIds: ["asset_set_2", "asset_set_1"] }], themes: [{ themeId: "theme_1", revision: 3, digest: themeDigest, document: themeDocument, licenseEvidenceIds: ["license_1"] }], orderedAssetIds: [...payload.sourceAssetIds, "asset_set_2", "asset_set_1"] },
     });
     expect(recipe.inputArtifactIds).toEqual([...payload.sourceAssetIds, "asset_set_2", "asset_set_1"]);
+    expect(recipe.providerInputArtifactIds).toEqual([...payload.sourceAssetIds, "asset_set_2", "asset_set_1"]);
     expect(recipe.workflowInputs.mediaSetRevisions[0]).toMatchObject({ digest: mediaDigest, orderedAssetIds: ["asset_set_2", "asset_set_1"] });
     expect(recipe.workflowInputs.themeInstructions[0]).toMatchObject({ digest: themeDigest, visual: themeDocument.visual, captions: themeDocument.captions, licenseEvidenceIds: ["license_1"] });
+  });
+
+  it("retains talking-head Media Set lineage without changing its text-to-video provider contract", () => {
+    const { definition, payload, modelPolicy } = fixture("talking_head_ugc");
+    const mediaDigest = mediaSetMembershipDigest({ mediaSetId: "set_1", revision: 2, orderedAssetIds: ["reference_2", "reference_1"] });
+    const recipe = buildContentGenerationRecipe({ contentPieceId: "piece_talking", contentPieceRevision: 3, contentPiecePayload: { ...payload, mediaSetIds: ["set_1"], mediaSetRevisionRefs: [{ mediaSetId: "set_1", revision: 2, digest: mediaDigest }] }, definition, definitionDigest, sourceTypes: new Map([["reference_2", "image"], ["reference_1", "image"]]), modelPolicy, resources: { mediaSets: [{ mediaSetId: "set_1", revision: 2, digest: mediaDigest, orderedAssetIds: ["reference_2", "reference_1"] }], themes: [], orderedAssetIds: ["reference_2", "reference_1"] } });
+    expect(recipe.inputArtifactIds).toEqual(["reference_2", "reference_1"]);
+    expect(recipe.providerInputArtifactIds).toEqual([]);
+    expect(definition.execution.capability).toBe("text_to_video");
   });
 });

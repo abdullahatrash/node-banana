@@ -60,11 +60,15 @@ export function contentExecutionPlan(format: ContentFormat, definition: ContentF
   };
 }
 
-export function contentProviderSourceIds(format: ContentFormat, sources: Array<{ id: string; type: string }>, definition?: ContentFormatDefinition): string[] {
+export function contentProviderSourceIds(format: ContentFormat, sources: Array<{ id: string; type: string }>, definition?: ContentFormatDefinition, retainedSources: Array<{ id: string; type: string }> = sources): string[] {
   const resolved = definition ?? CONTENT_FORMAT_DEFINITIONS[format];
   const assignment = contentSourceSlotAssignment(resolved, sources);
   if (!assignment) return [];
-  return sources.filter((_source, index) => resolved.sourceSlots[assignment[index]!]!.providerInputIndex !== null).map((source) => source.id);
+  const direct = sources.filter((_source, index) => resolved.sourceSlots[assignment[index]!]!.providerInputIndex !== null);
+  if (resolved.execution.capability !== "image_to_video" || !resolved.controls.includes("media_sets")) return direct.map((source) => source.id);
+  const maximum = resolved.sourceSlots.filter((slot) => slot.providerInputIndex !== null && slot.type === "image").reduce((sum, slot) => sum + slot.maximum, 0);
+  const eligible = retainedSources.filter((source) => source.type === "image");
+  return eligible.length <= maximum ? eligible.map((source) => source.id) : [];
 }
 
 export function validateContentExecutionInput(input: {

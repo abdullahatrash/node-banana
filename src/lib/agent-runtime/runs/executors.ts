@@ -130,7 +130,7 @@ class ContentGenerationDispatchExecutor implements WorkflowStepExecutor {
     let request: { workspaceId: string; userId: string; role: string; planTier: string; intentId: string; prompt: string; sourceAssetIds: string[]; idempotencyKey: string; workflowInputs: Record<string, unknown> };
     try { request = JSON.parse(raw) as typeof request; }
     catch { return { kind: "failed_known", failureCode: "CONTENT_DISPATCH_REQUEST_INVALID", retryable: false, providerOperationRef: null }; }
-    const expectedOperation = `runtime.${this.providerOperation}@1`;
+    const expectedOperation = this.operationIdentity;
     const declared = Object.keys(input.step.inputs).filter((name) => name !== "guard" && name !== "recipe");
     const typedInputsMatch = request.workflowInputs && declared.every((name) => input.inputs[name]?.textContent === (typeof request.workflowInputs[name] === "string" ? request.workflowInputs[name] : canonicalJson(request.workflowInputs[name] ?? null)));
     if (request.workspaceId !== input.workspaceId || input.step.operation.identity !== expectedOperation || !request.intentId || !request.userId || !Array.isArray(request.sourceAssetIds) || !typedInputsMatch) return { kind: "failed_known", failureCode: "CONTENT_DISPATCH_REQUEST_INVALID", retryable: false, providerOperationRef: null };

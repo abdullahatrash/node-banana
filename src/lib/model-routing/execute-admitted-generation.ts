@@ -48,7 +48,9 @@ export function contentWorkflowRequestFromRun(input: {
   const expectedInputs = [...binding.workflow.inputs].sort();
   const actualInputs = run.startSnapshot.inputs.map((candidate) => candidate.name).sort();
   const declaredInputs = Object.keys(run.startSnapshot.definition.inputs).sort();
-  if (canonicalDigest(actualInputs) !== canonicalDigest(expectedInputs) || canonicalDigest(declaredInputs) !== canonicalDigest(expectedInputs) || run.startSnapshot.inputs.some((candidate) => candidate.kind !== "text")) return null;
+  const dispatchStep = run.startSnapshot.definition.steps.find((step) => step.id.startsWith("dispatch_"));
+  const dispatchContract = run.startSnapshot.operationContracts.find((contract) => contract.stepId === dispatchStep?.id);
+  if (canonicalDigest(actualInputs) !== canonicalDigest(expectedInputs) || canonicalDigest(declaredInputs) !== canonicalDigest(expectedInputs) || run.startSnapshot.inputs.some((candidate) => candidate.kind !== "text") || run.startSnapshot.artifactReferences.length !== 0 || dispatchStep?.operation.identity !== binding.workflow.operation || dispatchContract?.identity !== binding.workflow.operation || dispatchContract.contractDigest !== dispatchStep.operation.contractDigest) return null;
   const recipeInputs = run.startSnapshot.inputs.filter((candidate) => candidate.name === "recipe" && candidate.kind === "text");
   if (recipeInputs.length !== 1 || typeof recipeInputs[0]?.value !== "string") return null;
   let request: Record<string, unknown>;
@@ -58,7 +60,10 @@ export function contentWorkflowRequestFromRun(input: {
     request = parsed as Record<string, unknown>;
   } catch { return null; }
   if (request.schema !== "content-workflow-generation-request/v1" || request.workspaceId !== input.workspaceId || request.userId !== input.userId || request.intentId !== input.intent.id || request.contentExecutionDigest !== binding.digest || request.prompt !== input.prompt) return null;
-  if (canonicalDigest(request.sourceAssetIds) !== canonicalDigest(input.sourceAssetIds) || canonicalDigest(request.workflow) !== canonicalDigest(binding.workflow) || canonicalDigest(request.modelPolicy) !== canonicalDigest(binding.modelPolicy) || canonicalDigest(request.workflowInputs) !== canonicalDigest(binding.workflowInputs) || canonicalDigest(request.orderedInputArtifactIds) !== canonicalDigest(binding.inputArtifactIds) || canonicalDigest(request.providerInputArtifactIds) !== canonicalDigest(binding.providerInputArtifactIds) || canonicalDigest(request.selectedModel) !== canonicalDigest(input.intent.selectedModel)) return null;
+  const evidenceByAssetId = new Map(input.intent.rights.evidence.map((evidence) => [evidence.sourceAssetId, evidence.sourceDigest]));
+  const expectedArtifactReferences = binding.inputArtifactIds.map((artifactId) => ({ artifactId, digest: evidenceByAssetId.get(artifactId) ?? null }));
+  const artifactReferencesMatch = binding.formatDefinition.revision < 5 || (!expectedArtifactReferences.some((reference) => !reference.digest) && canonicalDigest(request.orderedInputArtifacts) === canonicalDigest(expectedArtifactReferences));
+  if (!artifactReferencesMatch || canonicalDigest(request.sourceAssetIds) !== canonicalDigest(input.sourceAssetIds) || canonicalDigest(request.workflow) !== canonicalDigest(binding.workflow) || canonicalDigest(request.modelPolicy) !== canonicalDigest(binding.modelPolicy) || canonicalDigest(request.workflowInputs) !== canonicalDigest(binding.workflowInputs) || canonicalDigest(request.orderedInputArtifactIds) !== canonicalDigest(binding.inputArtifactIds) || canonicalDigest(request.providerInputArtifactIds) !== canonicalDigest(binding.providerInputArtifactIds) || canonicalDigest(request.selectedModel) !== canonicalDigest(input.intent.selectedModel)) return null;
   return request;
 }
 
@@ -118,7 +123,11 @@ export async function executeAdmittedGeneration(input: {
       const payload = contentPieceSchema.parse(contentSnapshot?.payload);
       if (canonicalDigest(payload) !== intent.contentExecution.contentPiece.digest) return rejected(409, "CONTENT_EXECUTION_RECIPE_MISMATCH");
       const resources = await loadContentExecutionResources(input.workspaceId, payload);
-      if (canonicalDigest(resources.orderedAssetIds) !== canonicalDigest(intent.contentExecution.inputArtifactIds) || canonicalDigest(resources.mediaSets) !== canonicalDigest(intent.contentExecution.workflowInputs.mediaSetRevisions) || canonicalDigest(resources.themes.map((theme) => ({ themeId: theme.themeId, revision: theme.revision, digest: theme.digest, visual: theme.document.visual, captions: theme.document.captions, licenseEvidenceIds: theme.licenseEvidenceIds }))) !== canonicalDigest(intent.contentExecution.workflowInputs.themeInstructions)) return rejected(409, "CONTENT_RESOURCE_BINDING_STALE");
+      const workflowInputs = intent.contentExecution.workflowInputs as unknown as Record<string, unknown>;
+      const resourceBindingMatches = intent.contentExecution.formatDefinition.revision < 4
+        ? canonicalDigest(payload.mediaSetIds) === canonicalDigest(workflowInputs.mediaSetIds ?? []) && canonicalDigest(payload.themeRevisionRefs) === canonicalDigest(workflowInputs.themeRevisionRefs ?? [])
+        : canonicalDigest(resources.mediaSets) === canonicalDigest(workflowInputs.mediaSetRevisions) && canonicalDigest(resources.themes.map((theme) => ({ themeId: theme.themeId, revision: theme.revision, digest: theme.digest, visual: theme.document.visual, captions: theme.document.captions, licenseEvidenceIds: theme.licenseEvidenceIds }))) === canonicalDigest(workflowInputs.themeInstructions);
+      if (canonicalDigest(resources.orderedAssetIds) !== canonicalDigest(intent.contentExecution.inputArtifactIds) || !resourceBindingMatches) return rejected(409, "CONTENT_RESOURCE_BINDING_STALE");
       const resolved = await resolveContentFormatDefinitionReference(intent.contentExecution.formatDefinition.id.slice("content-format:".length) as import("@/lib/product-surfaces/definitions").ContentFormat, intent.contentExecution.formatDefinition);
       if (!validateContentGenerationRecipe({ recipe: intent.contentExecution, definition: resolved.definition, capability: intent.capability, rightsSourceAssetIds: sourceIds, providerSourceAssetIds: intent.providerComposition.sourceAssetIds })) return rejected(409, "CONTENT_EXECUTION_RECIPE_MISMATCH");
       assertContentModelPolicy({ definition: resolved.definition, intent, descriptor });

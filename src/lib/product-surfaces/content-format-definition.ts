@@ -57,7 +57,7 @@ function define(format: ContentFormat, input: {
   return {
     schema: "content-format-definition/v1",
     id: `content-format:${format}`,
-    revision: 4,
+    revision: 5,
     format,
     status: "active",
     controls: input.controls,
@@ -70,8 +70,8 @@ function define(format: ContentFormat, input: {
     execution: {
       strategy: generated ? "admitted_generation" : "canonical_upload",
       capability: input.capability,
-      workflow: generated ? { id: `tasmeemai_content_${format}`, revisionId: "builtin-2026-09-04-4", operation: `runtime.dispatch_content_${format}@1`, inputs: workflowInputs } : null,
-      modelPolicy: generated ? { id: `content.${format}.v4`, revision: 4, qualifiedModelsOnly: true, advancedOverrides: "compatible_only" } : null,
+      workflow: generated ? { id: `tasmeemai_content_${format}`, revisionId: "builtin-2026-09-04-5", operation: `runtime.dispatch_content_${format}@2`, inputs: workflowInputs } : null,
+      modelPolicy: generated ? { id: `content.${format}.v5`, revision: 5, qualifiedModelsOnly: true, advancedOverrides: "compatible_only" } : null,
     },
     managedQuote: { required: generated, acceptance: "explicit_before_admission", maximumQuantity: 60 },
     renderProof: { required: true, schema: "content-render-proof/v2", verifies: ["fonts", "bidi", "captions", "timing", "safe_areas"] },

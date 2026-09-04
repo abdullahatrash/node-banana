@@ -28,6 +28,7 @@ export function isAdmittedContentArtifact(input: {
   format: ContentFormat;
   definition: ContentFormatDefinition;
   sourceAssets: ContentAssetEvidence[];
+  inputAssets?: ContentAssetEvidence[];
   personaState: string | null;
   generation: ContentGenerationReference;
   receipt: { assetId: string | null; intentId: string; status: string; contentDigest: string | null; width: number | null; height: number | null; durationSeconds: string | null } | null;
@@ -40,7 +41,8 @@ export function isAdmittedContentArtifact(input: {
   if (!validateContentExecutionInput({ format: input.format, definition: input.definition, sources: input.sourceAssets, personaState: input.personaState }).ok) return false;
   const assignment = contentSourceSlotAssignment(input.definition, input.sourceAssets);
   if (!assignment || input.sourceAssets.some((asset, index) => validateReadyPortraitAsset(asset, input.definition.sourceSlots[assignment[index]!]!.type) !== null)) return false;
-  const providerSourceIds = contentProviderSourceIds(input.format, input.sourceAssets, input.definition);
+  const inputAssets = input.inputAssets ?? input.sourceAssets;
+  const providerSourceIds = contentProviderSourceIds(input.format, input.sourceAssets, input.definition, inputAssets);
   const { generation, receipt, intent, operation, artifact } = input;
   return generation.operationId === generationOperationId(generation.intentId)
     && Boolean(receipt && receipt.status === "ready" && receipt.assetId === generation.assetId && receipt.intentId === generation.intentId && receipt.contentDigest)
@@ -48,7 +50,9 @@ export function isAdmittedContentArtifact(input: {
     && intent?.capability === plan.capability
     && intent.outputContract.mediaType === "video"
     && intent.outputContract.aspectRatio === "9:16"
-    && intent.contentExecution?.inputArtifactIds.length === intent.rights.sourceAssetIds.length
+    && intent.contentExecution?.inputArtifactIds.length === inputAssets.length
+    && intent.contentExecution.inputArtifactIds.every((id, index) => id === inputAssets[index]?.id)
+    && intent.contentExecution.inputArtifactIds.length === intent.rights.sourceAssetIds.length
     && intent.contentExecution.inputArtifactIds.every((id, index) => id === intent.rights.sourceAssetIds[index])
     && providerSourceIds.length === intent.contentExecution.providerInputArtifactIds.length
     && providerSourceIds.every((id, index) => id === intent.contentExecution?.providerInputArtifactIds[index])
