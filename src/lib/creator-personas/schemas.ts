@@ -66,6 +66,20 @@ export const addPersonaEvidenceSchema = z.object({
   if (new Date(value.expiresAt) <= new Date(value.effectiveAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "EVIDENCE_WINDOW_INVALID" });
 });
 
+export const recordPersonaConsentSchema = z.object({
+  action: z.literal("record_consent"),
+  expectedRevision: z.number().int().positive(),
+  subjectReference: id,
+  sourceAssetIds: z.array(id).min(1).max(100),
+  allowedPurposes: z.array(z.enum(["training", "generation", "content_set", "channel", "blitz"])).min(1),
+  geographies: z.array(z.string().trim().min(2).max(32)).min(1).max(100),
+  effectiveAt: date,
+  expiresAt: date,
+  idempotencyKey: id,
+}).superRefine((value, context) => {
+  if (new Date(value.expiresAt) <= new Date(value.effectiveAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "EVIDENCE_WINDOW_INVALID" });
+});
+
 export const attachPersonaSourcesSchema = z.object({
   action: z.literal("attach_sources"),
   expectedRevision: z.number().int().positive(),
@@ -114,7 +128,7 @@ export const bindPersonaUsageSchema = z.object({
 });
 
 export const personaCommandSchema = z.discriminatedUnion("action", [
-  addPersonaEvidenceSchema, attachPersonaSourcesSchema, requestPersonaTrainingSchema,
+  addPersonaEvidenceSchema, recordPersonaConsentSchema, attachPersonaSourcesSchema, requestPersonaTrainingSchema,
   activatePersonaSchema, suspendPersonaSchema,
   deletePersonaSchema, bindPersonaUsageSchema,
 ]);

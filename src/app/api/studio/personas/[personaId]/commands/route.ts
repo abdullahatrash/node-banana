@@ -13,7 +13,11 @@ export const POST = withStudioAuth<Context>({ route: "/api/studio/personas/[pers
   const { personaId } = await context.params;
   try {
     let result: Record<string, unknown>;
-    if (parsed.data.action === "add_evidence") {
+    if (parsed.data.action === "record_consent") {
+      if (!['owner', 'admin'].includes(authz.role)) return NextResponse.json({ success: false, code: "EVIDENCE_ISSUER_FORBIDDEN" }, { status: 403 });
+      const { action: _action, effectiveAt, expiresAt, ...command } = parsed.data;
+      result = await CREATOR_PERSONAS.recordConsent({ ...command, personaId, effectiveAt: new Date(effectiveAt), expiresAt: new Date(expiresAt), workspaceId: authz.workspaceId, userId: authz.userId });
+    } else if (parsed.data.action === "add_evidence") {
       const { action: _action, issuerSignature, effectiveAt, expiresAt, ...command } = parsed.data;
       if (command.issuer === "workspace_consent_officer") {
         if (!['owner', 'admin'].includes(authz.role) || command.scope.kind !== "likeness_consent") return NextResponse.json({ success: false, code: "EVIDENCE_ISSUER_FORBIDDEN" }, { status: 403 });

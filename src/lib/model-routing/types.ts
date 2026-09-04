@@ -6,6 +6,14 @@ export type ContentLanguage = "ar" | "en" | "mixed";
 export type ArabicVariety = "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other";
 
 export interface ExactModelRef { provider: "replicate" | "google" | "kie" | "openai" | "fal" | "wavespeed"; model: string; version: string; inputSchemaDigest: string; }
+export interface GenerationPersonaBinding {
+  personaId: string;
+  personaRevision: number;
+  purpose: "generation";
+  model: ExactModelRef & { provider: "replicate"; qualificationDigest: `sha256:${string}`; trainingJobId: string };
+  disclosure: string;
+  evidence: { consentEvidenceId: string | null; providerAcceptanceEvidenceId: string; disclosureEvidenceId: string; abuseReviewEvidenceId: string };
+}
 export interface CostQuote { currency: "USD"; amount: number; basis: "image" | "second" | "run"; quantity: number; quotedAt: Date; expiresAt: Date; }
 export interface ModelQualificationEvidence {
   id: string; revision: number; digest: `sha256:${string}`; issuedAt: Date; expiresAt: Date;
@@ -62,6 +70,7 @@ export interface GenerationIntent {
   regionAdmission: { policyId: string; policyVersion: number; evidenceDigest: `sha256:${string}`; region: string; routeId: string; evidenceExpiresAt: Date };
   outputContract: { mediaType: "text" | "image" | "video"; aspectRatio: "9:16" | null; width: number | null; height: number | null; durationSeconds: number | null; fps: number | null; safetyParameterKey: string | null; safetyValue: string | number | boolean | null; lockedParametersDigest: `sha256:${string}` };
   requestedModel: ExactModelRef; selectedModel: ExactModelRef; fallbackAuthorizationId: string | null; fundingMode: GenerationFundingMode;
+  persona?: GenerationPersonaBinding | null;
   quote: CostQuote; reservationIds: string[]; createdByUserId: string; createdAt: Date;
 }
 

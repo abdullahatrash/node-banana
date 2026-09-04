@@ -21,6 +21,14 @@ describe("ModelRoutingService", () => {
   });
   it("rejects silent fallback", async () => { const service = new ModelRoutingService(new MemoryModelRoutingRepository(), () => at, resolveTestModel, new MemoryGenerationBudgetAuthority(), ALLOWING_TEST_REGION_AUTHORITY); const result = await service.createIntent({ workspaceId: "ws", brand: testBrand("b", 1, at, `sha256:${"b".repeat(64)}`), rawPrompt: "x", capability: "text_to_image", contentLanguage: "en", arabicVariety: null, rights: TEST_RIGHTS, remixBrief: TEST_REMIX_BRIEF, requestedModel: testRef(0), selectedModel: testRef(2), fallbackAuthorizationId: null, quantity: 1, userId: "u", idempotencyKey: "intent-002" }); expect(result.kind).toBe("fallback_not_authorized"); });
 
+  it("persists the exact governed Persona snapshot on its generation intent", async () => {
+    const service = new ModelRoutingService(new MemoryModelRoutingRepository(), () => at, resolveTestModel, new MemoryGenerationBudgetAuthority(), ALLOWING_TEST_REGION_AUTHORITY);
+    const selected = testRef(5);
+    const persona = { personaId: "persona", personaRevision: 9, purpose: "generation" as const, model: { ...selected, provider: "replicate" as const, qualificationDigest: `sha256:${"d".repeat(64)}` as const, trainingJobId: "training" }, disclosure: "AI Persona", evidence: { consentEvidenceId: "consent", providerAcceptanceEvidenceId: "acceptance", disclosureEvidenceId: "disclosure", abuseReviewEvidenceId: "abuse" } };
+    const result = await service.createIntent({ workspaceId: "ws", brand: testBrand("brand", 1, at), rawPrompt: "campaign", capability: "text_to_video", contentLanguage: "en", arabicVariety: null, rights: TEST_RIGHTS, remixBrief: TEST_REMIX_BRIEF, requestedModel: selected, selectedModel: selected, fallbackAuthorizationId: null, persona, quantity: 8, userId: "u", idempotencyKey: "persona-intent" });
+    expect(result.intent?.persona).toEqual(persona);
+  });
+
   it("resolves price server-side and enforces cumulative fallback consumption", async () => {
     const repo = new MemoryModelRoutingRepository();
     const service = new ModelRoutingService(repo, () => at, resolveTestModel, new MemoryGenerationBudgetAuthority(), ALLOWING_TEST_REGION_AUTHORITY);

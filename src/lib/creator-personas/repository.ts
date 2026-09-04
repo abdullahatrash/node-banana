@@ -85,6 +85,16 @@ export class CreatorPersonaRepository {
     });
   }
 
+  async recordConsent(input: Actor & { personaId: string; expectedRevision: number; subjectReference: string; sourceAssetIds: string[]; allowedPurposes: Array<"training" | PersonaUsagePurpose>; geographies: string[]; effectiveAt: Date; expiresAt: Date; idempotencyKey: string }) {
+    const uniqueIds = [...new Set(input.sourceAssetIds)];
+    if (uniqueIds.length !== input.sourceAssetIds.length) throw new CreatorPersonaError("CONSENT_SOURCE_DUPLICATE");
+    const rows = await this.database.select({ id: assets.id, checksum: assets.checksum, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, uniqueIds), isNull(assets.deletedAt)));
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    if (uniqueIds.some((id) => { const asset = byId.get(id); return !asset?.checksum || (asset.metadata as Record<string, unknown> | null)?.uploadState !== "ready"; })) throw new CreatorPersonaError("CONSENT_SOURCE_NOT_READY");
+    const scope = { kind: "likeness_consent" as const, subjectReference: input.subjectReference, sourceAssetIds: uniqueIds, sourceDigests: uniqueIds.map((id) => ({ assetId: id, digest: byId.get(id)!.checksum })), allowedPurposes: input.allowedPurposes, geographies: input.geographies, revocable: true as const };
+    return this.addEvidence({ workspaceId: input.workspaceId, userId: input.userId, personaId: input.personaId, expectedRevision: input.expectedRevision, issuer: "workspace_consent_officer", subjectDigest: canonicalDigest({ workspaceId: input.workspaceId, subjectReference: input.subjectReference }), evidenceDigest: canonicalDigest({ scope, effectiveAt: input.effectiveAt.toISOString(), expiresAt: input.expiresAt.toISOString() }), scope, effectiveAt: input.effectiveAt, expiresAt: input.expiresAt, idempotencyKey: input.idempotencyKey });
+  }
+
   async attachSources(input: Actor & { personaId: string; expectedRevision: number; assetIds: string[]; consentEvidenceId: string | null; idempotencyKey: string }) {
     const requestDigest = canonicalDigest({ command: "attach_sources", ...input });
     return this.database.transaction(async (tx) => {
@@ -141,7 +151,7 @@ export class CreatorPersonaRepository {
       const [job] = await tx.select().from(creatorPersonaTrainingJobs).where(and(eq(creatorPersonaTrainingJobs.workspaceId, input.workspaceId), eq(creatorPersonaTrainingJobs.id, input.trainingJobId), eq(creatorPersonaTrainingJobs.personaId, input.personaId))).limit(1);
       if (!persona || !job) throw new CreatorPersonaError("TRAINING_JOB_NOT_FOUND"); if (persona.revision !== input.expectedRevision) throw new CreatorPersonaError("REVISION_CONFLICT"); if (!["queued", "admitted", "running", "waiting_provider", "outcome_unknown"].includes(job.state)) throw new CreatorPersonaError("TRAINING_ALREADY_RESOLVED");
       if (input.outcome === "succeeded") {
-        if (!input.resultModelRef || input.resultModelRef.trainingJobId !== job.id || input.resultModelRef.provider !== job.provider || input.resultModelRef.qualificationDigest !== job.qualificationDigest) throw new CreatorPersonaError("TRAINED_MODEL_REF_MISMATCH");
+        if (!input.resultModelRef || input.resultModelRef.trainingJobId !== job.id || input.resultModelRef.provider !== job.provider) throw new CreatorPersonaError("TRAINED_MODEL_REF_MISMATCH");
         const qualified = findCuratedModel(input.resultModelRef);
         if (!qualified || qualified.qualification.status !== "qualified" || qualified.qualification.evidence.digest !== input.resultModelRef.qualificationDigest) throw new CreatorPersonaError("TRAINED_MODEL_NOT_QUALIFIED");
       }
@@ -208,11 +218,16 @@ export class CreatorPersonaRepository {
   async resolveUsage(input: { workspaceId: string; personaId: string; purpose: PersonaUsagePurpose; resourceId: string }) {
     const detail = await this.get(input.workspaceId, input.personaId); if (!detail) throw new CreatorPersonaError("PERSONA_NOT_FOUND");
     const usage = detail.usages.find((item) => item.purpose === input.purpose && item.resourceId === input.resourceId); if (!usage) throw new CreatorPersonaError("PERSONA_USAGE_NOT_BOUND");
+    return { ...(await this.prepareUsage({ workspaceId: input.workspaceId, personaId: input.personaId, purpose: input.purpose })), usageId: usage.id, resourceId: input.resourceId };
+  }
+
+  async prepareUsage(input: { workspaceId: string; personaId: string; purpose: PersonaUsagePurpose }) {
+    const detail = await this.get(input.workspaceId, input.personaId); if (!detail) throw new CreatorPersonaError("PERSONA_NOT_FOUND");
     const gate = evaluatePersonaGate({ persona: detail.persona, evidence: detail.evidence, at: this.now() }); if (!gate.admitted) throw new CreatorPersonaError("PERSONA_USAGE_DENIED", gate.reasons.join(","));
     const model = parsePersonaModelRef(detail.persona.reusableModelRef); if (!model) throw new CreatorPersonaError("TRAINED_MODEL_REQUIRED");
     const scope = gate.evidence.providerAcceptance!.scope;
     if (scope.provider !== model.provider || scope.model !== model.model || scope.modelVersion !== model.version || scope.qualificationDigest !== model.qualificationDigest || !Array.isArray(scope.acceptedUses) || !scope.acceptedUses.includes(acceptedUseForPurpose(input.purpose))) throw new CreatorPersonaError("PERSONA_USE_NOT_ACCEPTED");
-    return { personaId: detail.persona.id, personaRevision: detail.persona.revision, usageId: usage.id, purpose: input.purpose, resourceId: input.resourceId, model, disclosure: detail.persona.disclosure, evidence: { consentEvidenceId: gate.evidence.consent?.id ?? null, providerAcceptanceEvidenceId: gate.evidence.providerAcceptance!.id, disclosureEvidenceId: gate.evidence.disclosure!.id, abuseReviewEvidenceId: gate.evidence.abuseReview!.id } };
+    return { personaId: detail.persona.id, personaRevision: detail.persona.revision, purpose: input.purpose, model, disclosure: detail.persona.disclosure, evidence: { consentEvidenceId: gate.evidence.consent?.id ?? null, providerAcceptanceEvidenceId: gate.evidence.providerAcceptance!.id, disclosureEvidenceId: gate.evidence.disclosure!.id, abuseReviewEvidenceId: gate.evidence.abuseReview!.id } };
   }
 
   async claimTrainingDispatch(input: { at: Date; staleBefore: Date }) {

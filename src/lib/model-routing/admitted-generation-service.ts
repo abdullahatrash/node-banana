@@ -17,12 +17,15 @@ import type { OperationRecord } from "@/lib/agent-runtime/operation-status/types
 import { loadImmutableBrandContext } from "./brand-context";
 import { PRODUCTION_OPERATION_STATUS } from "@/lib/agent-runtime/operation-status/production";
 import { ensureAdmittedGenerationOperation } from "./generation-operation";
+import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
+import { CreatorPersonaError } from "@/lib/creator-personas/repository";
 
 export interface AdmittedGenerationInput {
   prompt: string; model: ExactModelRef & { provider: "replicate" }; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
   quantity: number; sourceAssetIds: string[]; rightsBasis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; rightsEvidenceIds: string[];
   remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
   fundingMode: "byok" | "managed";
+  personaId?: string | null;
 }
 export type AdmittedGenerationResult = { ok: true; status: 200 | 202; value: { intentId: string; operation: OperationRecord; provider: unknown; operationHref: string } } | { ok: false; status: 402 | 409 | 422 | 503; code: string; nextActions?: Array<{ code: string; href: string }> };
 const fail = (status: 402 | 409 | 422 | 503, code: string, nextActions?: Array<{ code: string; href: string }>): AdmittedGenerationResult => ({ ok: false, status, code, ...(nextActions ? { nextActions } : {}) });
@@ -32,6 +35,12 @@ const rightsId = (workspaceId: string, key: string) => `rights_${createHash("sha
 export async function admitStudioGeneration(context: { workspaceId: string; userId: string; role: string; planTier: string; idempotencyKey: string; input: AdmittedGenerationInput }): Promise<AdmittedGenerationResult> {
   const { input } = context; const model = findCuratedModel(input.model, configuredCatalog());
   if (!model || model.qualification.status !== "qualified") return fail(422, "MODEL_NOT_EXECUTABLE", [{ code: "configure_model", href: "/studio/model-routing" }]);
+  let persona: import("./types").GenerationPersonaBinding | null = null;
+  if (input.personaId) {
+    try { const prepared = await CREATOR_PERSONAS.prepareUsage({ workspaceId: context.workspaceId, personaId: input.personaId, purpose: "generation" }); persona = { ...prepared, purpose: "generation" }; }
+    catch (error) { return fail(422, error instanceof CreatorPersonaError ? error.code : "PERSONA_USAGE_DENIED", [{ code: "review_persona", href: "/influencers" }]); }
+    if (persona.model.provider !== input.model.provider || persona.model.model !== input.model.model || persona.model.version !== input.model.version || persona.model.inputSchemaDigest !== input.model.inputSchemaDigest) return fail(422, "PERSONA_MODEL_MISMATCH", [{ code: "select_persona_model", href: "/influencers" }]);
+  }
   if (input.capability !== "text_generation" && !canUseS3Storage()) return fail(503, "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE", [{ code: "configure_storage", href: "/studio/settings/storage" }]);
   const releaseFlagId = process.env.ADMITTED_GENERATION_RELEASE_FLAG_ID?.trim();
   if (!releaseFlagId && process.env.NODE_ENV === "production") return fail(503, "GENERATION_RELEASE_FLAG_UNCONFIGURED");
@@ -65,9 +74,13 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   const [inserted] = await getDb().insert(inspirationRightsSnapshots).values({ workspaceId: context.workspaceId, id: snapshot.id, revision: 1, snapshot, digest: snapshot.digest, basis: snapshot.basis, permittedRemix: snapshot.permittedRemix, createdByUserId: context.userId, createdAt: at }).onConflictDoNothing().returning({ snapshot: inspirationRightsSnapshots.snapshot });
   const stored = inserted?.snapshot ?? (await getDb().select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, context.workspaceId), eq(inspirationRightsSnapshots.id, snapshotId), eq(inspirationRightsSnapshots.revision, 1))).limit(1))[0]?.snapshot; const rights = stored ? hydrateRightsSnapshot(stored) : null;
   if (!rights || rights.digest !== snapshot.digest) return fail(409, "IDEMPOTENCY_CONFLICT");
-  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: context.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, fundingMode: input.fundingMode, quantity: input.quantity, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent` });
+  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: context.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, fundingMode: input.fundingMode, persona, quantity: input.quantity, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent` });
   if (created.kind !== "created" && created.kind !== "replayed") return fail(created.kind === "unavailable" || created.kind === "budget_unavailable" ? 503 : created.kind === "budget_denied" ? 402 : 422, "code" in created && typeof created.code === "string" ? created.code : created.kind.toUpperCase(), [{ code: "inspect_operations", href: "/studio/operations" }]);
   if (!created.intent) return fail(503, "GENERATION_INTENT_UNAVAILABLE");
+  if (created.intent.persona) {
+    try { await CREATOR_PERSONAS.bindUsage({ workspaceId: context.workspaceId, userId: context.userId, personaId: created.intent.persona.personaId, expectedRevision: created.intent.persona.personaRevision, purpose: "generation", resourceId: created.intent.id, idempotencyKey: `generation-persona:${created.intent.id}` }); }
+    catch (error) { await PRODUCTION_MODEL_ROUTING.releaseIntent({ workspaceId: context.workspaceId, intent: created.intent }); return fail(409, error instanceof CreatorPersonaError ? error.code : "PERSONA_BINDING_FAILED", [{ code: "review_persona", href: "/influencers" }]); }
+  }
   void credential;
   const operation = await ensureAdmittedGenerationOperation(PRODUCTION_OPERATION_STATUS, created.intent);
   if (!operation) return fail(503, "OPERATION_UNAVAILABLE", [{ code: "inspect_operations", href: "/studio/operations" }]);

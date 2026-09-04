@@ -25,6 +25,7 @@ export function classifyContentLanguage(value: string): ContentLanguage {
 export interface StudioGenerationRequest {
   prompt: string; model: ExactModelRef; mode: "photo" | "video" | "copy"; sourceMediaType: "image" | "video" | null; sourceAssetIds: string[]; quantity: number;
   fundingMode: "byok" | "managed";
+  personaId?: string | null;
   contentLanguage?: ContentLanguage;
   arabicVariety: ArabicVariety | null; rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
   permittedRemix: "reference_only" | "transform" | "derivative"; rightsEvidenceIds: string[];
@@ -41,7 +42,7 @@ export async function runAdmittedStudioGeneration(input: StudioGenerationRequest
   const contentLanguage = input.contentLanguage ?? classifyContentLanguage(input.prompt);
   // Admission intentionally ignores the UI abort signal: it cannot spend, and
   // completing it gives the client a durable operation it can safely cancel.
-  const response = await fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief, fundingMode: input.fundingMode }) });
+  const response = await fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief, fundingMode: input.fundingMode, personaId: input.personaId ?? null }) });
   if (!response.ok) throw await errorFrom(response);
   const admitted = responseSchema.safeParse(await response.json()); if (!admitted.success) throw new StudioGenerationError("GENERATION_RESPONSE_INVALID");
   let operation = admitted.data.operation;

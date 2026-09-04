@@ -80,6 +80,12 @@ export class ModelRoutingService {
   }
   listAuthorizations(workspaceId: string) { return this.repository.listAuthorizations(workspaceId); }
 
+  async releaseIntent(input: { workspaceId: string; intent: GenerationIntent }) {
+    const at = this.now();
+    await this.budgets.release({ workspaceId: input.workspaceId, intentId: input.intent.id, at });
+    if (input.intent.fallbackAuthorizationId) await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: input.intent.fallbackAuthorizationId, intentId: input.intent.id, at });
+  }
+
   async createIntent(input: {
     workspaceId: string; brand: GenerationIntent["brand"]; rawPrompt: string;
     capability: GenerationCapability; contentLanguage: ContentLanguage;
@@ -87,7 +93,7 @@ export class ModelRoutingService {
     requestedModel: ExactModelRef; selectedModel: ExactModelRef;
     fallbackAuthorizationId: string | null; quantity: number;
     remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
-    userId: string; idempotencyKey: string; fundingMode?: GenerationIntent["fundingMode"]; id?: string;
+    userId: string; idempotencyKey: string; fundingMode?: GenerationIntent["fundingMode"]; persona?: GenerationIntent["persona"]; id?: string;
   }) {
     const at = this.now();
     const id = input.id ?? stableId("intent", input.workspaceId, input.idempotencyKey);
@@ -141,7 +147,7 @@ export class ModelRoutingService {
       regionAdmission: region.evidence,
       outputContract: { mediaType: input.capability === "text_generation" ? "text" : input.capability.includes("video") ? "video" : "image", aspectRatio: input.capability === "text_generation" ? null : "9:16", width: selected.qualification.outputShape.width, height: selected.qualification.outputShape.height, durationSeconds: input.capability.includes("video") ? input.quantity : null, fps: selected.qualification.outputShape.fps, safetyParameterKey: selected.qualification.inputContract.safety?.parameterKey ?? null, safetyValue: selected.qualification.inputContract.safety?.safeValue ?? null, lockedParametersDigest: digest(selected.qualification.inputContract.lockedParameters) },
       requestedModel: input.requestedModel, selectedModel: input.selectedModel,
-      fallbackAuthorizationId: input.fallbackAuthorizationId, fundingMode, quote,
+      fallbackAuthorizationId: input.fallbackAuthorizationId, fundingMode, persona: input.persona ?? null, quote,
       reservationIds: reservation.reservationIds, createdByUserId: input.userId, createdAt: at,
     };
     const requestDigest = digest({ command: "intent", ...value, id: input.id ?? null, createdAt: undefined });

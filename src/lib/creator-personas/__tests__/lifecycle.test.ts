@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { acceptedUseForPurpose, evaluatePersonaGate, parsePersonaModelRef, serializePersonaModelRef, type CreatorPersona, type CreatorPersonaEvidence } from "../types";
 import { personaAttestationMessage, verifyPersonaAttestation } from "../attestation";
-import { addPersonaEvidenceSchema, createPersonaSchema, requestPersonaTrainingSchema } from "../schemas";
+import { addPersonaEvidenceSchema, createPersonaSchema, recordPersonaConsentSchema, requestPersonaTrainingSchema } from "../schemas";
 
 const at = new Date("2026-09-04T12:00:00.000Z");
 const digest = `sha256:${"a".repeat(64)}` as const;
@@ -41,5 +41,12 @@ describe("Creator Persona safety gates", () => {
     expect(parsePersonaModelRef(serializePersonaModelRef(model))).toEqual(model);
     expect(parsePersonaModelRef("owner/persona:latest")).toBeNull();
     expect(acceptedUseForPurpose("content_set")).toBe("content_set");
+  });
+
+  it("requires explicit scoped consent uses and a finite evidence window", () => {
+    const valid = { action: "record_consent", expectedRevision: 1, subjectReference: "subject-1", sourceAssetIds: ["asset-1"], allowedPurposes: ["training"], geographies: ["SA"], effectiveAt: "2026-09-01T00:00:00.000Z", expiresAt: "2026-10-01T00:00:00.000Z", idempotencyKey: "consent-1" };
+    expect(recordPersonaConsentSchema.safeParse(valid).success).toBe(true);
+    expect(recordPersonaConsentSchema.safeParse({ ...valid, allowedPurposes: [] }).success).toBe(false);
+    expect(recordPersonaConsentSchema.safeParse({ ...valid, expiresAt: valid.effectiveAt }).success).toBe(false);
   });
 });

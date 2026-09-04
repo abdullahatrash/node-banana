@@ -13,6 +13,8 @@ import type { GenerationExecutionResult } from "./execution";
 import { PostgresModelRoutingRepository } from "./postgres-repository";
 import { validateRightsEvidence } from "./rights-evidence";
 import { validateGenerationSources } from "./source-validation";
+import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
+import { CreatorPersonaError } from "@/lib/creator-personas/repository";
 
 export type ExecuteAdmittedGenerationResult =
   | { ok: true; status: 202; result: Extract<GenerationExecutionResult, { kind: "accepted" }> }
@@ -34,6 +36,12 @@ export async function executeAdmittedGeneration(input: {
   const routing = new PostgresModelRoutingRepository(getDb);
   const intent = await routing.getIntent(input.workspaceId, input.intentId);
   if (!intent) return rejected(404, "GENERATION_INTENT_NOT_FOUND");
+  if (intent.persona) {
+    try {
+      const current = await CREATOR_PERSONAS.resolveUsage({ workspaceId: input.workspaceId, personaId: intent.persona.personaId, purpose: "generation", resourceId: intent.id });
+      if (current.personaRevision < intent.persona.personaRevision || current.model.model !== intent.persona.model.model || current.model.version !== intent.persona.model.version || current.model.inputSchemaDigest !== intent.persona.model.inputSchemaDigest) return rejected(409, "PERSONA_BINDING_CHANGED");
+    } catch (error) { return rejected(409, error instanceof CreatorPersonaError ? error.code : "PERSONA_USAGE_DENIED"); }
+  }
   if (intent.outputContract.mediaType !== "text" && !canUseS3Storage()) return rejected(503, "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE");
   const releaseFlagId = process.env.ADMITTED_GENERATION_RELEASE_FLAG_ID?.trim();
   if (!releaseFlagId && process.env.NODE_ENV === "production") return rejected(503, "GENERATION_RELEASE_FLAG_UNCONFIGURED");
