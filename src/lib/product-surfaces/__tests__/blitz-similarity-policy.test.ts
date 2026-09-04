@@ -12,24 +12,24 @@ const measurements: BlitzSimilarityMeasurementInput[] = [
 
 describe("Blitz similarity gate", () => {
   it("requires pinned text, frame, and audio measurements", () => {
-    expect(() => buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements: measurements.slice(0, 2), evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1" } })).toThrow("BLITZ_SIMILARITY_COVERAGE_INCOMPLETE");
+    expect(() => buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements: measurements.slice(0, 2), evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1", qualificationDigest: digest("9") } })).toThrow("BLITZ_SIMILARITY_COVERAGE_INCOMPLETE");
   });
 
   it("pins a passing evidence digest to exact source and candidate bytes", () => {
-    const evidence = buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements, evaluatedAt: new Date("2026-09-04T00:00:00Z"), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1" } });
+    const evidence = buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements, evaluatedAt: new Date("2026-09-04T00:00:00Z"), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1", qualificationDigest: digest("9") } });
     expect(evidence.status).toBe("passed");
     expect(validateBlitzSimilarityGate({ evidence, sourceAsset, candidateAsset })).toEqual({ ok: true });
     expect(validateBlitzSimilarityGate({ evidence, sourceAsset, candidateAsset: { ...candidateAsset, contentDigest: digest("9") } })).toMatchObject({ ok: false, code: "BLITZ_SIMILARITY_IDENTITY_MISMATCH" });
   });
 
   it("blocks a candidate exceeding any fixed policy threshold", () => {
-    const evidence = buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements: measurements.map((measurement) => measurement.modality === "audio" ? { ...measurement, coverage: "compared", similarityBasisPoints: 9_000, sourceFingerprintDigest: digest("7"), candidateFingerprintDigest: digest("8") } : measurement), evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1" } });
+    const evidence = buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements: measurements.map((measurement) => measurement.modality === "audio" ? { ...measurement, coverage: "compared", similarityBasisPoints: 9_000, sourceFingerprintDigest: digest("7"), candidateFingerprintDigest: digest("8") } : measurement), evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1", qualificationDigest: digest("9") } });
     expect(evidence.status).toBe("blocked");
     expect(validateBlitzSimilarityGate({ evidence, sourceAsset, candidateAsset })).toMatchObject({ ok: false, code: "BLITZ_SIMILARITY_BLOCKED" });
   });
 
   it("rejects tampered scores even when the status string remains passed", () => {
-    const evidence = buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements, evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1" } });
+    const evidence = buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements, evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1", qualificationDigest: digest("9") } });
     const tampered = structuredClone(evidence); tampered.measurements[0]!.similarityBasisPoints = 0;
     expect(validateBlitzSimilarityGate({ evidence: tampered, sourceAsset, candidateAsset })).toMatchObject({ ok: false, code: "BLITZ_SIMILARITY_EVIDENCE_INVALID" });
   });

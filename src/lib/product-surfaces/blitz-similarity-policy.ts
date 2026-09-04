@@ -28,7 +28,7 @@ export interface BlitzSimilarityGateEvidence {
   measurements: Array<BlitzSimilarityMeasurementInput & { maximumBasisPoints: number; passed: boolean }>;
   status: "passed" | "blocked";
   evaluatedAt: string;
-  evaluator: { kind: "qualified_internal"; adapterId: string; adapterVersion: string };
+  evaluator: { kind: "qualified_internal"; adapterId: string; adapterVersion: string; qualificationDigest: `sha256:${string}` };
   digest: `sha256:${string}`;
 }
 

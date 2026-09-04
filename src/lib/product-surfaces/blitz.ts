@@ -11,8 +11,9 @@ import { isAdmittedBlitzArtifact } from "./blitz-lineage";
 import { blitzPayloadSchema, parseProductPayload } from "./definitions";
 import { buildContentRenderProof, validateReadyPortraitAsset, type ContentAssetEvidence } from "./content-lineage";
 import { ProductRecordConflictError, ProductRecordIdempotencyError } from "./repository";
+import { requirePassedBlitzSimilarityEvidence } from "./blitz-similarity-service";
 
-export async function decideBlitzItem(input: { workspaceId: string; userId: string; itemId: string; expectedRevision: number; decision: "accepted" | "rejected"; reasons: Array<{ code: "not_relevant" | "brand_mismatch" | "stale_source" | "rights_unclear" | "too_similar" | "wrong_format" | "other"; note: string }>; generation: { assetId: string; intentId: string; operationId: string } | null; idempotencyKey: string; now?: Date }) {
+export async function decideBlitzItem(input: { workspaceId: string; userId: string; itemId: string; expectedRevision: number; decision: "accepted" | "rejected"; reasons: Array<{ code: "not_relevant" | "brand_mismatch" | "stale_source" | "rights_unclear" | "too_similar" | "wrong_format" | "other"; note: string }>; generation: { assetId: string; intentId: string; operationId: string } | null; similarityEvidenceId: string | null; idempotencyKey: string; now?: Date }) {
   const now = input.now ?? new Date();
   const digest = canonicalDigest({ itemId: input.itemId, expectedRevision: input.expectedRevision, decision: input.decision, reasons: input.reasons, generation: input.generation });
   return getDb().transaction(async (tx) => {
@@ -26,7 +27,7 @@ export async function decideBlitzItem(input: { workspaceId: string; userId: stri
     const payload = blitzPayloadSchema.parse(item.payload);
     let contentPieceId: string | null = null;
     if (input.decision === "accepted") {
-      if (!input.generation || !payload.sourceAssetId || !payload.sourceMediaType || !payload.rightsSnapshot || !payload.rightsBasis || !payload.permittedRemix || !payload.contentLanguage || !payload.format) throw new Error("BLITZ_GENERATION_REQUIRED");
+      if (!input.generation || !input.similarityEvidenceId || !payload.sourceAssetId || !payload.sourceMediaType || !payload.rightsSnapshot || !payload.rightsBasis || !payload.permittedRemix || !payload.contentLanguage || !payload.format) throw new Error("BLITZ_GENERATION_REQUIRED");
       const [[receipt], [intentRow], [operation], [artifact], [sourceAsset]] = await Promise.all([
         tx.select().from(modelArtifactIngestionReceipts).where(and(eq(modelArtifactIngestionReceipts.workspaceId, input.workspaceId), eq(modelArtifactIngestionReceipts.assetId, input.generation.assetId), eq(modelArtifactIngestionReceipts.intentId, input.generation.intentId), eq(modelArtifactIngestionReceipts.status, "ready"))).limit(1),
         tx.select({ intent: generationIntents.intent }).from(generationIntents).where(and(eq(generationIntents.workspaceId, input.workspaceId), eq(generationIntents.id, input.generation.intentId))).limit(1),
@@ -37,6 +38,7 @@ export async function decideBlitzItem(input: { workspaceId: string; userId: stri
       const evidence = (row: typeof assets.$inferSelect): ContentAssetEvidence => ({ id: row.id, type: row.type, checksum: row.checksum, width: row.width, height: row.height, durationSeconds: row.durationSeconds, uploadState: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata.uploadState : null });
       const operationMetadata = operation?.metadata && typeof operation.metadata === "object" && !Array.isArray(operation.metadata) ? operation.metadata : {};
       if (!artifact || !sourceAsset || validateReadyPortraitAsset(evidence(sourceAsset), payload.sourceMediaType) || validateReadyPortraitAsset(evidence(artifact), "video") || !isAdmittedBlitzArtifact({ sourceAssetId: payload.sourceAssetId, rightsDigest: payload.rightsSnapshot.digest, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifactExists: true })) throw new Error("BLITZ_GENERATION_LINEAGE_INVALID");
+      await requirePassedBlitzSimilarityEvidence(tx, { workspaceId: input.workspaceId, evidenceId: input.similarityEvidenceId, itemId: input.itemId, itemRevision: input.expectedRevision, sourceAssetId: sourceAsset.id, sourceDigest: sourceAsset.checksum!, candidateAssetId: artifact.id, candidateDigest: artifact.checksum! });
       contentPieceId = randomUUID();
       const proofFacts = buildContentRenderProof({ sourceAssets: [evidence(sourceAsset)], artifact: evidence(artifact), intentId: input.generation.intentId, operationId: input.generation.operationId, verifiedAt: now });
       const renderProof = { ...proofFacts, digest: canonicalDigest(proofFacts) };

@@ -74,6 +74,7 @@ describe("typed product command contracts", () => {
     expect(source).toContain("validateReadyPortraitAsset");
     expect(source).toContain("buildContentRenderProof");
     expect(source).toContain('renderProofStatus: "passed"');
+    expect(source).toContain("requirePassedBlitzSimilarityEvidence");
   });
 
   it("links campaign runtime receipts to the central recovery cockpit", () => {
