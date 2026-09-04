@@ -2,8 +2,21 @@ import { describe, expect, it } from "vitest";
 import { AUTOMATION_STEPS, CONTENT_FORMATS, parseProductPayload, productCreateSchema } from "../definitions";
 
 describe("product surface definitions", () => {
-  it("keeps the observed twelve formats and ten automation steps explicit", () => {
-    expect(CONTENT_FORMATS).toHaveLength(12);
+  it("keeps the observed eleven named formats plus Custom and ten automation steps explicit", () => {
+    expect(CONTENT_FORMATS).toEqual([
+      "slideshow",
+      "wall_of_text",
+      "video_hook_demo",
+      "speaking_hook_demo",
+      "talking_head_ugc",
+      "green_screen_meme",
+      "talking_head_green_screen",
+      "product_spokesperson",
+      "green_screen_mobile_app",
+      "claymation",
+      "character_swap",
+      "custom_upload",
+    ]);
     expect(new Set(CONTENT_FORMATS).size).toBe(12);
     expect(AUTOMATION_STEPS).toHaveLength(10);
     expect(new Set(AUTOMATION_STEPS).size).toBe(10);

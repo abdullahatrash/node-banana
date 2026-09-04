@@ -4,7 +4,7 @@ import { allContentFormatsHaveExecutionPlans, contentExecutionPlan, contentProvi
 import { contentFormatDefinition } from "../content-format-definition";
 
 describe("Content Format execution plans", () => {
-  it("covers all twelve formats with governed execution", () => {
+  it("covers eleven named formats plus Custom with governed execution", () => {
     expect(CONTENT_FORMATS).toHaveLength(12);
     expect(allContentFormatsHaveExecutionPlans()).toBe(true);
     expect(CONTENT_FORMATS.filter((format) => contentExecutionPlan(format).strategy === "admitted_generation")).toHaveLength(11);
