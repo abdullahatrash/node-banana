@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
 import {
@@ -17,6 +17,8 @@ import {
   workspaceProductRecords,
 } from "@/lib/db/schema";
 import { configuredCatalog } from "@/lib/model-routing/catalog";
+import { inspirationRightsEvidence } from "@/lib/model-routing/db-schema";
+import { isCuratedContentThemeLicenseEvidence } from "./content-theme-catalog";
 import { campaignPayloadSchema } from "./definitions";
 
 type CampaignPayload = ReturnType<typeof campaignPayloadSchema.parse>;
@@ -87,7 +89,7 @@ export async function loadCampaignAuthoringOptions(input: {
     database.select({ workflowId: contentWorkflows.id, revisionId: contentWorkflowRevisions.id, revision: contentWorkflowRevisions.revision, definitionDigest: contentWorkflowRevisions.definitionDigest, definition: contentWorkflowRevisions.definition })
       .from(contentWorkflows).innerJoin(contentWorkflowRevisions, and(eq(contentWorkflowRevisions.workspaceId, contentWorkflows.workspaceId), eq(contentWorkflowRevisions.workflowId, contentWorkflows.id), eq(contentWorkflowRevisions.revision, contentWorkflows.currentRevision)))
       .where(eq(contentWorkflows.workspaceId, input.workspaceId)).orderBy(desc(contentWorkflows.updatedAt)),
-    database.select({ themeId: contentThemes.id, title: contentThemes.title, revision: contentThemeRevisions.revision, digest: contentThemeRevisions.documentDigest, licenseExpiresAt: contentThemeRevisions.licenseExpiresAt })
+    database.select({ themeId: contentThemes.id, title: contentThemes.title, revision: contentThemeRevisions.revision, digest: contentThemeRevisions.documentDigest, licenseEvidenceIds: contentThemeRevisions.licenseEvidenceIds, licenseExpiresAt: contentThemeRevisions.licenseExpiresAt })
       .from(contentThemes).innerJoin(contentThemeRevisions, and(eq(contentThemeRevisions.workspaceId, contentThemes.workspaceId), eq(contentThemeRevisions.themeId, contentThemes.id), eq(contentThemeRevisions.revision, contentThemes.activeRevision)))
       .where(and(eq(contentThemes.workspaceId, input.workspaceId), eq(contentThemes.state, "active"), isNull(contentThemes.archivedAt))).orderBy(desc(contentThemes.updatedAt)),
     database.select({ id: brandProfiles.id, revision: brandProfiles.revision, profile: brandProfiles.profile })
@@ -120,6 +122,9 @@ export async function loadCampaignAuthoringOptions(input: {
   const brand = brandRows[0]
     ? { id: brandRows[0].id, revision: brandRows[0].revision, digest: canonicalDigest(brandRows[0].profile), label: `v${brandRows[0].revision}` }
     : null;
+  const themeLicenseIds = [...new Set(themeRows.flatMap((row) => Array.isArray(row.licenseEvidenceIds) ? row.licenseEvidenceIds : []))];
+  const themeLicenseRows = themeLicenseIds.length ? await database.select({ id: inspirationRightsEvidence.id }).from(inspirationRightsEvidence).where(and(eq(inspirationRightsEvidence.workspaceId, input.workspaceId), inArray(inspirationRightsEvidence.id, themeLicenseIds), eq(inspirationRightsEvidence.basis, "licensed"), or(isNull(inspirationRightsEvidence.expiresAt), gt(inspirationRightsEvidence.expiresAt, now)))) : [];
+  const currentThemeLicenseIds = new Set(themeLicenseRows.map((row) => row.id));
 
   return {
     brand,
@@ -127,7 +132,7 @@ export async function loadCampaignAuthoringOptions(input: {
     personas: personaRows.map((row) => ({ id: row.id, label: row.name, detail: `v${row.revision}` })),
     demoAssets: readyAssets,
     mediaSets: labelRecord("media_set", ["active"]),
-    themes: themeRows.filter((row) => !row.licenseExpiresAt || row.licenseExpiresAt > now).map((row) => ({ id: `${row.themeId}:${row.revision}`, themeId: row.themeId, revision: row.revision, digest: row.digest, label: row.title, detail: `v${row.revision}` })),
+    themes: themeRows.filter((row) => (!row.licenseExpiresAt || row.licenseExpiresAt > now) && Array.isArray(row.licenseEvidenceIds) && row.licenseEvidenceIds.length > 0 && row.licenseEvidenceIds.every((evidenceId) => currentThemeLicenseIds.has(evidenceId) || isCuratedContentThemeLicenseEvidence({ themeId: row.themeId, revision: row.revision, digest: row.digest, evidenceId }))).map((row) => ({ id: `${row.themeId}:${row.revision}`, themeId: row.themeId, revision: row.revision, digest: row.digest, label: row.title, detail: `v${row.revision}` })),
     channels: channelRows.map((row) => ({ id: row.id, label: row.displayName, detail: `${row.platform}${row.username ? ` · @${row.username}` : ""}` })),
     workflows: workflowRows.map((row) => ({
       id: row.revisionId,

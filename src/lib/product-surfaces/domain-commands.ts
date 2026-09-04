@@ -21,6 +21,7 @@ import { buildQualifiedContentRenderProof, productionContentRenderProofVerifier 
 import { evaluatePersonaGate, type CreatorPersona, type CreatorPersonaEvidence } from "@/lib/creator-personas/types";
 import { mediaSetMembershipDigest, orderedContentAssetIds, resolveMediaSetRevision } from "./content-execution-resources";
 import { mediaSetAssetIssue, type MediaSetPurpose } from "./media-set-policy";
+import { isCuratedContentThemeLicenseEvidence } from "./content-theme-catalog";
 
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
 type ContentPiecePayload = ReturnType<typeof contentPieceSchema.parse>;
@@ -68,7 +69,7 @@ async function validateContentPayload(executor: Parameters<Parameters<ReturnType
     sourceAssets,
     persona,
     mediaSets: resolvedMediaSets,
-    themes: themes.map((theme) => ({ id: theme.id, revision: theme.revision, digest: theme.digest, state: theme.state, licenseCurrent: (!theme.licenseExpiresAt || theme.licenseExpiresAt > now) && Array.isArray(theme.licenseEvidenceIds) && theme.licenseEvidenceIds.length > 0 && theme.licenseEvidenceIds.every((id) => currentThemeEvidenceIds.has(id)) })),
+    themes: themes.map((theme) => ({ id: theme.id, revision: theme.revision, digest: theme.digest, state: theme.state, licenseCurrent: (!theme.licenseExpiresAt || theme.licenseExpiresAt > now) && Array.isArray(theme.licenseEvidenceIds) && theme.licenseEvidenceIds.length > 0 && theme.licenseEvidenceIds.every((evidenceId) => currentThemeEvidenceIds.has(evidenceId) || isCuratedContentThemeLicenseEvidence({ themeId: theme.id, revision: theme.revision, digest: theme.digest, evidenceId })) })),
   });
 }
 

@@ -6,6 +6,7 @@ import { assets, contentThemeRevisions, contentThemes, workspaceProductRecordRev
 import { inspirationRightsEvidence } from "@/lib/model-routing/db-schema";
 import type { contentPieceSchema } from "./definitions";
 import { orderedContentAssetIds, resolveMediaSetRevision, resolveThemeRevision } from "./content-execution-resources";
+import { isCuratedContentThemeLicenseEvidence } from "./content-theme-catalog";
 
 type ContentPiecePayload = ReturnType<typeof contentPieceSchema.parse>;
 
@@ -29,7 +30,7 @@ export async function loadContentExecutionResources(workspaceId: string, payload
   const licenseEvidenceIds = [...new Set(themes.flatMap((theme) => theme.licenseEvidenceIds))];
   const licenseEvidence = licenseEvidenceIds.length ? await db.select({ id: inspirationRightsEvidence.id }).from(inspirationRightsEvidence).where(and(eq(inspirationRightsEvidence.workspaceId, workspaceId), inArray(inspirationRightsEvidence.id, licenseEvidenceIds), eq(inspirationRightsEvidence.basis, "licensed"), or(isNull(inspirationRightsEvidence.expiresAt), gt(inspirationRightsEvidence.expiresAt, now)))) : [];
   const currentLicenseEvidenceIds = new Set(licenseEvidence.map((row) => row.id));
-  if (licenseEvidenceIds.some((id) => !currentLicenseEvidenceIds.has(id))) throw new Error("CONTENT_THEME_LICENSE_EVIDENCE_INVALID");
+  if (themes.some((theme) => theme.licenseEvidenceIds.some((evidenceId) => !currentLicenseEvidenceIds.has(evidenceId) && !isCuratedContentThemeLicenseEvidence({ themeId: theme.themeId, revision: theme.revision, digest: theme.digest, evidenceId })))) throw new Error("CONTENT_THEME_LICENSE_EVIDENCE_INVALID");
   const orderedAssetIds = orderedContentAssetIds(payload.sourceAssetIds, mediaSets);
   const assetRows = orderedAssetIds.length ? await db.select().from(assets).where(and(eq(assets.workspaceId, workspaceId), inArray(assets.id, orderedAssetIds), isNull(assets.deletedAt))) : [];
   const assetById = new Map(assetRows.map((row) => [row.id, row]));
