@@ -25,6 +25,7 @@ import { resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/
 import { assertContentGenerationRequest, buildContentGenerationRecipe, contentProviderPrompt, ContentGenerationRecipeError } from "@/lib/product-surfaces/content-generation-recipe";
 import { assertContentModelPolicy, ContentWorkflowRuntimeError } from "@/lib/product-surfaces/content-workflow-runtime";
 import { contentModelAllowed, resolveContentModelPolicy } from "@/lib/product-surfaces/content-model-policy";
+import { loadContentExecutionResources } from "@/lib/product-surfaces/content-execution-resources-repository";
 
 export interface AdmittedGenerationInput {
   prompt: string; model: ExactModelRef & { provider: "replicate" }; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
@@ -66,11 +67,8 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   if (!brand?.acceptedAt) return fail(422, "ACCEPTED_BRAND_REVISION_REQUIRED", [{ code: "accept_brand", href: "/onboarding/brand-review" }]);
   const brandContext = await loadImmutableBrandContext({ workspaceId: context.workspaceId, profileId: brand.id, revision: brand.revision, acceptedAt: brand.acceptedAt, profile: brand.profile });
   if (!brandContext) return fail(422, "BRAND_REFERENCE_ASSET_NOT_READY", [{ code: "review_brand", href: "/onboarding/brand-review" }]);
-  const sourceAssetIds = [...input.sourceAssetIds];
-  const fetchedRows = sourceAssetIds.length ? await getDb().select({ id: assets.id, type: assets.type, storageKey: assets.storageKey, checksum: assets.checksum, mimeType: assets.mimeType, width: assets.width, height: assets.height, durationSeconds: assets.durationSeconds, metadata: assets.metadata, createdByUserId: assets.createdByUserId, createdAt: assets.createdAt }).from(assets).where(and(eq(assets.workspaceId, context.workspaceId), inArray(assets.id, sourceAssetIds), isNull(assets.deletedAt))) : [];
-  const byId = new Map(fetchedRows.map((row) => [row.id, row]));
-  const sourceRows = sourceAssetIds.map((id) => byId.get(id)).filter((row): row is (typeof fetchedRows)[number] => Boolean(row));
-  let contentExecution: import("./types").GenerationIntent["contentExecution"] = null;
+  let sourceAssetIds = [...input.sourceAssetIds];
+  let preparedContent: { record: typeof workspaceProductRecords.$inferSelect; payload: ReturnType<typeof contentPieceSchema.parse>; resolved: Awaited<ReturnType<typeof resolveContentFormatDefinitionReference>>; policy: NonNullable<ReturnType<typeof resolveContentModelPolicy>>; resources: Awaited<ReturnType<typeof loadContentExecutionResources>> } | null = null;
   if (input.contentExecution) {
     try {
       const [record] = await getDb().select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, context.workspaceId), eq(workspaceProductRecords.id, input.contentExecution.contentPieceId), eq(workspaceProductRecords.kind, "content_piece"), isNull(workspaceProductRecords.archivedAt))).limit(1);
@@ -79,9 +77,25 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
       if (!payload.formatDefinition) throw new ContentGenerationRecipeError("CONTENT_FORMAT_DEFINITION_STALE");
       const resolved = await resolveContentFormatDefinitionReference(payload.format, payload.formatDefinition);
       const policy = resolveContentModelPolicy(resolved.definition, configuredCatalog());
-      if (!policy || !contentModelAllowed(policy, input.model)) throw new ContentWorkflowRuntimeError("CONTENT_MODEL_POLICY_MODEL_NOT_ALLOWED");
-      if (input.prompt !== contentProviderPrompt(payload)) throw new ContentGenerationRecipeError("CONTENT_PROVIDER_CONTROLS_MISMATCH");
-      contentExecution = buildContentGenerationRecipe({ contentPieceId: record.id, contentPieceRevision: record.revision, contentPiecePayload: payload, definition: resolved.definition, definitionDigest: resolved.reference.digest as `sha256:${string}`, sourceTypes: new Map(sourceRows.map((row) => [row.id, row.type])), modelPolicy: policy });
+      if (!policy) throw new ContentWorkflowRuntimeError("CONTENT_MODEL_POLICY_UNAVAILABLE");
+      const resources = await loadContentExecutionResources(context.workspaceId, payload);
+      if (canonicalDigest(input.sourceAssetIds) !== canonicalDigest(resources.orderedAssetIds)) throw new ContentGenerationRecipeError("CONTENT_RESOURCE_ASSET_MISMATCH");
+      if (input.prompt !== contentProviderPrompt(payload, resources)) throw new ContentGenerationRecipeError("CONTENT_PROVIDER_CONTROLS_MISMATCH");
+      sourceAssetIds = resources.orderedAssetIds;
+      preparedContent = { record, payload, resolved, policy, resources };
+    } catch (error) {
+      return fail(422, error instanceof ContentGenerationRecipeError || error instanceof ContentWorkflowRuntimeError || error instanceof Error && error.message.startsWith("CONTENT_") ? (error as Error).message : "CONTENT_EXECUTION_RECIPE_INVALID");
+    }
+  }
+  const fetchedRows = sourceAssetIds.length ? await getDb().select({ id: assets.id, type: assets.type, storageKey: assets.storageKey, checksum: assets.checksum, mimeType: assets.mimeType, width: assets.width, height: assets.height, durationSeconds: assets.durationSeconds, metadata: assets.metadata, createdByUserId: assets.createdByUserId, createdAt: assets.createdAt }).from(assets).where(and(eq(assets.workspaceId, context.workspaceId), inArray(assets.id, sourceAssetIds), isNull(assets.deletedAt))) : [];
+  const byId = new Map(fetchedRows.map((row) => [row.id, row]));
+  const sourceRows = sourceAssetIds.map((id) => byId.get(id)).filter((row): row is (typeof fetchedRows)[number] => Boolean(row));
+  let contentExecution: import("./types").GenerationIntent["contentExecution"] = null;
+  if (preparedContent) {
+    try {
+      const { record, payload, resolved, policy, resources } = preparedContent;
+      if (!contentModelAllowed(policy, input.model)) throw new ContentWorkflowRuntimeError("CONTENT_MODEL_POLICY_MODEL_NOT_ALLOWED");
+      contentExecution = buildContentGenerationRecipe({ contentPieceId: record.id, contentPieceRevision: record.revision, contentPiecePayload: payload, definition: resolved.definition, definitionDigest: resolved.reference.digest as `sha256:${string}`, sourceTypes: new Map(sourceRows.map((row) => [row.id, row.type])), modelPolicy: policy, resources });
       assertContentGenerationRequest({ recipe: contentExecution, format: payload.format, definition: resolved.definition, capability: input.capability, sourceAssetIds, personaId: input.personaId ?? null, payload });
       assertContentModelPolicy({ definition: resolved.definition, intent: { selectedModel: input.model, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, outputContract: { mediaType: input.capability === "text_generation" ? "text" : input.capability.includes("video") ? "video" : "image", aspectRatio: input.capability === "text_generation" ? null : "9:16" }, quote: { quantity: input.quantity }, contentExecution, regionAdmission: { region: "replicate-us" } } as import("./types").GenerationIntent, descriptor: model, policy });
     } catch (error) {

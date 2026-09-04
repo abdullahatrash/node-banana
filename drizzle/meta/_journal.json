@@ -757,6 +757,13 @@
       "when": 1788637200000,
       "tag": "0107_content_format_typed_workflows",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1788640800000,
+      "tag": "0108_content_resource_bindings",
+      "breakpoints": true
     }
   ]
 }

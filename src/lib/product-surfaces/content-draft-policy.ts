@@ -23,7 +23,7 @@ export interface ContentDraftPolicyInput {
   definition: ContentFormatDefinition | null;
   draft: {
     format: ContentFormat;
-    formatDefinition: { id: string; revision: number } | null;
+    formatDefinition: { id: string; revision: number; digest?: string } | null;
     contentLanguage: "ar" | "en" | "mixed";
     arabicVariety: string | null;
     aspectRatio: string;
@@ -34,12 +34,13 @@ export interface ContentDraftPolicyInput {
     scene: string;
     personaId: string | null;
     mediaSetIds: string[];
-    themeRevisionRefs: Array<{ themeId: string; revision: number }>;
+    mediaSetRevisionRefs: Array<{ mediaSetId: string; revision: number; digest: string }>;
+    themeRevisionRefs: Array<{ themeId: string; revision: number; digest?: string }>;
   };
   sourceAssets: Array<{ id: string; type: string; ready: boolean }>;
   persona: { id: string; state: string; consentCurrent: boolean } | null;
-  mediaSets: Array<{ id: string; state: string }>;
-  themes: Array<{ id: string; revision: number; state: string; licenseCurrent: boolean }>;
+  mediaSets: Array<{ id: string; revision: number; digest: string; state: string }>;
+  themes: Array<{ id: string; revision: number; digest: string; state: string; licenseCurrent: boolean }>;
 }
 
 export function validateContentDraft(input: ContentDraftPolicyInput): ContentDraftIssueCode[] {
@@ -62,7 +63,7 @@ export function validateContentDraft(input: ContentDraftPolicyInput): ContentDra
   if (!execution.ok) issues.add(execution.code);
   if (input.sourceAssets.some((asset) => !asset.ready)) issues.add("CONTENT_ASSET_NOT_READY");
   if (definition.requiredControls.includes("persona") && (!input.persona || input.persona.id !== draft.personaId || input.persona.state !== "active" || !input.persona.consentCurrent)) issues.add("CONTENT_PERSONA_REQUIRED");
-  if (draft.mediaSetIds.some((id) => !input.mediaSets.some((set) => set.id === id && set.state === "active"))) issues.add("CONTENT_MEDIA_SET_INVALID");
-  if (draft.themeRevisionRefs.some((reference) => !input.themes.some((theme) => theme.id === reference.themeId && theme.revision === reference.revision && theme.state === "active" && theme.licenseCurrent))) issues.add("CONTENT_THEME_REVISION_INVALID");
+  if (new Set(draft.mediaSetIds).size !== draft.mediaSetIds.length || new Set(draft.mediaSetRevisionRefs.map((reference) => reference.mediaSetId)).size !== draft.mediaSetRevisionRefs.length || draft.mediaSetIds.length !== draft.mediaSetRevisionRefs.length || draft.mediaSetIds.some((id) => !draft.mediaSetRevisionRefs.some((reference) => reference.mediaSetId === id)) || draft.mediaSetRevisionRefs.some((reference) => !input.mediaSets.some((set) => set.id === reference.mediaSetId && set.revision === reference.revision && set.digest === reference.digest && set.state === "active"))) issues.add("CONTENT_MEDIA_SET_INVALID");
+  if (new Set(draft.themeRevisionRefs.map((reference) => reference.themeId)).size !== draft.themeRevisionRefs.length || draft.themeRevisionRefs.some((reference) => !reference.digest || !input.themes.some((theme) => theme.id === reference.themeId && theme.revision === reference.revision && theme.digest === reference.digest && theme.state === "active" && theme.licenseCurrent))) issues.add("CONTENT_THEME_REVISION_INVALID");
   return [...issues];
 }

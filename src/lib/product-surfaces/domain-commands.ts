@@ -2,10 +2,10 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { assets, contentThemeRevisions, contentThemes, creatorPersonaEvidence, creatorPersonas, workflowRuns, workspaceProductRecords } from "@/lib/db/schema";
-import { contentWorkflowGenerationRuns, generationIntents, modelTextOutputReceipts } from "@/lib/model-routing/db-schema";
+import { assets, contentThemeRevisions, contentThemes, creatorPersonaEvidence, creatorPersonas, workflowRuns, workspaceProductRecordRevisions, workspaceProductRecords } from "@/lib/db/schema";
+import { contentWorkflowGenerationRuns, generationIntents, inspirationRightsEvidence, modelTextOutputReceipts } from "@/lib/model-routing/db-schema";
 import { runtimeOperations } from "@/lib/agent-runtime/operation-status/db-schema";
 import { generationOperationId } from "@/lib/model-routing/generation-operation";
 import { modelArtifactIngestionReceipts } from "@/lib/model-routing/db-schema";
@@ -19,6 +19,7 @@ import { ContentFormatRegistryError, resolveActiveContentFormatDefinition, resol
 import type { ContentFormatDefinition } from "./content-format-definition";
 import { buildQualifiedContentRenderProof, productionContentRenderProofVerifier } from "./content-render-proof";
 import { evaluatePersonaGate, type CreatorPersona, type CreatorPersonaEvidence } from "@/lib/creator-personas/types";
+import { mediaSetMembershipDigest } from "./content-execution-resources";
 
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
 type ContentPiecePayload = ReturnType<typeof contentPieceSchema.parse>;
@@ -26,7 +27,8 @@ type ContentPiecePayload = ReturnType<typeof contentPieceSchema.parse>;
 async function pinnedContentDefinition(payload: ContentPiecePayload): Promise<ContentFormatDefinition | null> {
   if (!payload.formatDefinition) return null;
   try {
-    return (await resolveContentFormatDefinitionReference(payload.format, payload.formatDefinition)).definition;
+    const resolved = await resolveContentFormatDefinitionReference(payload.format, payload.formatDefinition);
+    return resolved.reference.digest === payload.formatDefinition.digest ? resolved.definition : null;
   } catch (error) {
     if (error instanceof ContentFormatRegistryError) return null;
     throw error;
@@ -47,15 +49,25 @@ async function validateContentPayload(executor: Parameters<Parameters<ReturnType
     if (row) persona = { id: row.id, state: row.state, consentCurrent: evaluatePersonaGate({ persona: row as CreatorPersona, evidence: evidence as CreatorPersonaEvidence[], at: now }).admitted };
   }
   const mediaSets = payload.mediaSetIds.length ? await executor.select({ id: workspaceProductRecords.id, state: workspaceProductRecords.state }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, workspaceId), eq(workspaceProductRecords.kind, "media_set"), inArray(workspaceProductRecords.id, payload.mediaSetIds), isNull(workspaceProductRecords.archivedAt))) : [];
+  const mediaSetSnapshots = payload.mediaSetRevisionRefs.length ? await executor.select().from(workspaceProductRecordRevisions).where(and(eq(workspaceProductRecordRevisions.workspaceId, workspaceId), inArray(workspaceProductRecordRevisions.recordId, payload.mediaSetRevisionRefs.map((reference) => reference.mediaSetId)))) : [];
+  const activeMediaSetIds = new Set(mediaSets.filter((set) => set.state === "active").map((set) => set.id));
+  const resolvedMediaSetCandidates = mediaSetSnapshots.flatMap((snapshot) => { if (!activeMediaSetIds.has(snapshot.recordId) || snapshot.state !== "active") return []; const parsed = parseProductPayload("media_set", snapshot.payload); const orderedAssetIds = Array.isArray(parsed.assetIds) ? parsed.assetIds : []; return [{ id: snapshot.recordId, revision: snapshot.revision, digest: mediaSetMembershipDigest({ mediaSetId: snapshot.recordId, revision: snapshot.revision, orderedAssetIds }), state: "active", orderedAssetIds }]; });
+  const membershipAssetIds = [...new Set(resolvedMediaSetCandidates.flatMap((set) => set.orderedAssetIds))];
+  const membershipAssetRows = membershipAssetIds.length ? await executor.select({ id: assets.id, checksum: assets.checksum, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, workspaceId), inArray(assets.id, membershipAssetIds), isNull(assets.deletedAt))) : [];
+  const readyMembershipAssetIds = new Set(membershipAssetRows.filter((row) => row.checksum && (row.metadata as Record<string, unknown> | null)?.uploadState === "ready").map((row) => row.id));
+  const resolvedMediaSets = resolvedMediaSetCandidates.filter((set) => set.orderedAssetIds.length > 0 && set.orderedAssetIds.every((id) => readyMembershipAssetIds.has(id)));
   const themeIds = [...new Set(payload.themeRevisionRefs.map((reference) => reference.themeId))];
-  const themes = themeIds.length ? await executor.select({ id: contentThemes.id, revision: contentThemeRevisions.revision, state: contentThemes.state, licenseExpiresAt: contentThemeRevisions.licenseExpiresAt }).from(contentThemes).innerJoin(contentThemeRevisions, and(eq(contentThemeRevisions.workspaceId, contentThemes.workspaceId), eq(contentThemeRevisions.themeId, contentThemes.id))).where(and(eq(contentThemes.workspaceId, workspaceId), inArray(contentThemes.id, themeIds))) : [];
+  const themes = themeIds.length ? await executor.select({ id: contentThemes.id, revision: contentThemeRevisions.revision, digest: contentThemeRevisions.documentDigest, state: contentThemes.state, licenseEvidenceIds: contentThemeRevisions.licenseEvidenceIds, licenseExpiresAt: contentThemeRevisions.licenseExpiresAt }).from(contentThemes).innerJoin(contentThemeRevisions, and(eq(contentThemeRevisions.workspaceId, contentThemes.workspaceId), eq(contentThemeRevisions.themeId, contentThemes.id))).where(and(eq(contentThemes.workspaceId, workspaceId), inArray(contentThemes.id, themeIds))) : [];
+  const themeEvidenceIds = [...new Set(themes.flatMap((theme) => Array.isArray(theme.licenseEvidenceIds) ? theme.licenseEvidenceIds : []))];
+  const themeEvidence = themeEvidenceIds.length ? await executor.select({ id: inspirationRightsEvidence.id }).from(inspirationRightsEvidence).where(and(eq(inspirationRightsEvidence.workspaceId, workspaceId), inArray(inspirationRightsEvidence.id, themeEvidenceIds), eq(inspirationRightsEvidence.basis, "licensed"), or(isNull(inspirationRightsEvidence.expiresAt), gt(inspirationRightsEvidence.expiresAt, now)))) : [];
+  const currentThemeEvidenceIds = new Set(themeEvidence.map((evidence) => evidence.id));
   return validateContentDraft({
     definition,
-    draft: { format: payload.format, formatDefinition: payload.formatDefinition, contentLanguage: payload.contentLanguage, arabicVariety: payload.arabicVariety, aspectRatio: payload.aspectRatio, durationSeconds: payload.durationSeconds, script: payload.script, captionStyle: payload.captionStyle, speaker: payload.speaker, scene: payload.scene, personaId: payload.personaId, mediaSetIds: payload.mediaSetIds, themeRevisionRefs: payload.themeRevisionRefs },
+    draft: { format: payload.format, formatDefinition: payload.formatDefinition, contentLanguage: payload.contentLanguage, arabicVariety: payload.arabicVariety, aspectRatio: payload.aspectRatio, durationSeconds: payload.durationSeconds, script: payload.script, captionStyle: payload.captionStyle, speaker: payload.speaker, scene: payload.scene, personaId: payload.personaId, mediaSetIds: payload.mediaSetIds, mediaSetRevisionRefs: payload.mediaSetRevisionRefs, themeRevisionRefs: payload.themeRevisionRefs },
     sourceAssets,
     persona,
-    mediaSets,
-    themes: themes.map((theme) => ({ id: theme.id, revision: theme.revision, state: theme.state, licenseCurrent: !theme.licenseExpiresAt || theme.licenseExpiresAt > now })),
+    mediaSets: resolvedMediaSets,
+    themes: themes.map((theme) => ({ id: theme.id, revision: theme.revision, digest: theme.digest, state: theme.state, licenseCurrent: (!theme.licenseExpiresAt || theme.licenseExpiresAt > now) && Array.isArray(theme.licenseEvidenceIds) && theme.licenseEvidenceIds.length > 0 && theme.licenseEvidenceIds.every((id) => currentThemeEvidenceIds.has(id)) })),
   });
 }
 
@@ -124,7 +136,7 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
       if (!artifactRow) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
       const binding = intentRow?.intent.contentExecution;
       const expectedProviderInputs = contentProviderSourceIds(payload.format, sourceAssets, definition);
-      if (!binding || binding.contentPiece.id !== record.id || binding.contentPiece.revision !== record.revision || binding.contentPiece.digest !== canonicalDigest(payload) || binding.formatDefinition.id !== payload.formatDefinition?.id || binding.formatDefinition.revision !== payload.formatDefinition?.revision || binding.formatDefinition.digest !== payload.formatDefinition?.digest || binding.workflow.id !== definition.execution.workflow?.id || binding.workflow.revisionId !== definition.execution.workflow?.revisionId || binding.modelPolicy.id !== definition.execution.modelPolicy?.id || binding.modelPolicy.revision !== definition.execution.modelPolicy?.revision || binding.inputArtifactIds.some((id, index) => id !== payload.sourceAssetIds[index]) || binding.inputArtifactIds.length !== payload.sourceAssetIds.length || binding.providerInputArtifactIds.some((id, index) => id !== expectedProviderInputs[index]) || binding.providerInputArtifactIds.length !== expectedProviderInputs.length) throw new Error("CONTENT_EXECUTION_RECIPE_MISMATCH");
+      if (!binding || binding.contentPiece.id !== record.id || binding.contentPiece.revision !== record.revision || binding.contentPiece.digest !== canonicalDigest(payload) || binding.formatDefinition.id !== payload.formatDefinition?.id || binding.formatDefinition.revision !== payload.formatDefinition?.revision || binding.formatDefinition.digest !== payload.formatDefinition?.digest || binding.workflow.id !== definition.execution.workflow?.id || binding.workflow.revisionId !== definition.execution.workflow?.revisionId || binding.modelPolicy.id !== definition.execution.modelPolicy?.id || binding.modelPolicy.revision !== definition.execution.modelPolicy?.revision || binding.inputArtifactIds.some((id, index) => id !== intentRow?.intent.rights.sourceAssetIds[index]) || binding.inputArtifactIds.length !== intentRow?.intent.rights.sourceAssetIds.length || binding.providerInputArtifactIds.some((id, index) => id !== expectedProviderInputs[index]) || binding.providerInputArtifactIds.length !== expectedProviderInputs.length) throw new Error("CONTENT_EXECUTION_RECIPE_MISMATCH");
       const dispatchReceiptArtifactId = workflowBinding?.finalSnapshot?.outputs.receipt?.artifactId;
       if (!workflowBinding || workflowBinding.runState !== "completed" || workflowBinding.binding.contentPieceId !== record.id || workflowBinding.binding.contentPieceRevision !== record.revision || workflowBinding.binding.recipeDigest !== binding.digest || !dispatchReceiptArtifactId) throw new Error("CONTENT_WORKFLOW_LINEAGE_INVALID");
       if (!workflowBinding.binding.dispatchReceiptArtifactId) await tx.update(contentWorkflowGenerationRuns).set({ dispatchReceiptArtifactId, updatedAt: now }).where(and(eq(contentWorkflowGenerationRuns.workspaceId, input.workspaceId), eq(contentWorkflowGenerationRuns.generationIntentId, input.generation.intentId)));
@@ -192,8 +204,8 @@ export async function bindContentTextOutputCommand(input: Actor & { id: string; 
 export async function createMediaSetCommand(input: Actor & { title: string; assetIds: string[]; category: string; description: string }) {
   return getDb().transaction(async (tx) => {
     const ids = [...new Set(input.assetIds)];
-    const found = ids.length ? await tx.select({ id: assets.id }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, ids), isNull(assets.deletedAt))) : [];
-    if (!ids.length || found.length !== ids.length) throw new Error("MEDIA_SET_ASSET_NOT_AVAILABLE");
+    const found = ids.length ? await tx.select({ id: assets.id, checksum: assets.checksum, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, ids), isNull(assets.deletedAt))) : [];
+    if (!ids.length || found.length !== ids.length || found.some((row) => !row.checksum || (row.metadata as Record<string, unknown> | null)?.uploadState !== "ready")) throw new Error("MEDIA_SET_ASSET_NOT_AVAILABLE");
     return createProductRecordInTransaction(tx, { ...input, kind: "media_set", state: "active", payload: { assetIds: ids, category: input.category, description: input.description } });
   });
 }

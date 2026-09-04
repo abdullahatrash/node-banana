@@ -80,9 +80,9 @@ describe("typed Content Workflow provider dispatch", () => {
     const definitionDigest = canonicalDigest(definition) as `sha256:${string}`;
     const descriptor = qualifiedDescriptor();
     const model = { provider: "replicate" as const, model: descriptor.model, version: descriptor.qualification.status === "qualified" ? descriptor.qualification.version : "", inputSchemaDigest: descriptor.qualification.status === "qualified" ? descriptor.qualification.inputSchemaDigest : "" };
-    const unsignedPolicy = { schema: "content-model-policy/v1" as const, id: definition.execution.modelPolicy!.id, revision: 3, format: "slideshow" as const, region: "replicate-us" as const, defaultModel: model, compatibleModels: [model], overrides: { mode: "explicit_exact_allowlist" as const, allowedFields: ["model"] as const, requireRequote: true as const } };
+    const unsignedPolicy = { schema: "content-model-policy/v1" as const, id: definition.execution.modelPolicy!.id, revision: definition.execution.modelPolicy!.revision, format: "slideshow" as const, region: "replicate-us" as const, defaultModel: model, compatibleModels: [model], overrides: { mode: "explicit_exact_allowlist" as const, allowedFields: ["model"] as const, requireRequote: true as const } };
     const policy = { ...unsignedPolicy, digest: canonicalDigest(unsignedPolicy) } as ContentModelPolicy;
-    const payload = { format: "slideshow" as const, formatDefinition: { id: definition.id, revision: definition.revision, digest: definitionDigest }, contentLanguage: "ar" as const, arabicVariety: "gulf" as const, prompt: "إطلاق المنتج", script: "نص الحملة", aspectRatio: "9:16" as const, durationSeconds: 5, captionStyle: "brand", speaker: "", scene: "", sourceAssetIds, personaId: null, mediaSetIds: ["media_set_1"], themeRevisionRefs: [{ themeId: "theme_1", revision: 2 }], validationIssues: [], candidateArtifactIds: [], candidates: [], renderProofStatus: "not_requested" as const };
+    const payload = { format: "slideshow" as const, formatDefinition: { id: definition.id, revision: definition.revision, digest: definitionDigest }, contentLanguage: "ar" as const, arabicVariety: "gulf" as const, prompt: "إطلاق المنتج", script: "نص الحملة", aspectRatio: "9:16" as const, durationSeconds: 5, captionStyle: "brand", speaker: "", scene: "", sourceAssetIds, personaId: null, mediaSetIds: [], mediaSetRevisionRefs: [], themeRevisionRefs: [], validationIssues: [], candidateArtifactIds: [], candidates: [], renderProofStatus: "not_requested" as const };
     const prompt = contentProviderPrompt(payload);
     const contentExecution = buildContentGenerationRecipe({ contentPieceId: "piece_1", contentPieceRevision: 3, contentPiecePayload: payload, definition, definitionDigest, sourceTypes: new Map(sourceAssetIds.map((id) => [id, "image"])), modelPolicy: policy });
     const brandProfile = { companyName: "Test" };
@@ -136,7 +136,9 @@ describe("typed Content Workflow provider dispatch", () => {
       [{ acceptedAt: now, profile: brandProfile }],
       [{ status: "held", amount: "0.05" }],
       [{ digest: intent.rights.digest, permittedRemix: "transform" }],
-      sourceAssetIds.map((id) => ({ id, type: "image", storageKey: id, checksum: sourceDigest, mimeType: "image/png", width: 1080, height: 1920, durationSeconds: null, metadata: {} })),
+      sourceAssetIds.map((id) => ({ id, type: "image", storageKey: id, checksum: sourceDigest, mimeType: "image/png", width: 1080, height: 1920, durationSeconds: null, metadata: { uploadState: "ready", dimensionEvidence: "server-media-probe/v1" } })),
+      [{ payload }],
+      sourceAssetIds.map((id) => ({ id, type: "image", storageKey: id, checksum: sourceDigest, mimeType: "image/png", width: 1080, height: 1920, durationSeconds: null, metadata: { uploadState: "ready", dimensionEvidence: "server-media-probe/v1" } })),
       [{ digest: policy.digest }],
       [{ workflowId: durable.workflowId, workflowRevisionId: durable.workflowRevisionId, startSnapshot: durable.startSnapshot }],
     ];

@@ -26,7 +26,7 @@ export function assertContentModelPolicy(input: {
 }): void {
   const { definition, intent, descriptor } = input;
   const policy = definition.execution.modelPolicy;
-  if (!policy || policy.id !== `content.${definition.format}.v3` || policy.revision !== 3 || !policy.qualifiedModelsOnly) throw new ContentWorkflowRuntimeError("CONTENT_MODEL_POLICY_UNAVAILABLE");
+  if (!policy || policy.id !== `content.${definition.format}.v${definition.revision}` || policy.revision !== definition.revision || !policy.qualifiedModelsOnly) throw new ContentWorkflowRuntimeError("CONTENT_MODEL_POLICY_UNAVAILABLE");
   if (!intent.contentExecution?.modelPolicy.compatibleModels.some((model) => model.provider === intent.selectedModel.provider && model.model === intent.selectedModel.model && model.version === intent.selectedModel.version && model.inputSchemaDigest === intent.selectedModel.inputSchemaDigest)) throw new ContentWorkflowRuntimeError("CONTENT_MODEL_POLICY_MODEL_NOT_ALLOWED");
   if (intent.regionAdmission.region !== intent.contentExecution.modelPolicy.region) throw new ContentWorkflowRuntimeError("CONTENT_MODEL_POLICY_REGION_MISMATCH");
   if (input.policy && (!validateContentModelPolicy(input.policy) || input.policy.digest !== intent.contentExecution?.modelPolicy.digest || !contentModelAllowed(input.policy, intent.selectedModel))) throw new ContentWorkflowRuntimeError("CONTENT_MODEL_POLICY_MODEL_NOT_ALLOWED");

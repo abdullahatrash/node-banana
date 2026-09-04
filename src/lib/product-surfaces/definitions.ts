@@ -156,7 +156,8 @@ export const contentPieceSchema = z.object({
   sourceAssetIds: z.array(text(200)).default([]),
   personaId: text(200).nullable().default(null),
   mediaSetIds: z.array(text(200)).default([]),
-  themeRevisionRefs: z.array(z.object({ themeId: text(200), revision: z.number().int().positive() }).strict()).default([]),
+  mediaSetRevisionRefs: z.array(z.object({ mediaSetId: text(200), revision: z.number().int().positive(), digest: renderProofDigest }).strict()).default([]),
+  themeRevisionRefs: z.array(z.object({ themeId: text(200), revision: z.number().int().positive(), digest: renderProofDigest.optional() }).strict()).default([]),
   validationIssues: z.array(text(200)).default([]),
   candidateArtifactIds: z.array(text(200)).default([]),
   candidates: z.array(z.object({

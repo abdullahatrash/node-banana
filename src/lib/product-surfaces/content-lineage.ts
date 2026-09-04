@@ -48,8 +48,10 @@ export function isAdmittedContentArtifact(input: {
     && intent?.capability === plan.capability
     && intent.outputContract.mediaType === "video"
     && intent.outputContract.aspectRatio === "9:16"
-    && providerSourceIds.length === intent.rights.sourceAssetIds.length
-    && providerSourceIds.every((id, index) => id === intent.rights.sourceAssetIds[index])
+    && intent.contentExecution?.inputArtifactIds.length === intent.rights.sourceAssetIds.length
+    && intent.contentExecution.inputArtifactIds.every((id, index) => id === intent.rights.sourceAssetIds[index])
+    && providerSourceIds.length === intent.contentExecution.providerInputArtifactIds.length
+    && providerSourceIds.every((id, index) => id === intent.contentExecution?.providerInputArtifactIds[index])
     && operation?.state === "succeeded"
     && Array.isArray(operation.artifactIds)
     && operation.artifactIds.includes(generation.assetId);

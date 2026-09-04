@@ -2,7 +2,7 @@ import { ARABIC_VARIETIES, CONTENT_FORMATS, type ContentFormat } from "./definit
 import type { GenerationCapability } from "@/lib/model-routing/types";
 
 export type ContentControl = "script" | "prompt" | "source_images" | "source_video" | "persona" | "app_capture" | "speaker" | "scene" | "captions" | "media_sets" | "theme";
-export type ContentWorkflowInput = "recipe" | "script" | "prompt" | "speaker" | "scene" | "captionStyle" | "personaId" | "mediaSetIds" | "themeRevisionRefs" | "orderedSources" | "durationSeconds" | "aspectRatio" | "contentLanguage" | "arabicVariety";
+export type ContentWorkflowInput = "recipe" | "script" | "prompt" | "speaker" | "scene" | "captionStyle" | "personaId" | "mediaSetRevisions" | "themeInstructions" | "orderedSources" | "durationSeconds" | "aspectRatio" | "contentLanguage" | "arabicVariety";
 export type ContentSourceSlot = { key: "images" | "video" | "app_capture"; type: "image" | "video"; minimum: number; maximum: number; providerInputIndex: number | null };
 
 export interface ContentFormatDefinition {
@@ -52,12 +52,12 @@ function define(format: ContentFormat, input: {
   if (input.controls.includes("scene")) workflowInputs.push("scene");
   if (input.controls.includes("captions")) workflowInputs.push("captionStyle");
   if (input.controls.includes("persona")) workflowInputs.push("personaId");
-  if (input.controls.includes("media_sets")) workflowInputs.push("mediaSetIds");
-  if (input.controls.includes("theme")) workflowInputs.push("themeRevisionRefs");
+  if (input.controls.includes("media_sets")) workflowInputs.push("mediaSetRevisions");
+  if (input.controls.includes("theme")) workflowInputs.push("themeInstructions");
   return {
     schema: "content-format-definition/v1",
     id: `content-format:${format}`,
-    revision: 3,
+    revision: 4,
     format,
     status: "active",
     controls: input.controls,
@@ -70,8 +70,8 @@ function define(format: ContentFormat, input: {
     execution: {
       strategy: generated ? "admitted_generation" : "canonical_upload",
       capability: input.capability,
-      workflow: generated ? { id: `tasmeemai_content_${format}`, revisionId: "builtin-2026-09-04-3", operation: `runtime.dispatch_content_${format}@1`, inputs: workflowInputs } : null,
-      modelPolicy: generated ? { id: `content.${format}.v3`, revision: 3, qualifiedModelsOnly: true, advancedOverrides: "compatible_only" } : null,
+      workflow: generated ? { id: `tasmeemai_content_${format}`, revisionId: "builtin-2026-09-04-4", operation: `runtime.dispatch_content_${format}@1`, inputs: workflowInputs } : null,
+      modelPolicy: generated ? { id: `content.${format}.v4`, revision: 4, qualifiedModelsOnly: true, advancedOverrides: "compatible_only" } : null,
     },
     managedQuote: { required: generated, acceptance: "explicit_before_admission", maximumQuantity: 60 },
     renderProof: { required: true, schema: "content-render-proof/v2", verifies: ["fonts", "bidi", "captions", "timing", "safe_areas"] },

@@ -11,6 +11,7 @@ import { ModelSelect } from "@/components/simple-studio-shell/forms/ModelSelect"
 import { runAdmittedStudioGeneration } from "@/lib/model-routing/studio-generation-client";
 import { contentExecutionPlan } from "@/lib/product-surfaces/content-execution-plan";
 import { contentProviderPrompt } from "@/lib/product-surfaces/content-generation-recipe";
+import { orderedContentAssetIds, type ResolvedMediaSetRevision, type ResolvedThemeRevision } from "@/lib/product-surfaces/content-execution-resources";
 import type { ExactModelRef } from "@/lib/model-routing/types";
 import type { ContentFormatDefinition, ContentSourceSlot } from "@/lib/product-surfaces/content-format-definition";
 import type { ContentEditorOptions } from "@/lib/product-surfaces/content-editor-options";
@@ -21,10 +22,13 @@ type Piece = { id: string; title: string; revision: number; payload: Record<stri
 type Translator = (key: string, values?: Record<string, string | number>) => string;
 type Progress = "idle" | "generating" | "succeeded" | "cancelled" | "failed";
 
-export function contentDraftPayload(data: FormData, format: ContentFormat, definition: ContentFormatDefinition, definitionDigest: `sha256:${string}`, authoritative?: Record<string, unknown>) {
+export function contentDraftPayload(data: FormData, format: ContentFormat, definition: ContentFormatDefinition, definitionDigest: `sha256:${string}`, options?: Pick<ContentEditorOptions, "mediaSets" | "themes">, authoritative?: Record<string, unknown>) {
   const language = String(data.get("language"));
   const theme = String(data.get("themeRevision") || "");
   const separator = theme.lastIndexOf(":");
+  const mediaSetIds = data.getAll("mediaSetIds").map(String).filter(Boolean);
+  const selectedMediaSets = mediaSetIds.flatMap((id) => { const selected = options?.mediaSets.find((set) => set.id === id); return selected ? [{ mediaSetId: selected.id, revision: selected.revision, digest: selected.digest }] : []; });
+  const selectedTheme = separator > 0 ? options?.themes.find((candidate) => candidate.id === decodeURIComponent(theme.slice(0, separator)) && candidate.revision === Number(theme.slice(separator + 1))) : undefined;
   return {
     format,
     formatDefinition: { id: definition.id, revision: definition.revision, digest: definitionDigest },
@@ -33,8 +37,9 @@ export function contentDraftPayload(data: FormData, format: ContentFormat, defin
     prompt: String(data.get("prompt") || ""), script: String(data.get("script") || ""), speaker: String(data.get("speaker") || ""), scene: String(data.get("scene") || ""),
     aspectRatio: definition.layout.defaultAspectRatio, durationSeconds: Number(data.get("duration")), captionStyle: String(data.get("captionStyle") || ""),
     sourceAssetIds: data.getAll("sourceAssetIds").map(String).filter(Boolean), personaId: String(data.get("personaId") || "") || null,
-    mediaSetIds: data.getAll("mediaSetIds").map(String).filter(Boolean),
-    themeRevisionRefs: separator > 0 ? [{ themeId: decodeURIComponent(theme.slice(0, separator)), revision: Number(theme.slice(separator + 1)) }] : [],
+    mediaSetIds,
+    mediaSetRevisionRefs: selectedMediaSets,
+    themeRevisionRefs: selectedTheme ? [{ themeId: selectedTheme.id, revision: selectedTheme.revision, digest: selectedTheme.digest }] : [],
     candidateArtifactIds: (authoritative?.candidateArtifactIds as string[]) ?? [], candidates: (authoritative?.candidates as unknown[]) ?? [],
     renderProofStatus: String(authoritative?.renderProofStatus ?? "not_requested"), validationIssues: [],
   };
@@ -53,7 +58,7 @@ export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options,
 
   async function persist(data: FormData) {
     const current = recordRef.current;
-    const result = await productRequest("/api/product-content", { ...(current ? { id: current.id, expectedRevision: current.revision } : {}), title: String(data.get("title")), payload: contentDraftPayload(data, selectedFormat, definition, definitionDigest, current?.payload), idempotencyKey: crypto.randomUUID() });
+    const result = await productRequest("/api/product-content", { ...(current ? { id: current.id, expectedRevision: current.revision } : {}), title: String(data.get("title")), payload: contentDraftPayload(data, selectedFormat, definition, definitionDigest, options, current?.payload), idempotencyKey: crypto.randomUUID() });
     const record = result.record as Piece | undefined; if (!record?.id || !record.revision) throw new Error("CONTENT_RESPONSE_INVALID"); recordRef.current = record;
     if (!current) router.replace(`/content?format=${encodeURIComponent(selectedFormat)}&piece=${encodeURIComponent(record.id)}`, { scroll: false });
     return record;
@@ -77,8 +82,11 @@ export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options,
       if (mode === "media" && issues.length) { setError(t(`validation.${issues[0]}`)); setProgress("failed"); return; }
       if (mode === "media" && execution.strategy === "canonical_upload") await productRequest("/api/product-content/generation", { kind: "upload", id: saved.id, expectedRevision: saved.revision, idempotencyKey: crypto.randomUUID() });
       else {
-        const savedPayload = contentPieceSchema.parse(saved.payload); const language = savedPayload.contentLanguage; const sourceIds = savedPayload.sourceAssetIds;
-        const generated = await runAdmittedStudioGeneration({ prompt: mode === "media" ? contentProviderPrompt(savedPayload) : [savedPayload.prompt, savedPayload.script, t(`formats.${selectedFormat}`)].filter(Boolean).join("\n\n"), contentLanguage: language, model: { provider: "replicate", model: modelId!, version: version!, inputSchemaDigest: schemaDigest! }, mode: mode === "copy" ? "copy" : "video", sourceMediaType: mode === "copy" ? null : execution.capability === "video_to_video" ? "video" : execution.capability === "image_to_video" ? "image" : null, sourceAssetIds: mode === "copy" ? [] : sourceIds, quantity: mode === "copy" ? 1 : savedPayload.durationSeconds, fundingMode, personaId: savedPayload.personaId, contentExecution: mode === "media" ? { contentPieceId: saved.id, contentPieceRevision: saved.revision } : null, arabicVariety: language === "en" ? null : savedPayload.arabicVariety, rightsBasis, permittedRemix, rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "requested Content Format", "pinned source lineage"], transform: permittedRemix === "reference_only" ? [] : ["composition", "motion", "wording"], avoid: ["unverified claims", "unlicensed marks"] }, idempotencyKey: crypto.randomUUID(), signal: abort.signal, confirmManagedCreditQuote: requestStudioManagedCreditQuoteConfirmation });
+        const savedPayload = contentPieceSchema.parse(saved.payload); const language = savedPayload.contentLanguage;
+        const mediaSets: ResolvedMediaSetRevision[] = savedPayload.mediaSetRevisionRefs.flatMap((reference) => { const option = options.mediaSets.find((set) => set.id === reference.mediaSetId && set.revision === reference.revision && set.digest === reference.digest); return option ? [{ mediaSetId: option.id, revision: option.revision, digest: option.digest, orderedAssetIds: option.orderedAssetIds }] : []; });
+        const themes: ResolvedThemeRevision[] = savedPayload.themeRevisionRefs.flatMap((reference) => { const option = options.themes.find((theme) => theme.id === reference.themeId && theme.revision === reference.revision && theme.digest === reference.digest); return option && reference.digest ? [{ themeId: option.id, revision: option.revision, digest: option.digest, document: option.document, licenseEvidenceIds: option.licenseEvidenceIds }] : []; });
+        const sourceIds = orderedContentAssetIds(savedPayload.sourceAssetIds, mediaSets);
+        const generated = await runAdmittedStudioGeneration({ prompt: mode === "media" ? contentProviderPrompt(savedPayload, { mediaSets, themes }) : [savedPayload.prompt, savedPayload.script, t(`formats.${selectedFormat}`)].filter(Boolean).join("\n\n"), contentLanguage: language, model: { provider: "replicate", model: modelId!, version: version!, inputSchemaDigest: schemaDigest! }, mode: mode === "copy" ? "copy" : "video", sourceMediaType: mode === "copy" ? null : execution.capability === "video_to_video" ? "video" : execution.capability === "image_to_video" ? "image" : null, sourceAssetIds: mode === "copy" ? [] : sourceIds, quantity: mode === "copy" ? 1 : savedPayload.durationSeconds, fundingMode, personaId: savedPayload.personaId, contentExecution: mode === "media" ? { contentPieceId: saved.id, contentPieceRevision: saved.revision } : null, arabicVariety: language === "en" ? null : savedPayload.arabicVariety, rightsBasis, permittedRemix, rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "requested Content Format", "pinned source lineage"], transform: permittedRemix === "reference_only" ? [] : ["composition", "motion", "wording"], avoid: ["unverified claims", "unlicensed marks"] }, idempotencyKey: crypto.randomUUID(), signal: abort.signal, confirmManagedCreditQuote: requestStudioManagedCreditQuoteConfirmation });
         if (mode === "copy") { if (!generated.textOutputId) throw new Error("CANONICAL_TEXT_OUTPUT_RECEIPT_MISSING"); await productRequest("/api/product-content/generation", { kind: "text", id: saved.id, expectedRevision: saved.revision, textOutputId: generated.textOutputId, idempotencyKey: crypto.randomUUID() }); }
         else { if (!generated.assetId) throw new Error("CANONICAL_MEDIA_RECEIPT_MISSING"); await productRequest("/api/product-content/generation", { kind: "media", id: saved.id, expectedRevision: saved.revision, generation: { assetId: generated.assetId, intentId: generated.intentId, operationId: generated.operationId }, idempotencyKey: crypto.randomUUID() }); }
       }

@@ -3,7 +3,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { resolveDurableProviderKey, resolveManagedProviderKey } from "@/lib/byok/repository";
 import { getDb } from "@/lib/db";
-import { assets, brandProfiles, workflowRuns } from "@/lib/db/schema";
+import { assets, brandProfiles, workflowRuns, workspaceProductRecordRevisions } from "@/lib/db/schema";
 import { getReleaseControlService } from "@/lib/release-control/production";
 import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { loadImmutableBrandContext } from "./brand-context";
@@ -17,6 +17,8 @@ import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
 import { CreatorPersonaError } from "@/lib/creator-personas/repository";
 import { resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/content-format-registry";
 import { validateContentGenerationRecipe } from "@/lib/product-surfaces/content-generation-recipe";
+import { contentPieceSchema } from "@/lib/product-surfaces/definitions";
+import { loadContentExecutionResources } from "@/lib/product-surfaces/content-execution-resources-repository";
 import { assertContentModelPolicy } from "@/lib/product-surfaces/content-workflow-runtime";
 
 export type ExecuteAdmittedGenerationResult =
@@ -112,6 +114,11 @@ export async function executeAdmittedGeneration(input: {
   const providerIds = intent.contentExecution?.providerInputArtifactIds ?? sourceIds;
   if (intent.contentExecution) {
     try {
+      const [contentSnapshot] = await getDb().select({ payload: workspaceProductRecordRevisions.payload }).from(workspaceProductRecordRevisions).where(and(eq(workspaceProductRecordRevisions.workspaceId, input.workspaceId), eq(workspaceProductRecordRevisions.recordId, intent.contentExecution.contentPiece.id), eq(workspaceProductRecordRevisions.revision, intent.contentExecution.contentPiece.revision))).limit(1);
+      const payload = contentPieceSchema.parse(contentSnapshot?.payload);
+      if (canonicalDigest(payload) !== intent.contentExecution.contentPiece.digest) return rejected(409, "CONTENT_EXECUTION_RECIPE_MISMATCH");
+      const resources = await loadContentExecutionResources(input.workspaceId, payload);
+      if (canonicalDigest(resources.orderedAssetIds) !== canonicalDigest(intent.contentExecution.inputArtifactIds) || canonicalDigest(resources.mediaSets) !== canonicalDigest(intent.contentExecution.workflowInputs.mediaSetRevisions) || canonicalDigest(resources.themes.map((theme) => ({ themeId: theme.themeId, revision: theme.revision, digest: theme.digest, visual: theme.document.visual, captions: theme.document.captions, licenseEvidenceIds: theme.licenseEvidenceIds }))) !== canonicalDigest(intent.contentExecution.workflowInputs.themeInstructions)) return rejected(409, "CONTENT_RESOURCE_BINDING_STALE");
       const resolved = await resolveContentFormatDefinitionReference(intent.contentExecution.formatDefinition.id.slice("content-format:".length) as import("@/lib/product-surfaces/definitions").ContentFormat, intent.contentExecution.formatDefinition);
       if (!validateContentGenerationRecipe({ recipe: intent.contentExecution, definition: resolved.definition, capability: intent.capability, rightsSourceAssetIds: sourceIds, providerSourceAssetIds: intent.providerComposition.sourceAssetIds })) return rejected(409, "CONTENT_EXECUTION_RECIPE_MISMATCH");
       assertContentModelPolicy({ definition: resolved.definition, intent, descriptor });

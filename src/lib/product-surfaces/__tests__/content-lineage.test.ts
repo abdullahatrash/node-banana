@@ -6,7 +6,7 @@ import { contentFormatDefinition } from "../content-format-definition";
 const digest = `sha256:${"a".repeat(64)}`;
 const video = { id: "source", type: "video", checksum: digest, width: 1080, height: 1920, durationSeconds: 15, uploadState: "ready" };
 const artifact = { ...video, id: "result" };
-const intent = { id: "intent", capability: "video_to_video", rights: { sourceAssetIds: ["source"] }, outputContract: { mediaType: "video", aspectRatio: "9:16" } } as GenerationIntent;
+const intent = { id: "intent", capability: "video_to_video", rights: { sourceAssetIds: ["source"] }, contentExecution: { inputArtifactIds: ["source"], providerInputArtifactIds: ["source"] }, outputContract: { mediaType: "video", aspectRatio: "9:16" } } as GenerationIntent;
 const admitted = { format: "wall_of_text" as const, definition: contentFormatDefinition("wall_of_text"), sourceAssets: [video], personaState: null, generation: { assetId: "result", intentId: "intent", operationId: "generation:intent" }, receipt: { assetId: "result", intentId: "intent", status: "ready", contentDigest: digest, width: 1080, height: 1920, durationSeconds: "15" }, intent, operation: { state: "succeeded", artifactIds: ["result"] }, artifact };
 
 describe("Content Render Proof lineage", () => {

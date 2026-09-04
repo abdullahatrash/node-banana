@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CONTENT_FORMATS } from "../definitions";
+import { contentFormatDefinition } from "../content-format-definition";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
 const migration = readFileSync("drizzle/0100_content_format_definitions_and_similarity.sql", "utf8");
 const v2 = readFileSync("drizzle/0106_content_format_workflow_v2.sql", "utf8");
 const v3 = readFileSync("drizzle/0107_content_format_typed_workflows.sql", "utf8");
+const v4 = readFileSync("drizzle/0108_content_resource_bindings.sql", "utf8");
 
 describe("Content format persistence migration", () => {
   it("seeds every observed format as an exact active revision", () => {
@@ -28,6 +31,16 @@ describe("Content format persistence migration", () => {
     expect(v3).toContain("builtin-2026-09-04-3");
     expect(v3).toContain('CREATE TABLE "content_model_policy_revisions"');
     expect(v3).toContain("content_model_policy_revisions_immutable");
+  });
+
+  it("retires v3 and replaces opaque resource ids with exact resource bindings", () => {
+    expect(v4).toContain("WHERE \"revision\" = 3");
+    expect(v4).toContain("builtin-2026-09-04-4");
+    expect(v4).toContain("mediaSetRevisions");
+    expect(v4).toContain("themeInstructions");
+    expect(v4).not.toContain('"mediaSetIds"');
+    expect(v4).not.toContain('"themeRevisionRefs"');
+    for (const format of CONTENT_FORMATS) expect(v4).toContain(canonicalDigest(contentFormatDefinition(format)));
   });
 
   it("persists immutable licensed theme and Blitz similarity evidence", () => {

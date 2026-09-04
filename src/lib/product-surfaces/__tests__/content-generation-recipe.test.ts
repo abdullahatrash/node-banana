@@ -4,6 +4,7 @@ import { CONTENT_FORMAT_DEFINITIONS } from "../content-format-definition";
 import { buildContentGenerationRecipe, ContentGenerationRecipeError } from "../content-generation-recipe";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { ContentModelPolicy } from "../content-model-policy";
+import { mediaSetMembershipDigest } from "../content-execution-resources";
 
 const definitionDigest = `sha256:${"a".repeat(64)}` as const;
 
@@ -50,5 +51,21 @@ describe("Content generation recipes", () => {
   it("keeps Custom on the canonical import lifecycle", () => {
     const definition = CONTENT_FORMAT_DEFINITIONS.custom_upload;
     expect(() => buildContentGenerationRecipe({ contentPieceId: "piece_custom", contentPieceRevision: 1, contentPiecePayload: { ...fixture("wall_of_text").payload, format: "custom_upload", formatDefinition: { id: definition.id, revision: definition.revision, digest: definitionDigest } }, definition, definitionDigest, sourceTypes: new Map(), modelPolicy: fixture("wall_of_text").modelPolicy })).toThrowError(expect.objectContaining<Partial<ContentGenerationRecipeError>>({ code: "CONTENT_CANONICAL_IMPORT_REQUIRED" }));
+  });
+
+  it("binds ordered Media Set membership and licensed Theme instructions into the workflow recipe", () => {
+    const { definition, sources, payload, modelPolicy } = fixture("slideshow");
+    const mediaDigest = mediaSetMembershipDigest({ mediaSetId: "set_1", revision: 5, orderedAssetIds: ["asset_set_2", "asset_set_1"] });
+    const themeDocument = { schema: "content-theme/v1" as const, visual: { stylePrompt: "Warm editorial", palette: ["#112233"], avoid: ["unlicensed marks"] }, captions: { style: "brand", fontFamilies: ["Noto Sans Arabic"], position: "bottom" as const, bidi: "native" as const } };
+    const themeDigest = canonicalDigest(themeDocument) as `sha256:${string}`;
+    const recipe = buildContentGenerationRecipe({
+      contentPieceId: "piece_slideshow", contentPieceRevision: 2,
+      contentPiecePayload: { ...payload, mediaSetIds: ["set_1"], mediaSetRevisionRefs: [{ mediaSetId: "set_1", revision: 5, digest: mediaDigest }], themeRevisionRefs: [{ themeId: "theme_1", revision: 3, digest: themeDigest }] },
+      definition, definitionDigest, sourceTypes: new Map([...sources.map((source) => [source.id, source.type] as const), ["asset_set_2", "image"], ["asset_set_1", "image"]]), modelPolicy,
+      resources: { mediaSets: [{ mediaSetId: "set_1", revision: 5, digest: mediaDigest, orderedAssetIds: ["asset_set_2", "asset_set_1"] }], themes: [{ themeId: "theme_1", revision: 3, digest: themeDigest, document: themeDocument, licenseEvidenceIds: ["license_1"] }], orderedAssetIds: [...payload.sourceAssetIds, "asset_set_2", "asset_set_1"] },
+    });
+    expect(recipe.inputArtifactIds).toEqual([...payload.sourceAssetIds, "asset_set_2", "asset_set_1"]);
+    expect(recipe.workflowInputs.mediaSetRevisions[0]).toMatchObject({ digest: mediaDigest, orderedAssetIds: ["asset_set_2", "asset_set_1"] });
+    expect(recipe.workflowInputs.themeInstructions[0]).toMatchObject({ digest: themeDigest, visual: themeDocument.visual, captions: themeDocument.captions, licenseEvidenceIds: ["license_1"] });
   });
 });

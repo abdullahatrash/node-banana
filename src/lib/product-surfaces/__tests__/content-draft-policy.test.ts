@@ -3,13 +3,14 @@ import { validateContentDraft, type ContentDraftPolicyInput } from "../content-d
 import { contentFormatDefinition } from "../content-format-definition";
 
 const talkingHeadDefinition = contentFormatDefinition("talking_head_ugc");
+const digest = `sha256:${"a".repeat(64)}`;
 const readyDraft: ContentDraftPolicyInput = {
   definition: talkingHeadDefinition,
-  draft: { format: "talking_head_ugc", formatDefinition: { id: talkingHeadDefinition.id, revision: talkingHeadDefinition.revision }, contentLanguage: "ar", arabicVariety: "gulf", aspectRatio: "9:16", durationSeconds: 15, script: "نص أصلي", captionStyle: "brand", speaker: "Warm founder", scene: "Studio", personaId: "persona", mediaSetIds: ["set"], themeRevisionRefs: [{ themeId: "theme", revision: 2 }] },
+  draft: { format: "talking_head_ugc", formatDefinition: { id: talkingHeadDefinition.id, revision: talkingHeadDefinition.revision }, contentLanguage: "ar", arabicVariety: "gulf", aspectRatio: "9:16", durationSeconds: 15, script: "نص أصلي", captionStyle: "brand", speaker: "Warm founder", scene: "Studio", personaId: "persona", mediaSetIds: ["set"], mediaSetRevisionRefs: [{ mediaSetId: "set", revision: 2, digest }], themeRevisionRefs: [{ themeId: "theme", revision: 2, digest }] },
   sourceAssets: [],
   persona: { id: "persona", state: "active", consentCurrent: true },
-  mediaSets: [{ id: "set", state: "active" }],
-  themes: [{ id: "theme", revision: 2, state: "active", licenseCurrent: true }],
+  mediaSets: [{ id: "set", revision: 2, digest, state: "active" }],
+  themes: [{ id: "theme", revision: 2, digest, state: "active", licenseCurrent: true }],
 };
 
 describe("Content Draft validation", () => {
@@ -24,7 +25,7 @@ describe("Content Draft validation", () => {
 
   it("derives required format controls and media rules instead of trusting the UI", () => {
     const definition = contentFormatDefinition("green_screen_meme");
-    const input: ContentDraftPolicyInput = { ...readyDraft, definition, draft: { ...readyDraft.draft, format: "green_screen_meme", formatDefinition: { id: definition.id, revision: definition.revision }, speaker: "", scene: "", personaId: null, mediaSetIds: [], themeRevisionRefs: [] }, persona: null, mediaSets: [], themes: [], sourceAssets: [{ id: "video-first", type: "video", ready: true }, { id: "image-second", type: "image", ready: true }] };
+    const input: ContentDraftPolicyInput = { ...readyDraft, definition, draft: { ...readyDraft.draft, format: "green_screen_meme", formatDefinition: { id: definition.id, revision: definition.revision }, speaker: "", scene: "", personaId: null, mediaSetIds: [], mediaSetRevisionRefs: [], themeRevisionRefs: [] }, persona: null, mediaSets: [], themes: [], sourceAssets: [{ id: "video-first", type: "video", ready: true }, { id: "image-second", type: "image", ready: true }] };
     expect(validateContentDraft(input)).toContain("CONTENT_SOURCE_TYPE_INVALID");
     expect(validateContentDraft({ ...input, sourceAssets: [{ id: "image", type: "image", ready: true }, { id: "video", type: "video", ready: true }] })).not.toContain("CONTENT_SOURCE_TYPE_INVALID");
   });
