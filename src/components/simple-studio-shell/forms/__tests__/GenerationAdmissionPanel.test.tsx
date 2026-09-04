@@ -58,7 +58,7 @@ describe("GenerationAdmissionPanel managed credit confirmation", () => {
     render(<GenerationAdmissionPanel runs={2} quantityPerRun={5} />);
     expect(screen.getByTestId("generation-funding-summary")).toHaveTextContent("Your Replicate key (BYOK)");
     expect(screen.getByTestId("generation-funding-summary")).toHaveTextContent("$0.20");
-    expect(screen.getByRole("link", { name: "Manage key" })).toHaveAttribute("href", "/settings?section=credentials");
+    expect(screen.getByRole("link", { name: "Manage key" })).toHaveAttribute("href", "/settings?section=providers");
   });
 
   it("explains managed credits before the exact quote is created", () => {

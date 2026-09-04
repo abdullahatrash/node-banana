@@ -50,7 +50,7 @@ export function GenerationAdmissionPanel({ runs, quantityPerRun }: { runs?: numb
             : funding("estimatedCost", { amount: new Intl.NumberFormat(locale, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(estimatedProviderCost) })}
         </p> : <p className="mt-1 text-xs text-muted-foreground">{funding("selectModel")}</p>}
       </div>
-      <Link href={fundingMode === "byok" ? "/settings?section=credentials" : "/billing"} className="shrink-0 text-xs font-semibold text-primary underline-offset-4 hover:underline">
+      <Link href={fundingMode === "byok" ? "/settings?section=providers" : "/billing"} className="shrink-0 text-xs font-semibold text-primary underline-offset-4 hover:underline">
         {funding(`${fundingMode}.action`)}
       </Link>
     </div>

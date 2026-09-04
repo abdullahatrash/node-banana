@@ -53,7 +53,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
     catch (error) { return fail(422, error instanceof CreatorPersonaError ? error.code : "PERSONA_USAGE_DENIED", [{ code: "review_persona", href: "/influencers" }]); }
     if (persona.model.provider !== input.model.provider || persona.model.model !== input.model.model || persona.model.version !== input.model.version || persona.model.inputSchemaDigest !== input.model.inputSchemaDigest) return fail(422, "PERSONA_MODEL_MISMATCH", [{ code: "select_persona_model", href: "/influencers" }]);
   }
-  if (input.capability !== "text_generation" && !canUseS3Storage()) return fail(503, "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE", [{ code: "configure_storage", href: "/studio/settings/storage" }]);
+  if (input.capability !== "text_generation" && !canUseS3Storage()) return fail(503, "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE", [{ code: "configure_storage", href: "/settings?section=storage" }]);
   const releaseFlagId = process.env.ADMITTED_GENERATION_RELEASE_FLAG_ID?.trim();
   if (!releaseFlagId && process.env.NODE_ENV === "production") return fail(503, "GENERATION_RELEASE_FLAG_UNCONFIGURED");
   if (releaseFlagId) {
@@ -65,7 +65,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
     : await resolveDurableProviderKey(context.workspaceId, "replicate");
   if (!credential) return input.fundingMode === "managed"
     ? fail(503, "MANAGED_REPLICATE_CREDENTIAL_UNAVAILABLE", [{ code: "inspect_billing", href: "/billing" }])
-    : fail(422, "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", [{ code: "configure_provider_key", href: "/studio/settings/provider-keys" }]);
+    : fail(422, "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", [{ code: "configure_provider_key", href: "/settings?section=providers" }]);
   const [brand] = await getDb().select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, context.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
   if (!brand?.acceptedAt) return fail(422, "ACCEPTED_BRAND_REVISION_REQUIRED", [{ code: "accept_brand", href: "/onboarding/brand-review" }]);
   if (input.blitzContext) {

@@ -1126,5 +1126,46 @@
     "unitPrice": "Provider price: {amount} per {basis}",
     "estimatedCost": "Estimated provider cost for this request: {amount}",
     "basis": { "image": "image", "second": "second", "run": "run" }
+  },
+  "generationReadiness": {
+    "title": "Generation setup needs attention",
+    "description": "Complete these workspace gates before this type of generation can run.",
+    "gates": {
+      "qualifiedModel": {
+        "title": "Qualify a compatible Replicate model",
+        "detail": "No signed, immutable model contract currently supports this generation type.",
+        "action": "Model routing"
+      },
+      "acceptedBrand": {
+        "title": "Accept the Brand Profile",
+        "detail": "Generation pins an accepted brand revision so every result uses workspace context.",
+        "action": "Review brand"
+      },
+      "canonicalMediaStorage": {
+        "title": "Configure workspace media storage",
+        "detail": "Image and video results require the canonical S3-compatible storage backend.",
+        "action": "Storage"
+      },
+      "processingRegion": {
+        "title": "Verify the Replicate processing region",
+        "detail": "A current signed region policy must allow the exact Replicate processing route.",
+        "action": "Data controls"
+      },
+      "byokCredential": {
+        "title": "Save a validated Replicate key",
+        "detail": "BYOK runs use the encrypted credential owned by this workspace.",
+        "action": "Provider keys"
+      },
+      "managedCredential": {
+        "title": "Enable the managed Replicate account",
+        "detail": "The operator-managed credential and immutable key revision are not configured.",
+        "action": "Billing"
+      },
+      "managedCreditRate": {
+        "title": "Configure the managed credit rate",
+        "detail": "Managed runs require a valid USD-per-credit rate before an exact quote can be issued.",
+        "action": "Billing"
+      }
+    }
   }
 }
