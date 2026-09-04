@@ -10,7 +10,6 @@ import {
   RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react"
-import { format } from "date-fns"
 import { PostStatusBadge } from "./PostStatusBadge"
 import { Button } from "@/components/ui/button"
 import {
@@ -21,6 +20,7 @@ import {
 import { useToast } from "@/components/Toast"
 import type { SocialPost } from "@/lib/social/client"
 import type { SocialPostStatus } from "@/lib/db/schema"
+import { useFormatter, useTranslations } from "next-intl"
 
 interface PostRowProps {
   post: SocialPost
@@ -28,6 +28,8 @@ interface PostRowProps {
 }
 
 export function PostRow({ post, onMutate }: PostRowProps) {
+  const t = useTranslations("social.posts")
+  const format = useFormatter()
   const router = useRouter()
   const { show: showToast } = useToast()
   const [showError, setShowError] = useState(false)
@@ -44,11 +46,11 @@ export function PostRow({ post, onMutate }: PostRowProps) {
     setIsActing(true)
     try {
       await retrySocialPost(post.id)
-      showToast("Post re-queued", "success")
+      showToast(t("toast.requeued"), "success")
       onMutate()
     } catch (error) {
       showToast(
-        error instanceof Error ? error.message : "Retry failed",
+        error instanceof Error ? error.message : t("errors.retry"),
         "error",
       )
     } finally {
@@ -57,15 +59,15 @@ export function PostRow({ post, onMutate }: PostRowProps) {
   }
 
   async function handleDelete() {
-    if (!confirm("Delete this post?")) return
+    if (!confirm(t("confirmDelete"))) return
     setIsActing(true)
     try {
       await deleteSocialPost(post.id)
-      showToast("Post deleted", "success")
+      showToast(t("toast.deleted"), "success")
       onMutate()
     } catch (error) {
       showToast(
-        error instanceof Error ? error.message : "Delete failed",
+        error instanceof Error ? error.message : t("errors.delete"),
         "error",
       )
     } finally {
@@ -82,11 +84,11 @@ export function PostRow({ post, onMutate }: PostRowProps) {
         mediaUrls: (post.mediaUrls as Array<{ type: string; url: string; alt?: string }>) ?? undefined,
         mediaReferences: post.stableMediaRefs?.map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset", id: reference.assetId, digest: reference.assetDigest })),
       })
-      showToast("Post duplicated as draft", "success")
+      showToast(t("toast.duplicated"), "success")
       router.push(`/social/compose?postId=${duplicated.id}`)
     } catch (error) {
       showToast(
-        error instanceof Error ? error.message : "Duplicate failed",
+        error instanceof Error ? error.message : t("errors.duplicate"),
         "error",
       )
     } finally {
@@ -100,11 +102,11 @@ export function PostRow({ post, onMutate }: PostRowProps) {
         {/* Content */}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm">
-            {post.content?.slice(0, 100) || "No content"}
+            {post.content?.slice(0, 100) || t("noContent")}
           </p>
           {post.mediaUrls && post.mediaUrls.length > 0 && (
             <p className="mt-0.5 text-[10px] text-muted-foreground">
-              {post.mediaUrls.length} media attached
+              {t("mediaAttached", { count: post.mediaUrls.length })}
             </p>
           )}
         </div>
@@ -116,13 +118,13 @@ export function PostRow({ post, onMutate }: PostRowProps) {
               ? "queued"
               : (post.status as SocialPostStatus)
           }
-          label={isWaitingForScheduledPublish ? "Scheduled" : undefined}
+          label={isWaitingForScheduledPublish ? t("scheduled") : undefined}
         />
 
         {/* Time */}
         {time && (
           <span className="flex-shrink-0 text-xs text-muted-foreground">
-            {format(new Date(time), "MMM d, HH:mm")}
+            <bdi>{format.dateTime(new Date(time), { dateStyle: "medium", timeStyle: "short" })}</bdi>
           </span>
         )}
 
@@ -134,6 +136,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
               size="icon"
               className="size-7"
               onClick={() => router.push(`/social/compose?postId=${post.id}`)}
+              aria-label={t("actions.edit")}
             >
               <PencilIcon className="size-3.5" />
             </Button>
@@ -145,6 +148,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
               className="size-7 text-destructive"
               onClick={handleRetry}
               disabled={isActing}
+              aria-label={t("actions.retry")}
             >
               <RefreshCwIcon className="size-3.5" />
             </Button>
@@ -156,6 +160,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
               className="size-7"
               render={<a href={post.platformPostUrl} target="_blank" rel="noopener" />}
               nativeButton={false}
+              aria-label={t("actions.openPublished")}
             >
               <ExternalLinkIcon className="size-3.5" />
             </Button>
@@ -167,6 +172,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
               className="size-7 text-muted-foreground hover:text-destructive"
               onClick={handleDelete}
               disabled={isActing}
+              aria-label={t("actions.delete")}
             >
               <Trash2Icon className="size-3.5" />
             </Button>
@@ -177,6 +183,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
             className="size-7"
             onClick={handleDuplicate}
             disabled={isActing}
+            aria-label={t("actions.duplicate")}
           >
             <CopyIcon className="size-3.5" />
           </Button>
@@ -193,7 +200,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
             <ChevronDownIcon
               className={`size-3 transition-transform ${showError ? "rotate-180" : ""}`}
             />
-            {showError ? "Hide error" : "Show error"}
+            {showError ? t("hideError") : t("showError")}
           </button>
           {showError && (
             <div className="px-3 pb-2 text-[10px] text-destructive/80">

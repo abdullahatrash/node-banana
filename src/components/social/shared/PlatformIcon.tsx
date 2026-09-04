@@ -2,6 +2,7 @@
 
 import type { SocialPlatform } from "@/lib/db/schema";
 import { PLATFORM_COLORS, PLATFORM_ICONS } from "@/lib/social/constants";
+import { useTranslations } from "next-intl";
 
 interface PlatformIconProps {
   platform: SocialPlatform;
@@ -14,6 +15,7 @@ export function PlatformIcon({
   size = 20,
   className,
 }: PlatformIconProps) {
+  const t = useTranslations("social.platforms");
   if (platform === "pinterest") {
     return (
       <svg
@@ -39,7 +41,7 @@ export function PlatformIcon({
   if (platform === "threads") {
     return (
       <svg
-        aria-label="Threads"
+        aria-label={t("threads")}
         viewBox="0 0 192 192"
         xmlns="http://www.w3.org/2000/svg"
         width={size}

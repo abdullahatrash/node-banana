@@ -4,17 +4,21 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { useSimpleStudioStore, type Generation } from "@/store/simpleStudioStore";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
+import { useFormatter, useTranslations } from "next-intl";
 
 function GenerationCard({ gen }: { gen: Generation }) {
+  const t = useTranslations("studioUi.library");
+  const format = useFormatter();
+  const createdAt = format.dateTime(new Date(gen.createdAt), { dateStyle: "medium" });
   if (gen.mode === "copy") {
     return (
       <div className="rounded-lg border p-4">
         <div className="mb-2 text-xs text-muted-foreground">
-          copy · {new Date(gen.createdAt).toLocaleDateString()}
+          {t("type.copy")} · <bdi>{createdAt}</bdi>
         </div>
         <div className="mb-2 text-sm font-medium line-clamp-2">{gen.prompt}</div>
         <div className="text-sm line-clamp-4 whitespace-pre-wrap">
-          {gen.result ?? "(no output)"}
+          {gen.result ?? t("noOutput")}
         </div>
       </div>
     );
@@ -35,7 +39,7 @@ function GenerationCard({ gen }: { gen: Generation }) {
         </div>
         <div className="p-3">
           <div className="mb-1 text-xs text-muted-foreground">
-            video · {new Date(gen.createdAt).toLocaleDateString()}
+            {t("type.video")} · <bdi>{createdAt}</bdi>
           </div>
           <div className="text-sm line-clamp-2">{gen.prompt}</div>
         </div>
@@ -54,7 +58,7 @@ function GenerationCard({ gen }: { gen: Generation }) {
       </div>
       <div className="p-3">
         <div className="mb-1 text-xs text-muted-foreground">
-          photo · {new Date(gen.createdAt).toLocaleDateString()}
+          {t("type.photo")} · <bdi>{createdAt}</bdi>
         </div>
         <div className="text-sm line-clamp-2">{gen.prompt}</div>
       </div>
@@ -63,6 +67,7 @@ function GenerationCard({ gen }: { gen: Generation }) {
 }
 
 export function LibraryGallery() {
+  const t = useTranslations("studioUi.library");
   const generationsByMode = useSimpleStudioStore((s) => s.generationsByMode);
   const filter = useSimpleStudioShellStore((s) => s.libraryModeFilter);
 
@@ -79,25 +84,25 @@ export function LibraryGallery() {
   if (visible.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 p-12 text-center">
-        <div className="text-sm text-muted-foreground">No generations yet.</div>
+        <div className="text-sm text-muted-foreground">{t("empty")}</div>
         <div className="flex gap-2">
           <Link
             href="/simple-studio/images"
             className="rounded-md border px-3 py-1 text-sm hover:bg-muted"
           >
-            Create images
+            {t("createImages")}
           </Link>
           <Link
             href="/simple-studio/videos"
             className="rounded-md border px-3 py-1 text-sm hover:bg-muted"
           >
-            Create videos
+            {t("createVideos")}
           </Link>
           <Link
             href="/simple-studio/copy"
             className="rounded-md border px-3 py-1 text-sm hover:bg-muted"
           >
-            Write copy
+            {t("writeCopy")}
           </Link>
         </div>
       </div>

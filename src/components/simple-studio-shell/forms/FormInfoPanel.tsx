@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useTranslations } from "next-intl";
 
 interface FormInfoPanelProps {
   aspectRatios?: { value: string; label: string }[];
@@ -25,12 +26,13 @@ export function FormInfoPanel({
   onBatchCountChange,
   estimatedCost,
 }: FormInfoPanelProps) {
+  const t = useTranslations("studioUi.infoPanel");
   return (
     <div className="space-y-4 rounded-lg border bg-card p-4 text-sm">
       {aspectRatios && aspectRatios.length > 0 && (
         <section>
           <div className="mb-2 text-xs font-medium text-muted-foreground">
-            Aspect ratio
+            {t("aspectRatio")}
           </div>
           <div className="flex flex-wrap gap-2">
             {aspectRatios.map((r) => (
@@ -54,7 +56,7 @@ export function FormInfoPanel({
       {batchPresets && batchPresets.length > 0 && (
         <section>
           <div className="mb-2 text-xs font-medium text-muted-foreground">
-            Batch count
+            {t("batchCount")}
           </div>
           <div className="flex flex-wrap gap-2">
             {batchPresets.map((n) => (
@@ -78,7 +80,7 @@ export function FormInfoPanel({
       {estimatedCost && (
         <section>
           <div className="mb-1 text-xs font-medium text-muted-foreground">
-            Estimated cost
+            {t("estimatedCost")}
           </div>
           <div>{estimatedCost}</div>
         </section>
@@ -87,7 +89,7 @@ export function FormInfoPanel({
       {outputExample && (
         <section>
           <div className="mb-2 text-xs font-medium text-muted-foreground">
-            Output example
+            {t("outputExample")}
           </div>
           {outputExample}
         </section>

@@ -1,6 +1,7 @@
 "use client"
 
 import type { ComposerMediaItem } from "@/store/socialComposerStore"
+import { useTranslations } from "next-intl"
 
 interface XPreviewProps {
   displayName: string
@@ -10,6 +11,7 @@ interface XPreviewProps {
 }
 
 export function XPreview({ displayName, username, content, media }: XPreviewProps) {
+  const t = useTranslations("social.preview")
   return (
     <div className="overflow-hidden rounded-lg border bg-card p-3">
       <div className="flex gap-2.5">
@@ -19,7 +21,7 @@ export function XPreview({ displayName, username, content, media }: XPreviewProp
           <div className="flex items-center gap-1">
             <span className="text-xs font-semibold">{displayName}</span>
             <span className="text-[10px] text-muted-foreground">
-              {username ? `@${username}` : ""} · now
+              <bdi>{username ? `@${username}` : ""}</bdi> · {t("now")}
             </span>
           </div>
           {/* Content */}
@@ -51,10 +53,10 @@ export function XPreview({ displayName, username, content, media }: XPreviewProp
           )}
           {/* Engagement */}
           <div className="mt-2 flex gap-6 text-[10px] text-muted-foreground">
-            <span>Reply</span>
-            <span>Repost</span>
-            <span>Like</span>
-            <span>Views</span>
+            <span>{t("reply")}</span>
+            <span>{t("repost")}</span>
+            <span>{t("like")}</span>
+            <span>{t("views")}</span>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 "use client"
 
 import type { ComposerMediaItem } from "@/store/socialComposerStore"
+import { useTranslations } from "next-intl"
 
 interface BlueskyPreviewProps {
   displayName: string
@@ -15,6 +16,7 @@ export function BlueskyPreview({
   content,
   media,
 }: BlueskyPreviewProps) {
+  const t = useTranslations("social.preview")
   const images = media.filter((m) => m.type === "image").slice(0, 4)
 
   return (
@@ -64,10 +66,10 @@ export function BlueskyPreview({
             </div>
           )}
           <div className="mt-2 flex gap-6 text-[10px] text-muted-foreground">
-            <span>Reply</span>
-            <span>Repost</span>
-            <span>Like</span>
-            <span>More</span>
+            <span>{t("reply")}</span>
+            <span>{t("repost")}</span>
+            <span>{t("like")}</span>
+            <span>{t("more")}</span>
           </div>
         </div>
       </div>

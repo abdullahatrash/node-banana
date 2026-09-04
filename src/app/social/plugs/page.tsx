@@ -12,8 +12,10 @@ import { useToast } from "@/components/Toast"
 import { Loader2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useTranslations } from "next-intl"
 
 export default function SocialPlugsPage() {
+  const t = useTranslations("social.plugs")
   const [webhooks, setWebhooks] = useState<SocialWebhook[]>([])
   const [targetUrl, setTargetUrl] = useState("")
   const [isLoading, setIsLoading] = useState(true)
@@ -28,13 +30,13 @@ export default function SocialPlugsPage() {
       setWebhooks(await listSocialWebhooks())
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Failed to load plugs"
+        error instanceof Error ? error.message : t("errors.load")
       setError(message)
       setWebhooks([])
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     refresh()
@@ -48,15 +50,15 @@ export default function SocialPlugsPage() {
       const { signingSecret } = await createSocialWebhook({ targetUrl: targetUrl.trim() })
       show(
         signingSecret
-          ? `Webhook created. Secret: ${signingSecret.slice(0, 12)}...`
-          : "Webhook created",
+          ? t("toast.createdWithSecret", { secret: `${signingSecret.slice(0, 12)}…` })
+          : t("toast.created"),
         "success",
       )
       setTargetUrl("")
       await refresh()
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Failed to create webhook"
+        error instanceof Error ? error.message : t("errors.create")
       setError(message)
       show(message, "error")
     } finally {
@@ -69,23 +71,23 @@ export default function SocialPlugsPage() {
     try {
       await updateSocialWebhook(webhook.id, { enabled: !webhook.enabled })
       await refresh()
-      show(webhook.enabled ? "Plug disabled" : "Plug enabled", "success")
+      show(webhook.enabled ? t("toast.disabled") : t("toast.enabled"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : "Failed to update plug", "error")
+      show(error instanceof Error ? error.message : t("errors.update"), "error")
     } finally {
       setMutatingWebhookId(null)
     }
   }
 
   async function onDelete(webhook: SocialWebhook) {
-    if (!confirm("Delete this plug?")) return
+    if (!confirm(t("confirmDelete"))) return
     setMutatingWebhookId(webhook.id)
     try {
       await deleteSocialWebhook(webhook.id)
       await refresh()
-      show("Plug deleted", "success")
+      show(t("toast.deleted"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : "Failed to delete plug", "error")
+      show(error instanceof Error ? error.message : t("errors.delete"), "error")
     } finally {
       setMutatingWebhookId(null)
     }
@@ -101,7 +103,7 @@ export default function SocialPlugsPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
-      <h2 className="text-lg font-semibold">Plugs (Webhooks)</h2>
+      <h2 className="text-lg font-semibold">{t("title")}</h2>
       {error ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
           {error}
@@ -112,16 +114,16 @@ export default function SocialPlugsPage() {
           type="url"
           value={targetUrl}
           onChange={(e) => setTargetUrl(e.target.value)}
-          placeholder="https://example.com/social-webhook"
+          placeholder={t("urlPlaceholder")}
         />
         <Button type="submit" disabled={isCreating}>
-          {isCreating ? "Creating..." : "Add Plug"}
+          {isCreating ? t("creating") : t("add")}
         </Button>
       </form>
       <div className="space-y-2">
         {webhooks.length === 0 ? (
           <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-            No plugs configured yet.
+            {t("empty")}
           </div>
         ) : (
           webhooks.map((webhook) => (
@@ -130,7 +132,7 @@ export default function SocialPlugsPage() {
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{webhook.targetUrl}</div>
                   <div className="text-[10px] text-muted-foreground">
-                    {webhook.enabled ? "Enabled" : "Disabled"} · {webhook.id}
+                    {webhook.enabled ? t("state.enabled") : t("state.disabled")} · <bdi>{webhook.id}</bdi>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -140,7 +142,7 @@ export default function SocialPlugsPage() {
                     onClick={() => onToggleEnabled(webhook)}
                     disabled={mutatingWebhookId === webhook.id}
                   >
-                    {webhook.enabled ? "Disable" : "Enable"}
+                    {webhook.enabled ? t("disable") : t("enable")}
                   </Button>
                   <Button
                     size="sm"
@@ -149,7 +151,7 @@ export default function SocialPlugsPage() {
                     onClick={() => onDelete(webhook)}
                     disabled={mutatingWebhookId === webhook.id}
                   >
-                    Delete
+                    {t("delete")}
                   </Button>
                 </div>
               </div>

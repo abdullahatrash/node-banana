@@ -1,6 +1,7 @@
 "use client"
 
 import type { ComposerMediaItem } from "@/store/socialComposerStore"
+import { useTranslations } from "next-intl"
 
 interface YouTubePreviewProps {
   displayName: string
@@ -9,6 +10,7 @@ interface YouTubePreviewProps {
 }
 
 export function YouTubePreview({ displayName, content, media }: YouTubePreviewProps) {
+  const t = useTranslations("social.preview")
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
       {/* Video thumbnail */}
@@ -25,13 +27,13 @@ export function YouTubePreview({ displayName, content, media }: YouTubePreviewPr
         <div className="size-8 flex-shrink-0 rounded-full bg-muted" />
         <div className="min-w-0 flex-1">
           <p className="line-clamp-2 text-xs font-medium leading-snug">
-            {content || "Untitled video"}
+            {content || t("untitledVideo")}
           </p>
           <p className="mt-0.5 text-[10px] text-muted-foreground">
             {displayName}
           </p>
           <p className="text-[10px] text-muted-foreground">
-            0 views · Just now
+            {t("viewCount", { count: 0 })} · {t("justNow")}
           </p>
         </div>
       </div>

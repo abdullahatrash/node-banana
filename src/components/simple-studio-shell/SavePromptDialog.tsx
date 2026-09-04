@@ -12,8 +12,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
+import { useTranslations } from "next-intl";
 
 export function SavePromptDialog() {
+  const t = useTranslations("studioUi.savePrompt");
   const open = useSimpleStudioShellStore((s) => s.savePromptDialogOpen);
   const closeDialog = useSimpleStudioShellStore((s) => s.closeSavePromptDialog);
   const storePrompt = useSimpleStudioStore((s) => s.prompt);
@@ -60,22 +62,22 @@ export function SavePromptDialog() {
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Save prompt</DialogTitle>
+          <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>
-            Save a {mode} prompt to your library for later use.
+            {t("description", { mode: t(`mode.${mode}`) })}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
           <div>
             <label htmlFor="save-prompt-name" className="mb-1 block text-sm font-medium">
-              Name
+              {t("name")}
             </label>
             <input
               id="save-prompt-name"
               type="text"
               className="w-full rounded-md border bg-background p-2 text-sm"
-              placeholder="e.g. Cinematic sunset"
+              placeholder={t("namePlaceholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
@@ -87,12 +89,12 @@ export function SavePromptDialog() {
               htmlFor="save-prompt-text"
               className="mb-1 block text-sm font-medium"
             >
-              Prompt text
+              {t("promptText")}
             </label>
             <textarea
               id="save-prompt-text"
               className="max-h-48 min-h-24 w-full resize-y rounded-md border bg-background p-2 text-sm"
-              placeholder="Describe the prompt…"
+              placeholder={t("promptPlaceholder")}
               value={promptText}
               onChange={(e) => setPromptText(e.target.value)}
             />
@@ -101,10 +103,10 @@ export function SavePromptDialog() {
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => handleOpenChange(false)}>
-            Cancel
+            {t("cancel")}
           </Button>
           <Button onClick={handleSave} disabled={disabled}>
-            Save
+            {saving ? t("saving") : t("save")}
           </Button>
         </DialogFooter>
       </DialogContent>

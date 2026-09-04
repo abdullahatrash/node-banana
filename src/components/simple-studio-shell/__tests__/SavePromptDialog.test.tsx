@@ -1,9 +1,20 @@
-import { render, screen } from "@testing-library/react";
+import { render as testingRender, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
+import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { SavePromptDialog } from "../SavePromptDialog";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
+import messages from "@/i18n/messages/en.json";
+
+function render(ui: ReactElement) {
+  return testingRender(
+    <NextIntlClientProvider locale="en" messages={messages}>
+      {ui}
+    </NextIntlClientProvider>,
+  );
+}
 
 describe("SavePromptDialog", () => {
   beforeEach(() => {

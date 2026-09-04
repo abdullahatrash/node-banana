@@ -27,12 +27,14 @@ import {
   pickSelectedPublishingSettings,
   validateSelectedPublishingSettings,
 } from "@/lib/social/publishing-settings"
+import { useTranslations } from "next-intl"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/components/Toast"
 import type { SocialPlatform } from "@/lib/db/schema"
 
 export function ComposeView() {
+  const t = useTranslations("social.compose")
   const router = useRouter()
   const { show: showToast } = useToast()
   const [isSubmitting, setIsSubmitting] = useState<
@@ -123,12 +125,12 @@ export function ComposeView() {
           scheduledAt: scheduledAt?.toISOString(),
         })
       }
-      showToast("Draft saved", "success")
+      showToast(t("toast.draftSaved"), "success")
       reset()
       router.push("/social/posts")
     } catch (error) {
       showToast(
-        error instanceof Error ? error.message : "Failed to save draft",
+        error instanceof Error ? error.message : t("errors.saveDraft"),
         "error",
       )
     } finally {
@@ -155,7 +157,7 @@ export function ComposeView() {
     if (!canSchedule) return
     const validation = validateBeforePublish()
     if (!validation.valid) {
-      showToast(validation.errors[0] ?? "Publishing settings need attention", "error")
+      showToast(validation.errors[0] ?? t("errors.settings"), "error")
       return
     }
     setIsSubmitting("schedule")
@@ -195,17 +197,17 @@ export function ComposeView() {
       const { total, failed } = await publishAll(publishQueue)
       if (failed > 0) {
         showToast(
-          `Scheduled ${total - failed} of ${total} posts. ${failed} failed.`,
+          t("toast.schedulePartial", { success: total - failed, total, failed }),
           "error",
         )
       } else {
-        showToast("Post scheduled", "success")
+        showToast(t("toast.scheduled"), "success")
       }
       reset()
       router.push("/social/calendar")
     } catch (error) {
       showToast(
-        error instanceof Error ? error.message : "Failed to schedule",
+        error instanceof Error ? error.message : t("errors.schedule"),
         "error",
       )
     } finally {
@@ -217,7 +219,7 @@ export function ComposeView() {
     if (!canPublish) return
     const validation = validateBeforePublish()
     if (!validation.valid) {
-      showToast(validation.errors[0] ?? "Publishing settings need attention", "error")
+      showToast(validation.errors[0] ?? t("errors.settings"), "error")
       return
     }
     setIsSubmitting("publish")
@@ -256,17 +258,17 @@ export function ComposeView() {
       const { total, failed } = await publishAll(publishQueue)
       if (failed > 0) {
         showToast(
-          `Published ${total - failed} of ${total} posts. ${failed} failed.`,
+          t("toast.publishPartial", { success: total - failed, total, failed }),
           "error",
         )
       } else {
-        showToast("Publishing...", "success")
+        showToast(t("toast.publishing"), "success")
       }
       reset()
       router.push("/social/calendar")
     } catch (error) {
       showToast(
-        error instanceof Error ? error.message : "Failed to publish",
+        error instanceof Error ? error.message : t("errors.publish"),
         "error",
       )
     } finally {
@@ -282,13 +284,13 @@ export function ComposeView() {
           variant="ghost"
           size="sm"
           onClick={() => {
-            if (isDirty && !confirm("Discard unsaved changes?")) return
+            if (isDirty && !confirm(t("confirmDiscard"))) return
             reset()
             router.push("/social/calendar")
           }}
         >
           <ArrowLeftIcon className="size-4" />
-          Back
+          {t("back")}
         </Button>
         <Separator orientation="vertical" className="h-4" />
         <span className="text-sm font-medium">
@@ -327,7 +329,7 @@ export function ComposeView() {
           ) : (
             <SaveIcon className="size-4" />
           )}
-          Save Draft
+          {t("saveDraft")}
         </Button>
 
         <Button
@@ -341,7 +343,7 @@ export function ComposeView() {
           ) : (
             <CalendarClockIcon className="size-4" />
           )}
-          Schedule
+          {t("schedule")}
         </Button>
 
         <Button
@@ -354,7 +356,7 @@ export function ComposeView() {
           ) : (
             <SendIcon className="size-4" />
           )}
-          Publish Now
+          {t("publishNow")}
         </Button>
       </div>
     </div>

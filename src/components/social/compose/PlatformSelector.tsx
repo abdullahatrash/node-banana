@@ -7,8 +7,10 @@ import { PlatformIcon } from "@/components/social/shared/PlatformIcon"
 import { PLATFORM_LABELS, PLATFORM_COLORS } from "@/lib/social/constants"
 import { CheckIcon } from "lucide-react"
 import type { SocialPlatform } from "@/lib/db/schema"
+import { useTranslations } from "next-intl"
 
 export function PlatformSelector() {
+  const t = useTranslations("social.compose")
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const { selectedAccountIds, toggleAccount } = useSocialComposerStore()
 
@@ -20,11 +22,11 @@ export function PlatformSelector() {
     return (
       <div className="rounded-lg border border-dashed p-4 text-center">
         <p className="text-sm text-muted-foreground">
-          No channels connected.{" "}
+          {t("channels.none")} {" "}
           <Link href="/social/channels" className="text-primary underline">
-            Connect one
+            {t("channels.connect")}
           </Link>{" "}
-          to start posting.
+          {t("channels.start")}
         </p>
       </div>
     )
@@ -33,7 +35,7 @@ export function PlatformSelector() {
   return (
     <div>
       <label className="mb-2 block text-xs font-medium text-muted-foreground">
-        Post to
+        {t("channels.postTo")}
       </label>
       <div className="flex flex-wrap gap-2">
         {activeAccounts.map((account) => {
@@ -69,7 +71,7 @@ export function PlatformSelector() {
       </div>
       {selectedAccountIds.length === 0 && (
         <p className="mt-2 text-xs text-destructive">
-          Select at least one channel to publish
+          {t("channels.required")}
         </p>
       )}
     </div>

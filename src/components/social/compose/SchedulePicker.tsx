@@ -2,8 +2,10 @@
 
 import { useSocialComposerStore } from "@/store/socialComposerStore"
 import { Label } from "@/components/ui/label"
+import { useTranslations } from "next-intl"
 
 export function SchedulePicker() {
+  const t = useTranslations("social.compose")
   const { scheduledAt, setScheduledAt } = useSocialComposerStore()
 
   const dateStr = scheduledAt
@@ -38,7 +40,7 @@ export function SchedulePicker() {
 
   return (
     <div>
-      <Label className="mb-2 block text-xs">Schedule</Label>
+      <Label className="mb-2 block text-xs">{t("schedule")}</Label>
       <div className="flex gap-2">
         <input
           type="date"
@@ -56,7 +58,7 @@ export function SchedulePicker() {
       </div>
       {scheduledAt && scheduledAt < new Date() && (
         <p className="mt-1 text-[10px] text-destructive">
-          Scheduled time is in the past
+          {t("schedulePast")}
         </p>
       )}
     </div>

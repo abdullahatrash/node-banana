@@ -1,6 +1,7 @@
 "use client"
 
 import type { ComposerMediaItem } from "@/store/socialComposerStore"
+import { useTranslations } from "next-intl"
 
 interface FacebookPreviewProps {
   displayName: string
@@ -9,6 +10,7 @@ interface FacebookPreviewProps {
 }
 
 export function FacebookPreview({ displayName, content, media }: FacebookPreviewProps) {
+  const t = useTranslations("social.preview")
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
       {/* Header */}
@@ -16,7 +18,7 @@ export function FacebookPreview({ displayName, content, media }: FacebookPreview
         <div className="size-9 rounded-full bg-muted" />
         <div>
           <p className="text-xs font-semibold">{displayName}</p>
-          <p className="text-[10px] text-muted-foreground">Just now · 🌐</p>
+          <p className="text-[10px] text-muted-foreground">{t("justNow")} · 🌐</p>
         </div>
       </div>
       {/* Content */}
@@ -37,9 +39,9 @@ export function FacebookPreview({ displayName, content, media }: FacebookPreview
       )}
       {/* Engagement */}
       <div className="flex gap-4 border-t px-3 py-2 text-[10px] text-muted-foreground">
-        <span>👍 Like</span>
-        <span>💬 Comment</span>
-        <span>↗ Share</span>
+        <span>👍 {t("like")}</span>
+        <span>💬 {t("comment")}</span>
+        <span>↗ {t("share")}</span>
       </div>
     </div>
   )

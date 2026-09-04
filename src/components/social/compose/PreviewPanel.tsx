@@ -3,14 +3,13 @@
 import { useSocialComposerStore } from "@/store/socialComposerStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformIcon } from "@/components/social/shared/PlatformIcon"
-import { PLATFORM_LABELS } from "@/lib/social/constants"
-import { Badge } from "@/components/ui/badge"
 import { LinkedInPreview } from "./previews/LinkedInPreview"
 import { XPreview } from "./previews/XPreview"
 import { InstagramPreview } from "./previews/InstagramPreview"
 import { FacebookPreview } from "./previews/FacebookPreview"
 import { TikTokPreview } from "./previews/TikTokPreview"
 import { YouTubePreview } from "./previews/YouTubePreview"
+import { useTranslations } from "next-intl"
 import { BlueskyPreview } from "./previews/BlueskyPreview"
 import { MastodonPreview } from "./previews/MastodonPreview"
 import type { SocialPlatform } from "@/lib/db/schema"
@@ -35,6 +34,8 @@ const PREVIEW_COMPONENTS: Record<
 }
 
 export function PreviewPanel() {
+  const t = useTranslations("social.compose")
+  const platformT = useTranslations("social.platforms")
   const { content, selectedAccountIds, mediaUrls } = useSocialComposerStore()
   const accounts = useSocialAccountsStore((s) => s.accounts)
 
@@ -42,7 +43,7 @@ export function PreviewPanel() {
     return (
       <div className="flex h-full items-center justify-center p-6">
         <p className="text-center text-xs text-muted-foreground">
-          Select a channel to see preview
+          {t("preview.selectChannel")}
         </p>
       </div>
     )
@@ -52,7 +53,7 @@ export function PreviewPanel() {
     return (
       <div className="flex h-full items-center justify-center p-6">
         <p className="text-center text-xs text-muted-foreground">
-          Start typing to see preview
+          {t("preview.startTyping")}
         </p>
       </div>
     )
@@ -61,7 +62,7 @@ export function PreviewPanel() {
   return (
     <div className="flex flex-col gap-4 overflow-y-auto p-4">
       <h3 className="text-xs font-medium text-muted-foreground">
-        Live Preview
+        {t("preview.title")}
       </h3>
 
       {selectedAccountIds.map((accountId) => {
@@ -77,7 +78,7 @@ export function PreviewPanel() {
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <PlatformIcon platform={platform} size={14} />
                 <span>
-                  {PLATFORM_LABELS[platform]} preview not available
+                  {t("preview.unavailable", { platform: platformT(platform) })}
                 </span>
               </div>
             </div>
@@ -89,7 +90,7 @@ export function PreviewPanel() {
             <div className="mb-1.5 flex items-center gap-1.5">
               <PlatformIcon platform={platform} size={12} />
               <span className="text-[10px] font-medium text-muted-foreground">
-                {PLATFORM_LABELS[platform]}
+                {platformT(platform)}
               </span>
             </div>
             <PreviewComponent

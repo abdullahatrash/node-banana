@@ -1,8 +1,19 @@
-import { render, screen } from "@testing-library/react";
+import { render as testingRender, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it, beforeEach } from "vitest";
 import { LibraryGallery } from "../LibraryGallery";
 import { useSimpleStudioStore, type Generation } from "@/store/simpleStudioStore";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
+import messages from "@/i18n/messages/en.json";
+
+function render(ui: ReactElement) {
+  return testingRender(
+    <NextIntlClientProvider locale="en" messages={messages}>
+      {ui}
+    </NextIntlClientProvider>,
+  );
+}
 
 function makeGen(overrides: Partial<Generation>): Generation {
   return {

@@ -95,7 +95,7 @@ function SignInForm() {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-neutral-500"
-              placeholder="you@example.com"
+              placeholder={common("emailPlaceholder")}
             />
           </label>
 

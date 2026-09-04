@@ -12,8 +12,10 @@ import { CalendarMonth } from "@/components/social/calendar/CalendarMonth"
 import { CalendarListView } from "@/components/social/calendar/CalendarListView"
 import { Button } from "@/components/ui/button"
 import { PlusIcon, Loader2Icon } from "lucide-react"
+import { useTranslations } from "next-intl"
 
 export default function CalendarPage() {
+  const t = useTranslations("social.calendar")
   const {
     viewMode,
     isLoading,
@@ -46,13 +48,13 @@ export default function CalendarPage() {
         <CalendarFilters />
         <div className="flex flex-1 items-center justify-center">
           <div className="max-w-sm text-center">
-            <h2 className="mb-2 text-lg font-semibold">No channels connected</h2>
+            <h2 className="mb-2 text-lg font-semibold">{t("noChannels")}</h2>
             <p className="mb-6 text-sm text-muted-foreground">
-              Connect a social account to start scheduling posts.
+              {t("noChannelsHelp")}
             </p>
             <Button render={<Link href="/social/channels" />} nativeButton={false}>
               <PlusIcon className="size-4" />
-              Connect Channel
+              {t("connectChannel")}
             </Button>
           </div>
         </div>
