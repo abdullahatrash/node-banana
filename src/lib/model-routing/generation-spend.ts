@@ -6,11 +6,12 @@ type Db = ReturnType<typeof getDb>;
 export type GenerationSpendOutcome =
   | { kind: "succeeded"; actualAmountUsd: number }
   | { kind: "pre_start_cancelled" }
+  | { kind: "failed_known" }
   | { kind: "cost_unknown" };
 
 export function generationSpendAmounts(outcome: GenerationSpendOutcome, quotedAmountUsd: number) {
   if (outcome.kind === "succeeded") return { status: "settled" as const, actualAmountUsd: outcome.actualAmountUsd.toFixed(6), releasedAmountUsd: "0" };
-  if (outcome.kind === "pre_start_cancelled") return { status: "released" as const, actualAmountUsd: "0", releasedAmountUsd: quotedAmountUsd.toFixed(6) };
+  if (outcome.kind === "pre_start_cancelled" || outcome.kind === "failed_known") return { status: "released" as const, actualAmountUsd: "0", releasedAmountUsd: quotedAmountUsd.toFixed(6) };
   return { status: "outcome_unknown" as const, actualAmountUsd: null, releasedAmountUsd: "0" };
 }
 

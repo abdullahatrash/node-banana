@@ -40,7 +40,14 @@ export async function recoverReplicatePredictions(input: { database: Db; operati
       } else {
         const disposition = recoveryDisposition(result); const terminal = disposition.operationState; summary.terminal++;
         await input.database.update(modelProviderEffectClaims).set({ state: disposition.effectState, providerStatus: result.state, pollAttempts: row.pollAttempts + 1, leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner)));
-        await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome: terminal === "succeeded" ? { kind: "succeeded", actualAmountUsd: intent.quote.amount * intent.quote.quantity } : { kind: "cost_unknown" }, quotedAmountUsd: intent.quote.amount * intent.quote.quantity, at });
+        const outcome = terminal === "succeeded"
+          ? { kind: "succeeded" as const, actualAmountUsd: intent.quote.amount * intent.quote.quantity }
+          : result.state === "failed_known"
+            ? { kind: "failed_known" as const }
+            : result.state === "aborted_pre_start"
+              ? { kind: "pre_start_cancelled" as const }
+              : { kind: "cost_unknown" as const };
+        await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome, quotedAmountUsd: intent.quote.amount * intent.quote.quantity, at });
       }
     } catch { summary.failed++; await input.database.update(modelProviderEffectClaims).set({ state: "outcome_unknown", providerStatus: "transport_lost", nextPollAt: new Date(at.getTime() + 60_000), leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner))); await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome: { kind: "cost_unknown" }, quotedAmountUsd: 0, at }); }
   }
@@ -57,7 +64,8 @@ async function projectGenerationOperation(database: Db, operations: OperationSta
 export function recoveryDisposition(result: ReplicateExecutionResult): { operationState: OperationState; effectState: "submitted" | "outcome_unknown" | "succeeded" | "failed_known" | "cancelled"; budgetState: "held" | "released" | "settled" | "outcome_unknown" } {
   if (result.state === "waiting_provider") return { operationState: "waiting_provider", effectState: "submitted", budgetState: "held" };
   if (result.state === "succeeded") return { operationState: "succeeded", effectState: "succeeded", budgetState: "settled" };
-  if (result.state === "failed_known") return { operationState: "failed_known", effectState: "failed_known", budgetState: "outcome_unknown" };
+  if (result.state === "failed_known") return { operationState: "failed_known", effectState: "failed_known", budgetState: "released" };
+  if (result.state === "aborted_pre_start") return { operationState: "cancelled", effectState: "cancelled", budgetState: "released" };
   if (result.state === "cancelled") return { operationState: "cancelled", effectState: "cancelled", budgetState: "outcome_unknown" };
   return { operationState: "outcome_unknown", effectState: "outcome_unknown", budgetState: "outcome_unknown" };
 }

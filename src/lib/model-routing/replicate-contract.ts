@@ -12,7 +12,7 @@ export interface ProviderEffectClaimPort {
 }
 export interface CanonicalArtifactIngestionPort { ingest(input: { workspaceId: string; intent: GenerationIntent; providerPredictionId: string; output: unknown }): Promise<{ artifactIds: string[] }>; }
 export interface CanonicalTextOutputIngestionPort { ingest(input: { workspaceId: string; intent: GenerationIntent; providerPredictionId: string; output: unknown }): Promise<{ textOutputIds: string[] }>; }
-export type ReplicateExecutionResult = { state: "waiting_provider"; predictionId: string | null; code?: string } | { state: "succeeded"; predictionId: string; artifactIds: string[]; textOutputIds: string[] } | { state: "cancelled"; predictionId: string } | { state: "failed_known"; predictionId: string | null; code: string } | { state: "outcome_unknown"; predictionId: string | null; code: string };
+export type ReplicateExecutionResult = { state: "waiting_provider"; predictionId: string | null; code?: string } | { state: "succeeded"; predictionId: string; artifactIds: string[]; textOutputIds: string[] } | { state: "cancelled"; predictionId: string } | { state: "aborted_pre_start"; predictionId: string } | { state: "failed_known"; predictionId: string | null; code: string } | { state: "outcome_unknown"; predictionId: string | null; code: string };
 
 /** A single-attempt contract. Scheduling/poll cadence belongs to the durable worker; this adapter never retries or selects a fallback. */
 export class ReplicatePredictionAdapter {
@@ -48,7 +48,8 @@ export class ReplicatePredictionAdapter {
   }
   private async map(intent: GenerationIntent, value: ReplicatePrediction): Promise<ReplicateExecutionResult> {
     if (value.status === "starting" || value.status === "processing") return { state: "waiting_provider", predictionId: value.id };
-    if (value.status === "canceled" || value.status === "aborted") return { state: "cancelled", predictionId: value.id };
+    if (value.status === "aborted") return { state: "aborted_pre_start", predictionId: value.id };
+    if (value.status === "canceled") return { state: "cancelled", predictionId: value.id };
     if (value.status === "failed") return { state: "failed_known", predictionId: value.id, code: "REPLICATE_FAILED" };
     try {
       if (intent.outputContract.mediaType === "text") {

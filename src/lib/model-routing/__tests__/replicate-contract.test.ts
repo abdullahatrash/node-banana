@@ -57,7 +57,7 @@ describe("ReplicatePredictionAdapter mocked contract", () => {
       { create, get: vi.fn(async () => { throw new Error("network"); }), cancel: vi.fn() },
       effectClaims(), { ingest: vi.fn() }, TEST_CREDENTIAL_REF, undefined, resolveTestModel,
     );
-    expect(await adapter.submit(intent, {})).toEqual({ state: "cancelled", predictionId: "p" });
+    expect(await adapter.submit(intent, {})).toEqual({ state: "aborted_pre_start", predictionId: "p" });
     expect((await adapter.poll(intent, "p")).state).toBe("outcome_unknown");
     expect(create).toHaveBeenCalledTimes(1);
   });

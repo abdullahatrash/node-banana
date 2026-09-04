@@ -28,6 +28,10 @@ export class GenerationOperationControlAdapter implements OperationControlAdapte
       const prediction = await new ReplicateHttpClient(() => token).cancel(identity.predictionId);
       if (prediction.status !== "canceled" && prediction.status !== "aborted") return { kind: "accepted" as const };
       const at = new Date();
+      if (prediction.status === "aborted") {
+        await this.settle({ database: this.database(), workspaceId: operation.workspaceId, intentId: operation.resourceId, outcome: { kind: "pre_start_cancelled" }, quotedAmountUsd: quote, at });
+        return { kind: "confirmed_cancelled" as const };
+      }
       // Replicate may bill work that was cancelled after it started. A provider
       // cancellation confirms the operation state, not a zero-dollar outcome.
       await this.settle({ database: this.database(), workspaceId: operation.workspaceId, intentId: operation.resourceId, outcome: { kind: "cost_unknown" }, quotedAmountUsd: quote, at });

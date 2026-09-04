@@ -81,7 +81,7 @@ export class GenerationExecutionService {
     if (provider.state === "succeeded") return this.transition(operation, "succeeded", null, actor, `${key}:succeeded`, "generation.succeeded", { ...metadata, artifactIds: provider.artifactIds, artifactCount: provider.artifactIds.length, textOutputIds: provider.textOutputIds, textOutputCount: provider.textOutputIds.length });
     if (provider.state === "failed_known") return this.transition(operation, "failed_known", null, actor, `${key}:failed`, "generation.failed_known", metadata);
     if (provider.state === "outcome_unknown") return this.transition(operation, "outcome_unknown", null, actor, `${key}:unknown`, "generation.outcome_unknown", metadata);
-    const cancelling = await this.transition(operation, "cancelling", null, actor, `${key}:cancelling`, "generation.provider_reported_cancelled", metadata);
+    const cancelling = await this.transition(operation, "cancelling", null, actor, `${key}:cancelling`, provider.state === "aborted_pre_start" ? "generation.provider_aborted_pre_start" : "generation.provider_reported_cancelled", metadata);
     return this.transition(cancelling, "cancelled", null, actor, `${key}:cancelled`, "generation.cancelled", metadata);
   }
 }
