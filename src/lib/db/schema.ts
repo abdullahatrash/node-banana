@@ -9054,6 +9054,34 @@ export const productCampaignOccurrences = pgTable(
   }),
 );
 
+/** Campaign-local money and managed-credit exposure, reserved before a Workflow Run is submitted. */
+export const productCampaignSpendReservations = pgTable(
+  "product_campaign_spend_reservations",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    occurrenceId: text("occurrence_id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    campaignRevision: integer("campaign_revision").notNull(),
+    quoteId: text("quote_id").notNull(),
+    currency: text("currency").notNull(),
+    quotedAmountCents: bigint("quoted_amount_cents", { mode: "number" }).notNull(),
+    reservedCreditUnits: bigint("reserved_credit_units", { mode: "number" }).notNull(),
+    creditUnitPriceUsd: text("credit_unit_price_usd"),
+    state: text("state").notNull(),
+    actualAmountCents: bigint("actual_amount_cents", { mode: "number" }),
+    actualCreditUnits: bigint("actual_credit_units", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_campaign_spend_reservations_pk", columns: [table.workspaceId, table.occurrenceId] }),
+    quoteUnique: uniqueIndex("product_campaign_spend_reservations_quote_unique").on(table.workspaceId, table.quoteId),
+    occurrenceFk: foreignKey({ columns: [table.workspaceId, table.occurrenceId], foreignColumns: [productCampaignOccurrences.workspaceId, productCampaignOccurrences.id], name: "product_campaign_spend_reservations_occurrence_fk" }).onDelete("restrict"),
+    campaignIdx: index("product_campaign_spend_reservations_campaign_idx").on(table.workspaceId, table.campaignId, table.state, table.createdAt),
+    valuesCheck: check("product_campaign_spend_reservations_values_check", sql`${table.campaignRevision} > 0 and ${table.currency} = 'USD' and ${table.quotedAmountCents} > 0 and ${table.reservedCreditUnits} >= 0 and (${table.creditUnitPriceUsd} is null or ${table.creditUnitPriceUsd} ~ '^(0|[1-9][0-9]*)([.][0-9]+)?$') and ${table.state} in ('held','settled','released','outcome_unknown') and (${table.actualAmountCents} is null or ${table.actualAmountCents} >= 0) and (${table.actualCreditUnits} is null or ${table.actualCreditUnits} >= 0)`),
+  }),
+);
+
 export const productRuntimeScanCheckpoints = pgTable(
   "product_runtime_scan_checkpoints",
   {

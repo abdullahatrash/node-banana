@@ -30,9 +30,42 @@ export interface CampaignSchedulerRepository {
   schedule(workspaceId: string, plans: ScheduledCampaignSnapshot[]): Promise<{ inserted: number; replayed: number }>;
   cancelFuture(workspaceId: string, campaignId: string, after: Date): Promise<number>;
   claimDue(input: { workerId: string; now: Date; leaseUntil: Date; limit: number }): Promise<ClaimedCampaignOccurrence[]>;
-  markSubmitting(input: { occurrence: ClaimedCampaignOccurrence; quoteId: string; quotedAmount: string; currency: string; now: Date }): Promise<boolean>;
+  reserveAndMarkSubmitting(input: { occurrence: ClaimedCampaignOccurrence; quoteId: string; quotedAmount: string; quotedAmountCents: number; reservedCreditUnits: number; creditUnitPriceUsd: string | null; currency: "USD"; now: Date }): Promise<"reserved" | "budget_exceeded" | "credit_exceeded" | "conflict">;
   bindRun(input: { occurrence: ClaimedCampaignOccurrence; runId: string; startSnapshotDigest: string; quoteId: string; quotedAmount: string; currency: string; acceptedAt: Date }): Promise<void>;
   fail(input: { occurrence: ClaimedCampaignOccurrence; code: string; outcomeUnknown: boolean; now: Date }): Promise<void>;
+}
+
+function decimalParts(value: string): { whole: bigint; fraction: string } | null {
+  const match = /^(0|[1-9][0-9]*)(?:\.([0-9]+))?$/.exec(value);
+  return match ? { whole: BigInt(match[1]), fraction: match[2] ?? "" } : null;
+}
+
+/** Converts an exact USD decimal to cents by conservatively rounding upward. */
+export function campaignQuoteCents(value: string): number | null {
+  const parts = decimalParts(value); if (!parts) return null;
+  const hundredths = parts.fraction.padEnd(2, "0").slice(0, 2);
+  const remainder = parts.fraction.slice(2);
+  const cents = parts.whole * BigInt(100) + BigInt(hundredths || "0") + (/[1-9]/.test(remainder) ? BigInt(1) : BigInt(0));
+  return cents <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(cents) : null;
+}
+
+/** Converts exact quote/rate decimals to credits without floating-point or count approximations. */
+export function campaignCreditUnits(input: { quotedUsd: string; fundingMode: "byok" | "managed"; usdPerCredit: string | null }): number | null {
+  if (input.fundingMode === "byok") return 0;
+  const amount = decimalParts(input.quotedUsd); const rate = input.usdPerCredit ? decimalParts(input.usdPerCredit) : null;
+  if (!amount || !rate) return null;
+  const scale = Math.max(amount.fraction.length, rate.fraction.length);
+  const toScaled = (parts: { whole: bigint; fraction: string }) => parts.whole * (BigInt(10) ** BigInt(scale)) + BigInt(parts.fraction.padEnd(scale, "0") || "0");
+  const amountScaled = toScaled(amount); const rateScaled = toScaled(rate);
+  if (amountScaled <= BigInt(0) || rateScaled <= BigInt(0)) return null;
+  const units = (amountScaled + rateScaled - BigInt(1)) / rateScaled;
+  return units <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(units) : null;
+}
+
+export function campaignCeilingDecision(input: { committedAmountCents: string; committedCreditUnits: string; nextAmountCents: number; nextCreditUnits: number; amountCeilingCents: number; creditCeiling: number }): "admitted" | "budget_exceeded" | "credit_exceeded" {
+  if (BigInt(input.committedAmountCents) + BigInt(input.nextAmountCents) > BigInt(input.amountCeilingCents)) return "budget_exceeded";
+  if (BigInt(input.committedCreditUnits) + BigInt(input.nextCreditUnits) > BigInt(input.creditCeiling)) return "credit_exceeded";
+  return "admitted";
 }
 
 export interface ScheduledCampaignWorkflowRuntime {
@@ -60,7 +93,7 @@ export function campaignScheduleSnapshots(input: {
 }
 
 export class CampaignOccurrenceScheduler {
-  constructor(private readonly repository: CampaignSchedulerRepository, private readonly runtime: ScheduledCampaignWorkflowRuntime, private readonly codec: CampaignQuoteCodec, private readonly clock = () => new Date()) {}
+  constructor(private readonly repository: CampaignSchedulerRepository, private readonly runtime: ScheduledCampaignWorkflowRuntime, private readonly codec: CampaignQuoteCodec, private readonly clock = () => new Date(), private readonly managedCreditRate = () => process.env.MANAGED_GENERATION_USD_PER_CREDIT?.trim() || null) {}
 
   async processDue(input: { workerId: string; limit?: number }) {
     const now = this.clock(); const claimed = await this.repository.claimDue({ workerId: input.workerId, now, leaseUntil: new Date(now.getTime() + 120_000), limit: Math.min(50, Math.max(1, input.limit ?? 20)) });
@@ -69,11 +102,15 @@ export class CampaignOccurrenceScheduler {
       try {
         const runtimeInputs = { ...occurrence.workflow.inputs, contentFormat: occurrence.format, scheduledAt: occurrence.scheduledAt.toISOString(), channelIds: JSON.stringify(occurrence.channels), approvalMode: occurrence.approvalMode, autoPublishGrantId: occurrence.autoPublishGrantId ?? "" };
         const preview = await this.runtime.preview({ workspaceId: occurrence.workspaceId, workflowId: occurrence.workflow.workflowId, revisionId: occurrence.workflow.workflowRevisionId, inputs: runtimeInputs, principalId: occurrence.actor.principalId, inputArtifactIds: occurrence.workflow.inputArtifactIds });
-        const amountCents = Math.ceil(Number(preview.ceiling.amount ?? Number.POSITIVE_INFINITY) * 100);
-        if (!preview.admissible || !Number.isSafeInteger(amountCents) || amountCents > occurrence.budgetCeilingCents) { await this.repository.fail({ occurrence, code: "CAMPAIGN_OCCURRENCE_BUDGET_DENIED", outcomeUnknown: false, now: this.clock() }); summary.denied++; continue; }
+        const quotedAmount = preview.ceiling.amount;
+        const creditUnitPriceUsd = occurrence.fundingMode === "managed" ? this.managedCreditRate() : null;
+        const amountCents = quotedAmount === null ? null : campaignQuoteCents(quotedAmount);
+        const creditUnits = quotedAmount === null ? null : campaignCreditUnits({ quotedUsd: quotedAmount, fundingMode: occurrence.fundingMode, usdPerCredit: creditUnitPriceUsd });
+        if (!preview.admissible || preview.ceiling.currency !== "USD" || quotedAmount === null || amountCents === null || creditUnits === null || amountCents > occurrence.budgetCeilingCents) { await this.repository.fail({ occurrence, code: creditUnits === null ? "CAMPAIGN_OCCURRENCE_CREDIT_PRICING_UNAVAILABLE" : "CAMPAIGN_OCCURRENCE_BUDGET_DENIED", outcomeUnknown: false, now: this.clock() }); summary.denied++; continue; }
         const acceptedQuote = issueCampaignAcceptedQuote({ preview, binding: occurrence.workflow, workspaceId: occurrence.workspaceId, userId: occurrence.actor.principalId, keyId: occurrence.actor.keyId, campaignId: occurrence.campaignId, campaignRevision: occurrence.campaignRevision, now, codec: this.codec });
-        const submitting = await this.repository.markSubmitting({ occurrence, quoteId: acceptedQuote.quote.quoteId, quotedAmount: acceptedQuote.quote.amount, currency: acceptedQuote.quote.currency, now: this.clock() });
-        if (!submitting) continue;
+        const reservation = await this.repository.reserveAndMarkSubmitting({ occurrence, quoteId: acceptedQuote.quote.quoteId, quotedAmount, quotedAmountCents: amountCents, reservedCreditUnits: creditUnits, creditUnitPriceUsd, currency: "USD", now: this.clock() });
+        if (reservation === "budget_exceeded" || reservation === "credit_exceeded") { await this.repository.fail({ occurrence, code: reservation === "budget_exceeded" ? "CAMPAIGN_CUMULATIVE_BUDGET_EXCEEDED" : "CAMPAIGN_CUMULATIVE_CREDIT_EXCEEDED", outcomeUnknown: false, now: this.clock() }); summary.denied++; continue; }
+        if (reservation === "conflict") continue;
         try {
         const accepted = await this.runtime.start({ workspaceId: occurrence.workspaceId, workflowId: occurrence.workflow.workflowId, revisionId: occurrence.workflow.workflowRevisionId, inputs: runtimeInputs, principalId: occurrence.actor.principalId, keyId: occurrence.actor.keyId, authorizationEvidenceRef: occurrence.actor.authorizationEvidenceRef, idempotencyKey: occurrence.occurrenceKey, inputArtifactIds: occurrence.workflow.inputArtifactIds, capability: "workflow_runs.start@2", acceptedSpendQuoteRef: acceptedQuote.ref });
         await this.repository.bindRun({ occurrence, runId: accepted.run.id, startSnapshotDigest: accepted.run.startSnapshotDigest, quoteId: acceptedQuote.quote.quoteId, quotedAmount: acceptedQuote.quote.amount, currency: acceptedQuote.quote.currency, acceptedAt: new Date(accepted.run.acceptedAt) }); summary.started++;

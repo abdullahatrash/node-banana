@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { CampaignOccurrenceScheduler, campaignScheduleSnapshots, type CampaignSchedulerRepository, type ClaimedCampaignOccurrence } from "../campaign-scheduler";
+import { CampaignOccurrenceScheduler, campaignCeilingDecision, campaignCreditUnits, campaignQuoteCents, campaignScheduleSnapshots, type CampaignSchedulerRepository, type ClaimedCampaignOccurrence } from "../campaign-scheduler";
 
 const at = new Date("2026-09-06T00:00:00Z");
 const occurrence = (): ClaimedCampaignOccurrence => ({ workspaceId: "ws", id: "occ", leaseToken: "lease", campaignId: "campaign", campaignRevision: 3, campaignDigest: `sha256:${"a".repeat(64)}`, scheduledAt: at, occurrenceKey: "campaign-occurrence:key", format: "slideshow", timezone: "Asia/Riyadh", channels: ["channel"], approvalMode: "request_human", autoPublishGrantId: null, fundingMode: "managed", budgetCeilingCents: 50, creditCeiling: 5, workflow: { workflowId: "workflow", workflowRevisionId: "revision", inputs: {}, inputArtifactIds: [] }, actor: { principalId: "user", keyId: "key", authorizationEvidenceRef: "evidence" } });
-const repository = (claimed: ClaimedCampaignOccurrence[]) => ({ schedule: vi.fn(), cancelFuture: vi.fn(), claimDue: vi.fn().mockResolvedValue(claimed), markSubmitting: vi.fn().mockResolvedValue(true), bindRun: vi.fn(), fail: vi.fn() }) satisfies CampaignSchedulerRepository;
+const repository = (claimed: ClaimedCampaignOccurrence[]) => ({ schedule: vi.fn(), cancelFuture: vi.fn(), claimDue: vi.fn().mockResolvedValue(claimed), reserveAndMarkSubmitting: vi.fn().mockResolvedValue("reserved" as const), bindRun: vi.fn(), fail: vi.fn() }) satisfies CampaignSchedulerRepository;
 const preview = (amount: string) => ({ admissible: true, denialReasons: [], ceiling: { amount, currency: "USD", certainty: "conservative" }, stepExposures: [{ provider: "replicate", model: "m", amountPerAttempt: amount, automaticAttempts: 1, pricingSnapshotIds: ["price"] }] });
 
 describe("Campaign Occurrence scheduler", () => {
@@ -14,24 +14,44 @@ describe("Campaign Occurrence scheduler", () => {
 
   it("launches the exact scheduled key through quote admission", async () => {
     const repo = repository([occurrence()]); const runtime = { preview: vi.fn().mockResolvedValue(preview("0.40")), start: vi.fn().mockResolvedValue({ run: { id: "run", workflowId: "workflow", workflowRevisionId: "revision", state: "accepted", startSnapshotDigest: `sha256:${"b".repeat(64)}`, acceptedAt: at.toISOString() } }) };
-    const scheduler = new CampaignOccurrenceScheduler(repo, runtime as never, { seal: () => "signed" }, () => at);
+    const scheduler = new CampaignOccurrenceScheduler(repo, runtime as never, { seal: () => "signed" }, () => at, () => "0.10");
     await expect(scheduler.processDue({ workerId: "worker" })).resolves.toMatchObject({ started: 1, denied: 0 });
-    expect(repo.markSubmitting).toHaveBeenCalledWith(expect.objectContaining({ occurrence: expect.objectContaining({ id: "occ" }) }));
+    expect(repo.reserveAndMarkSubmitting).toHaveBeenCalledWith(expect.objectContaining({ occurrence: expect.objectContaining({ id: "occ" }), quotedAmountCents: 40, reservedCreditUnits: 4, creditUnitPriceUsd: "0.10" }));
     expect(runtime.start).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "campaign-occurrence:key", acceptedSpendQuoteRef: "signed" }));
     expect(repo.bindRun).toHaveBeenCalledWith(expect.objectContaining({ runId: "run" }));
   });
 
   it("fails closed before starting work above the campaign ceiling", async () => {
     const repo = repository([occurrence()]); const runtime = { preview: vi.fn().mockResolvedValue(preview("0.51")), start: vi.fn() };
-    const scheduler = new CampaignOccurrenceScheduler(repo, runtime as never, { seal: () => "signed" }, () => at);
+    const scheduler = new CampaignOccurrenceScheduler(repo, runtime as never, { seal: () => "signed" }, () => at, () => "0.10");
     await expect(scheduler.processDue({ workerId: "worker" })).resolves.toMatchObject({ denied: 1, started: 0 });
     expect(runtime.start).not.toHaveBeenCalled(); expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({ code: "CAMPAIGN_OCCURRENCE_BUDGET_DENIED", outcomeUnknown: false }));
   });
 
   it("records only post-claim provider ambiguity as outcome unknown", async () => {
     const repo = repository([occurrence()]); const runtime = { preview: vi.fn().mockResolvedValue(preview("0.40")), start: vi.fn().mockRejectedValue(new Error("transport_lost")) };
-    const scheduler = new CampaignOccurrenceScheduler(repo, runtime as never, { seal: () => "signed" }, () => at);
+    const scheduler = new CampaignOccurrenceScheduler(repo, runtime as never, { seal: () => "signed" }, () => at, () => "0.10");
     await expect(scheduler.processDue({ workerId: "worker" })).resolves.toMatchObject({ outcomeUnknown: 1, denied: 0 });
     expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({ code: "transport_lost", outcomeUnknown: true }));
+  });
+
+  it("uses exact decimal money and credit conversions instead of occurrence counts", () => {
+    expect(campaignQuoteCents("0.400001")).toBe(41);
+    expect(campaignQuoteCents("12.34")).toBe(1234);
+    expect(campaignCreditUnits({ quotedUsd: "0.400001", fundingMode: "managed", usdPerCredit: "0.03" })).toBe(14);
+    expect(campaignCreditUnits({ quotedUsd: "999", fundingMode: "byok", usdPerCredit: null })).toBe(0);
+    expect(campaignCreditUnits({ quotedUsd: "0.4", fundingMode: "managed", usdPerCredit: null })).toBeNull();
+    expect(campaignCeilingDecision({ committedAmountCents: "60", committedCreditUnits: "4", nextAmountCents: 40, nextCreditUnits: 1, amountCeilingCents: 100, creditCeiling: 5 })).toBe("admitted");
+    expect(campaignCeilingDecision({ committedAmountCents: "61", committedCreditUnits: "4", nextAmountCents: 40, nextCreditUnits: 1, amountCeilingCents: 100, creditCeiling: 5 })).toBe("budget_exceeded");
+    expect(campaignCeilingDecision({ committedAmountCents: "60", committedCreditUnits: "5", nextAmountCents: 40, nextCreditUnits: 1, amountCeilingCents: 100, creditCeiling: 5 })).toBe("credit_exceeded");
+  });
+
+  it("denies an occurrence when the atomic cumulative campaign reservation reaches either ceiling", async () => {
+    const repo = repository([occurrence()]); repo.reserveAndMarkSubmitting.mockResolvedValue("credit_exceeded");
+    const runtime = { preview: vi.fn().mockResolvedValue(preview("0.40")), start: vi.fn() };
+    const scheduler = new CampaignOccurrenceScheduler(repo, runtime as never, { seal: () => "signed" }, () => at, () => "0.10");
+    await expect(scheduler.processDue({ workerId: "worker" })).resolves.toMatchObject({ denied: 1, started: 0 });
+    expect(runtime.start).not.toHaveBeenCalled();
+    expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({ code: "CAMPAIGN_CUMULATIVE_CREDIT_EXCEEDED", outcomeUnknown: false }));
   });
 });

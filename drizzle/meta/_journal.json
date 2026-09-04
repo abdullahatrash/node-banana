@@ -694,6 +694,13 @@
       "when": 1788601200000,
       "tag": "0098_analytics_event_receipts_refresh_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1788604800000,
+      "tag": "0099_campaign_cumulative_spend_reservations",
+      "breakpoints": true
     }
   ]
 }

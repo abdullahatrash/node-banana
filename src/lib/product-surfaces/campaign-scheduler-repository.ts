@@ -1,10 +1,10 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, asc, count, desc, eq, gte, inArray, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { productCampaignOccurrences, workflowRunMutationReceipts, workflowRuns } from "@/lib/db/schema";
-import type { CampaignSchedulerRepository, ClaimedCampaignOccurrence, ScheduledCampaignSnapshot } from "./campaign-scheduler";
+import { productCampaignOccurrences, productCampaignSpendReservations, runtimeBudgetReservations, workflowRunMutationReceipts, workflowRuns, workspaceProductRecords } from "@/lib/db/schema";
+import { campaignCeilingDecision, campaignCreditUnits, campaignQuoteCents, type CampaignSchedulerRepository, type ClaimedCampaignOccurrence, type ScheduledCampaignSnapshot } from "./campaign-scheduler";
 
 type StoredSnapshot = Omit<ScheduledCampaignSnapshot, "scheduledAt"> & { scheduledAt: string };
 
@@ -27,17 +27,8 @@ export class PostgresCampaignSchedulerRepository implements CampaignSchedulerRep
         campaignGroups.set(plan.campaignId, [...(campaignGroups.get(plan.campaignId) ?? []), plan]);
       }
       let inserted = 0;
-      for (const [campaignId, group] of campaignGroups) {
-        const [usage] = await tx.select({ value: count() }).from(productCampaignOccurrences).where(and(
-          eq(productCampaignOccurrences.workspaceId, workspaceId),
-          eq(productCampaignOccurrences.campaignId, campaignId),
-          inArray(productCampaignOccurrences.state, ["scheduled", "claimed", "submitting", "running", "succeeded", "outcome_unknown"]),
-        ));
-        const ceiling = Math.max(0, group[0]?.creditCeiling ?? 0);
-        const available = Math.max(0, ceiling - Number(usage?.value ?? 0));
-        const selected = group.slice(0, available);
-        if (!selected.length) continue;
-        const rows = await tx.insert(productCampaignOccurrences).values(selected.map((plan) => ({
+      for (const group of campaignGroups.values()) {
+        const rows = await tx.insert(productCampaignOccurrences).values(group.map((plan) => ({
           workspaceId, id: randomUUID(), campaignId: plan.campaignId, campaignRevision: plan.campaignRevision,
           campaignDigest: plan.campaignDigest, occurrenceKey: plan.occurrenceKey, scheduledAt: plan.scheduledAt,
           format: plan.format, snapshot: storedSnapshot(plan), state: "scheduled", createdAt: new Date(), updatedAt: new Date(),
@@ -73,9 +64,29 @@ export class PostgresCampaignSchedulerRepository implements CampaignSchedulerRep
     });
   }
 
-  async markSubmitting(input: { occurrence: ClaimedCampaignOccurrence; quoteId: string; quotedAmount: string; currency: string; now: Date }) {
-    const rows = await getDb().update(productCampaignOccurrences).set({ state: "submitting", leaseToken: null, leaseExpiresAt: null, quoteId: input.quoteId, quotedAmount: input.quotedAmount, currency: input.currency, updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, input.occurrence.workspaceId), eq(productCampaignOccurrences.id, input.occurrence.id), eq(productCampaignOccurrences.state, "claimed"), eq(productCampaignOccurrences.leaseToken, input.occurrence.leaseToken))).returning({ id: productCampaignOccurrences.id });
-    return rows.length === 1;
+  async reserveAndMarkSubmitting(input: Parameters<CampaignSchedulerRepository["reserveAndMarkSubmitting"]>[0]) {
+    return getDb().transaction(async (tx) => {
+      const [campaign] = await tx.select({ id: workspaceProductRecords.id }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.occurrence.workspaceId), eq(workspaceProductRecords.id, input.occurrence.campaignId), eq(workspaceProductRecords.kind, "campaign"))).for("update").limit(1);
+      if (!campaign) return "conflict" as const;
+      const [current] = await tx.select({ state: productCampaignOccurrences.state, leaseToken: productCampaignOccurrences.leaseToken }).from(productCampaignOccurrences).where(and(eq(productCampaignOccurrences.workspaceId, input.occurrence.workspaceId), eq(productCampaignOccurrences.id, input.occurrence.id))).limit(1);
+      const [existing] = await tx.select().from(productCampaignSpendReservations).where(and(eq(productCampaignSpendReservations.workspaceId, input.occurrence.workspaceId), eq(productCampaignSpendReservations.occurrenceId, input.occurrence.id))).limit(1);
+      if (existing) {
+        // A durable reservation means submission may already have happened. Recovery
+        // owns reconciliation; the scheduler must never resubmit from this branch.
+        return "conflict" as const;
+      }
+      if (current?.state !== "claimed" || current.leaseToken !== input.occurrence.leaseToken) return "conflict" as const;
+      const [totals] = await tx.select({
+        amount: sql<string>`coalesce(sum(case when ${productCampaignSpendReservations.state} = 'settled' then coalesce(${productCampaignSpendReservations.actualAmountCents}, ${productCampaignSpendReservations.quotedAmountCents}) when ${productCampaignSpendReservations.state} in ('held','outcome_unknown') then ${productCampaignSpendReservations.quotedAmountCents} else 0 end), 0)::text`,
+        credits: sql<string>`coalesce(sum(case when ${productCampaignSpendReservations.state} = 'settled' then coalesce(${productCampaignSpendReservations.actualCreditUnits}, ${productCampaignSpendReservations.reservedCreditUnits}) when ${productCampaignSpendReservations.state} in ('held','outcome_unknown') then ${productCampaignSpendReservations.reservedCreditUnits} else 0 end), 0)::text`,
+      }).from(productCampaignSpendReservations).where(and(eq(productCampaignSpendReservations.workspaceId, input.occurrence.workspaceId), eq(productCampaignSpendReservations.campaignId, input.occurrence.campaignId)));
+      const ceiling = campaignCeilingDecision({ committedAmountCents: totals?.amount ?? "0", committedCreditUnits: totals?.credits ?? "0", nextAmountCents: input.quotedAmountCents, nextCreditUnits: input.reservedCreditUnits, amountCeilingCents: input.occurrence.budgetCeilingCents, creditCeiling: input.occurrence.creditCeiling });
+      if (ceiling !== "admitted") return ceiling;
+      await tx.insert(productCampaignSpendReservations).values({ workspaceId: input.occurrence.workspaceId, occurrenceId: input.occurrence.id, campaignId: input.occurrence.campaignId, campaignRevision: input.occurrence.campaignRevision, quoteId: input.quoteId, currency: input.currency, quotedAmountCents: input.quotedAmountCents, reservedCreditUnits: input.reservedCreditUnits, creditUnitPriceUsd: input.creditUnitPriceUsd, state: "held", actualAmountCents: null, actualCreditUnits: null, createdAt: input.now, updatedAt: input.now });
+      const rows = await tx.update(productCampaignOccurrences).set({ state: "submitting", leaseToken: null, leaseExpiresAt: null, quoteId: input.quoteId, quotedAmount: input.quotedAmount, currency: input.currency, updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, input.occurrence.workspaceId), eq(productCampaignOccurrences.id, input.occurrence.id), eq(productCampaignOccurrences.state, "claimed"), eq(productCampaignOccurrences.leaseToken, input.occurrence.leaseToken))).returning({ id: productCampaignOccurrences.id });
+      if (rows.length !== 1) throw new Error("CAMPAIGN_OCCURRENCE_RESERVATION_CONFLICT");
+      return "reserved" as const;
+    });
   }
 
   async bindRun(input: Parameters<CampaignSchedulerRepository["bindRun"]>[0]) {
@@ -85,7 +96,10 @@ export class PostgresCampaignSchedulerRepository implements CampaignSchedulerRep
 
   async fail(input: Parameters<CampaignSchedulerRepository["fail"]>[0]) {
     const state = input.outcomeUnknown ? "outcome_unknown" : "failed_known";
-    await getDb().update(productCampaignOccurrences).set({ state, failureCode: input.code.slice(0, 500), completedAt: input.outcomeUnknown ? null : input.now, updatedAt: input.now, leaseToken: null, leaseExpiresAt: null }).where(and(eq(productCampaignOccurrences.workspaceId, input.occurrence.workspaceId), eq(productCampaignOccurrences.id, input.occurrence.id), inArray(productCampaignOccurrences.state, ["claimed", "submitting"])));
+    await getDb().transaction(async (tx) => {
+      await tx.update(productCampaignOccurrences).set({ state, failureCode: input.code.slice(0, 500), completedAt: input.outcomeUnknown ? null : input.now, updatedAt: input.now, leaseToken: null, leaseExpiresAt: null }).where(and(eq(productCampaignOccurrences.workspaceId, input.occurrence.workspaceId), eq(productCampaignOccurrences.id, input.occurrence.id), inArray(productCampaignOccurrences.state, ["claimed", "submitting"])));
+      await tx.update(productCampaignSpendReservations).set(input.outcomeUnknown ? { state: "outcome_unknown", updatedAt: input.now } : { state: "released", actualAmountCents: 0, actualCreditUnits: 0, updatedAt: input.now }).where(and(eq(productCampaignSpendReservations.workspaceId, input.occurrence.workspaceId), eq(productCampaignSpendReservations.occurrenceId, input.occurrence.id), eq(productCampaignSpendReservations.state, "held")));
+    });
   }
 
   async markStaleSubmissionsUnknown(input: { before: Date; now: Date; limit?: number }) {
@@ -98,7 +112,10 @@ export class PostgresCampaignSchedulerRepository implements CampaignSchedulerRep
         const actor = snapshot?.actor;
         const [receipt] = actor ? await tx.select({ runId: workflowRunMutationReceipts.runId }).from(workflowRunMutationReceipts).where(and(eq(workflowRunMutationReceipts.workspaceId, row.workspaceId), eq(workflowRunMutationReceipts.principalId, actor.principalId), eq(workflowRunMutationReceipts.keyId, actor.keyId), eq(workflowRunMutationReceipts.capability, "workflow_runs.start@2"), eq(workflowRunMutationReceipts.idempotencyKey, snapshot.occurrenceKey))).limit(1) : [];
         const [run] = receipt ? await tx.select({ id: workflowRuns.id, startSnapshotDigest: workflowRuns.startSnapshotDigest, state: workflowRuns.state }).from(workflowRuns).where(and(eq(workflowRuns.workspaceId, row.workspaceId), eq(workflowRuns.id, receipt.runId))).limit(1) : [];
-        await tx.update(productCampaignOccurrences).set(run ? { state: run.state === "completed" ? "succeeded" : run.state === "failed" ? "failed_known" : "running", workflowRunId: run.id, startSnapshotDigest: run.startSnapshotDigest, failureCode: run.state === "failed" ? "WORKFLOW_RUN_FAILED" : null, completedAt: ["completed", "failed"].includes(run.state) ? input.now : null, updatedAt: input.now } : { state: "outcome_unknown", failureCode: "CAMPAIGN_WORKFLOW_SUBMISSION_IDENTITY_LOST", updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, row.workspaceId), eq(productCampaignOccurrences.id, row.id), eq(productCampaignOccurrences.state, "submitting")));
+        // Even a terminal recovered Run passes through `running`; the dedicated
+        // reconciler then settles campaign money/credits from runtime budget facts.
+        await tx.update(productCampaignOccurrences).set(run ? { state: "running", workflowRunId: run.id, startSnapshotDigest: run.startSnapshotDigest, failureCode: null, completedAt: null, updatedAt: input.now } : { state: "outcome_unknown", failureCode: "CAMPAIGN_WORKFLOW_SUBMISSION_IDENTITY_LOST", updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, row.workspaceId), eq(productCampaignOccurrences.id, row.id), eq(productCampaignOccurrences.state, "submitting")));
+        if (!run) await tx.update(productCampaignSpendReservations).set({ state: "outcome_unknown", updatedAt: input.now }).where(and(eq(productCampaignSpendReservations.workspaceId, row.workspaceId), eq(productCampaignSpendReservations.occurrenceId, row.id), eq(productCampaignSpendReservations.state, "held")));
       }
       return rows.length;
     });
@@ -106,8 +123,16 @@ export class PostgresCampaignSchedulerRepository implements CampaignSchedulerRep
 
   async reconcileWorkflowRuns(input: { now: Date; limit?: number }) {
     return getDb().transaction(async (tx) => {
-      const rows = await tx.select({ workspaceId: productCampaignOccurrences.workspaceId, id: productCampaignOccurrences.id, state: workflowRuns.state, failureCode: workflowRuns.failureCode }).from(productCampaignOccurrences).innerJoin(workflowRuns, and(eq(workflowRuns.workspaceId, productCampaignOccurrences.workspaceId), eq(workflowRuns.id, productCampaignOccurrences.workflowRunId))).where(and(inArray(productCampaignOccurrences.state, ["running", "outcome_unknown"]), inArray(workflowRuns.state, ["completed", "failed", "cancelled"]))).orderBy(asc(productCampaignOccurrences.updatedAt), asc(productCampaignOccurrences.id)).limit(Math.min(100, Math.max(1, input.limit ?? 50))).for("update", { of: productCampaignOccurrences, skipLocked: true });
-      for (const row of rows) await tx.update(productCampaignOccurrences).set({ state: row.state === "completed" ? "succeeded" : row.state === "cancelled" ? "cancelled" : "failed_known", failureCode: row.failureCode, completedAt: input.now, updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, row.workspaceId), eq(productCampaignOccurrences.id, row.id), inArray(productCampaignOccurrences.state, ["running", "outcome_unknown"])));
+      const rows = await tx.select({ workspaceId: productCampaignOccurrences.workspaceId, id: productCampaignOccurrences.id, workflowRunId: workflowRuns.id, state: workflowRuns.state, failureCode: workflowRuns.failureCode }).from(productCampaignOccurrences).innerJoin(workflowRuns, and(eq(workflowRuns.workspaceId, productCampaignOccurrences.workspaceId), eq(workflowRuns.id, productCampaignOccurrences.workflowRunId))).where(and(inArray(productCampaignOccurrences.state, ["running", "outcome_unknown"]), inArray(workflowRuns.state, ["completed", "failed", "cancelled"]))).orderBy(asc(productCampaignOccurrences.updatedAt), asc(productCampaignOccurrences.id)).limit(Math.min(100, Math.max(1, input.limit ?? 50))).for("update", { of: productCampaignOccurrences, skipLocked: true });
+      for (const row of rows) {
+        const [runtimeSpend] = await tx.select({ total: sql<string>`coalesce(sum(${runtimeBudgetReservations.settledAmount}::numeric + ${runtimeBudgetReservations.heldAmount}::numeric), 0)::text`, exactKnown: sql<boolean>`count(*) > 0 and bool_and(${runtimeBudgetReservations.currency} = 'USD' and ${runtimeBudgetReservations.state} in ('settled','released'))` }).from(runtimeBudgetReservations).where(and(eq(runtimeBudgetReservations.workspaceId, row.workspaceId), eq(runtimeBudgetReservations.runId, row.workflowRunId)));
+        const actualUsd = runtimeSpend?.exactKnown ? runtimeSpend.total : null;
+        const [campaignReservation] = await tx.select({ rate: productCampaignSpendReservations.creditUnitPriceUsd }).from(productCampaignSpendReservations).where(and(eq(productCampaignSpendReservations.workspaceId, row.workspaceId), eq(productCampaignSpendReservations.occurrenceId, row.id))).limit(1);
+        const actualAmountCents = actualUsd === null ? null : campaignQuoteCents(actualUsd);
+        const actualCreditUnits = actualUsd === null ? null : campaignCreditUnits({ quotedUsd: actualUsd, fundingMode: campaignReservation?.rate ? "managed" : "byok", usdPerCredit: campaignReservation?.rate ?? null });
+        await tx.update(productCampaignSpendReservations).set(runtimeSpend?.exactKnown && actualAmountCents !== null && actualCreditUnits !== null ? { state: "settled", actualAmountCents, actualCreditUnits, updatedAt: input.now } : { state: "outcome_unknown", updatedAt: input.now }).where(and(eq(productCampaignSpendReservations.workspaceId, row.workspaceId), eq(productCampaignSpendReservations.occurrenceId, row.id), inArray(productCampaignSpendReservations.state, ["held", "outcome_unknown"])));
+        await tx.update(productCampaignOccurrences).set({ state: row.state === "completed" ? "succeeded" : row.state === "cancelled" ? "cancelled" : "failed_known", failureCode: row.failureCode, completedAt: input.now, updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, row.workspaceId), eq(productCampaignOccurrences.id, row.id), inArray(productCampaignOccurrences.state, ["running", "outcome_unknown"])));
+      }
       return rows.length;
     });
   }
