@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { ensureWorkspaceFreePlan } from "@/lib/commercial/free-plan";
 import {
@@ -21,6 +21,7 @@ import {
 type AssetUploadState = "pending" | "ready" | "failed";
 
 export const DEFAULT_WORKSPACE_QUOTA_BYTES = 10 * 1024 * 1024 * 1024;
+export const SOFT_DELETE_RETENTION_DAYS = 30;
 
 function asMetadataRecord(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -249,6 +250,38 @@ export async function ensureWorkspaceStorageLimit(
       updatedAt: now,
     })
     .onConflictDoNothing();
+}
+
+export type WorkspaceStorageSummary = {
+  quotaBytes: number;
+  usedBytes: number;
+  pendingReservedBytes: number;
+  activeAssetCount: number;
+  recoverableDeletedBytes: number;
+  recoverableDeletedCount: number;
+  byType: Array<{ type: (typeof assetTypeEnum.enumValues)[number]; bytes: number; count: number }>;
+  measuredAt: string;
+};
+
+export async function getWorkspaceStorageSummary(workspaceId: string): Promise<WorkspaceStorageSummary> {
+  const db = getDb();
+  const [limitRows, activeRows, pendingRows, deletedRows] = await Promise.all([
+    db.select({ quotaBytes: workspaceStorageLimits.quotaBytes }).from(workspaceStorageLimits).where(eq(workspaceStorageLimits.workspaceId, workspaceId)).limit(1),
+    db.select({ type: assets.type, bytes: sql<string>`coalesce(sum(${assets.sizeBytes}), 0)::text`, count: sql<string>`count(*)::text` }).from(assets).where(and(eq(assets.workspaceId, workspaceId), isNull(assets.deletedAt), sql`coalesce(${assets.metadata} ->> 'uploadState', 'ready') <> 'failed'`)).groupBy(assets.type),
+    db.select({ bytes: sql<string>`coalesce(sum(case when jsonb_typeof(${assets.metadata} -> 'expectedSizeBytes') = 'number' then (${assets.metadata} ->> 'expectedSizeBytes')::bigint else 0 end), 0)::text` }).from(assets).where(and(eq(assets.workspaceId, workspaceId), isNull(assets.deletedAt), sql`${assets.metadata} ->> 'uploadState' = 'pending'`, sql`case when pg_input_is_valid(${assets.metadata} ->> 'pendingExpiresAt', 'timestamptz') then (${assets.metadata} ->> 'pendingExpiresAt')::timestamptz > now() else false end`)),
+    db.select({ bytes: sql<string>`coalesce(sum(${assets.sizeBytes}), 0)::text`, count: sql<string>`count(*)::text` }).from(assets).where(and(eq(assets.workspaceId, workspaceId), isNotNull(assets.deletedAt), gte(assets.deletedAt, sql`now() - make_interval(days => ${SOFT_DELETE_RETENTION_DAYS})`))),
+  ]);
+  const byType = activeRows.map((row) => ({ type: row.type, bytes: parseByteCount(row.bytes), count: parseByteCount(row.count) }));
+  return {
+    quotaBytes: limitRows[0]?.quotaBytes ?? DEFAULT_WORKSPACE_QUOTA_BYTES,
+    usedBytes: byType.reduce((sum, row) => sum + row.bytes, 0),
+    pendingReservedBytes: parseByteCount(pendingRows[0]?.bytes),
+    activeAssetCount: byType.reduce((sum, row) => sum + row.count, 0),
+    recoverableDeletedBytes: parseByteCount(deletedRows[0]?.bytes),
+    recoverableDeletedCount: parseByteCount(deletedRows[0]?.count),
+    byType,
+    measuredAt: new Date().toISOString(),
+  };
 }
 
 export async function ensureWorkspaceUser(
@@ -883,7 +916,7 @@ export async function listPurgeableSoftDeletedAssets(params: {
   limit?: number;
 }) {
   const db = getDb();
-  const retentionDays = params.retentionDays ?? 30;
+  const retentionDays = params.retentionDays ?? SOFT_DELETE_RETENTION_DAYS;
   const limit = params.limit ?? 100;
 
   return db
