@@ -402,6 +402,7 @@ export const workspaceSettings = pgTable(
       .default("ar")
       .notNull(),
     defaultInterfaceLocale: text("default_interface_locale").default("ar").notNull(),
+    contentMarket: text("content_market").default("SA").notNull(),
     schedulingTimezone: text("scheduling_timezone").default("UTC").notNull(),
     schedulingWeekStart: integer("scheduling_week_start").default(1).notNull(),
     brandKit: jsonb("brand_kit").$type<Record<string, unknown>>(),
@@ -428,6 +429,10 @@ export const workspaceSettings = pgTable(
     interfaceLocaleCheck: check(
       "workspace_settings_default_interface_locale_check",
       sql`${table.defaultInterfaceLocale} in ('ar', 'en')`,
+    ),
+    contentMarketCheck: check(
+      "workspace_settings_content_market_check",
+      sql`${table.contentMarket} in ('SA', 'AE', 'EG', 'QA', 'KW', 'BH', 'OM', 'JO', 'LB', 'IQ', 'MA', 'DZ', 'TN', 'LY', 'YE', 'PS', 'SD', 'SY')`,
     ),
   }),
 );

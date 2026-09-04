@@ -3,16 +3,21 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { workspaceSettings } from "@/lib/db/schema";
+import {
+  isWorkspaceContentMarket,
+  type WorkspaceCalendarPreferences,
+} from "@/lib/product-surfaces/workspace-preferences-contract";
 
-export interface WorkspaceCalendarPreferences {
-  timezone: string;
-  weekStartsOn: 0 | 1 | 2 | 3 | 4 | 5 | 6;
-}
+export type { WorkspaceCalendarPreferences } from "@/lib/product-surfaces/workspace-preferences-contract";
 
 export function validateCalendarPreferences(input: {
+  contentMarket: unknown;
   timezone: unknown;
   weekStartsOn: unknown;
 }): WorkspaceCalendarPreferences {
+  if (!isWorkspaceContentMarket(input.contentMarket)) {
+    throw new Error("CONTENT_MARKET_INVALID");
+  }
   if (typeof input.timezone !== "string" || input.timezone.length > 100) {
     throw new Error("CALENDAR_TIMEZONE_INVALID");
   }
@@ -25,11 +30,12 @@ export function validateCalendarPreferences(input: {
   if (!Number.isInteger(input.weekStartsOn) || Number(input.weekStartsOn) < 0 || Number(input.weekStartsOn) > 6) {
     throw new Error("CALENDAR_WEEK_START_INVALID");
   }
-  return { timezone, weekStartsOn: Number(input.weekStartsOn) as WorkspaceCalendarPreferences["weekStartsOn"] };
+  return { contentMarket: input.contentMarket, timezone, weekStartsOn: Number(input.weekStartsOn) as WorkspaceCalendarPreferences["weekStartsOn"] };
 }
 
 export async function getWorkspaceCalendarPreferences(workspaceId: string): Promise<WorkspaceCalendarPreferences> {
   const [row] = await getDb().select({
+    contentMarket: workspaceSettings.contentMarket,
     timezone: workspaceSettings.schedulingTimezone,
     weekStartsOn: workspaceSettings.schedulingWeekStart,
   }).from(workspaceSettings).where(eq(workspaceSettings.workspaceId, workspaceId)).limit(1);
@@ -39,15 +45,25 @@ export async function getWorkspaceCalendarPreferences(workspaceId: string): Prom
 
 export async function updateWorkspaceCalendarPreferences(input: {
   workspaceId: string;
+  contentMarket?: unknown;
   timezone: unknown;
   weekStartsOn: unknown;
 }): Promise<WorkspaceCalendarPreferences> {
-  const preferences = validateCalendarPreferences(input);
+  if (input.contentMarket !== undefined && !isWorkspaceContentMarket(input.contentMarket)) {
+    throw new Error("CONTENT_MARKET_INVALID");
+  }
+  const scheduling = validateCalendarPreferences({
+    contentMarket: input.contentMarket ?? "SA",
+    timezone: input.timezone,
+    weekStartsOn: input.weekStartsOn,
+  });
   const [row] = await getDb().update(workspaceSettings).set({
-    schedulingTimezone: preferences.timezone,
-    schedulingWeekStart: preferences.weekStartsOn,
+    ...(input.contentMarket === undefined ? {} : { contentMarket: scheduling.contentMarket }),
+    schedulingTimezone: scheduling.timezone,
+    schedulingWeekStart: scheduling.weekStartsOn,
     updatedAt: new Date(),
   }).where(eq(workspaceSettings.workspaceId, input.workspaceId)).returning({
+    contentMarket: workspaceSettings.contentMarket,
     timezone: workspaceSettings.schedulingTimezone,
     weekStartsOn: workspaceSettings.schedulingWeekStart,
   });

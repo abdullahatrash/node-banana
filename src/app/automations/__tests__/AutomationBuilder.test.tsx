@@ -31,7 +31,7 @@ const options: CampaignAuthoringOptions = {
   modelPolicies: [{ id: "workspace-default", label: "Workspace default", detail: null }],
   grants: [{ id: "grant-1", label: "Grant", detail: "channel-1", channelId: "channel-1", expiresAt: null }],
 };
-const calendarPreferences = { timezone: "Africa/Cairo", weekStartsOn: 6 as const };
+const calendarPreferences = { contentMarket: "EG" as const, timezone: "Africa/Cairo", weekStartsOn: 6 as const };
 
 describe("AutomationBuilder", () => {
   beforeEach(() => { productRequest.mockReset(); replace.mockReset(); refresh.mockReset(); });

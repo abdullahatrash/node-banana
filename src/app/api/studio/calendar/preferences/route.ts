@@ -16,7 +16,7 @@ export const PATCH = withStudioAuth<undefined>(
     if (!body || typeof body !== "object" || Array.isArray(body)) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
     try {
       const value = body as Record<string, unknown>;
-      const preferences = await updateWorkspaceCalendarPreferences({ workspaceId: authz.workspaceId, timezone: value.timezone, weekStartsOn: value.weekStartsOn });
+      const preferences = await updateWorkspaceCalendarPreferences({ workspaceId: authz.workspaceId, contentMarket: value.contentMarket, timezone: value.timezone, weekStartsOn: value.weekStartsOn });
       return noStoreJson({ success: true, preferences });
     } catch (error) {
       const code = error instanceof Error ? error.message : "CALENDAR_PREFERENCES_UNAVAILABLE";

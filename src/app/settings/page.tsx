@@ -1,12 +1,14 @@
 import Link from "next/link";
-import { ArchiveIcon, BriefcaseBusinessIcon, CreditCardIcon, FileClockIcon, KeyRoundIcon, PlugZapIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, BriefcaseBusinessIcon, CreditCardIcon, FileClockIcon, Globe2Icon, KeyRoundIcon, PlugZapIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { ApiTokensSettings } from "@/components/social/ApiTokensSettings";
 import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
 import { SettingsSheet } from "@/components/product-shell/SettingsSheet";
 import { GovernanceSettingsSurface, type GovernanceSettingsSection } from "@/components/governance/GovernanceSettingsSurface";
 import { BillingSettings } from "@/components/commercial/BillingSettings";
+import { WorkspacePreferencesSettings } from "@/components/product-shell/WorkspacePreferencesSettings";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { getWorkspaceCalendarPreferences } from "@/lib/product-surfaces/calendar-preferences";
 import { resolveWorkspaceMemberPermissions } from "@/lib/studio/authz";
 
 const sections = [
@@ -19,6 +21,7 @@ const sections = [
   { key: "safety", icon: ShieldAlertIcon },
   { key: "bulk", icon: WaypointsIcon },
   { key: "portability", icon: ArchiveIcon },
+  { key: "preferences", icon: Globe2Icon },
   { key: "billing", icon: CreditCardIcon },
   { key: "api", icon: KeyRoundIcon },
   { key: "providers", icon: PlugZapIcon },
@@ -45,6 +48,7 @@ export default async function SettingsPage({
   ]);
   const workspaceId = access.aggregate?.session.workspaceId;
   const permissions = workspaceId ? await resolveWorkspaceMemberPermissions({ workspaceId, userId: access.session.user.id }) : [];
+  const preferences = workspaceId ? await getWorkspaceCalendarPreferences(workspaceId) : null;
   const canReadBilling = permissions.includes("product:billing:read");
   const canManageBilling = permissions.includes("product:billing:manage");
   const canPurchaseBilling = permissions.includes("product:billing:purchase");
@@ -117,6 +121,8 @@ export default async function SettingsPage({
           <div className="min-w-0 flex-1 overflow-y-auto">
             {activeSection === "billing" ? (
               <BillingSettings canManage={canManageBilling} canPurchase={canPurchaseBilling} />
+            ) : activeSection === "preferences" && preferences ? (
+              <WorkspacePreferencesSettings initialPreferences={preferences} canManage={permissions.includes("social:publish")} />
             ) : activeSection === "providers" ? (
               <ProviderKeysSettings />
             ) : activeSection === "api" ? (

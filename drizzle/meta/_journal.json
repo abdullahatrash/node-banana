@@ -883,6 +883,13 @@
       "when": 1788702000000,
       "tag": "0125_document_assets",
       "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1788705600000,
+      "tag": "0126_workspace_preferences",
+      "breakpoints": true
     }
   ]
 }
