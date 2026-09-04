@@ -87,6 +87,7 @@ export const inspirationPayloadSchema = z.object({
     z.string().regex(/^\/api\/studio\/assets\/[A-Za-z0-9%._~-]+\/download$/),
   ]),
   sourceAssetId: text(200).nullable().default(null),
+  sourceMediaType: z.enum(["image", "video"]).nullable().default(null),
   sourceName: text(200),
   capturedAt: z.string().datetime(),
   metricsObservedAt: z.string().datetime(),
@@ -102,12 +103,19 @@ export const inspirationPayloadSchema = z.object({
   tags: z.array(text(80)).default([]),
 });
 
-const blitzSchema = z.object({
+export const blitzPayloadSchema = z.object({
   inspirationItemId: text(200).nullable().default(null),
   contentPieceId: text(200).nullable().default(null),
   sourceAttribution: text(500),
   sourceAssetId: text(200).nullable().default(null),
+  sourceMediaType: z.enum(["image", "video"]).nullable().default(null),
   rightsSnapshot: z.object({ id: text(200), revision: z.number().int().positive(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
+  rightsBasis: z.enum(["owned", "licensed", "public_domain", "consented"]).nullable().default(null),
+  permittedRemix: z.enum(["reference_only", "transform", "derivative"]).nullable().default(null),
+  rightsEvidenceIds: z.array(text(200)).default([]),
+  contentLanguage: z.enum(["ar", "en", "mixed"]).nullable().default(null),
+  arabicVariety: z.enum(ARABIC_VARIETIES).nullable().default(null),
+  format: z.enum(CONTENT_FORMATS).nullable().default(null),
   remixBrief: z.object({ influences: z.array(text(200)).min(1), protectedExpressionExcluded: z.boolean() }),
   rationale: text(1_000),
   rejectionReasons: z.array(text(300)).default([]),
@@ -115,7 +123,7 @@ const blitzSchema = z.object({
 
 const contentPieceSchema = z.object({
   format: z.enum(CONTENT_FORMATS),
-  contentLanguage: z.enum(["ar", "en"]),
+  contentLanguage: z.enum(["ar", "en", "mixed"]),
   arabicVariety: z.enum(ARABIC_VARIETIES).nullable().default(null),
   prompt: optionalText(10_000),
   script: optionalText(25_000),
@@ -127,6 +135,12 @@ const contentPieceSchema = z.object({
   renderProofStatus: z.enum(["not_requested", "pending", "passed", "failed"]).default("not_requested"),
   generatedText: z.object({
     textOutputId: text(200),
+    intentId: text(200),
+    operationId: text(200),
+    contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  }).nullable().default(null),
+  generatedMedia: z.object({
+    assetId: text(200),
     intentId: text(200),
     operationId: text(200),
     contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -220,7 +234,7 @@ export const PRODUCT_STATES: Record<ProductRecordKind, readonly string[]> = {
 
 const payloadSchemas: Record<ProductRecordKind, z.ZodType<Record<string, unknown>>> = {
   inspiration_item: inspirationPayloadSchema,
-  blitz_item: blitzSchema,
+  blitz_item: blitzPayloadSchema,
   content_piece: contentPieceSchema,
   campaign_automation: campaignPayloadSchema,
   creator_persona: personaSchema,

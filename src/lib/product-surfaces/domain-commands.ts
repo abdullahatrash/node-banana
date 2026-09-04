@@ -12,14 +12,14 @@ import { parseProductPayload } from "./definitions";
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
 
 export async function saveContentCommand(input: Actor & { id?: string; expectedRevision?: number; title: string; payload: Record<string, unknown> }) {
-  const requested = parseProductPayload("content_piece", { ...input.payload, candidateArtifactIds: [], renderProofStatus: "not_requested", generatedText: null });
+  const requested = parseProductPayload("content_piece", { ...input.payload, candidateArtifactIds: [], renderProofStatus: "not_requested", generatedText: null, generatedMedia: null });
   if (!input.id) return createProductRecord({ ...input, kind: "content_piece", state: "active", payload: requested });
   if (!input.expectedRevision) throw new Error("CONTENT_EXPECTED_REVISION_REQUIRED");
   const id = input.id;
   const [current] = await getDb().select({ payload: workspaceProductRecords.payload }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1);
   if (!current) return null;
   const authoritative = parseProductPayload("content_piece", current.payload);
-  return updateProductRecord({ ...input, id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, payload: { ...requested, candidateArtifactIds: authoritative.candidateArtifactIds, renderProofStatus: authoritative.renderProofStatus, generatedText: authoritative.generatedText } });
+  return updateProductRecord({ ...input, id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, payload: { ...requested, candidateArtifactIds: authoritative.candidateArtifactIds, renderProofStatus: authoritative.renderProofStatus, generatedText: authoritative.generatedText, generatedMedia: authoritative.generatedMedia } });
 }
 
 export async function bindContentTextOutputCommand(input: Actor & { id: string; expectedRevision: number; textOutputId: string }) {

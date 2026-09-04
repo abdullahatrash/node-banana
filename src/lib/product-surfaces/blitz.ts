@@ -4,13 +4,16 @@ import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { workspaceProductCommandReceipts, workspaceProductRecordRevisions, workspaceProductRecords } from "@/lib/db/schema";
-import { parseProductPayload } from "./definitions";
+import { assets, workspaceProductCommandReceipts, workspaceProductRecordRevisions, workspaceProductRecords } from "@/lib/db/schema";
+import { runtimeOperations } from "@/lib/agent-runtime/operation-status/db-schema";
+import { generationIntents, modelArtifactIngestionReceipts } from "@/lib/model-routing/db-schema";
+import { isAdmittedBlitzArtifact } from "./blitz-lineage";
+import { blitzPayloadSchema, parseProductPayload } from "./definitions";
 import { ProductRecordConflictError, ProductRecordIdempotencyError } from "./repository";
 
-export async function decideBlitzItem(input: { workspaceId: string; userId: string; itemId: string; expectedRevision: number; decision: "accepted" | "rejected"; reasons: string[]; idempotencyKey: string; now?: Date }) {
+export async function decideBlitzItem(input: { workspaceId: string; userId: string; itemId: string; expectedRevision: number; decision: "accepted" | "rejected"; reasons: string[]; generation: { assetId: string; intentId: string; operationId: string } | null; idempotencyKey: string; now?: Date }) {
   const now = input.now ?? new Date();
-  const digest = canonicalDigest({ itemId: input.itemId, expectedRevision: input.expectedRevision, decision: input.decision, reasons: input.reasons });
+  const digest = canonicalDigest({ itemId: input.itemId, expectedRevision: input.expectedRevision, decision: input.decision, reasons: input.reasons, generation: input.generation });
   return getDb().transaction(async (tx) => {
     const [receipt] = await tx.select().from(workspaceProductCommandReceipts).where(and(eq(workspaceProductCommandReceipts.workspaceId, input.workspaceId), eq(workspaceProductCommandReceipts.idempotencyKey, input.idempotencyKey))).limit(1);
     if (receipt) {
@@ -19,11 +22,19 @@ export async function decideBlitzItem(input: { workspaceId: string; userId: stri
     }
     const [item] = await tx.select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.itemId), eq(workspaceProductRecords.kind, "blitz_item"))).limit(1);
     if (!item || item.revision !== input.expectedRevision || item.state !== "queued") throw new ProductRecordConflictError("Blitz item is no longer queued. Refresh and try again.");
-    const payload = parseProductPayload("blitz_item", item.payload);
+    const payload = blitzPayloadSchema.parse(item.payload);
     let contentPieceId: string | null = null;
     if (input.decision === "accepted") {
+      if (!input.generation || !payload.sourceAssetId || !payload.sourceMediaType || !payload.rightsSnapshot || !payload.rightsBasis || !payload.permittedRemix || !payload.contentLanguage || !payload.format) throw new Error("BLITZ_GENERATION_REQUIRED");
+      const [[receipt], [intentRow], [operation], [artifact]] = await Promise.all([
+        tx.select().from(modelArtifactIngestionReceipts).where(and(eq(modelArtifactIngestionReceipts.workspaceId, input.workspaceId), eq(modelArtifactIngestionReceipts.assetId, input.generation.assetId), eq(modelArtifactIngestionReceipts.intentId, input.generation.intentId), eq(modelArtifactIngestionReceipts.status, "ready"))).limit(1),
+        tx.select({ intent: generationIntents.intent }).from(generationIntents).where(and(eq(generationIntents.workspaceId, input.workspaceId), eq(generationIntents.id, input.generation.intentId))).limit(1),
+        tx.select({ state: runtimeOperations.state, metadata: runtimeOperations.metadata }).from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, input.workspaceId), eq(runtimeOperations.id, input.generation.operationId), eq(runtimeOperations.resourceId, input.generation.intentId))).limit(1),
+        tx.select({ id: assets.id }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.id, input.generation.assetId))).limit(1),
+      ]);
+      if (!isAdmittedBlitzArtifact({ sourceAssetId: payload.sourceAssetId, rightsDigest: payload.rightsSnapshot.digest, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operation.metadata.artifactIds } : null, artifactExists: Boolean(artifact) })) throw new Error("BLITZ_GENERATION_LINEAGE_INVALID");
       contentPieceId = randomUUID();
-      const contentPayload = parseProductPayload("content_piece", { format: "video_hook_demo", contentLanguage: "ar", arabicVariety: "msa", prompt: payload.rationale, script: "", aspectRatio: "9:16", durationSeconds: 15, captionStyle: "brand", sourceAssetIds: [], candidateArtifactIds: [], renderProofStatus: "not_requested" });
+      const contentPayload = parseProductPayload("content_piece", { format: payload.format, contentLanguage: payload.contentLanguage, arabicVariety: payload.arabicVariety, prompt: payload.rationale, script: "", aspectRatio: "9:16", durationSeconds: Math.max(4, Math.min(60, Math.round(intentRow.intent.outputContract.durationSeconds ?? 15))), captionStyle: "brand", sourceAssetIds: [payload.sourceAssetId], candidateArtifactIds: [input.generation.assetId], renderProofStatus: "pending", generatedText: null, generatedMedia: { assetId: input.generation.assetId, intentId: input.generation.intentId, operationId: input.generation.operationId, contentDigest: receipt.contentDigest } });
       await tx.insert(workspaceProductRecords).values({ workspaceId: input.workspaceId, id: contentPieceId, kind: "content_piece", title: item.title, state: "active", revision: 1, payload: contentPayload, createdByUserId: input.userId, updatedByUserId: input.userId, createdAt: now, updatedAt: now });
       await tx.insert(workspaceProductRecordRevisions).values({ workspaceId: input.workspaceId, recordId: contentPieceId, revision: 1, title: item.title, state: "active", payload: contentPayload, authorUserId: input.userId, createdAt: now });
     }
