@@ -58,14 +58,29 @@ The literal `--execute-paid-smoke` flag is mandatory. Review the plan and its im
 
 ## Prerequisites
 
-1. Apply database migrations through `0129_model_qualification_webhook_receipts`.
+1. Apply database migrations through `0130_model_qualification_artifact_reviews`.
 2. Set a dedicated, least-privileged `REPLICATE_QUALIFICATION_API_TOKEN`. Customer BYOK credentials must never be used. Example-file placeholders are treated as missing.
 3. Expose `/api/studio/webhooks/replicate-qualification` through an HTTPS tunnel and set that full URL as `QUALIFICATION_WEBHOOK_URL`. Set `QUALIFICATION_WEBHOOK_OBSERVER_URL` to the local app's `/api/studio/internal/qualification-webhooks` route. The receiver verifies Replicate's signature, stores only an append-only payload digest and identity receipt, and correlates both `start` and terminal deliveries to the stable run/case submission key. This is also the safe recovery path when the paid submission response is lost: the runner waits for verified webhook evidence and never blindly retries a paid prediction.
-4. Configure the still-separate secure ingestion service and spend observer with `QUALIFICATION_INGESTION_URL` and `QUALIFICATION_SPEND_OBSERVER_URL`. The ingestion receipt must use `kind: "media"` with dimensions/duration or `kind: "text"` with a positive character count; both forms require content and language-evidence digests.
-5. Configure a random `QUALIFICATION_HARNESS_TOKEN` of at least 32 characters for the observer and the remaining internal services.
-6. Configure `REPLICATE_WEBHOOK_SIGNING_SECRET` from Replicate's webhook-signing-secret endpoint. A made-up local value cannot verify Replicate deliveries.
-7. Pin the spend observer's Ed25519 public keys in `QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON`. The observer must bind signed preflight authorizations and observed receipts to the Replicate account, credential fingerprint, immutable model version, stable run/case identity, and prediction.
-8. Supply `MODEL_QUALIFICATION_SIGNING_PRIVATE_KEY` only for the command invocation. Keep the corresponding public key in `MODEL_QUALIFICATION_PUBLIC_KEYS_JSON` for runtime verification.
+4. Set `QUALIFICATION_INGESTION_URL` to the local app's `/api/studio/internal/qualification-artifacts` route. Text output is hashed and checked with deterministic Unicode-script evidence without retaining its content. Every media output is fetched only from `REPLICATE_OUTPUT_HOSTS`, size-bounded, decoded, hashed, and stored as an immutable technical inspection. Media never receives invented language evidence: the paid runner waits up to 15 minutes for an operator to accept or reject the exact content digest.
+5. While a media cell is waiting, list the pending reviews with `pnpm qualify:replicate:review --list`. Open the returned Replicate prediction URL, compare it to the reported digest and dimensions, then record one immutable decision. For an image use `--method operator_visual_review`; for video use `--method operator_playback_review`. Example:
+
+   ```bash
+   pnpm qualify:replicate:review \
+     --receipt qai_<receipt> \
+     --digest sha256:<content-digest> \
+     --decision accepted \
+     --reviewer operator@example.com \
+     --method operator_visual_review \
+     --languages ar \
+     --notes "Arabic composition, shaping, and Brand fidelity reviewed."
+   ```
+
+   The review command never calls Replicate or starts a prediction. A rejection or conflicting second review fails closed.
+6. Configure the still-separate spend observer with `QUALIFICATION_SPEND_OBSERVER_URL`. Replicate's public prediction object exposes runtime metrics, not an exact per-prediction account charge, so local runtime estimates must not be mislabeled as billing evidence.
+7. Configure a random `QUALIFICATION_HARNESS_TOKEN` of at least 32 characters for the observer and the remaining internal services.
+8. Configure `REPLICATE_WEBHOOK_SIGNING_SECRET` from Replicate's webhook-signing-secret endpoint. A made-up local value cannot verify Replicate deliveries.
+9. Pin the spend observer's Ed25519 public keys in `QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON`. The observer must bind signed preflight authorizations and observed receipts to the Replicate account, credential fingerprint, immutable model version, stable run/case identity, and prediction.
+10. Supply `MODEL_QUALIFICATION_SIGNING_PRIVATE_KEY` only for the command invocation. Keep the corresponding public key in `MODEL_QUALIFICATION_PUBLIC_KEYS_JSON` for runtime verification.
 
 ## Durable account ceiling
 

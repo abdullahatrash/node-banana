@@ -92,4 +92,14 @@ describe("Replicate qualification HTTP execution", () => {
       submissionKey: "wrong-model-submission",
     })).rejects.toThrow("QUALIFICATION_MODEL_IDENTITY_MISMATCH");
   });
+
+  it("sends content language to the trusted artifact inspector and accepts multi-output evidence", async () => {
+    const item = { contentDigest: `sha256:${"a".repeat(64)}`, width: 1080, height: 1920, durationSeconds: null, fps: null };
+    const receipt = { kind: "media", receiptId: "qai_receipt", contentDigest: `sha256:${"b".repeat(64)}`, itemCount: 1, items: [item], width: 1080, height: 1920, durationSeconds: null, fps: null, observedLanguages: ["ar"], languageEvidenceDigest: `sha256:${"c".repeat(64)}` };
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json(receipt));
+    const execution = new ReplicateQualificationHttpExecution(environment, fetcher);
+    await expect(execution.ingest({ predictionId: "prediction-1", caseId: "arabic-case", capability: "text_to_image", contentLanguage: "ar", output: "https://replicate.delivery/output.png" })).resolves.toEqual(receipt);
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ contentLanguage: "ar", predictionId: "prediction-1" });
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("authorization")).toBe("Bearer qualification-harness-test");
+  });
 });

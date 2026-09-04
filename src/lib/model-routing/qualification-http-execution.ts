@@ -10,7 +10,7 @@ const predictionSchema = z.object({ id: z.string().min(1), status: z.enum(["star
 const observerSchema = z.object({ authentic: z.literal(true), deliveryId: z.string().min(1), predictionId: z.string().min(1), version: z.string().min(1), status: terminal }).strict();
 const recoveredSubmissionSchema = z.object({ predictionId: z.string().min(1), version: z.string().min(1) }).strict();
 const ingestionSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("media"), receiptId: z.string().min(1), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().nonnegative().nullable(), observedLanguages: z.array(z.enum(["ar", "en"])).min(1), languageEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict(),
+  z.object({ kind: z.literal("media"), receiptId: z.string().min(1), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), itemCount: z.number().int().positive().max(8), items: z.array(z.object({ contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().nonnegative().nullable(), fps: z.number().positive().nullable() }).strict()).min(1).max(8), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().nonnegative().nullable(), fps: z.number().positive().nullable(), observedLanguages: z.array(z.enum(["ar", "en"])).min(1), languageEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict(),
   z.object({ kind: z.literal("text"), receiptId: z.string().min(1), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), characterCount: z.number().int().positive(), observedLanguages: z.array(z.enum(["ar", "en"])).min(1), languageEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict(),
 ]);
 const accountSchema = z.object({ username: z.string().min(1).max(200) }).passthrough();
@@ -165,8 +165,20 @@ export class ReplicateQualificationHttpExecution implements QualificationExecuti
 
   async ingest(input: Parameters<QualificationExecutionPort["ingest"]>[0]) {
     const response = await this.harness(this.ingestionUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
-    if (!response.ok) throw new Error(`QUALIFICATION_INGESTION_HTTP_${response.status}`);
-    return ingestionSchema.parse(await response.json()) as Awaited<ReturnType<QualificationExecutionPort["ingest"]>>;
+    if (response.ok && response.status !== 202) return ingestionSchema.parse(await response.json()) as Awaited<ReturnType<QualificationExecutionPort["ingest"]>>;
+    if (response.status !== 202 && response.status !== 404) throw new Error(`QUALIFICATION_INGESTION_HTTP_${response.status}`);
+    const url = new URL(this.ingestionUrl);
+    url.searchParams.set("predictionId", input.predictionId);
+    url.searchParams.set("caseId", input.caseId);
+    url.searchParams.set("capability", input.capability);
+    url.searchParams.set("contentLanguage", input.contentLanguage);
+    for (let attempt = 0; attempt < 450; attempt++) {
+      const observed = await this.harness(url, { method: "GET" });
+      if (observed.status === 202 || observed.status === 404) { await wait(2_000); continue; }
+      if (!observed.ok) throw new Error(`QUALIFICATION_INGESTION_HTTP_${observed.status}`);
+      return ingestionSchema.parse(await observed.json()) as Awaited<ReturnType<QualificationExecutionPort["ingest"]>>;
+    }
+    throw new Error(`QUALIFICATION_INGESTION_REVIEW_TIMEOUT:${input.caseId}`);
   }
 
   async reconcile(input: Target & { predictionId: string; caseId: string }) {

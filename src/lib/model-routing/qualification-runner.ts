@@ -34,9 +34,18 @@ export type QualificationIngestionReceipt = {
   kind: "media";
   receiptId: string;
   contentDigest: `sha256:${string}`;
+  itemCount: number;
+  items: Array<{
+    contentDigest: `sha256:${string}`;
+    width: number;
+    height: number;
+    durationSeconds: number | null;
+    fps: number | null;
+  }>;
   width: number;
   height: number;
   durationSeconds: number | null;
+  fps: number | null;
   observedLanguages: Array<"ar" | "en">;
   languageEvidenceDigest: `sha256:${string}`;
 } | {
@@ -63,7 +72,7 @@ export interface QualificationExecutionPort {
   awaitWebhook(input: QualificationExecutionTarget & { predictionId: string; caseId: string }): Promise<{ authentic: boolean; deliveryId: string; status: "succeeded" | "failed" | "canceled" | "aborted" }>;
   poll(input: QualificationExecutionTarget & { predictionId: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string; output: unknown }>;
   cancel(input: QualificationExecutionTarget & { predictionId: string; caseId: string }): Promise<{ status: "canceled" | "aborted"; version: string }>;
-  ingest(input: { predictionId: string; caseId: string; capability: QualificationSmokeCase["capability"]; output: unknown }): Promise<QualificationIngestionReceipt>;
+  ingest(input: { predictionId: string; caseId: string; capability: QualificationSmokeCase["capability"]; contentLanguage: "ar" | "en"; output: unknown }): Promise<QualificationIngestionReceipt>;
   reconcile(input: QualificationExecutionTarget & { predictionId: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string }>;
   observeSpend(input: { predictionId: string; model: string; version: string; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendReceipt>;
 }
@@ -266,10 +275,10 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
       if (spend.matrixObservedSpendUsd >= MAX_QUALIFICATION_SPEND_USD || receipt.amountUsd > authoritativeMaximum + Number.EPSILON) throw new Error(`QUALIFICATION_OBSERVED_SPEND_CAP_EXCEEDED:${cell.id}`);
       let ingestion: Awaited<ReturnType<QualificationExecutionPort["ingest"]>> | null = null;
       if (cell.lifecycle === "complete") {
-        ingestion = await execution.ingest({ predictionId: submitted.predictionId, caseId: cell.id, capability: cell.capability, output });
+        ingestion = await execution.ingest({ predictionId: submitted.predictionId, caseId: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, output });
         if (cell.capability === "text_generation") {
           if (ingestion.kind !== "text" || ingestion.characterCount <= 0) throw new Error(`QUALIFICATION_TEXT_OUTPUT_INVALID:${cell.id}`);
-        } else if (ingestion.kind !== "media" || ingestion.width * 16 !== ingestion.height * 9) throw new Error(`QUALIFICATION_OUTPUT_NOT_9_16:${cell.id}`);
+        } else if (ingestion.kind !== "media" || base.outputShape.width === null || base.outputShape.height === null || ingestion.itemCount !== ingestion.items.length || ingestion.items.length === 0 || ingestion.items.some((item) => item.width * 16 !== item.height * 9 || item.width !== base.outputShape.width || item.height !== base.outputShape.height || (base.outputShape.fps === null ? item.fps !== null : item.fps === null || Math.abs(item.fps - base.outputShape.fps) > 0.1)) || ingestion.width !== ingestion.items[0]!.width || ingestion.height !== ingestion.items[0]!.height || ingestion.durationSeconds !== ingestion.items[0]!.durationSeconds || ingestion.fps !== ingestion.items[0]!.fps) throw new Error(`QUALIFICATION_OUTPUT_SHAPE_MISMATCH:${cell.id}`);
         if (!ingestion.observedLanguages.includes(cell.contentLanguage)) throw new Error(`QUALIFICATION_LANGUAGE_EVIDENCE_MISSING:${cell.id}`);
       }
       const result = { id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: authoritativeMaximum, spendAuthorizationId: spendAuthorizations[index]!.authorizationId, spendAuthorizationDigest: spendAuthorizations[index]!.digest, observedSpendUsd: receipt.amountUsd, spendReceiptId: receipt.receiptId, spendReceiptDigest: receipt.digest, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, providerCompositionDigest: composed.evidence.digest, composedPromptDigest: composed.evidence.composedPromptDigest, providerInputDigest: composed.providerInputDigest, safetyVerified: Boolean(base.inputContract.safety), webhookDeliveryId: webhook.deliveryId, ingestion };

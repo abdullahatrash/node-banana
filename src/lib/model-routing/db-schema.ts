@@ -309,3 +309,51 @@ export const modelQualificationWebhookReceipts = pgTable("model_qualification_we
   predictionIdx: index("model_qualification_webhook_receipts_prediction_idx").on(table.predictionId, table.receivedAt),
   valuesCheck: check("model_qualification_webhook_receipts_values_check", sql`${table.provider} = 'replicate' and length(${table.eventId}) between 8 and 200 and length(${table.submissionKey}) between 16 and 300 and ${table.payloadDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.providerStatus} in ('starting','processing','succeeded','failed','canceled','aborted')`),
 }));
+
+export type QualificationInspectedMediaItem = {
+  contentDigest: `sha256:${string}`;
+  width: number;
+  height: number;
+  durationSeconds: number | null;
+  fps: number | null;
+};
+
+export const modelQualificationArtifactInspections = pgTable("model_qualification_artifact_inspections", {
+  receiptId: text("receipt_id").primaryKey(),
+  runId: text("run_id").notNull(),
+  caseId: text("case_id").notNull(),
+  predictionId: text("prediction_id").notNull(),
+  capability: text("capability").notNull(),
+  contentLanguage: text("content_language").notNull(),
+  kind: text("kind").notNull(),
+  contentDigest: text("content_digest").notNull(),
+  items: jsonb("items").$type<QualificationInspectedMediaItem[]>(),
+  width: integer("width"),
+  height: integer("height"),
+  durationSeconds: numeric("duration_seconds", { precision: 12, scale: 3 }),
+  fps: numeric("fps", { precision: 8, scale: 3 }),
+  characterCount: integer("character_count"),
+  outputLocatorDigest: text("output_locator_digest").notNull(),
+  technicalEvidenceDigest: text("technical_evidence_digest").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  caseFk: foreignKey({ name: "model_qualification_artifact_inspections_case_fk", columns: [table.runId, table.caseId], foreignColumns: [modelQualificationCases.runId, modelQualificationCases.caseId] }).onDelete("restrict"),
+  predictionUnique: uniqueIndex("model_qualification_artifact_inspections_prediction_unique").on(table.predictionId),
+  caseUnique: uniqueIndex("model_qualification_artifact_inspections_case_unique").on(table.runId, table.caseId),
+  valuesCheck: check("model_qualification_artifact_inspections_values_check", sql`${table.receiptId} ~ '^qai_[a-f0-9]{32}$' and ${table.capability} in ('text_generation','text_to_image','image_to_image','text_to_video','image_to_video','video_to_video') and ${table.contentLanguage} in ('ar','en') and ${table.kind} in ('text','media') and ${table.contentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.outputLocatorDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.technicalEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ((${table.kind} = 'text' and ${table.characterCount} > 0 and ${table.items} is null and ${table.width} is null and ${table.height} is null and ${table.durationSeconds} is null and ${table.fps} is null) or (${table.kind} = 'media' and jsonb_array_length(${table.items}) > 0 and ${table.width} > 0 and ${table.height} > 0 and ${table.characterCount} is null))`),
+}));
+
+export const modelQualificationArtifactReviews = pgTable("model_qualification_artifact_reviews", {
+  receiptId: text("receipt_id").primaryKey().references(() => modelQualificationArtifactInspections.receiptId, { onDelete: "restrict" }),
+  decision: text("decision").notNull(),
+  reviewerId: text("reviewer_id").notNull(),
+  method: text("method").notNull(),
+  observedLanguages: text("observed_languages").array().notNull(),
+  reviewedContentDigest: text("reviewed_content_digest").notNull(),
+  languageEvidenceDigest: text("language_evidence_digest").notNull(),
+  notesDigest: text("notes_digest").notNull(),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  valuesCheck: check("model_qualification_artifact_reviews_values_check", sql`${table.decision} in ('accepted','rejected') and length(${table.reviewerId}) between 3 and 200 and ${table.method} in ('automatic_unicode_script','operator_visual_review','operator_playback_review') and cardinality(${table.observedLanguages}) between 1 and 2 and ${table.observedLanguages} <@ array['ar','en']::text[] and ${table.reviewedContentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.languageEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.notesDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+}));

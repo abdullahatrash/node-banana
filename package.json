@@ -24,6 +24,7 @@
     "qualify:replicate": "tsx scripts/qualify-replicate-model.ts",
     "qualify:replicate:check": "tsx scripts/check-replicate-qualification.ts",
     "qualify:replicate:inspect": "tsx scripts/inspect-replicate-qualification-contract.ts",
+    "qualify:replicate:review": "tsx scripts/review-replicate-qualification-artifact.ts",
     "governance:region-evidence": "tsx scripts/sign-governance-region-evidence.ts",
     "test": "vitest",
     "test:run": "vitest run",

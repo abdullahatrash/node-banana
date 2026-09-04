@@ -31,6 +31,7 @@ function input(executionPriceUsd = 0.1) {
 
 function port(overrides: Partial<QualificationExecutionPort> = {}): QualificationExecutionPort {
   let sequence = 0;
+  const mediaItem = { contentDigest: `sha256:${"e".repeat(64)}` as const, width: 1080, height: 1920, durationSeconds: null, fps: null };
   return {
     identifyAccount: vi.fn().mockResolvedValue({ provider: "replicate", accountId: "replicate-account", credentialFingerprint: `sha256:${"8".repeat(64)}` }),
     authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, caseId, account }) => {
@@ -43,7 +44,7 @@ function port(overrides: Partial<QualificationExecutionPort> = {}): Qualificatio
     poll: vi.fn(async ({ version }) => ({ status: "succeeded" as const, version, output: "https://replicate.delivery/output.png" })),
     cancel: vi.fn(async ({ version }) => ({ status: "aborted" as const, version })),
     awaitWebhook: vi.fn(async ({ predictionId }) => ({ authentic: true, deliveryId: `delivery-${predictionId}`, status: predictionId === "prediction-3" ? "aborted" as const : "succeeded" as const })),
-    ingest: vi.fn(async ({ caseId }) => ({ kind: "media" as const, receiptId: "artifact-1", contentDigest: `sha256:${"e".repeat(64)}` as const, width: 1080, height: 1920, durationSeconds: null, observedLanguages: [caseId.startsWith("arabic") ? "ar" as const : "en" as const], languageEvidenceDigest: `sha256:${"f".repeat(64)}` as const })),
+    ingest: vi.fn(async ({ caseId }) => ({ kind: "media" as const, receiptId: "artifact-1", contentDigest: `sha256:${"e".repeat(64)}` as const, itemCount: 1, items: [mediaItem], width: 1080, height: 1920, durationSeconds: null, fps: null, observedLanguages: [caseId.startsWith("arabic") ? "ar" as const : "en" as const], languageEvidenceDigest: `sha256:${"f".repeat(64)}` as const })),
     reconcile: vi.fn(async ({ predictionId, version }) => ({ status: predictionId === "prediction-3" ? "aborted" as const : "succeeded" as const, version })),
     observeSpend: vi.fn(async ({ predictionId, model, version, account }) => {
       const receipt = { schema: "replicate-qualification-spend-receipt/v1" as const, receiptId: `receipt-${predictionId}`, ...account, predictionId, model, version, currency: "USD" as const, amountUsd: 0.01, observedAt: at.toISOString(), source: "replicate-account-billing" as const };
@@ -88,6 +89,7 @@ describe("executable Replicate qualification runner", () => {
     expect(execution.submit).toHaveBeenCalledTimes(3);
     expect(execution.authorizeSpend).toHaveBeenCalledWith(expect.objectContaining({ runId: "qualification-run-001", caseId: "arabic-complete" }));
     expect(execution.ingest).toHaveBeenCalledTimes(2);
+    expect(execution.ingest).toHaveBeenCalledWith(expect.objectContaining({ caseId: "arabic-complete", contentLanguage: "ar" }));
     expect(execution.cancel).toHaveBeenCalledTimes(1);
     expect(execution.awaitWebhook).toHaveBeenCalledTimes(3);
     expect(execution.reconcile).toHaveBeenCalledTimes(3);
@@ -137,10 +139,16 @@ describe("executable Replicate qualification runner", () => {
   });
 
   it("does not sign after any incomplete evidence gate", async () => {
-    const execution = port({ ingest: vi.fn().mockResolvedValue({ kind: "media", receiptId: "artifact", contentDigest: `sha256:${"e".repeat(64)}`, width: 1024, height: 1024, durationSeconds: null, observedLanguages: ["ar", "en"], languageEvidenceDigest: `sha256:${"f".repeat(64)}` }) });
+    const execution = port({ ingest: vi.fn().mockResolvedValue({ kind: "media", receiptId: "artifact", contentDigest: `sha256:${"e".repeat(64)}`, itemCount: 1, items: [{ contentDigest: `sha256:${"e".repeat(64)}`, width: 1024, height: 1024, durationSeconds: null, fps: null }], width: 1024, height: 1024, durationSeconds: null, fps: null, observedLanguages: ["ar", "en"], languageEvidenceDigest: `sha256:${"f".repeat(64)}` }) });
     const durable = ledger();
-    await expect(executeReplicateQualification(input(), privateKey.export({ type: "pkcs8", format: "pem" }).toString(), execution, durable, at)).rejects.toThrow("QUALIFICATION_OUTPUT_NOT_9_16");
+    await expect(executeReplicateQualification(input(), privateKey.export({ type: "pkcs8", format: "pem" }).toString(), execution, durable, at)).rejects.toThrow("QUALIFICATION_OUTPUT_SHAPE_MISMATCH");
     expect(durable.markOutcomeUnknown).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a valid 9:16 output that does not match the signed resolution", async () => {
+    const mediaItem = { contentDigest: `sha256:${"e".repeat(64)}` as const, width: 720, height: 1280, durationSeconds: null, fps: null };
+    const execution = port({ ingest: vi.fn().mockResolvedValue({ kind: "media", receiptId: "artifact", contentDigest: `sha256:${"e".repeat(64)}`, itemCount: 1, items: [mediaItem], width: 720, height: 1280, durationSeconds: null, fps: null, observedLanguages: ["ar", "en"], languageEvidenceDigest: `sha256:${"f".repeat(64)}` }) });
+    await expect(executeReplicateQualification(input(), privateKey.export({ type: "pkcs8", format: "pem" }).toString(), execution, ledger(), at)).rejects.toThrow("QUALIFICATION_OUTPUT_SHAPE_MISMATCH");
   });
 
   it("recovers a stale provider submission by stable key and never submits it again", async () => {
