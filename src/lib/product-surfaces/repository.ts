@@ -93,6 +93,7 @@ export async function updateProductRecord(input: {
   workspaceId: string;
   userId: string;
   id: string;
+  expectedKind?: ProductRecordKind;
   expectedRevision: number;
   title?: string;
   state?: string;
@@ -107,6 +108,7 @@ export async function updateProductRecordInTransaction(executor: ProductRecordEx
   workspaceId: string;
   userId: string;
   id: string;
+  expectedKind?: ProductRecordKind;
   expectedRevision: number;
   title?: string;
   state?: string;
@@ -118,6 +120,7 @@ export async function updateProductRecordInTransaction(executor: ProductRecordEx
     const [current] = await executor.select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id))).limit(1);
     if (!current) return null;
     const kind = current.kind as ProductRecordKind;
+    if (input.expectedKind && kind !== input.expectedKind) return null;
     const state = input.state ?? current.state;
     assertState(kind, state);
     const payload = input.payload ? parseProductPayload(kind, input.payload) : current.payload;

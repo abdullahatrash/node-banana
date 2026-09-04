@@ -21,22 +21,20 @@ export function AnalyticsSourcesClient() {
     try {
       if (kind === "website") {
         const hostname = String(data.get("hostname")).trim().toLowerCase();
-        await productRequest("/api/product-records", {
+        await productRequest("/api/product-analytics/sources", {
           kind: "website_analytics_source",
           title: hostname,
-          state: "active",
           idempotencyKey: crypto.randomUUID(),
-          payload: { hostname, publicKey: crypto.randomUUID(), enabled: true, lastEventAt: null },
+          payload: { hostname },
         });
       } else {
         const domain = String(data.get("domain")).trim().toLowerCase();
         const topics = String(data.get("topics")).split(",").map((topic) => topic.trim()).filter(Boolean);
-        await productRequest("/api/product-records", {
+        await productRequest("/api/product-analytics/sources", {
           kind: "geo_analytics_source",
           title: domain,
-          state: "active",
           idempotencyKey: crypto.randomUUID(),
-          payload: { domain, topics, enabled: true, lastObservationAt: null },
+          payload: { domain, topics },
         });
       }
       form.reset();

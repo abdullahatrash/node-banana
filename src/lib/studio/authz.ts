@@ -52,13 +52,22 @@ export type SocialPermission =
   | "social:publish"
   | "social:manage";
 
-export type ContentOSPermission = StudioPermission | SocialPermission;
+export type ProductPermission =
+  | "product:read"
+  | "product:content:write"
+  | "product:inspiration:write"
+  | "product:campaigns:write"
+  | "product:analytics:write"
+  | "product:support:submit";
+
+export type ContentOSPermission = StudioPermission | SocialPermission | ProductPermission;
 
 const READ_ONLY_CONTENT_OS_PERMISSIONS = new Set<ContentOSPermission>([
   "workspaces:read",
   "projects:read",
   "assets:read",
   "social:view",
+  "product:read",
 ]);
 
 const WRITE_BLOCKING_CLOSURE_STATUSES = [
@@ -609,10 +618,11 @@ export async function authorizeStudioRequest(
   options: {
     route: string;
     action?: StudioAccessAction;
+    permission?: ContentOSPermission;
   },
 ): Promise<StudioAuthorizationResult> {
   const action = options.action ?? "read";
-  const permission = mapActionToPermission(options.route, action);
+  const permission = options.permission ?? mapActionToPermission(options.route, action);
   const permissionResult = await withApiPermission(request, {
     route: options.route,
     permission,

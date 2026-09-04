@@ -120,6 +120,21 @@ describe("withStudioAuth", () => {
     expect(handler).toHaveBeenCalledWith(request, authorizedResult, undefined);
   });
 
+  it("forwards an exact product capability instead of inferring Workspace mutation", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue(authorizedResult);
+    const route = withStudioAuth(
+      { route: "/api/product-support/submit", action: "write", permission: "product:support:submit" },
+      vi.fn().mockResolvedValue(NextResponse.json({ success: true })),
+    );
+    const request = createRequest();
+    await route(request, undefined as never);
+    expect(mockAuthorizeStudioRequest).toHaveBeenCalledWith(request, {
+      route: "/api/product-support/submit",
+      action: "write",
+      permission: "product:support:submit",
+    });
+  });
+
   it("returns 500 with generic message when handler throws (not leaking error.message)", async () => {
     mockAuthorizeStudioRequest.mockResolvedValue(authorizedResult);
     const canary =

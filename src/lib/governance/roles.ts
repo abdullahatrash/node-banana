@@ -125,6 +125,12 @@ export const CONTENT_OS_PERMISSION_CAPABILITIES = Object.freeze({
   // Submission still requires exact Publishing Approval at release time.
   "social:publish": ref("social.posts.submit"),
   "social:manage": ref("social.content.manage"),
+  "product:read": ref("product.records.read"),
+  "product:content:write": ref("product.content.write"),
+  "product:inspiration:write": ref("product.inspiration.write"),
+  "product:campaigns:write": ref("product.campaigns.write"),
+  "product:analytics:write": ref("product.analytics.write"),
+  "product:support:submit": ref("product.support.submit"),
 });
 
 const PRODUCT_READ = [
@@ -132,12 +138,18 @@ const PRODUCT_READ = [
   CONTENT_OS_PERMISSION_CAPABILITIES["projects:read"],
   CONTENT_OS_PERMISSION_CAPABILITIES["assets:read"],
   CONTENT_OS_PERMISSION_CAPABILITIES["social:view"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:read"],
 ] as const;
 const PRODUCT_CREATE = [
   ...PRODUCT_READ,
   CONTENT_OS_PERMISSION_CAPABILITIES["projects:write"],
   CONTENT_OS_PERMISSION_CAPABILITIES["assets:write"],
   CONTENT_OS_PERMISSION_CAPABILITIES["social:publish"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:content:write"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:inspiration:write"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:campaigns:write"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:analytics:write"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:support:submit"],
 ] as const;
 const PRODUCT_ADMIN = [
   ...PRODUCT_CREATE,

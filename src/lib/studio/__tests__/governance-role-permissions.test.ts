@@ -16,6 +16,20 @@ describe("governed legacy product permissions", () => {
     expect(permissions("creator")).toContain("social:publish");
     expect(permissions("creator")).not.toContain("social:connect");
     expect(permissions("creator")).not.toContain("social:manage");
+    expect(permissions("creator")).toEqual(expect.arrayContaining([
+      "product:read",
+      "product:content:write",
+      "product:inspiration:write",
+      "product:campaigns:write",
+      "product:analytics:write",
+      "product:support:submit",
+    ]));
+  });
+
+  it("keeps product viewers read-only while allowing them to contact support", () => {
+    expect(permissions("viewer")).toContain("product:read");
+    expect(permissions("viewer")).not.toContain("product:content:write");
+    expect(permissions("viewer")).not.toContain("product:support:submit");
   });
 
   it("maps a Custom Role's exact capability set without a legacy member fallback", () => {

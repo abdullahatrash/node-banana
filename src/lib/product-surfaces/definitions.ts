@@ -81,8 +81,9 @@ export const ARABIC_VARIETIES = [
 const text = (max = 2_000) => z.string().trim().min(1).max(max);
 const optionalText = (max = 2_000) => z.string().trim().max(max).default("");
 
-const inspirationSchema = z.object({
+export const inspirationPayloadSchema = z.object({
   sourceUrl: z.string().url(),
+  sourceAssetId: text(200).nullable().default(null),
   sourceName: text(200),
   capturedAt: z.string().datetime(),
   metricsObservedAt: z.string().datetime(),
@@ -92,6 +93,7 @@ const inspirationSchema = z.object({
   arabicVariety: z.enum(ARABIC_VARIETIES).nullable().default(null),
   format: z.enum(CONTENT_FORMATS),
   rightsStatus: z.enum(["licensed", "user_submitted", "embeddable", "metadata_only", "restricted"]),
+  rightsSnapshot: z.object({ id: text(200), revision: z.number().int().positive(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
   permittedInfluence: z.array(z.enum(["topic", "hook", "pacing", "structure"])).min(1),
   whyThisAppears: z.array(text(300)).min(1),
   tags: z.array(text(80)).default([]),
@@ -101,6 +103,8 @@ const blitzSchema = z.object({
   inspirationItemId: text(200).nullable().default(null),
   contentPieceId: text(200).nullable().default(null),
   sourceAttribution: text(500),
+  sourceAssetId: text(200).nullable().default(null),
+  rightsSnapshot: z.object({ id: text(200), revision: z.number().int().positive(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
   remixBrief: z.object({ influences: z.array(text(200)).min(1), protectedExpressionExcluded: z.boolean() }),
   rationale: text(1_000),
   rejectionReasons: z.array(text(300)).default([]),
@@ -184,7 +188,7 @@ export const PRODUCT_STATES: Record<ProductRecordKind, readonly string[]> = {
 };
 
 const payloadSchemas: Record<ProductRecordKind, z.ZodType<Record<string, unknown>>> = {
-  inspiration_item: inspirationSchema,
+  inspiration_item: inspirationPayloadSchema,
   blitz_item: blitzSchema,
   content_piece: contentPieceSchema,
   campaign_automation: campaignSchema,

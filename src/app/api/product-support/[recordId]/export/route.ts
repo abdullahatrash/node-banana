@@ -3,7 +3,7 @@ import { exportSupportRecord } from "@/lib/product-support/export";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 type Context = { params: Promise<{ recordId: string }> };
-export const GET = withStudioAuth<Context>({ route: "/api/product-support/[recordId]/export", action: "read" }, async (_request: NextRequest, authz, context) => {
+export const GET = withStudioAuth<Context>({ route: "/api/product-support/[recordId]/export", action: "read", permission: "product:read" }, async (_request: NextRequest, authz, context) => {
   const { recordId } = await context.params;
   const exported = await exportSupportRecord({ workspaceId: authz.workspaceId, recordId });
   if (!exported) return NextResponse.json({ success: false, error: "Support record not found." }, { status: 404 });
