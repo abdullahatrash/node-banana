@@ -8925,6 +8925,195 @@ export const workspaceProductRecordRevisions = pgTable(
   }),
 );
 
+/**
+ * Persistent Creator Personas are a separate safety-critical aggregate rather
+ * than an untyped product-record payload. Evidence and usage rows are
+ * append-only so an output can always resolve the exact consent, disclosure,
+ * provider acceptance, and Persona revision that admitted it.
+ */
+export const creatorPersonas = pgTable(
+  "creator_personas",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    kind: text("kind").notNull(),
+    state: text("state").notNull(),
+    name: text("name").notNull(),
+    contentLanguage: text("content_language").notNull(),
+    arabicVariety: text("arabic_variety"),
+    disclosure: text("disclosure").notNull(),
+    revision: integer("revision").default(1).notNull(),
+    reusableModelRef: text("reusable_model_ref"),
+    retentionUntil: timestamp("retention_until", { withTimezone: true }).notNull(),
+    suspendedReasonCode: text("suspended_reason_code"),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    updatedByUserId: text("updated_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_personas_pk", columns: [table.workspaceId, table.id] }),
+    stateCursorIdx: index("creator_personas_workspace_state_cursor_idx").on(table.workspaceId, table.state, table.updatedAt, table.id),
+    retentionIdx: index("creator_personas_retention_idx").on(table.state, table.retentionUntil),
+    kindCheck: check("creator_personas_kind_check", sql`${table.kind} in ('synthetic','consented_likeness')`),
+    stateCheck: check("creator_personas_state_check", sql`${table.state} in ('draft','consent_review','ready_to_train','training','review','active','training_failed','suspended','consent_expired','deleted')`),
+    localeCheck: check("creator_personas_locale_check", sql`${table.contentLanguage} in ('ar','en') and (${table.arabicVariety} is null or ${table.arabicVariety} in ('msa','gulf','egyptian','levantine','maghrebi'))`),
+    revisionCheck: check("creator_personas_revision_check", sql`${table.revision} > 0`),
+  }),
+);
+
+export const creatorPersonaEvidence = pgTable(
+  "creator_persona_evidence",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    personaId: text("persona_id").notNull(),
+    personaRevision: integer("persona_revision").notNull(),
+    type: text("type").notNull(),
+    issuer: text("issuer").notNull(),
+    subjectDigest: text("subject_digest").notNull(),
+    scope: jsonb("scope").$type<Record<string, unknown>>().notNull(),
+    evidenceDigest: text("evidence_digest").notNull(),
+    provider: text("provider"),
+    providerPolicyVersion: text("provider_policy_version"),
+    effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    verifiedByUserId: text("verified_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_evidence_pk", columns: [table.workspaceId, table.id] }),
+    personaFk: foreignKey({ name: "creator_persona_evidence_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    activeIdx: index("creator_persona_evidence_active_idx").on(table.workspaceId, table.personaId, table.type, table.expiresAt),
+    typeCheck: check("creator_persona_evidence_type_check", sql`${table.type} in ('likeness_consent','provider_acceptance','disclosure_review','abuse_review')`),
+    digestCheck: check("creator_persona_evidence_digest_check", sql`${table.subjectDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    windowCheck: check("creator_persona_evidence_window_check", sql`${table.expiresAt} > ${table.effectiveAt}`),
+  }),
+);
+
+export const creatorPersonaTrainingSources = pgTable(
+  "creator_persona_training_sources",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    personaId: text("persona_id").notNull(),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+    ordinal: integer("ordinal").notNull(),
+    assetChecksum: text("asset_checksum").notNull(),
+    consentEvidenceId: text("consent_evidence_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_training_sources_pk", columns: [table.workspaceId, table.personaId, table.assetId] }),
+    personaFk: foreignKey({ name: "creator_persona_training_sources_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    evidenceFk: foreignKey({ name: "creator_persona_training_sources_evidence_fk", columns: [table.workspaceId, table.consentEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    orderUnique: uniqueIndex("creator_persona_training_sources_order_unique").on(table.workspaceId, table.personaId, table.ordinal),
+    ordinalCheck: check("creator_persona_training_sources_ordinal_check", sql`${table.ordinal} >= 0`),
+    checksumCheck: check("creator_persona_training_sources_checksum_check", sql`${table.assetChecksum} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const creatorPersonaTrainingJobs = pgTable(
+  "creator_persona_training_jobs",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    personaId: text("persona_id").notNull(),
+    personaRevision: integer("persona_revision").notNull(),
+    state: text("state").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    modelVersion: text("model_version").notNull(),
+    qualificationDigest: text("qualification_digest").notNull(),
+    providerAcceptanceEvidenceId: text("provider_acceptance_evidence_id").notNull(),
+    operationId: text("operation_id").notNull(),
+    providerJobRef: text("provider_job_ref"),
+    resultModelRef: text("result_model_ref"),
+    failureCode: text("failure_code"),
+    requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_training_jobs_pk", columns: [table.workspaceId, table.id] }),
+    personaFk: foreignKey({ name: "creator_persona_training_jobs_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    acceptanceFk: foreignKey({ name: "creator_persona_training_jobs_acceptance_fk", columns: [table.workspaceId, table.providerAcceptanceEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    operationUnique: uniqueIndex("creator_persona_training_jobs_operation_unique").on(table.workspaceId, table.operationId),
+    personaCursorIdx: index("creator_persona_training_jobs_persona_cursor_idx").on(table.workspaceId, table.personaId, table.createdAt, table.id),
+    stateCursorIdx: index("creator_persona_training_jobs_state_cursor_idx").on(table.workspaceId, table.state, table.updatedAt, table.id),
+    stateCheck: check("creator_persona_training_jobs_state_check", sql`${table.state} in ('queued','admitted','running','waiting_provider','succeeded','failed_known','outcome_unknown','cancelled')`),
+    digestCheck: check("creator_persona_training_jobs_digest_check", sql`${table.qualificationDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const creatorPersonaUsages = pgTable(
+  "creator_persona_usages",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    personaId: text("persona_id").notNull(),
+    personaRevision: integer("persona_revision").notNull(),
+    purpose: text("purpose").notNull(),
+    resourceId: text("resource_id").notNull(),
+    consentEvidenceId: text("consent_evidence_id"),
+    providerAcceptanceEvidenceId: text("provider_acceptance_evidence_id").notNull(),
+    disclosureEvidenceId: text("disclosure_evidence_id").notNull(),
+    disclosure: text("disclosure").notNull(),
+    boundByUserId: text("bound_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_usages_pk", columns: [table.workspaceId, table.id] }),
+    personaFk: foreignKey({ name: "creator_persona_usages_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    acceptanceFk: foreignKey({ name: "creator_persona_usages_acceptance_fk", columns: [table.workspaceId, table.providerAcceptanceEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    disclosureFk: foreignKey({ name: "creator_persona_usages_disclosure_fk", columns: [table.workspaceId, table.disclosureEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    consentFk: foreignKey({ name: "creator_persona_usages_consent_fk", columns: [table.workspaceId, table.consentEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    resourceUnique: uniqueIndex("creator_persona_usages_resource_unique").on(table.workspaceId, table.personaId, table.purpose, table.resourceId),
+    resourceIdx: index("creator_persona_usages_resource_idx").on(table.workspaceId, table.purpose, table.resourceId),
+    personaCursorIdx: index("creator_persona_usages_persona_cursor_idx").on(table.workspaceId, table.personaId, table.createdAt, table.id),
+    purposeCheck: check("creator_persona_usages_purpose_check", sql`${table.purpose} in ('generation','content_set','channel','blitz')`),
+  }),
+);
+
+export const creatorPersonaEvents = pgTable(
+  "creator_persona_events",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    personaId: text("persona_id").notNull(),
+    revision: integer("revision").notNull(),
+    id: text("id").notNull(),
+    type: text("type").notNull(),
+    actorUserId: text("actor_user_id").references(() => user.id, { onDelete: "restrict" }),
+    facts: jsonb("facts").$type<Record<string, unknown>>().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_events_pk", columns: [table.workspaceId, table.personaId, table.revision] }),
+    idUnique: uniqueIndex("creator_persona_events_id_unique").on(table.workspaceId, table.id),
+    personaFk: foreignKey({ name: "creator_persona_events_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    revisionCheck: check("creator_persona_events_revision_check", sql`${table.revision} > 0`),
+  }),
+);
+
+export const creatorPersonaCommandReceipts = pgTable(
+  "creator_persona_command_receipts",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    personaId: text("persona_id").notNull(),
+    resultRevision: integer("result_revision").notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_command_receipts_pk", columns: [table.workspaceId, table.idempotencyKey] }),
+    personaFk: foreignKey({ name: "creator_persona_command_receipts_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    digestCheck: check("creator_persona_command_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.resultRevision} > 0`),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 import { productCreateSchema, productUpdateSchema } from "@/lib/product-surfaces/definitions";
-import { createProductRecord, isProductRecordKind, listProductRecords, ProductRecordConflictError, ProductRecordIdempotencyError, updateProductRecord } from "@/lib/product-surfaces/repository";
+import { createProductRecord, isProductRecordKind, listProductRecords, ProductRecordConflictError, ProductRecordIdempotencyError, ProductRecordTransitionError, updateProductRecord } from "@/lib/product-surfaces/repository";
 
 export const GET = withStudioAuth<undefined>({ route: "/api/product-records", action: "read" }, async (request, authz) => {
   const requested = request.nextUrl.searchParams.getAll("kind");
@@ -19,6 +19,7 @@ export const POST = withStudioAuth<undefined>({ route: "/api/product-records", a
     return NextResponse.json({ success: true, record }, { status: 201 });
   } catch (error) {
     if (error instanceof ProductRecordIdempotencyError) return NextResponse.json({ success: false, error: error.message }, { status: 409 });
+    if (error instanceof ProductRecordTransitionError) return NextResponse.json({ success: false, error: error.message }, { status: 422 });
     throw error;
   }
 });
@@ -32,6 +33,7 @@ export const PATCH = withStudioAuth<undefined>({ route: "/api/product-records", 
     return NextResponse.json({ success: true, record });
   } catch (error) {
     if (error instanceof ProductRecordConflictError || error instanceof ProductRecordIdempotencyError) return NextResponse.json({ success: false, error: error.message }, { status: 409 });
+    if (error instanceof ProductRecordTransitionError) return NextResponse.json({ success: false, error: error.message }, { status: 422 });
     throw error;
   }
 });

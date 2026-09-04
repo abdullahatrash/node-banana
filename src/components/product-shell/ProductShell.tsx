@@ -222,23 +222,6 @@ export function ProductShell({
                   {primaryNavigation.map((item) => {
                     const Icon = primaryIcons[item.key];
                     const label = t(`primary.${item.key}`);
-                    if (!("href" in item)) {
-                      return (
-                        <SidebarMenuItem key={item.key}>
-                          <SidebarMenuButton
-                            disabled
-                            aria-disabled="true"
-                            title={t("status.plannedDetail")}
-                          >
-                            <Icon />
-                            <span>{label}</span>
-                            <span className="ms-auto text-[10px] text-muted-foreground">
-                              {t("status.planned")}
-                            </span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      );
-                    }
                     return (
                       <ShellLink key={item.key} item={item} label={label} icon={Icon} />
                     );

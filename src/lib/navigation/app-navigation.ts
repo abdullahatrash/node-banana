@@ -69,7 +69,7 @@ export const primaryNavigation = [
       "/simple-studio/videos",
     ],
   },
-  { key: "influencers", futureHref: "/influencers", availability: "planned" },
+  { key: "influencers", href: "/influencers", aliases: [] },
   {
     key: "content",
     href: "/content",

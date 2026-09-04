@@ -38,10 +38,11 @@ export const OPERATION_PROJECTION_ADAPTERS = [
   adapter("workspace-imports/v1", "workspace_import"),
   adapter("runtime-automations/v1", "automation"),
   adapter("publishing-deliveries/v1", "publishing_delivery"),
+  adapter("creator-persona-training/v1", "persona_training"),
 ] as const;
 
 /** Reserved taxonomy only. No owning durable resource exists yet, so these are never advertised as projected adapters. */
-export const UNAVAILABLE_OPERATION_KINDS = ["persona_training", "metric_refresh", "ingestion"] as const satisfies readonly OperationKind[];
+export const UNAVAILABLE_OPERATION_KINDS = ["metric_refresh", "ingestion"] as const satisfies readonly OperationKind[];
 
 export function getOperationProjectionAdapter(id: string): OperationProjectionAdapter | null {
   return OPERATION_PROJECTION_ADAPTERS.find((item) => item.id === id) ?? null;

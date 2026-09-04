@@ -5,12 +5,13 @@ import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
 import { workspaceProductCommandReceipts, workspaceProductRecordRevisions, workspaceProductRecords } from "@/lib/db/schema";
-import { PRODUCT_RECORD_KINDS, PRODUCT_STATES, parseProductPayload, type ProductRecordKind } from "./definitions";
+import { PRODUCT_RECORD_KINDS, PRODUCT_STATES, parseProductPayload, productTransitionIssue, type ProductRecordKind } from "./definitions";
 
 export type ProductRecord = typeof workspaceProductRecords.$inferSelect;
 
 export class ProductRecordConflictError extends Error {}
 export class ProductRecordIdempotencyError extends Error {}
+export class ProductRecordTransitionError extends Error {}
 
 function assertState(kind: ProductRecordKind, state: string) {
   if (!PRODUCT_STATES[kind].includes(state)) throw new Error("Unsupported state for record kind.");
@@ -42,6 +43,7 @@ export async function createProductRecord(input: {
   now?: Date;
 }) {
   assertState(input.kind, input.state);
+  if (input.kind === "creator_persona" && input.state !== "draft") throw new ProductRecordTransitionError("CREATOR_PERSONA_MUST_START_AS_DRAFT");
   const payload = parseProductPayload(input.kind, input.payload);
   const digest = canonicalDigest({ kind: input.kind, title: input.title, state: input.state, payload });
   const now = input.now ?? new Date();
@@ -87,6 +89,8 @@ export async function updateProductRecord(input: {
     const state = input.state ?? current.state;
     assertState(kind, state);
     const payload = input.payload ? parseProductPayload(kind, input.payload) : current.payload;
+    const transitionIssue = productTransitionIssue({ kind, from: current.state, to: state, payload, now });
+    if (transitionIssue) throw new ProductRecordTransitionError(transitionIssue);
     const title = input.title?.trim() ?? current.title;
     const digest = canonicalDigest({ id: input.id, expectedRevision: input.expectedRevision, title, state, payload });
     const [receipt] = await tx.select().from(workspaceProductCommandReceipts).where(and(eq(workspaceProductCommandReceipts.workspaceId, input.workspaceId), eq(workspaceProductCommandReceipts.idempotencyKey, input.idempotencyKey))).limit(1);

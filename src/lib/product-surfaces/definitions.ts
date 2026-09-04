@@ -195,6 +195,33 @@ export function parseProductPayload(kind: ProductRecordKind, payload: unknown) {
   return payloadSchemas[kind].parse(payload);
 }
 
+const PERSONA_TRANSITIONS: Record<string, readonly string[]> = {
+  draft: ["consent_review", "ready_to_train", "deleted"],
+  consent_review: ["ready_to_train", "deleted"],
+  ready_to_train: ["training", "deleted"],
+  training: ["review", "training_failed", "deleted"],
+  training_failed: ["ready_to_train", "deleted"],
+  review: ["active", "training_failed", "deleted"],
+  active: ["suspended", "consent_expired", "deleted"],
+  suspended: ["active", "deleted"],
+  consent_expired: ["consent_review", "deleted"],
+  deleted: [],
+};
+
+export function productTransitionIssue(input: { kind: ProductRecordKind; from: string; to: string; payload: Record<string, unknown>; now?: Date }): string | null {
+  if (input.from === input.to) return null;
+  if (input.kind !== "creator_persona") return null;
+  if (!PERSONA_TRANSITIONS[input.from]?.includes(input.to)) return "CREATOR_PERSONA_TRANSITION_NOT_ALLOWED";
+  const persona = personaSchema.parse(input.payload);
+  if (persona.kind === "consented_likeness" && ["ready_to_train", "training", "review", "active"].includes(input.to)) {
+    if (!persona.consentEvidenceRef || !persona.consentExpiresAt) return "CREATOR_PERSONA_CONSENT_REQUIRED";
+    if (new Date(persona.consentExpiresAt) <= (input.now ?? new Date())) return "CREATOR_PERSONA_CONSENT_EXPIRED";
+  }
+  if (["training", "review", "active"].includes(input.to) && !persona.trainingRunId) return "CREATOR_PERSONA_TRAINING_RECEIPT_REQUIRED";
+  if (input.to === "active" && !persona.reusableModelRef) return "CREATOR_PERSONA_MODEL_REFERENCE_REQUIRED";
+  return null;
+}
+
 export const productCreateSchema = z.object({
   kind: z.enum(PRODUCT_RECORD_KINDS),
   title: text(240),
