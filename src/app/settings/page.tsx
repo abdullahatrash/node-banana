@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArchiveIcon, BellIcon, BriefcaseBusinessIcon, CircleUserRoundIcon, ClapperboardIcon, CreditCardIcon, FileClockIcon, Globe2Icon, HardDriveIcon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, RadioTowerIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, SparklesIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, BellIcon, BriefcaseBusinessIcon, CircleUserRoundIcon, ClapperboardIcon, CreditCardIcon, FileClockIcon, FingerprintIcon, Globe2Icon, HardDriveIcon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, RadioTowerIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, SparklesIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { ApiTokensSettings } from "@/components/social/ApiTokensSettings";
 import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
@@ -14,6 +14,7 @@ import { WorkspaceStorageSettings } from "@/components/product-shell/WorkspaceSt
 import { WorkspaceChannelsSettings } from "@/components/product-shell/WorkspaceChannelsSettings";
 import { WorkspaceDemoVideosSettings } from "@/components/product-shell/WorkspaceDemoVideosSettings";
 import { WorkspaceRemixSettings } from "@/components/product-shell/WorkspaceRemixSettings";
+import { WorkspacePrivacySettings } from "@/components/product-shell/WorkspacePrivacySettings";
 import { getAuthFeatureFlags } from "@/lib/auth/features";
 import { isAppLocale } from "@/i18n/config";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
@@ -38,6 +39,7 @@ const sections = [
   { key: "channels", icon: RadioTowerIcon },
   { key: "demoVideos", icon: ClapperboardIcon },
   { key: "remix", icon: SparklesIcon },
+  { key: "privacy", icon: FingerprintIcon },
   { key: "storage", icon: HardDriveIcon },
   { key: "billing", icon: CreditCardIcon },
   { key: "api", icon: KeyRoundIcon },
@@ -169,6 +171,8 @@ export default async function SettingsPage({
               <WorkspaceDemoVideosSettings workspaceId={workspaceId} canManage={canManageDemoVideos} />
             ) : activeSection === "remix" && workspaceId ? (
               <WorkspaceRemixSettings workspaceId={workspaceId} canManage={canManageRemix} />
+            ) : activeSection === "privacy" && workspaceId ? (
+              <WorkspacePrivacySettings workspaceId={workspaceId} />
             ) : activeSection === "storage" && workspaceId ? (
               <WorkspaceStorageSettings workspaceId={workspaceId} />
             ) : activeSection === "providers" ? (
