@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { workspaceProductCommandReceipts, workspaceProductRecords } from "@/lib/db/schema";
+import { workspaceProductCommandReceipts, workspaceProductRecordRevisions, workspaceProductRecords } from "@/lib/db/schema";
 import { PRODUCT_RECORD_KINDS, PRODUCT_STATES, parseProductPayload, type ProductRecordKind } from "./definitions";
 
 export type ProductRecord = typeof workspaceProductRecords.$inferSelect;
@@ -62,6 +62,7 @@ export async function createProductRecord(input: {
       revision: 1, payload, createdByUserId: input.userId, updatedByUserId: input.userId,
       createdAt: now, updatedAt: now,
     }).returning();
+    await tx.insert(workspaceProductRecordRevisions).values({ workspaceId: input.workspaceId, recordId: id, revision: 1, title: input.title.trim(), state: input.state, payload, authorUserId: input.userId, createdAt: now });
     await tx.insert(workspaceProductCommandReceipts).values({ workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest: digest, recordId: id, resultRevision: 1, createdAt: now });
     return record;
   });
@@ -96,6 +97,7 @@ export async function updateProductRecord(input: {
     const [updated] = await tx.update(workspaceProductRecords).set({ title, state, payload, revision: sql`${workspaceProductRecords.revision} + 1`, updatedByUserId: input.userId, updatedAt: now, archivedAt: state === "archived" || state === "deleted" || state === "closed" ? now : null })
       .where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id), eq(workspaceProductRecords.revision, input.expectedRevision))).returning();
     if (!updated) throw new ProductRecordConflictError("The record changed on another device. Refresh and try again.");
+    await tx.insert(workspaceProductRecordRevisions).values({ workspaceId: input.workspaceId, recordId: input.id, revision: updated.revision, title, state, payload, authorUserId: input.userId, createdAt: now });
     await tx.insert(workspaceProductCommandReceipts).values({ workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest: digest, recordId: input.id, resultRevision: updated.revision, createdAt: now });
     return updated;
   });
@@ -104,4 +106,3 @@ export async function updateProductRecord(input: {
 export function isProductRecordKind(value: string): value is ProductRecordKind {
   return PRODUCT_RECORD_KINDS.includes(value as ProductRecordKind);
 }
-

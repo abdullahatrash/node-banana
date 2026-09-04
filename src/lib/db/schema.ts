@@ -8901,6 +8901,30 @@ export const workspaceProductCommandReceipts = pgTable(
   }),
 );
 
+/** Append-only snapshots preserve draft history without making files mutable. */
+export const workspaceProductRecordRevisions = pgTable(
+  "workspace_product_record_revisions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    recordId: text("record_id").notNull(),
+    revision: integer("revision").notNull(),
+    title: text("title").notNull(),
+    state: text("state").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    authorUserId: text("author_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.recordId, table.revision], name: "workspace_product_record_revisions_pk" }),
+    recordFk: foreignKey({ columns: [table.workspaceId, table.recordId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "workspace_product_record_revisions_record_fk" }).onDelete("restrict"),
+    revisionCheck: check("workspace_product_record_revisions_revision_check", sql`${table.revision} > 0`),
+  }),
+);
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];

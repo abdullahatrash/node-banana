@@ -1,43 +1,7 @@
-import Link from "next/link";
-import { FileTextIcon, ImageIcon, LibraryIcon, VideoIcon } from "lucide-react";
 import { getTranslations } from "next-intl/server";
-
-const availableContentSurfaces = [
-  { key: "copy", href: "/simple-studio/copy", icon: FileTextIcon },
-  { key: "images", href: "/simple-studio/images", icon: ImageIcon },
-  { key: "videos", href: "/simple-studio/videos", icon: VideoIcon },
-  { key: "posts", href: "/social/posts", icon: LibraryIcon },
-] as const;
-
-export default async function ContentPage() {
-  const t = await getTranslations("shell.contentHub");
-  return (
-    <main className="flex flex-1 flex-col px-5 py-8 sm:px-8 lg:px-12">
-      <div className="mx-auto w-full max-w-5xl">
-        <h2 className="text-3xl font-semibold tracking-tight">{t("title")}</h2>
-        <p className="mt-3 max-w-2xl text-sm leading-7 text-muted-foreground">
-          {t("description")}
-        </p>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2">
-          {availableContentSurfaces.map((surface) => (
-            <Link
-              key={surface.key}
-              href={surface.href}
-              className="flex items-start gap-4 rounded-2xl border bg-card p-5 outline-none transition hover:border-amber-500/50 focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-                <surface.icon className="size-5" />
-              </span>
-              <span>
-                <span className="block font-semibold">{t(`${surface.key}Title`)}</span>
-                <span className="mt-1 block text-sm leading-6 text-muted-foreground">
-                  {t(`${surface.key}Description`)}
-                </span>
-              </span>
-            </Link>
-          ))}
-        </div>
-      </div>
-    </main>
-  );
-}
+import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { CONTENT_FORMATS, type ContentFormat } from "@/lib/product-surfaces/definitions";
+import { listProductRecords } from "@/lib/product-surfaces/repository";
+import { ContentBuilder } from "./ContentBuilder";
+export const dynamic = "force-dynamic";
+export default async function ContentPage({ searchParams }: { searchParams: Promise<{ format?: string; piece?: string }> }) { const query = await searchParams; const format = CONTENT_FORMATS.includes(query.format as ContentFormat) ? query.format as ContentFormat : "talking_head_ugc"; const { aggregate } = await requireOnboardingComplete("/content"); const workspaceId = aggregate?.session.workspaceId; const t = await getTranslations("product.content"); if (!workspaceId) return null; const rows = await listProductRecords({ workspaceId, kinds: ["content_piece"] }); const pieces = rows.map(({ id, title, revision, payload }) => ({ id, title, revision, payload })); const selectedPiece = pieces.find((piece) => piece.id === query.piece) ?? null; return <main className="flex-1 px-5 py-8 sm:px-8 lg:px-10"><div className="mx-auto max-w-[1500px]"><header className="mb-7"><p className="text-xs font-semibold uppercase tracking-[.18em] text-amber-600">{t("eyebrow")}</p><h1 className="mt-2 text-3xl font-semibold sm:text-4xl">{t("title")}</h1><p className="mt-2 max-w-3xl text-muted-foreground">{t("description")}</p></header><ContentBuilder selectedFormat={format} selectedPiece={selectedPiece} pieces={pieces} /></div></main>; }

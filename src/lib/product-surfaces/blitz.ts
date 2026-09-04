@@ -4,7 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { workspaceProductCommandReceipts, workspaceProductRecords } from "@/lib/db/schema";
+import { workspaceProductCommandReceipts, workspaceProductRecordRevisions, workspaceProductRecords } from "@/lib/db/schema";
 import { parseProductPayload } from "./definitions";
 import { ProductRecordConflictError, ProductRecordIdempotencyError } from "./repository";
 
@@ -25,12 +25,13 @@ export async function decideBlitzItem(input: { workspaceId: string; userId: stri
       contentPieceId = randomUUID();
       const contentPayload = parseProductPayload("content_piece", { format: "video_hook_demo", contentLanguage: "ar", arabicVariety: "msa", prompt: payload.rationale, script: "", aspectRatio: "9:16", durationSeconds: 15, captionStyle: "brand", sourceAssetIds: [], candidateArtifactIds: [], renderProofStatus: "not_requested" });
       await tx.insert(workspaceProductRecords).values({ workspaceId: input.workspaceId, id: contentPieceId, kind: "content_piece", title: item.title, state: "active", revision: 1, payload: contentPayload, createdByUserId: input.userId, updatedByUserId: input.userId, createdAt: now, updatedAt: now });
+      await tx.insert(workspaceProductRecordRevisions).values({ workspaceId: input.workspaceId, recordId: contentPieceId, revision: 1, title: item.title, state: "active", payload: contentPayload, authorUserId: input.userId, createdAt: now });
     }
     const nextPayload = parseProductPayload("blitz_item", { ...payload, contentPieceId, rejectionReasons: input.decision === "rejected" ? input.reasons : [] });
     const [updated] = await tx.update(workspaceProductRecords).set({ state: input.decision, payload: nextPayload, revision: sql`${workspaceProductRecords.revision} + 1`, updatedByUserId: input.userId, updatedAt: now }).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.itemId), eq(workspaceProductRecords.revision, input.expectedRevision))).returning();
     if (!updated) throw new ProductRecordConflictError("Blitz item changed on another device.");
+    await tx.insert(workspaceProductRecordRevisions).values({ workspaceId: input.workspaceId, recordId: input.itemId, revision: updated.revision, title: updated.title, state: updated.state, payload: nextPayload, authorUserId: input.userId, createdAt: now });
     await tx.insert(workspaceProductCommandReceipts).values({ workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest: digest, recordId: input.itemId, resultRevision: updated.revision, createdAt: now });
     return { itemId: updated.id, revision: updated.revision, contentPieceId };
   });
 }
-

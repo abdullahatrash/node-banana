@@ -8,7 +8,7 @@ import { chooseDashboardNextAction } from "./dashboard-policy";
 export interface DashboardReadModel {
   activation: { brand: boolean; media: boolean; channel: boolean; content: boolean; scheduled: boolean };
   counts: { media: number; channels: number; reauth: number; content: number; queuedBlitz: number; scheduled: number; failedPublishing: number; failedGeneration: number };
-  recentAssets: Array<{ id: string; type: "image" | "video" | "copy"; createdAt: Date }>;
+  recentAssets: Array<{ id: string; type: "image" | "video" | "audio" | "model3d" | "workflow"; createdAt: Date }>;
   upcomingPosts: Array<{ id: string; content: string | null; scheduledAt: Date | null; status: string }>;
   nextAction: ReturnType<typeof chooseDashboardNextAction>;
   generatedAt: Date;
