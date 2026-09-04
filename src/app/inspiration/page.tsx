@@ -15,8 +15,7 @@ export default async function InspirationPage() {
     listProductRecords({ workspaceId, kinds: ["inspiration_item"] }),
     listInspirationTrendFeed({ workspaceId, filters: { limit: 60 } }),
   ]);
-  const trendIds = new Set(trends.map((item) => item.id));
-  const manual = rows.filter((row) => !trendIds.has(row.id)).map(({ id, title, revision, state, payload }) => ({
+  const manual = rows.filter((row) => !row.payload.trendEvidence).map(({ id, title, revision, state, payload }) => ({
     id, title, revision, state, payload, score: null, freshness: null,
     metricsObservedAt: String(payload.metricsObservedAt), sourcePublishedAt: null,
     eligibleForBlitz: Boolean(payload.sourceAssetId && payload.sourceMediaType && payload.rightsSnapshot && payload.rightsStatus !== "restricted" && payload.rightsStatus !== "metadata_only"),
