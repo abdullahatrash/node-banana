@@ -6,6 +6,7 @@ import { BUILT_IN_ROLE_APPLICATION_CAPABILITIES, BUILT_IN_ROLE_CAPABILITIES } fr
 import { decodeInvitationToken, decodeReviewToken, GovernanceError, GovernanceService } from "../service";
 import { RepositoryPublishingApprovalGovernancePolicy } from "../publishing-approval-policy";
 import { ConfiguredGovernanceRegionVerifier, GovernanceRegionAdmissionService, type GovernanceRegionDeploymentEvidence } from "../region-policy";
+import { GOVERNANCE_REGION_ROUTE_CATALOG } from "../region-route-catalog";
 import { TRUSTED_RETENTION_LEGAL_FLOORS } from "../retention-policy";
 import { RETENTION_CLASSES, type GovernanceActor, type GovernanceReviewPresentationPort, type RetentionRule } from "../types";
 
@@ -21,7 +22,8 @@ function regionEvidence(validSignature = true): GovernanceRegionDeploymentEviden
     schema: "governance-region-deployment-evidence/v1" as const,
     keyId: "deployment-key-1", deploymentId: "deployment-1", region: "me-central-1",
     issuedAt: "2026-09-03T11:00:00.000Z", expiresAt: "2026-10-03T12:00:00.000Z",
-    routes: (["primary_storage", "processing", "backup", "logging", "deletion"] as const).map((kind) => ({ kind, routeId: `${kind}-me-1`, region: "me-central-1" })),
+    routes: GOVERNANCE_REGION_ROUTE_CATALOG.map((route) => ({ kind: route.kind, routeId: route.routeId, region: "me-central-1" })),
+    sources: [{ url: "https://example.com/region-evidence", digest: `sha256:${"e".repeat(64)}` as const, checkedAt: "2026-09-03T10:00:00.000Z" }],
   };
   return { ...payload, signature: validSignature ? createHmac("sha256", regionKey).update(canonicalJson(payload)).digest("base64url") : Buffer.alloc(32, 1).toString("base64url") };
 }
@@ -422,7 +424,7 @@ describe("GovernanceService", () => {
     const verifiedService = new GovernanceService(repository, { now: () => new Date(NOW) }, undefined, new ConfiguredGovernanceRegionVerifier(new Map([["deployment-key-1", regionKey]])));
     expect(await verifiedService.execute(owner, { type: "set_region_policy", region: "me-central-1", verificationEvidence: regionEvidence(), stepUpToken: regionAuth.stepUpToken }, "region-policy-key")).toMatchObject({ verified: true, status: "active" });
     const admission = new GovernanceRegionAdmissionService(repository);
-    await expect(admission.admit({ workspaceId: owner.workspaceId, kind: "processing", routeId: "processing-me-1", configuredRegion: "me-central-1", evaluatedAt: NOW })).resolves.toMatchObject({ allowed: true, policyApplied: true });
+    await expect(admission.admit({ workspaceId: owner.workspaceId, kind: "processing", routeId: "processing:asset-ingestion", configuredRegion: "me-central-1", evaluatedAt: NOW })).resolves.toMatchObject({ allowed: true, policyApplied: true });
     await expect(admission.admit({ workspaceId: owner.workspaceId, kind: "processing", routeId: "provider-global", configuredRegion: "global", evaluatedAt: NOW })).resolves.toEqual({ allowed: false, reason: "REGION_ROUTE_NOT_ALLOWLISTED" });
     const exportAuth = await stepUp(service, "exports.manage");
     expect(await service.execute(owner, { type: "request_workspace_export", includeKinds: ["content", "media", "plans"], stepUpToken: exportAuth.stepUpToken }, "workspace-export-key")).toMatchObject({ status: "queued", omissions: expect.arrayContaining(["secrets", "non_transferable_licensed_media"]) });
@@ -449,8 +451,27 @@ describe("GovernanceService", () => {
     await expect(service.execute(owner, { type: "set_region_policy", region: "me-central-1", verificationEvidence: regionEvidence(false), stepUpToken: auth.stepUpToken }, "region-untrusted-key")).resolves.toMatchObject({ verified: false, status: "pending_verification", reason: "UNCONFIGURED_TRUST_ROOT" });
     const policy = await repository.getResource<{ verified: boolean; verifiedEvidence: null }>({ workspaceId: owner.workspaceId, kind: "data_region_policy", id: "active" });
     expect(policy).toMatchObject({ status: "pending_verification", body: { verified: false, verifiedEvidence: null } });
-    await expect(new GovernanceRegionAdmissionService(repository).admit({ workspaceId: owner.workspaceId, kind: "processing", routeId: "processing-me-1", configuredRegion: "me-central-1", evaluatedAt: NOW })).resolves.toEqual({ allowed: false, reason: "REGION_POLICY_UNVERIFIED" });
+    await expect(new GovernanceRegionAdmissionService(repository).admit({ workspaceId: owner.workspaceId, kind: "processing", routeId: "processing:asset-ingestion", configuredRegion: "me-central-1", evaluatedAt: NOW })).resolves.toEqual({ allowed: false, reason: "REGION_POLICY_UNVERIFIED" });
     await expect(new ConfiguredGovernanceRegionVerifier(new Map([["deployment-key-1", regionKey]])).verify({ workspaceId: owner.workspaceId, region: "me-central-1", evidence: regionEvidence(false), evaluatedAt: NOW })).resolves.toEqual({ status: "pending", reason: "INVALID_SIGNATURE" });
+  });
+
+  it("verifies a sourced multi-region route manifest without conflating provider processing and primary storage", async () => {
+    const base = regionEvidence();
+    const payload = {
+      ...base,
+      routes: base.routes.map((route) => route.routeId === "provider:replicate"
+        ? { ...route, routeId: "provider:replicate", region: "replicate-us" }
+        : route),
+    };
+    const { signature: _signature, ...unsigned } = payload;
+    const evidence = { ...unsigned, signature: createHmac("sha256", regionKey).update(canonicalJson(unsigned)).digest("base64url") };
+    const verifier = new ConfiguredGovernanceRegionVerifier(new Map([["deployment-key-1", regionKey]]));
+    await expect(verifier.verify({ workspaceId: owner.workspaceId, region: "me-central-1", evidence, evaluatedAt: NOW }))
+      .resolves.toMatchObject({ status: "verified", evidence: { region: "me-central-1", routes: expect.arrayContaining([{ kind: "processing", routeId: "provider:replicate", region: "replicate-us" }]) } });
+    const duplicateUnsigned = { ...unsigned, routes: [...unsigned.routes, unsigned.routes[0]!] };
+    const duplicate = { ...duplicateUnsigned, signature: createHmac("sha256", regionKey).update(canonicalJson(duplicateUnsigned)).digest("base64url") };
+    await expect(verifier.verify({ workspaceId: owner.workspaceId, region: "me-central-1", evidence: duplicate, evaluatedAt: NOW }))
+      .resolves.toEqual({ status: "pending", reason: "INVALID_SCOPE" });
   });
 
   it("enforces Retention Class completeness, legal floors, holds, receipts, and tombstones", async () => {

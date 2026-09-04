@@ -5,7 +5,7 @@ import { testRef } from "./fixtures";
 const at = new Date("2026-09-04T00:00:00.000Z");
 const digest = `sha256:${"ab".repeat(32)}`;
 function repository(overrides: Record<string, unknown> = {}): GenerationRegionRepository {
-  return { getResource: async () => ({ id: "active", workspaceId: "ws", kind: "data_region_policy", version: 4, status: "active", body: { region: "replicate-us", verified: true, verifiedEvidence: { schema: "governance-verified-region-evidence/v1", evidenceDigest: digest, keyId: "key", deploymentId: "deployment", region: "replicate-us", issuedAt: "2026-09-03T00:00:00.000Z", expiresAt: "2026-09-05T00:00:00.000Z", routes: [{ kind: "processing", routeId: "provider:replicate", region: "replicate-us" }], verifiedAt: "2026-09-03T00:00:00.000Z" }, ...overrides }, createdByUserId: "u", createdAt: at, updatedAt: at }) as never };
+  return { getResource: async () => ({ id: "active", workspaceId: "ws", kind: "data_region_policy", version: 4, status: "active", body: { region: "local-primary", verified: true, verifiedEvidence: { schema: "governance-verified-region-evidence/v1", evidenceDigest: digest, keyId: "key", deploymentId: "deployment", region: "local-primary", issuedAt: "2026-09-03T00:00:00.000Z", expiresAt: "2026-09-05T00:00:00.000Z", routes: [{ kind: "processing", routeId: "provider:replicate", region: "replicate-us" }], sources: [{ url: "https://replicate.com/docs/topics/site-policy/subprocessors/", digest, checkedAt: "2026-09-03T00:00:00.000Z" }], verifiedAt: "2026-09-03T00:00:00.000Z" }, ...overrides }, createdByUserId: "u", createdAt: at, updatedAt: at }) as never };
 }
 
 describe("generation processing region authority", () => {

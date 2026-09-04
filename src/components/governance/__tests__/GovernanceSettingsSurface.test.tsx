@@ -81,6 +81,16 @@ describe("GovernanceSettingsSurface", () => {
     expect(screen.queryByRole("button", { name: "Activate verified region" })).not.toBeInTheDocument();
   });
 
+  it("accepts an exact signed route manifest and authors its guidance in Arabic", async () => {
+    const user = userEvent.setup();
+    renderSurface("data", "ar");
+    expect(await screen.findByLabelText("بيان المناطق الموقّع كما هو")).toHaveAttribute("dir", "ltr");
+    expect(screen.getByText(/pnpm governance:region-evidence/)).toBeInTheDocument();
+    await user.click(screen.getByText("المسارات المرجعية المطلوبة"));
+    expect(screen.getByText(/provider:replicate/)).toBeInTheDocument();
+    expect(screen.getByText(/storage:workspace-assets/)).toBeInTheDocument();
+  });
+
   it("offers all Approval Policy decision modes in Arabic", async () => {
     const user = userEvent.setup();
     renderSurface("approval", "ar");

@@ -32,6 +32,8 @@ import {
 import type { GovernanceCommandRunner, GovernanceSettingsSection } from "./GovernanceSettingsSurface";
 import { TRUSTED_RETENTION_LEGAL_FLOORS } from "@/lib/governance/retention-policy";
 import { GOVERNANCE_PORTABLE_KINDS } from "@/lib/governance/portability-contract";
+import { GOVERNANCE_REGION_ROUTE_CATALOG } from "@/lib/governance/region-route-catalog";
+import type { GovernanceRegionDeploymentEvidence } from "@/lib/governance/region-policy";
 
 type Can = (capability: GovernanceCapability) => boolean;
 type Props = { section: GovernanceSettingsSection; snapshot: GovernanceSnapshot; run: GovernanceCommandRunner; can: Can; busy: boolean };
@@ -213,8 +215,42 @@ function AuditWorkflows({ snapshot, run, can, busy }: Omit<Props, "section">) {
 }
 
 function RegionPolicyForm({ snapshot, run, can, busy }: Omit<Props, "section">) {
-  const t = useTranslations("governance"); const [token, setToken] = useState(""); const current = snapshot.resources.data_region_policy?.find((item) => item.id === "active");
-  return <Workflow title={t("workflows.region.title")} description={t("workflows.region.description")} allowed={can("regions.manage")} busy={busy}><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const region = value(form, "region"); const route = (kind: "primary_storage" | "processing" | "backup" | "logging" | "deletion") => ({ kind, routeId: value(form, `${kind}RouteId`), region }); void run({ type: "set_region_policy", region, verificationEvidence: { schema: "governance-region-deployment-evidence/v1", keyId: value(form, "keyId"), deploymentId: value(form, "deploymentId"), region, issuedAt: new Date(value(form, "issuedAt")).toISOString(), expiresAt: new Date(value(form, "expiresAt")).toISOString(), routes: [route("primary_storage"), route("processing"), route("backup"), route("logging"), route("deletion")], signature: value(form, "signature") }, ...(current ? { expectedVersion: current.version } : {}), stepUpToken: token }); }}><div className="grid gap-3 sm:grid-cols-3"><Field id="region-name" name="region" label={t("fields.region")} dir="ltr" required /><Field id="region-key" name="keyId" label={t("fields.evidenceKeyId")} dir="ltr" required /><Field id="region-deployment" name="deploymentId" label={t("fields.deploymentId")} dir="ltr" required /></div><div className="grid gap-3 sm:grid-cols-2"><Field id="region-issued" name="issuedAt" label={t("fields.issuedAt")} type="datetime-local" required /><Field id="region-expires" name="expiresAt" label={t("fields.expiresAt")} type="datetime-local" required /></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{(["primary_storage", "processing", "backup", "logging", "deletion"] as const).map((kind) => <Field key={kind} id={`region-route-${kind}`} name={`${kind}RouteId`} label={t(`regionRoutes.${kind}`)} dir="ltr" required />)}</div><Field id="region-signature" name="signature" label={t("fields.evidenceSignature")} pattern="[A-Za-z0-9_-]{43,128}" dir="ltr" required /><StepUpControl purpose="regions.manage" resourceId={null} run={run} busy={busy} onToken={setToken} /><Submit label={t("actions.activateRegion")} busy={busy || !token} /></form></Workflow>;
+  const t = useTranslations("governance");
+  const [token, setToken] = useState("");
+  const [manifestError, setManifestError] = useState(false);
+  const current = snapshot.resources.data_region_policy?.find((item) => item.id === "active");
+  return (
+    <Workflow title={t("workflows.region.title")} description={t("workflows.region.description")} allowed={can("regions.manage")} busy={busy}>
+      <form className="grid gap-4" onSubmit={(event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        let verificationEvidence: GovernanceRegionDeploymentEvidence;
+        try {
+          verificationEvidence = JSON.parse(value(form, "signedManifest")) as GovernanceRegionDeploymentEvidence;
+          setManifestError(false);
+        } catch {
+          setManifestError(true);
+          return;
+        }
+        void run({
+          type: "set_region_policy",
+          region: verificationEvidence.region,
+          verificationEvidence,
+          ...(current ? { expectedVersion: current.version } : {}),
+          stepUpToken: token,
+        });
+      }}>
+        <TextArea id="region-signed-manifest" name="signedManifest" label={t("signedRegionManifest")} help={t("workflows.region.manifestHelp")} className="min-h-64 font-mono text-xs" dir="ltr" required />
+        {manifestError ? <p role="alert" className="text-sm text-destructive">{t("workflows.region.manifestInvalid")}</p> : null}
+        <details className="rounded-lg border p-3">
+          <summary className="cursor-pointer text-sm font-medium">{t("workflows.region.requiredRoutes")}</summary>
+          <ul className="mt-3 grid gap-2">{GOVERNANCE_REGION_ROUTE_CATALOG.map((route) => <li key={route.key}><code className="break-all text-xs" dir="ltr">{route.kind} · {route.routeId}</code></li>)}</ul>
+        </details>
+        <StepUpControl purpose="regions.manage" resourceId={null} run={run} busy={busy} onToken={setToken} />
+        <Submit label={t("actions.activateRegion")} busy={busy || !token} />
+      </form>
+    </Workflow>
+  );
 }
 
 function RetentionPolicyForm({ snapshot, run, can, busy }: Omit<Props, "section">) {

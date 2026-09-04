@@ -52,7 +52,7 @@ export class GovernanceGenerationRegionAuthority implements GenerationRegionAuth
     if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= at) return { kind: "denied", code: "PROCESSING_REGION_EVIDENCE_EXPIRED" };
     const routeId = `provider:${model.provider}`;
     const route = verified.routes.find((item) => item.kind === "processing" && item.routeId === routeId && item.region === configuredRegion);
-    if (!route || policy.body.region !== configuredRegion || verified.region !== configuredRegion || !/^sha256:[a-f0-9]{64}$/.test(verified.evidenceDigest)) return { kind: "denied", code: "PROCESSING_REGION_ROUTE_NOT_VERIFIED" };
+    if (!route || !/^sha256:[a-f0-9]{64}$/.test(verified.evidenceDigest)) return { kind: "denied", code: "PROCESSING_REGION_ROUTE_NOT_VERIFIED" };
     return { kind: "admitted", evidence: { policyId: policy.id, policyVersion: policy.version, evidenceDigest: verified.evidenceDigest as `sha256:${string}`, region: configuredRegion, routeId, evidenceExpiresAt: expiresAt } };
   }
 }

@@ -1,5 +1,6 @@
 import { createCipheriv, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
+import { GOVERNANCE_REGION_ROUTES } from "./region-route-catalog";
 import { putObjectToS3 } from "@/lib/storage";
 import type { GovernanceAuditEvent, GovernanceRepository, GovernanceResource } from "./types";
 import { projectGovernanceAuditEvent, projectGovernanceResource } from "./projection";
@@ -146,7 +147,7 @@ export class GovernanceExportWorker {
       const envelope = { schema: "governance-encrypted-export/v1", algorithm: "AES-256-GCM", keyId: "workspace-export-v1", iv: iv.toString("base64url"), tag: cipher.getAuthTag().toString("base64url"), ciphertext: ciphertext.toString("base64url") };
       const bytes = Buffer.from(canonicalJson(envelope), "utf8");
       if (this.admitStorageRoute) {
-        const admission = await this.admitStorageRoute({ workspaceId: input.workspaceId, routeId: "storage:governance-export", configuredRegion: process.env.GOVERNANCE_EXPORT_STORAGE_REGION ?? "unconfigured" });
+        const admission = await this.admitStorageRoute({ workspaceId: input.workspaceId, routeId: GOVERNANCE_REGION_ROUTES.governanceExportStorage.routeId, configuredRegion: process.env.GOVERNANCE_EXPORT_STORAGE_REGION ?? "unconfigured" });
         if (!admission.allowed) throw new Error(admission.reason ?? "REGION_ROUTE_NOT_ALLOWLISTED");
       }
       const storageKey = `governance/${input.workspaceId}/${job.id}/${jobBody.lease!.id}.encrypted.json`;

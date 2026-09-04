@@ -303,6 +303,8 @@ pnpm smoke:infra
 SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
 ```
 
+Provider processing geography is verified independently from Workspace storage residency. To configure the exact signed route manifest used by local and production readiness gates, follow [Provider processing-region evidence](docs/operations/provider-region-evidence.md).
+
 ### Build
 
 ```bash

@@ -155,7 +155,7 @@ export function buildLocalReadinessReport(
           "region",
           "Processing region",
           "The Workspace has no active verified region evidence for provider:replicate.",
-          "Configure PROVIDER_REGION_REPLICATE and publish verified region evidence in Governance.",
+          "Configure PROVIDER_REGION_REPLICATE and GOVERNANCE_REGION_TRUST_KEYS, then publish a signed, sourced provider:replicate processing route in Governance.",
         ),
     facts.replicateVaultKey && facts.replicateVaultKeyValidated
       ? ready("byok_provider", "Workspace Replicate key", "A validated durable Workspace key exists.")

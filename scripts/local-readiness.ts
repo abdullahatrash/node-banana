@@ -29,6 +29,7 @@ async function run() {
   let activePlans = 0;
   let activeCreditPacks = 0;
   let availableCredits = 0;
+  const configuredReplicateRegion = process.env.PROVIDER_REGION_REPLICATE?.trim() || null;
 
   if (pool) {
     try {
@@ -46,7 +47,7 @@ async function run() {
         const key = await pool.query<{ validated: boolean }>("select (last_validated_at is not null) as validated from workspace_provider_keys where workspace_id = $1 and provider = 'replicate' limit 1", [workspaceId]);
         replicateVaultKey = key.rowCount === 1;
         replicateVaultKeyValidated = key.rows[0]?.validated === true;
-        verifiedReplicateRegion = (await count("select count(*) from workspace_governance_resources where workspace_id = $1 and kind = 'data_region_policy' and id = 'active' and status = 'active' and body->>'verified' = 'true' and body->'verifiedEvidence'->>'expiresAt' > $2", [workspaceId, new Date().toISOString()])) > 0;
+        verifiedReplicateRegion = Boolean(configuredReplicateRegion) && (await count("select count(*) from workspace_governance_resources where workspace_id = $1 and kind = 'data_region_policy' and id = 'active' and status = 'active' and body->>'verified' = 'true' and body->'verifiedEvidence'->>'expiresAt' > $2 and exists (select 1 from jsonb_array_elements(body->'verifiedEvidence'->'routes') route where route->>'kind' = 'processing' and route->>'routeId' = 'provider:replicate' and route->>'region' = $3)", [workspaceId, new Date().toISOString(), configuredReplicateRegion])) > 0;
         const credits = await pool.query<{ credits: string }>("select coalesce(sum(available_units), 0)::text as credits from generation_credit_buckets where workspace_id = $1 and (expires_at is null or expires_at > now())", [workspaceId]);
         availableCredits = Number(credits.rows[0]?.credits ?? 0);
       }

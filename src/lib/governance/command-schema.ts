@@ -26,6 +26,7 @@ const regionEvidence = z.object({
   schema: z.literal("governance-region-deployment-evidence/v1"), keyId: id, deploymentId: id,
   region: id, issuedAt: timestamp, expiresAt: timestamp,
   routes: z.array(z.object({ kind: z.enum(["primary_storage", "processing", "backup", "logging", "deletion"]), routeId: id, region: id }).strict()).min(5),
+  sources: z.array(z.object({ url: z.string().url().refine((value) => new URL(value).protocol === "https:"), digest, checkedAt: timestamp }).strict()).min(1).max(20),
   signature: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
 }).strict();
 

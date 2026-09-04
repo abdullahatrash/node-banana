@@ -3,6 +3,7 @@ import { noStoreJson, requireExplicitAgentWorkspace } from "@/lib/agent-auth/htt
 import { credentialHumanContext } from "@/lib/credential-vault/http";
 import { GovernanceError } from "@/lib/governance/service";
 import { admitProductionGovernanceRegionRoute, PRODUCTION_GOVERNANCE_SERVICE } from "@/lib/governance/production";
+import { GOVERNANCE_REGION_ROUTES } from "@/lib/governance/region-route-catalog";
 import { createPresignedDownload } from "@/lib/storage";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
@@ -23,7 +24,7 @@ export const GET = withStudioAuth<{ params: Promise<Record<string, string>> }>(
     try {
       const { exportId } = await context.params;
       const artifact = await PRODUCTION_GOVERNANCE_SERVICE.authorizeExportDownload({ workspaceId: actor.workspaceId, userId: actor.userId, legacyRole: actor.role, authContextId: actor.authContextId ?? authz.authContextId }, exportId ?? "");
-      const admission = await admitProductionGovernanceRegionRoute({ workspaceId: authz.workspaceId, kind: "primary_storage", routeId: "storage:governance-export", configuredRegion: process.env.GOVERNANCE_EXPORT_STORAGE_REGION ?? "unconfigured" });
+      const admission = await admitProductionGovernanceRegionRoute({ workspaceId: authz.workspaceId, ...GOVERNANCE_REGION_ROUTES.governanceExportStorage, configuredRegion: process.env.GOVERNANCE_EXPORT_STORAGE_REGION ?? "unconfigured" });
       if (!admission.allowed) return noStoreJson({ success: false, code: "REGION_ROUTE_NOT_ALLOWLISTED" }, { status: 409 });
       const signed = await createPresignedDownload({ key: artifact.artifactRef, expiresInSeconds: 300 });
       return noStoreJson({ success: true, exportId: artifact.exportId, kind: artifact.kind, expiresAt: artifact.expiresAt, manifest: artifact.manifest, downloadUrl: signed.downloadUrl, downloadExpiresInSeconds: signed.expiresInSeconds });

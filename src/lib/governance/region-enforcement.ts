@@ -1,20 +1,11 @@
-import type { GovernanceRegionRouteKind } from "./region-policy";
 import { GovernanceRegionAdmissionService } from "./region-policy";
 import { DrizzleGovernanceRepository } from "./postgres-repository";
 import { getDb } from "@/lib/db";
+import { GOVERNANCE_REGION_ROUTES } from "./region-route-catalog";
+
+export { GOVERNANCE_REGION_ROUTES } from "./region-route-catalog";
 
 const REGION_ADMISSION = new GovernanceRegionAdmissionService(new DrizzleGovernanceRepository(getDb));
-
-export const GOVERNANCE_REGION_ROUTES = {
-  assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" },
-  assetProcessing: { kind: "processing", routeId: "processing:asset-ingestion" },
-  publishing: { kind: "processing", routeId: "processing:social-publishing" },
-  deletion: { kind: "deletion", routeId: "deletion:workspace-resources" },
-  backup: { kind: "backup", routeId: "backup:workspace-primary" },
-  logging: { kind: "logging", routeId: "logging:workspace-audit" },
-  workspaceImportProcessing: { kind: "processing", routeId: "processing:workspace-import" },
-  workspaceImportStorage: { kind: "primary_storage", routeId: "storage:workspace-import" },
-} as const satisfies Record<string, { kind: GovernanceRegionRouteKind; routeId: string }>;
 
 export class GovernanceRegionRouteDeniedError extends Error {
   constructor(readonly reason: string) {
