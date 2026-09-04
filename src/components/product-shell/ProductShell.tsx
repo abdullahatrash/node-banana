@@ -34,6 +34,11 @@ import {
   BellIcon,
   CableIcon,
   PlugIcon,
+  BookOpenIcon,
+  FlagIcon,
+  HeadphonesIcon,
+  MegaphoneIcon,
+  MessageSquareMoreIcon,
 } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NavUser } from "@/components/nav-user";
@@ -108,6 +113,11 @@ const contextIcons = {
   copilot: SparklesIcon,
   integrations: CableIcon,
   plugs: PlugIcon,
+  guide: BookOpenIcon,
+  feedback: MessageSquareMoreIcon,
+  roadmap: FlagIcon,
+  releases: MegaphoneIcon,
+  support: HeadphonesIcon,
 } satisfies Record<ContextNavigationKey, typeof ActivityIcon>;
 
 function ShellLink({

@@ -33,7 +33,12 @@ export type ContextNavigationKey =
   | "events"
   | "copilot"
   | "integrations"
-  | "plugs";
+  | "plugs"
+  | "guide"
+  | "feedback"
+  | "roadmap"
+  | "releases"
+  | "support";
 
 export interface NavigationItem<Key extends string = string> {
   key: Key;
@@ -127,6 +132,11 @@ export const additionalToolsNavigation = [
   { key: "copilot", href: "/social/copilot", aliases: [] },
   { key: "integrations", href: "/social/integrations", aliases: [] },
   { key: "plugs", href: "/social/plugs", aliases: [] },
+  { key: "guide", href: "/guide", aliases: [] },
+  { key: "feedback", href: "/feedback", aliases: [] },
+  { key: "roadmap", href: "/roadmap", aliases: [] },
+  { key: "releases", href: "/releases", aliases: [] },
+  { key: "support", href: "/support", aliases: [] },
 ] as const satisfies readonly NavigationItem<ContextNavigationKey>[];
 
 export const allNavigationItems = [
