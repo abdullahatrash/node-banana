@@ -33,4 +33,12 @@ describe("typed product command contracts", () => {
     expect(source).toContain('capability: "workflow_runs.start@2"');
     expect(source).toContain("acceptedSpendQuoteRef");
   });
+
+  it("binds generated Copy only from a succeeded canonical text receipt", () => {
+    const source = read("src/lib/product-surfaces/domain-commands.ts");
+    expect(source).toContain("modelTextOutputReceipts");
+    expect(source).toContain('operation?.state !== "succeeded"');
+    expect(source).toContain("operationOutputIds.includes(output.id)");
+    expect(source).toContain("updateProductRecordInTransaction(tx");
+  });
 });

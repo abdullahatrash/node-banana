@@ -3,20 +3,46 @@ import "server-only";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { assets, workspaceProductRecords } from "@/lib/db/schema";
-import { createProductRecord, createProductRecordInTransaction, updateProductRecord, type ProductRecord } from "./repository";
+import { generationIntents, modelTextOutputReceipts } from "@/lib/model-routing/db-schema";
+import { runtimeOperations } from "@/lib/agent-runtime/operation-status/db-schema";
+import { generationOperationId } from "@/lib/model-routing/generation-operation";
+import { createProductRecord, createProductRecordInTransaction, updateProductRecord, updateProductRecordInTransaction, type ProductRecord } from "./repository";
 import { parseProductPayload } from "./definitions";
 
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
 
 export async function saveContentCommand(input: Actor & { id?: string; expectedRevision?: number; title: string; payload: Record<string, unknown> }) {
-  const requested = parseProductPayload("content_piece", { ...input.payload, candidateArtifactIds: [], renderProofStatus: "not_requested" });
+  const requested = parseProductPayload("content_piece", { ...input.payload, candidateArtifactIds: [], renderProofStatus: "not_requested", generatedText: null });
   if (!input.id) return createProductRecord({ ...input, kind: "content_piece", state: "active", payload: requested });
   if (!input.expectedRevision) throw new Error("CONTENT_EXPECTED_REVISION_REQUIRED");
   const id = input.id;
   const [current] = await getDb().select({ payload: workspaceProductRecords.payload }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1);
   if (!current) return null;
   const authoritative = parseProductPayload("content_piece", current.payload);
-  return updateProductRecord({ ...input, id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, payload: { ...requested, candidateArtifactIds: authoritative.candidateArtifactIds, renderProofStatus: authoritative.renderProofStatus } });
+  return updateProductRecord({ ...input, id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, payload: { ...requested, candidateArtifactIds: authoritative.candidateArtifactIds, renderProofStatus: authoritative.renderProofStatus, generatedText: authoritative.generatedText } });
+}
+
+export async function bindContentTextOutputCommand(input: Actor & { id: string; expectedRevision: number; textOutputId: string }) {
+  return getDb().transaction(async (tx) => {
+    const [[record], [output]] = await Promise.all([
+      tx.select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1),
+      tx.select().from(modelTextOutputReceipts).where(and(eq(modelTextOutputReceipts.workspaceId, input.workspaceId), eq(modelTextOutputReceipts.id, input.textOutputId))).limit(1),
+    ]);
+    if (!record || !output) return null;
+    const operationId = generationOperationId(output.intentId);
+    const [[intentRow], [operation]] = await Promise.all([
+      tx.select({ intent: generationIntents.intent }).from(generationIntents).where(and(eq(generationIntents.workspaceId, input.workspaceId), eq(generationIntents.id, output.intentId))).limit(1),
+      tx.select({ state: runtimeOperations.state, metadata: runtimeOperations.metadata }).from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, input.workspaceId), eq(runtimeOperations.id, operationId), eq(runtimeOperations.resourceId, output.intentId))).limit(1),
+    ]);
+    const operationOutputIds = Array.isArray(operation?.metadata.textOutputIds) ? operation.metadata.textOutputIds : [];
+    if (!intentRow || intentRow.intent.outputContract.mediaType !== "text" || operation?.state !== "succeeded" || !operationOutputIds.includes(output.id)) throw new Error("CONTENT_TEXT_OUTPUT_NOT_ADMITTED");
+    const payload = parseProductPayload("content_piece", record.payload);
+    return updateProductRecordInTransaction(tx, {
+      workspaceId: input.workspaceId, userId: input.userId, id: record.id, expectedKind: "content_piece", expectedRevision: input.expectedRevision,
+      payload: { ...payload, script: output.content, generatedText: { textOutputId: output.id, intentId: output.intentId, operationId, contentDigest: output.contentDigest } },
+      idempotencyKey: input.idempotencyKey,
+    });
+  });
 }
 
 export async function createMediaSetCommand(input: Actor & { title: string; assetIds: string[]; category: string; description: string }) {

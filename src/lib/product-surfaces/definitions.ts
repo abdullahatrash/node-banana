@@ -125,6 +125,12 @@ const contentPieceSchema = z.object({
   sourceAssetIds: z.array(text(200)).default([]),
   candidateArtifactIds: z.array(text(200)).default([]),
   renderProofStatus: z.enum(["not_requested", "pending", "passed", "failed"]).default("not_requested"),
+  generatedText: z.object({
+    textOutputId: text(200),
+    intentId: text(200),
+    operationId: text(200),
+    contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  }).nullable().default(null),
 });
 
 export const campaignPayloadSchema = z.object({

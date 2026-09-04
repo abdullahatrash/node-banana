@@ -26,7 +26,7 @@ export interface StudioGenerationRequest {
   prompt: string; model: ExactModelRef; mode: "photo" | "video" | "copy"; sourceMediaType: "image" | "video" | null; sourceAssetIds: string[]; quantity: number;
   fundingMode: "byok" | "managed";
   contentLanguage?: ContentLanguage;
-  arabicVariety: ArabicVariety; rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
+  arabicVariety: ArabicVariety | null; rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
   permittedRemix: "reference_only" | "transform" | "derivative"; rightsEvidenceIds: string[];
   remixBrief: { preserve: string[]; transform: string[]; avoid: string[] }; idempotencyKey: string; signal: AbortSignal;
 }
@@ -35,7 +35,7 @@ export class StudioGenerationError extends Error { constructor(readonly code: st
 
 async function errorFrom(response: Response) { const parsed = errorSchema.safeParse(await response.json().catch(() => null)); return new StudioGenerationError(parsed.success ? parsed.data.code ?? "GENERATION_ADMISSION_FAILED" : "GENERATION_ADMISSION_FAILED", parsed.success ? parsed.data.nextActions?.[0]?.code ?? null : null); }
 
-export async function runAdmittedStudioGeneration(input: StudioGenerationRequest): Promise<{ result: string; assetId: string | null }> {
+export async function runAdmittedStudioGeneration(input: StudioGenerationRequest): Promise<{ result: string; assetId: string | null; textOutputId: string | null }> {
   const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new StudioGenerationError("WORKSPACE_REQUIRED");
   const capability: GenerationCapability = input.mode === "copy" ? "text_generation" : input.mode === "video" ? (input.sourceAssetIds.length ? input.sourceMediaType === "video" ? "video_to_video" : "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image");
   const contentLanguage = input.contentLanguage ?? classifyContentLanguage(input.prompt);
@@ -84,9 +84,9 @@ export async function runAdmittedStudioGeneration(input: StudioGenerationRequest
     if (!output.ok) throw await errorFrom(output);
     const parsed = z.object({ success: z.literal(true), output: z.object({ content: z.string().min(1) }) }).safeParse(await output.json());
     if (!parsed.success) throw new StudioGenerationError("CANONICAL_TEXT_OUTPUT_INVALID");
-    return { result: parsed.data.output.content, assetId: null };
+    return { result: parsed.data.output.content, assetId: null, textOutputId: outputId };
   }
   const metadataIds = Array.isArray(operation.metadata.artifactIds) ? operation.metadata.artifactIds.filter((item): item is string => typeof item === "string") : [];
   const assetId = metadataIds[0]; if (!assetId) throw new StudioGenerationError("CANONICAL_ARTIFACT_RECEIPT_MISSING");
-  const download = await getStudioAssetDownloadUrl(assetId); return { result: download.downloadUrl, assetId };
+  const download = await getStudioAssetDownloadUrl(assetId); return { result: download.downloadUrl, assetId, textOutputId: null };
 }
