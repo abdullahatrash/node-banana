@@ -40,6 +40,7 @@
     "db:set-password": "node scripts/db-set-password.mjs",
     "db:set-workspace-quota": "node scripts/set-workspace-quota.mjs",
     "doctor:local": "tsx scripts/local-readiness.ts",
+    "workers:local": "node scripts/run-local-content-workers.mjs",
     "smoke:infra": "bash scripts/smoke-infra.sh",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"

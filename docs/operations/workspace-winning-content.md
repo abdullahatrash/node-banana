@@ -57,6 +57,13 @@ Both internal endpoints are intended for a scheduler. Invoke them with the
 same `STUDIO_INTERNAL_API_SECRET` configured in `.env.local`:
 
 ```bash
+pnpm workers:local -- --url http://localhost:3002
+```
+
+The command loads `.env.local` using Next.js semantics and never prints the
+secret. The equivalent individual requests are:
+
+```bash
 curl --fail --silent --show-error \
   -H "x-studio-internal-secret: $STUDIO_INTERNAL_API_SECRET" \
   "http://localhost:3002/api/studio/internal/social-performance-sync?limit=20"
