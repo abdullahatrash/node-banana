@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { supportAttachmentReferencesSchema } from "@/lib/product-support/attachment-policy";
 
 export const PRODUCT_RECORD_KINDS = [
   "inspiration_item",
@@ -161,8 +162,8 @@ const simpleSchemas = {
   geo_analytics_source: z.object({ domain: text(253), topics: z.array(text(300)).min(1), enabled: z.boolean(), lastObservationAt: z.string().datetime().nullable() }),
   referral: z.object({ code: text(80), destinationEmail: z.string().email().nullable(), status: z.enum(["available", "invited", "qualified", "rewarded"]), rewardCreditCents: z.number().int().nonnegative() }),
   channel_onboarding_order: z.object({ platforms: z.array(text(80)).min(1), goals: z.array(text(300)).min(1), requestedLaunchAt: z.string().datetime().nullable(), notes: optionalText(2_000), statusDetail: optionalText(1_000) }),
-  feedback: z.object({ category: z.enum(["idea", "problem", "praise"]), body: text(5_000), route: optionalText(500) }),
-  support_case: z.object({ category: z.enum(["account", "billing", "generation", "publishing", "safety", "other"]), body: text(5_000), severity: z.enum(["normal", "urgent"]), resolution: optionalText(5_000) }),
+  feedback: z.object({ category: z.enum(["idea", "problem", "praise"]), body: text(5_000), route: optionalText(500), attachmentRefs: supportAttachmentReferencesSchema.default([]) }),
+  support_case: z.object({ category: z.enum(["account", "billing", "generation", "publishing", "safety", "other"]), body: text(5_000), severity: z.enum(["normal", "urgent"]), resolution: optionalText(5_000), attachmentRefs: supportAttachmentReferencesSchema.default([]) }),
   guidance_progress: z.object({ completedKeys: z.array(text(120)), dismissedReleaseIds: z.array(text(120)) }),
 } as const;
 
