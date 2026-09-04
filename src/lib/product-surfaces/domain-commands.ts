@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import { and, eq, gt, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { assets, contentThemeRevisions, contentThemes, creatorPersonaEvidence, creatorPersonas, workflowRuns, workspaceProductRecordRevisions, workspaceProductRecords } from "@/lib/db/schema";
 import { contentWorkflowGenerationRuns, generationIntents, inspirationRightsEvidence, modelTextOutputReceipts } from "@/lib/model-routing/db-schema";
@@ -11,7 +11,7 @@ import { generationOperationId } from "@/lib/model-routing/generation-operation"
 import { modelArtifactIngestionReceipts } from "@/lib/model-routing/db-schema";
 import { createPresignedDownload } from "@/lib/storage";
 import { createProductRecord, createProductRecordInTransaction, updateProductRecord, updateProductRecordInTransaction, type ProductRecord } from "./repository";
-import { contentPieceSchema, parseProductPayload } from "./definitions";
+import { contentPieceSchema, mediaSetSchema, parseProductPayload } from "./definitions";
 import { isAdmittedContentArtifact, validateReadyPortraitAsset, type ContentAssetEvidence, type ContentGenerationReference } from "./content-lineage";
 import { contentExecutionPlan, contentProviderSourceIds, validateContentExecutionInput } from "./content-execution-plan";
 import { validateContentDraft } from "./content-draft-policy";
@@ -20,6 +20,7 @@ import type { ContentFormatDefinition } from "./content-format-definition";
 import { buildQualifiedContentRenderProof, productionContentRenderProofVerifier } from "./content-render-proof";
 import { evaluatePersonaGate, type CreatorPersona, type CreatorPersonaEvidence } from "@/lib/creator-personas/types";
 import { mediaSetMembershipDigest, orderedContentAssetIds, resolveMediaSetRevision } from "./content-execution-resources";
+import { mediaSetAssetIssue, type MediaSetPurpose } from "./media-set-policy";
 
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
 type ContentPiecePayload = ReturnType<typeof contentPieceSchema.parse>;
@@ -213,12 +214,41 @@ export async function bindContentTextOutputCommand(input: Actor & { id: string; 
   });
 }
 
-export async function createMediaSetCommand(input: Actor & { title: string; assetIds: string[]; category: string; description: string }) {
+function assertMediaSetAssets(purpose: MediaSetPurpose, ids: string[], found: Array<{ id: string; type: string; mimeType: string | null; sizeBytes: number | null; durationSeconds: number | null; checksum: string | null; metadata: Record<string, unknown> | null }>) {
+  if (!ids.length || found.length !== ids.length) throw new Error("MEDIA_SET_ASSET_NOT_AVAILABLE");
+  const foundById = new Map(found.map((row) => [row.id, row]));
+  for (const id of ids) {
+    const asset = foundById.get(id);
+    if (!asset) throw new Error("MEDIA_SET_ASSET_NOT_AVAILABLE");
+    const issue = mediaSetAssetIssue(purpose, asset);
+    if (issue) throw new Error(issue);
+  }
+}
+
+export async function createMediaSetCommand(input: Actor & { title: string; assetIds: string[]; category: string; description: string; purpose?: MediaSetPurpose }) {
   return getDb().transaction(async (tx) => {
     const ids = [...new Set(input.assetIds)];
-    const found = ids.length ? await tx.select({ id: assets.id, checksum: assets.checksum, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, ids), isNull(assets.deletedAt))) : [];
-    if (!ids.length || found.length !== ids.length || found.some((row) => !row.checksum || (row.metadata as Record<string, unknown> | null)?.uploadState !== "ready")) throw new Error("MEDIA_SET_ASSET_NOT_AVAILABLE");
-    return createProductRecordInTransaction(tx, { ...input, kind: "media_set", state: "active", payload: { assetIds: ids, category: input.category, description: input.description } });
+    const purpose = input.purpose ?? "general";
+    if (purpose === "demo_videos") {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${input.workspaceId}:demo_videos`}))`);
+      const existing = await tx.select({ id: workspaceProductRecords.id }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.kind, "media_set"), eq(workspaceProductRecords.state, "active"), isNull(workspaceProductRecords.archivedAt), sql`${workspaceProductRecords.payload} ->> 'purpose' = 'demo_videos'`)).limit(1);
+      if (existing[0]) throw new Error("DEMO_VIDEO_SET_EXISTS");
+    }
+    const found = ids.length ? await tx.select({ id: assets.id, type: assets.type, mimeType: assets.mimeType, sizeBytes: assets.sizeBytes, durationSeconds: assets.durationSeconds, checksum: assets.checksum, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, ids), isNull(assets.deletedAt))) : [];
+    assertMediaSetAssets(purpose, ids, found);
+    return createProductRecordInTransaction(tx, { ...input, kind: "media_set", state: "active", payload: { assetIds: ids, category: input.category, description: input.description, purpose } });
+  });
+}
+
+export async function updateMediaSetCommand(input: Actor & { id: string; expectedRevision: number; title: string; assetIds: string[]; category: string; description: string; purpose: MediaSetPurpose }) {
+  return getDb().transaction(async (tx) => {
+    const [current] = await tx.select({ payload: workspaceProductRecords.payload }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id), eq(workspaceProductRecords.kind, "media_set"))).limit(1);
+    if (!current) return null;
+    if (mediaSetSchema.parse(current.payload).purpose !== input.purpose) throw new Error("MEDIA_SET_PURPOSE_IMMUTABLE");
+    const ids = [...new Set(input.assetIds)];
+    const found = ids.length ? await tx.select({ id: assets.id, type: assets.type, mimeType: assets.mimeType, sizeBytes: assets.sizeBytes, durationSeconds: assets.durationSeconds, checksum: assets.checksum, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, ids), isNull(assets.deletedAt))) : [];
+    if (ids.length) assertMediaSetAssets(input.purpose, ids, found);
+    return updateProductRecordInTransaction(tx, { workspaceId: input.workspaceId, userId: input.userId, id: input.id, expectedKind: "media_set", expectedRevision: input.expectedRevision, title: input.title, state: ids.length ? "active" : "archived", payload: { assetIds: ids, category: input.category, description: input.description, purpose: input.purpose }, idempotencyKey: input.idempotencyKey });
   });
 }
 

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArchiveIcon, BellIcon, BriefcaseBusinessIcon, CircleUserRoundIcon, CreditCardIcon, FileClockIcon, Globe2Icon, HardDriveIcon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, RadioTowerIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, BellIcon, BriefcaseBusinessIcon, CircleUserRoundIcon, ClapperboardIcon, CreditCardIcon, FileClockIcon, Globe2Icon, HardDriveIcon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, RadioTowerIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { ApiTokensSettings } from "@/components/social/ApiTokensSettings";
 import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
@@ -12,6 +12,7 @@ import { WorkspaceNotificationSettings } from "@/components/product-shell/Worksp
 import { AccountSettings } from "@/components/product-shell/AccountSettings";
 import { WorkspaceStorageSettings } from "@/components/product-shell/WorkspaceStorageSettings";
 import { WorkspaceChannelsSettings } from "@/components/product-shell/WorkspaceChannelsSettings";
+import { WorkspaceDemoVideosSettings } from "@/components/product-shell/WorkspaceDemoVideosSettings";
 import { getAuthFeatureFlags } from "@/lib/auth/features";
 import { isAppLocale } from "@/i18n/config";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
@@ -34,6 +35,7 @@ const sections = [
   { key: "preferences", icon: Globe2Icon },
   { key: "notifications", icon: BellIcon },
   { key: "channels", icon: RadioTowerIcon },
+  { key: "demoVideos", icon: ClapperboardIcon },
   { key: "storage", icon: HardDriveIcon },
   { key: "billing", icon: CreditCardIcon },
   { key: "api", icon: KeyRoundIcon },
@@ -73,10 +75,12 @@ export default async function SettingsPage({
   const canReadChannels = permissions.includes("social:view");
   const canConnectChannels = permissions.includes("social:connect");
   const canReadStorage = permissions.includes("assets:read");
+  const canReadDemoVideos = permissions.includes("assets:read");
+  const canManageDemoVideos = permissions.includes("assets:write") && permissions.includes("product:content:write");
   const authFeatures = getAuthFeatureFlags();
-  const visibleSections = sections.filter(({ key }) => (key !== "billing" || canReadBilling) && (key !== "notifications" || canManageNotifications) && (key !== "channels" || canReadChannels) && (key !== "storage" || canReadStorage));
+  const visibleSections = sections.filter(({ key }) => (key !== "billing" || canReadBilling) && (key !== "notifications" || canManageNotifications) && (key !== "channels" || canReadChannels) && (key !== "demoVideos" || canReadDemoVideos) && (key !== "storage" || canReadStorage));
   const requestedSection = readSection(section);
-  const activeSection = (requestedSection === "billing" && !canReadBilling) || (requestedSection === "notifications" && !canManageNotifications) || (requestedSection === "channels" && !canReadChannels) || (requestedSection === "storage" && !canReadStorage) ? "members" : requestedSection;
+  const activeSection = (requestedSection === "billing" && !canReadBilling) || (requestedSection === "notifications" && !canManageNotifications) || (requestedSection === "channels" && !canReadChannels) || (requestedSection === "demoVideos" && !canReadDemoVideos) || (requestedSection === "storage" && !canReadStorage) ? "members" : requestedSection;
 
   return (
     <SettingsSheet>
@@ -157,6 +161,8 @@ export default async function SettingsPage({
               <WorkspaceNotificationSettings workspaceId={workspaceId} interfaceLocale={interfaceLocale} workspaceTimeZone={preferences.timezone} />
             ) : activeSection === "channels" && workspaceId ? (
               <WorkspaceChannelsSettings workspaceId={workspaceId} canConnect={canConnectChannels} />
+            ) : activeSection === "demoVideos" && workspaceId ? (
+              <WorkspaceDemoVideosSettings workspaceId={workspaceId} canManage={canManageDemoVideos} />
             ) : activeSection === "storage" && workspaceId ? (
               <WorkspaceStorageSettings workspaceId={workspaceId} />
             ) : activeSection === "providers" ? (

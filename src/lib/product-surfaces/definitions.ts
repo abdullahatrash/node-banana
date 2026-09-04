@@ -297,8 +297,10 @@ const personaSchema = z.object({
 export const websiteAnalyticsSourceSchema = z.object({ hostname: text(253), publicKey: text(300), enabled: z.boolean(), lastEventAt: z.string().datetime().nullable(), verificationStatus: z.enum(["pending", "verified", "failed"]).default("pending"), verificationChallenge: text(300).default("legacy-unverified"), verifiedAt: z.string().datetime().nullable().default(null), refreshStatus: z.enum(["idle", "queued", "running", "succeeded", "failed"]).default("idle"), refreshRequestedAt: z.string().datetime().nullable().default(null), lastRefreshAt: z.string().datetime().nullable().default(null), lastRefreshError: text(300).nullable().default(null) })
 export const geoAnalyticsSourceSchema = z.object({ domain: text(253), topics: z.array(text(300)).min(1), enabled: z.boolean(), lastObservationAt: z.string().datetime().nullable(), verificationStatus: z.enum(["pending", "verified", "failed"]).default("pending"), verificationChallenge: text(300).default("legacy-unverified"), verifiedAt: z.string().datetime().nullable().default(null), refreshStatus: z.enum(["idle", "queued", "running", "succeeded", "failed"]).default("idle"), refreshRequestedAt: z.string().datetime().nullable().default(null), lastRefreshAt: z.string().datetime().nullable().default(null), lastRefreshError: text(300).nullable().default(null) })
 
+export const mediaSetSchema = z.object({ assetIds: z.array(text(200)), category: optionalText(100), description: optionalText(1_000), purpose: z.enum(["general", "demo_videos"]).default("general") });
+
 const simpleSchemas = {
-  media_set: z.object({ assetIds: z.array(text(200)), category: optionalText(100), description: optionalText(1_000) }),
+  media_set: mediaSetSchema,
   website_analytics_source: websiteAnalyticsSourceSchema,
   geo_analytics_source: geoAnalyticsSourceSchema,
   referral: z.object({ code: text(80), destinationEmail: z.string().email().nullable(), status: z.enum(["available", "invited", "qualified", "rewarded"]), rewardCreditCents: z.number().int().nonnegative() }),
