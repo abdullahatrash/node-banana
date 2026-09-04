@@ -289,3 +289,23 @@ export const modelQualificationSpendReceipts = pgTable("model_qualification_spen
   accountMatrixIdx: index("model_qualification_spend_receipts_account_matrix_idx").on(table.provider, table.providerAccountId, table.matrixId, table.providerObservedAt),
   valuesCheck: check("model_qualification_spend_receipts_values_check", sql`${table.provider} = 'replicate' and ${table.currency} = 'USD' and ${table.amountUsd}::numeric >= 0 and ${table.credentialFingerprint} ~ '^sha256:[a-f0-9]{64}$' and ${table.payloadDigest} ~ '^sha256:[a-f0-9]{64}$'`),
 }));
+
+export const modelQualificationWebhookReceipts = pgTable("model_qualification_webhook_receipts", {
+  provider: text("provider").notNull(),
+  eventId: text("event_id").notNull(),
+  runId: text("run_id").notNull(),
+  caseId: text("case_id").notNull(),
+  submissionKey: text("submission_key").notNull(),
+  predictionId: text("prediction_id").notNull(),
+  model: text("model").notNull(),
+  executedVersion: text("executed_version").notNull(),
+  providerStatus: text("provider_status").notNull(),
+  payloadDigest: text("payload_digest").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "model_qualification_webhook_receipts_pk", columns: [table.provider, table.eventId] }),
+  caseFk: foreignKey({ name: "model_qualification_webhook_receipts_case_fk", columns: [table.runId, table.caseId], foreignColumns: [modelQualificationCases.runId, modelQualificationCases.caseId] }).onDelete("restrict"),
+  submissionIdx: index("model_qualification_webhook_receipts_submission_idx").on(table.submissionKey, table.receivedAt),
+  predictionIdx: index("model_qualification_webhook_receipts_prediction_idx").on(table.predictionId, table.receivedAt),
+  valuesCheck: check("model_qualification_webhook_receipts_values_check", sql`${table.provider} = 'replicate' and length(${table.eventId}) between 8 and 200 and length(${table.submissionKey}) between 16 and 300 and ${table.payloadDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.providerStatus} in ('starting','processing','succeeded','failed','canceled','aborted')`),
+}));

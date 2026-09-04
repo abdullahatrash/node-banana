@@ -1,6 +1,6 @@
 import { createPublicKey } from "node:crypto";
 import { z } from "zod";
-import { hasConfiguredSecret, readConfiguredSecret } from "@/lib/configured-secret";
+import { readConfiguredSecret } from "@/lib/configured-secret";
 
 export type QualificationPreflightCheck = {
   id: string;
@@ -58,6 +58,8 @@ export function inspectReplicateQualificationEnvironment(
   const endpointFailures = endpointKeys.filter((key) => !safeEndpoint(environment[key]));
   const spendTrustIsValid = validEd25519KeyMap(environment.QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON);
   const qualificationTrustIsValid = validEd25519KeyMap(environment.MODEL_QUALIFICATION_PUBLIC_KEYS_JSON, signingKeyId);
+  const harnessToken = readConfiguredSecret(environment.QUALIFICATION_HARNESS_TOKEN);
+  const harnessTokenIsStrong = Boolean(harnessToken && harnessToken.length >= 32);
   const checks = [
     check(
       "dedicated_token",
@@ -68,10 +70,10 @@ export function inspectReplicateQualificationEnvironment(
     ),
     check(
       "harness_token",
-      hasConfiguredSecret(environment.QUALIFICATION_HARNESS_TOKEN),
-      hasConfiguredSecret(environment.QUALIFICATION_HARNESS_TOKEN)
-        ? "The qualification harness bearer secret is configured."
-        : "Set QUALIFICATION_HARNESS_TOKEN for the operator-only harness.",
+      harnessTokenIsStrong,
+      harnessTokenIsStrong
+        ? "The qualification harness bearer secret is configured with at least 32 characters."
+        : "Set QUALIFICATION_HARNESS_TOKEN to a random secret of at least 32 characters.",
     ),
     check(
       "harness_endpoints",

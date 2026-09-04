@@ -9,7 +9,7 @@ function readyEnvironment(overrides: Record<string, string | undefined> = {}) {
     REPLICATE_QUALIFICATION_API_TOKEN: "qualification-secret",
     REPLICATE_API_KEY: "legacy-secret",
     REPLICATE_MANAGED_API_TOKEN: "managed-secret",
-    QUALIFICATION_HARNESS_TOKEN: "harness-secret",
+    QUALIFICATION_HARNESS_TOKEN: "harness-secret-at-least-32-characters",
     QUALIFICATION_WEBHOOK_URL: "https://qualification.example/webhook",
     QUALIFICATION_WEBHOOK_OBSERVER_URL: "https://qualification.example/observer",
     QUALIFICATION_INGESTION_URL: "https://qualification.example/ingestion",
@@ -43,6 +43,12 @@ describe("Replicate qualification environment preflight", () => {
     expect(result.ready).toBe(false);
     expect(result.checks.find((item) => item.id === "dedicated_token")?.status).toBe("blocked");
     expect(result.checks.find((item) => item.id === "harness_token")?.status).toBe("blocked");
+  });
+
+  it("rejects a weak harness bearer secret", () => {
+    const result = inspectReplicateQualificationEnvironment(readyEnvironment({ QUALIFICATION_HARNESS_TOKEN: "too-short" }), "operator-key");
+    expect(result.ready).toBe(false);
+    expect(result.checks.find((item) => item.id === "harness_token")?.detail).toContain("at least 32 characters");
   });
 
   it("rejects missing plan signing trust and unsafe public endpoints", () => {
