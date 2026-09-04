@@ -20,6 +20,7 @@ describe("app navigation registry", () => {
       "library",
       "calendar",
       "analytics",
+      "billing",
       "brand",
       "settings",
     ]);
