@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { CURATED_MODELS, modelQualificationAttestationSchema } from "./catalog";
+import type { QualificationRunLedger } from "./qualification-ledger";
 
 export const MAX_QUALIFICATION_SPEND_USD = 0.4;
 
@@ -27,10 +28,15 @@ const inputSchema = z.object({
 
 export type QualificationRunnerInput = z.input<typeof inputSchema>;
 export type QualificationSmokeCase = z.infer<typeof smokeCaseSchema>;
+export type QualificationRunOutput = {
+  report: { schema: string; runId: string; model: string; version: string; hardCapUsd: number; maximumSpendUsd: number; cases: Array<Record<string, unknown>>; completedAt: string };
+  envelope: { version: 1; qualifications: Array<{ attestation: z.infer<typeof modelQualificationAttestationSchema>; signature: { algorithm: "ed25519"; keyId: string; value: string } }> };
+};
 
 export interface QualificationExecutionPort {
   inspectSchema(input: { model: string; version: string }): Promise<{ inputSchemaDigest: `sha256:${string}`; inputKeys: string[] }>;
-  submit(input: { model: string; version: string; providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string }): Promise<{ predictionId: string; version: string; acceptedInput: Record<string, unknown> }>;
+  submit(input: { model: string; version: string; providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string; acceptedInput: Record<string, unknown> }>;
+  recoverSubmission(input: { model: string; version: string; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string } | null>;
   awaitWebhook(input: { predictionId: string; version: string; caseId: string }): Promise<{ authentic: boolean; deliveryId: string; status: "succeeded" | "failed" | "canceled" | "aborted" }>;
   poll(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string; output: unknown }>;
   cancel(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "canceled" | "aborted"; version: string }>;
@@ -46,7 +52,7 @@ function requireMatrixCoverage(cases: QualificationSmokeCase[]) {
 }
 
 /** Executes every paid smoke cell once, stops below USD 0.40, and signs only complete evidence. */
-export async function executeReplicateQualification(input: QualificationRunnerInput, privateKeyPem: string, execution: QualificationExecutionPort, at = new Date()) {
+export async function executeReplicateQualification(input: QualificationRunnerInput, privateKeyPem: string, execution: QualificationExecutionPort, ledger: QualificationRunLedger, at = new Date()): Promise<QualificationRunOutput> {
   const parsed = inputSchema.parse(input);
   const base = parsed.attestation;
   const curated = CURATED_MODELS.find((item) => item.provider === "replicate" && item.model === base.model);
@@ -59,15 +65,24 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
   const privateKey = createPrivateKey(privateKeyPem);
   if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("QUALIFICATION_SIGNING_KEY_INVALID");
 
+  const requestDigest = canonicalDigest(parsed) as `sha256:${string}`;
+  const casePlans = parsed.cases.map((cell) => ({ caseId: cell.id, requestDigest: canonicalDigest(cell) as `sha256:${string}`, maximumSpendUsd: cell.maximumSpendUsd }));
+  const begun = await ledger.begin({ runId: parsed.runId, requestDigest, provider: "replicate", model: base.model, modelVersion: base.version, signingKeyId: parsed.signingKeyId, hardCapUsd: MAX_QUALIFICATION_SPEND_USD, reservedSpendUsd: declaredSpend, cases: casePlans, at });
+  if (begun.kind === "completed") return begun.result as QualificationRunOutput;
+
   let reservedSpend = 0;
   const results: Array<Record<string, unknown>> = [];
-  for (const cell of parsed.cases) {
+  for (const [index, cell] of parsed.cases.entries()) {
     if (!base.capabilities.includes(cell.capability)) throw new Error(`QUALIFICATION_CASE_CAPABILITY_MISMATCH:${cell.id}`);
     const authoritativeMaximum = base.executionPriceUsd.amount * cell.billableQuantity;
     if (!Number.isFinite(authoritativeMaximum) || cell.maximumSpendUsd + Number.EPSILON < authoritativeMaximum) throw new Error(`QUALIFICATION_CASE_PRICE_UNDERSTATED:${cell.id}`);
     const nextSpend = reservedSpend + cell.maximumSpendUsd;
     if (nextSpend >= MAX_QUALIFICATION_SPEND_USD) throw new Error("QUALIFICATION_BUDGET_CAP_EXCEEDED");
     reservedSpend = nextSpend;
+    const casePlan = casePlans[index]!;
+    const claim = await ledger.claimCase({ runId: parsed.runId, caseId: cell.id, requestDigest: casePlan.requestDigest, at });
+    if (claim.kind === "busy") throw new Error(`QUALIFICATION_CASE_BUSY:${cell.id}`);
+    if (claim.kind === "completed") { results.push(claim.result); continue; }
     const schema = await execution.inspectSchema({ model: base.model, version: base.version });
     if (schema.inputSchemaDigest !== base.inputSchemaDigest) throw new Error(`QUALIFICATION_SCHEMA_MISMATCH:${cell.id}`);
     for (const requiredKey of [base.inputContract.promptKey, base.inputContract.brandContextKey]) if (!schema.inputKeys.includes(requiredKey)) throw new Error(`QUALIFICATION_SCHEMA_KEY_MISSING:${cell.id}:${requiredKey}`);
@@ -75,35 +90,58 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
     if (base.inputContract.aspectRatioKey) providerInput[base.inputContract.aspectRatioKey] = "9:16";
     if (base.inputContract.safety) providerInput[base.inputContract.safety.parameterKey] = base.inputContract.safety.safeValue;
     for (const [key, value] of Object.entries(base.inputContract.lockedParameters)) providerInput[key] = value;
-    const submitted = await execution.submit({ model: base.model, version: base.version, providerInput, cancelAfterSeconds: base.cancelAfterSeconds, caseId: cell.id });
+    let submitted: { predictionId: string; version: string; acceptedInput: Record<string, unknown> };
+    try {
+      if (claim.kind === "submit") {
+        submitted = await execution.submit({ model: base.model, version: base.version, providerInput, cancelAfterSeconds: base.cancelAfterSeconds, caseId: cell.id, submissionKey: claim.submissionKey });
+      } else if (claim.kind === "recover_submission") {
+        const recovered = await execution.recoverSubmission({ model: base.model, version: base.version, caseId: cell.id, submissionKey: claim.submissionKey });
+        if (!recovered) throw new Error(`QUALIFICATION_SUBMISSION_IDENTITY_UNKNOWN:${cell.id}`);
+        submitted = { ...recovered, acceptedInput: providerInput };
+      } else {
+        submitted = { predictionId: claim.predictionId, version: claim.executedVersion, acceptedInput: providerInput };
+      }
+      await ledger.bindSubmission({ runId: parsed.runId, caseId: cell.id, claimToken: claim.claimToken, predictionId: submitted.predictionId, executedVersion: submitted.version, at });
+    } catch (error) {
+      await ledger.markOutcomeUnknown({ runId: parsed.runId, caseId: cell.id, claimToken: claim.claimToken, at });
+      throw error;
+    }
     if (submitted.version !== base.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${cell.id}`);
     if (base.inputContract.safety && submitted.acceptedInput[base.inputContract.safety.parameterKey] !== base.inputContract.safety.safeValue) throw new Error(`QUALIFICATION_SAFETY_MISMATCH:${cell.id}`);
-    let terminal: "succeeded" | "failed" | "canceled" | "aborted";
-    let ingestion: Awaited<ReturnType<QualificationExecutionPort["ingest"]>> | null = null;
-    if (cell.lifecycle === "cancel") {
-      const cancelled = await execution.cancel({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
-      if (cancelled.version !== base.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${cell.id}`);
-      terminal = cancelled.status;
-    } else {
-      const polled = await execution.poll({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
-      if (polled.version !== base.version || polled.status !== "succeeded") throw new Error(`QUALIFICATION_COMPLETION_FAILED:${cell.id}`);
-      terminal = polled.status;
-      ingestion = await execution.ingest({ predictionId: submitted.predictionId, caseId: cell.id, capability: cell.capability, output: polled.output });
-      if (ingestion.width * 16 !== ingestion.height * 9) throw new Error(`QUALIFICATION_OUTPUT_NOT_9_16:${cell.id}`);
-      if (!ingestion.observedLanguages.includes(cell.contentLanguage)) throw new Error(`QUALIFICATION_LANGUAGE_EVIDENCE_MISSING:${cell.id}`);
+    try {
+      let terminal: "succeeded" | "failed" | "canceled" | "aborted";
+      let ingestion: Awaited<ReturnType<QualificationExecutionPort["ingest"]>> | null = null;
+      if (cell.lifecycle === "cancel") {
+        const cancelled = await execution.cancel({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
+        if (cancelled.version !== base.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${cell.id}`);
+        terminal = cancelled.status;
+      } else {
+        const polled = await execution.poll({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
+        if (polled.version !== base.version || polled.status !== "succeeded") throw new Error(`QUALIFICATION_COMPLETION_FAILED:${cell.id}`);
+        terminal = polled.status;
+        ingestion = await execution.ingest({ predictionId: submitted.predictionId, caseId: cell.id, capability: cell.capability, output: polled.output });
+        if (ingestion.width * 16 !== ingestion.height * 9) throw new Error(`QUALIFICATION_OUTPUT_NOT_9_16:${cell.id}`);
+        if (!ingestion.observedLanguages.includes(cell.contentLanguage)) throw new Error(`QUALIFICATION_LANGUAGE_EVIDENCE_MISSING:${cell.id}`);
+      }
+      const webhook = await execution.awaitWebhook({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
+      if (!webhook.authentic || webhook.status !== terminal) throw new Error(`QUALIFICATION_WEBHOOK_FAILED:${cell.id}`);
+      const reconciled = await execution.reconcile({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
+      if (reconciled.version !== base.version || reconciled.status !== terminal) throw new Error(`QUALIFICATION_RECONCILIATION_FAILED:${cell.id}`);
+      const result = { id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: cell.maximumSpendUsd, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, safetyVerified: Boolean(base.inputContract.safety), webhookDeliveryId: webhook.deliveryId, ingestion };
+      await ledger.completeCase({ runId: parsed.runId, caseId: cell.id, claimToken: claim.claimToken, predictionId: submitted.predictionId, executedVersion: submitted.version, terminalStatus: terminal, result, at });
+      results.push(result);
+    } catch (error) {
+      await ledger.markOutcomeUnknown({ runId: parsed.runId, caseId: cell.id, claimToken: claim.claimToken, at });
+      throw error;
     }
-    const webhook = await execution.awaitWebhook({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
-    if (!webhook.authentic || webhook.status !== terminal) throw new Error(`QUALIFICATION_WEBHOOK_FAILED:${cell.id}`);
-    const reconciled = await execution.reconcile({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
-    if (reconciled.version !== base.version || reconciled.status !== terminal) throw new Error(`QUALIFICATION_RECONCILIATION_FAILED:${cell.id}`);
-    results.push({ id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: cell.maximumSpendUsd, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, safetyVerified: Boolean(base.inputContract.safety), webhookDeliveryId: webhook.deliveryId, ingestion });
   }
 
-  const completedAt = new Date();
+  const completedAt = at;
   const report = { schema: "replicate-qualification-smoke-report/v1", runId: parsed.runId, model: base.model, version: base.version, hardCapUsd: MAX_QUALIFICATION_SPEND_USD, maximumSpendUsd: reservedSpend, cases: results, completedAt: completedAt.toISOString() };
   const attestation = modelQualificationAttestationSchema.parse({ ...base, qualificationRun: { id: parsed.runId, digest: canonicalDigest(report), completedAt: completedAt.toISOString() } });
-  return {
+  const result = {
     report,
     envelope: { version: 1 as const, qualifications: [{ attestation, signature: { algorithm: "ed25519" as const, keyId: parsed.signingKeyId, value: sign(null, Buffer.from(canonicalJson(attestation)), privateKey).toString("base64url") } }] },
   };
+  return ledger.completeRun({ runId: parsed.runId, requestDigest, result, at }) as Promise<QualificationRunOutput>;
 }

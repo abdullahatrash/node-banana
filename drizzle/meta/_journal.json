@@ -673,6 +673,13 @@
       "when": 1788590400000,
       "tag": "0095_product_analytics_observations",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1788594000000,
+      "tag": "0096_durable_model_qualification_runs",
+      "breakpoints": true
     }
   ]
 }

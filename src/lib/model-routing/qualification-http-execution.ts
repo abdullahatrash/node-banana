@@ -6,6 +6,7 @@ import type { QualificationExecutionPort } from "./qualification-runner";
 const terminal = z.enum(["succeeded", "failed", "canceled", "aborted"]);
 const predictionSchema = z.object({ id: z.string().min(1), status: z.enum(["starting", "processing", "succeeded", "failed", "canceled", "aborted"]), version: z.string().min(1), output: z.unknown().optional() }).passthrough();
 const observerSchema = z.object({ authentic: z.literal(true), deliveryId: z.string().min(1), predictionId: z.string().min(1), version: z.string().min(1), status: terminal }).strict();
+const recoveredSubmissionSchema = z.object({ predictionId: z.string().min(1), version: z.string().min(1) }).strict();
 const ingestionSchema = z.object({ receiptId: z.string().min(1), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().nonnegative().nullable(), observedLanguages: z.array(z.enum(["ar", "en"])).min(1), languageEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
 
 type QualificationEnvironment = Readonly<Record<string, string | undefined>>;
@@ -51,11 +52,21 @@ export class ReplicateQualificationHttpExecution implements QualificationExecuti
     return { inputSchemaDigest: canonicalDigest(inputSchema) as `sha256:${string}`, inputKeys: Object.keys(inputSchema.properties) };
   }
 
-  async submit(input: { model: string; version: string; providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string }) {
+  async submit(input: { model: string; version: string; providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string; submissionKey: string }) {
     const webhook = new URL(this.webhookUrl); webhook.searchParams.set("caseId", input.caseId);
-    const response = await this.replicate("predictions", { method: "POST", headers: { "Cancel-After": `${input.cancelAfterSeconds}s`, Prefer: "respond-async" }, body: JSON.stringify({ version: input.version, input: input.providerInput, webhook: webhook.toString(), webhook_events_filter: ["completed"] }) });
+    const response = await this.replicate("predictions", { method: "POST", headers: { "Cancel-After": `${input.cancelAfterSeconds}s`, "Idempotency-Key": input.submissionKey, Prefer: "respond-async" }, body: JSON.stringify({ version: input.version, input: input.providerInput, webhook: webhook.toString(), webhook_events_filter: ["completed"] }) });
     const prediction = predictionSchema.parse(await response.json());
     return { predictionId: prediction.id, version: prediction.version, acceptedInput: structuredClone(input.providerInput) };
+  }
+
+  async recoverSubmission(input: { model: string; version: string; caseId: string; submissionKey: string }) {
+    const url = new URL(this.observerUrl); url.searchParams.set("submissionKey", input.submissionKey); url.searchParams.set("caseId", input.caseId);
+    const response = await this.harness(url, { method: "GET" });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`QUALIFICATION_SUBMISSION_RECOVERY_HTTP_${response.status}`);
+    const recovered = recoveredSubmissionSchema.parse(await response.json());
+    if (recovered.version !== input.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${input.caseId}`);
+    return recovered;
   }
 
   async awaitWebhook(input: { predictionId: string; version: string; caseId: string }) {
