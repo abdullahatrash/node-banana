@@ -66,7 +66,44 @@
             "start": "تعذر بدء ربط Mastodon"
           }
         }
+      },
+      "page": {
+        "connected": "تم ربط القناة بنجاح!", "pageConnected": "تم الربط بصفحة {name}!", "completing": "جارٍ إكمال الربط…",
+        "emptyTitle": "اربط قناتك الأولى", "emptyDescription": "اربط حساباتك الاجتماعية لبدء جدولة المحتوى ونشره مباشرة من تصميمي.",
+        "connect": "ربط قناة", "title": "القنوات المتصلة", "description": "أدر حساباتك واتصالاتك على منصات التواصل",
+        "selectAccount": "اختر حسابًا", "selectAccountDescription": "اختر الصفحة أو الحساب الذي تريد النشر باسمه",
+        "errors": { "missingSelection": "جلسة الاختيار الآمنة مفقودة. أعد الربط.", "complete": "تعذر إكمال الربط", "selectPage": "تعذر اختيار الصفحة" }
+      },
+      "card": {
+        "createPost": "إنشاء منشور", "reconnecting": "جارٍ إعادة الربط…", "reconnect": "إعادة الربط", "settings": "الإعدادات", "copyId": "نسخ المعرّف", "enable": "تفعيل", "disable": "تعطيل", "removing": "جارٍ الإزالة…", "confirm": "تأكيد", "cancel": "إلغاء", "disconnect": "قطع الاتصال",
+        "confirmForceDisconnect": "ترتبط بهذه القناة منشورات. هل تريد قطع الاتصال قسرًا وإزالة المنشورات المرتبطة؟",
+        "settingsTitle": "إعدادات القناة", "settingsDescription": "حدّث اسم العرض وبيانات الجدولة الخاصة بالقناة.", "displayName": "اسم العرض", "channelNamePlaceholder": "اسم القناة", "postingTimes": "أوقات النشر (من 0 إلى 23، مفصولة بفواصل)", "postingTimesPlaceholder": "9,12,18", "customerGroup": "اسم العميل أو المجموعة", "customerGroupPlaceholder": "فريق التواصل للشرق الأوسط", "saving": "جارٍ الحفظ…", "save": "حفظ",
+        "state": { "reauth": "يلزم إعادة المصادقة", "disabled": "معطلة", "connected": "متصلة" },
+        "toast": { "disconnected": "قُطع اتصال {name}", "forceDisconnected": "قُطع اتصال {name} قسرًا", "disabled": "عُطلت القناة", "enabled": "فُعلت القناة", "updated": "حُدثت إعدادات القناة", "idCopied": "نُسخ معرّف القناة" },
+        "errors": { "forceDisconnect": "تعذر قطع الاتصال قسرًا", "disconnect": "تعذر قطع الاتصال", "reconnect": "تعذرت إعادة الربط", "update": "تعذر تحديث القناة", "save": "تعذر حفظ الإعدادات", "copyId": "تعذر نسخ معرّف القناة" }
       }
+    },
+    "settings": {
+      "tokens": {
+        "title": "رموز واجهة API", "description": "أنشئ رموزًا خاصة بمساحة العمل لواجهة API العامة وخادم MCP وأداة سطر الأوامر. يظهر الرمز كاملًا مرة واحدة عند إنشائه ويمكن إلغاؤه في أي وقت.",
+        "name": "اسم الرمز", "namePlaceholder": "مثال: مسار التكامل المستمر أو وكيل برمجي", "create": "إنشاء رمز", "created": "أُنشئ", "lastUsed": "آخر استخدام", "actions": "الإجراءات", "loading": "جارٍ تحميل الرموز…", "empty": "لا توجد رموز API بعد. أنشئ رمزًا للتحكم في مساحة العمل برمجيًا.", "never": "لم يُستخدم", "revoked": "ملغى", "revoke": "إلغاء",
+        "copyTitle": "انسخ رمز API", "copyDescription": "هذه هي المرة الوحيدة التي يظهر فيها الرمز كاملًا. احفظه في مكان آمن؛ يمكنك إلغاءه لاحقًا لكن لا يمكنك عرضه مجددًا.", "copy": "نسخ",
+        "toast": { "created": "أُنشئ رمز API", "revoked": "أُلغي الرمز", "copied": "نُسخ الرمز إلى الحافظة" },
+        "errors": { "load": "تعذر تحميل رموز API", "create": "تعذر إنشاء رمز API", "revoke": "تعذر إلغاء الرمز", "copy": "تعذر النسخ؛ انسخه يدويًا" }
+      },
+      "providerKeys": {
+        "title": "مفاتيح المزودين الخاصة بك", "description": "احفظ مفاتيح مزودي الذكاء الاصطناعي لكل مساحة عمل. تُتحقق صلاحية المفاتيح قبل الحفظ، وتُشفّر أثناء التخزين، ولا تظهر مجددًا بعد إنشائها.",
+        "provider": "المزود", "apiKey": "مفتاح API", "key": "المفتاح", "keyPlaceholder": "ألصق مفتاح API الخاص بالمزود", "save": "حفظ المفتاح", "updated": "آخر تحديث", "actions": "الإجراءات", "loading": "جارٍ تحميل مفاتيح المزودين…", "empty": "لا توجد مفاتيح مزودين بعد. أضف مفتاحًا لتشغيل التوليد من ميزانيتك الخاصة.", "never": "لم يُستخدم", "delete": "حذف",
+        "confirmDelete": "هل تريد حذف مفتاح {provider} المحفوظ لمساحة العمل؟", "toast": { "saved": "حُفظ مفتاح {provider}", "deleted": "حُذف مفتاح المزود" },
+        "errors": { "load": "تعذر تحميل مفاتيح المزودين", "save": "تعذر حفظ مفتاح المزود", "delete": "تعذر حذف مفتاح المزود" }
+      }
+    },
+    "publishingSettings": {
+      "heading": "إعدادات النشر", "title": "العنوان", "privacy": "الخصوصية", "tags": "الوسوم", "madeForKids": "مخصص للأطفال", "visibilityLabel": "مستوى الظهور", "postingMethod": "طريقة النشر",
+      "allowComments": "السماح بالتعليقات", "allowDuet": "السماح بالثنائيات", "allowStitch": "السماح بالدمج", "autoAddMusic": "إضافة الموسيقى تلقائيًا", "videoMadeWithAi": "الفيديو منشأ بالذكاء الاصطناعي", "brandedContent": "محتوى بعلامة تجارية", "yourBrand": "علامتك التجارية",
+      "subreddit": "مجتمع Reddit", "subredditPlaceholder": "/r/tasmeemai", "type": "النوع", "link": "الرابط", "contentWarning": "تحذير المحتوى", "contentWarningPlaceholder": "نص تحذيري اختياري",
+      "visibility": { "private": "خاص", "unlisted": "غير مدرج", "public": "عام", "onlyMe": "أنا فقط", "followers": "المتابعون", "mutualFriends": "الأصدقاء المتبادلون", "followersOnly": "المتابعون فقط", "mentionedOnly": "المذكورون فقط" },
+      "methods": { "upload": "رفع", "direct": "نشر مباشر" }, "types": { "text": "نص", "link": "رابط" }
     },
     "platforms": { "linkedin": "لينكدإن", "x": "إكس", "instagram": "إنستغرام", "tiktok": "تيك توك", "youtube": "يوتيوب", "facebook": "فيسبوك", "threads": "ثريدز", "bluesky": "بلوسكاي", "pinterest": "بنترست", "reddit": "ريديت", "mastodon": "ماستودون" },
     "preview": { "reply": "رد", "repost": "إعادة نشر", "like": "إعجاب", "more": "المزيد", "comment": "تعليق", "share": "مشاركة", "send": "إرسال", "boost": "تعزيز", "favourite": "مفضلة", "bookmark": "حفظ", "views": "المشاهدات", "viewCount": "{count, plural, =0 {لا مشاهدات} one {مشاهدة واحدة} two {مشاهدتان} few {# مشاهدات} many {# مشاهدة} other {# مشاهدة}}", "now": "الآن", "justNow": "الآن", "untitledVideo": "فيديو بلا عنوان", "linkedin": "لينكدإن" },

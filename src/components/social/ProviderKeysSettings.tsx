@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
+import { useFormatter, useTranslations } from "next-intl"
 import { KeyRoundIcon, Loader2Icon, ShieldCheckIcon } from "lucide-react"
 import { useToast } from "@/components/Toast"
 import { Button } from "@/components/ui/button"
@@ -19,18 +20,16 @@ import {
   type ByokProvider,
 } from "@/lib/byok/providers"
 
-function formatDate(value: string | null): string {
-  if (!value) return "Never"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "—"
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  })
-}
-
 export function ProviderKeysSettings() {
+  const t = useTranslations("social.settings.providerKeys")
+  const formatValue = useFormatter()
+  const formatDate = (value: string | null) => {
+    if (!value) return t("never")
+    const date = new Date(value)
+    return Number.isNaN(date.getTime())
+      ? "—"
+      : formatValue.dateTime(date, { year: "numeric", month: "short", day: "numeric" })
+  }
   const { show: showToast } = useToast()
   const [keys, setKeys] = useState<ProviderKeySummaryView[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -48,7 +47,7 @@ export function ProviderKeysSettings() {
       showToast(
         error instanceof StudioApiError
           ? error.message
-          : "Failed to load provider keys",
+          : t("errors.load"),
         "error",
       )
     } finally {
@@ -71,13 +70,13 @@ export function ProviderKeysSettings() {
     try {
       await saveProviderKeyRequest(provider, trimmed)
       setApiKey("")
-      showToast(`${BYOK_PROVIDER_LABELS[provider]} key saved`, "success")
+      showToast(t("toast.saved", { provider: BYOK_PROVIDER_LABELS[provider] }), "success")
       await loadKeys()
     } catch (error) {
       showToast(
         error instanceof StudioApiError || error instanceof Error
           ? error.message
-          : "Failed to save provider key",
+          : t("errors.save"),
         "error",
       )
     } finally {
@@ -88,7 +87,7 @@ export function ProviderKeysSettings() {
   async function handleDelete(target: ByokProvider) {
     if (
       !confirm(
-        `Delete the stored ${BYOK_PROVIDER_LABELS[target]} key for this workspace?`,
+        t("confirmDelete", { provider: BYOK_PROVIDER_LABELS[target] }),
       )
     ) {
       return
@@ -98,12 +97,12 @@ export function ProviderKeysSettings() {
     try {
       await deleteProviderKeyRequest(target)
       setKeys((prev) => prev.filter((key) => key.provider !== target))
-      showToast("Provider key deleted", "success")
+      showToast(t("toast.deleted"), "success")
     } catch (error) {
       showToast(
         error instanceof StudioApiError
           ? error.message
-          : "Failed to delete provider key",
+          : t("errors.delete"),
         "error",
       )
     } finally {
@@ -116,12 +115,10 @@ export function ProviderKeysSettings() {
       <div>
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <KeyRoundIcon className="size-5" />
-          Provider Keys (BYOK)
+          {t("title")}
         </h2>
         <p className="text-sm text-muted-foreground">
-          Store your own AI provider API keys per workspace. Keys are
-          validated with a live check before saving, encrypted at rest, and
-          never shown again after creation.
+          {t("description")}
         </p>
       </div>
 
@@ -130,10 +127,10 @@ export function ProviderKeysSettings() {
         className="flex flex-col gap-2 sm:flex-row sm:items-end"
       >
         <div>
-          <Label htmlFor="provider-key-provider">Provider</Label>
+          <Label htmlFor="provider-key-provider">{t("provider")}</Label>
           <select
             id="provider-key-provider"
-            aria-label="Provider"
+            aria-label={t("provider")}
             className="flex h-9 w-full min-w-40 rounded-lg border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none"
             value={provider}
             onChange={(event) =>
@@ -148,13 +145,13 @@ export function ProviderKeysSettings() {
           </select>
         </div>
         <div className="flex-1">
-          <Label htmlFor="provider-key-value">API key</Label>
+          <Label htmlFor="provider-key-value">{t("apiKey")}</Label>
           <Input
             id="provider-key-value"
             type="password"
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
-            placeholder="Paste the provider's API key"
+            placeholder={t("keyPlaceholder")}
             autoComplete="off"
           />
         </div>
@@ -164,27 +161,26 @@ export function ProviderKeysSettings() {
           ) : (
             <ShieldCheckIcon className="size-4" />
           )}
-          Save key
+          {t("save")}
         </Button>
       </form>
 
       <div className="rounded-lg border">
         <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b px-4 py-2.5 text-xs font-medium text-muted-foreground">
-          <span>Provider</span>
-          <span className="hidden sm:block">Key</span>
-          <span className="hidden sm:block">Updated</span>
-          <span className="text-end">Actions</span>
+          <span>{t("provider")}</span>
+          <span className="hidden sm:block">{t("key")}</span>
+          <span className="hidden sm:block">{t("updated")}</span>
+          <span className="text-end">{t("actions")}</span>
         </div>
 
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
             <Loader2Icon className="size-4 animate-spin" />
-            Loading provider keys…
+            {t("loading")}
           </div>
         ) : keys.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-            No provider keys yet. Add one above to run generation on your own
-            budget.
+            {t("empty")}
           </div>
         ) : (
           keys.map((key) => (
@@ -211,7 +207,7 @@ export function ProviderKeysSettings() {
                   {deletingProvider === key.provider ? (
                     <Loader2Icon className="size-3.5 animate-spin" />
                   ) : (
-                    "Delete"
+                    t("delete")
                   )}
                 </Button>
               </div>

@@ -1,5 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render as testingRender, screen, fireEvent, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { NextIntlClientProvider } from "next-intl";
+import messages from "@/i18n/messages/en.json";
+
+function render(ui: ReactElement) {
+  return testingRender(
+    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+      {ui}
+    </NextIntlClientProvider>,
+  );
+}
 
 const mockShowToast = vi.fn();
 const mockListProviderKeysRequest = vi.fn();

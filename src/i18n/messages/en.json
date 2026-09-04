@@ -66,7 +66,44 @@
             "start": "Failed to start Mastodon connection"
           }
         }
+      },
+      "page": {
+        "connected": "Channel connected successfully!", "pageConnected": "Connected to {name}!", "completing": "Completing connection…",
+        "emptyTitle": "Connect your first channel", "emptyDescription": "Link your social accounts to start scheduling and publishing content directly from Tasmeemai.",
+        "connect": "Connect channel", "title": "Connected channels", "description": "Manage your social media accounts and connections",
+        "selectAccount": "Select an account", "selectAccountDescription": "Choose which page or account to post as",
+        "errors": { "missingSelection": "Missing secure selection session. Please reconnect.", "complete": "Failed to complete connection", "selectPage": "Failed to select page" }
+      },
+      "card": {
+        "createPost": "Create post", "reconnecting": "Reconnecting…", "reconnect": "Reconnect", "settings": "Settings", "copyId": "Copy ID", "enable": "Enable", "disable": "Disable", "removing": "Removing…", "confirm": "Confirm", "cancel": "Cancel", "disconnect": "Disconnect",
+        "confirmForceDisconnect": "This channel has linked posts. Force disconnect and remove linked posts?",
+        "settingsTitle": "Channel settings", "settingsDescription": "Update display name and channel-specific scheduling metadata.", "displayName": "Display name", "channelNamePlaceholder": "Channel name", "postingTimes": "Posting times (0–23, comma separated)", "postingTimesPlaceholder": "9,12,18", "customerGroup": "Customer or group name", "customerGroupPlaceholder": "MENA social team", "saving": "Saving…", "save": "Save",
+        "state": { "reauth": "Re-authentication needed", "disabled": "Disabled", "connected": "Connected" },
+        "toast": { "disconnected": "{name} disconnected", "forceDisconnected": "{name} force-disconnected", "disabled": "Channel disabled", "enabled": "Channel enabled", "updated": "Channel settings updated", "idCopied": "Channel ID copied" },
+        "errors": { "forceDisconnect": "Force disconnect failed", "disconnect": "Failed to disconnect", "reconnect": "Failed to reconnect", "update": "Failed to update channel", "save": "Failed to save settings", "copyId": "Failed to copy channel ID" }
       }
+    },
+    "settings": {
+      "tokens": {
+        "title": "API tokens", "description": "Create workspace-scoped tokens for the public API, MCP server, and CLI. Tokens are shown once at creation and can be revoked at any time.",
+        "name": "Token name", "namePlaceholder": "e.g. CI pipeline, coding agent", "create": "Create token", "created": "Created", "lastUsed": "Last used", "actions": "Actions", "loading": "Loading tokens…", "empty": "No API tokens yet. Create one to start driving this workspace programmatically.", "never": "Never", "revoked": "Revoked", "revoke": "Revoke",
+        "copyTitle": "Copy your API token", "copyDescription": "This is the only time the full token is shown. Store it somewhere safe — you can revoke it later, but you can’t view it again.", "copy": "Copy",
+        "toast": { "created": "API token created", "revoked": "Token revoked", "copied": "Token copied to clipboard" },
+        "errors": { "load": "Failed to load API tokens", "create": "Failed to create API token", "revoke": "Failed to revoke token", "copy": "Could not copy — copy it manually" }
+      },
+      "providerKeys": {
+        "title": "Provider keys (BYOK)", "description": "Store your own AI provider API keys per workspace. Keys are validated with a live check before saving, encrypted at rest, and never shown again after creation.",
+        "provider": "Provider", "apiKey": "API key", "key": "Key", "keyPlaceholder": "Paste the provider’s API key", "save": "Save key", "updated": "Updated", "actions": "Actions", "loading": "Loading provider keys…", "empty": "No provider keys yet. Add one above to run generation on your own budget.", "never": "Never", "delete": "Delete",
+        "confirmDelete": "Delete the stored {provider} key for this workspace?", "toast": { "saved": "{provider} key saved", "deleted": "Provider key deleted" },
+        "errors": { "load": "Failed to load provider keys", "save": "Failed to save provider key", "delete": "Failed to delete provider key" }
+      }
+    },
+    "publishingSettings": {
+      "heading": "Publishing settings", "title": "Title", "privacy": "Privacy", "tags": "Tags", "madeForKids": "Made for kids", "visibilityLabel": "Visibility", "postingMethod": "Posting method",
+      "allowComments": "Allow comments", "allowDuet": "Allow duet", "allowStitch": "Allow stitch", "autoAddMusic": "Automatically add music", "videoMadeWithAi": "Video made with AI", "brandedContent": "Branded content", "yourBrand": "Your brand",
+      "subreddit": "Subreddit", "subredditPlaceholder": "/r/tasmeemai", "type": "Type", "link": "Link", "contentWarning": "Content warning", "contentWarningPlaceholder": "Optional warning text",
+      "visibility": { "private": "Private", "unlisted": "Unlisted", "public": "Public", "onlyMe": "Only me", "followers": "Followers", "mutualFriends": "Mutual friends", "followersOnly": "Followers only", "mentionedOnly": "Mentioned only" },
+      "methods": { "upload": "Upload", "direct": "Direct post" }, "types": { "text": "Text", "link": "Link" }
     },
     "platforms": { "linkedin": "LinkedIn", "x": "X", "instagram": "Instagram", "tiktok": "TikTok", "youtube": "YouTube", "facebook": "Facebook", "threads": "Threads", "bluesky": "Bluesky", "pinterest": "Pinterest", "reddit": "Reddit", "mastodon": "Mastodon" },
     "preview": { "reply": "Reply", "repost": "Repost", "like": "Like", "more": "More", "comment": "Comment", "share": "Share", "send": "Send", "boost": "Boost", "favourite": "Favourite", "bookmark": "Bookmark", "views": "Views", "viewCount": "{count, plural, =0 {No views} one {# view} other {# views}}", "now": "now", "justNow": "Just now", "untitledVideo": "Untitled video", "linkedin": "LinkedIn" },
