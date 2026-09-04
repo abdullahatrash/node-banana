@@ -46,6 +46,8 @@
     "smoke:i18n-shell": "node scripts/smoke-i18n-shell.mjs",
     "smoke:product": "node scripts/smoke-product-backend.mjs",
     "smoke:licensed-trends": "node scripts/smoke-licensed-trends.mjs",
+    "demo:licensed-trend": "node scripts/smoke-licensed-trends.mjs --keep-fixture",
+    "demo:licensed-trend:clean": "node scripts/smoke-licensed-trends.mjs --cleanup-only",
     "smoke:infra": "bash scripts/smoke-infra.sh",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"

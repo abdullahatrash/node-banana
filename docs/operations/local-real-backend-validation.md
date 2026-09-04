@@ -70,6 +70,20 @@ server-owned managed token and stable key revision.
 | Workers and recovery | `pnpm workers:local -- --url http://localhost:3002` | `STUDIO_INTERNAL_API_SECRET` and Postgres | Leases, retries and idempotency converge without duplicate Assets, posts, ledger entries or Inspiration Items. | A worker never invents authority to start a new generation |
 | Governance and erasure | `/settings` governance/privacy/account sections | Postgres, object storage and configured external adapters | Export, retention, legal hold, closure and erasure show exact scope, require the correct confirmations, and retain only the allowed audit evidence. | None; external deletion adapters may have side effects |
 
+To inspect the licensed trend-to-Blitz path manually, retain one synthetic,
+rights-safe Arabic fixture instead of relying on an empty Workspace feed:
+
+```bash
+APP_BASE_URL=http://localhost:3002 pnpm demo:licensed-trend
+# Open /inspiration, inspect its provenance, and queue it to /blitz.
+APP_BASE_URL=http://localhost:3002 pnpm demo:licensed-trend:clean
+```
+
+The retained fixture is namespaced to `local.smoke`, expires after one day, and
+does not call an AI provider. The cleanup command revokes its entitlement and
+catalog entry, then archives its Workspace Inspiration record. Regular
+`smoke:licensed-trends` still cleans up automatically.
+
 ## 4. Open real Replicate execution deliberately
 
 `BYOK_KEY_ENCRYPTION_KEY` is only the vault-encryption master key. Choose one

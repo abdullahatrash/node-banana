@@ -19,11 +19,14 @@ const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
 if (!bucket || !region || !accessKeyId || !secretAccessKey) throw new Error("S3 configuration is required.");
 const s3 = new S3Client({ region, endpoint: process.env.S3_ENDPOINT || undefined, forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true", credentials: { accessKeyId, secretAccessKey } });
 const pool = new Pool({ connectionString: databaseUrl });
+const keepFixture = process.argv.includes("--keep-fixture");
+const cleanupOnly = process.argv.includes("--cleanup-only");
+if (keepFixture && cleanupOnly) throw new Error("Choose either --keep-fixture or --cleanup-only.");
 const suffix = randomUUID();
 const catalogId = `smoke_catalog_${suffix}`;
 const sourceKey = `licensed-catalog-smoke/${suffix}/source.png`;
 const evidenceKey = `licensed-catalog-smoke/${suffix}/license.txt`;
-let workspaceId = ""; let entitlementId = ""; let jobId = ""; let inspirationItemId = ""; let rightsSnapshotId = ""; let rightsEvidenceId = ""; let sourceAssetId = ""; let evidenceAssetId = "";
+let workspaceId = ""; let entitlementId = ""; let jobId = ""; let inspirationItemId = ""; let rightsSnapshotId = ""; let rightsEvidenceId = ""; let sourceAssetId = ""; let evidenceAssetId = ""; let passed = false;
 
 const sha256 = (body) => `sha256:${createHash("sha256").update(body).digest("hex")}`;
 const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wf8MZ0AAAAASUVORK5CYII=", "base64");
@@ -45,7 +48,6 @@ async function internal(body) {
 }
 
 async function cleanup() {
-  if (!workspaceId) return;
   const catalogs = await pool.query("select id from licensed_trend_catalog_entries where provider_key = 'local.smoke'");
   const catalogIds = catalogs.rows.map((row) => row.id);
   if (!catalogIds.length) return;
@@ -66,6 +68,11 @@ async function cleanup() {
 }
 
 try {
+  if (cleanupOnly) {
+    await cleanup();
+    passed = true;
+    console.log("[OK] removed retained local licensed-trend demo records");
+  } else {
   const signIn = await fetch(new URL("/api/auth/sign-in/email", baseUrl), { method: "POST", headers: { "content-type": "application/json", origin: baseUrl.origin }, body: JSON.stringify({ email: process.env.SMOKE_EMAIL || "alice@nodebanana.dev", password: process.env.SMOKE_PASSWORD || "Password123!" }) });
   const cookie = cookies(signIn); if (!signIn.ok || !cookie) throw new Error("Seeded-user sign-in failed."); await signIn.arrayBuffer();
   const workspaces = await json(await fetch(new URL("/api/studio/workspaces", baseUrl), { headers: { cookie } }), "workspace list");
@@ -92,8 +99,14 @@ try {
   ({ source_asset_id: sourceAssetId, evidence_document_asset_id: evidenceAssetId, rights_evidence_id: rightsEvidenceId, rights_snapshot_id: rightsSnapshotId, inspiration_item_id: inspirationItemId } = job);
   const page = await fetch(new URL("/inspiration", baseUrl), { headers: { cookie }, redirect: "manual" });
   if (page.status !== 200) throw new Error(`Inspiration page returned HTTP ${page.status}.`);
+  if (!(await page.text()).includes("اختبار كتالوج مرخّص")) throw new Error("Inspiration page did not render the materialized licensed trend.");
+  passed = true;
   console.log("[OK] licensed trend publish → grant → browse → import → verified materialization");
+  if (keepFixture) console.log("[KEPT] Open /inspiration to inspect and queue the Arabic licensed trend; run pnpm demo:licensed-trend:clean when finished.");
+  }
 } finally {
-  try { await cleanup(); } catch (error) { console.warn(`[WARN] smoke cleanup could not complete: ${error instanceof Error ? error.message : "unknown"}`); }
+  if (!cleanupOnly && (!keepFixture || !passed)) {
+    try { await cleanup(); } catch (error) { console.warn(`[WARN] smoke cleanup could not complete: ${error instanceof Error ? error.message : "unknown"}`); }
+  }
   await pool.end(); s3.destroy();
 }
