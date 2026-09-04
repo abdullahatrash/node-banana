@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { VideoForm } from "../VideoForm";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
-vi.mock("next-intl", () => ({ useTranslations: (namespace: string) => (key: string) => namespace === "simpleStudio.generation" ? ({ generating: "Generating…", cancel: "Cancel", progress: "Generation progress" })[key] ?? key : namespace === "simpleStudio.forms" ? ({ prompt: "Prompt", generate: "Generate", enhancing: "Enhancing prompt…", enhance: "AI Prompt Enhance", "video.sourceImageAlt": "Source", "video.removeSource": "Remove source image", "video.includeDialogue": "Include dialogue", "video.dialogueText": "Dialogue text", "languages.en": "English", "languages.ar": "عربي" })[key] ?? key : key }));
+vi.mock("next-intl", () => ({ useLocale: () => "ar", useTranslations: (namespace: string) => (key: string) => namespace === "simpleStudio.generation" ? ({ generating: "Generating…", cancel: "Cancel", progress: "Generation progress" })[key] ?? key : namespace === "simpleStudio.forms" ? ({ prompt: "Prompt", generate: "Generate", enhancing: "Enhancing prompt…", enhance: "AI Prompt Enhance", "video.sourceImageAlt": "Source", "video.removeSource": "Remove source image", "video.includeDialogue": "Include dialogue", "video.dialogueText": "Dialogue text", "languages.en": "English", "languages.ar": "عربي" })[key] ?? key : key }));
 
 describe("VideoForm", () => {
   beforeEach(() => {

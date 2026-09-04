@@ -5,6 +5,7 @@ import { CopyForm } from "../CopyForm";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 
 vi.mock("next-intl", () => ({
+  useLocale: () => "ar",
   useTranslations: (namespace: string) => (key: string) =>
     namespace === "simpleStudio.generation"
       ? ({
