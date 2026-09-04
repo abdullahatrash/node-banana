@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/creator-personas/production", () => ({
+  CREATOR_PERSONAS: { resolveUsage: vi.fn() },
+}));
 import type { BrandSourceRecord } from "../../repository";
 import type { BrandProfileV1, OnboardingAnswersV1 } from "../../schemas";
 import {
