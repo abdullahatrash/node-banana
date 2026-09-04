@@ -820,6 +820,13 @@
       "when": 1788669600000,
       "tag": "0116_default_commercial_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1788673200000,
+      "tag": "0117_inspiration_trend_ingestion",
+      "breakpoints": true
     }
   ]
 }

@@ -9242,6 +9242,82 @@ export const productRuntimeScanCheckpoints = pgTable(
   (table) => ({ cursorCheck: check("product_runtime_scan_checkpoints_cursor_check", sql`(${table.cursorAt} is null and ${table.cursorId} is null) or (${table.cursorAt} is not null and ${table.cursorId} is not null)`) }),
 );
 
+/** Provider-neutral scheduled inputs for the rights-aware Inspiration feed.
+ * Credentials and provider-specific configuration never live in this table;
+ * adapter keys resolve through deployment configuration. */
+export const inspirationTrendSources = pgTable(
+  "inspiration_trend_sources",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(), adapterKey: text("adapter_key").notNull(), sourceKind: text("source_kind").notNull(), displayName: text("display_name").notNull(), state: text("state").notNull(),
+    scheduleMinutes: integer("schedule_minutes").notNull(), nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(), cursor: text("cursor"),
+    preferredRegions: jsonb("preferred_regions").$type<string[]>().notNull(), preferredArabicVarieties: jsonb("preferred_arabic_varieties").$type<string[]>().notNull(),
+    preferredFormats: jsonb("preferred_formats").$type<string[]>().notNull(), preferredTags: jsonb("preferred_tags").$type<string[]>().notNull(), excludedTags: jsonb("excluded_tags").$type<string[]>().notNull(),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "inspiration_trend_sources_pk", columns: [table.workspaceId, table.id] }),
+    adapterUnique: uniqueIndex("inspiration_trend_sources_adapter_unique").on(table.workspaceId, table.adapterKey),
+    dueIdx: index("inspiration_trend_sources_due_idx").on(table.state, table.nextRunAt, table.workspaceId, table.id),
+    valuesCheck: check("inspiration_trend_sources_values_check", sql`${table.state} in ('active','paused') and ${table.sourceKind} in ('official_api','licensed_dataset','public_metadata','embeddable_feed') and ${table.adapterKey} ~ '^[a-z][a-z0-9._-]{1,119}$' and ${table.scheduleMinutes} between 5 and 10080`),
+  }),
+);
+
+export const inspirationTrendIngestionJobs = pgTable(
+  "inspiration_trend_ingestion_jobs",
+  {
+    workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), sourceId: text("source_id").notNull(), sourceKey: text("source_key").notNull(), requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    state: text("state").notNull(), cursor: text("cursor"), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), leaseEpoch: integer("lease_epoch").default(0).notNull(),
+    attempt: integer("attempt").default(0).notNull(), maxAttempts: integer("max_attempts").default(5).notNull(), pageCount: integer("page_count").default(0).notNull(),
+    insertedCount: integer("inserted_count").default(0).notNull(), updatedCount: integer("updated_count").default(0).notNull(), replayedCount: integer("replayed_count").default(0).notNull(), restrictedCount: integer("restricted_count").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(), failureCode: text("failure_code"), requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(), startedAt: timestamp("started_at", { withTimezone: true }), finishedAt: timestamp("finished_at", { withTimezone: true }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "inspiration_trend_ingestion_jobs_pk", columns: [table.workspaceId, table.id] }),
+    sourceKeyUnique: uniqueIndex("inspiration_trend_ingestion_jobs_source_key_unique").on(table.workspaceId, table.sourceId, table.sourceKey),
+    sourceFk: foreignKey({ name: "inspiration_trend_ingestion_jobs_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [inspirationTrendSources.workspaceId, inspirationTrendSources.id] }).onDelete("restrict"),
+    dueIdx: index("inspiration_trend_ingestion_jobs_due_idx").on(table.state, table.nextAttemptAt, table.leaseExpiresAt, table.id),
+    valuesCheck: check("inspiration_trend_ingestion_jobs_values_check", sql`${table.state} in ('queued','claimed','succeeded','failed_known') and ${table.leaseEpoch} >= 0 and ${table.attempt} >= 0 and ${table.attempt} <= ${table.maxAttempts} and ${table.maxAttempts} between 1 and 20 and ${table.pageCount} >= 0 and ${table.insertedCount} >= 0 and ${table.updatedCount} >= 0 and ${table.replayedCount} >= 0 and ${table.restrictedCount} >= 0`),
+    leaseCheck: check("inspiration_trend_ingestion_jobs_lease_check", sql`(${table.state} = 'claimed' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`),
+  }),
+);
+
+/** Mutable read projection; its immutable source, rights, and ranking evidence
+ * remains in Workspace Product Record revisions and ingestion receipts. */
+export const inspirationTrendFeedEntries = pgTable(
+  "inspiration_trend_feed_entries",
+  {
+    workspaceId: text("workspace_id").notNull(), inspirationItemId: text("inspiration_item_id").notNull(), sourceId: text("source_id").notNull(), externalItemId: text("external_item_id").notNull(),
+    score: integer("score").notNull(), rankingDigest: text("ranking_digest").notNull(), metricsObservedAt: timestamp("metrics_observed_at", { withTimezone: true }).notNull(), sourcePublishedAt: timestamp("source_published_at", { withTimezone: true }).notNull(), rightsExpiresAt: timestamp("rights_expires_at", { withTimezone: true }),
+    region: text("region").notNull(), contentLanguage: text("content_language").notNull(), arabicVariety: text("arabic_variety"), format: text("format").notNull(), rightsStatus: text("rights_status").notNull(), eligibleForBlitz: boolean("eligible_for_blitz").notNull(), searchableText: text("searchable_text").notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "inspiration_trend_feed_entries_pk", columns: [table.workspaceId, table.inspirationItemId] }),
+    sourceItemUnique: uniqueIndex("inspiration_trend_feed_entries_source_item_unique").on(table.workspaceId, table.sourceId, table.externalItemId),
+    itemFk: foreignKey({ name: "inspiration_trend_feed_entries_item_fk", columns: [table.workspaceId, table.inspirationItemId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id] }).onDelete("restrict"),
+    sourceFk: foreignKey({ name: "inspiration_trend_feed_entries_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [inspirationTrendSources.workspaceId, inspirationTrendSources.id] }).onDelete("restrict"),
+    rankIdx: index("inspiration_trend_feed_entries_rank_idx").on(table.workspaceId, table.score, table.metricsObservedAt, table.inspirationItemId),
+    filterIdx: index("inspiration_trend_feed_entries_filter_idx").on(table.workspaceId, table.contentLanguage, table.region, table.format, table.rightsStatus),
+    valuesCheck: check("inspiration_trend_feed_entries_values_check", sql`${table.score} between 0 and 10000 and ${table.rankingDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.contentLanguage} in ('ar','en') and ${table.rightsStatus} in ('licensed','user_submitted','embeddable','metadata_only','restricted')`),
+  }),
+);
+
+export const inspirationTrendIngestionReceipts = pgTable(
+  "inspiration_trend_ingestion_receipts",
+  {
+    workspaceId: text("workspace_id").notNull(), sourceId: text("source_id").notNull(), externalItemId: text("external_item_id").notNull(), observationDigest: text("observation_digest").notNull(),
+    inspirationItemId: text("inspiration_item_id").notNull(), inspirationItemRevision: integer("inspiration_item_revision").notNull(), sourceContentDigest: text("source_content_digest").notNull(), rightsEvidenceDigest: text("rights_evidence_digest").notNull(), rankingDigest: text("ranking_digest").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "inspiration_trend_ingestion_receipts_pk", columns: [table.workspaceId, table.sourceId, table.externalItemId, table.observationDigest, table.rankingDigest] }),
+    sourceFk: foreignKey({ name: "inspiration_trend_ingestion_receipts_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [inspirationTrendSources.workspaceId, inspirationTrendSources.id] }).onDelete("restrict"),
+    revisionFk: foreignKey({ name: "inspiration_trend_ingestion_receipts_revision_fk", columns: [table.workspaceId, table.inspirationItemId, table.inspirationItemRevision], foreignColumns: [workspaceProductRecordRevisions.workspaceId, workspaceProductRecordRevisions.recordId, workspaceProductRecordRevisions.revision] }).onDelete("restrict"),
+    itemIdx: index("inspiration_trend_ingestion_receipts_item_idx").on(table.workspaceId, table.inspirationItemId, table.createdAt),
+    digestsCheck: check("inspiration_trend_ingestion_receipts_digests_check", sql`${table.observationDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.sourceContentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rightsEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rankingDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.inspirationItemRevision} > 0`),
+  }),
+);
+
 export const productBlitzReplenishmentRuns = pgTable(
   "product_blitz_replenishment_runs",
   {

@@ -29,6 +29,7 @@ export const trendIngestionCandidateSchema = z.object({
     observedAt: z.string().datetime(),
     expiresAt: z.string().datetime().nullable(),
     sourceAssetId: id.nullable(),
+    sourceMediaType: z.enum(["image", "video"]).nullable(),
     rightsSnapshot: z.object({ id, revision: z.number().int().positive(), digest }).strict().nullable(),
     permittedInfluence: z.array(z.enum(TREND_INFLUENCE_TYPES)).min(1).max(4),
   }).strict(),
@@ -37,7 +38,8 @@ export const trendIngestionCandidateSchema = z.object({
   if (new Date(value.rights.observedAt) > new Date(value.metricsObservedAt)) context.addIssue({ code: "custom", path: ["rights", "observedAt"], message: "Rights evidence must exist when the metric observation is captured." });
   if (value.rights.expiresAt && new Date(value.rights.expiresAt) <= new Date(value.rights.observedAt)) context.addIssue({ code: "custom", path: ["rights", "expiresAt"], message: "Rights expiry must follow its observation." });
   if (value.rights.status === "metadata_only" && value.rights.permittedInfluence.some((item) => item !== "topic")) context.addIssue({ code: "custom", path: ["rights", "permittedInfluence"], message: "Metadata-only evidence may influence topics only." });
-  if ((value.rights.sourceAssetId === null) !== (value.rights.rightsSnapshot === null)) context.addIssue({ code: "custom", path: ["rights"], message: "A source Asset and Rights Snapshot must be supplied together." });
+  const referenceParts = [value.rights.sourceAssetId, value.rights.sourceMediaType, value.rights.rightsSnapshot];
+  if (referenceParts.some((part) => part === null) && referenceParts.some((part) => part !== null)) context.addIssue({ code: "custom", path: ["rights"], message: "A source Asset, media type, and Rights Snapshot must be supplied together." });
 });
 
 export type TrendIngestionCandidate = z.infer<typeof trendIngestionCandidateSchema>;

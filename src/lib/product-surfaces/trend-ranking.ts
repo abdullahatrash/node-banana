@@ -32,7 +32,7 @@ export function rankTrendCandidate(input: { candidate: TrendIngestionCandidate; 
   const eligibleForDiscovery = candidate.rights.status !== "restricted" && evidenceCurrent;
   const eligibleForBlitz = eligibleForDiscovery
     && candidate.rights.status !== "metadata_only"
-    && Boolean(candidate.rights.sourceAssetId && candidate.rights.rightsSnapshot);
+    && Boolean(candidate.rights.sourceAssetId && candidate.rights.sourceMediaType && candidate.rights.rightsSnapshot);
   const signals = {
     freshness: freshness(ageHours(candidate.metricsObservedAt, evaluatedAt)),
     recency: recency(ageHours(candidate.sourcePublishedAt, evaluatedAt)),

@@ -24,6 +24,7 @@ const candidate: TrendIngestionCandidate = {
     observedAt: "2026-09-04T11:30:00.000Z",
     expiresAt: "2027-09-04T00:00:00.000Z",
     sourceAssetId: "asset-1",
+    sourceMediaType: "video",
     rightsSnapshot: { id: "rights-1", revision: 2, digest: `sha256:${"c".repeat(64)}` },
     permittedInfluence: ["topic", "hook", "pacing", "structure"],
   },
@@ -63,7 +64,7 @@ describe("explainable trend ranking", () => {
         sourcePublishedAt: "2025-01-01T00:00:00.000Z",
         metricsObservedAt: "2025-01-01T00:00:00.000Z",
         tags: ["gambling"],
-        rights: { ...candidate.rights, status: "restricted", sourceAssetId: null, rightsSnapshot: null },
+        rights: { ...candidate.rights, status: "restricted", sourceAssetId: null, sourceMediaType: null, rightsSnapshot: null },
       },
       context: { ...context, excludedTags: ["gambling"] },
       evaluatedAt: now,
@@ -79,7 +80,7 @@ describe("explainable trend ranking", () => {
 
   it("keeps metadata-only trends discoverable but never admits them to Blitz", () => {
     const result = rankTrendCandidate({
-      candidate: { ...candidate, rights: { ...candidate.rights, status: "metadata_only", sourceAssetId: null, rightsSnapshot: null, permittedInfluence: ["topic"] } },
+      candidate: { ...candidate, rights: { ...candidate.rights, status: "metadata_only", sourceAssetId: null, sourceMediaType: null, rightsSnapshot: null, permittedInfluence: ["topic"] } },
       context,
       evaluatedAt: now,
     });
