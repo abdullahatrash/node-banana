@@ -16,9 +16,9 @@ export const trendIngestionCandidateSchema = z.object({
   sourcePublishedAt: z.string().datetime(),
   sourceContentDigest: digest,
   metricsObservedAt: z.string().datetime(),
-  metrics: z.object({ views: z.number().int().nonnegative(), likes: z.number().int().nonnegative(), comments: z.number().int().nonnegative().optional() }).strict(),
+  metrics: z.object({ views: z.number().int().nonnegative().nullable(), likes: z.number().int().nonnegative().nullable(), comments: z.number().int().nonnegative().nullable().optional() }).strict().refine((metrics) => Object.values(metrics).some((value) => value !== null), "At least one provider metric is required."),
   observationProvenance: z.object({
-    kind: z.literal("workspace_attested"),
+    kind: z.enum(["workspace_attested", "platform_verified"]),
     ref: z.string().trim().min(1).max(500),
     digest,
   }).strict().nullable().optional(),

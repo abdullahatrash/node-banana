@@ -32,7 +32,7 @@ async function context(executor: Executor, workspaceId: string, campaignId: stri
       const rights = stored ? hydrateRightsSnapshot(stored.snapshot as InspirationRightsSnapshot) : null;
       rightsAdmitted = Boolean(rights && validateRightsEvidence({ workspaceId, basis: rights.basis, permittedRemix: rights.permittedRemix, sourceAssetIds: rights.sourceAssetIds, evidence: rights.evidence, at: now }).ok);
     }
-    sources.push({ id: row.id, format: source.format, contentLanguage: source.contentLanguage, rightsAdmitted, observedAt: new Date(source.metricsObservedAt), views: source.metrics.views, likes: source.metrics.likes });
+    sources.push({ id: row.id, format: source.format, contentLanguage: source.contentLanguage, rightsAdmitted, observedAt: new Date(source.metricsObservedAt), views: source.metrics.views ?? 0, likes: source.metrics.likes ?? 0 });
   }
   return {
     policy: { mode: campaign.execution.replenishmentMode, targetCapacity: campaign.execution.blitzTargetCapacity, maximumCreatesPerRun: campaign.execution.blitzMaximumCreatesPerRun, prospectiveSpendCeilingCents: campaign.execution.budgetCents, perProposalGenerationCeilingCents: perProposal, remixRatio: campaign.remixRatio, executionMode: campaign.execution.mode, contentLanguage: campaign.contentLanguage, formatMix: campaign.formatMix },

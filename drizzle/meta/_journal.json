@@ -848,6 +848,20 @@
       "when": 1788684000000,
       "tag": "0120_trend_ranking_context_repair",
       "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1788687600000,
+      "tag": "0121_verified_social_performance_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1788691200000,
+      "tag": "0122_performance_sync_active_job_guard",
+      "breakpoints": true
     }
   ]
 }

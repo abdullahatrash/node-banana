@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { assets, inspirationTrendSources, socialAccounts, socialPosts, workspaceContentPerformanceObservations } from "@/lib/db/schema";
+import { assets, inspirationTrendSources, socialAccounts, socialPosts, workspaceContentPerformanceObservations, workspaceContentPerformanceSyncs } from "@/lib/db/schema";
 import { inspirationRightsSnapshots } from "@/lib/model-routing/db-schema";
 import { hydrateRightsSnapshot, validateRightsEvidence } from "@/lib/model-routing/rights-evidence";
 import type { InspirationRightsSnapshot } from "@/lib/model-routing/types";
@@ -49,6 +49,11 @@ export interface WorkspaceOwnedPerformanceSource {
   sourceAssetId: string;
   rightsSnapshot: { id: string; revision: number; digest: `sha256:${string}` };
   channel: string;
+  socialAccountId: string;
+  platform: string;
+  verifiedSyncSupported: boolean;
+  requiresReauth: boolean;
+  sync: { id: string; state: string; scheduleMinutes: number; nextRunAt: string; lastObservedAt: string | null; lastErrorCode: string | null } | null;
 }
 
 export async function listWorkspaceOwnedPerformanceSources(input: { workspaceId: string; at?: Date; limit?: number }): Promise<WorkspaceOwnedPerformanceSource[]> {
@@ -57,13 +62,15 @@ export async function listWorkspaceOwnedPerformanceSources(input: { workspaceId:
   const posts = await getDb().select().from(socialPosts).where(and(eq(socialPosts.workspaceId, input.workspaceId), eq(socialPosts.status, "published"))).orderBy(desc(socialPosts.publishedAt), desc(socialPosts.id)).limit(limit * 2);
   const assetIds = [...new Set(posts.flatMap((post) => post.stableMediaRefs.filter((reference) => (reference.resourceKind ?? "studio_asset") === "studio_asset").map((reference) => reference.assetId)))];
   const accountIds = [...new Set(posts.map((post) => post.socialAccountId))];
-  const [assetRows, accounts, rightsRows] = await Promise.all([
+  const [assetRows, accounts, rightsRows, syncRows] = await Promise.all([
     assetIds.length ? getDb().select({ id: assets.id, type: assets.type, checksum: assets.checksum, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, assetIds), isNull(assets.deletedAt))) : [],
-    accountIds.length ? getDb().select({ id: socialAccounts.id, displayName: socialAccounts.displayName, platform: socialAccounts.platform }).from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), inArray(socialAccounts.id, accountIds))) : [],
+    accountIds.length ? getDb().select({ id: socialAccounts.id, displayName: socialAccounts.displayName, platform: socialAccounts.platform, requiresReauth: socialAccounts.requiresReauth, disabled: socialAccounts.disabled }).from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), inArray(socialAccounts.id, accountIds))) : [],
     getDb().select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, input.workspaceId), eq(inspirationRightsSnapshots.basis, "owned"))).orderBy(desc(inspirationRightsSnapshots.createdAt)).limit(1_000),
+    getDb().select().from(workspaceContentPerformanceSyncs).where(eq(workspaceContentPerformanceSyncs.workspaceId, input.workspaceId)),
   ]);
   const assetById = new Map(assetRows.map((asset) => [asset.id, asset]));
   const accountById = new Map(accounts.map((account) => [account.id, account]));
+  const syncBySource = new Map(syncRows.map((sync) => [`${sync.postId}:${sync.sourceAssetId}`, sync]));
   const rights = rightsRows.map((row) => hydrateRightsSnapshot(row.snapshot as InspirationRightsSnapshot)).filter((snapshot) => snapshot.createdAt <= at && validateRightsEvidence({ workspaceId: input.workspaceId, basis: snapshot.basis, permittedRemix: snapshot.permittedRemix, sourceAssetIds: snapshot.sourceAssetIds, evidence: snapshot.evidence, at }).ok);
   const results: WorkspaceOwnedPerformanceSource[] = [];
   for (const post of posts) {
@@ -75,7 +82,8 @@ export async function listWorkspaceOwnedPerformanceSources(input: { workspaceId:
       const asset = assetById.get(reference.assetId);
       const snapshot = rights.find((candidate) => candidate.sourceAssetIds.length === 1 && candidate.sourceAssetIds[0] === reference.assetId);
       if (!asset || asset.type !== "video" || !asset.checksum || asset.metadata?.uploadState !== "ready" || reference.assetDigest !== asset.checksum || !snapshot) continue;
-      results.push({ id: `${post.id}:${asset.id}`, postId: post.id, title: (post.content?.trim() || account.displayName || post.id).slice(0, 240), sourceUrl: post.platformPostUrl, publishedAt: post.publishedAt.toISOString(), sourceAssetId: asset.id, rightsSnapshot: { id: snapshot.id, revision: snapshot.revision, digest: snapshot.digest }, channel: `${account.displayName} · ${account.platform}`.slice(0, 200) });
+      const sync = syncBySource.get(`${post.id}:${asset.id}`) ?? null;
+      results.push({ id: `${post.id}:${asset.id}`, postId: post.id, title: (post.content?.trim() || account.displayName || post.id).slice(0, 240), sourceUrl: post.platformPostUrl, publishedAt: post.publishedAt.toISOString(), sourceAssetId: asset.id, rightsSnapshot: { id: snapshot.id, revision: snapshot.revision, digest: snapshot.digest }, channel: `${account.displayName} · ${account.platform}`.slice(0, 200), socialAccountId: account.id, platform: account.platform, verifiedSyncSupported: ["instagram", "tiktok", "youtube"].includes(account.platform) && !account.disabled, requiresReauth: account.requiresReauth, sync: sync ? { id: sync.id, state: sync.state, scheduleMinutes: sync.scheduleMinutes, nextRunAt: sync.nextRunAt.toISOString(), lastObservedAt: sync.lastObservedAt?.toISOString() ?? null, lastErrorCode: sync.lastErrorCode } : null });
       if (results.length >= limit) return results;
     }
   }
@@ -111,7 +119,7 @@ export function workspaceOwnedCandidateFromRecords(input: {
     externalItemId: post.id, title, sourceUrl, sourceName, sourcePublishedAt: post.publishedAt.toISOString(),
     sourceContentDigest: canonicalDigest({ schema: "workspace-published-content/v1", postId: post.id, content: post.content, platformPostUrl: sourceUrl, assetId: asset.id, assetDigest: asset.checksum }),
     metricsObservedAt: observation.observedAt.toISOString(), metrics: { views: observation.views, likes: observation.likes, comments: observation.comments }, region: observation.region,
-    observationProvenance: { kind: "workspace_attested", ref: observation.sourceRef, digest: observation.sourceDigest },
+    observationProvenance: { kind: observation.sourceKind as "workspace_attested" | "platform_verified", ref: observation.sourceRef, digest: observation.sourceDigest },
     contentLanguage: observation.contentLanguage, arabicVariety: observation.arabicVariety, format: observation.format, tags: observation.tags,
     rights: { status: "user_submitted", evidenceRef: `workspace-rights:${rights.id}@${rights.revision}`, evidenceDigest: rights.digest, observedAt: rights.createdAt.toISOString(), expiresAt: expiresAt?.toISOString() ?? null, sourceAssetId: asset.id, sourceMediaType: "video", rightsSnapshot: { id: rights.id, revision: rights.revision, digest: rights.digest }, permittedInfluence },
   });

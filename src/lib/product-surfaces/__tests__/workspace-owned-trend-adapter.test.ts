@@ -23,6 +23,7 @@ const rights: InspirationRightsSnapshot = {
 const observation: typeof workspaceContentPerformanceObservations.$inferSelect = {
   workspaceId: "workspace-1", id: "observation-1", postId: "post-1", sourceAssetId: "asset-1", rightsSnapshotId: "rights-1", rightsSnapshotRevision: 1, rightsSnapshotDigest: digest("b"),
   sourceKind: "workspace_attested", sourceRef: "workspace-dashboard", sourceDigest: digest("c"), views: 12_000, likes: 900, comments: 40,
+  platform: null, providerAccountId: null, providerPostId: null, providerRequestId: null, reportedMetrics: [], providerReceipt: {},
   region: "GCC", contentLanguage: "ar", arabicVariety: "gulf", format: "video_hook_demo", tags: ["launch"], observedAt, capturedAt: requestedAt,
   createdByUserId: "user-1", idempotencyKey: "observation-key", requestDigest: digest("d"),
 };
