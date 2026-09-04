@@ -7,6 +7,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { Archive, Check, ChevronLeft, ChevronRight, CircleAlert, LoaderCircle, Pause, Play, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
 import { ProductRequestError, productRequest } from "@/components/product-surfaces/ProductApi";
 import type { CampaignAuthoringOptions, CampaignSelectorOption } from "@/lib/product-surfaces/campaign-authoring";
+import type { WorkspaceCalendarPreferences } from "@/lib/product-surfaces/calendar-preferences";
 import { ARABIC_VARIETIES, AUTOMATION_STEPS, CONTENT_FORMATS } from "@/lib/product-surfaces/definitions";
 
 type Automation = { id: string; title: string; state: string; revision: number; payload: Record<string, unknown> };
@@ -26,12 +27,12 @@ type Translator = (key: string, values?: Record<string, string | number>) => str
 const DEFAULT_MIX = Object.fromEntries(CONTENT_FORMATS.map((format) => [format, ["slideshow", "wall_of_text", "green_screen_meme", "video_hook_demo"].includes(format) ? 25 : 0]));
 const MENA_TIMEZONES = ["Asia/Riyadh", "Asia/Dubai", "Asia/Qatar", "Asia/Kuwait", "Asia/Bahrain", "Asia/Muscat", "Africa/Cairo", "Africa/Casablanca", "Asia/Beirut", "Asia/Amman"];
 
-function initialPayload(name: string, options: CampaignAuthoringOptions): CampaignDraft {
+function initialPayload(name: string, options: CampaignAuthoringOptions, calendarPreferences: WorkspaceCalendarPreferences): CampaignDraft {
   return {
     currentStep: 1, name, formatMix: { ...DEFAULT_MIX }, remixRatio: 50, inspirationIds: [],
     brandProfileRef: options.brand ? { id: options.brand.id, revision: options.brand.revision, digest: options.brand.digest } : null,
     contentLanguage: "ar", arabicVariety: "msa", personaIds: [], demoAssetIds: [], mediaSetIds: [], themeRevisionRefs: [], channelIds: [], variantsPerChannel: 1,
-    cadence: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, weekStart: 0, startAt: null, endAt: null, postsPerWeek: 3, calendarCapacity: 20 },
+    cadence: { timezone: calendarPreferences.timezone, weekStart: calendarPreferences.weekStartsOn, startAt: null, endAt: null, postsPerWeek: 3, calendarCapacity: 20 },
     execution: { mode: "managed", modelPolicy: "workspace-default", creditCeiling: 20, budgetCents: 5000, replenishmentMode: "manual", blitzTargetCapacity: 20, blitzMaximumCreatesPerRun: 10, workflow: null },
     reviewMode: "request_human", autoPublishGrantId: null, validationErrors: [], runtime: null,
   };
@@ -41,12 +42,12 @@ function draft(value: Record<string, unknown>): CampaignDraft { return value as 
 function localDate(value: string | null) { return value ? value.slice(0, 16) : ""; }
 function isoDate(value: string) { if (!value) return null; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString(); }
 
-export function AutomationBuilder({ automations, occurrences, options, selectedAutomationId }: { automations: Automation[]; occurrences: Occurrence[]; options: CampaignAuthoringOptions; selectedAutomationId: string | null }) {
+export function AutomationBuilder({ automations, occurrences, options, calendarPreferences, selectedAutomationId }: { automations: Automation[]; occurrences: Occurrence[]; options: CampaignAuthoringOptions; calendarPreferences: WorkspaceCalendarPreferences; selectedAutomationId: string | null }) {
   const t = useTranslations("product.automations") as Translator;
   const router = useRouter();
   const selectedFromServer = selectedAutomationId ? automations.find((item) => item.id === selectedAutomationId) ?? null : null;
   const [record, setRecord] = useState<Automation | null>(selectedFromServer);
-  const [payload, setPayload] = useState<CampaignDraft>(() => selectedFromServer ? draft(selectedFromServer.payload) : initialPayload(t("defaultName"), options));
+  const [payload, setPayload] = useState<CampaignDraft>(() => selectedFromServer ? draft(selectedFromServer.payload) : initialPayload(t("defaultName"), options, calendarPreferences));
   const [step, setStep] = useState(Number(selectedFromServer?.payload.currentStep ?? 1));
   const [busy, setBusy] = useState(false); const [dirty, setDirty] = useState(false); const [error, setError] = useState(""); const [admission, setAdmission] = useState<Admission | null>(null);
   const latestPayload = useRef(payload); const busyRef = useRef(false); const saveIdempotencyKey = useRef<string | null>(null);

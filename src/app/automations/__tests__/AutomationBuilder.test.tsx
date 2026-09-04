@@ -31,13 +31,14 @@ const options: CampaignAuthoringOptions = {
   modelPolicies: [{ id: "workspace-default", label: "Workspace default", detail: null }],
   grants: [{ id: "grant-1", label: "Grant", detail: "channel-1", channelId: "channel-1", expiresAt: null }],
 };
+const calendarPreferences = { timezone: "Africa/Cairo", weekStartsOn: 6 as const };
 
 describe("AutomationBuilder", () => {
   beforeEach(() => { productRequest.mockReset(); replace.mockReset(); refresh.mockReset(); });
 
   it("keeps a new Automation provisional until the first substantive save", async () => {
     productRequest.mockResolvedValue({ record: { id: "campaign-1", title: "Launch", state: "draft", revision: 1, payload: {} } });
-    render(<AutomationBuilder automations={[]} occurrences={[]} options={options} selectedAutomationId={null} />);
+    render(<AutomationBuilder automations={[]} occurrences={[]} options={options} calendarPreferences={calendarPreferences} selectedAutomationId={null} />);
 
     expect(screen.getByText("provisional")).toBeVisible();
     const stepButtons = screen.getAllByRole("button", { name: /steps\./ });
@@ -52,7 +53,7 @@ describe("AutomationBuilder", () => {
     await waitFor(() => expect(productRequest).toHaveBeenCalledWith("/api/product-campaigns", expect.objectContaining({
       action: "save_draft",
       title: "Launch",
-      payload: expect.objectContaining({ currentStep: 2, contentLanguage: "ar", arabicVariety: "msa", reviewMode: "request_human" }),
+      payload: expect.objectContaining({ currentStep: 2, contentLanguage: "ar", arabicVariety: "msa", reviewMode: "request_human", cadence: expect.objectContaining({ timezone: "Africa/Cairo", weekStart: 6 }) }),
     })));
     expect(replace).toHaveBeenCalledWith("/automations/campaign-1/edit");
   });
@@ -66,7 +67,7 @@ describe("AutomationBuilder", () => {
       execution: { mode: "managed", modelPolicy: "workspace-default", creditCeiling: 20, budgetCents: 5000, replenishmentMode: "manual", blitzTargetCapacity: 20, blitzMaximumCreatesPerRun: 10, workflow: null },
       reviewMode: "request_human", autoPublishGrantId: null, validationErrors: [], runtime: null,
     };
-    render(<AutomationBuilder automations={[{ id: "campaign-1", title: "Launch", state: "draft", revision: 3, payload }]} occurrences={[]} options={options} selectedAutomationId="campaign-1" />);
+    render(<AutomationBuilder automations={[{ id: "campaign-1", title: "Launch", state: "draft", revision: 3, payload }]} occurrences={[]} options={options} calendarPreferences={calendarPreferences} selectedAutomationId="campaign-1" />);
 
     expect(screen.getByLabelText("fields.workflowRevisionId")).toBeInstanceOf(HTMLSelectElement);
     expect(screen.getByRole("option", { name: /Publish/ })).toHaveValue("workflow-revision-1");
