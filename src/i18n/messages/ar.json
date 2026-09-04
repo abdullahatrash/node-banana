@@ -114,7 +114,7 @@
     "calendarUi": {
       "views": { "day": "يوم", "week": "أسبوع", "month": "شهر", "list": "قائمة" },
       "weekdays": { "mon": "الاثنين", "tue": "الثلاثاء", "wed": "الأربعاء", "thu": "الخميس", "fri": "الجمعة", "sat": "السبت", "sun": "الأحد" },
-      "previous": "الفترة السابقة", "next": "الفترة التالية", "today": "اليوم", "allChannels": "كل القنوات",
+      "previous": "الفترة السابقة", "next": "الفترة التالية", "today": "اليوم", "allChannels": "كل القنوات", "weekStartsOn": "بداية الأسبوع",
       "noPostsThisWeek": "لا توجد منشورات هذا الأسبوع", "unscheduled": "غير مجدول", "noContent": "لا يوجد محتوى", "unknownChannel": "قناة غير معروفة",
       "destinationUnavailable": "معلومات قناة الوجهة غير متاحة.", "draftPrefix": "مسودة:", "notSet": "غير محدد",
       "scheduled": "مجدول", "published": "منشور", "created": "أُنشئ", "video": "فيديو",
@@ -122,8 +122,8 @@
       "confirmPublishNow": "هل تريد نشر هذا المنشور الآن وتجاوز موعده المجدول؟", "confirmDelete": "هل تريد حذف هذا المنشور؟",
       "status": { "draft": "مسودة", "queued": "مجدول", "publishing": "قيد النشر", "published": "منشور", "failed": "فشل" },
       "actions": { "save": "حفظ", "edit": "تعديل", "publishNow": "النشر الآن", "retry": "إعادة المحاولة", "reschedule": "إعادة الجدولة", "open": "فتح", "duplicate": "تكرار", "delete": "حذف" },
-      "toast": { "rescheduled": "أُعيدت جدولة المنشور", "requeued": "أُعيد المنشور إلى قائمة الانتظار", "queuedNow": "أُضيف المنشور للنشر الفوري", "duplicated": "نُسخ المنشور كمسودة", "deleted": "حُذف المنشور" },
-      "errors": { "cannotReschedule": "لا يمكن إعادة جدولة هذا المنشور.", "reschedule": "تعذرت إعادة الجدولة", "retry": "تعذرت إعادة المحاولة", "action": "تعذر تنفيذ الإجراء" }
+      "toast": { "rescheduled": "أُعيدت جدولة المنشور", "requeued": "أُعيد المنشور إلى قائمة الانتظار", "queuedNow": "أُضيف المنشور للنشر الفوري", "duplicated": "نُسخ المنشور كمسودة", "deleted": "حُذف المنشور", "preferencesSaved": "تم حفظ تفضيلات التقويم" },
+      "errors": { "cannotReschedule": "لا يمكن إعادة جدولة هذا المنشور.", "reschedule": "تعذرت إعادة الجدولة", "retry": "تعذرت إعادة المحاولة", "action": "تعذر تنفيذ الإجراء", "preferences": "تعذر حفظ تفضيلات التقويم" }
     },
     "events": { "title": "الأحداث", "empty": "لا توجد أحداث بعد.", "markUnread": "تحديد كغير مقروء", "markRead": "تحديد كمقروء", "errors": { "load": "فشل تحميل الأحداث", "update": "فشل تحديث الحدث" }, "severity": { "info": "معلومة", "warning": "تحذير", "error": "خطأ" } },
     "integrations": { "title": "عمليات التكامل", "connectedChannels": "القنوات المتصلة", "availableProviders": "المزوّدون المتاحون", "errors": { "load": "فشل تحميل عمليات التكامل" } },
@@ -373,6 +373,7 @@
       }
     },
     "publishingApprovals": {
+      "status": { "superseded": "تم الاستبدال" },
       "copy": {
         "linkedin": "لينكدإن",
         "channel": "· القناة",

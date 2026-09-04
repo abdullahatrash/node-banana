@@ -114,7 +114,7 @@
     "calendarUi": {
       "views": { "day": "Day", "week": "Week", "month": "Month", "list": "List" },
       "weekdays": { "mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat", "sun": "Sun" },
-      "previous": "Previous period", "next": "Next period", "today": "Today", "allChannels": "All channels",
+      "previous": "Previous period", "next": "Next period", "today": "Today", "allChannels": "All channels", "weekStartsOn": "Week starts",
       "noPostsThisWeek": "No posts this week", "unscheduled": "Unscheduled", "noContent": "No content", "unknownChannel": "Unknown channel",
       "destinationUnavailable": "Destination channel information is unavailable.", "draftPrefix": "Draft:", "notSet": "Not set",
       "scheduled": "Scheduled", "published": "Published", "created": "Created", "video": "Video",
@@ -122,8 +122,8 @@
       "confirmPublishNow": "Publish this post now? This bypasses its schedule.", "confirmDelete": "Delete this post?",
       "status": { "draft": "Draft", "queued": "Scheduled", "publishing": "Publishing", "published": "Published", "failed": "Failed" },
       "actions": { "save": "Save", "edit": "Edit", "publishNow": "Publish now", "retry": "Retry", "reschedule": "Reschedule", "open": "Open", "duplicate": "Duplicate", "delete": "Delete" },
-      "toast": { "rescheduled": "Post rescheduled", "requeued": "Post re-queued", "queuedNow": "Post queued for immediate publishing", "duplicated": "Post duplicated as draft", "deleted": "Post deleted" },
-      "errors": { "cannotReschedule": "This post cannot be rescheduled.", "reschedule": "Failed to reschedule", "retry": "Retry failed", "action": "Action failed" }
+      "toast": { "rescheduled": "Post rescheduled", "requeued": "Post re-queued", "queuedNow": "Post queued for immediate publishing", "duplicated": "Post duplicated as draft", "deleted": "Post deleted", "preferencesSaved": "Calendar preferences saved" },
+      "errors": { "cannotReschedule": "This post cannot be rescheduled.", "reschedule": "Failed to reschedule", "retry": "Retry failed", "action": "Action failed", "preferences": "Could not save calendar preferences" }
     },
     "events": { "title": "Events", "empty": "No events yet.", "markUnread": "Mark unread", "markRead": "Mark read", "errors": { "load": "Failed to load events", "update": "Failed to update event" }, "severity": { "info": "Information", "warning": "Warning", "error": "Error" } },
     "integrations": { "title": "Integrations", "connectedChannels": "Connected channels", "availableProviders": "Available providers", "errors": { "load": "Failed to load integrations" } },
@@ -373,6 +373,7 @@
       }
     },
     "publishingApprovals": {
+      "status": { "superseded": "Superseded" },
       "copy": {
         "linkedin": "LinkedIn",
         "channel": "· Channel",
