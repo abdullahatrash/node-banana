@@ -26,7 +26,7 @@ const schema = z
   );
 
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/studio/credential-spend-grants", action: "read" },
+  { route: "/api/studio/credential-spend-grants", action: "read", permission: "workspaces:read" },
   async (request: NextRequest, authz) => {
     const human = credentialHumanContext(request, authz);
     if (!human) {
@@ -48,7 +48,7 @@ export const GET = withStudioAuth<undefined>(
 );
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/credential-spend-grants", action: "write" },
+  { route: "/api/studio/credential-spend-grants", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz) => {
     const human = credentialHumanContext(request, authz);
     if (!human) {

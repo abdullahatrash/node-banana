@@ -14,7 +14,7 @@ function errorStatus(error: GovernanceError): number {
 }
 
 export const GET = withStudioAuth<{ params: Promise<Record<string, string>> }>(
-  { route: "/api/studio/governance/exports/[exportId]/download", action: "read" },
+  { route: "/api/studio/governance/exports/[exportId]/download", action: "read", permission: "workspaces:read" },
   async (request: NextRequest, authz, context) => {
     const boundaryError = requireExplicitAgentWorkspace(request, authz.workspaceId);
     if (boundaryError) return boundaryError;

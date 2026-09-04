@@ -28,7 +28,7 @@ function isAssetReady(metadata: unknown): boolean {
 type AssetIdContext = { params: Promise<{ assetId: string }> };
 
 export const GET = withStudioAuth<AssetIdContext>(
-  { route: "/api/studio/assets/[assetId]/download", action: "read" },
+  { route: "/api/studio/assets/[assetId]/download", action: "read", permission: "assets:read" },
   async (
     _request: NextRequest,
     authz,

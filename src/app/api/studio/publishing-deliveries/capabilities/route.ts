@@ -117,7 +117,7 @@ function responseStatus(category: string): number {
 }
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/publishing-deliveries/capabilities", action: "read" },
+  { route: "/api/studio/publishing-deliveries/capabilities", action: "read", permission: "social:view" },
   async (request: NextRequest, authz) => {
     let body: unknown;
     try {

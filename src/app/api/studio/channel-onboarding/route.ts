@@ -8,9 +8,9 @@ import { ChannelOnboardingError } from "@/lib/channel-onboarding/repository";
 const denied = () => NextResponse.json({ success: false, code: "CHANNEL_ONBOARDING_ADMIN_REQUIRED" }, { status: 403 });
 const failure = (error: unknown) => { if (!(error instanceof ChannelOnboardingError)) throw error; return NextResponse.json({ success: false, code: error.code }, { status: ["REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT"].includes(error.code) ? 409 : 422 }); };
 
-export const GET = withStudioAuth<undefined>({ route: "/api/studio/channel-onboarding", action: "read" }, async (_request, authz) => NextResponse.json({ success: true, data: await CHANNEL_ONBOARDING.summary(authz.workspaceId) }));
+export const GET = withStudioAuth<undefined>({ route: "/api/studio/channel-onboarding", action: "read", permission: "social:view" }, async (_request, authz) => NextResponse.json({ success: true, data: await CHANNEL_ONBOARDING.summary(authz.workspaceId) }));
 
-export const POST = withStudioAuth<undefined>({ route: "/api/studio/channel-onboarding", action: "write" }, async (request: NextRequest, authz) => {
+export const POST = withStudioAuth<undefined>({ route: "/api/studio/channel-onboarding", action: "write", permission: "social:manage" }, async (request: NextRequest, authz) => {
   if (!["owner", "admin"].includes(authz.role)) return denied();
   const parsed = publicChannelOnboardingCommandSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ success: false, code: "INVALID_CHANNEL_ONBOARDING_COMMAND" }, { status: 400 });

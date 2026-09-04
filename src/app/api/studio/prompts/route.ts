@@ -25,7 +25,7 @@ interface PromptsPostResponse {
 const VALID_MODES = new Set(["photo", "video", "copy"]);
 
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/studio/prompts", action: "read" },
+  { route: "/api/studio/prompts", action: "read", permission: "projects:read" },
   async (request: NextRequest, authz): Promise<NextResponse<PromptsGetResponse>> => {
     const mode = request.nextUrl.searchParams.get("mode") || undefined;
     if (mode && !VALID_MODES.has(mode)) {
@@ -41,7 +41,7 @@ export const GET = withStudioAuth<undefined>(
 );
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/prompts", action: "write" },
+  { route: "/api/studio/prompts", action: "write", permission: "projects:write" },
   async (request: NextRequest, authz): Promise<NextResponse<PromptsPostResponse>> => {
     const body = (await request.json()) as PromptsPostRequest;
 

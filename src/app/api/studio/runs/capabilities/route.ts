@@ -31,7 +31,7 @@ function responseStatus(category: string): number {
 }
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/runs/capabilities", action: "read" },
+  { route: "/api/studio/runs/capabilities", action: "read", permission: "projects:read" },
   async (request: NextRequest, authz) => {
     const selectedWorkspace = request.headers.get("x-workspace-id")?.trim();
     if (!selectedWorkspace || selectedWorkspace !== authz.workspaceId) {

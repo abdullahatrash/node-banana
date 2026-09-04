@@ -64,7 +64,7 @@ function isValidAction(action: unknown): action is MultipartAction {
 }
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/assets/presign-multipart", action: "write" },
+  { route: "/api/studio/assets/presign-multipart", action: "write", permission: "assets:write" },
   async (request: NextRequest, authz): Promise<NextResponse<MultipartResponse>> => {
     if (!canUseS3Storage()) {
       return noStoreJson(

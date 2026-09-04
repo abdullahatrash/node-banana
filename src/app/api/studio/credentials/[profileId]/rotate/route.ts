@@ -19,7 +19,7 @@ const schema = z
   .strict();
 
 export const POST = withStudioAuth<Context>(
-  { route: "/api/studio/credentials/[profileId]/rotate", action: "write" },
+  { route: "/api/studio/credentials/[profileId]/rotate", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz, context) => {
     const human = credentialHumanContext(request, authz);
     if (!human) {

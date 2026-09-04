@@ -185,6 +185,7 @@ describe("/api/studio/assets/presign auth hardening", () => {
       {
         route: "/api/studio/assets/presign",
         action: "write",
+        permission: "assets:write",
       },
     );
   });

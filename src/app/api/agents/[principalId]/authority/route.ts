@@ -116,7 +116,7 @@ function resolveAuthorityContracts(
 }
 
 export const POST = withStudioAuth<Context>(
-  { route: "/api/agents/[principalId]/authority", action: "write" },
+  { route: "/api/agents/[principalId]/authority", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz, context) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) return denied;

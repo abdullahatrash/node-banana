@@ -7,13 +7,13 @@ import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 const idempotencyKey = (request: NextRequest) => request.headers.get("idempotency-key")?.trim() || "";
 
-export const GET = withStudioAuth<undefined>({ route: "/api/studio/release-control", action: "read" }, async (request: NextRequest, authz) => {
+export const GET = withStudioAuth<undefined>({ route: "/api/studio/release-control", action: "read", permission: "workspaces:read" }, async (request: NextRequest, authz) => {
   const service = getReleaseControlService();
   const [snapshot, readiness] = await Promise.all([service.snapshot(authz.workspaceId), service.readiness(authz.workspaceId)]);
   return noStoreJson({ success: true, snapshot, readiness });
 });
 
-export const POST = withStudioAuth<undefined>({ route: "/api/studio/release-control", action: "write" }, async (request: NextRequest, authz) => {
+export const POST = withStudioAuth<undefined>({ route: "/api/studio/release-control", action: "write", permission: "workspaces:write" }, async (request: NextRequest, authz) => {
   const key = idempotencyKey(request);
   if (key.length < 8 || key.length > 200) return noStoreJson({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED" }, { status: 400 });
   try {

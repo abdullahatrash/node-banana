@@ -19,7 +19,7 @@ const bodySchema = z.object({
 }).strict();
 
 export function createAdmittedGenerationPost(route: string) {
-  return withStudioAuth<undefined>({ route, action: "write" }, async (request: NextRequest, authz) => {
+  return withStudioAuth<undefined>({ route, action: "write", permission: "product:content:write" }, async (request: NextRequest, authz) => {
     const key = request.headers.get("idempotency-key")?.trim(); let raw: unknown = null; try { raw = await request.json(); } catch { /* schema handles it */ }
     const parsed = bodySchema.safeParse(raw);
     if (request.headers.get("x-workspace-id") !== authz.workspaceId || !key || key.length < 8 || !parsed.success) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });

@@ -37,7 +37,7 @@ interface AssetsPostResponse {
 }
 
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/studio/assets", action: "read" },
+  { route: "/api/studio/assets", action: "read", permission: "assets:read" },
   async (request: NextRequest, authz): Promise<NextResponse<AssetsGetResponse>> => {
     const projectId = request.nextUrl.searchParams.get("projectId");
     const assets = projectId
@@ -51,7 +51,7 @@ export const GET = withStudioAuth<undefined>(
 );
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/assets", action: "write" },
+  { route: "/api/studio/assets", action: "write", permission: "assets:write" },
   async (request: NextRequest, authz): Promise<NextResponse<AssetsPostResponse>> => {
     await requireGovernanceRegionRoute({
       workspaceId: authz.workspaceId,

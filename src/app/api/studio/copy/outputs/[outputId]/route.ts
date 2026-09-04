@@ -8,7 +8,7 @@ import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 const idSchema = z.string().regex(/^text_[a-f0-9]{32}$/);
 
-export const GET = withStudioAuth<{ params: Promise<Record<string, string>> }>({ route: "/api/studio/copy/outputs/[outputId]", action: "read" }, async (request: NextRequest, authz, context) => {
+export const GET = withStudioAuth<{ params: Promise<Record<string, string>> }>({ route: "/api/studio/copy/outputs/[outputId]", action: "read", permission: "product:read" }, async (request: NextRequest, authz, context) => {
   const outputId = idSchema.safeParse((await context.params).outputId);
   if (!outputId.success || request.headers.get("x-workspace-id") !== authz.workspaceId) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
   const [output] = await getDb().select({ id: modelTextOutputReceipts.id, content: modelTextOutputReceipts.content, contentDigest: modelTextOutputReceipts.contentDigest }).from(modelTextOutputReceipts).where(and(eq(modelTextOutputReceipts.workspaceId, authz.workspaceId), eq(modelTextOutputReceipts.id, outputId.data))).limit(1);

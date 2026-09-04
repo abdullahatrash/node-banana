@@ -25,7 +25,7 @@ interface AssetPatchRequest {
 type AssetIdContext = { params: Promise<{ assetId: string }> };
 
 export const GET = withStudioAuth<AssetIdContext>(
-  { route: "/api/studio/assets/[assetId]", action: "read" },
+  { route: "/api/studio/assets/[assetId]", action: "read", permission: "assets:read" },
   async (
     _request: NextRequest,
     authz,
@@ -48,7 +48,7 @@ export const GET = withStudioAuth<AssetIdContext>(
 );
 
 export const DELETE = withStudioAuth<AssetIdContext>(
-  { route: "/api/studio/assets/[assetId]", action: "delete" },
+  { route: "/api/studio/assets/[assetId]", action: "delete", permission: "assets:delete" },
   async (
     _request: NextRequest,
     authz,
@@ -71,7 +71,7 @@ export const DELETE = withStudioAuth<AssetIdContext>(
 );
 
 export const PATCH = withStudioAuth<AssetIdContext>(
-  { route: "/api/studio/assets/[assetId]", action: "write" },
+  { route: "/api/studio/assets/[assetId]", action: "write", permission: "assets:write" },
   async (
     request: NextRequest,
     authz,

@@ -18,7 +18,7 @@ const FACTOR_MUTATION_PATHS = new Set([
 export async function POST(request: NextRequest) {
   if (FACTOR_MUTATION_PATHS.has(request.nextUrl.pathname)) {
     if (!request.headers.get("x-workspace-id")?.trim()) return Response.json({ success: false, error: "An explicit Workspace is required.", code: "WORKSPACE_REQUIRED" }, { status: 400 });
-    const authz = await authorizeStudioRequest(request, { route: request.nextUrl.pathname, action: "write" });
+    const authz = await authorizeStudioRequest(request, { route: request.nextUrl.pathname, action: "write", permission: "workspaces:write" });
     if (!authz.authorized) return authzErrorResponse(authz);
     const stepUpDenied = await requireGovernanceStepUp({ request, workspaceId: authz.workspaceId, userId: authz.userId, purpose: "auth.factor.change", resourceId: authz.userId });
     if (stepUpDenied) return stepUpDenied;

@@ -30,7 +30,7 @@ interface PresignResponse {
 }
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/assets/presign", action: "write" },
+  { route: "/api/studio/assets/presign", action: "write", permission: "assets:write" },
   async (request: NextRequest, authz): Promise<NextResponse<PresignResponse>> => {
     if (!canUseS3Storage()) {
       return noStoreJson(

@@ -25,7 +25,7 @@ const idempotencyKeySchema = z
   .refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/credentials/capabilities", action: "write" },
+  { route: "/api/studio/credentials/capabilities", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz) => {
     const humanContext = credentialHumanContext(request, authz);
     if (!humanContext) {

@@ -80,7 +80,7 @@ function mutationResult(
 }
 
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/studio/publishing-approval-authority", action: "write" },
+  { route: "/api/studio/publishing-approval-authority", action: "write", permission: "social:manage" },
   async (request: NextRequest, authz) => {
     const denied = adminDenied(authz.role);
     if (denied) return denied;
@@ -119,7 +119,7 @@ export const GET = withStudioAuth<undefined>(
 );
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/publishing-approval-authority", action: "write" },
+  { route: "/api/studio/publishing-approval-authority", action: "write", permission: "social:manage" },
   async (request: NextRequest, authz) => {
     const denied = adminDenied(authz.role);
     if (denied) return denied;

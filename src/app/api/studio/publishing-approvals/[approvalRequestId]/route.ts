@@ -31,6 +31,7 @@ export const GET = withStudioAuth<ApprovalContext>(
   {
     route: "/api/studio/publishing-approvals/[approvalRequestId]",
     action: "read",
+    permission: "social:view",
   },
   async (request, authz, context) => {
     const workspaceError = requirePublishingApprovalWorkspace(
@@ -55,9 +56,10 @@ export const GET = withStudioAuth<ApprovalContext>(
 export const POST = withStudioAuth<ApprovalContext>(
   {
     route: "/api/studio/publishing-approvals/[approvalRequestId]",
-    // Workspace read establishes a Human Principal; the Approval service and
+    // Social publishing admission establishes a Human Principal; the Approval service and
     // repository independently require explicit current per-Channel grants.
     action: "read",
+    permission: "social:publish",
   },
   async (request: NextRequest, authz, context) => {
     const requestError = requirePublishingApprovalMutation(

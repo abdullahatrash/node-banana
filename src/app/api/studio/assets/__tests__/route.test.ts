@@ -102,6 +102,7 @@ describe("/api/studio/assets auth hardening", () => {
       {
         route: "/api/studio/assets",
         action: "read",
+        permission: "assets:read",
       },
     );
   });
@@ -195,6 +196,7 @@ describe("/api/studio/assets auth hardening", () => {
       {
         route: "/api/studio/assets",
         action: "write",
+        permission: "assets:write",
       },
     );
   });

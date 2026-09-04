@@ -6,7 +6,7 @@ import { executeAdmittedGeneration } from "@/lib/model-routing/execute-admitted-
 
 const bodySchema = z.object({ prompt: z.string().trim().min(1).max(50_000), sourceAssetIds: z.array(z.string().min(1).max(200)).max(8).default([]) }).strict();
 
-export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>({ route: "/api/studio/model-routing/intents/[intentId]/execute", action: "write" }, async (request: NextRequest, authz, context) => {
+export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>({ route: "/api/studio/model-routing/intents/[intentId]/execute", action: "write", permission: "product:content:write" }, async (request: NextRequest, authz, context) => {
   const intentId = (await context.params).intentId?.trim();
   const key = request.headers.get("idempotency-key");
   let raw: unknown = null; try { raw = await request.json(); } catch { /* invalid below */ }

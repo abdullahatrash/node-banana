@@ -10,10 +10,10 @@ import {
 
 type AuthorizedStudio = Extract<StudioAuthorizationResult, { authorized: true }>;
 
-interface WithStudioAuthOptions {
+export interface WithStudioAuthOptions {
   route: string;
   action: "read" | "write" | "delete";
-  permission?: import("@/lib/studio/authz").ContentOSPermission;
+  permission: import("@/lib/studio/authz").ContentOSPermission;
 }
 
 type RouteContext = { params: Promise<Record<string, string>> };

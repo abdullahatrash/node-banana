@@ -55,7 +55,7 @@ const rotateKeySchema = z
   .strict();
 
 export const POST = withStudioAuth<PrincipalContext>(
-  { route: "/api/agents/[principalId]/keys", action: "write" },
+  { route: "/api/agents/[principalId]/keys", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz, context) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) return denied;

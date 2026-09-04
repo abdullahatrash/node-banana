@@ -10,7 +10,7 @@ import { requireAgentMutationRequest } from "@/lib/agent-auth/http-request";
 type KeyContext = { params: Promise<{ keyId: string }> };
 
 export const DELETE = withStudioAuth<KeyContext>(
-  { route: "/api/agents/keys/[keyId]", action: "delete" },
+  { route: "/api/agents/keys/[keyId]", action: "delete", permission: "workspaces:delete" },
   async (request, authz, context) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) return denied;

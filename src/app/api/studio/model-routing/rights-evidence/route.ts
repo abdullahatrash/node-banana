@@ -12,7 +12,7 @@ const body = z.object({
   issuedAt: z.string().datetime({ offset: true }), expiresAt: z.string().datetime({ offset: true }).nullable(),
 }).strict();
 
-export const POST = withStudioAuth<undefined>({ route: "/api/studio/model-routing/rights-evidence", action: "write" }, async (request: NextRequest, authz) => {
+export const POST = withStudioAuth<undefined>({ route: "/api/studio/model-routing/rights-evidence", action: "write", permission: "product:content:write" }, async (request: NextRequest, authz) => {
   const key = request.headers.get("idempotency-key")?.trim(); let raw: unknown = null; try { raw = await request.json(); } catch { /* schema handles it */ }
   const parsed = body.safeParse(raw);
   if (!key || key.length < 8 || request.headers.get("x-workspace-id") !== authz.workspaceId || !parsed.success) return noStoreJson({ success: false, code: "INVALID_RIGHTS_EVIDENCE" }, { status: 400 });

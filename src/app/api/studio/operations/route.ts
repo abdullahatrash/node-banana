@@ -15,7 +15,7 @@ function selected<T extends string>(value: string | undefined, allowed: readonly
   return result.length ? result : undefined;
 }
 
-export const GET = withStudioAuth<undefined>({ route: "/api/studio/operations", action: "read" }, async (request: NextRequest, authz) => {
+export const GET = withStudioAuth<undefined>({ route: "/api/studio/operations", action: "read", permission: "workspaces:read" }, async (request: NextRequest, authz) => {
   if (request.headers.get("x-workspace-id") !== authz.workspaceId) return noStoreJson({ success: false, code: "WORKSPACE_REQUIRED" }, { status: 400 });
   const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });

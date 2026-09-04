@@ -40,7 +40,7 @@ function errorResponse(error: unknown): NextResponse {
 }
 
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/studio/credentials", action: "read" },
+  { route: "/api/studio/credentials", action: "read", permission: "workspaces:read" },
   async (request, authz) => {
     const human = credentialHumanContext(request, authz);
     if (!human) return manager("member")!;
@@ -61,7 +61,7 @@ export const GET = withStudioAuth<undefined>(
 );
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/credentials", action: "write" },
+  { route: "/api/studio/credentials", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz) => {
     const human = credentialHumanContext(request, authz);
     if (!human) return manager("member")!;

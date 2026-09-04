@@ -248,36 +248,6 @@ function authFailure(
   };
 }
 
-function mapActionToPermission(
-  route: string,
-  action: StudioAccessAction,
-): ContentOSPermission {
-  if (route.includes("/billing") || route.includes("/personas")) {
-    throw new Error("EXPLICIT_PRODUCT_PERMISSION_REQUIRED");
-  }
-  const resource = route.includes("/projects")
-    ? "projects"
-    : route.includes("/assets")
-      ? "assets"
-      : "workspaces";
-
-  if (resource === "projects") {
-    if (action === "read") return "projects:read";
-    if (action === "write") return "projects:write";
-    return "projects:delete";
-  }
-
-  if (resource === "assets") {
-    if (action === "read") return "assets:read";
-    if (action === "write") return "assets:write";
-    return "assets:delete";
-  }
-
-  if (action === "read") return "workspaces:read";
-  if (action === "write") return "workspaces:write";
-  return "workspaces:delete";
-}
-
 function hasPermission(
   permissions: ContentOSPermission[],
   permission: ContentOSPermission,
@@ -628,15 +598,13 @@ export async function authorizeStudioRequest(
   request: Request,
   options: {
     route: string;
-    action?: StudioAccessAction;
-    permission?: ContentOSPermission;
+    action: StudioAccessAction;
+    permission: ContentOSPermission;
   },
 ): Promise<StudioAuthorizationResult> {
-  const action = options.action ?? "read";
-  const permission = options.permission ?? mapActionToPermission(options.route, action);
   const permissionResult = await withApiPermission(request, {
     route: options.route,
-    permission,
+    permission: options.permission,
   });
 
   if (!permissionResult.authorized) {

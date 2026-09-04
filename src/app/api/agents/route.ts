@@ -9,7 +9,7 @@ import { requireExplicitAgentWorkspace } from "@/lib/agent-auth/http-request";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/agents", action: "read" },
+  { route: "/api/agents", action: "read", permission: "workspaces:read" },
   async (request, authz) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) return denied;

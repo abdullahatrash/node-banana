@@ -104,7 +104,7 @@ function sanitizeFileName(fileName?: string): string | null {
 }
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/assets/ingest", action: "write" },
+  { route: "/api/studio/assets/ingest", action: "write", permission: "assets:write" },
   async (request: NextRequest, authz): Promise<NextResponse<IngestResponse>> => {
     if (!canUseS3Storage()) {
       return noStoreJson(

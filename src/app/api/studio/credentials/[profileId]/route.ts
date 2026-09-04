@@ -14,7 +14,7 @@ const schema = z
   .strict();
 
 export const PATCH = withStudioAuth<Context>(
-  { route: "/api/studio/credentials/[profileId]", action: "write" },
+  { route: "/api/studio/credentials/[profileId]", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz, context) => {
     const human = credentialHumanContext(request, authz);
     if (!human) {

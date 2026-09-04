@@ -16,7 +16,7 @@ const querySchema = z.object({
 });
 
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/studio/publishing-approvals", action: "read" },
+  { route: "/api/studio/publishing-approvals", action: "read", permission: "social:view" },
   async (request: NextRequest, authz) => {
     const workspaceError = requirePublishingApprovalWorkspace(
       request,

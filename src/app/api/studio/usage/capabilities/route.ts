@@ -18,7 +18,7 @@ const invocation = z.object({
 }).strict();
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/usage/capabilities", action: "read" },
+  { route: "/api/studio/usage/capabilities", action: "read", permission: "workspaces:read" },
   async (request: NextRequest, authz) => {
     const selectedWorkspace = request.headers.get("x-workspace-id")?.trim();
     if (!selectedWorkspace || selectedWorkspace !== authz.workspaceId) {

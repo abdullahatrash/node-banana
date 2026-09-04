@@ -14,7 +14,7 @@ import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 const body = z.object({ basis: z.enum(["owned","licensed","public_domain","consented"]), permittedRemix: z.enum(["reference_only","transform","derivative"]), evidenceIds: z.array(z.string().min(1).max(200)).max(100), sourceAssetIds: z.array(z.string().min(1).max(200)).max(100) }).strict();
 const stableId = (workspaceId: string, key: string) => `rights_${createHash("sha256").update(`${workspaceId}:${key}`).digest("hex").slice(0, 32)}`;
 
-export const POST = withStudioAuth<undefined>({ route: "/api/studio/model-routing/rights-snapshots", action: "write" }, async (request: NextRequest, authz) => {
+export const POST = withStudioAuth<undefined>({ route: "/api/studio/model-routing/rights-snapshots", action: "write", permission: "product:content:write" }, async (request: NextRequest, authz) => {
   const key = request.headers.get("idempotency-key"); let raw: unknown = null; try { raw = await request.json(); } catch { /* invalid */ }
   const parsed = body.safeParse(raw);
   if (!key || key.length < 8 || request.headers.get("x-workspace-id") !== authz.workspaceId || !parsed.success) return noStoreJson({ success: false, code: "INVALID_RIGHTS_EVIDENCE" }, { status: 400 });

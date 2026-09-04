@@ -23,7 +23,7 @@ interface KeySaveResponse {
 
 /** List the current workspace's BYOK provider keys — masked hints only. */
 export const GET = withStudioAuth<undefined>(
-  { route: ROUTE, action: "read" },
+  { route: ROUTE, action: "read", permission: "workspaces:read" },
   async (
     _request: NextRequest,
     authz,
@@ -40,7 +40,7 @@ export const GET = withStudioAuth<undefined>(
  * reaches the vault.
  */
 export const POST = withStudioAuth<undefined>(
-  { route: ROUTE, action: "write" },
+  { route: ROUTE, action: "write", permission: "workspaces:write" },
   async (
     request: NextRequest,
     authz,

@@ -12,14 +12,14 @@ const mutationSchema = z.discriminatedUnion("action", [
 
 function status(result: { kind: string }) { return result.kind === "not_found" ? 404 : result.kind === "conflict" ? 409 : result.kind === "unavailable" ? 503 : 200; }
 
-export const GET = withStudioAuth<{ params: Promise<Record<string, string>> }>({ route: "/api/studio/operations/[operationId]", action: "read" }, async (request: NextRequest, authz, context) => {
+export const GET = withStudioAuth<{ params: Promise<Record<string, string>> }>({ route: "/api/studio/operations/[operationId]", action: "read", permission: "workspaces:read" }, async (request: NextRequest, authz, context) => {
   const operationId = idSchema.safeParse((await context.params).operationId);
   if (!operationId.success || request.headers.get("x-workspace-id") !== authz.workspaceId) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
   const [operation, events] = await Promise.all([PRODUCTION_OPERATION_STATUS.get(authz.workspaceId, operationId.data), PRODUCTION_OPERATION_STATUS.listEvents(authz.workspaceId, operationId.data)]);
   return operation ? noStoreJson({ success: true, operation, events, controls: PRODUCTION_OPERATION_STATUS.availableControls(operation) }) : noStoreJson({ success: false, code: "NOT_FOUND" }, { status: 404 });
 });
 
-export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>({ route: "/api/studio/operations/[operationId]", action: "write" }, async (request: NextRequest, authz, context) => {
+export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>({ route: "/api/studio/operations/[operationId]", action: "write", permission: "workspaces:write" }, async (request: NextRequest, authz, context) => {
   const operationId = idSchema.safeParse((await context.params).operationId);
   const key = request.headers.get("idempotency-key");
   let body: unknown = null; try { body = await request.json(); } catch { /* invalid below */ }

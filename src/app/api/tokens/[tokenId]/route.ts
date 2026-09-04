@@ -14,7 +14,7 @@ type TokenIdContext = { params: Promise<{ tokenId: string }> };
 
 /** Revoke a token. Scoped to the caller's workspace; takes effect immediately. */
 export const DELETE = withStudioAuth<TokenIdContext>(
-  { route: ROUTE, action: "delete" },
+  { route: ROUTE, action: "delete", permission: "workspaces:delete" },
   async (
     _request: NextRequest,
     authz,

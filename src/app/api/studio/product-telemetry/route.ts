@@ -6,7 +6,7 @@ import { ReleaseControlConflictError } from "@/lib/release-control/repository";
 import { classifyTelemetryRegion } from "@/lib/release-control/telemetry-region";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
-export const POST = withStudioAuth<undefined>({ route: "/api/studio/product-telemetry", action: "write" }, async (request: NextRequest, authz) => {
+export const POST = withStudioAuth<undefined>({ route: "/api/studio/product-telemetry", action: "write", permission: "product:read" }, async (request: NextRequest, authz) => {
   const key = request.headers.get("idempotency-key")?.trim() || "";
   if (key.length < 8 || key.length > 200) return noStoreJson({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED" }, { status: 400 });
   try {

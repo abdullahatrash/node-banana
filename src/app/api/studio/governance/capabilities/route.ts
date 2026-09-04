@@ -27,7 +27,7 @@ function status(category: string): number {
 }
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/governance/capabilities", action: "read" },
+  { route: "/api/studio/governance/capabilities", action: "read", permission: "workspaces:read" },
   async (request: NextRequest, authz) => {
     let body: unknown;
     try { body = await request.json(); } catch { return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 }); }

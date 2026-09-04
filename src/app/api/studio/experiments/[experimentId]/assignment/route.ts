@@ -6,7 +6,7 @@ import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 type Context = { params: Promise<{ experimentId: string }> };
 
-export const POST = withStudioAuth<Context>({ route: "/api/studio/experiments/[experimentId]/assignment", action: "read" }, async (request: NextRequest, authz, context) => {
+export const POST = withStudioAuth<Context>({ route: "/api/studio/experiments/[experimentId]/assignment", action: "read", permission: "product:read" }, async (request: NextRequest, authz, context) => {
   const key = request.headers.get("idempotency-key")?.trim() || "";
   if (key.length < 8 || key.length > 200) return noStoreJson({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED" }, { status: 400 });
   try {
