@@ -158,6 +158,30 @@
     "trace": { "title": "Diagnostic Trace", "reference": "Operator Trace Reference", "grantId": "Trace Operator Grant ID", "read": "Read sanitized trace" },
     "bundle": { "createTitle": "Create Support Bundle", "createDescription": "Choose each resource explicitly. The server builds closed projections and freezes immutable bytes; no include-all option exists.", "resourceKind": "Support resource kind", "resourceId": "Support resource ID", "exactResourceId": "Exact resource ID", "add": "Add", "remove": "Remove", "purpose": "Support purpose", "incidentDiagnosis": "Incident diagnosis", "supportCase": "Support case", "consentExpiry": "Consent expiry", "consent": "I explicitly consent to store only these selected projections until expiry.", "freeze": "Freeze bundle", "readTitle": "Read Support Bundle", "bundleId": "Bundle ID", "grantId": "Bundle Operator Grant ID", "read": "Read bundle", "expires": "expires {time}", "summary": "{count} selected projections · {bytes} bytes", "download": "Download verified JSON", "revoke": "Revoke" }
   },
+  "product": {
+    "dashboard": {
+      "eyebrow": "Workspace command center",
+      "title": "What needs your attention today",
+      "updated": "Live workspace projection · updated {time}",
+      "activationTitle": "Workspace activation",
+      "activationProgress": "{complete} of {total} operational milestones complete",
+      "activation": { "brand": "Approve Brand Profile", "media": "Create or upload media", "channel": "Connect a Channel", "content": "Accept a Content Piece", "scheduled": "Schedule the first publication" },
+      "nextTitle": "Recommended next action",
+      "actions": { "brand": "Complete your Brand Profile", "media": "Create your first media", "channel": "Connect a publishing Channel", "failure": "Resolve publishing failures", "content": "Review the Blitz Queue", "schedule": "Schedule approved content", "insights": "Review performance insights" },
+      "reasons": { "brand_missing": "Brand context must be approved before content can reliably reflect your identity.", "media_missing": "Your media library is empty. Create or upload reusable source material.", "channel_missing": "A verified Channel is required before planning publication.", "publishing_failure": "A failed publication is the highest-priority recoverable operational issue.", "content_missing": "Review and explicitly accept a proposal before it enters publishing.", "schedule_missing": "You have content and a Channel, but nothing is scheduled yet.", "workspace_ready": "Core activation is complete. Use current evidence to guide the next campaign." },
+      "open": "Open workspace",
+      "metrics": { "media": "Media assets", "channels": "Connected Channels", "scheduled": "Scheduled posts", "failures": "Needs attention" },
+      "upcoming": "Upcoming publishing", "recentMedia": "Recent media", "viewAll": "View all", "untitledPost": "Untitled post", "notScheduled": "Schedule pending", "emptyUpcoming": "No publications are currently queued.", "createPost": "Compose a post", "emptyMedia": "No reusable media yet.", "createMedia": "Create media",
+      "assetType": { "image": "Image", "video": "Video", "copy": "Copy" }
+    },
+    "brand": {
+      "eyebrow": "Brand Center", "description": "The approved Workspace identity, audiences, voice, claims, and safety boundaries injected into creation workflows.",
+      "activeRevision": "Active approved revision", "revisionValue": "Revision {revision} · accepted {date}", "audiences": "Audience mix", "language": "Default content language", "positioning": "Positioning", "voice": "Voice descriptors", "guardrails": "Claims and topic guardrails", "history": "Immutable revision history", "revision": "Revision {revision}",
+      "status": { "active": "Active", "draft": "Awaiting review", "superseded": "Superseded" },
+      "editorTitle": "Review and improve Brand Profile", "editorHelp": "Saving creates a new draft revision. It never silently changes the active profile.", "edit": "Create revision", "cancel": "Cancel", "saveDraft": "Save review draft", "draftReady": "Revision {revision} is ready for explicit approval.", "approveRevision": "Approve revision {revision}", "error": "Brand Profile update failed.",
+      "fields": { "identity": "Core identity", "mission": "Mission", "positioning": "Positioning", "ownedSpace": "Owned space", "offering": "Offerings — one per line", "benefits": "Benefits — one per line", "differentiators": "Differentiators — one per line", "voice": "Voice descriptors — one per line", "do": "Voice: do — one per line", "doNot": "Voice: avoid — one per line", "claims": "Prohibited claims — one per line", "topics": "Prohibited topics — one per line", "angles": "Content angles — one per line", "uncertainties": "Review notes — one per line" }
+    }
+  },
   "releaseQuality": {
     "eyebrow": "Evidence-backed delivery",
     "title": "Release quality",

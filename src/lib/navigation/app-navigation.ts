@@ -77,7 +77,7 @@ export const primaryNavigation = [
   },
   { key: "calendar", href: "/calendar", aliases: ["/social/calendar"] },
   { key: "analytics", href: "/analytics", aliases: ["/social/analytics"] },
-  { key: "brand", futureHref: "/brand", availability: "planned" },
+  { key: "brand", href: "/brand", aliases: [] },
   { key: "settings", href: "/settings", aliases: ["/social/settings"] },
 ] as const satisfies readonly (
   | NavigationItem<PrimaryNavigationKey>
