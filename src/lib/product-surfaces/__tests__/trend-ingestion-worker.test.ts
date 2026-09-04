@@ -7,7 +7,7 @@ const candidate: TrendIngestionCandidate = {
   externalItemId: "trend-1", title: "Gulf commerce launch", sourceUrl: "https://example.com/trend-1", sourceName: "Licensed feed",
   sourcePublishedAt: "2026-09-04T09:00:00.000Z", sourceContentDigest: `sha256:${"a".repeat(64)}`,
   metricsObservedAt: "2026-09-04T11:00:00.000Z", metrics: { views: 50_000, likes: 4_000 }, region: "GCC",
-  contentLanguage: "ar", arabicVariety: "gulf", format: "video_hook_demo", tags: ["commerce"],
+  contentLanguage: "ar", arabicVariety: "gulf", format: "video_hook_demo", tags: ["commerce"], creativePrimitives: { topics: [], hookPattern: null, pacing: null, structure: [] },
   rights: { status: "metadata_only", evidenceRef: "official:terms", evidenceDigest: `sha256:${"b".repeat(64)}`, observedAt: "2026-09-04T11:00:00.000Z", expiresAt: null, sourceAssetId: null, sourceMediaType: null, rightsSnapshot: null, permittedInfluence: ["topic"] },
 };
 const job: ClaimedTrendIngestionJob = {

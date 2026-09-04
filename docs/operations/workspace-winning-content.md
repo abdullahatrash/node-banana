@@ -50,6 +50,23 @@ pnpm doctor:local -- --workspace seed_ws_alice
 8. Open the source link and verify it resolves to the published post. Stored
    evidence pins its source digest and the exact Rights Snapshot without
    persisting any access or refresh token.
+9. Add the Inspiration Item to Blitz. The server must create a
+   `brand-aware-remix-brief/v1` snapshot that pins the accepted Brand Profile
+   revision, Inspiration revision, rights digest, content language, Arabic
+   variety, permitted topic/hook/pacing/structure directions, original Brand
+   direction, protected-expression exclusions, and exact provider contract.
+10. In `/blitz`, verify the Brand angle and audience are visible before any
+    generation begins. An older generic proposal is deliberately disabled and
+    must be re-queued so it cannot spend against stale Brand or rights state.
+11. Select a qualified Replicate video model. In managed mode, confirm the
+    exact expiring Generation Credit quote. In BYOK mode, confirm the
+    Workspace has a durable Replicate credential. Admission must reject any
+    changed prompt, source Asset, evidence list, language, Arabic variety,
+    capability, Brand revision, or stale Blitz revision before dispatch.
+12. Accept only after the generated 9:16 Asset passes text, frame, and audio
+    similarity checks. Promotion to a Content Piece rechecks the exact Rights
+    Snapshot and Remix Brief digest from the Generation Intent; it does not
+    schedule or publish the result.
 
 ## Running the worker locally
 

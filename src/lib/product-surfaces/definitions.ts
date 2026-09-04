@@ -73,6 +73,24 @@ const legacyBlitzRejectionReasonSchema = text(300).transform((note) => ({
 }));
 
 const sha256Digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const remixInfluence = z.enum(["topic", "hook", "pacing", "structure"]);
+const legacyRemixBriefSchema = z.object({
+  influences: z.array(remixInfluence).min(1),
+  protectedExpressionExcluded: z.boolean(),
+}).strict();
+export const brandAwareRemixBriefSchema = z.object({
+  schema: z.literal("brand-aware-remix-brief/v1"),
+  brandProfile: z.object({ id: text(200), revision: z.number().int().positive(), digest: sha256Digest, acceptedAt: z.string().datetime() }).strict(),
+  source: z.object({ inspirationItemId: text(200), revision: z.number().int().positive(), evidenceDigest: sha256Digest.nullable(), rightsSnapshotDigest: sha256Digest }).strict(),
+  locale: z.object({ contentLanguage: z.enum(["ar", "en"]), arabicVariety: z.enum(ARABIC_VARIETIES).nullable() }).strict(),
+  influencePlan: z.array(z.object({ kind: remixInfluence, direction: text(500) }).strict()).min(1).max(4),
+  brandDirection: z.object({ audience: text(1_000), angle: text(1_000), voice: z.array(text(120)).min(1).max(12), offering: text(1_000), callToAction: text(500) }).strict(),
+  provider: z.object({ prompt: text(10_000), preserve: z.array(text(500)).min(1).max(50), transform: z.array(text(500)).max(50), avoid: z.array(text(500)).min(1).max(50) }).strict(),
+  protectedExpressionExcluded: z.literal(true),
+  createdAt: z.string().datetime(),
+  digest: sha256Digest,
+}).strict();
+export type BrandAwareRemixBrief = z.infer<typeof brandAwareRemixBriefSchema>;
 const trendRankingSignalsSchema = z.object({
   freshness: z.number().int().min(0).max(100), recency: z.number().int().min(0).max(100), performance: z.number().int().min(0).max(100),
   brandFit: z.number().int().min(0).max(100), region: z.number().int().min(0).max(100), language: z.number().int().min(0).max(100),
@@ -111,6 +129,12 @@ export const inspirationPayloadSchema = z.object({
   rightsStatus: z.enum(["licensed", "user_submitted", "embeddable", "metadata_only", "restricted"]),
   rightsSnapshot: z.object({ id: text(200), revision: z.number().int().positive(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
   permittedInfluence: z.array(z.enum(["topic", "hook", "pacing", "structure"])).min(1),
+  creativePrimitives: z.object({
+    topics: z.array(text(120)).max(12),
+    hookPattern: text(500).nullable(),
+    pacing: text(500).nullable(),
+    structure: z.array(text(500)).max(12),
+  }).strict().default({ topics: [], hookPattern: null, pacing: null, structure: [] }),
   whyThisAppears: z.array(text(300)).min(1),
   tags: z.array(text(80)).default([]),
   trendEvidence: trendEvidenceSchema.nullable().default(null),
@@ -131,7 +155,7 @@ export const blitzPayloadSchema = z.object({
   contentLanguage: z.enum(["ar", "en", "mixed"]).nullable().default(null),
   arabicVariety: z.enum(ARABIC_VARIETIES).nullable().default(null),
   format: z.enum(CONTENT_FORMATS).nullable().default(null),
-  remixBrief: z.object({ influences: z.array(text(200)).min(1), protectedExpressionExcluded: z.boolean() }),
+  remixBrief: z.union([brandAwareRemixBriefSchema, legacyRemixBriefSchema]),
   rationale: text(1_000),
   sourceComparison: z.object({ views: z.number().int().nonnegative(), likes: z.number().int().nonnegative(), observedAt: z.string().datetime(), selectionDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
   executionMode: z.enum(["byok", "managed"]).nullable().default(null),

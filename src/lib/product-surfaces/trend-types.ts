@@ -27,6 +27,12 @@ export const trendIngestionCandidateSchema = z.object({
   arabicVariety: z.enum(ARABIC_VARIETIES).nullable(),
   format: z.enum(CONTENT_FORMATS),
   tags: z.array(z.string().trim().min(1).max(80)).max(30),
+  creativePrimitives: z.object({
+    topics: z.array(z.string().trim().min(1).max(120)).max(12),
+    hookPattern: z.string().trim().min(1).max(500).nullable(),
+    pacing: z.string().trim().min(1).max(500).nullable(),
+    structure: z.array(z.string().trim().min(1).max(500)).max(12),
+  }).strict().default({ topics: [], hookPattern: null, pacing: null, structure: [] }),
   rights: z.object({
     status: z.enum(TREND_RIGHTS_STATUSES),
     evidenceRef: z.string().trim().min(1).max(500),

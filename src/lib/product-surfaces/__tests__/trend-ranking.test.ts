@@ -17,6 +17,7 @@ const candidate: TrendIngestionCandidate = {
   arabicVariety: "gulf",
   format: "video_hook_demo",
   tags: ["تقنية", "شركات", "إطلاق"],
+  creativePrimitives: { topics: ["تقنية"], hookPattern: null, pacing: null, structure: [] },
   rights: {
     status: "licensed",
     evidenceRef: "license:mena-dataset:2026",

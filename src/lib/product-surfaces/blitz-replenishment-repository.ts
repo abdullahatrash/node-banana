@@ -1,15 +1,16 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, inArray, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { productBlitzReplenishmentItems, productBlitzReplenishmentRuns, workspaceProductRecords } from "@/lib/db/schema";
+import { brandProfiles, productBlitzReplenishmentItems, productBlitzReplenishmentRuns, workspaceProductRecords } from "@/lib/db/schema";
 import { inspirationRightsSnapshots } from "@/lib/model-routing/db-schema";
 import { hydrateRightsSnapshot, validateRightsEvidence } from "@/lib/model-routing/rights-evidence";
 import type { InspirationRightsSnapshot } from "@/lib/model-routing/types";
 import { blitzPayloadSchema, campaignPayloadSchema, inspirationPayloadSchema } from "./definitions";
 import { createProductRecordInTransaction } from "./repository";
+import { compileBrandAwareRemixBrief } from "./remix-brief";
 import type { BlitzReplenishmentContext, BlitzReplenishmentRepository, ClaimedBlitzReplenishment } from "./blitz-replenisher";
 
 type Executor = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
@@ -69,6 +70,8 @@ export class PostgresBlitzReplenishmentRepository implements BlitzReplenishmentR
     return getDb().transaction(async (tx) => {
       const [owned] = await tx.select().from(productBlitzReplenishmentRuns).where(and(eq(productBlitzReplenishmentRuns.workspaceId, input.run.workspaceId), eq(productBlitzReplenishmentRuns.id, input.run.runId), eq(productBlitzReplenishmentRuns.state, "claimed"), eq(productBlitzReplenishmentRuns.leaseToken, input.run.leaseToken))).limit(1).for("update");
       if (!owned) throw new Error("BLITZ_REPLENISHMENT_LEASE_LOST");
+      const [brand] = await tx.select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, input.run.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
+      if (!brand?.acceptedAt) throw new Error("BLITZ_ACTIVE_BRAND_REQUIRED");
       let created = 0; let replayed = 0;
       for (const [position, selected] of input.selected.entries()) {
         const [sourceRow] = await tx.select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.run.workspaceId), eq(workspaceProductRecords.id, selected.id), eq(workspaceProductRecords.kind, "inspiration_item"), isNull(workspaceProductRecords.archivedAt))).limit(1);
@@ -79,10 +82,11 @@ export class PostgresBlitzReplenishmentRepository implements BlitzReplenishmentR
         const rights = stored ? hydrateRightsSnapshot(stored.snapshot as InspirationRightsSnapshot) : null;
         if (!rights || !validateRightsEvidence({ workspaceId: input.run.workspaceId, basis: rights.basis, permittedRemix: rights.permittedRemix, sourceAssetIds: rights.sourceAssetIds, evidence: rights.evidence, at: input.now }).ok) continue;
         const selectionDigest = canonicalDigest({ sourceId: selected.id, views: selected.views, likes: selected.likes, observedAt: selected.observedAt.toISOString(), policy: input.run.context.policy });
+        const remixBrief = compileBrandAwareRemixBrief({ inspirationItemId: sourceRow.id, inspirationRevision: sourceRow.revision, sourceValue: source, brand: { id: brand.id, revision: brand.revision, acceptedAt: brand.acceptedAt, profile: brand.profile }, permittedRemix: rights.permittedRemix, createdAt: input.now });
         const record = await createProductRecordInTransaction(tx, { workspaceId: input.run.workspaceId, userId: owned.actorUserId, kind: "blitz_item", title: sourceRow.title, state: "queued", idempotencyKey: `blitz-replenish:${input.run.runId}:${selected.id}`, now: input.now, payload: {
           campaignId: owned.campaignId, replenishmentRunId: owned.id, inspirationItemId: sourceRow.id, contentPieceId: null, sourceAttribution: source.sourceUrl, sourceAssetId: source.sourceAssetId, sourceMediaType: source.sourceMediaType,
-          rightsSnapshot: source.rightsSnapshot, remixBrief: { influences: source.permittedInfluence, protectedExpressionExcluded: true }, rightsBasis: rights.basis, permittedRemix: rights.permittedRemix, rightsEvidenceIds: rights.evidence.map((item) => item.id),
-          contentLanguage: source.contentLanguage, arabicVariety: source.arabicVariety, format: source.format, rationale: "bounded_rights_cleared_replenishment", rejectionReasons: [],
+          rightsSnapshot: source.rightsSnapshot, remixBrief, rightsBasis: rights.basis, permittedRemix: rights.permittedRemix, rightsEvidenceIds: rights.evidence.map((item) => item.id),
+          contentLanguage: source.contentLanguage, arabicVariety: source.arabicVariety, format: source.format, rationale: remixBrief.brandDirection.angle.slice(0, 1_000), rejectionReasons: [],
           sourceComparison: { views: selected.views, likes: selected.likes, observedAt: selected.observedAt.toISOString(), selectionDigest }, executionMode: input.run.context.policy.executionMode, generationCeilingCents: input.run.context.policy.perProposalGenerationCeilingCents,
         } });
         const inserted = await tx.insert(productBlitzReplenishmentItems).values({ workspaceId: input.run.workspaceId, runId: input.run.runId, position, sourceRecordId: sourceRow.id, blitzItemId: record.id, rationaleDigest: selectionDigest, createdAt: input.now }).onConflictDoNothing().returning({ id: productBlitzReplenishmentItems.blitzItemId });

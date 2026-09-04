@@ -80,6 +80,7 @@ function payload(source: typeof inspirationTrendSources.$inferSelect, item: Rank
     capturedAt: capturedAt.toISOString(), metricsObservedAt: item.candidate.metricsObservedAt, metrics: item.candidate.metrics, region: item.candidate.region,
     contentLanguage: item.candidate.contentLanguage, arabicVariety: item.candidate.arabicVariety, format: item.candidate.format, rightsStatus: item.candidate.rights.status,
     rightsSnapshot: item.candidate.rights.rightsSnapshot, permittedInfluence: item.candidate.rights.permittedInfluence, whyThisAppears: item.ranking.reasonCodes, tags: item.candidate.tags,
+    creativePrimitives: item.candidate.creativePrimitives,
     trendEvidence: {
       schema: "inspiration-trend-evidence/v1",
       source: { sourceId: source.id, sourceKind: source.sourceKind, adapterKey: source.adapterKey, externalItemId: item.candidate.externalItemId, sourceContentDigest: item.candidate.sourceContentDigest, capturedAt: capturedAt.toISOString(), publishedAt: item.candidate.sourcePublishedAt, observationDigest, observationProvenance: item.candidate.observationProvenance },

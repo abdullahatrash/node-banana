@@ -21,6 +21,7 @@ import { ensureAdmittedGenerationOperation } from "./generation-operation";
 import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
 import { CreatorPersonaError } from "@/lib/creator-personas/repository";
 import { contentPieceSchema } from "@/lib/product-surfaces/definitions";
+import { validateBrandAwareBlitzGenerationContract } from "@/lib/product-surfaces/blitz-generation-contract";
 import { resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/content-format-registry";
 import { assertContentGenerationRequest, buildContentGenerationRecipe, contentProviderPrompt, ContentGenerationRecipeError } from "@/lib/product-surfaces/content-generation-recipe";
 import { assertContentModelPolicy, ContentWorkflowRuntimeError } from "@/lib/product-surfaces/content-workflow-runtime";
@@ -36,6 +37,7 @@ export interface AdmittedGenerationInput {
   managedQuoteAcceptance?: ManagedCreditQuoteAcceptance | null;
   personaId?: string | null;
   contentExecution?: { contentPieceId: string; contentPieceRevision: number } | null;
+  blitzContext?: { itemId: string; expectedRevision: number } | null;
 }
 export type AdmittedGenerationResult = { ok: true; status: 200 | 202; value: { intentId: string; operation: OperationRecord; provider: unknown; operationHref: string } } | { ok: false; status: 402 | 409 | 422 | 503; code: string; nextActions?: Array<{ code: string; href: string }>; managedCreditQuote?: ManagedCreditQuote };
 const fail = (status: 402 | 409 | 422 | 503, code: string, nextActions?: Array<{ code: string; href: string }>, managedCreditQuote?: ManagedCreditQuote): AdmittedGenerationResult => ({ ok: false, status, code, ...(nextActions ? { nextActions } : {}), ...(managedCreditQuote ? { managedCreditQuote } : {}) });
@@ -66,6 +68,12 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
     : fail(422, "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", [{ code: "configure_provider_key", href: "/studio/settings/provider-keys" }]);
   const [brand] = await getDb().select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, context.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
   if (!brand?.acceptedAt) return fail(422, "ACCEPTED_BRAND_REVISION_REQUIRED", [{ code: "accept_brand", href: "/onboarding/brand-review" }]);
+  if (input.blitzContext) {
+    const [row] = await getDb().select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, context.workspaceId), eq(workspaceProductRecords.id, input.blitzContext.itemId), eq(workspaceProductRecords.kind, "blitz_item"), isNull(workspaceProductRecords.archivedAt))).limit(1);
+    if (!row || row.state !== "queued" || row.revision !== input.blitzContext.expectedRevision) return fail(409, "BLITZ_REVISION_STALE", [{ code: "refresh_blitz", href: "/blitz" }]);
+    const contract = validateBrandAwareBlitzGenerationContract({ payloadValue: row.payload, request: input, brand: { id: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile), acceptedAt: brand.acceptedAt } });
+    if (!contract.ok) return fail(422, contract.code, [{ code: contract.code === "BLITZ_BRIEF_SNAPSHOT_REQUIRED" ? "requeue_inspiration" : "refresh_blitz", href: contract.code === "BLITZ_BRIEF_SNAPSHOT_REQUIRED" ? "/inspiration" : "/blitz" }]);
+  }
   const brandContext = await loadImmutableBrandContext({ workspaceId: context.workspaceId, profileId: brand.id, revision: brand.revision, acceptedAt: brand.acceptedAt, profile: brand.profile });
   if (!brandContext) return fail(422, "BRAND_REFERENCE_ASSET_NOT_READY", [{ code: "review_brand", href: "/onboarding/brand-review" }]);
   let sourceAssetIds = [...input.sourceAssetIds];
