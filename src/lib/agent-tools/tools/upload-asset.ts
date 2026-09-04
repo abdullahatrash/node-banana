@@ -9,6 +9,7 @@ import {
   streamUploadToS3,
 } from "@/lib/storage";
 import { fetchPublicRemoteFile } from "@/lib/security/remote-file-fetch";
+import { collectBufferedAssetEvidence, collectFileAssetEvidence } from "@/lib/studio/asset-media-evidence";
 import {
   getProject,
   finalizeAssetUpload,
@@ -219,6 +220,7 @@ export const uploadAssetTool: ToolDefinition<typeof inputSchema, typeof outputSc
 
         uploadMimeType =
           input.mimeType?.trim().toLowerCase() || pickDefaultMimeType(input.assetType);
+        const evidence = await collectBufferedAssetEvidence({ assetType: input.assetType, mimeType: uploadMimeType, bytes });
         const sanitizedName = sanitizeFileName(input.fileName);
         const extension =
           getExtensionFromFileName(sanitizedName) ||
@@ -252,6 +254,11 @@ export const uploadAssetTool: ToolDefinition<typeof inputSchema, typeof outputSc
           uploadState: "ready",
           sizeBytes: bytes.length,
           mimeType: uploadMimeType,
+          checksum: evidence.checksum,
+          width: evidence.width,
+          height: evidence.height,
+          durationSeconds: evidence.durationSeconds,
+          metadata: evidence.metadata,
         });
 
         const { downloadUrl, expiresInSeconds } = await resolveDownloadUrl(key);
@@ -261,6 +268,7 @@ export const uploadAssetTool: ToolDefinition<typeof inputSchema, typeof outputSc
       const fetched = await fetchPublicRemoteFile({ sourceUrl: input.sourceUrl!.trim(), maximumBytes: MAX_UPLOAD_BYTES, timeoutMs: FETCH_TIMEOUT_MS });
       try {
         uploadMimeType = input.mimeType?.trim().toLowerCase() || fetched.mimeType || pickDefaultMimeType(input.assetType);
+        const evidence = await collectFileAssetEvidence({ assetType: input.assetType, mimeType: uploadMimeType, path: fetched.path, checksum: fetched.digest });
         const sanitizedName = sanitizeFileName(input.fileName);
         const extension = getExtensionFromFileName(sanitizedName) || getExtensionForMimeType(uploadMimeType, "bin");
         const key = buildAssetObjectKey({ workspaceId, projectId, assetType: input.assetType, fileExtension: extension });
@@ -268,7 +276,7 @@ export const uploadAssetTool: ToolDefinition<typeof inputSchema, typeof outputSc
         createdAssetId = pending.id;
         const { sizeBytes } = await streamUploadToS3({ key, body: fetched.createReadStream(), contentType: uploadMimeType, contentLength: fetched.sizeBytes });
         if (sizeBytes !== fetched.sizeBytes) throw new Error("Remote asset upload size mismatch.");
-        await finalizeAssetUpload({ workspaceId, assetId: pending.id, uploadState: "ready", sizeBytes, mimeType: uploadMimeType });
+        await finalizeAssetUpload({ workspaceId, assetId: pending.id, uploadState: "ready", sizeBytes, mimeType: uploadMimeType, checksum: evidence.checksum, width: evidence.width, height: evidence.height, durationSeconds: evidence.durationSeconds, metadata: evidence.metadata });
         const { downloadUrl, expiresInSeconds } = await resolveDownloadUrl(key);
         return { assetId: pending.id, downloadUrl, expiresInSeconds };
       } finally {

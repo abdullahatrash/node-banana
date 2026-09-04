@@ -11,11 +11,12 @@ const mockBuildAssetObjectKey = vi.fn();
 const mockCreatePresignedDownload = vi.fn();
 const mockRequireRegion = vi.fn(async (_input?: unknown) => undefined);
 const mockFetchPublicRemoteFile = vi.fn();
-
-vi.mock("sharp", () => ({ default: () => ({ metadata: async () => ({ width: 1080, height: 1920 }) }) }));
+const mockCollectBufferedAssetEvidence = vi.fn();
+const mockCollectFileAssetEvidence = vi.fn();
 
 vi.mock("@/lib/governance/region-enforcement", () => ({ GOVERNANCE_REGION_ROUTES: { assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" }, assetProcessing: { kind: "processing", routeId: "processing:asset-ingestion" } }, requireGovernanceRegionRoute: (...args: unknown[]) => mockRequireRegion(args[0]) }));
 vi.mock("@/lib/security/remote-file-fetch", () => ({ fetchPublicRemoteFile: (...args: unknown[]) => mockFetchPublicRemoteFile(...args) }));
+vi.mock("@/lib/studio/asset-media-evidence", () => ({ collectBufferedAssetEvidence: (...args: unknown[]) => mockCollectBufferedAssetEvidence(...args), collectFileAssetEvidence: (...args: unknown[]) => mockCollectFileAssetEvidence(...args) }));
 
 const { MockStudioAssetQuotaExceededError } = vi.hoisted(() => {
   class StudioAssetQuotaExceededError extends Error {
@@ -76,12 +77,16 @@ describe("/api/studio/assets/ingest", () => {
       expiresInSeconds: 900,
     });
     mockFetchPublicRemoteFile.mockResolvedValue({
+      path: "/tmp/quarantine",
       mimeType: "image/png",
       sizeBytes: 1024,
       digest: `sha256:${"a".repeat(64)}`,
       createReadStream: () => ({ mocked: true }),
       cleanup: vi.fn(async () => undefined),
     });
+    const evidence = { checksum: `sha256:${"b".repeat(64)}`, width: 1080, height: 1920, metadata: { dimensionEvidence: "server-media-probe/v1" } };
+    mockCollectBufferedAssetEvidence.mockResolvedValue(evidence);
+    mockCollectFileAssetEvidence.mockResolvedValue(evidence);
   });
 
   it("returns 401 for unauthenticated request", async () => {
@@ -162,6 +167,9 @@ describe("/api/studio/assets/ingest", () => {
         workspaceId: "ws_1",
         assetId: "asset_1",
         uploadState: "ready",
+        checksum: `sha256:${"b".repeat(64)}`,
+        width: 1080,
+        height: 1920,
       }),
     );
   });
@@ -280,7 +288,7 @@ describe("/api/studio/assets/ingest", () => {
     expect(mockFetchPublicRemoteFile).toHaveBeenCalledWith(expect.objectContaining({ sourceUrl: "https://example.com/image.png" }));
     expect(mockStreamUploadToS3).toHaveBeenCalled();
     expect(mockPutObjectToS3).not.toHaveBeenCalled();
-    expect(mockFinalizeAssetUpload).toHaveBeenCalledWith(expect.objectContaining({ uploadState: "ready", sizeBytes: 1024 }));
+    expect(mockFinalizeAssetUpload).toHaveBeenCalledWith(expect.objectContaining({ uploadState: "ready", sizeBytes: 1024, checksum: `sha256:${"b".repeat(64)}`, metadata: { dimensionEvidence: "server-media-probe/v1" } }));
   });
 
   it("rejects an oversized remote response before storage upload", async () => {
