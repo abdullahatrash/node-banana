@@ -27,7 +27,8 @@ export const POST = withStudioAuth<undefined>(
     const parsed = command.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
     try {
-      const result = await productionCalendarRescheduleService({ userId: authz.userId, role: authz.role, authContextId: authz.authContextId }).reschedule({
+      const service = await productionCalendarRescheduleService({ workspaceId: authz.workspaceId, userId: authz.userId, role: authz.role, authContextId: authz.authContextId });
+      const result = await service.reschedule({
         scheduledAt: parsed.data.scheduledAt,
         confirmCancelReleasedDelivery: parsed.data.confirmCancelReleasedDelivery,
         idempotencyKey: parsed.data.idempotencyKey,

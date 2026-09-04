@@ -12,6 +12,7 @@ import type { PublishingPlanRevisionDto } from "@/lib/agent-runtime/publishing-p
 import { CalendarRescheduleService, type CalendarReschedulePorts } from "./calendar-reschedule";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { CalendarRescheduleCommandRepository } from "./calendar-reschedule-repository";
+import { WORKSPACE_SERVICE_AGENT_RESOLVER } from "@/lib/agent-auth/workspace-service-agent";
 
 function capabilityResult<T>(response: Awaited<ReturnType<typeof dispatchCapability>>): T {
   if (response.type === "capability_error") {
@@ -22,14 +23,18 @@ function capabilityResult<T>(response: Awaited<ReturnType<typeof dispatchCapabil
   return response.output as T;
 }
 
-export function productionCalendarRescheduleService(input: {
+export async function productionCalendarRescheduleService(input: {
+  workspaceId: string;
   userId: string;
   role: "owner" | "admin" | "member";
   authContextId: string;
-}): CalendarRescheduleService {
-  const servicePrincipalId = process.env.CALENDAR_RESCHEDULE_AGENT_PRINCIPAL_ID;
-  const serviceKeyId = process.env.CALENDAR_RESCHEDULE_AGENT_KEY_ID;
-  if (!servicePrincipalId || !serviceKeyId) throw new Error("CALENDAR_RESCHEDULE_SERVICE_ACTOR_UNAVAILABLE");
+}): Promise<CalendarRescheduleService> {
+  const actor = await WORKSPACE_SERVICE_AGENT_RESOLVER.resolve({
+    workspaceId: input.workspaceId,
+    purpose: "calendar_reschedule",
+  });
+  const servicePrincipalId = actor.principalId;
+  const serviceKeyId = actor.keyId;
   const receipts = new CalendarRescheduleCommandRepository({ principalId: servicePrincipalId, keyId: serviceKeyId });
   const ports: CalendarReschedulePorts = {
     async loadSource(sourceInput) {

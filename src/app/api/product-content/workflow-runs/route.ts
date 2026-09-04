@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
+import { WORKSPACE_SERVICE_AGENT_RESOLVER } from "@/lib/agent-auth/workspace-service-agent";
 import { getDb } from "@/lib/db";
 import { findCuratedModel } from "@/lib/model-routing/catalog";
 import { PostgresModelRoutingRepository } from "@/lib/model-routing/postgres-repository";
@@ -16,17 +17,18 @@ export const POST = withStudioAuth<undefined>({ route: "/api/product-content/wor
   const key = request.headers.get("idempotency-key");
   const parsed = body.safeParse(await request.json().catch(() => null));
   if (!parsed.success || !key || key.length < 8 || request.headers.get("x-workspace-id") !== authz.workspaceId) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
-  const principalId = process.env.CONTENT_WORKFLOW_AGENT_PRINCIPAL_ID?.trim();
-  const keyId = process.env.CONTENT_WORKFLOW_AGENT_KEY_ID?.trim();
-  if (!principalId || !keyId) return noStoreJson({ success: false, code: "CONTENT_WORKFLOW_SERVICE_ACTOR_UNAVAILABLE" }, { status: 503 });
   try {
+    const actor = await WORKSPACE_SERVICE_AGENT_RESOLVER.resolve({
+      workspaceId: authz.workspaceId,
+      purpose: "content_workflow",
+    });
     const intent = await new PostgresModelRoutingRepository(getDb).getIntent(authz.workspaceId, parsed.data.intentId);
     if (!intent?.contentExecution) return noStoreJson({ success: false, code: "CONTENT_WORKFLOW_INTENT_REQUIRED" }, { status: 409 });
     const format = intent.contentExecution.formatDefinition.id.slice("content-format:".length) as ContentFormat;
     const resolved = await resolveContentFormatDefinitionReference(format, intent.contentExecution.formatDefinition);
     const descriptor = findCuratedModel(intent.selectedModel);
     if (!descriptor) return noStoreJson({ success: false, code: "CONTENT_MODEL_POLICY_MODEL_NOT_QUALIFIED" }, { status: 409 });
-    const accepted = await new ContentGenerationWorkflowService(productionContentWorkflowRuntime({ principalId, keyId })).start({ workspaceId: authz.workspaceId, userId: authz.userId, authContextId: authz.authContextId, role: authz.role, planTier: authz.contentSession.planTier, intent, definition: resolved.definition, descriptor, prompt: parsed.data.prompt, sourceAssetIds: parsed.data.sourceAssetIds, idempotencyKey: key, servicePrincipalId: principalId, serviceKeyId: keyId });
+    const accepted = await new ContentGenerationWorkflowService(productionContentWorkflowRuntime(actor)).start({ workspaceId: authz.workspaceId, userId: authz.userId, authContextId: authz.authContextId, role: authz.role, planTier: authz.contentSession.planTier, intent, definition: resolved.definition, descriptor, prompt: parsed.data.prompt, sourceAssetIds: parsed.data.sourceAssetIds, idempotencyKey: key, servicePrincipalId: actor.principalId, serviceKeyId: actor.keyId });
     return noStoreJson({ success: true, workflowRun: accepted.run }, { status: 202 });
   } catch (error) {
     const code = error instanceof ContentWorkflowRuntimeError ? error.code : "CONTENT_WORKFLOW_UNAVAILABLE";

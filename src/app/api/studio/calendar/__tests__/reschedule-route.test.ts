@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 const authorizeStudioRequest = vi.fn();
 const reschedule = vi.fn();
+const productionCalendarRescheduleService = vi.fn(async () => ({
+  reschedule: (...args: unknown[]) => reschedule(...args),
+}));
 
 vi.mock("@/lib/db", () => ({ isDatabaseConfigured: () => true }));
 vi.mock("@/lib/studio/authz", () => ({
@@ -12,7 +15,7 @@ vi.mock("@/lib/studio/authz", () => ({
 }));
 vi.mock("@/lib/product-surfaces/calendar-reschedule-production", () => ({
   calendarRescheduleInitiator: () => ({ userId: "user_1", principalId: "human:user_1", keyId: "session", authorizationEvidenceRef: "auth" }),
-  productionCalendarRescheduleService: () => ({ reschedule: (...args: unknown[]) => reschedule(...args) }),
+  productionCalendarRescheduleService: (input: unknown) => productionCalendarRescheduleService(input),
 }));
 
 import { POST } from "../reschedule/route";
@@ -51,7 +54,20 @@ describe("POST /api/studio/calendar/reschedule", () => {
       revisionDigest: source.revisionDigest,
       expectedRevision: 4,
       targetId: "target_1",
+      userId: "user_1",
+      initiator: {
+        userId: "user_1",
+        principalId: "human:user_1",
+        keyId: "session",
+        authorizationEvidenceRef: "auth",
+      },
     }));
+    expect(productionCalendarRescheduleService).toHaveBeenCalledWith({
+      workspaceId: "workspace_1",
+      userId: "user_1",
+      role: "member",
+      authContextId: "session_1",
+    });
   });
 
   it("rejects the former caller-controlled legacy post authority", async () => {
