@@ -10,7 +10,7 @@ const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("refresh_source"), sourceId: z.string().min(1).max(200), expectedSourceRevision: z.number().int().positive(), idempotencyKey: z.string().min(8).max(200) }),
 ]);
 
-export const POST = withStudioAuth<undefined>({ route: "/api/brand/profile", action: "write" }, async (request, authz) => {
+export const POST = withStudioAuth<undefined>({ route: "/api/brand/profile", action: "write", permission: "workspaces:write" }, async (request, authz) => {
   const parsed = requestSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ success: false, error: "Invalid Brand Profile command.", issues: parsed.error.issues }, { status: 400 });
   try {
