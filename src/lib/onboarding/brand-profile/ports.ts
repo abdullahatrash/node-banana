@@ -5,6 +5,7 @@ import type {
   BrandProfileV1,
   OnboardingAnswersV1,
 } from "../schemas";
+import type { ImmutableBrandContext } from "@/lib/model-routing/types";
 
 export type StructuredGenerationKind = "brand_profile" | "activation_artifact";
 
@@ -15,9 +16,25 @@ export interface StructuredGenerationRequest {
   schemaDescription: string;
   system: string;
   prompt: string;
+  admission?: {
+    workspaceId: string;
+    userId: string;
+    idempotencyKey: string;
+    contentLanguage: "ar" | "en" | "mixed";
+    arabicVariety: "msa" | null;
+    brand: {
+      profileId: string;
+      revision: number;
+      acceptedAt: Date;
+      profileDigest: `sha256:${string}`;
+      context: ImmutableBrandContext;
+      referenceUrls: Array<{ assetId: string; url: string }>;
+    };
+  };
 }
 
 export interface StructuredGenerationClient {
+  readonly requiresAdmission?: boolean;
   generate(request: StructuredGenerationRequest): Promise<unknown>;
 }
 
@@ -30,6 +47,13 @@ export interface BrandProfileGenerationInput {
 export interface ActivationArtifactGenerationInput {
   brandProfileId: string;
   profile: BrandProfileV1;
+  control?: {
+    workspaceId: string;
+    userId: string;
+    idempotencyKey: string;
+    revision: number;
+    acceptedAt: Date;
+  };
 }
 
 export interface BrandProfileGenerator {
@@ -53,7 +77,9 @@ export class BrandProfileGenerationError extends Error {
       | "BRAND_PROFILE_OUTPUT_INVALID"
       | "ACTIVATION_GENERATION_FAILED"
       | "ACTIVATION_OUTPUT_INVALID"
-      | "MODEL_CONFIGURATION_UNAVAILABLE",
+      | "MODEL_CONFIGURATION_UNAVAILABLE"
+      | "ADMITTED_GENERATION_UNAVAILABLE"
+      | "ADMITTED_GENERATION_PENDING",
     readonly retryable: boolean,
   ) {
     super(code);

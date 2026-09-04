@@ -1,13 +1,6 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
-import {
-  generateText,
-  NoObjectGeneratedError,
-  Output,
-  type LanguageModel,
-} from "ai";
 import type { z } from "zod";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { loadImmutableBrandContext } from "@/lib/model-routing/brand-context";
 import {
   activationArtifactV1Schema,
   brandProfileV1Schema,
@@ -33,77 +26,25 @@ import {
   buildBrandProfilePrompt,
   buildRepairPrompt,
 } from "./prompt";
-
-type OnboardingModelProvider = "google" | "openai" | "anthropic";
-
-interface OnboardingModelConfig {
-  provider: OnboardingModelProvider;
-  modelId: string;
-  envKey: "GEMINI_API_KEY" | "OPENAI_API_KEY" | "ANTHROPIC_API_KEY";
-}
-
-const MODEL_REGISTRY: Record<string, OnboardingModelConfig> = {
-  "gemini-2.5-flash": {
-    provider: "google",
-    modelId: "gemini-2.5-flash",
-    envKey: "GEMINI_API_KEY",
-  },
-  "gemini-3-flash-preview": {
-    provider: "google",
-    modelId: "gemini-3-flash-preview",
-    envKey: "GEMINI_API_KEY",
-  },
-  "gpt-4.1-mini": {
-    provider: "openai",
-    modelId: "gpt-4.1-mini",
-    envKey: "OPENAI_API_KEY",
-  },
-  "gpt-4.1-nano": {
-    provider: "openai",
-    modelId: "gpt-4.1-nano",
-    envKey: "OPENAI_API_KEY",
-  },
-  "claude-sonnet-4.5": {
-    provider: "anthropic",
-    modelId: "claude-sonnet-4-5-20250929",
-    envKey: "ANTHROPIC_API_KEY",
-  },
-};
+import { AdmittedOnboardingStructuredGenerationClient } from "./admitted-client";
 
 function formatZodIssues(error: z.ZodError): string[] {
   return error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`);
 }
 
-export class AiSdkStructuredGenerationClient implements StructuredGenerationClient {
-  constructor(private readonly model: LanguageModel) {}
+const language = (value: string): "ar" | "en" | "mixed" => value.toLowerCase().startsWith("ar") ? "ar" : value.toLowerCase().startsWith("en") ? "en" : "mixed";
 
-  async generate(request: StructuredGenerationRequest): Promise<unknown> {
-    try {
-      const result = await generateText({
-        model: this.model,
-        system: request.system,
-        prompt: request.prompt,
-        output: Output.object({
-          schema: request.schema,
-          name: request.schemaName,
-          description: request.schemaDescription,
-        }),
-        temperature: 0.1,
-        maxOutputTokens: 8_192,
-        maxRetries: 2,
-      });
-      return result.output;
-    } catch (error) {
-      if (NoObjectGeneratedError.isInstance(error)) {
-        throw new InvalidStructuredOutputError([
-          error.finishReason === "length"
-            ? "root: output was truncated"
-            : "root: output did not match the required schema",
-        ]);
-      }
-      throw error;
-    }
-  }
+function bootstrapProfile(input: BrandProfileGenerationInput): BrandProfileV1 {
+  const contentLanguage = language(input.contentLanguage);
+  const companyName = input.answers.identity?.companyName ?? "Workspace brand";
+  const localizedPending = contentLanguage === "ar" ? "هوية العلامة قيد التحليل من الأدلة التي وافق المستخدم على تقديمها." : "Brand identity pending analysis from evidence the user consented to submit.";
+  return {
+    schemaVersion: 1, contentLanguage, identity: { companyName, coreIdentity: localizedPending, logoAssetId: input.answers.identity?.logoAssetId ?? null },
+    offering: input.answers.businessClassification?.categories ?? ["brand analysis"], audiences: [{ name: input.answers.role?.role ?? "workspace team", description: localizedPending, weight: 100 }],
+    problems: [], benefits: input.answers.goals?.expectedOutcomes ?? [], differentiators: [], mission: localizedPending, positioning: localizedPending, ownedSpace: localizedPending,
+    businessModel: input.answers.businessClassification?.businessModel ?? "both", categories: input.answers.businessClassification?.categories ?? [],
+    voice: { descriptors: [], do: [], doNot: [] }, prohibitedClaims: [], prohibitedTopics: [], competitors: [], contentAngles: [], uncertainties: [localizedPending], evidence: [], sourceIds: [input.source.id],
+  };
 }
 
 async function generateWithOneRepair<T>(input: {
@@ -121,10 +62,15 @@ async function generateWithOneRepair<T>(input: {
     let issues: string[] = [];
 
     try {
-      output = await input.client.generate({ ...input.request, prompt });
+      const admission = input.request.admission
+        ? { ...input.request.admission, idempotencyKey: `${input.request.admission.idempotencyKey}:attempt:${attempt + 1}` }
+        : undefined;
+      output = await input.client.generate({ ...input.request, prompt, admission });
     } catch (error) {
       if (error instanceof InvalidStructuredOutputError) {
         issues = error.issues;
+      } else if (error instanceof BrandProfileGenerationError) {
+        throw error;
       } else {
         throw new BrandProfileGenerationError(input.failureCode, true);
       }
@@ -168,6 +114,14 @@ export class ValidatedBrandProfileGenerator implements BrandProfileGenerator {
       evidence,
       answers: input.answers,
     });
+    let admission: StructuredGenerationRequest["admission"];
+    if (this.client.requiresAdmission) {
+      const bootstrap = bootstrapProfile(input);
+      const acceptedAt = input.source.createdAt;
+      const loaded = await loadImmutableBrandContext({ workspaceId: input.source.workspaceId, profileId: `onboarding_${input.source.id}`, revision: input.source.revision, acceptedAt, profile: bootstrap });
+      if (!loaded) throw new BrandProfileGenerationError("ADMITTED_GENERATION_UNAVAILABLE", false);
+      admission = { workspaceId: input.source.workspaceId, userId: input.source.createdByUserId, idempotencyKey: `onboarding:${input.source.id}:brand-profile:v1`, contentLanguage: language(input.contentLanguage), arabicVariety: language(input.contentLanguage) === "en" ? null : "msa", brand: { profileId: loaded.context.profileId, revision: loaded.context.revision, acceptedAt, profileDigest: canonicalDigest({ sourceId: input.source.id, contentHash: input.source.contentHash, answers: input.answers }) as `sha256:${string}`, context: loaded.context, referenceUrls: loaded.referenceUrls } };
+    }
 
     return generateWithOneRepair({
       client: this.client,
@@ -178,6 +132,7 @@ export class ValidatedBrandProfileGenerator implements BrandProfileGenerator {
         schemaDescription: "A versioned, evidence-backed brand profile for human review.",
         system: BRAND_PROFILE_SYSTEM_PROMPT,
         prompt,
+        admission,
       },
       schema: brandProfileV1Schema,
       validate: (profile) => {
@@ -203,6 +158,13 @@ export class ValidatedBrandProfileGenerator implements BrandProfileGenerator {
       brandProfileId: input.brandProfileId,
       profile,
     });
+    let admission: StructuredGenerationRequest["admission"];
+    if (this.client.requiresAdmission) {
+      if (!input.control) throw new BrandProfileGenerationError("ADMITTED_GENERATION_UNAVAILABLE", false);
+      const loaded = await loadImmutableBrandContext({ workspaceId: input.control.workspaceId, profileId: input.brandProfileId, revision: input.control.revision, acceptedAt: input.control.acceptedAt, profile });
+      if (!loaded) throw new BrandProfileGenerationError("ADMITTED_GENERATION_UNAVAILABLE", false);
+      admission = { workspaceId: input.control.workspaceId, userId: input.control.userId, idempotencyKey: input.control.idempotencyKey, contentLanguage: language(profile.contentLanguage), arabicVariety: language(profile.contentLanguage) === "en" ? null : "msa", brand: { profileId: input.brandProfileId, revision: input.control.revision, acceptedAt: input.control.acceptedAt, profileDigest: canonicalDigest(profile) as `sha256:${string}`, context: loaded.context, referenceUrls: loaded.referenceUrls } };
+    }
 
     return generateWithOneRepair({
       client: this.client,
@@ -213,6 +175,7 @@ export class ValidatedBrandProfileGenerator implements BrandProfileGenerator {
         schemaDescription: "One editable, immediately useful content suggestion.",
         system: ACTIVATION_SYSTEM_PROMPT,
         prompt,
+        admission,
       },
       schema: activationArtifactV1Schema,
       validate: (artifact) => {
@@ -231,29 +194,11 @@ export class ValidatedBrandProfileGenerator implements BrandProfileGenerator {
   }
 }
 
-function createLanguageModel(modelKey: string, environment: NodeJS.ProcessEnv): LanguageModel {
-  const config = MODEL_REGISTRY[modelKey];
-  const apiKey = config ? environment[config.envKey] : undefined;
-  if (!config || !apiKey) {
-    throw new BrandProfileGenerationError("MODEL_CONFIGURATION_UNAVAILABLE", false);
-  }
-
-  switch (config.provider) {
-    case "google":
-      return createGoogleGenerativeAI({ apiKey })(config.modelId);
-    case "openai":
-      return createOpenAI({ apiKey })(config.modelId);
-    case "anthropic":
-      return createAnthropic({ apiKey })(config.modelId);
-  }
-}
-
 export function createConfiguredBrandProfileGenerator(options?: {
   modelKey?: string;
   environment?: NodeJS.ProcessEnv;
 }): BrandProfileGenerator {
   const environment = options?.environment ?? process.env;
-  const modelKey = options?.modelKey ?? environment.ONBOARDING_LLM_MODEL ?? "gemini-2.5-flash";
-  const model = createLanguageModel(modelKey, environment);
-  return new ValidatedBrandProfileGenerator(new AiSdkStructuredGenerationClient(model));
+  if (options?.modelKey) throw new BrandProfileGenerationError("MODEL_CONFIGURATION_UNAVAILABLE", false);
+  return new ValidatedBrandProfileGenerator(new AdmittedOnboardingStructuredGenerationClient(environment));
 }

@@ -192,6 +192,13 @@ describe("ValidatedBrandProfileGenerator", () => {
     expect(client.requests).toHaveLength(1);
   });
 
+  it("preserves a durable pending admission for workflow retry instead of starting a repair", async () => {
+    const client = new SequenceClient([new BrandProfileGenerationError("ADMITTED_GENERATION_PENDING", true)]);
+    const generator = new ValidatedBrandProfileGenerator(client);
+    await expect(generator.generateProfile({ source, answers, contentLanguage: "ar" })).rejects.toMatchObject({ code: "ADMITTED_GENERATION_PENDING", retryable: true });
+    expect(client.requests).toHaveLength(1);
+  });
+
   it("generates activation only from a validated profile and binds its profile ID", async () => {
     const profile = validProfile("en");
     const artifact = {
@@ -215,6 +222,34 @@ describe("ValidatedBrandProfileGenerator", () => {
     expect(client.requests[0].prompt).toContain("Required brandProfileId: profile_1");
   });
 
+  it("pins onboarding profile and activation work to admitted Workspace and Brand context", async () => {
+    const profile = validProfile("ar");
+    const artifact = {
+      schemaVersion: 1,
+      contentLanguage: "ar",
+      kind: "social_post",
+      title: "خطط بوضوح",
+      hook: "خطة واضحة تحفظ صوت علامتك.",
+      body: "ابدأ بفكرة واحدة ثم راجعها مع فريقك.",
+      rationale: "يعكس التموضع وصوت العلامة.",
+      suggestedFormats: ["منشور اجتماعي"],
+      brandProfileId: "profile_1",
+    } as const;
+    const client = new SequenceClient([profile, artifact]) as SequenceClient & { requiresAdmission: true };
+    client.requiresAdmission = true;
+    const generator = new ValidatedBrandProfileGenerator(client);
+
+    await generator.generateProfile({ source, answers, contentLanguage: "ar" });
+    await generator.generateActivationArtifact({
+      brandProfileId: "profile_1",
+      profile,
+      control: { workspaceId: source.workspaceId, userId: source.createdByUserId, idempotencyKey: "onboarding:profile_1:activation:v1", revision: 2, acceptedAt: source.createdAt },
+    });
+
+    expect(client.requests[0].admission).toMatchObject({ workspaceId: source.workspaceId, userId: source.createdByUserId, contentLanguage: "ar", arabicVariety: "msa", brand: { profileId: `onboarding_${source.id}`, revision: 1 } });
+    expect(client.requests[1].admission).toMatchObject({ workspaceId: source.workspaceId, userId: source.createdByUserId, brand: { profileId: "profile_1", revision: 2 } });
+  });
+
   it("fails closed when the configured model or API key is unavailable", () => {
     expect(() =>
       createConfiguredBrandProfileGenerator({
@@ -222,5 +257,6 @@ describe("ValidatedBrandProfileGenerator", () => {
         environment: { NODE_ENV: "test" },
       }),
     ).toThrowError(BrandProfileGenerationError);
+    expect(() => createConfiguredBrandProfileGenerator({ environment: { NODE_ENV: "test" } })).toThrowError(BrandProfileGenerationError);
   });
 });

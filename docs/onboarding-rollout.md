@@ -8,7 +8,7 @@ This runbook enables the verified, resumable onboarding journey without locking 
 2. Run `pnpm db:backfill:onboarding` before enabling product gates. It marks existing workspace members `completed_legacy`; rerunning it is safe.
 3. Verify that every active production user with a workspace is either `completed`, `completed_legacy`, or intentionally in the new cohort.
 4. Configure `RESEND_API_KEY`, `AUTH_FROM_EMAIL`, `AUTH_EMAIL_DELIVERY=resend`, and an approved sending domain. Never enable console email links outside local development.
-5. Configure `ONBOARDING_LLM_MODEL` and the matching provider credential.
+5. Configure `ONBOARDING_REPLICATE_MODEL_REF_JSON` to an immutable text model covered by an unexpired signed qualification, plus the Workspace's durable Replicate credential. Generation remains closed until the Workspace budget and verified processing-region policies also admit it.
 6. Confirm the Workflow webhook routes are reachable and the workflow manifest contains `executeOnboardingBrandAnalysis`.
 
 ## Cohort controls

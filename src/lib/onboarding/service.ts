@@ -424,6 +424,7 @@ export class DefaultOnboardingService {
         );
       }
       const profileId = this.ids.generate("profile");
+      const profileRevision = await this.repository.getNextBrandProfileRevision(workspaceId);
       const editedProfile = brandProfileV1Schema.parse({
         ...currentDraft.profile,
         identity: {
@@ -445,11 +446,12 @@ export class DefaultOnboardingService {
       const artifact = await this.profileGenerator().generateActivationArtifact({
         brandProfileId: profileId,
         profile: editedProfile,
+        control: { workspaceId, userId: input.userId, idempotencyKey: `onboarding:${profileId}:activation:v1`, revision: profileRevision, acceptedAt: now },
       });
       replacementProfile = {
         id: profileId,
         workspaceId,
-        revision: await this.repository.getNextBrandProfileRevision(workspaceId),
+        revision: profileRevision,
         status: "draft",
         schemaVersion: 1,
         profile: editedProfile,
