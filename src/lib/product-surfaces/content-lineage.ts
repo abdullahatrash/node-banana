@@ -1,7 +1,8 @@
 import { generationOperationId } from "@/lib/model-routing/generation-operation";
 import type { GenerationIntent } from "@/lib/model-routing/types";
 import type { ContentFormat } from "./definitions";
-import { contentExecutionPlan, contentProviderSourceIds, validateContentExecutionInput } from "./content-execution-plan";
+import { contentExecutionPlan, contentProviderSourceIds, contentSourceSlotAssignment, validateContentExecutionInput } from "./content-execution-plan";
+import type { ContentFormatDefinition } from "./content-format-definition";
 
 export interface ContentAssetEvidence {
   id: string;
@@ -25,6 +26,7 @@ export function validateReadyPortraitAsset(asset: ContentAssetEvidence, expected
 
 export function isAdmittedContentArtifact(input: {
   format: ContentFormat;
+  definition: ContentFormatDefinition;
   sourceAssets: ContentAssetEvidence[];
   personaState: string | null;
   generation: ContentGenerationReference;
@@ -33,11 +35,12 @@ export function isAdmittedContentArtifact(input: {
   operation: { state: string; artifactIds: unknown } | null;
   artifact: ContentAssetEvidence | null;
 }) {
-  const plan = contentExecutionPlan(input.format);
+  const plan = contentExecutionPlan(input.format, input.definition);
   if (plan.strategy !== "admitted_generation" || !plan.capability) return false;
-  if (!validateContentExecutionInput({ format: input.format, sources: input.sourceAssets, personaState: input.personaState }).ok) return false;
-  if (input.sourceAssets.some((asset, index) => validateReadyPortraitAsset(asset, plan.sourceTypes[index]!) !== null)) return false;
-  const providerSourceIds = contentProviderSourceIds(input.format, input.sourceAssets.map((asset) => asset.id));
+  if (!validateContentExecutionInput({ format: input.format, definition: input.definition, sources: input.sourceAssets, personaState: input.personaState }).ok) return false;
+  const assignment = contentSourceSlotAssignment(input.definition, input.sourceAssets);
+  if (!assignment || input.sourceAssets.some((asset, index) => validateReadyPortraitAsset(asset, input.definition.sourceSlots[assignment[index]!]!.type) !== null)) return false;
+  const providerSourceIds = contentProviderSourceIds(input.format, input.sourceAssets, input.definition);
   const { generation, receipt, intent, operation, artifact } = input;
   return generation.operationId === generationOperationId(generation.intentId)
     && Boolean(receipt && receipt.status === "ready" && receipt.assetId === generation.assetId && receipt.intentId === generation.intentId && receipt.contentDigest)

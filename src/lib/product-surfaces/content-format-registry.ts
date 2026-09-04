@@ -33,3 +33,11 @@ export async function resolveActiveContentFormatDefinition(format: ContentFormat
   if (definition.id !== row.definitionId || definition.revision !== row.revision || definition.format !== row.format || canonicalDigest(definition) !== row.documentDigest) throw new ContentFormatRegistryError("CONTENT_FORMAT_DEFINITION_INVALID");
   return { definition, reference: { id: row.definitionId, revision: row.revision, digest: row.documentDigest } };
 }
+
+export async function resolveContentFormatDefinitionReference(format: ContentFormat, reference: { id: string; revision: number }) {
+  const [row] = await getDb().select().from(contentFormatDefinitionRevisions).where(and(eq(contentFormatDefinitionRevisions.definitionId, reference.id), eq(contentFormatDefinitionRevisions.revision, reference.revision), eq(contentFormatDefinitionRevisions.format, format))).limit(1);
+  if (!row) throw new ContentFormatRegistryError("CONTENT_FORMAT_DEFINITION_UNAVAILABLE");
+  const definition = validatePersistedContentFormatDefinition(row.document);
+  if (definition.id !== row.definitionId || definition.revision !== row.revision || definition.format !== row.format || canonicalDigest(definition) !== row.documentDigest) throw new ContentFormatRegistryError("CONTENT_FORMAT_DEFINITION_INVALID");
+  return { definition, reference: { id: row.definitionId, revision: row.revision, digest: row.documentDigest } };
+}

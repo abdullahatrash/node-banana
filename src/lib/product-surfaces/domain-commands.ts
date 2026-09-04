@@ -14,13 +14,25 @@ import { contentPieceSchema, parseProductPayload } from "./definitions";
 import { buildContentRenderProof, isAdmittedContentArtifact, validateReadyPortraitAsset, type ContentAssetEvidence, type ContentGenerationReference } from "./content-lineage";
 import { contentExecutionPlan, validateContentExecutionInput } from "./content-execution-plan";
 import { validateContentDraft } from "./content-draft-policy";
-import { resolveActiveContentFormatDefinition } from "./content-format-registry";
+import { ContentFormatRegistryError, resolveActiveContentFormatDefinition, resolveContentFormatDefinitionReference } from "./content-format-registry";
+import type { ContentFormatDefinition } from "./content-format-definition";
 import { evaluatePersonaGate, type CreatorPersona, type CreatorPersonaEvidence } from "@/lib/creator-personas/types";
 
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
 type ContentPiecePayload = ReturnType<typeof contentPieceSchema.parse>;
 
+async function pinnedContentDefinition(payload: ContentPiecePayload): Promise<ContentFormatDefinition | null> {
+  if (!payload.formatDefinition) return null;
+  try {
+    return (await resolveContentFormatDefinitionReference(payload.format, payload.formatDefinition)).definition;
+  } catch (error) {
+    if (error instanceof ContentFormatRegistryError) return null;
+    throw error;
+  }
+}
+
 async function validateContentPayload(executor: Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0], workspaceId: string, payload: ContentPiecePayload, now = new Date()) {
+  const definition = await pinnedContentDefinition(payload);
   const sourceRowsUnordered = payload.sourceAssetIds.length ? await executor.select().from(assets).where(and(eq(assets.workspaceId, workspaceId), inArray(assets.id, payload.sourceAssetIds), isNull(assets.deletedAt))) : [];
   const sourceById = new Map(sourceRowsUnordered.map((row) => [row.id, row]));
   const sourceAssets = payload.sourceAssetIds.map((id) => sourceById.get(id)).filter((row): row is typeof assets.$inferSelect => Boolean(row)).map((row) => ({ id: row.id, type: row.type, ready: Boolean(row.checksum && (row.metadata as Record<string, unknown> | null)?.uploadState === "ready") }));
@@ -36,6 +48,7 @@ async function validateContentPayload(executor: Parameters<Parameters<ReturnType
   const themeIds = [...new Set(payload.themeRevisionRefs.map((reference) => reference.themeId))];
   const themes = themeIds.length ? await executor.select({ id: contentThemes.id, revision: contentThemeRevisions.revision, state: contentThemes.state, licenseExpiresAt: contentThemeRevisions.licenseExpiresAt }).from(contentThemes).innerJoin(contentThemeRevisions, and(eq(contentThemeRevisions.workspaceId, contentThemes.workspaceId), eq(contentThemeRevisions.themeId, contentThemes.id))).where(and(eq(contentThemes.workspaceId, workspaceId), inArray(contentThemes.id, themeIds))) : [];
   return validateContentDraft({
+    definition,
     draft: { format: payload.format, formatDefinition: payload.formatDefinition, contentLanguage: payload.contentLanguage, arabicVariety: payload.arabicVariety, aspectRatio: payload.aspectRatio, durationSeconds: payload.durationSeconds, script: payload.script, captionStyle: payload.captionStyle, speaker: payload.speaker, scene: payload.scene, personaId: payload.personaId, mediaSetIds: payload.mediaSetIds, themeRevisionRefs: payload.themeRevisionRefs },
     sourceAssets,
     persona,
@@ -46,18 +59,17 @@ async function validateContentPayload(executor: Parameters<Parameters<ReturnType
 
 export async function saveContentCommand(input: Actor & { id?: string; expectedRevision?: number; title: string; payload: Record<string, unknown> }) {
   const draft = contentPieceSchema.parse({ ...input.payload, candidateArtifactIds: [], candidates: [], renderProofStatus: "not_requested", generatedText: null, generatedMedia: null });
-  const activeDefinition = await resolveActiveContentFormatDefinition(draft.format);
-  const requested = contentPieceSchema.parse({ ...draft, formatDefinition: activeDefinition.reference });
+  const [current] = input.id ? await getDb().select({ payload: workspaceProductRecords.payload }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1) : [];
+  if (input.id && !current) return null;
+  const authoritative = current ? contentPieceSchema.parse(current.payload) : null;
+  const requestedReference = authoritative?.formatDefinition ?? draft.formatDefinition ?? (await resolveActiveContentFormatDefinition(draft.format)).reference;
+  const requested = contentPieceSchema.parse({ ...draft, formatDefinition: requestedReference });
   const validationIssues = await getDb().transaction((tx) => validateContentPayload(tx, input.workspaceId, requested));
   const state = validationIssues.length ? "draft" : "active";
   const validated = { ...requested, validationIssues };
   if (!input.id) return createProductRecord({ ...input, kind: "content_piece", state, payload: validated });
   if (!input.expectedRevision) throw new Error("CONTENT_EXPECTED_REVISION_REQUIRED");
-  const id = input.id;
-  const [current] = await getDb().select({ payload: workspaceProductRecords.payload }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1);
-  if (!current) return null;
-  const authoritative = contentPieceSchema.parse(current.payload);
-  return updateProductRecord({ ...input, id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, state, payload: { ...validated, candidateArtifactIds: authoritative.candidateArtifactIds, candidates: authoritative.candidates, renderProofStatus: authoritative.renderProofStatus, generatedText: authoritative.generatedText, generatedMedia: authoritative.generatedMedia } });
+  return updateProductRecord({ ...input, id: input.id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, state, payload: { ...validated, candidateArtifactIds: authoritative!.candidateArtifactIds, candidates: authoritative!.candidates, renderProofStatus: authoritative!.renderProofStatus, generatedText: authoritative!.generatedText, generatedMedia: authoritative!.generatedMedia } });
 }
 
 function assetEvidence(row: typeof assets.$inferSelect): ContentAssetEvidence {
@@ -73,6 +85,8 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
     const payload = contentPieceSchema.parse(record.payload);
     const validationIssues = await validateContentPayload(tx, input.workspaceId, payload, now);
     if (validationIssues.length) throw new Error(validationIssues[0]);
+    const definition = await pinnedContentDefinition(payload);
+    if (!definition) throw new Error("CONTENT_FORMAT_DEFINITION_STALE");
     const sourceRowsUnordered = payload.sourceAssetIds.length ? await tx.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, payload.sourceAssetIds), isNull(assets.deletedAt))) : [];
     const sourceById = new Map(sourceRowsUnordered.map((row) => [row.id, row]));
     const sourceRows = payload.sourceAssetIds.map((id) => sourceById.get(id)).filter((row): row is typeof assets.$inferSelect => Boolean(row));
@@ -82,9 +96,9 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
       const [persona] = await tx.select({ state: workspaceProductRecords.state }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, payload.personaId), eq(workspaceProductRecords.kind, "creator_persona"), isNull(workspaceProductRecords.archivedAt))).limit(1);
       personaState = persona?.state ?? null;
     }
-    const inputValidation = validateContentExecutionInput({ format: payload.format, sources: sourceAssets, personaState });
+    const inputValidation = validateContentExecutionInput({ format: payload.format, definition, sources: sourceAssets, personaState });
     if (!inputValidation.ok) throw new Error(inputValidation.code);
-    const plan = contentExecutionPlan(payload.format);
+    const plan = contentExecutionPlan(payload.format, definition);
     let artifact: ContentAssetEvidence;
     let contentDigest: string;
     let intentId: string | null = null;
@@ -104,7 +118,7 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
       const operationMetadata = operation?.metadata && typeof operation.metadata === "object" && !Array.isArray(operation.metadata) ? operation.metadata : {};
       if (!artifactRow) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
       artifact = assetEvidence(artifactRow);
-      if (!isAdmittedContentArtifact({ format: payload.format, sourceAssets, personaState, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest, width: receipt.width, height: receipt.height, durationSeconds: receipt.durationSeconds } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifact })) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
+      if (!isAdmittedContentArtifact({ format: payload.format, definition, sourceAssets, personaState, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest, width: receipt.width, height: receipt.height, durationSeconds: receipt.durationSeconds } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifact })) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
       contentDigest = receipt!.contentDigest!;
       intentId = input.generation.intentId;
       operationId = input.generation.operationId;

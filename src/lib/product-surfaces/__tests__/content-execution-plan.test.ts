@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CONTENT_FORMATS } from "../definitions";
 import { allContentFormatsHaveExecutionPlans, contentExecutionPlan, contentProviderSourceIds, validateContentExecutionInput } from "../content-execution-plan";
+import { contentFormatDefinition } from "../content-format-definition";
 
 describe("Content Format execution plans", () => {
   it("covers all twelve formats with governed execution", () => {
@@ -27,7 +28,7 @@ describe("Content Format execution plans", () => {
   });
 
   it("retains supplementary green-screen inputs while sending only the primary video", () => {
-    expect(contentProviderSourceIds("green_screen_meme", ["background-image", "source-video"])).toEqual(["source-video"]);
+    expect(contentProviderSourceIds("green_screen_meme", [{ id: "background-image", type: "image" }, { id: "source-video", type: "video" }])).toEqual(["source-video"]);
   });
 
   it("rejects wrong order, missing source, and inactive persona", () => {
@@ -37,7 +38,27 @@ describe("Content Format execution plans", () => {
   });
 
   it("accepts the definition-owned Slideshow source range without widening other formats", () => {
+    expect(validateContentExecutionInput({ format: "slideshow", sources: Array.from({ length: 2 }, (_, index) => ({ id: `image-${index}`, type: "image" })), personaState: null })).toEqual({ ok: true });
     expect(validateContentExecutionInput({ format: "slideshow", sources: Array.from({ length: 20 }, (_, index) => ({ id: `image-${index}`, type: "image" })), personaState: null })).toEqual({ ok: true });
+    expect(contentProviderSourceIds("slideshow", Array.from({ length: 20 }, (_, index) => ({ id: `image-${index}`, type: "image" })))).toHaveLength(20);
     expect(validateContentExecutionInput({ format: "slideshow", sources: Array.from({ length: 21 }, (_, index) => ({ id: `image-${index}`, type: "image" })), personaState: null })).toMatchObject({ ok: false, code: "CONTENT_SOURCE_CARDINALITY_INVALID" });
+  });
+
+  it.each(["product_spokesperson", "claymation"] as const)("preserves all eight ordered inputs for %s", (format) => {
+    const sources = Array.from({ length: 8 }, (_, index) => ({ id: `${format}-${index}`, type: "image" }));
+    expect(validateContentExecutionInput({ format, sources, personaState: format === "product_spokesperson" ? "active" : null })).toEqual({ ok: true });
+    expect(contentProviderSourceIds(format, sources)).toEqual(sources.map((source) => source.id));
+  });
+
+  it("derives runtime source validation and provider routing from the supplied pinned definition", () => {
+    const pinned = {
+      ...contentFormatDefinition("slideshow"),
+      revision: 9,
+      sourceSlots: [{ key: "video" as const, type: "video" as const, minimum: 1, maximum: 1, providerInputIndex: 0 }],
+      execution: { ...contentFormatDefinition("slideshow").execution, capability: "video_to_video" as const },
+    };
+    expect(contentExecutionPlan("slideshow", pinned)).toMatchObject({ capability: "video_to_video", sourceTypes: ["video"] });
+    expect(validateContentExecutionInput({ format: "slideshow", definition: pinned, sources: [{ id: "video", type: "video" }], personaState: null })).toEqual({ ok: true });
+    expect(contentProviderSourceIds("slideshow", [{ id: "video", type: "video" }], pinned)).toEqual(["video"]);
   });
 });

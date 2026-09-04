@@ -1,5 +1,5 @@
 import type { ContentFormat } from "./definitions";
-import { contentFormatDefinition } from "./content-format-definition";
+import type { ContentFormatDefinition } from "./content-format-definition";
 import { validateContentExecutionInput } from "./content-execution-plan";
 
 export type ContentDraftIssueCode =
@@ -20,6 +20,7 @@ export type ContentDraftIssueCode =
   | "CONTENT_THEME_REVISION_INVALID";
 
 export interface ContentDraftPolicyInput {
+  definition: ContentFormatDefinition | null;
   draft: {
     format: ContentFormat;
     formatDefinition: { id: string; revision: number } | null;
@@ -43,9 +44,12 @@ export interface ContentDraftPolicyInput {
 
 export function validateContentDraft(input: ContentDraftPolicyInput): ContentDraftIssueCode[] {
   const { draft } = input;
-  const definition = contentFormatDefinition(draft.format);
   const issues = new Set<ContentDraftIssueCode>();
-  if (!draft.formatDefinition || draft.formatDefinition.id !== definition.id || draft.formatDefinition.revision !== definition.revision) issues.add("CONTENT_FORMAT_DEFINITION_STALE");
+  const definition = input.definition;
+  if (!definition || !draft.formatDefinition || draft.formatDefinition.id !== definition.id || draft.formatDefinition.revision !== definition.revision || definition.format !== draft.format) {
+    issues.add("CONTENT_FORMAT_DEFINITION_STALE");
+    return [...issues];
+  }
   if (!definition.languages.content.includes(draft.contentLanguage)) issues.add("CONTENT_LANGUAGE_UNSUPPORTED");
   if (draft.arabicVariety && !definition.languages.arabicVarieties.includes(draft.arabicVariety as never)) issues.add("CONTENT_ARABIC_VARIETY_UNSUPPORTED");
   if (!definition.layout.aspectRatios.includes(draft.aspectRatio as never)) issues.add("CONTENT_ASPECT_RATIO_UNSUPPORTED");
@@ -54,7 +58,7 @@ export function validateContentDraft(input: ContentDraftPolicyInput): ContentDra
   if (definition.requiredControls.includes("captions") && !definition.captions.styles.includes(draft.captionStyle as never)) issues.add("CONTENT_CAPTION_REQUIRED");
   if (definition.requiredControls.includes("speaker") && !draft.speaker.trim()) issues.add("CONTENT_SPEAKER_REQUIRED");
   if (definition.requiredControls.includes("scene") && !draft.scene.trim()) issues.add("CONTENT_SCENE_REQUIRED");
-  const execution = validateContentExecutionInput({ format: draft.format, sources: input.sourceAssets, personaState: input.persona?.state ?? null });
+  const execution = validateContentExecutionInput({ format: draft.format, definition, sources: input.sourceAssets, personaState: input.persona?.state ?? null });
   if (!execution.ok) issues.add(execution.code);
   if (input.sourceAssets.some((asset) => !asset.ready)) issues.add("CONTENT_ASSET_NOT_READY");
   if (definition.requiredControls.includes("persona") && (!input.persona || input.persona.id !== draft.personaId || input.persona.state !== "active" || !input.persona.consentCurrent)) issues.add("CONTENT_PERSONA_REQUIRED");
