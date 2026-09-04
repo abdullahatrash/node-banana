@@ -631,6 +631,13 @@
       "when": 1788568800000,
       "tag": "0089_creator_persona_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1788572400000,
+      "tag": "0090_billing_credits_referrals",
+      "breakpoints": true
     }
   ]
 }

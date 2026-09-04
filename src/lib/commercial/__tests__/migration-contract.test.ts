@@ -1,0 +1,3 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+describe("commercial schema", () => { it("separates plans, trial identity, managed credits, BYOK evidence boundary, referral cash, fraud evidence, and command receipts", () => { const sql = readFileSync("drizzle/0090_billing_credits_referrals.sql", "utf8"); for (const value of ["billing_plan_versions", "beneficiary_identity_digest", "workspace_subscriptions", "managed_execution_commercial_quotes", "generation_credit_buckets", "generation_credit_reservations", "generation_credit_ledger_entries", "commercial_command_receipts", "referral_payout_ledger_entries", "referral_fraud_evidence", "outcome_unknown"]) expect(sql).toContain(value); expect(sql).not.toContain("byok_credit"); }); });
