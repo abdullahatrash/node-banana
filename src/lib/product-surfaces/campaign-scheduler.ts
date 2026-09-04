@@ -49,12 +49,13 @@ export function campaignScheduleSnapshots(input: {
 }) {
   if (input.campaign.state !== "active") return [];
   const campaign = campaignPayloadSchema.parse(input.campaign.payload);
-  if (!campaign.execution.workflow) throw new Error("CAMPAIGN_WORKFLOW_BINDING_REQUIRED");
+  const workflow = campaign.execution.workflow;
+  if (!workflow) throw new Error("CAMPAIGN_WORKFLOW_BINDING_REQUIRED");
   const campaignDigest = canonicalDigest({ revision: input.campaign.revision, payload: campaign });
   return planCampaignOccurrences({ campaignId: input.campaign.id, campaignRevision: input.campaign.revision, cadence: { ...campaign.cadence, weekStart: campaign.cadence.weekStart }, formatMix: campaign.formatMix, from: input.from, through: input.through }).map((plan) => ({
     workspaceId: input.workspaceId, campaignId: input.campaign.id, campaignRevision: input.campaign.revision, campaignDigest, scheduledAt: plan.scheduledAt, occurrenceKey: plan.occurrenceKey, format: plan.format, timezone: campaign.cadence.timezone,
     channels: [...campaign.channelIds], approvalMode: campaign.reviewMode, autoPublishGrantId: campaign.autoPublishGrantId, fundingMode: campaign.execution.mode, budgetCeilingCents: campaign.execution.budgetCents, creditCeiling: campaign.execution.creditCeiling,
-    workflow: structuredClone(campaign.execution.workflow), actor: structuredClone(input.actor),
+    workflow: structuredClone(workflow), actor: structuredClone(input.actor),
   }));
 }
 

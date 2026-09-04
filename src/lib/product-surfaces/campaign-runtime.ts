@@ -8,6 +8,7 @@ import { workspaceProductRecords } from "@/lib/db/schema";
 import { campaignPayloadSchema } from "./definitions";
 import { updateProductRecord, type ProductRecord } from "@/lib/product-surfaces/repository";
 import { CampaignQuoteError, issueCampaignAcceptedQuote } from "./campaign-quote";
+import { PRODUCTION_CAMPAIGN_SCHEDULER_REPOSITORY } from "./campaign-scheduler-repository";
 
 export class CampaignRuntimeError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -83,6 +84,7 @@ export async function activateCampaignCommand(input: {
       quotedAmount: acceptedQuote.quote.amount,
       currency: acceptedQuote.quote.currency,
       acceptedAt: accepted.run.acceptedAt,
+      scheduleAuthority: { principalId: input.userId, keyId, authorizationEvidenceRef: `campaign:${record.id}:revision:${validating.revision}` },
     },
   });
   const active = await updateProductRecord({
@@ -102,5 +104,6 @@ export async function activateCampaignCommand(input: {
 export async function pauseCampaignCommand(input: { workspaceId: string; userId: string; id: string; expectedRevision: number; idempotencyKey: string }) {
   const paused = await updateProductRecord({ ...input, expectedKind: "campaign_automation", state: "paused" });
   if (!paused) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
+  await PRODUCTION_CAMPAIGN_SCHEDULER_REPOSITORY.cancelFuture(input.workspaceId, input.id, new Date());
   return paused;
 }

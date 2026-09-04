@@ -203,6 +203,7 @@ export const campaignPayloadSchema = z.object({
     quotedAmount: z.string().regex(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/),
     currency: z.string().regex(/^[A-Z]{3}$/),
     acceptedAt: z.string().datetime(),
+    scheduleAuthority: z.object({ principalId: text(200), keyId: text(300), authorizationEvidenceRef: text(500) }).nullable().default(null),
   }).nullable().default(null),
 }).superRefine((value, context) => {
   const total = Object.values(value.formatMix).reduce((sum, percentage) => sum + percentage, 0);
