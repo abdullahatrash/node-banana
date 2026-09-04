@@ -8925,6 +8925,37 @@ export const workspaceProductRecordRevisions = pgTable(
   }),
 );
 
+/** Immutable, source-revision-bound Website and GEO measurements. */
+export const productAnalyticsObservations = pgTable(
+  "product_analytics_observations",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceRevision: integer("source_revision").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    metric: text("metric").notNull(),
+    value: integer("value").notNull(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }).notNull(),
+    windowEndedAt: timestamp("window_ended_at", { withTimezone: true }).notNull(),
+    evidenceDigest: text("evidence_digest").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_analytics_observations_pk", columns: [table.workspaceId, table.id] }),
+    idempotencyUnique: uniqueIndex("product_analytics_observations_idempotency_unique").on(table.workspaceId, table.sourceId, table.idempotencyKey),
+    sourceRevisionFk: foreignKey({ columns: [table.workspaceId, table.sourceId, table.sourceRevision], foreignColumns: [workspaceProductRecordRevisions.workspaceId, workspaceProductRecordRevisions.recordId, workspaceProductRecordRevisions.revision], name: "product_analytics_observations_source_revision_fk" }).onDelete("restrict"),
+    rangeIdx: index("product_analytics_observations_range_idx").on(table.workspaceId, table.metric, table.windowEndedAt, table.id),
+    sourceIdx: index("product_analytics_observations_source_idx").on(table.workspaceId, table.sourceId, table.windowEndedAt, table.id),
+    sourceCheck: check("product_analytics_observations_source_check", sql`(${table.sourceKind} = 'website_analytics_source' and ${table.metric} = 'websiteViews') or (${table.sourceKind} = 'geo_analytics_source' and ${table.metric} = 'geoCitations')`),
+    valueCheck: check("product_analytics_observations_value_check", sql`${table.value} >= 0 and ${table.value} <= 10000000`),
+    windowCheck: check("product_analytics_observations_window_check", sql`${table.windowEndedAt} > ${table.windowStartedAt} and ${table.windowEndedAt} <= ${table.windowStartedAt} + interval '24 hours'`),
+    digestCheck: check("product_analytics_observations_digest_check", sql`${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.idempotencyKey}) between 8 and 200`),
+  }),
+);
+
 export const productCampaignOccurrences = pgTable(
   "product_campaign_occurrences",
   {

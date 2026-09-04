@@ -666,6 +666,13 @@
       "when": 1788586800000,
       "tag": "0094_campaign_scheduling_blitz_replenishment",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1788590400000,
+      "tag": "0095_product_analytics_observations",
+      "breakpoints": true
     }
   ]
 }

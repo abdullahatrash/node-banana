@@ -120,7 +120,7 @@ function normalizeOriginHostname(origin: string | null) {
   if (!origin) return null
   try {
     const url = new URL(origin)
-    if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) return null
+    if (url.protocol !== "https:" || url.port || url.username || url.password || url.pathname !== "/" || url.search || url.hash) return null
     return normalizeHostname(url.hostname)
   } catch { return null }
 }

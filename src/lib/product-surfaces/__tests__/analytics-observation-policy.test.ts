@@ -10,7 +10,7 @@ describe("analytics observation admission", () => {
     expect(admitWebsiteObservation(websiteInput, { source: websiteSource, origin: "https://EXAMPLE.com", now })).toMatchObject({ workspaceId: "ws_1", sourceId: "website_1", sourceRevision: 3, metric: "websiteViews", value: 12 })
   })
 
-  it.each([null, "http://example.com", "https://example.com/path", "https://evil.example"])("rejects absent or non-exact origins: %s", (origin) => {
+  it.each([null, "http://example.com", "https://example.com:444", "https://example.com/path", "https://evil.example"])("rejects absent or non-exact origins: %s", (origin) => {
     expect(() => admitWebsiteObservation(websiteInput, { source: websiteSource, origin, now })).toThrowError(expect.objectContaining({ code: "ANALYTICS_SOURCE_ORIGIN_MISMATCH" }))
   })
 
