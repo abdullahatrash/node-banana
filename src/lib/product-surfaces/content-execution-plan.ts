@@ -44,8 +44,12 @@ export function validateContentExecutionInput(input: {
   personaState: string | null;
 }): { ok: true } | { ok: false; code: "CONTENT_SOURCE_CARDINALITY_INVALID" | "CONTENT_SOURCE_TYPE_INVALID" | "CONTENT_PERSONA_REQUIRED" } {
   const plan = contentExecutionPlan(input.format);
-  if (input.sources.length !== plan.sourceTypes.length) return { ok: false, code: "CONTENT_SOURCE_CARDINALITY_INVALID" };
-  if (input.sources.some((source, index) => source.type !== plan.sourceTypes[index])) return { ok: false, code: "CONTENT_SOURCE_TYPE_INVALID" };
+  const slots = CONTENT_FORMAT_DEFINITIONS[input.format].sourceSlots;
+  const minimum = slots.reduce((sum, slot) => sum + slot.minimum, 0);
+  const maximum = slots.reduce((sum, slot) => sum + slot.maximum, 0);
+  if (input.sources.length < minimum || input.sources.length > maximum) return { ok: false, code: "CONTENT_SOURCE_CARDINALITY_INVALID" };
+  if (slots.length === 1 && input.sources.some((source) => source.type !== slots[0]!.type)) return { ok: false, code: "CONTENT_SOURCE_TYPE_INVALID" };
+  if (slots.length > 1 && input.sources.some((source, index) => source.type !== slots[index]?.type)) return { ok: false, code: "CONTENT_SOURCE_TYPE_INVALID" };
   if (plan.requiresPersona && input.personaState !== "active") return { ok: false, code: "CONTENT_PERSONA_REQUIRED" };
   return { ok: true };
 }

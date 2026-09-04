@@ -35,4 +35,9 @@ describe("Content Format execution plans", () => {
     expect(validateContentExecutionInput({ format: "slideshow", sources: [], personaState: null })).toMatchObject({ ok: false, code: "CONTENT_SOURCE_CARDINALITY_INVALID" });
     expect(validateContentExecutionInput({ format: "character_swap", sources: [{ id: "v", type: "video" }], personaState: "suspended" })).toMatchObject({ ok: false, code: "CONTENT_PERSONA_REQUIRED" });
   });
+
+  it("accepts the definition-owned Slideshow source range without widening other formats", () => {
+    expect(validateContentExecutionInput({ format: "slideshow", sources: Array.from({ length: 20 }, (_, index) => ({ id: `image-${index}`, type: "image" })), personaState: null })).toEqual({ ok: true });
+    expect(validateContentExecutionInput({ format: "slideshow", sources: Array.from({ length: 21 }, (_, index) => ({ id: `image-${index}`, type: "image" })), personaState: null })).toMatchObject({ ok: false, code: "CONTENT_SOURCE_CARDINALITY_INVALID" });
+  });
 });
