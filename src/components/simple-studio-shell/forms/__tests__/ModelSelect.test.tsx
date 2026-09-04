@@ -10,7 +10,7 @@ const qualification = { status: "qualified", version: "immutable-version", input
 
 describe("ModelSelect capability admission", () => {
   beforeEach(() => {
-    useSimpleStudioStore.setState({ referenceImages: [], selectedModelId: "text-model", selectedModelProvider: "replicate", selectedModelName: "Text", selectedModelVersion: "immutable-version", selectedModelSchemaDigest: `sha256:${"a".repeat(64)}` });
+    useSimpleStudioStore.setState({ referenceImages: [], selectedModelId: "text-model", selectedModelProvider: "replicate", selectedModelName: "Text", selectedModelVersion: "immutable-version", selectedModelSchemaDigest: `sha256:${"a".repeat(64)}`, selectedModelExecutionPriceUsd: null });
     global.fetch = vi.fn().mockResolvedValue({ json: async () => ({ success: true, items: [
       { model: "text-model", label: "Text", provider: "replicate", capabilities: ["text_to_image"], qualification },
       { model: "edit-model", label: "Edit", provider: "replicate", capabilities: ["image_to_image"], qualification },
@@ -23,6 +23,7 @@ describe("ModelSelect capability admission", () => {
     await waitFor(() => expect(screen.getByRole("option", { name: /Copy/ })).toBeInTheDocument());
     expect(screen.queryByRole("option", { name: /Text/ })).not.toBeInTheDocument();
     expect(useSimpleStudioStore.getState().selectedModelId).toBe("copy-model");
+    expect(useSimpleStudioStore.getState().selectedModelExecutionPriceUsd).toEqual({ basis: "run", amount: 0.02 });
   });
 
   it("switches to an image-to-image-qualified model when references are present", async () => {

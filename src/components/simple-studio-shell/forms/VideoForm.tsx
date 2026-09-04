@@ -260,7 +260,7 @@ export function VideoForm() {
           <ModelSelect mode="video" id="video-model" />
         </div>
 
-        <GenerationAdmissionPanel />
+        <GenerationAdmissionPanel runs={batchCount} quantityPerRun={videoDuration} />
 
         {isGenerating ? (
           <GenerateProgress />

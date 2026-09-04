@@ -127,7 +127,7 @@ export function CopyForm() {
           <ModelSelect mode="copy" id="copy-model" />
         </div>
 
-        <GenerationAdmissionPanel />
+        <GenerationAdmissionPanel runs={batchCount} quantityPerRun={1} />
 
         {isGenerating ? (
           <GenerateProgress />

@@ -161,7 +161,7 @@
     "context": { "compose": "Compose", "channels": "Channels", "approvals": "Approvals", "deliveries": "Deliveries", "agents": "Agents", "videoEditor": "Video Editor", "operations": "Operations", "modelRouting": "Model routing", "releaseQuality": "Release quality", "usage": "Usage", "budgets": "Budgets", "quotas": "Quotas", "credentials": "Credentials", "observability": "Observability", "promptLibrary": "Prompt Library", "posts": "Posts", "socialMedia": "Social media", "events": "Events", "copilot": "Copilot", "integrations": "Integrations", "plugs": "Webhooks", "guide": "Guide", "feedback": "Feedback", "roadmap": "Roadmap", "releases": "Releases", "support": "Support" },
     "status": { "planned": "Planned", "plannedDetail": "This complete capability is scheduled for a later parity slice and is not presented as available yet." },
     "workspace": { "label": "Workspace", "select": "Select workspace", "selectionRequired": "Choose an authorized workspace to continue", "owner": "Owner", "admin": "Admin", "member": "Member", "empty": "No authorized workspace", "unavailable": "Workspace context is unavailable" },
-    "commercial": { "free": "Free", "credits": "{count} credits available", "trial": "{plan} trial · {days}d left", "upgrade": "Upgrade" },
+    "commercial": { "free": "Free", "credits": "{count} credits available", "trial": "{plan} trial · {days}d left", "upgrade": "Upgrade", "manageCredits": "Manage plan and {count} available credits" },
     "dashboard": { "eyebrow": "Workspace home", "title": "Create, review, and publish from one place", "description": "Use the unified workspace navigation to move between every available creation, publishing, agent, and operations capability.", "createTitle": "Create content", "createDescription": "Start with an image, video, or copy workflow in AI Studio.", "publishTitle": "Plan and publish", "publishDescription": "Compose a post, connect channels, and manage the calendar.", "operateTitle": "Review operations", "operateDescription": "Inspect approvals, deliveries, usage, budgets, and service health.", "open": "Open" },
     "contentHub": { "title": "Content workspace", "description": "Choose a live creation or publishing surface. The complete format system arrives as its own parity slice; this hub does not disguise unfinished formats as available.", "copyTitle": "Write copy", "copyDescription": "Create campaign and social copy with the copy studio.", "imagesTitle": "Generate images", "imagesDescription": "Create and refine visual assets in AI Studio.", "videosTitle": "Generate videos", "videosDescription": "Create short-form video assets with available models.", "postsTitle": "Manage posts", "postsDescription": "Open saved social drafts and publishing records." },
     "settings": { "title": "Settings", "description": "Workspace access, trust, and provider configuration", "close": "Close settings", "navigationLabel": "Settings sections", "sections": { "account": "Account", "members": "Members and invitations", "roles": "Roles", "approval": "Approval policies", "portfolios": "Portfolios", "audit": "Audit trail", "data": "Data and retention", "safety": "Safety and appeals", "bulk": "Bulk operations", "portability": "Import and export", "language": "Language", "preferences": "Workspace preferences", "notifications": "Notifications", "channels": "Publishing Channels", "demoVideos": "Demo Videos", "remix": "Remix", "privacy": "Privacy", "storage": "Storage", "billing": "Billing and credits", "api": "API access", "providers": "Provider credentials" } },
@@ -1110,5 +1110,21 @@
       "daysAhead": "30 days ahead",
       "completeCalendar": "30 / 30"
     }
+  },
+  "generationFunding": {
+    "byok": {
+      "title": "Your Replicate key (BYOK)",
+      "description": "Uses the encrypted Replicate credential saved for this workspace. Replicate bills your provider account directly; Node Banana generation credits are not debited.",
+      "action": "Manage key"
+    },
+    "managed": {
+      "title": "Node Banana managed credits",
+      "description": "An exact credit debit and money total must be approved before provider work starts. Declining the quote spends nothing.",
+      "action": "View credits"
+    },
+    "selectModel": "Select an admitted model to see its provider price.",
+    "unitPrice": "Provider price: {amount} per {basis}",
+    "estimatedCost": "Estimated provider cost for this request: {amount}",
+    "basis": { "image": "image", "second": "second", "run": "run" }
   }
 }

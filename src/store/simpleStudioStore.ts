@@ -56,7 +56,8 @@ export interface SimpleStudioState {
   selectedModelName: string | null;
   selectedModelVersion: string | null;
   selectedModelSchemaDigest: string | null;
-  setSelectedModel: (id: string | null, provider?: string | null, name?: string | null, version?: string | null, schemaDigest?: string | null) => void;
+  selectedModelExecutionPriceUsd: { basis: "image" | "second" | "run"; amount: number } | null;
+  setSelectedModel: (id: string | null, provider?: string | null, name?: string | null, version?: string | null, schemaDigest?: string | null, executionPriceUsd?: SimpleStudioState["selectedModelExecutionPriceUsd"]) => void;
   setSelectedModelId: (id: string | null) => void;
   aspectRatio: string;
   setAspectRatio: (ratio: string) => void;
@@ -238,9 +239,10 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   selectedModelName: null,
   selectedModelVersion: null,
   selectedModelSchemaDigest: null,
-  setSelectedModel: (id, provider = null, name = null, version = null, schemaDigest = null) =>
-    set({ selectedModelId: id, selectedModelProvider: provider, selectedModelName: name, selectedModelVersion: version, selectedModelSchemaDigest: schemaDigest }),
-  setSelectedModelId: (id) => set({ selectedModelId: id, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null }),
+  selectedModelExecutionPriceUsd: null,
+  setSelectedModel: (id, provider = null, name = null, version = null, schemaDigest = null, executionPriceUsd = null) =>
+    set({ selectedModelId: id, selectedModelProvider: provider, selectedModelName: name, selectedModelVersion: version, selectedModelSchemaDigest: schemaDigest, selectedModelExecutionPriceUsd: executionPriceUsd }),
+  setSelectedModelId: (id) => set({ selectedModelId: id, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null, selectedModelExecutionPriceUsd: null }),
   aspectRatio: "9:16",
   setAspectRatio: (ratio) => set({ aspectRatio: ratio }),
   batchCount: 4,
@@ -249,7 +251,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setReferenceImages: (images) => set({ referenceImages: images }),
   sourceImage: null,
   sourceMediaType: null,
-  setSourceImage: (image, mediaType = image ? "image" : null) => set({ sourceImage: image, sourceMediaType: image ? mediaType : null, selectedModelId: null, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null }),
+  setSourceImage: (image, mediaType = image ? "image" : null) => set({ sourceImage: image, sourceMediaType: image ? mediaType : null, selectedModelId: null, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null, selectedModelExecutionPriceUsd: null }),
   videoDuration: 5,
   setVideoDuration: (duration) => set({ videoDuration: duration }),
   dialogueEnabled: false,
@@ -520,6 +522,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       selectedModelId: (config.selectedModelId as string) || null,
       selectedModelProvider: (config.selectedModelProvider as string) || null,
       selectedModelName: (config.selectedModelName as string) || null,
+      selectedModelExecutionPriceUsd: null,
       aspectRatio: (config.aspectRatio as string) || "1:1",
       batchCount: (config.batchCount as number) || 4,
       tone: (config.tone as string) || "professional",

@@ -1,16 +1,21 @@
 "use client";
 
+import Link from "next/link";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
-import { useTranslations } from "next-intl";
+import { KeyRoundIcon, WalletCardsIcon } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 
 const VARIETIES = ["msa", "gulf", "egyptian", "levantine", "maghrebi", "other"] as const;
 
-export function GenerationAdmissionPanel() {
+export function GenerationAdmissionPanel({ runs, quantityPerRun }: { runs?: number; quantityPerRun?: number }) {
+  const locale = useLocale();
   const t = useTranslations("simpleStudio.admission");
+  const funding = useTranslations("generationFunding");
   const automationFields = useTranslations("product.automations.fields");
   const fundingModes = useTranslations("product.automations.modes");
   const fundingMode = useSimpleStudioStore((state) => state.fundingMode);
   const setFundingMode = useSimpleStudioStore((state) => state.setFundingMode);
+  const selectedModelExecutionPriceUsd = useSimpleStudioStore((state) => state.selectedModelExecutionPriceUsd);
   const rightsBasis = useSimpleStudioStore((state) => state.rightsBasis);
   const setRightsBasis = useSimpleStudioStore((state) => state.setRightsBasis);
   const permittedRemix = useSimpleStudioStore((state) => state.permittedRemix);
@@ -24,10 +29,31 @@ export function GenerationAdmissionPanel() {
   const pendingManagedCreditQuotes = useSimpleStudioStore((state) => state.pendingManagedCreditQuotes);
   const resolveManagedCreditQuote = useSimpleStudioStore((state) => state.resolveManagedCreditQuote);
   const quote = pendingManagedCreditQuotes[0] ?? null;
-  const locale = typeof document === "undefined" ? "en" : document.documentElement.lang || "en";
+  const validRuns = runs !== undefined && Number.isFinite(runs) && runs > 0 ? runs : null;
+  const validQuantity = quantityPerRun !== undefined && Number.isFinite(quantityPerRun) && quantityPerRun > 0 ? quantityPerRun : null;
+  const estimatedProviderCost = selectedModelExecutionPriceUsd && validRuns !== null
+    ? selectedModelExecutionPriceUsd.amount * validRuns * (selectedModelExecutionPriceUsd.basis === "second" && validQuantity !== null ? validQuantity : 1)
+    : null;
+  const FundingIcon = fundingMode === "byok" ? KeyRoundIcon : WalletCardsIcon;
+
   return <fieldset className="space-y-3 rounded-lg border bg-muted/20 p-3">
     <legend className="px-1 text-sm font-semibold">{t("title")}</legend>
     <p className="text-xs text-muted-foreground">{t("description")}</p>
+    <div className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-start" data-testid="generation-funding-summary">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-900"><FundingIcon className="size-4" aria-hidden="true" /></span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold">{funding(`${fundingMode}.title`)}</p>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{funding(`${fundingMode}.description`)}</p>
+        {selectedModelExecutionPriceUsd ? <p className="mt-1 text-xs font-medium">
+          {estimatedProviderCost === null
+            ? funding("unitPrice", { amount: new Intl.NumberFormat(locale, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(selectedModelExecutionPriceUsd.amount), basis: funding(`basis.${selectedModelExecutionPriceUsd.basis}`) })
+            : funding("estimatedCost", { amount: new Intl.NumberFormat(locale, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(estimatedProviderCost) })}
+        </p> : <p className="mt-1 text-xs text-muted-foreground">{funding("selectModel")}</p>}
+      </div>
+      <Link href={fundingMode === "byok" ? "/settings?section=credentials" : "/billing"} className="shrink-0 text-xs font-semibold text-primary underline-offset-4 hover:underline">
+        {funding(`${fundingMode}.action`)}
+      </Link>
+    </div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <label className="text-xs font-medium">{automationFields("mode")}<select className="mt-1 w-full rounded-md border bg-background p-2" value={fundingMode} onChange={(event) => setFundingMode(event.target.value as typeof fundingMode)}><option value="byok">{fundingModes("byok")}</option><option value="managed">{fundingModes("managed")}</option></select></label>
       <label className="text-xs font-medium">{t("arabicVariety")}<select className="mt-1 w-full rounded-md border bg-background p-2" value={arabicVariety} onChange={(event) => setArabicVariety(event.target.value as typeof arabicVariety)}>{VARIETIES.map((value) => <option key={value} value={value}>{t(`varieties.${value}`)}</option>)}</select></label>

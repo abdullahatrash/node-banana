@@ -143,19 +143,23 @@ describe("ProductShell", () => {
 
   it("shows authoritative plan, trial, credits, and Upgrade state in English", async () => {
     const trialEndsAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) !== "/api/studio/billing") return new Response(null, { status: 204 });
       return new Response(JSON.stringify({ success: true, data: {
         subscription: { state: "trialing", planId: "starter", planVersion: 1, currentPeriodEndsAt: trialEndsAt, graceEndsAt: null, merchantCustomerRef: null },
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }, { planId: "starter", version: 1, authoredName: { ar: "البداية", en: "Starter" } }],
         credit: { availableUnits: 21 },
       } }), { status: 200, headers: { "content-type": "application/json" } });
-    }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     renderShell();
-    expect(await screen.findByText("Starter trial · 3d left")).toBeInTheDocument();
+    expect(await screen.findAllByText("Starter trial · 3d left")).toHaveLength(2);
     expect(screen.getByText("21 credits available")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Upgrade" })).toHaveAttribute("href", "/billing");
+    expect(screen.getByTestId("shell-commercial-status-compact")).toHaveAccessibleName("Manage plan and 21 available credits");
+    expect(screen.getByTestId("shell-commercial-status-compact")).toHaveAttribute("href", "/billing");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/api/studio/billing")).toHaveLength(1);
   });
 
   it("localizes authoritative Free and credit state in Arabic", async () => {
@@ -169,9 +173,10 @@ describe("ProductShell", () => {
     }));
 
     renderShell("ar");
-    expect(await screen.findByText("مجانية")).toBeInTheDocument();
+    expect(await screen.findAllByText("مجانية")).toHaveLength(2);
     expect(screen.getByText("10 رصيدًا متاحًا")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "ترقية الباقة" })).toBeInTheDocument();
+    expect(screen.getByTestId("shell-commercial-status-compact")).toHaveAccessibleName("إدارة الباقة و10 رصيدًا متاحًا");
   });
 
   it("reads commercial state for the same authorized workspace selected by the switcher", async () => {

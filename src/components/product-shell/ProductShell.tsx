@@ -76,7 +76,7 @@ import { getDirection } from "@/i18n/config";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ServiceStatusBanner } from "@/components/release-control/ServiceStatusBanner";
 import { GlobalCopilot } from "./GlobalCopilot";
-import { CommercialStatus } from "./CommercialStatus";
+import { CommercialStatus, CommercialStatusCompact, useCommercialStatusData } from "./CommercialStatus";
 
 const primaryIcons = {
   dashboard: CircleGaugeIcon,
@@ -178,6 +178,11 @@ export function ProductShell({
     : t("brandName");
   const side = locale === "ar" ? "right" : "left";
   const direction = getDirection(locale === "ar" ? "ar" : "en");
+  const commercialSummary = useCommercialStatusData({
+    workspaceId: context.initialWorkspaceId,
+    authorizedWorkspaces: context.workspaces,
+    enabled: context.canReadBilling,
+  });
 
   return (
     <SidebarProvider
@@ -299,7 +304,7 @@ export function ProductShell({
           </nav>
         </SidebarContent>
         <SidebarFooter>
-          <CommercialStatus workspaceId={context.initialWorkspaceId} authorizedWorkspaces={context.workspaces} />
+          <CommercialStatus summary={commercialSummary} />
           <LanguageSwitcher className="w-full justify-start group-data-[collapsible=icon]:px-2" />
           <NavUser user={context.user} />
         </SidebarFooter>
@@ -309,7 +314,10 @@ export function ProductShell({
           <SidebarTrigger label={t("sidebar.toggle")} side={side} className="-ms-1" />
           <span className="h-4 w-px bg-border" aria-hidden="true" />
           <h1 className="min-w-0 truncate text-base font-semibold">{title}</h1>
-          <div className="ms-auto flex min-w-0 shrink-0 items-center gap-2">{headerActions}</div>
+          <div className="ms-auto flex min-w-0 shrink-0 items-center gap-2">
+            {context.canReadBilling ? <CommercialStatusCompact summary={commercialSummary} /> : null}
+            {headerActions}
+          </div>
         </header>
         <div id="product-main-content" tabIndex={-1} className="flex min-h-0 flex-1 flex-col">
           <ServiceStatusBanner />

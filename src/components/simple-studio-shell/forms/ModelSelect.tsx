@@ -58,10 +58,12 @@ export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) 
           });
           setModels(unique);
           const selected = unique.find((item: ProviderModel) => item.model === selectedModelId);
-          if (!selected) {
+          if (selected?.qualification.status === "qualified") {
+            setSelectedModel(selected.model, selected.provider, selected.label, selected.qualification.version, selected.qualification.inputSchemaDigest, selected.qualification.executionPriceUsd);
+          } else {
             const replacement = unique[0] as ProviderModel | undefined;
             if (replacement?.qualification.status === "qualified") {
-              setSelectedModel(replacement.model, replacement.provider, replacement.label, replacement.qualification.version, replacement.qualification.inputSchemaDigest);
+              setSelectedModel(replacement.model, replacement.provider, replacement.label, replacement.qualification.version, replacement.qualification.inputSchemaDigest, replacement.qualification.executionPriceUsd);
             } else {
               setSelectedModel(null, null, null);
             }
@@ -92,7 +94,7 @@ export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) 
     }
     const model = models.find((m) => m.model === value);
     if (model?.qualification.status === "qualified") {
-      setSelectedModel(model.model, model.provider, model.label, model.qualification.version, model.qualification.inputSchemaDigest);
+      setSelectedModel(model.model, model.provider, model.label, model.qualification.version, model.qualification.inputSchemaDigest, model.qualification.executionPriceUsd);
     }
   };
 

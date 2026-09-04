@@ -5,7 +5,21 @@ import { GenerationAdmissionPanel } from "../GenerationAdmissionPanel";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string, values?: Record<string, string>) => ({
+  useLocale: () => "en",
+  useTranslations: (namespace: string) => (key: string, values?: Record<string, string | number>) => namespace === "generationFunding" ? ({
+    "byok.title": "Your Replicate key (BYOK)",
+    "byok.description": "Replicate bills your provider account directly; Node Banana generation credits are not debited.",
+    "byok.action": "Manage key",
+    "managed.title": "Node Banana managed credits",
+    "managed.description": "An exact credit debit must be approved before provider work starts.",
+    "managed.action": "View credits",
+    "selectModel": "Select an admitted model.",
+    "unitPrice": `Provider price: ${values?.amount ?? ""} per ${values?.basis ?? ""}`,
+    "estimatedCost": `Estimated provider cost for this request: ${values?.amount ?? ""}`,
+    "basis.image": "image",
+    "basis.second": "second",
+    "basis.run": "run",
+  })[key] ?? key : ({
     "managedQuote.title": "Confirm managed generation credits",
     "managedQuote.description": "Review the exact quote.",
     "managedQuote.creditDebit": "Maximum credit debit",
@@ -34,7 +48,25 @@ const quote = {
 };
 
 describe("GenerationAdmissionPanel managed credit confirmation", () => {
-  beforeEach(() => useSimpleStudioStore.setState({ pendingManagedCreditQuotes: [] }));
+  beforeEach(() => useSimpleStudioStore.setState({ fundingMode: "byok", pendingManagedCreditQuotes: [], selectedModelExecutionPriceUsd: null }));
+
+  it("explains BYOK billing and previews the selected provider cost", () => {
+    useSimpleStudioStore.setState({
+      fundingMode: "byok",
+      selectedModelExecutionPriceUsd: { basis: "second", amount: 0.02 },
+    });
+    render(<GenerationAdmissionPanel runs={2} quantityPerRun={5} />);
+    expect(screen.getByTestId("generation-funding-summary")).toHaveTextContent("Your Replicate key (BYOK)");
+    expect(screen.getByTestId("generation-funding-summary")).toHaveTextContent("$0.20");
+    expect(screen.getByRole("link", { name: "Manage key" })).toHaveAttribute("href", "/settings?section=credentials");
+  });
+
+  it("explains managed credits before the exact quote is created", () => {
+    useSimpleStudioStore.setState({ fundingMode: "managed", selectedModelExecutionPriceUsd: null });
+    render(<GenerationAdmissionPanel />);
+    expect(screen.getByTestId("generation-funding-summary")).toHaveTextContent("Node Banana managed credits");
+    expect(screen.getByRole("link", { name: "View credits" })).toHaveAttribute("href", "/billing");
+  });
 
   it("shows the exact debit, money and binding and requires an explicit decision", async () => {
     const resolve = vi.fn();

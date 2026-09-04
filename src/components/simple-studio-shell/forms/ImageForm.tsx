@@ -173,7 +173,7 @@ export function ImageForm() {
           <ModelSelect mode="photo" id="image-model" />
         </div>
 
-        <GenerationAdmissionPanel />
+        <GenerationAdmissionPanel runs={batchCount} quantityPerRun={1} />
 
         {isGenerating ? (
           <GenerateProgress />
