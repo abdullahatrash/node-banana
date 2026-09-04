@@ -4,6 +4,7 @@ import { buildLocalReadinessReport, type LocalReadinessFacts } from "../local-re
 const readyFacts = (overrides: Partial<LocalReadinessFacts> = {}): LocalReadinessFacts => ({
   generatedAt: new Date("2026-09-04T12:00:00.000Z"),
   workspaceId: "ws_local",
+  workspaceExists: true,
   databaseConnected: true,
   databaseDetail: "Connected.",
   canonicalStorageConfigured: true,
@@ -56,6 +57,15 @@ describe("local generation readiness", () => {
     expect(report.coreReady).toBe(true);
     expect(report.byokReady).toBe(false);
     expect(report.managedReady).toBe(false);
+  });
+
+  it("does not claim a configured but missing Workspace is ready", () => {
+    const report = buildLocalReadinessReport(readyFacts({ workspaceId: "missing-workspace", workspaceExists: false }));
+    expect(report).toMatchObject({ workspaceId: "missing-workspace", coreReady: false, byokReady: false, managedReady: false });
+    expect(report.checks.find((check) => check.id === "workspace")).toMatchObject({
+      status: "blocked",
+      detail: "Configured Workspace missing-workspace does not exist or is deleted.",
+    });
   });
 
   it("explains why a legacy discovery key cannot qualify a model", () => {

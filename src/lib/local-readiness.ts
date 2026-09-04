@@ -34,6 +34,7 @@ const blocked = (
 export interface LocalReadinessFacts {
   generatedAt: Date;
   workspaceId: string | null;
+  workspaceExists: boolean;
   databaseConnected: boolean;
   databaseDetail: string;
   canonicalStorageConfigured: boolean;
@@ -98,12 +99,14 @@ export function buildLocalReadinessReport(
           detail: "New Provider keys cannot be saved interactively until verification-code delivery is configured.",
           action: "For local testing only, set AUTH_ALLOW_CONSOLE_EMAIL_LINKS=true and read the code from the dev-server terminal.",
         },
-    facts.workspaceId
+    facts.workspaceId && facts.workspaceExists
       ? ready("workspace", "Workspace", `Inspecting ${facts.workspaceId}.`)
       : blocked(
           "workspace",
           "Workspace",
-          "No active local Workspace was found.",
+          facts.workspaceId
+            ? `Configured Workspace ${facts.workspaceId} does not exist or is deleted.`
+            : "No active local Workspace was found.",
           "Run `pnpm db:seed` or pass `--workspace <workspace-id>`.",
         ),
     facts.qualifiedReplicateModels > 0

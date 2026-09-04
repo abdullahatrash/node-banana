@@ -22,6 +22,7 @@ async function run() {
   let databaseConnected = false;
   let databaseDetail = databaseUrl ? "Connection failed." : "DATABASE_URL is not configured.";
   let workspaceId = argument("--workspace") || process.env.DEV_WORKSPACE_ID?.trim() || null;
+  let workspaceExists = false;
   let acceptedBrand = false;
   let verifiedReplicateRegion = false;
   let replicateVaultKey = false;
@@ -40,9 +41,10 @@ async function run() {
         const workspace = await pool.query<{ id: string }>("select id from workspaces where deleted_at is null order by created_at limit 1");
         workspaceId = workspace.rows[0]?.id ?? null;
       }
+      workspaceExists = Boolean(workspaceId) && (await count("select count(*) from workspaces where id = $1 and deleted_at is null", [workspaceId])) > 0;
       activePlans = await count("select count(*) from billing_plan_versions where status = 'active' and effective_at <= now() and (retired_at is null or retired_at > now())");
       activeCreditPacks = await count("select count(*) from generation_credit_pack_versions where status = 'active' and effective_at <= now() and (retired_at is null or retired_at > now())");
-      if (workspaceId) {
+      if (workspaceId && workspaceExists) {
         acceptedBrand = (await count("select count(*) from brand_profiles where workspace_id = $1 and status = 'active' and accepted_at is not null", [workspaceId])) > 0;
         const key = await pool.query<{ validated: boolean }>("select (last_validated_at is not null) as validated from workspace_provider_keys where workspace_id = $1 and provider = 'replicate' limit 1", [workspaceId]);
         replicateVaultKey = key.rowCount === 1;
@@ -61,6 +63,7 @@ async function run() {
   const facts: LocalReadinessFacts = {
     generatedAt: new Date(),
     workspaceId,
+    workspaceExists,
     databaseConnected,
     databaseDetail,
     canonicalStorageConfigured:
