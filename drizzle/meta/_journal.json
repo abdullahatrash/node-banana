@@ -813,6 +813,13 @@
       "when": 1788666000000,
       "tag": "0115_generation_rights_erasure_preflight",
       "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1788669600000,
+      "tag": "0116_default_commercial_catalog",
+      "breakpoints": true
     }
   ]
 }
