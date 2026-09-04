@@ -236,6 +236,16 @@ seeded user's original preference. It verifies server-rendered semantics and
 route reachability; the release screenshot matrix remains the authority for
 visual overflow, focus order, and responsive composition.
 
+Generate that real-Chrome screenshot matrix, including every Settings section,
+at 390, 768, and 1440 CSS pixels with:
+
+```bash
+APP_BASE_URL=http://localhost:3002 pnpm smoke:rtl-visual
+```
+
+Review the ignored captures and report under `renders/rtl-layout/`; a green
+geometry report does not replace the required human visual review.
+
 ### Installation
 
 ```bash

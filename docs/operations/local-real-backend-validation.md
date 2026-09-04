@@ -78,6 +78,21 @@ it in both Arabic and English at 390, 768, and 1440 CSS pixels. Cover at least
 `/dashboard`, `/inspiration`, `/blitz`, all three `/simple-studio/*` forms,
 `/content`, `/calendar`, `/billing`, and every `/settings` section.
 
+With the local app running, create the complete stable-browser matrix first:
+
+```bash
+APP_BASE_URL=http://localhost:3002 pnpm smoke:rtl-visual
+```
+
+The command signs in as the seeded user through the real backend, captures Arabic
+and English at mobile, tablet, and desktop widths, and writes the ignored images
+and machine-readable report under `renders/rtl-layout/`. It checks route and
+query preservation, document language/direction, landmarks, headings, and
+horizontal overflow. Set `CHROME_BIN` when Google Chrome is not installed at its
+standard macOS path. `RTL_SMOKE_ROUTE`, `RTL_SMOKE_LOCALE`, and
+`RTL_SMOKE_VIEWPORT` may narrow a diagnostic run, but never replace the complete
+release matrix.
+
 For each viewport and locale, verify:
 
 - the shell, drawers, breadcrumbs, steppers, popovers, and dialogs open from the
@@ -94,9 +109,10 @@ For each viewport and locale, verify:
   screen.
 
 Record the route, locale, viewport, screenshot, and defect for every failure.
-The RTL source gate and component tests prevent common regressions, but visual
-approval remains mandatory because CSS geometry and font shaping require a real
-browser.
+The report deliberately retains `manualReviewRequired: true`: the RTL source
+gate, component tests, and browser geometry checks prevent common regressions,
+but human visual approval remains mandatory for clipping, hierarchy, mixed-text
+readability, CSS geometry, and font shaping.
 
 To inspect the licensed trend-to-Blitz path manually, retain one synthetic,
 rights-safe Arabic fixture instead of relying on an empty Workspace feed:

@@ -44,6 +44,7 @@
     "doctor:local": "tsx scripts/local-readiness.ts",
     "workers:local": "node scripts/run-local-content-workers.mjs",
     "smoke:i18n-shell": "node scripts/smoke-i18n-shell.mjs",
+    "smoke:rtl-visual": "node scripts/smoke-rtl-visual.mjs",
     "smoke:product": "node scripts/smoke-product-backend.mjs",
     "smoke:licensed-trends": "node scripts/smoke-licensed-trends.mjs",
     "demo:licensed-trend": "node scripts/smoke-licensed-trends.mjs --keep-fixture",
