@@ -82,7 +82,10 @@ const text = (max = 2_000) => z.string().trim().min(1).max(max);
 const optionalText = (max = 2_000) => z.string().trim().max(max).default("");
 
 export const inspirationPayloadSchema = z.object({
-  sourceUrl: z.string().url(),
+  sourceUrl: z.union([
+    z.string().url(),
+    z.string().regex(/^\/api\/studio\/assets\/[A-Za-z0-9%._~-]+\/download$/),
+  ]),
   sourceAssetId: text(200).nullable().default(null),
   sourceName: text(200),
   capturedAt: z.string().datetime(),
