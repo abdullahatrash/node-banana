@@ -25,6 +25,41 @@ export type ExecuteAdmittedGenerationResult =
 
 const rejected = (status: 404 | 409 | 503, code: string, error?: string): ExecuteAdmittedGenerationResult => ({ ok: false, status, code, ...(error ? { error } : {}) });
 
+type ContentWorkflowRunEvidence = Pick<typeof workflowRuns.$inferSelect, "workflowId" | "workflowRevisionId" | "startSnapshot">;
+
+/**
+ * Opens only the current typed Content Workflow contract. Historical v2 Runs
+ * stored their envelope under `request`; accepting that name here would let a
+ * stale, differently-shaped snapshot authorize a v3 provider effect.
+ */
+export function contentWorkflowRequestFromRun(input: {
+  run: ContentWorkflowRunEvidence | null | undefined;
+  intent: import("./types").GenerationIntent;
+  workspaceId: string;
+  userId: string;
+  prompt: string;
+  sourceAssetIds: readonly string[];
+}): Record<string, unknown> | null {
+  const binding = input.intent.contentExecution;
+  const run = input.run;
+  if (!binding || !run || run.workflowId !== binding.workflow.id || run.workflowRevisionId !== binding.workflow.revisionId || run.startSnapshot.schema !== "workflow-run-start-snapshot/v2" || run.startSnapshot.workflowRevision !== binding.formatDefinition.revision) return null;
+  const expectedInputs = [...binding.workflow.inputs].sort();
+  const actualInputs = run.startSnapshot.inputs.map((candidate) => candidate.name).sort();
+  const declaredInputs = Object.keys(run.startSnapshot.definition.inputs).sort();
+  if (canonicalDigest(actualInputs) !== canonicalDigest(expectedInputs) || canonicalDigest(declaredInputs) !== canonicalDigest(expectedInputs) || run.startSnapshot.inputs.some((candidate) => candidate.kind !== "text")) return null;
+  const recipeInputs = run.startSnapshot.inputs.filter((candidate) => candidate.name === "recipe" && candidate.kind === "text");
+  if (recipeInputs.length !== 1 || typeof recipeInputs[0]?.value !== "string") return null;
+  let request: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(recipeInputs[0].value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    request = parsed as Record<string, unknown>;
+  } catch { return null; }
+  if (request.schema !== "content-workflow-generation-request/v1" || request.workspaceId !== input.workspaceId || request.userId !== input.userId || request.intentId !== input.intent.id || request.contentExecutionDigest !== binding.digest || request.prompt !== input.prompt) return null;
+  if (canonicalDigest(request.sourceAssetIds) !== canonicalDigest(input.sourceAssetIds) || canonicalDigest(request.workflow) !== canonicalDigest(binding.workflow) || canonicalDigest(request.modelPolicy) !== canonicalDigest(binding.modelPolicy) || canonicalDigest(request.workflowInputs) !== canonicalDigest(binding.workflowInputs) || canonicalDigest(request.orderedInputArtifactIds) !== canonicalDigest(binding.inputArtifactIds) || canonicalDigest(request.providerInputArtifactIds) !== canonicalDigest(binding.providerInputArtifactIds) || canonicalDigest(request.selectedModel) !== canonicalDigest(input.intent.selectedModel)) return null;
+  return request;
+}
+
 /** Shared execute boundary for HTTP, onboarding, automations, and other admitted generation callers. */
 export async function executeAdmittedGeneration(input: {
   workspaceId: string;
@@ -84,9 +119,7 @@ export async function executeAdmittedGeneration(input: {
       if (storedPolicy?.digest !== intent.contentExecution.modelPolicy.digest) return rejected(409, "CONTENT_MODEL_POLICY_UNAVAILABLE");
       if (!input.contentWorkflowRunId) return rejected(409, "CONTENT_WORKFLOW_RUN_REQUIRED");
       const [run] = await getDb().select({ workflowId: workflowRuns.workflowId, workflowRevisionId: workflowRuns.workflowRevisionId, startSnapshot: workflowRuns.startSnapshot }).from(workflowRuns).where(and(eq(workflowRuns.workspaceId, input.workspaceId), eq(workflowRuns.id, input.contentWorkflowRunId))).limit(1);
-      const requestInput = run?.startSnapshot.inputs.find((candidate) => candidate.name === "request" && candidate.kind === "text")?.value;
-      const request = typeof requestInput === "string" ? JSON.parse(requestInput) as Record<string, unknown> : null;
-      if (!run || run.workflowId !== intent.contentExecution.workflow.id || run.workflowRevisionId !== intent.contentExecution.workflow.revisionId || request?.intentId !== intent.id || request?.contentExecutionDigest !== intent.contentExecution.digest || canonicalDigest(request?.sourceAssetIds) !== canonicalDigest(sourceIds) || request?.prompt !== input.prompt) return rejected(409, "CONTENT_WORKFLOW_RUN_MISMATCH");
+      if (!contentWorkflowRequestFromRun({ run, intent, workspaceId: input.workspaceId, userId: input.userId, prompt: input.prompt, sourceAssetIds: sourceIds })) return rejected(409, "CONTENT_WORKFLOW_RUN_MISMATCH");
     } catch {
       return rejected(409, "CONTENT_EXECUTION_RECIPE_UNAVAILABLE");
     }

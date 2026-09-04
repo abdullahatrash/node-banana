@@ -110,7 +110,17 @@ class ContentGenerationDispatchExecutor implements WorkflowStepExecutor {
   readonly provider = "runtime";
   readonly providerOperation: string;
   readonly model = "content-workflow-v1";
-  constructor(readonly operationIdentity: string) { this.providerOperation = operationIdentity.split("@")[0]!.slice("runtime.".length); }
+  constructor(readonly operationIdentity: string, private readonly operationContractDigest: string) { this.providerOperation = operationIdentity.split("@")[0]!.slice("runtime.".length); }
+  get providerResolution() {
+    return {
+      adapterModule: "runtime/legacy-executor",
+      adapterContractDigest: canonicalDigest({ schema: "runtime-step-executor/v1", operationIdentity: this.operationIdentity, operationContractDigest: this.operationContractDigest, provider: this.provider, providerOperation: this.providerOperation, model: this.model }),
+      provider: this.provider, providerOperation: this.providerOperation, model: this.model,
+      effectKeySupport: "native" as const, observation: "provider_operation_ref" as const,
+      launchSafety: { mode: "native_effect_key" as const, guard: "workflow-step-attempt/v1" as const, replay: "provider_deduplicated" as const },
+      usageCeilings: [],
+    };
+  }
   admissionExposure() {
     return admissionExposureFor({ provider: this.provider, providerOperation: this.providerOperation, model: this.model, serviceTier: "local" });
   }
@@ -394,7 +404,7 @@ export class WorkflowRunExecutorRegistry
     }
     const registry = new WorkflowRunExecutorRegistry();
     registry.register(digest.identity, digest.contractDigest, new DigestTextExecutor());
-    for (const operation of CONTENT_GENERATION_DISPATCH_OPERATIONS) registry.register(operation.identity, operation.contractDigest, new ContentGenerationDispatchExecutor(operation.identity));
+    for (const operation of CONTENT_GENERATION_DISPATCH_OPERATIONS) registry.register(operation.identity, operation.contractDigest, new ContentGenerationDispatchExecutor(operation.identity, operation.contractDigest));
     registry.registerProviderAdapter(
       "gemini/generate-content",
       text.identity,
