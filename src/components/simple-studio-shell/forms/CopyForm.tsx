@@ -54,6 +54,7 @@ export function CopyForm() {
           </label>
           <textarea
             id="copy-prompt"
+            dir="auto"
             className="min-h-32 w-full resize-y rounded-md border bg-background p-3 text-sm"
             placeholder={t("copy.placeholder")}
             value={prompt}

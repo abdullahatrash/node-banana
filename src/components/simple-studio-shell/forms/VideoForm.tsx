@@ -87,6 +87,7 @@ export function VideoForm() {
           </label>
           <textarea
             id="video-prompt"
+            dir="auto"
             className="min-h-32 w-full resize-y rounded-md border bg-background p-3 text-sm"
             placeholder={t("video.placeholder")}
             value={prompt}

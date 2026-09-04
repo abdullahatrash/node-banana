@@ -77,6 +77,7 @@ export function ImageForm() {
           </label>
           <textarea
             id="image-prompt"
+            dir="auto"
             className="min-h-32 w-full resize-y rounded-md border bg-background p-3 text-sm"
             placeholder={t("image.placeholder")}
             value={prompt}

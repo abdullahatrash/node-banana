@@ -29,9 +29,9 @@ describe("VideoForm", () => {
     global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
   });
 
-  it("renders a prompt textarea", () => {
+  it("renders a prompt textarea with automatic bidi direction", () => {
     render(<VideoForm />);
-    expect(screen.getByLabelText("Prompt")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prompt")).toHaveAttribute("dir", "auto");
   });
 
   it("renders a Generate button", () => {

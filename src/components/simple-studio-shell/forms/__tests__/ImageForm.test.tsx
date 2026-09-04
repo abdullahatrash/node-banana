@@ -24,9 +24,9 @@ describe("ImageForm", () => {
     global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
   });
 
-  it("renders a prompt textarea", () => {
+  it("renders a prompt textarea with automatic bidi direction", () => {
     render(<ImageForm />);
-    expect(screen.getByLabelText("Prompt")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prompt")).toHaveAttribute("dir", "auto");
   });
 
   it("renders a Generate button", () => {

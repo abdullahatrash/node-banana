@@ -38,9 +38,9 @@ describe("CopyForm", () => {
     global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
   });
 
-  it("renders a prompt textarea", () => {
+  it("renders a prompt textarea with automatic bidi direction", () => {
     render(<CopyForm />);
-    expect(screen.getByLabelText(/prompt/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/prompt/i)).toHaveAttribute("dir", "auto");
   });
 
   it("renders tone and platform selectors", () => {
