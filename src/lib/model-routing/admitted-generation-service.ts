@@ -12,6 +12,7 @@ import { createImmutableRightsEvidence, loadRightsEvidence } from "./rights-evid
 import { hydrateRightsSnapshot, validateRightsEvidence } from "./rights-evidence";
 import { validateGenerationSources } from "./source-validation";
 import type { ArabicVariety, ContentLanguage, ExactModelRef, GenerationCapability, InspirationRightsEvidence, InspirationRightsSnapshot } from "./types";
+import type { ManagedCreditQuote, ManagedCreditQuoteAcceptance } from "./budget-authority";
 import { getReleaseControlService } from "@/lib/release-control/production";
 import type { OperationRecord } from "@/lib/agent-runtime/operation-status/types";
 import { loadImmutableBrandContext } from "./brand-context";
@@ -25,10 +26,11 @@ export interface AdmittedGenerationInput {
   quantity: number; sourceAssetIds: string[]; rightsBasis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; rightsEvidenceIds: string[];
   remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
   fundingMode: "byok" | "managed";
+  managedQuoteAcceptance?: ManagedCreditQuoteAcceptance | null;
   personaId?: string | null;
 }
-export type AdmittedGenerationResult = { ok: true; status: 200 | 202; value: { intentId: string; operation: OperationRecord; provider: unknown; operationHref: string } } | { ok: false; status: 402 | 409 | 422 | 503; code: string; nextActions?: Array<{ code: string; href: string }> };
-const fail = (status: 402 | 409 | 422 | 503, code: string, nextActions?: Array<{ code: string; href: string }>): AdmittedGenerationResult => ({ ok: false, status, code, ...(nextActions ? { nextActions } : {}) });
+export type AdmittedGenerationResult = { ok: true; status: 200 | 202; value: { intentId: string; operation: OperationRecord; provider: unknown; operationHref: string } } | { ok: false; status: 402 | 409 | 422 | 503; code: string; nextActions?: Array<{ code: string; href: string }>; managedCreditQuote?: ManagedCreditQuote };
+const fail = (status: 402 | 409 | 422 | 503, code: string, nextActions?: Array<{ code: string; href: string }>, managedCreditQuote?: ManagedCreditQuote): AdmittedGenerationResult => ({ ok: false, status, code, ...(nextActions ? { nextActions } : {}), ...(managedCreditQuote ? { managedCreditQuote } : {}) });
 const rightsId = (workspaceId: string, key: string) => `rights_${createHash("sha256").update(`studio:${workspaceId}:${key}`).digest("hex").slice(0, 32)}`;
 
 /** Owns the complete rights -> intent -> reservation -> operation -> provider admission transaction boundary. */
@@ -74,7 +76,8 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   const [inserted] = await getDb().insert(inspirationRightsSnapshots).values({ workspaceId: context.workspaceId, id: snapshot.id, revision: 1, snapshot, digest: snapshot.digest, basis: snapshot.basis, permittedRemix: snapshot.permittedRemix, createdByUserId: context.userId, createdAt: at }).onConflictDoNothing().returning({ snapshot: inspirationRightsSnapshots.snapshot });
   const stored = inserted?.snapshot ?? (await getDb().select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, context.workspaceId), eq(inspirationRightsSnapshots.id, snapshotId), eq(inspirationRightsSnapshots.revision, 1))).limit(1))[0]?.snapshot; const rights = stored ? hydrateRightsSnapshot(stored) : null;
   if (!rights || rights.digest !== snapshot.digest) return fail(409, "IDEMPOTENCY_CONFLICT");
-  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: context.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, fundingMode: input.fundingMode, persona, quantity: input.quantity, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent` });
+  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: context.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, fundingMode: input.fundingMode, managedQuoteAcceptance: input.managedQuoteAcceptance ?? null, persona, quantity: input.quantity, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent` });
+  if (created.kind === "managed_quote_confirmation_required") return fail(409, "MANAGED_CREDIT_CONFIRMATION_REQUIRED", undefined, created.quote);
   if (created.kind !== "created" && created.kind !== "replayed") return fail(created.kind === "unavailable" || created.kind === "budget_unavailable" ? 503 : created.kind === "budget_denied" ? 402 : 422, "code" in created && typeof created.code === "string" ? created.code : created.kind.toUpperCase(), [{ code: "inspect_operations", href: "/studio/operations" }]);
   if (!created.intent) return fail(503, "GENERATION_INTENT_UNAVAILABLE");
   if (created.intent.persona) {

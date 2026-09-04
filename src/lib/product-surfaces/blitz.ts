@@ -12,7 +12,7 @@ import { blitzPayloadSchema, parseProductPayload } from "./definitions";
 import { buildContentRenderProof, validateReadyPortraitAsset, type ContentAssetEvidence } from "./content-lineage";
 import { ProductRecordConflictError, ProductRecordIdempotencyError } from "./repository";
 
-export async function decideBlitzItem(input: { workspaceId: string; userId: string; itemId: string; expectedRevision: number; decision: "accepted" | "rejected"; reasons: string[]; generation: { assetId: string; intentId: string; operationId: string } | null; idempotencyKey: string; now?: Date }) {
+export async function decideBlitzItem(input: { workspaceId: string; userId: string; itemId: string; expectedRevision: number; decision: "accepted" | "rejected"; reasons: Array<{ code: "not_relevant" | "brand_mismatch" | "stale_source" | "rights_unclear" | "too_similar" | "wrong_format" | "other"; note: string }>; generation: { assetId: string; intentId: string; operationId: string } | null; idempotencyKey: string; now?: Date }) {
   const now = input.now ?? new Date();
   const digest = canonicalDigest({ itemId: input.itemId, expectedRevision: input.expectedRevision, decision: input.decision, reasons: input.reasons, generation: input.generation });
   return getDb().transaction(async (tx) => {

@@ -9,6 +9,7 @@ import {
   ingestStudioAsset,
 } from "@/lib/studio/client";
 import { runAdmittedStudioGeneration, StudioGenerationError } from "@/lib/model-routing/studio-generation-client";
+import type { ManagedCreditQuote } from "@/lib/model-routing/budget-authority";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,6 +87,8 @@ export interface SimpleStudioState {
   setArabicVariety: (value: SimpleStudioState["arabicVariety"]) => void;
   fundingMode: "byok" | "managed";
   setFundingMode: (value: SimpleStudioState["fundingMode"]) => void;
+  pendingManagedCreditQuotes: ManagedCreditQuote[];
+  resolveManagedCreditQuote: (quoteId: string, accepted: boolean) => void;
   rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
   setRightsBasis: (value: SimpleStudioState["rightsBasis"]) => void;
   permittedRemix: "reference_only" | "transform" | "derivative";
@@ -123,17 +126,27 @@ export interface SimpleStudioState {
 // ---------------------------------------------------------------------------
 
 let abortController: AbortController | null = null;
+const managedQuoteResolvers = new Map<string, (accepted: boolean) => void>();
+
+function requestManagedQuoteConfirmation(set: StudioSet, quote: ManagedCreditQuote): Promise<boolean> {
+  return new Promise((resolve) => {
+    const previous = managedQuoteResolvers.get(quote.quoteId);
+    if (previous) previous(false);
+    managedQuoteResolvers.set(quote.quoteId, resolve);
+    set((state) => ({ pendingManagedCreditQuotes: state.pendingManagedCreditQuotes.some((item) => item.quoteId === quote.quoteId) ? state.pendingManagedCreditQuotes : [...state.pendingManagedCreditQuotes, quote] }));
+  });
+}
 
 const CONCURRENT_LIMIT = 4;
 
-async function submitAdmittedGeneration(input: { state: SimpleStudioState; prompt: string; mode: SimpleStudioMode; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
+async function submitAdmittedGeneration(input: { set: StudioSet; state: SimpleStudioState; prompt: string; mode: SimpleStudioMode; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
   if (!input.state.selectedModelId || input.state.selectedModelProvider !== "replicate" || !input.state.selectedModelVersion || !input.state.selectedModelSchemaDigest) throw new Error("MODEL_NOT_SELECTED");
   if (!input.state.rightsConfirmed) throw new Error("RIGHTS_CONFIRMATION_REQUIRED");
   const prompt = input.mode === "copy" ? `${input.prompt}\n\nTone: ${input.state.tone}. Platform: ${input.state.platform}. Output language: ${input.state.outputLanguage}.` : input.prompt;
   const contentLanguage = input.mode === "copy"
     ? input.state.outputLanguage === "both" ? "mixed" : input.state.outputLanguage
     : undefined;
-  return runAdmittedStudioGeneration({ prompt, contentLanguage, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, fundingMode: input.state.fundingMode, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : [input.mode === "copy" ? "wording for the selected channel" : "composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal });
+  return runAdmittedStudioGeneration({ prompt, contentLanguage, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, fundingMode: input.state.fundingMode, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : [input.mode === "copy" ? "wording for the selected channel" : "composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal, confirmManagedCreditQuote: (quote) => requestManagedQuoteConfirmation(input.set, quote) });
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +202,7 @@ type StudioSet = (fn: (state: SimpleStudioState) => Partial<SimpleStudioState>) 
 async function executeGenerationEntry(input: { set: StudioSet; state: SimpleStudioState; generation: Generation; mode: SimpleStudioMode; prompt: string; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
   setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "generating", error: null } : value));
   try {
-    const admitted = await submitAdmittedGeneration({ state: input.state, prompt: input.prompt, mode: input.mode, sourceAssetIds: input.sourceAssetIds, idempotencyKey: input.idempotencyKey, signal: input.signal });
+    const admitted = await submitAdmittedGeneration({ set: input.set, state: input.state, prompt: input.prompt, mode: input.mode, sourceAssetIds: input.sourceAssetIds, idempotencyKey: input.idempotencyKey, signal: input.signal });
     setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "complete", result: admitted.result, assetId: admitted.assetId } : value));
   } catch (error) {
     if (input.signal.aborted) return;
@@ -253,6 +266,13 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setArabicVariety: (arabicVariety) => set({ arabicVariety }),
   fundingMode: "byok",
   setFundingMode: (fundingMode) => set({ fundingMode }),
+  pendingManagedCreditQuotes: [],
+  resolveManagedCreditQuote: (quoteId, accepted) => {
+    const resolve = managedQuoteResolvers.get(quoteId);
+    managedQuoteResolvers.delete(quoteId);
+    set((state) => ({ pendingManagedCreditQuotes: state.pendingManagedCreditQuotes.filter((quote) => quote.quoteId !== quoteId) }));
+    resolve?.(accepted);
+  },
   rightsBasis: "owned",
   setRightsBasis: (rightsBasis) => set((state) => ({ rightsBasis, rightsConfirmed: false, rightsEvidenceIds: rightsBasis === "owned" ? [] : state.rightsEvidenceIds })),
   permittedRemix: "transform",
@@ -356,6 +376,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       abortController.abort();
       abortController = null;
     }
+    for (const [quoteId, resolve] of managedQuoteResolvers) { managedQuoteResolvers.delete(quoteId); resolve(false); }
     // Cancel pending/generating entries across all modes
     const modes: SimpleStudioMode[] = ["photo", "video", "copy"];
     for (const m of modes) {
@@ -367,7 +388,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         ),
       );
     }
-    set({ isGenerating: false, currentBatchId: null });
+    set({ isGenerating: false, currentBatchId: null, pendingManagedCreditQuotes: [] });
   },
 
   retryGeneration: async (id: string) => {

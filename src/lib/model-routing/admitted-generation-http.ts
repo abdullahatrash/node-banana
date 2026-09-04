@@ -14,6 +14,7 @@ const bodySchema = z.object({
   rightsBasis: z.enum(["owned","licensed","public_domain","consented"]), permittedRemix: z.enum(["reference_only","transform","derivative"]), rightsEvidenceIds: z.array(z.string().min(1).max(200)).max(8).default([]),
   remixBrief: z.object({ preserve: briefList, transform: briefList, avoid: briefList }).strict(),
   fundingMode: z.enum(["byok", "managed"]).default("byok"),
+  managedQuoteAcceptance: z.object({ quoteId: z.string().uuid(), confirmationDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).transform((value) => value as `sha256:${string}`) }).strict().nullable().optional(),
   personaId: z.string().min(1).max(200).nullable().default(null),
 }).strict();
 
@@ -23,6 +24,6 @@ export function createAdmittedGenerationPost(route: string) {
     const parsed = bodySchema.safeParse(raw);
     if (request.headers.get("x-workspace-id") !== authz.workspaceId || !key || key.length < 8 || !parsed.success) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
     const result = await admitStudioGeneration({ workspaceId: authz.workspaceId, userId: authz.userId, role: authz.role, planTier: authz.contentSession.planTier, idempotencyKey: key, input: parsed.data });
-    return result.ok ? noStoreJson({ success: true, ...result.value }, { status: result.status }) : noStoreJson({ success: false, code: result.code, nextActions: result.nextActions ?? [] }, { status: result.status });
+    return result.ok ? noStoreJson({ success: true, ...result.value }, { status: result.status }) : noStoreJson({ success: false, code: result.code, nextActions: result.nextActions ?? [], ...(result.managedCreditQuote ? { managedCreditQuote: result.managedCreditQuote } : {}) }, { status: result.status });
   });
 }

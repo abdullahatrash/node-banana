@@ -84,4 +84,25 @@ describe("product surface definitions", () => {
     });
     expect(payload).toMatchObject({ execution: { workflow: null }, runtime: null });
   });
+
+  it("keeps Blitz rejection feedback structured while normalizing legacy records", () => {
+    const base = {
+      sourceAttribution: "https://example.com/source",
+      remixBrief: { influences: ["topic"], protectedExpressionExcluded: true },
+      rationale: "A rights-cleared proposal",
+    };
+
+    expect(parseProductPayload("blitz_item", {
+      ...base,
+      rejectionReasons: [{ code: "brand_mismatch", note: "Tone is too formal" }],
+    })).toMatchObject({
+      rejectionReasons: [{ code: "brand_mismatch", note: "Tone is too formal" }],
+    });
+    expect(parseProductPayload("blitz_item", {
+      ...base,
+      rejectionReasons: ["Legacy free-form reason"],
+    })).toMatchObject({
+      rejectionReasons: [{ code: "other", note: "Legacy free-form reason" }],
+    });
+  });
 });

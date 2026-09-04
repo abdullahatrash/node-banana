@@ -3,8 +3,12 @@ import { z } from "zod";
 import { decideBlitzItem } from "@/lib/product-surfaces/blitz";
 import { ProductRecordConflictError, ProductRecordIdempotencyError } from "@/lib/product-surfaces/repository";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import { BLITZ_REJECTION_CODES } from "@/lib/product-surfaces/definitions";
 
-const schema = z.object({ itemId: z.string().min(1).max(200), expectedRevision: z.number().int().positive(), decision: z.enum(["accepted", "rejected"]), reasons: z.array(z.string().trim().min(1).max(300)).max(12).default([]), generation: z.object({ assetId: z.string().min(1).max(200), intentId: z.string().min(1).max(200), operationId: z.string().min(1).max(200) }).strict().nullable().default(null), idempotencyKey: z.string().min(8).max(200) }).strict();
+const schema = z.object({ itemId: z.string().min(1).max(200), expectedRevision: z.number().int().positive(), decision: z.enum(["accepted", "rejected"]), reasons: z.array(z.object({ code: z.enum(BLITZ_REJECTION_CODES), note: z.string().trim().max(300).default("") }).strict()).max(12).default([]), generation: z.object({ assetId: z.string().min(1).max(200), intentId: z.string().min(1).max(200), operationId: z.string().min(1).max(200) }).strict().nullable().default(null), idempotencyKey: z.string().min(8).max(200) }).strict().superRefine((value, context) => {
+  if (value.decision === "rejected" && value.reasons.length === 0) context.addIssue({ code: "custom", path: ["reasons"], message: "A structured rejection reason is required." });
+  if (value.decision === "accepted" && value.reasons.length > 0) context.addIssue({ code: "custom", path: ["reasons"], message: "Acceptance cannot include rejection reasons." });
+});
 
 export const POST = withStudioAuth<undefined>({ route: "/api/blitz/decision", action: "write", permission: "product:content:write" }, async (request, authz) => {
   const parsed = schema.safeParse(await request.json());

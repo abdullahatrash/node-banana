@@ -3,6 +3,7 @@ import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { findCuratedModel } from "./catalog";
 import { authorizeFallback } from "./compatibility";
 import { DENYING_GENERATION_BUDGET_AUTHORITY, type GenerationBudgetAuthority } from "./budget-authority";
+import type { ManagedCreditQuoteAcceptance } from "./budget-authority";
 import type { ModelRoutingRepository } from "./repository";
 import type {
   ArabicVariety, ContentLanguage, CostQuote, ExactModelRef,
@@ -93,7 +94,7 @@ export class ModelRoutingService {
     requestedModel: ExactModelRef; selectedModel: ExactModelRef;
     fallbackAuthorizationId: string | null; quantity: number;
     remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
-    userId: string; idempotencyKey: string; fundingMode?: GenerationIntent["fundingMode"]; persona?: GenerationIntent["persona"]; id?: string;
+    userId: string; idempotencyKey: string; fundingMode?: GenerationIntent["fundingMode"]; managedQuoteAcceptance?: ManagedCreditQuoteAcceptance | null; persona?: GenerationIntent["persona"]; id?: string;
   }) {
     const at = this.now();
     const id = input.id ?? stableId("intent", input.workspaceId, input.idempotencyKey);
@@ -131,9 +132,10 @@ export class ModelRoutingService {
     if (selected.qualification.status !== "qualified" || input.quantity > selected.qualification.maxQuantity) return { kind: "invalid" as const };
     const quote: CostQuote = { currency: "USD", amount: selected.qualification.executionPriceUsd.amount, basis: selected.qualification.executionPriceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
     const fundingMode = input.fundingMode ?? "byok";
-    const reservation = await this.budgets.reserve({ workspaceId: input.workspaceId, principalId: input.userId, intentId: id, model: input.selectedModel, quote, fundingMode, at });
+    const reservation = await this.budgets.reserve({ workspaceId: input.workspaceId, principalId: input.userId, intentId: id, model: input.selectedModel, quote, fundingMode, managedQuoteAcceptance: input.managedQuoteAcceptance ?? null, at });
     if (reservation.kind !== "reserved") {
       if (fallbackReservation?.disposition === "created") await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });
+      if (reservation.kind === "confirmation_required") return { kind: "managed_quote_confirmation_required" as const, quote: reservation.quote };
       return reservation.kind === "denied" ? { kind: "budget_denied" as const, code: reservation.code } : { kind: "budget_unavailable" as const, code: reservation.code };
     }
     const value: GenerationIntent = {

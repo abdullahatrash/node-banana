@@ -3,13 +3,15 @@
 import { z } from "zod";
 import { getActiveWorkspaceId, getStudioAssetDownloadUrl } from "@/lib/studio/client";
 import type { ArabicVariety, ContentLanguage, ExactModelRef, GenerationCapability } from "./types";
+import type { ManagedCreditQuote, ManagedCreditQuoteAcceptance } from "./budget-authority";
 
 const terminalStates = new Set(["cancelled", "succeeded", "failed_known", "outcome_unknown"]);
 const operationSchema = z.object({ id: z.string(), revision: z.number().int().positive(), state: z.string(), metadata: z.record(z.string(), z.unknown()).default({}) }).passthrough();
 const responseSchema = z.object({ success: z.literal(true), intentId: z.string(), operation: operationSchema }).passthrough();
 const executionSchema = z.object({ success: z.literal(true), result: z.object({ kind: z.literal("accepted"), operation: operationSchema, provider: z.object({ artifactIds: z.array(z.string()).optional(), textOutputIds: z.array(z.string()).optional() }).passthrough().optional() }) }).passthrough();
 const inspectionSchema = z.object({ success: z.literal(true), operation: operationSchema }).passthrough();
-const errorSchema = z.object({ code: z.string().optional(), nextActions: z.array(z.object({ code: z.string() }).passthrough()).optional() }).passthrough();
+const managedCreditQuoteSchema = z.object({ schema: z.literal("managed-generation-credit-quote/v1"), quoteId: z.string(), intentId: z.string(), totalDebitUnits: z.number().int().positive(), currency: z.literal("USD"), subtotalMinor: z.number().int().nonnegative(), taxMinor: z.number().int().nonnegative(), totalMinor: z.number().int().nonnegative(), expiresAt: z.string().datetime(), pricingSnapshotDigest: z.string(), confirmationDigest: z.string() });
+const errorSchema = z.object({ code: z.string().optional(), nextActions: z.array(z.object({ code: z.string() }).passthrough()).optional(), managedCreditQuote: managedCreditQuoteSchema.optional() }).passthrough();
 
 export function classifyContentLanguage(value: string): ContentLanguage {
   let arabic = 0; let latin = 0;
@@ -30,6 +32,7 @@ export interface StudioGenerationRequest {
   arabicVariety: ArabicVariety | null; rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
   permittedRemix: "reference_only" | "transform" | "derivative"; rightsEvidenceIds: string[];
   remixBrief: { preserve: string[]; transform: string[]; avoid: string[] }; idempotencyKey: string; signal: AbortSignal;
+  confirmManagedCreditQuote?: (quote: ManagedCreditQuote) => Promise<boolean>;
 }
 
 export class StudioGenerationError extends Error { constructor(readonly code: string, readonly nextActionCode: string | null = null) { super(code); } }
@@ -40,9 +43,21 @@ export async function runAdmittedStudioGeneration(input: StudioGenerationRequest
   const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new StudioGenerationError("WORKSPACE_REQUIRED");
   const capability: GenerationCapability = input.mode === "copy" ? "text_generation" : input.mode === "video" ? (input.sourceAssetIds.length ? input.sourceMediaType === "video" ? "video_to_video" : "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image");
   const contentLanguage = input.contentLanguage ?? classifyContentLanguage(input.prompt);
+  const admissionBody = (managedQuoteAcceptance: ManagedCreditQuoteAcceptance | null) => ({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief, fundingMode: input.fundingMode, personaId: input.personaId ?? null, managedQuoteAcceptance });
   // Admission intentionally ignores the UI abort signal: it cannot spend, and
   // completing it gives the client a durable operation it can safely cancel.
-  const response = await fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief, fundingMode: input.fundingMode, personaId: input.personaId ?? null }) });
+  const requestAdmission = (acceptance: ManagedCreditQuoteAcceptance | null) => fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify(admissionBody(acceptance)) });
+  let response = await requestAdmission(null);
+  if (!response.ok && input.fundingMode === "managed") {
+    const parsed = errorSchema.safeParse(await response.clone().json().catch(() => null));
+    if (parsed.success && parsed.data.code === "MANAGED_CREDIT_CONFIRMATION_REQUIRED" && parsed.data.managedCreditQuote) {
+      if (!input.confirmManagedCreditQuote) throw new StudioGenerationError("MANAGED_CREDIT_CONFIRMATION_UI_UNAVAILABLE");
+      const quote = parsed.data.managedCreditQuote as ManagedCreditQuote;
+      if (!(await input.confirmManagedCreditQuote(quote))) throw new StudioGenerationError("MANAGED_CREDIT_QUOTE_DECLINED");
+      if (input.signal.aborted) throw new DOMException("Cancelled", "AbortError");
+      response = await requestAdmission({ quoteId: quote.quoteId, confirmationDigest: quote.confirmationDigest as `sha256:${string}` });
+    }
+  }
   if (!response.ok) throw await errorFrom(response);
   const admitted = responseSchema.safeParse(await response.json()); if (!admitted.success) throw new StudioGenerationError("GENERATION_RESPONSE_INVALID");
   let operation = admitted.data.operation;

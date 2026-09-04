@@ -36,6 +36,8 @@ export const CONTENT_FORMATS = [
 
 export type ContentFormat = (typeof CONTENT_FORMATS)[number];
 
+export const BLITZ_REJECTION_CODES = ["not_relevant", "brand_mismatch", "stale_source", "rights_unclear", "too_similar", "wrong_format", "other"] as const;
+
 export const AUTOMATION_STEPS = [
   "basics",
   "format_mix",
@@ -59,6 +61,16 @@ export const ARABIC_VARIETIES = [
 
 const text = (max = 2_000) => z.string().trim().min(1).max(max);
 const optionalText = (max = 2_000) => z.string().trim().max(max).default("");
+
+const blitzRejectionReasonSchema = z.object({
+  code: z.enum(BLITZ_REJECTION_CODES),
+  note: z.string().trim().max(300).default(""),
+}).strict();
+
+const legacyBlitzRejectionReasonSchema = text(300).transform((note) => ({
+  code: "other" as const,
+  note,
+}));
 
 export const inspirationPayloadSchema = z.object({
   sourceUrl: z.union([
@@ -102,7 +114,7 @@ export const blitzPayloadSchema = z.object({
   sourceComparison: z.object({ views: z.number().int().nonnegative(), likes: z.number().int().nonnegative(), observedAt: z.string().datetime(), selectionDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
   executionMode: z.enum(["byok", "managed"]).nullable().default(null),
   generationCeilingCents: z.number().int().nonnegative().default(0),
-  rejectionReasons: z.array(text(300)).default([]),
+  rejectionReasons: z.array(z.union([blitzRejectionReasonSchema, legacyBlitzRejectionReasonSchema])).max(12).default([]),
 });
 
 export const contentPieceSchema = z.object({

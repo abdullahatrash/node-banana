@@ -1,5 +1,24 @@
 import type { CostQuote, ExactModelRef, GenerationFundingMode } from "./types";
 
+export interface ManagedCreditQuote {
+  schema: "managed-generation-credit-quote/v1";
+  quoteId: string;
+  intentId: string;
+  totalDebitUnits: number;
+  currency: "USD";
+  subtotalMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+  expiresAt: string;
+  pricingSnapshotDigest: `sha256:${string}`;
+  confirmationDigest: `sha256:${string}`;
+}
+
+export interface ManagedCreditQuoteAcceptance {
+  quoteId: string;
+  confirmationDigest: `sha256:${string}`;
+}
+
 export interface GenerationBudgetAuthority {
   reserve(input: {
     workspaceId: string;
@@ -8,9 +27,11 @@ export interface GenerationBudgetAuthority {
     model: ExactModelRef;
     quote: CostQuote;
     fundingMode?: GenerationFundingMode;
+    managedQuoteAcceptance?: ManagedCreditQuoteAcceptance | null;
     at: Date;
   }): Promise<
     | { kind: "reserved"; reservationIds: string[]; disposition: "created" | "replayed" }
+    | { kind: "confirmation_required"; quote: ManagedCreditQuote }
     | { kind: "denied"; code: string }
     | { kind: "unavailable"; code: string }
   >;
