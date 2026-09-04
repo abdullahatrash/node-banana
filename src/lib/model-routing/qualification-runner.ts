@@ -36,7 +36,7 @@ export type QualificationRunOutput = {
 
 export interface QualificationExecutionPort {
   identifyAccount(): Promise<QualificationProviderAccount>;
-  authorizeSpend(input: { model: string; version: string; capability: QualificationSmokeCase["capability"]; billableQuantity: number; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendAuthorization>;
+  authorizeSpend(input: { runId: string; model: string; version: string; capability: QualificationSmokeCase["capability"]; billableQuantity: number; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendAuthorization>;
   inspectSchema(input: { model: string; version: string }): Promise<{ inputSchemaDigest: `sha256:${string}`; inputKeys: string[] }>;
   submit(input: { model: string; version: string; providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string; acceptedInput: Record<string, unknown> }>;
   recoverSubmission(input: { model: string; version: string; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string } | null>;
@@ -99,7 +99,7 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
   const requestDigest = canonicalDigest(parsed) as `sha256:${string}`;
   const account = await execution.identifyAccount();
   if (account.provider !== "replicate" || !account.accountId.trim() || !/^sha256:[a-f0-9]{64}$/.test(account.credentialFingerprint)) throw new Error("QUALIFICATION_ACCOUNT_IDENTITY_INVALID");
-  const spendAuthorizations = await Promise.all(parsed.cases.map((cell) => execution.authorizeSpend({ model: base.model, version: base.version, capability: cell.capability, billableQuantity: cell.billableQuantity, caseId: cell.id, account })));
+  const spendAuthorizations = await Promise.all(parsed.cases.map((cell) => execution.authorizeSpend({ runId: parsed.runId, model: base.model, version: base.version, capability: cell.capability, billableQuantity: cell.billableQuantity, caseId: cell.id, account })));
   const authoritativeMaximums = spendAuthorizations.map((authorization, index) => {
     const cell = parsed.cases[index]!;
     if (authorization.schema !== "replicate-qualification-spend-authorization/v1" || authorization.source !== "replicate-account-billing" || !authorization.signingKeyId || !/^sha256:[a-f0-9]{64}$/.test(authorization.digest) || authorization.accountId !== account.accountId || authorization.credentialFingerprint !== account.credentialFingerprint || authorization.model !== base.model || authorization.version !== base.version || authorization.capability !== cell.capability || authorization.billableQuantity !== cell.billableQuantity || !Number.isFinite(authorization.maximumAmountUsd) || authorization.maximumAmountUsd <= 0 || new Date(authorization.expiresAt) <= at) throw new Error(`QUALIFICATION_SPEND_AUTHORIZATION_MISMATCH:${cell.id}`);

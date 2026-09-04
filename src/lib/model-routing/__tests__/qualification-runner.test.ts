@@ -76,6 +76,7 @@ describe("executable Replicate qualification runner", () => {
     expect(verify(null, Buffer.from(canonicalJson(signed.attestation)), publicKey, Buffer.from(signed.signature.value, "base64url"))).toBe(true);
     expect(result.report).toMatchObject({ hardCapUsd: 0.4, maximumSpendUsd: 0.30000000000000004, observedSpendUsd: 0.03, providerAccountId: "replicate-account" });
     expect(execution.submit).toHaveBeenCalledTimes(3);
+    expect(execution.authorizeSpend).toHaveBeenCalledWith(expect.objectContaining({ runId: "qualification-run-001", caseId: "arabic-complete" }));
     expect(execution.ingest).toHaveBeenCalledTimes(2);
     expect(execution.cancel).toHaveBeenCalledTimes(1);
     expect(execution.awaitWebhook).toHaveBeenCalledTimes(3);
