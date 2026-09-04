@@ -1,6 +1,5 @@
 [
   "src/app/studio/publishing-approvals/PublishingApprovalCockpit.tsx",
   "src/app/studio/publishing-deliveries/DeliveryOperationsCockpit.tsx",
-  "src/app/studio/quotas/QuotaCockpit.tsx",
   "src/app/studio/runs/[workflowId]/[runId]/RunCockpit.tsx"
 ]

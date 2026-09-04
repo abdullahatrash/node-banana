@@ -284,6 +284,23 @@
       "unit": { "count": "عدد", "byte": "بايت", "millisecond": "مللي ثانية", "megapixel": "ميغابكسل" },
       "errors": { "workspace": "اختر مساحة عمل قبل إدارة الميزانيات.", "createPolicy": "تعذر إنشاء سياسة الميزانية.", "createOverride": "تعذر إنشاء تجاوز التسعير.", "revokeOverride": "تعذر إلغاء تجاوز التسعير.", "reason": "سجّل سببًا قبل تغيير ضوابط الإنفاق الطارئ.", "spendControl": "تعذر تحديث ضبط الإنفاق." }
     },
+    "quotas": {
+      "eyebrow": "السعة التشغيلية", "title": "الحصص وقوائم الانتظار", "description": "السعة الفعلية غير المالية والحجوزات الدائمة والانتظار القابل للتجديد والاستئناف والتحذيرات ومنع تأثيرات المزود.", "refresh": "تحديث", "capacityFallback": "سعة الحصة",
+      "spend": { "title": "إنفاق المزود الطارئ", "blocked": "تأثيرات المزود الجديدة محظورة", "enabled": "تأثيرات المزود مفعّلة", "help": "يحافظ التعليق على التشغيلات المقبولة وسجلات الاستخدام والحجوزات.", "reasonLabel": "سبب ضبط الإنفاق", "reasonPlaceholder": "سبب التدقيق", "suspend": "تعليق", "resume": "استئناف" },
+      "policies": { "title": "سياسات الحصص", "rule": "{rule} · الاستنفاد {exhaustion} · التحذير {warning}", "empty": "لم تُضبط سياسة حصص." },
+      "create": { "title": "إنشاء مراجعة سياسة", "principalLabel": "معرّف صاحب سياسة الحصة", "principalPlaceholder": "معرّف صاحب الصلاحية (فارغ = مساحة العمل)", "kindLabel": "نوع الحصة", "boundaryLabel": "حد الحصة", "dimensionLabel": "بُعد الحصة", "unitLabel": "وحدة الحصة", "windowLabel": "نافذة الحصة", "timezoneLabel": "منطقة الحصة الزمنية", "ruleLabel": "قاعدة الحجز", "warningLabel": "عتبة تحذير الحصة", "limitLabel": "الحد الصارم للحصة", "exhaustionLabel": "سلوك الاستنفاد", "submit": "إنشاء المراجعة" },
+      "kind": { "admission": "القبول", "concurrency": "التزامن", "rate": "المعدل", "storage": "التخزين", "usage": "الاستخدام" },
+      "boundary": { "runAdmission": "قبول التشغيل", "runConcurrency": "تزامن التشغيل", "providerEffect": "تأثير المزود", "artifactStorage": "تخزين المواد", "usageSettlement": "تسوية الاستخدام" },
+      "unit": { "count": "عدد", "byte": "بايت", "millisecond": "مللي ثانية", "megapixel": "ميغابكسل" },
+      "window": { "concurrent": "متزامنة", "minute": "دقيقة تقويمية", "hour": "ساعة تقويمية", "day": "يوم تقويمي", "week": "أسبوع تقويمي", "month": "شهر تقويمي", "lifetime": "مدى الحياة" },
+      "rule": { "consume": "استهلاك", "terminal": "تحرير عند النهاية", "transition": "تحرير عند الانتقال" },
+      "exhaustion": { "wait": "انتظار عند قابلية التجديد", "deny": "رفض" },
+      "effective": { "title": "السعة الفعلية للوكيل", "principalLabel": "معرّف صاحب السعة", "principalPlaceholder": "principal_…", "load": "تحميل", "summary": "ملتزم {committed} · قُيّم {evaluated}", "warning": "بلغت عتبة التحذير", "exhausted": "السعة مستنفدة · تحظر {ids}", "empty": "حمّل صاحب صلاحية وكيل لفحص السعة الفعلية لمساحة العمل وصاحب الصلاحية." },
+      "reservations": { "title": "حجوزات الحصص", "summary": "التشغيل {run} · {state} · مراجعة السياسة {revision}", "empty": "لا توجد حجوزات حصص نشطة." },
+      "waits": { "title": "انتظار الحصص والاستئنافات", "run": "التشغيل {run}", "request": "المطلوب {requested} · المتاح {available} · الأهلية {eligible}", "policy": "السياسة {policy} / {revision} · الحجوزات {reservations}", "resumed": "استؤنف: {reason} بواسطة {actor} في {time}", "resume": "إعادة التقييم والاستئناف", "empty": "لا توجد حالات انتظار للحصص." },
+      "actor": { "human": "إنسان", "agent": "وكيل", "system": "النظام" },
+      "errors": { "workspace": "اختر مساحة عمل قبل إدارة الحصص.", "resume": "تعذر استئناف انتظار الحصة.", "capacity": "سعة الحصة الفعلية غير متاحة.", "policy": "تعذر إنشاء سياسة الحصة.", "reason": "سجّل سببًا قبل تغيير ضوابط الإنفاق الطارئ.", "spend": "تعذر تحديث ضبط الإنفاق." }
+    },
     "credentials": {
       "title": "ملفات بيانات الاعتماد", "description": "تُحفظ الأسرار في الخزنة أثناء التسليم. لا يتلقى الوكلاء سوى معرّفات الخانات والبيانات المنقحة.", "vault": "حفظ ملف بيانات الاعتماد", "profile": "ملف بيانات الاعتماد", "revoke": "إلغاء", "redactedLegacy": "سجل قديم منقح", "reprovision": "إعادة تهيئة الملف القديم", "disable": "تعطيل", "enable": "تفعيل", "rotate": "تدوير", "emergencyRevoke": "إلغاء طارئ للإصدار {version}", "audit": "تدقيق الأمان الموحّد",
       "fields": { "profileName": "اسم الملف", "provider": "المزود", "slot": "الخانة المنطقية", "secretHandoff": "تسليم السر", "principal": "معرّف الوكيل", "replacementSecret": "السر البديل", "newSecret": "السر الجديد", "slotFor": "الخانة المنطقية للملف {name}", "replacementSecretFor": "السر البديل للملف {name}", "newSecretFor": "السر الجديد للملف {name}", "rotationOverlapFor": "ثواني تداخل التدوير للملف {name}" },
