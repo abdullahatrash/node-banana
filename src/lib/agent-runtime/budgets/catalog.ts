@@ -30,15 +30,7 @@ const EXACT_ENTRIES: readonly ExactCatalogEntry[] = Object.freeze([
     currency: "USD",
     sourceReference: "runtime-contract:runtime.digest_text@1",
   }),
-  Object.freeze({
-    provider: "runtime",
-    providerOperation: "dispatch_admitted_generation",
-    model: "content-workflow-v1",
-    serviceTier: "local",
-    perAttemptCeiling: "0",
-    currency: "USD",
-    sourceReference: "runtime-contract:runtime.dispatch_admitted_generation@1",
-  }),
+  ...["slideshow", "wall_of_text", "video_hook_demo", "speaking_hook_demo", "talking_head_ugc", "green_screen_meme", "talking_head_green_screen", "product_spokesperson", "green_screen_mobile_app", "claymation", "character_swap"].map((format) => Object.freeze({ provider: "runtime", providerOperation: `dispatch_content_${format}`, model: "content-workflow-v1", serviceTier: "local", perAttemptCeiling: "0", currency: "USD", sourceReference: `runtime-contract:runtime.dispatch_content_${format}@1` })),
   Object.freeze({
     provider: "conformance",
     providerOperation: "generate_text",

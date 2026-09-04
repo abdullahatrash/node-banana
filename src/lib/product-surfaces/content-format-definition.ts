@@ -2,6 +2,7 @@ import { ARABIC_VARIETIES, CONTENT_FORMATS, type ContentFormat } from "./definit
 import type { GenerationCapability } from "@/lib/model-routing/types";
 
 export type ContentControl = "script" | "prompt" | "source_images" | "source_video" | "persona" | "app_capture" | "speaker" | "scene" | "captions" | "media_sets" | "theme";
+export type ContentWorkflowInput = "recipe" | "script" | "prompt" | "speaker" | "scene" | "captionStyle" | "personaId" | "mediaSetIds" | "themeRevisionRefs" | "orderedSources" | "durationSeconds" | "aspectRatio" | "contentLanguage" | "arabicVariety";
 export type ContentSourceSlot = { key: "images" | "video" | "app_capture"; type: "image" | "video"; minimum: number; maximum: number; providerInputIndex: number | null };
 
 export interface ContentFormatDefinition {
@@ -20,7 +21,7 @@ export interface ContentFormatDefinition {
   execution: {
     strategy: "admitted_generation" | "canonical_upload";
     capability: Extract<GenerationCapability, "text_to_video" | "image_to_video" | "video_to_video"> | null;
-    workflow: { id: string; revisionId: string } | null;
+    workflow: { id: string; revisionId: string; operation: string; inputs: readonly ContentWorkflowInput[] } | null;
     modelPolicy: { id: string; revision: number; qualifiedModelsOnly: true; advancedOverrides: "compatible_only" } | null;
   };
   managedQuote: { required: boolean; acceptance: "explicit_before_admission"; maximumQuantity: number };
@@ -44,10 +45,19 @@ function define(format: ContentFormat, input: {
 }): ContentFormatDefinition {
   const generated = input.capability !== null;
   const duration = input.duration ?? [4, 60, 15];
+  const workflowInputs: ContentWorkflowInput[] = ["recipe", "durationSeconds", "aspectRatio", "contentLanguage", "arabicVariety", "orderedSources"];
+  if (input.controls.includes("script")) workflowInputs.push("script");
+  if (input.controls.includes("prompt")) workflowInputs.push("prompt");
+  if (input.controls.includes("speaker")) workflowInputs.push("speaker");
+  if (input.controls.includes("scene")) workflowInputs.push("scene");
+  if (input.controls.includes("captions")) workflowInputs.push("captionStyle");
+  if (input.controls.includes("persona")) workflowInputs.push("personaId");
+  if (input.controls.includes("media_sets")) workflowInputs.push("mediaSetIds");
+  if (input.controls.includes("theme")) workflowInputs.push("themeRevisionRefs");
   return {
     schema: "content-format-definition/v1",
     id: `content-format:${format}`,
-    revision: 2,
+    revision: 3,
     format,
     status: "active",
     controls: input.controls,
@@ -60,8 +70,8 @@ function define(format: ContentFormat, input: {
     execution: {
       strategy: generated ? "admitted_generation" : "canonical_upload",
       capability: input.capability,
-      workflow: generated ? { id: `tasmeemai_content_${format}`, revisionId: "builtin-2026-09-04-2" } : null,
-      modelPolicy: generated ? { id: `content.${format}.v2`, revision: 2, qualifiedModelsOnly: true, advancedOverrides: "compatible_only" } : null,
+      workflow: generated ? { id: `tasmeemai_content_${format}`, revisionId: "builtin-2026-09-04-3", operation: `runtime.dispatch_content_${format}@1`, inputs: workflowInputs } : null,
+      modelPolicy: generated ? { id: `content.${format}.v3`, revision: 3, qualifiedModelsOnly: true, advancedOverrides: "compatible_only" } : null,
     },
     managedQuote: { required: generated, acceptance: "explicit_before_admission", maximumQuantity: 60 },
     renderProof: { required: true, schema: "content-render-proof/v2", verifies: ["fonts", "bidi", "captions", "timing", "safe_areas"] },

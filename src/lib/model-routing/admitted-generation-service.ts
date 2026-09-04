@@ -6,7 +6,7 @@ import { getDb } from "@/lib/db";
 import { assets, brandProfiles, workspaceProductRecords } from "@/lib/db/schema";
 import { canUseS3Storage } from "@/lib/storage";
 import { configuredCatalog, findCuratedModel } from "./catalog";
-import { inspirationRightsSnapshots } from "./db-schema";
+import { contentModelPolicyRevisions, inspirationRightsSnapshots } from "./db-schema";
 import { PRODUCTION_MODEL_ROUTING } from "./production";
 import { createImmutableRightsEvidence, loadRightsEvidence } from "./rights-evidence-repository";
 import { hydrateRightsSnapshot, validateRightsEvidence } from "./rights-evidence";
@@ -22,8 +22,9 @@ import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
 import { CreatorPersonaError } from "@/lib/creator-personas/repository";
 import { contentPieceSchema } from "@/lib/product-surfaces/definitions";
 import { resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/content-format-registry";
-import { assertContentGenerationRequest, buildContentGenerationRecipe, ContentGenerationRecipeError } from "@/lib/product-surfaces/content-generation-recipe";
+import { assertContentGenerationRequest, buildContentGenerationRecipe, contentProviderPrompt, ContentGenerationRecipeError } from "@/lib/product-surfaces/content-generation-recipe";
 import { assertContentModelPolicy, ContentWorkflowRuntimeError } from "@/lib/product-surfaces/content-workflow-runtime";
+import { contentModelAllowed, resolveContentModelPolicy } from "@/lib/product-surfaces/content-model-policy";
 
 export interface AdmittedGenerationInput {
   prompt: string; model: ExactModelRef & { provider: "replicate" }; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
@@ -77,14 +78,23 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
       const payload = contentPieceSchema.parse(record.payload);
       if (!payload.formatDefinition) throw new ContentGenerationRecipeError("CONTENT_FORMAT_DEFINITION_STALE");
       const resolved = await resolveContentFormatDefinitionReference(payload.format, payload.formatDefinition);
-      contentExecution = buildContentGenerationRecipe({ contentPieceId: record.id, contentPieceRevision: record.revision, contentPiecePayload: payload, definition: resolved.definition, definitionDigest: resolved.reference.digest as `sha256:${string}`, sourceTypes: new Map(sourceRows.map((row) => [row.id, row.type])) });
+      const policy = resolveContentModelPolicy(resolved.definition, configuredCatalog());
+      if (!policy || !contentModelAllowed(policy, input.model)) throw new ContentWorkflowRuntimeError("CONTENT_MODEL_POLICY_MODEL_NOT_ALLOWED");
+      if (input.prompt !== contentProviderPrompt(payload)) throw new ContentGenerationRecipeError("CONTENT_PROVIDER_CONTROLS_MISMATCH");
+      contentExecution = buildContentGenerationRecipe({ contentPieceId: record.id, contentPieceRevision: record.revision, contentPiecePayload: payload, definition: resolved.definition, definitionDigest: resolved.reference.digest as `sha256:${string}`, sourceTypes: new Map(sourceRows.map((row) => [row.id, row.type])), modelPolicy: policy });
       assertContentGenerationRequest({ recipe: contentExecution, format: payload.format, definition: resolved.definition, capability: input.capability, sourceAssetIds, personaId: input.personaId ?? null, payload });
-      assertContentModelPolicy({ definition: resolved.definition, intent: { selectedModel: input.model, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, outputContract: { mediaType: input.capability === "text_generation" ? "text" : input.capability.includes("video") ? "video" : "image", aspectRatio: input.capability === "text_generation" ? null : "9:16" }, quote: { quantity: input.quantity } } as import("./types").GenerationIntent, descriptor: model });
+      assertContentModelPolicy({ definition: resolved.definition, intent: { selectedModel: input.model, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, outputContract: { mediaType: input.capability === "text_generation" ? "text" : input.capability.includes("video") ? "video" : "image", aspectRatio: input.capability === "text_generation" ? null : "9:16" }, quote: { quantity: input.quantity }, contentExecution, regionAdmission: { region: "replicate-us" } } as import("./types").GenerationIntent, descriptor: model, policy });
     } catch (error) {
       return fail(422, error instanceof ContentGenerationRecipeError || error instanceof ContentWorkflowRuntimeError ? error.code : "CONTENT_EXECUTION_RECIPE_INVALID");
     }
   }
   const providerSourceIds = contentExecution?.providerInputArtifactIds ?? sourceAssetIds;
+  if (contentExecution) {
+    const policy = { schema: "content-model-policy/v1" as const, id: contentExecution.modelPolicy.id, revision: contentExecution.modelPolicy.revision, format: contentExecution.workflowInputs.format as import("@/lib/product-surfaces/definitions").ContentFormat, region: contentExecution.modelPolicy.region as "replicate-us", defaultModel: contentExecution.modelPolicy.defaultModel as import("@/lib/product-surfaces/content-model-policy").ContentModelPolicy["defaultModel"], compatibleModels: contentExecution.modelPolicy.compatibleModels as import("@/lib/product-surfaces/content-model-policy").ContentModelPolicy["compatibleModels"], overrides: { mode: contentExecution.modelPolicy.overrideMode, allowedFields: ["model"] as const, requireRequote: true as const }, digest: contentExecution.modelPolicy.digest };
+    await getDb().insert(contentModelPolicyRevisions).values({ workspaceId: context.workspaceId, id: policy.id, revision: policy.revision, format: policy.format, status: "active", policy, policyDigest: policy.digest, createdAt: new Date() }).onConflictDoNothing();
+    const [storedPolicy] = await getDb().select({ digest: contentModelPolicyRevisions.policyDigest }).from(contentModelPolicyRevisions).where(and(eq(contentModelPolicyRevisions.workspaceId, context.workspaceId), eq(contentModelPolicyRevisions.id, policy.id), eq(contentModelPolicyRevisions.revision, policy.revision), eq(contentModelPolicyRevisions.status, "active"))).limit(1);
+    if (storedPolicy?.digest !== policy.digest) return fail(409, "CONTENT_MODEL_POLICY_CONFLICT");
+  }
   const providerSourceSet = new Set(providerSourceIds);
   const providerRows = sourceRows.filter((row) => providerSourceSet.has(row.id));
   const sourceValidation = validateGenerationSources(input.capability, providerSourceIds, providerRows.map((row) => ({ ...row, metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : null })), model.qualification.inputContract.imageMode);

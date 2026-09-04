@@ -4,6 +4,7 @@ import { CONTENT_FORMATS } from "../definitions";
 
 const migration = readFileSync("drizzle/0100_content_format_definitions_and_similarity.sql", "utf8");
 const v2 = readFileSync("drizzle/0106_content_format_workflow_v2.sql", "utf8");
+const v3 = readFileSync("drizzle/0107_content_format_typed_workflows.sql", "utf8");
 
 describe("Content format persistence migration", () => {
   it("seeds every observed format as an exact active revision", () => {
@@ -19,6 +20,14 @@ describe("Content format persistence migration", () => {
     expect(v2).toContain("'content-render-proof/v2'");
     expect(v2).toContain("'builtin-2026-09-04-2'");
     expect(v2).toContain('CREATE TABLE "content_workflow_generation_runs"');
+  });
+
+  it("retires v2 and persists distinct typed workflows plus immutable exact model policies", () => {
+    expect(v3).toContain("WHERE \"revision\" = 2");
+    expect(v3).toContain("runtime.dispatch_content_");
+    expect(v3).toContain("builtin-2026-09-04-3");
+    expect(v3).toContain('CREATE TABLE "content_model_policy_revisions"');
+    expect(v3).toContain("content_model_policy_revisions_immutable");
   });
 
   it("persists immutable licensed theme and Blitz similarity evidence", () => {

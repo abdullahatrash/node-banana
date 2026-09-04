@@ -4,6 +4,7 @@ import { assets, contentWorkflowRevisions, contentWorkflows, user, workflowRuns,
 import type { ExactModelRef, FallbackAuthorization, GenerationIntent, InspirationRightsEvidence, InspirationRightsSnapshot } from "./types";
 import type { DurableProviderCredentialRef } from "@/lib/byok/repository";
 import type { QualificationSpendReceipt } from "./qualification-ledger";
+import type { ContentModelPolicy } from "@/lib/product-surfaces/content-model-policy";
 
 export const modelFallbackAuthorizations = pgTable("model_fallback_authorizations", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), revision: integer("revision").notNull(),
@@ -37,6 +38,10 @@ export const contentWorkflowGenerationRuns = pgTable("content_workflow_generatio
   userFk: foreignKey({ name: "content_workflow_generation_runs_user_fk", columns: [table.initiatedByUserId], foreignColumns: [user.id] }).onDelete("restrict"),
   valuesCheck: check("content_workflow_generation_runs_values_check", sql`${table.contentPieceRevision} > 0 and ${table.recipeDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.initiatingAuthContextDigest} ~ '^sha256:[a-f0-9]{64}$'`),
 }));
+
+export const contentModelPolicyRevisions = pgTable("content_model_policy_revisions", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), revision: integer("revision").notNull(), format: text("format").notNull(), status: text("status").notNull(), policy: jsonb("policy").$type<ContentModelPolicy>().notNull(), policyDigest: text("policy_digest").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "content_model_policy_revisions_pk", columns: [table.workspaceId, table.id, table.revision] }), activeUnique: uniqueIndex("content_model_policy_revisions_active_unique").on(table.workspaceId, table.format).where(sql`${table.status} = 'active'`), valuesCheck: check("content_model_policy_revisions_values_check", sql`${table.revision} > 0 and ${table.status} in ('active','retired') and ${table.policyDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
 
 export const modelRoutingMutationReceipts = pgTable("model_routing_mutation_receipts", {
   workspaceId: text("workspace_id").notNull(), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), resourceKind: text("resource_kind").notNull(), resourceId: text("resource_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),

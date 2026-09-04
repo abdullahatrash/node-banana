@@ -1,4 +1,4 @@
-import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { admissionExposureFor } from "@/lib/agent-runtime/budgets/catalog";
 import {
   PROVIDER_ADAPTER_MANIFEST,
@@ -33,7 +33,7 @@ import type {
   WorkflowStepExecutor,
   WorkflowStepExecutorRegistry,
 } from "./types";
-import { CONTENT_GENERATION_DISPATCH_OPERATION } from "@/lib/model-routing/content-workflow-operation";
+import { CONTENT_GENERATION_DISPATCH_OPERATIONS } from "@/lib/model-routing/content-workflow-operation";
 
 const IDENTITY = "runtime.digest_text@1";
 
@@ -108,18 +108,22 @@ class DigestTextExecutor implements WorkflowStepExecutor {
 
 class ContentGenerationDispatchExecutor implements WorkflowStepExecutor {
   readonly provider = "runtime";
-  readonly providerOperation = "dispatch_admitted_generation";
+  readonly providerOperation: string;
   readonly model = "content-workflow-v1";
+  constructor(readonly operationIdentity: string) { this.providerOperation = operationIdentity.split("@")[0]!.slice("runtime.".length); }
   admissionExposure() {
     return admissionExposureFor({ provider: this.provider, providerOperation: this.providerOperation, model: this.model, serviceTier: "local" });
   }
   async execute(input: Parameters<WorkflowStepExecutor["execute"]>[0]): ReturnType<WorkflowStepExecutor["execute"]> {
-    const raw = input.inputs.request?.textContent;
+    const raw = input.inputs.recipe?.textContent;
     if (!raw) return { kind: "failed_known", failureCode: "CONTENT_DISPATCH_REQUEST_MISSING", retryable: false, providerOperationRef: null };
-    let request: { workspaceId: string; userId: string; role: string; planTier: string; intentId: string; prompt: string; sourceAssetIds: string[]; idempotencyKey: string };
+    let request: { workspaceId: string; userId: string; role: string; planTier: string; intentId: string; prompt: string; sourceAssetIds: string[]; idempotencyKey: string; workflowInputs: Record<string, unknown> };
     try { request = JSON.parse(raw) as typeof request; }
     catch { return { kind: "failed_known", failureCode: "CONTENT_DISPATCH_REQUEST_INVALID", retryable: false, providerOperationRef: null }; }
-    if (request.workspaceId !== input.workspaceId || !request.intentId || !request.userId || !Array.isArray(request.sourceAssetIds)) return { kind: "failed_known", failureCode: "CONTENT_DISPATCH_REQUEST_INVALID", retryable: false, providerOperationRef: null };
+    const expectedOperation = `runtime.${this.providerOperation}@1`;
+    const declared = Object.keys(input.step.inputs).filter((name) => name !== "guard" && name !== "recipe");
+    const typedInputsMatch = request.workflowInputs && declared.every((name) => input.inputs[name]?.textContent === (typeof request.workflowInputs[name] === "string" ? request.workflowInputs[name] : canonicalJson(request.workflowInputs[name] ?? null)));
+    if (request.workspaceId !== input.workspaceId || input.step.operation.identity !== expectedOperation || !request.intentId || !request.userId || !Array.isArray(request.sourceAssetIds) || !typedInputsMatch) return { kind: "failed_known", failureCode: "CONTENT_DISPATCH_REQUEST_INVALID", retryable: false, providerOperationRef: null };
     const { executeAdmittedGeneration } = await import("@/lib/model-routing/execute-admitted-generation");
     const result = await executeAdmittedGeneration({ ...request, contentWorkflowRunId: input.runId });
     if (!result.ok) return { kind: "failed_known", failureCode: result.code, retryable: result.status === 503, providerOperationRef: request.intentId };
@@ -390,7 +394,7 @@ export class WorkflowRunExecutorRegistry
     }
     const registry = new WorkflowRunExecutorRegistry();
     registry.register(digest.identity, digest.contractDigest, new DigestTextExecutor());
-    registry.register(CONTENT_GENERATION_DISPATCH_OPERATION.identity, CONTENT_GENERATION_DISPATCH_OPERATION.contractDigest, new ContentGenerationDispatchExecutor());
+    for (const operation of CONTENT_GENERATION_DISPATCH_OPERATIONS) registry.register(operation.identity, operation.contractDigest, new ContentGenerationDispatchExecutor(operation.identity));
     registry.registerProviderAdapter(
       "gemini/generate-content",
       text.identity,

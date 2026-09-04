@@ -232,8 +232,8 @@ function eligibleWorkflowExecutors(
   const isContentDispatch =
     steps.length === 2 &&
     steps[0]?.operation.identity === "runtime.digest_text@1" &&
-    steps[1]?.operation.identity === "runtime.dispatch_admitted_generation@1" &&
-    steps[1]?.inputs.request?.from === "workflow_input" &&
+    /^runtime\.dispatch_content_[a-z_]+@1$/.test(steps[1]?.operation.identity ?? "") &&
+    steps[1]?.inputs.recipe?.from === "workflow_input" &&
     steps[1]?.inputs.guard?.from === "step_output" &&
     steps[1]?.inputs.guard.step === steps[0]?.id &&
     steps[1]?.inputs.guard.output === "textDigest" &&

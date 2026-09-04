@@ -8,7 +8,7 @@ import { getReleaseControlService } from "@/lib/release-control/production";
 import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { loadImmutableBrandContext } from "./brand-context";
 import { findCuratedModel } from "./catalog";
-import { inspirationRightsSnapshots, modelGenerationBudgetReservations } from "./db-schema";
+import { contentModelPolicyRevisions, inspirationRightsSnapshots, modelGenerationBudgetReservations } from "./db-schema";
 import type { GenerationExecutionResult } from "./execution";
 import { PostgresModelRoutingRepository } from "./postgres-repository";
 import { validateRightsEvidence } from "./rights-evidence";
@@ -80,6 +80,8 @@ export async function executeAdmittedGeneration(input: {
       const resolved = await resolveContentFormatDefinitionReference(intent.contentExecution.formatDefinition.id.slice("content-format:".length) as import("@/lib/product-surfaces/definitions").ContentFormat, intent.contentExecution.formatDefinition);
       if (!validateContentGenerationRecipe({ recipe: intent.contentExecution, definition: resolved.definition, capability: intent.capability, rightsSourceAssetIds: sourceIds, providerSourceAssetIds: intent.providerComposition.sourceAssetIds })) return rejected(409, "CONTENT_EXECUTION_RECIPE_MISMATCH");
       assertContentModelPolicy({ definition: resolved.definition, intent, descriptor });
+      const [storedPolicy] = await getDb().select({ digest: contentModelPolicyRevisions.policyDigest }).from(contentModelPolicyRevisions).where(and(eq(contentModelPolicyRevisions.workspaceId, input.workspaceId), eq(contentModelPolicyRevisions.id, intent.contentExecution.modelPolicy.id), eq(contentModelPolicyRevisions.revision, intent.contentExecution.modelPolicy.revision), eq(contentModelPolicyRevisions.status, "active"))).limit(1);
+      if (storedPolicy?.digest !== intent.contentExecution.modelPolicy.digest) return rejected(409, "CONTENT_MODEL_POLICY_UNAVAILABLE");
       if (!input.contentWorkflowRunId) return rejected(409, "CONTENT_WORKFLOW_RUN_REQUIRED");
       const [run] = await getDb().select({ workflowId: workflowRuns.workflowId, workflowRevisionId: workflowRuns.workflowRevisionId, startSnapshot: workflowRuns.startSnapshot }).from(workflowRuns).where(and(eq(workflowRuns.workspaceId, input.workspaceId), eq(workflowRuns.id, input.contentWorkflowRunId))).limit(1);
       const requestInput = run?.startSnapshot.inputs.find((candidate) => candidate.name === "request" && candidate.kind === "text")?.value;

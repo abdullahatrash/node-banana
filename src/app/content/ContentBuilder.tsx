@@ -10,9 +10,11 @@ import { GenerationAdmissionPanel } from "@/components/simple-studio-shell/forms
 import { ModelSelect } from "@/components/simple-studio-shell/forms/ModelSelect";
 import { runAdmittedStudioGeneration } from "@/lib/model-routing/studio-generation-client";
 import { contentExecutionPlan } from "@/lib/product-surfaces/content-execution-plan";
+import { contentProviderPrompt } from "@/lib/product-surfaces/content-generation-recipe";
+import type { ExactModelRef } from "@/lib/model-routing/types";
 import type { ContentFormatDefinition, ContentSourceSlot } from "@/lib/product-surfaces/content-format-definition";
 import type { ContentEditorOptions } from "@/lib/product-surfaces/content-editor-options";
-import { ARABIC_VARIETIES, CONTENT_FORMATS, type ContentFormat } from "@/lib/product-surfaces/definitions";
+import { ARABIC_VARIETIES, CONTENT_FORMATS, contentPieceSchema, type ContentFormat } from "@/lib/product-surfaces/definitions";
 import { requestStudioManagedCreditQuoteConfirmation, useSimpleStudioStore } from "@/store/simpleStudioStore";
 
 type Piece = { id: string; title: string; revision: number; payload: Record<string, unknown> };
@@ -38,7 +40,7 @@ export function contentDraftPayload(data: FormData, format: ContentFormat, defin
   };
 }
 
-export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options, definition, definitionDigest }: { selectedFormat: ContentFormat; selectedPiece: Piece | null; pieces: Piece[]; options: ContentEditorOptions; definition: ContentFormatDefinition; definitionDigest: `sha256:${string}` }) {
+export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options, definition, definitionDigest, allowedModels }: { selectedFormat: ContentFormat; selectedPiece: Piece | null; pieces: Piece[]; options: ContentEditorOptions; definition: ContentFormatDefinition; definitionDigest: `sha256:${string}`; allowedModels: ExactModelRef[] }) {
   const t = useTranslations("product.content") as Translator;
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null); const recordRef = useRef(selectedPiece); const queue = useRef<Promise<unknown>>(Promise.resolve()); const timer = useRef<ReturnType<typeof setTimeout> | null>(null); const controller = useRef<AbortController | null>(null); const retryMode = useRef<"copy" | "media" | null>(null);
@@ -67,15 +69,16 @@ export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options,
   async function generate(mode: "copy" | "media") {
     const form = formRef.current; if (!form?.checkValidity()) { form?.reportValidity(); return; }
     if (!rightsConfirmed) { setError(t("error")); return; }
-    if ((mode === "copy" || execution.strategy === "admitted_generation") && (!modelId || provider !== "replicate" || !version || !schemaDigest)) { setError(t("modelRequired")); return; }
+    const selectedModelAllowed = allowedModels.some((model) => model.provider === provider && model.model === modelId && model.version === version && model.inputSchemaDigest === schemaDigest);
+    if ((mode === "copy" || execution.strategy === "admitted_generation") && (!modelId || provider !== "replicate" || !version || !schemaDigest || (mode === "media" && !selectedModelAllowed))) { setError(t("modelRequired")); return; }
     const abort = new AbortController(); controller.current = abort; retryMode.current = mode; setProgress("generating"); setError("");
     try {
       const data = new FormData(form); const saved = await saveData(data); const issues = Array.isArray(saved.payload.validationIssues) ? saved.payload.validationIssues.filter((v): v is string => typeof v === "string") : [];
       if (mode === "media" && issues.length) { setError(t(`validation.${issues[0]}`)); setProgress("failed"); return; }
       if (mode === "media" && execution.strategy === "canonical_upload") await productRequest("/api/product-content/generation", { kind: "upload", id: saved.id, expectedRevision: saved.revision, idempotencyKey: crypto.randomUUID() });
       else {
-        const language = String(data.get("language")) as "ar" | "en" | "mixed"; const sourceIds = data.getAll("sourceAssetIds").map(String).filter(Boolean);
-        const generated = await runAdmittedStudioGeneration({ prompt: [String(data.get("prompt")), String(data.get("script")), t(`formats.${selectedFormat}`)].filter(Boolean).join("\n\n"), contentLanguage: language, model: { provider: "replicate", model: modelId!, version: version!, inputSchemaDigest: schemaDigest! }, mode: mode === "copy" ? "copy" : "video", sourceMediaType: mode === "copy" ? null : execution.capability === "video_to_video" ? "video" : execution.capability === "image_to_video" ? "image" : null, sourceAssetIds: mode === "copy" ? [] : sourceIds, quantity: mode === "copy" ? 1 : Number(data.get("duration")), fundingMode, personaId: String(data.get("personaId") || "") || null, contentExecution: mode === "media" ? { contentPieceId: saved.id, contentPieceRevision: saved.revision } : null, arabicVariety: language === "en" ? null : String(data.get("arabicVariety")) as (typeof ARABIC_VARIETIES)[number], rightsBasis, permittedRemix, rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "requested Content Format", "pinned source lineage"], transform: permittedRemix === "reference_only" ? [] : ["composition", "motion", "wording"], avoid: ["unverified claims", "unlicensed marks"] }, idempotencyKey: crypto.randomUUID(), signal: abort.signal, confirmManagedCreditQuote: requestStudioManagedCreditQuoteConfirmation });
+        const savedPayload = contentPieceSchema.parse(saved.payload); const language = savedPayload.contentLanguage; const sourceIds = savedPayload.sourceAssetIds;
+        const generated = await runAdmittedStudioGeneration({ prompt: mode === "media" ? contentProviderPrompt(savedPayload) : [savedPayload.prompt, savedPayload.script, t(`formats.${selectedFormat}`)].filter(Boolean).join("\n\n"), contentLanguage: language, model: { provider: "replicate", model: modelId!, version: version!, inputSchemaDigest: schemaDigest! }, mode: mode === "copy" ? "copy" : "video", sourceMediaType: mode === "copy" ? null : execution.capability === "video_to_video" ? "video" : execution.capability === "image_to_video" ? "image" : null, sourceAssetIds: mode === "copy" ? [] : sourceIds, quantity: mode === "copy" ? 1 : savedPayload.durationSeconds, fundingMode, personaId: savedPayload.personaId, contentExecution: mode === "media" ? { contentPieceId: saved.id, contentPieceRevision: saved.revision } : null, arabicVariety: language === "en" ? null : savedPayload.arabicVariety, rightsBasis, permittedRemix, rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "requested Content Format", "pinned source lineage"], transform: permittedRemix === "reference_only" ? [] : ["composition", "motion", "wording"], avoid: ["unverified claims", "unlicensed marks"] }, idempotencyKey: crypto.randomUUID(), signal: abort.signal, confirmManagedCreditQuote: requestStudioManagedCreditQuoteConfirmation });
         if (mode === "copy") { if (!generated.textOutputId) throw new Error("CANONICAL_TEXT_OUTPUT_RECEIPT_MISSING"); await productRequest("/api/product-content/generation", { kind: "text", id: saved.id, expectedRevision: saved.revision, textOutputId: generated.textOutputId, idempotencyKey: crypto.randomUUID() }); }
         else { if (!generated.assetId) throw new Error("CANONICAL_MEDIA_RECEIPT_MISSING"); await productRequest("/api/product-content/generation", { kind: "media", id: saved.id, expectedRevision: saved.revision, generation: { assetId: generated.assetId, intentId: generated.intentId, operationId: generated.operationId }, idempotencyKey: crypto.randomUUID() }); }
       }
