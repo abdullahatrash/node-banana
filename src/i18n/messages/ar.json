@@ -119,11 +119,11 @@
       "destinationUnavailable": "معلومات قناة الوجهة غير متاحة.", "draftPrefix": "مسودة:", "notSet": "غير محدد",
       "scheduled": "مجدول", "published": "منشور", "created": "أُنشئ", "video": "فيديو",
       "mediaAttached": "{count, plural, one {مرفق وسائط واحد} two {مرفقا وسائط} few {# مرفقات وسائط} many {# مرفق وسائط} other {# مرفق وسائط}}", "more": "+{count} أخرى", "calendarTime": "وقت التقويم: {value}",
-      "confirmPublishNow": "هل تريد نشر هذا المنشور الآن وتجاوز موعده المجدول؟", "confirmDelete": "هل تريد حذف هذا المنشور؟",
+      "confirmPublishNow": "هل تريد نشر هذا المنشور الآن وتجاوز موعده المجدول؟", "confirmDelete": "هل تريد حذف هذا المنشور؟", "confirmCancelReleasedDelivery": "تم إرسال هذا الجدول بالفعل إلى المزوّد. هل تريد إلغاء عملية التسليم قبل إنشاء جدول جديد؟",
       "status": { "draft": "مسودة", "queued": "مجدول", "publishing": "قيد النشر", "published": "منشور", "failed": "فشل" },
       "actions": { "save": "حفظ", "edit": "تعديل", "publishNow": "النشر الآن", "retry": "إعادة المحاولة", "reschedule": "إعادة الجدولة", "open": "فتح", "duplicate": "تكرار", "delete": "حذف" },
-      "toast": { "rescheduled": "أُعيدت جدولة المنشور", "requeued": "أُعيد المنشور إلى قائمة الانتظار", "queuedNow": "أُضيف المنشور للنشر الفوري", "duplicated": "نُسخ المنشور كمسودة", "deleted": "حُذف المنشور", "preferencesSaved": "تم حفظ تفضيلات التقويم" },
-      "errors": { "cannotReschedule": "لا يمكن إعادة جدولة هذا المنشور.", "reschedule": "تعذرت إعادة الجدولة", "retry": "تعذرت إعادة المحاولة", "action": "تعذر تنفيذ الإجراء", "preferences": "تعذر حفظ تفضيلات التقويم" }
+      "toast": { "rescheduled": "أُعيدت جدولة المنشور", "requeued": "أُعيد المنشور إلى قائمة الانتظار", "queuedNow": "أُضيف المنشور للنشر الفوري", "duplicated": "نُسخ المنشور كمسودة", "deleted": "حُذف المنشور", "preferencesSaved": "تم حفظ تفضيلات التقويم", "approvalRequired": "تم حفظ الجدول الجديد. تلزم الموافقة قبل النشر." },
+      "errors": { "cannotReschedule": "لا يمكن إعادة جدولة هذا المنشور.", "reschedule": "تعذرت إعادة الجدولة", "retry": "تعذرت إعادة المحاولة", "action": "تعذر تنفيذ الإجراء", "preferences": "تعذر حفظ تفضيلات التقويم", "cancellationNotGuaranteed": "لم يتمكن المزوّد من ضمان الإلغاء. لم يتم إنشاء جدول بديل.", "canonicalScheduleUnavailable": "هذا العنصر غير مرتبط بخطة نشر معتمدة وحالية، ولا يمكن إعادة جدولته من هنا." }
     },
     "events": { "title": "الأحداث", "empty": "لا توجد أحداث بعد.", "markUnread": "تحديد كغير مقروء", "markRead": "تحديد كمقروء", "errors": { "load": "فشل تحميل الأحداث", "update": "فشل تحديث الحدث" }, "severity": { "info": "معلومة", "warning": "تحذير", "error": "خطأ" } },
     "integrations": { "title": "عمليات التكامل", "connectedChannels": "القنوات المتصلة", "availableProviders": "المزوّدون المتاحون", "errors": { "load": "فشل تحميل عمليات التكامل" } },

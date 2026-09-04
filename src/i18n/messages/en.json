@@ -119,11 +119,11 @@
       "destinationUnavailable": "Destination channel information is unavailable.", "draftPrefix": "Draft:", "notSet": "Not set",
       "scheduled": "Scheduled", "published": "Published", "created": "Created", "video": "Video",
       "mediaAttached": "{count, plural, one {# media item attached} other {# media items attached}}", "more": "+{count} more", "calendarTime": "Calendar time: {value}",
-      "confirmPublishNow": "Publish this post now? This bypasses its schedule.", "confirmDelete": "Delete this post?",
+      "confirmPublishNow": "Publish this post now? This bypasses its schedule.", "confirmDelete": "Delete this post?", "confirmCancelReleasedDelivery": "This schedule has already been released to the provider. Cancel that delivery before creating a new schedule?",
       "status": { "draft": "Draft", "queued": "Scheduled", "publishing": "Publishing", "published": "Published", "failed": "Failed" },
       "actions": { "save": "Save", "edit": "Edit", "publishNow": "Publish now", "retry": "Retry", "reschedule": "Reschedule", "open": "Open", "duplicate": "Duplicate", "delete": "Delete" },
-      "toast": { "rescheduled": "Post rescheduled", "requeued": "Post re-queued", "queuedNow": "Post queued for immediate publishing", "duplicated": "Post duplicated as draft", "deleted": "Post deleted", "preferencesSaved": "Calendar preferences saved" },
-      "errors": { "cannotReschedule": "This post cannot be rescheduled.", "reschedule": "Failed to reschedule", "retry": "Retry failed", "action": "Action failed", "preferences": "Could not save calendar preferences" }
+      "toast": { "rescheduled": "Post rescheduled", "requeued": "Post re-queued", "queuedNow": "Post queued for immediate publishing", "duplicated": "Post duplicated as draft", "deleted": "Post deleted", "preferencesSaved": "Calendar preferences saved", "approvalRequired": "New schedule saved. Approval is required before publishing." },
+      "errors": { "cannotReschedule": "This post cannot be rescheduled.", "reschedule": "Failed to reschedule", "retry": "Retry failed", "action": "Action failed", "preferences": "Could not save calendar preferences", "cancellationNotGuaranteed": "The provider could not guarantee cancellation. No replacement schedule was created.", "canonicalScheduleUnavailable": "This item is not linked to a current approved publishing plan and cannot be rescheduled here." }
     },
     "events": { "title": "Events", "empty": "No events yet.", "markUnread": "Mark unread", "markRead": "Mark read", "errors": { "load": "Failed to load events", "update": "Failed to update event" }, "severity": { "info": "Information", "warning": "Warning", "error": "Error" } },
     "integrations": { "title": "Integrations", "connectedChannels": "Connected channels", "availableProviders": "Available providers", "errors": { "load": "Failed to load integrations" } },
