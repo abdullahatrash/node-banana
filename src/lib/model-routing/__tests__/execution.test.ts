@@ -4,12 +4,13 @@ import { OperationStatusService } from "@/lib/agent-runtime/operation-status/ser
 import { MemoryModelRoutingRepository } from "../memory-repository";
 import { ReplicatePredictionAdapter } from "../replicate-contract";
 import { GenerationExecutionService } from "../execution";
-import { ALLOWING_TEST_REGION_AUTHORITY, resolveTestModel, testBrand, testOutputContract, testQualification, testRef, TEST_CREDENTIAL_REF, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
+import { ALLOWING_TEST_REGION_AUTHORITY, resolveTestModel, testBrand, testOutputContract, testProviderComposition, testQualification, testRef, TEST_CREDENTIAL_REF, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
 import type { GenerationIntent } from "../types";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
 const at = new Date("2026-09-03T00:00:00Z");
-const intent: GenerationIntent = { schema: "generation-intent/v1", id: "intent", workspaceId: "ws", brand: testBrand("brand", 2, at), promptDigest: canonicalDigest("Arabic campaign") as `sha256:${string}`, capability: "text_to_video", contentLanguage: "ar", arabicVariety: "gulf", rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, qualification: testQualification(5), regionAdmission: TEST_REGION_ADMISSION, outputContract: testOutputContract(5), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null, fundingMode: "byok", quote: { currency: "USD", amount: .05, basis: "second", quantity: 8, quotedAt: at, expiresAt: new Date("2026-09-03T00:05:00Z") }, reservationIds: ["budget"], createdByUserId: "user", createdAt: at };
+const brand = testBrand("brand", 2, at);
+const intent: GenerationIntent = { schema: "generation-intent/v1", id: "intent", workspaceId: "ws", brand, promptDigest: canonicalDigest("Arabic campaign") as `sha256:${string}`, providerComposition: testProviderComposition(5, "Arabic campaign", brand), capability: "text_to_video", contentLanguage: "ar", arabicVariety: "gulf", rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, qualification: testQualification(5), regionAdmission: TEST_REGION_ADMISSION, outputContract: testOutputContract(5), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null, fundingMode: "byok", quote: { currency: "USD", amount: .05, basis: "second", quantity: 8, quotedAt: at, expiresAt: new Date("2026-09-03T00:05:00Z") }, reservationIds: ["budget"], createdByUserId: "user", createdAt: at };
 
 describe("GenerationExecutionService", () => {
   it("requires the sealed prompt and projects admitted provider work durably", async () => {
@@ -27,6 +28,6 @@ describe("GenerationExecutionService", () => {
     const result = await service.execute({ workspaceId: "ws", userId: "user", intentId: "intent", rawPrompt: "Arabic campaign", sourceUrls: [], brandReferenceUrls: [], idempotencyKey: "execute-right" });
     expect(result.kind).toBe("accepted");
     if (result.kind === "accepted") expect(result.operation).toMatchObject({ state: "waiting_provider", revision: 4, metadata: { predictionId: "prediction", contentLanguage: "ar", arabicVariety: "gulf" } });
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({ prompt: "Arabic campaign", aspect_ratio: "9:16", duration: 8, disable_safety_checker: false, resolution: "1080p", audio: false }) }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({ prompt: expect.stringMatching(/^Arabic campaign\n\n\[TASMEEMAI_BRAND_CONTEXT_V1\]/), aspect_ratio: "9:16", duration: 8, disable_safety_checker: false, resolution: "1080p", audio: false }) }));
   });
 });

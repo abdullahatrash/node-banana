@@ -42,7 +42,7 @@ export interface ImmutableBrandContext {
 }
 export type ModelExecutionQualification =
   | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
-  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number | null; height: number | null; fps: number | null }; inputContract: { promptKey: string; brandContextKey: string; aspectRatioKey: string | null; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean } | null; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
+  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number | null; height: number | null; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string | null; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean } | null; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
 export interface ModelDescriptor {
   provider: ExactModelRef["provider"]; model: string; label: string;
   capabilities: readonly GenerationCapability[]; quality: GenerationQuality;
@@ -64,6 +64,7 @@ export interface GenerationIntent {
   schema: "generation-intent/v1"; id: string; workspaceId: string;
   brand: { profileId: string; revision: number; digest: `sha256:${string}`; acceptedAt: Date; context: ImmutableBrandContext };
   promptDigest: `sha256:${string}`; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
+  providerComposition: { schema: "provider-input-composition/v1"; promptVersion: "tasmeemai-brand-prompt/v1"; mediaVersion: "tasmeemai-brand-media/v1"; rawPromptDigest: `sha256:${string}`; brandContextDigest: `sha256:${string}`; composedPromptDigest: `sha256:${string}`; sourceAssetIds: string[]; brandReferenceAssets: Array<{ assetId: string; digest: `sha256:${string}`; kind: "logo" }>; providerMediaAssetIds: string[]; brandMediaDisposition: "provider_input" | "prompt_context" | "provider_input_and_prompt_context"; model: ExactModelRef; capability: GenerationCapability; contractDigest: `sha256:${string}`; digest: `sha256:${string}` };
   rights: { snapshotId: string; revision: number; digest: `sha256:${string}`; basis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; evidence: InspirationRightsEvidence[]; sourceAssetIds: string[] };
   remixBrief: { digest: `sha256:${string}`; preserve: string[]; transform: string[]; avoid: string[] };
   qualification: { id: string; revision: number; digest: `sha256:${string}`; expiresAt: Date };

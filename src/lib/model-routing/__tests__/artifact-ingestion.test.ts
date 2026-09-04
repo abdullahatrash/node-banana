@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { ArtifactIngestionBusyError, ArtifactLeaseGuard, S3CanonicalArtifactIngestion, validateDecodedArtifact } from "../artifact-ingestion";
 import type { ArtifactReceiptPort } from "../artifact-receipts";
 import type { GenerationIntent } from "../types";
-import { testBrand, testOutputContract, testQualification, testRef, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
+import { testBrand, testOutputContract, testProviderComposition, testQualification, testRef, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
 
+const brand = testBrand("brand", 4, new Date("2026-09-03T00:00:00Z"));
 const intent: GenerationIntent = {
   schema: "generation-intent/v1", id: "intent-artifact", workspaceId: "ws",
-  brand: testBrand("brand", 4, new Date("2026-09-03T00:00:00Z")),
-  promptDigest: `sha256:${"b".repeat(64)}`, capability: "text_to_video", contentLanguage: "ar", arabicVariety: "gulf",
+  brand,
+  promptDigest: `sha256:${"b".repeat(64)}`, providerComposition: testProviderComposition(5, "test", brand), capability: "text_to_video", contentLanguage: "ar", arabicVariety: "gulf",
   rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, qualification: testQualification(5), regionAdmission: TEST_REGION_ADMISSION,
   outputContract: testOutputContract(5, 8), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null, fundingMode: "byok",
   quote: { currency: "USD", amount: 0.4, basis: "second", quantity: 8, quotedAt: new Date("2026-09-03T00:00:00Z"), expiresAt: new Date("2026-09-03T00:05:00Z") },

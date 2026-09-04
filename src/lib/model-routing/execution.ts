@@ -9,6 +9,7 @@ import { authorizeFallback } from "./compatibility";
 import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } from "./generation-region";
 import { validateImmutableBrandContext } from "./brand-context";
 import { ensureAdmittedGenerationOperation } from "./generation-operation";
+import { composeQualifiedProviderInput } from "./provider-input-composition";
 
 export type GenerationExecutionResult =
   | { kind: "accepted"; operation: OperationRecord; provider: ReplicateExecutionResult }
@@ -49,14 +50,25 @@ export class GenerationExecutionService {
     const expectedAspectRatio = intent.outputContract.mediaType === "text" ? null : "9:16";
     if (intent.outputContract.aspectRatio !== expectedAspectRatio || intent.outputContract.width !== descriptor.qualification.outputShape.width || intent.outputContract.height !== descriptor.qualification.outputShape.height || intent.outputContract.fps !== descriptor.qualification.outputShape.fps || intent.outputContract.durationSeconds !== (intent.outputContract.mediaType === "video" ? intent.quote.quantity : null) || intent.outputContract.safetyParameterKey !== (contract.safety?.parameterKey ?? null) || intent.outputContract.safetyValue !== (contract.safety?.safeValue ?? null) || intent.outputContract.lockedParametersDigest !== canonicalDigest(contract.lockedParameters)) return { kind: "invalid", code: "OUTPUT_CONTRACT_MISMATCH" };
     if (input.sourceUrls.length && !contract.imageKey) return { kind: "invalid", code: "MODEL_IMAGE_INPUT_UNSUPPORTED" };
-    const providerInput: Record<string, unknown> = {
-      ...structuredClone(contract.lockedParameters),
-      [contract.promptKey]: input.rawPrompt,
-      [contract.brandContextKey]: JSON.stringify({ ...intent.brand.context, referenceAssets: intent.brand.context.referenceAssets.map((reference, index) => ({ ...reference, url: input.brandReferenceUrls[index]!.url })) }),
-    };
-    if (contract.aspectRatioKey) providerInput[contract.aspectRatioKey] = "9:16";
-    if (contract.quantityKey) providerInput[contract.quantityKey] = intent.quote.quantity;
-    if (contract.imageKey && input.sourceUrls.length) providerInput[contract.imageKey] = contract.imageMode === "array" ? input.sourceUrls : input.sourceUrls[0];
+    let composition;
+    try {
+      composition = composeQualifiedProviderInput({
+        rawPrompt: input.rawPrompt,
+        brand: intent.brand.context,
+        sourceAssetIds: intent.rights.sourceAssetIds,
+        sourceUrls: input.sourceUrls,
+        brandReferenceUrls: input.brandReferenceUrls,
+        model: intent.selectedModel,
+        capability: intent.capability,
+        contract,
+        aspectRatio: expectedAspectRatio,
+        quantity: intent.quote.quantity,
+      });
+    } catch (error) {
+      return { kind: "invalid", code: error instanceof Error ? error.message : "PROVIDER_INPUT_COMPOSITION_FAILED" };
+    }
+    if (composition.evidence.digest !== intent.providerComposition.digest || canonicalDigest(composition.evidence) !== canonicalDigest(intent.providerComposition)) return { kind: "invalid", code: "PROVIDER_COMPOSITION_MISMATCH" };
+    const providerInput = composition.providerInput;
 
     const actor = { type: "human" as const, userId: input.userId };
     let operation = await ensureAdmittedGenerationOperation(this.operations, intent);

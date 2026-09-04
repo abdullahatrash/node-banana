@@ -2,6 +2,7 @@ import { CURATED_MODELS, exactModelRef, findCuratedModel } from "../catalog";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { ExactModelRef, ImmutableBrandContext, ModelDescriptor } from "../types";
 import type { GenerationRegionAuthority } from "../generation-region";
+import { createProviderCompositionEvidence } from "../provider-input-composition";
 
 export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.map((model, index) => ({
   ...model,
@@ -14,7 +15,7 @@ export const QUALIFIED_TEST_MODELS: readonly ModelDescriptor[] = CURATED_MODELS.
     maxQuantity: 30,
     cancelAfterSeconds: 900,
     outputShape: { width: 1080, height: 1920, fps: model.capabilities.some((capability) => capability.endsWith("video")) ? 30 : null },
-    inputContract: { promptKey: "prompt", brandContextKey: "brand_context", aspectRatioKey: "aspect_ratio", quantityKey: "duration", imageKey: "image", imageMode: "single" as const, safety: { parameterKey: "disable_safety_checker", safeValue: false }, lockedParameters: { disable_safety_checker: false, draft: false, resolution: "1080p", audio: false } },
+    inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: "duration", imageKey: "image", imageMode: "single" as const, safety: { parameterKey: "disable_safety_checker", safeValue: false }, lockedParameters: { disable_safety_checker: false, draft: false, resolution: "1080p", audio: false } },
     evidence: {
       id: `qualification-${index}`, revision: 1,
       digest: `sha256:${(index + 20).toString(16).padStart(64, "0")}` as `sha256:${string}`,
@@ -65,4 +66,10 @@ export const testBrand = (profileId = "brand", revision = 1, acceptedAt = new Da
   };
   const context: ImmutableBrandContext = { ...value, digest: canonicalDigest(value) as `sha256:${string}` };
   return { profileId, revision, digest: profileDigest, acceptedAt, context };
+};
+
+export const testProviderComposition = (index: number, rawPrompt: string, brand = testBrand(), sourceAssetIds: string[] = []) => {
+  const model = QUALIFIED_TEST_MODELS[index];
+  if (!model || model.qualification.status !== "qualified") throw new Error(`Test model ${index} is not qualified`);
+  return createProviderCompositionEvidence({ rawPrompt, brand: brand.context, sourceAssetIds, model: testRef(index), capability: model.capabilities[0]!, contract: model.qualification.inputContract });
 };

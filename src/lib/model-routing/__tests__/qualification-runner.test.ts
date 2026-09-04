@@ -16,7 +16,7 @@ function input(maximumSpendUsd = 0.1) {
     endpoint: "versioned" as const, version: "immutable-provider-version-001", inputSchemaDigest: `sha256:${"a".repeat(64)}` as const,
     capabilities: [...model.capabilities], contentLanguages: [...model.contentLanguages], arabicVarieties: [...model.arabicVarieties], verifiedRegions: ["replicate-us"], executionModes: ["async" as const],
     executionPriceUsd: { basis: "image" as const, amount: 0.1 }, maxQuantity: 3, cancelAfterSeconds: 900, outputShape: { width: 1080, height: 1920, fps: null },
-    inputContract: { promptKey: "prompt", brandContextKey: "brand_context", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single" as const, safety: { parameterKey: "disable_safety_filter", safeValue: false }, lockedParameters: { disable_safety_filter: false } },
+    inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single" as const, safety: { parameterKey: "disable_safety_filter", safeValue: false }, lockedParameters: { disable_safety_filter: false } },
     license: { name: "Reviewed commercial license", commercialUse: true as const, derivativeUse: true, sourceUrl: "https://example.com/license", digest: `sha256:${"b".repeat(64)}` as const },
     pricingSource: { sourceUrl: "https://example.com/pricing", digest: `sha256:${"c".repeat(64)}` as const, checkedAt: "2026-09-03T00:00:00.000Z" },
     qualificationRun: { id: "untrusted-placeholder", digest: `sha256:${"d".repeat(64)}` as const, completedAt: "2026-09-03T01:00:00.000Z" },

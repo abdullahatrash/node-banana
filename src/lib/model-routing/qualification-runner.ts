@@ -4,6 +4,7 @@ import { z } from "zod";
 import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { CURATED_MODELS, modelQualificationAttestationSchema } from "./catalog";
 import type { QualificationRunLedger } from "./qualification-ledger";
+import { composeQualifiedProviderInput } from "./provider-input-composition";
 
 export const MAX_QUALIFICATION_SPEND_USD = 0.4;
 
@@ -51,6 +52,31 @@ function requireMatrixCoverage(cases: QualificationSmokeCase[]) {
   if (!cases.some((item) => item.lifecycle === "complete")) throw new Error("QUALIFICATION_INGESTION_CELL_REQUIRED");
 }
 
+function qualificationBrand(cell: QualificationSmokeCase) {
+  const value = {
+    schema: "brand-context/v1" as const,
+    profileId: `qualification:${cell.id}`,
+    revision: 1,
+    contentLanguage: cell.contentLanguage,
+    identity: { companyName: "Tasmeemai qualification fixture", coreIdentity: "Provider contract verification" },
+    offering: ["Qualified generation"],
+    audiences: [{ name: "Qualification", description: "Contract verification", weight: 1 }],
+    benefits: ["Deterministic evidence"], differentiators: ["Arabic-first"], positioning: "Safe qualification",
+    voice: { descriptors: ["clear"], do: ["preserve the prompt"], doNot: ["invent claims"] }, palette: ["#000000"],
+    constraints: { prohibitedClaims: ["guaranteed results"], prohibitedTopics: [] }, contentAngles: ["verification"],
+    referenceAssets: [],
+  };
+  return { ...value, digest: canonicalDigest(value) as `sha256:${string}` };
+}
+
+function qualificationSourceUrls(cell: QualificationSmokeCase, imageKey: string | null) {
+  if (!imageKey) return [];
+  const value = cell.input[imageKey];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) return value as string[];
+  return [];
+}
+
 /** Executes every paid smoke cell once, stops below USD 0.40, and signs only complete evidence. */
 export async function executeReplicateQualification(input: QualificationRunnerInput, privateKeyPem: string, execution: QualificationExecutionPort, ledger: QualificationRunLedger, at = new Date()): Promise<QualificationRunOutput> {
   const parsed = inputSchema.parse(input);
@@ -60,6 +86,7 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
   if (base.capabilities.some((capability) => !curated.capabilities.includes(capability))) throw new Error("QUALIFICATION_CAPABILITY_NOT_CURATED");
   if (new Date(base.issuedAt) > at || new Date(base.expiresAt) <= at) throw new Error("QUALIFICATION_WINDOW_INVALID");
   requireMatrixCoverage(parsed.cases);
+  for (const capability of base.capabilities) if (!parsed.cases.some((item) => item.capability === capability)) throw new Error(`QUALIFICATION_CAPABILITY_CELL_REQUIRED:${capability}`);
   const declaredSpend = parsed.cases.reduce((sum, item) => sum + item.maximumSpendUsd, 0);
   if (!Number.isFinite(declaredSpend) || declaredSpend >= MAX_QUALIFICATION_SPEND_USD) throw new Error("QUALIFICATION_BUDGET_CAP_EXCEEDED");
   const privateKey = createPrivateKey(privateKeyPem);
@@ -85,11 +112,24 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
     if (claim.kind === "completed") { results.push(claim.result); continue; }
     const schema = await execution.inspectSchema({ model: base.model, version: base.version });
     if (schema.inputSchemaDigest !== base.inputSchemaDigest) throw new Error(`QUALIFICATION_SCHEMA_MISMATCH:${cell.id}`);
-    for (const requiredKey of [base.inputContract.promptKey, base.inputContract.brandContextKey]) if (!schema.inputKeys.includes(requiredKey)) throw new Error(`QUALIFICATION_SCHEMA_KEY_MISSING:${cell.id}:${requiredKey}`);
-    const providerInput: Record<string, unknown> = { ...structuredClone(cell.input), [base.inputContract.promptKey]: cell.prompt, [base.inputContract.brandContextKey]: JSON.stringify({ qualification: true, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety }) };
-    if (base.inputContract.aspectRatioKey) providerInput[base.inputContract.aspectRatioKey] = "9:16";
-    if (base.inputContract.safety) providerInput[base.inputContract.safety.parameterKey] = base.inputContract.safety.safeValue;
-    for (const [key, value] of Object.entries(base.inputContract.lockedParameters)) providerInput[key] = value;
+    const requiredKeys = [base.inputContract.promptKey, base.inputContract.aspectRatioKey, base.inputContract.quantityKey, base.inputContract.imageKey, base.inputContract.safety?.parameterKey, ...Object.keys(base.inputContract.lockedParameters)].filter((value): value is string => Boolean(value));
+    for (const requiredKey of requiredKeys) if (!schema.inputKeys.includes(requiredKey)) throw new Error(`QUALIFICATION_SCHEMA_KEY_MISSING:${cell.id}:${requiredKey}`);
+    const sourceUrls = qualificationSourceUrls(cell, base.inputContract.imageKey);
+    if (["image_to_image", "image_to_video", "video_to_video"].includes(cell.capability) && sourceUrls.length === 0) throw new Error(`QUALIFICATION_SOURCE_MEDIA_REQUIRED:${cell.id}`);
+    const composed = composeQualifiedProviderInput({
+      rawPrompt: cell.prompt,
+      brand: qualificationBrand(cell),
+      sourceAssetIds: sourceUrls.map((_, sourceIndex) => `qualification:${cell.id}:source:${sourceIndex}`),
+      sourceUrls,
+      brandReferenceUrls: [],
+      model: { provider: base.provider, model: base.model, version: base.version, inputSchemaDigest: base.inputSchemaDigest },
+      capability: cell.capability,
+      contract: base.inputContract,
+      aspectRatio: "9:16",
+      quantity: cell.billableQuantity,
+      baseInput: cell.input,
+    });
+    const providerInput = composed.providerInput;
     let submitted: { predictionId: string; version: string; acceptedInput: Record<string, unknown> };
     try {
       if (claim.kind === "submit") {
@@ -107,6 +147,7 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
       throw error;
     }
     if (submitted.version !== base.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${cell.id}`);
+    if (canonicalDigest(submitted.acceptedInput) !== composed.providerInputDigest) throw new Error(`QUALIFICATION_ACCEPTED_INPUT_MISMATCH:${cell.id}`);
     if (base.inputContract.safety && submitted.acceptedInput[base.inputContract.safety.parameterKey] !== base.inputContract.safety.safeValue) throw new Error(`QUALIFICATION_SAFETY_MISMATCH:${cell.id}`);
     try {
       let terminal: "succeeded" | "failed" | "canceled" | "aborted";
@@ -127,7 +168,7 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
       if (!webhook.authentic || webhook.status !== terminal) throw new Error(`QUALIFICATION_WEBHOOK_FAILED:${cell.id}`);
       const reconciled = await execution.reconcile({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
       if (reconciled.version !== base.version || reconciled.status !== terminal) throw new Error(`QUALIFICATION_RECONCILIATION_FAILED:${cell.id}`);
-      const result = { id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: cell.maximumSpendUsd, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, safetyVerified: Boolean(base.inputContract.safety), webhookDeliveryId: webhook.deliveryId, ingestion };
+      const result = { id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: cell.maximumSpendUsd, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, providerCompositionDigest: composed.evidence.digest, composedPromptDigest: composed.evidence.composedPromptDigest, providerInputDigest: composed.providerInputDigest, safetyVerified: Boolean(base.inputContract.safety), webhookDeliveryId: webhook.deliveryId, ingestion };
       await ledger.completeCase({ runId: parsed.runId, caseId: cell.id, claimToken: claim.claimToken, predictionId: submitted.predictionId, executedVersion: submitted.version, terminalStatus: terminal, result, at });
       results.push(result);
     } catch (error) {

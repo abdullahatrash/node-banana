@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { ReplicatePredictionAdapter } from "../replicate-contract";
 import type { GenerationIntent } from "../types";
-import { resolveTestModel, testBrand, testOutputContract, testQualification, testRef, TEST_CREDENTIAL_REF, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
+import { resolveTestModel, testBrand, testOutputContract, testProviderComposition, testQualification, testRef, TEST_CREDENTIAL_REF, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
 
+const brand = testBrand("b", 1, new Date());
 const intent: GenerationIntent = {
   schema: "generation-intent/v1", id: "intent", workspaceId: "ws",
-  brand: testBrand("b", 1, new Date()),
-  promptDigest: `sha256:${"b".repeat(64)}`, capability: "text_to_video", contentLanguage: "ar", arabicVariety: "msa",
+  brand,
+  promptDigest: `sha256:${"b".repeat(64)}`, providerComposition: testProviderComposition(5, "test", brand), capability: "text_to_video", contentLanguage: "ar", arabicVariety: "msa",
   rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, qualification: testQualification(5), regionAdmission: TEST_REGION_ADMISSION, outputContract: testOutputContract(5, 5), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null, fundingMode: "byok",
   quote: { currency: "USD", amount: .05, basis: "second", quantity: 5, quotedAt: new Date(), expiresAt: new Date(Date.now() + 1000) },
   reservationIds: ["r"], createdByUserId: "u", createdAt: new Date(),

@@ -13,6 +13,7 @@ import type {
 import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } from "./generation-region";
 import { validateRightsEvidence } from "./rights-evidence";
 import { validateImmutableBrandContext } from "./brand-context";
+import { createProviderCompositionEvidence } from "./provider-input-composition";
 
 const digest = (value: unknown) => canonicalDigest(value) as `sha256:${string}`;
 const sameModel = (a: ExactModelRef, b: ExactModelRef) =>
@@ -138,9 +139,17 @@ export class ModelRoutingService {
       if (reservation.kind === "confirmation_required") return { kind: "managed_quote_confirmation_required" as const, quote: reservation.quote };
       return reservation.kind === "denied" ? { kind: "budget_denied" as const, code: reservation.code } : { kind: "budget_unavailable" as const, code: reservation.code };
     }
+    const providerComposition = createProviderCompositionEvidence({
+      rawPrompt: input.rawPrompt,
+      brand: input.brand.context,
+      sourceAssetIds: input.rights.sourceAssetIds,
+      model: input.selectedModel,
+      capability: input.capability,
+      contract: selected.qualification.inputContract,
+    });
     const value: GenerationIntent = {
       schema: "generation-intent/v1", id, workspaceId: input.workspaceId,
-      brand: input.brand, promptDigest: digest(input.rawPrompt), capability: input.capability,
+      brand: input.brand, promptDigest: digest(input.rawPrompt), providerComposition, capability: input.capability,
       contentLanguage: input.contentLanguage,
       arabicVariety: input.contentLanguage === "en" ? null : input.arabicVariety,
       rights: { ...input.rights, evidence: structuredClone(input.rights.evidence), sourceAssetIds: [...input.rights.sourceAssetIds] },
