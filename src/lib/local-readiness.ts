@@ -41,6 +41,11 @@ export interface LocalReadinessFacts {
   encryptionKeyValid: boolean;
   stepUpDeliveryConfigured: boolean;
   qualifiedReplicateModels: number;
+  qualificationDedicatedTokenConfigured: boolean;
+  qualificationHarnessConfigured: boolean;
+  qualificationSpendTrustConfigured: boolean;
+  qualificationSigningTrustConfigured: boolean;
+  legacyReplicateKeyConfigured: boolean;
   acceptedBrand: boolean;
   verifiedReplicateRegion: boolean;
   replicateVaultKey: boolean;
@@ -112,6 +117,29 @@ export function buildLocalReadinessReport(
           "Replicate model qualification",
           "The curated catalog is discovery-only; no model is executable.",
           "Complete the reviewed paid qualification procedure in docs/model-qualification-operations.md.",
+        ),
+    facts.qualificationDedicatedTokenConfigured &&
+    facts.qualificationHarnessConfigured &&
+    facts.qualificationSpendTrustConfigured &&
+    facts.qualificationSigningTrustConfigured
+      ? ready(
+          "qualification_setup",
+          "Qualification operator setup",
+          "The dedicated token, observer endpoints, and independent signing trust roots are configured.",
+        )
+      : blocked(
+          "qualification_setup",
+          "Qualification operator setup",
+          [
+            !facts.qualificationDedicatedTokenConfigured ? "dedicated Replicate qualification token" : null,
+            !facts.qualificationHarnessConfigured ? "webhook, ingestion, and spend-observer endpoints" : null,
+            !facts.qualificationSpendTrustConfigured ? "spend-receipt trust root" : null,
+            !facts.qualificationSigningTrustConfigured ? "model-qualification signing trust root" : null,
+          ].filter(Boolean).join(", ") + " missing." +
+            (facts.legacyReplicateKeyConfigured
+              ? " The legacy REPLICATE_API_KEY is present but is intentionally not reused for paid qualification."
+              : ""),
+          "Complete the guarded qualification setup stages before reviewing a paid matrix.",
         ),
     facts.acceptedBrand
       ? ready("brand", "Brand context", "An accepted immutable Brand revision is active.")

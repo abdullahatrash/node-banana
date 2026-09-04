@@ -76,6 +76,17 @@ async function run() {
         Boolean(process.env.AUTH_FROM_EMAIL?.trim())) ||
       process.env.AUTH_ALLOW_CONSOLE_EMAIL_LINKS === "true",
     qualifiedReplicateModels: configuredCatalog().filter((model) => model.provider === "replicate" && model.qualification.status === "qualified").length,
+    qualificationDedicatedTokenConfigured: Boolean(process.env.REPLICATE_QUALIFICATION_API_TOKEN?.trim()),
+    qualificationHarnessConfigured: Boolean(
+      process.env.QUALIFICATION_HARNESS_TOKEN?.trim() &&
+      process.env.QUALIFICATION_WEBHOOK_URL?.trim() &&
+      process.env.QUALIFICATION_WEBHOOK_OBSERVER_URL?.trim() &&
+      process.env.QUALIFICATION_INGESTION_URL?.trim() &&
+      process.env.QUALIFICATION_SPEND_OBSERVER_URL?.trim(),
+    ),
+    qualificationSpendTrustConfigured: Boolean(process.env.QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON?.trim()),
+    qualificationSigningTrustConfigured: Boolean(process.env.MODEL_QUALIFICATION_PUBLIC_KEYS_JSON?.trim()),
+    legacyReplicateKeyConfigured: Boolean(process.env.REPLICATE_API_KEY?.trim()),
     acceptedBrand,
     verifiedReplicateRegion,
     replicateVaultKey,

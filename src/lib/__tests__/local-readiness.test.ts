@@ -11,6 +11,11 @@ const readyFacts = (overrides: Partial<LocalReadinessFacts> = {}): LocalReadines
   encryptionKeyValid: true,
   stepUpDeliveryConfigured: true,
   qualifiedReplicateModels: 2,
+  qualificationDedicatedTokenConfigured: true,
+  qualificationHarnessConfigured: true,
+  qualificationSpendTrustConfigured: true,
+  qualificationSigningTrustConfigured: true,
+  legacyReplicateKeyConfigured: false,
   acceptedBrand: true,
   verifiedReplicateRegion: true,
   replicateVaultKey: true,
@@ -51,5 +56,20 @@ describe("local generation readiness", () => {
     expect(report.coreReady).toBe(true);
     expect(report.byokReady).toBe(false);
     expect(report.managedReady).toBe(false);
+  });
+
+  it("explains why a legacy discovery key cannot qualify a model", () => {
+    const report = buildLocalReadinessReport(readyFacts({
+      qualifiedReplicateModels: 0,
+      qualificationDedicatedTokenConfigured: false,
+      qualificationHarnessConfigured: false,
+      qualificationSpendTrustConfigured: false,
+      qualificationSigningTrustConfigured: false,
+      legacyReplicateKeyConfigured: true,
+    }));
+    expect(report.checks.find((check) => check.id === "qualification_setup")).toMatchObject({
+      status: "blocked",
+      detail: expect.stringContaining("legacy REPLICATE_API_KEY is present but is intentionally not reused"),
+    });
   });
 });
