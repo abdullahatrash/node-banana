@@ -138,6 +138,10 @@ export const inspirationPayloadSchema = z.object({
   whyThisAppears: z.array(text(300)).min(1),
   tags: z.array(text(80)).default([]),
   trendEvidence: trendEvidenceSchema.nullable().default(null),
+  catalogBinding: z.object({
+    catalogId: text(200), revision: z.number().int().positive(), digest: sha256Digest,
+    entitlementId: text(200), materializationJobId: text(200),
+  }).strict().nullable().default(null),
 });
 
 export const blitzPayloadSchema = z.object({
@@ -305,7 +309,7 @@ const simpleSchemas = {
 } as const;
 
 export const PRODUCT_STATES: Record<ProductRecordKind, readonly string[]> = {
-  inspiration_item: ["active", "saved", "dismissed", "restricted"],
+  inspiration_item: ["active", "saved", "dismissed", "restricted", "archived"],
   blitz_item: ["queued", "accepted", "rejected", "editing"],
   content_piece: ["draft", "active", "archived", "deleted"],
   campaign_automation: ["draft", "validating", "active", "paused", "archived"],

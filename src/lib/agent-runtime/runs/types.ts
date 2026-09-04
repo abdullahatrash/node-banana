@@ -135,7 +135,7 @@ export type WorkflowRunStartSnapshot =
 export interface WorkflowRunStudioAssetReference {
   assetId: string;
   digest: string;
-  type: "image" | "video" | "audio" | "model3d" | "workflow";
+  type: "image" | "video" | "audio" | "document" | "model3d" | "workflow";
   mediaType: string;
   sizeBytes: number;
   width: number | null;

@@ -15,6 +15,7 @@ const routes = [
   ["performance", "/api/studio/internal/social-performance-sync?limit=20"],
   ["youtube-trends", "/api/studio/internal/youtube-trends?limit=20"],
   ["trends", "/api/studio/internal/inspiration-trends?limit=20"],
+  ["licensed-trend-imports", "/api/studio/internal/licensed-trend-materialization?limit=10"],
 ];
 
 for (const [label, pathname] of routes) {

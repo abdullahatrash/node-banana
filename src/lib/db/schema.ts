@@ -281,6 +281,7 @@ export const assetTypeEnum = pgEnum("asset_type", [
   "image",
   "video",
   "audio",
+  "document",
   "model3d",
   "workflow",
 ]);
@@ -9434,6 +9435,124 @@ export const inspirationTrendIngestionReceipts = pgTable(
     revisionFk: foreignKey({ name: "inspiration_trend_ingestion_receipts_revision_fk", columns: [table.workspaceId, table.inspirationItemId, table.inspirationItemRevision], foreignColumns: [workspaceProductRecordRevisions.workspaceId, workspaceProductRecordRevisions.recordId, workspaceProductRecordRevisions.revision] }).onDelete("restrict"),
     itemIdx: index("inspiration_trend_ingestion_receipts_item_idx").on(table.workspaceId, table.inspirationItemId, table.createdAt),
     digestsCheck: check("inspiration_trend_ingestion_receipts_digests_check", sql`${table.observationDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.sourceContentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rightsEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rankingDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.inspirationItemRevision} > 0`),
+  }),
+);
+
+/** Operator-published, licensed media packages. This global catalog is kept
+ * physically separate from policy-isolated public metadata discovery. */
+export const licensedTrendCatalogEntries = pgTable(
+  "licensed_trend_catalog_entries",
+  {
+    id: text("id").primaryKey(),
+    providerKey: text("provider_key").notNull(),
+    providerItemId: text("provider_item_id").notNull(),
+    activeRevision: integer("active_revision").notNull(),
+    state: text("state").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    providerItemUnique: uniqueIndex("licensed_trend_catalog_entries_provider_item_unique").on(table.providerKey, table.providerItemId),
+    stateIdx: index("licensed_trend_catalog_entries_state_idx").on(table.state, table.updatedAt, table.id),
+    valuesCheck: check("licensed_trend_catalog_entries_values_check", sql`${table.activeRevision} > 0 and ${table.state} in ('active','paused','revoked') and ${table.providerKey} ~ '^[a-z][a-z0-9._-]{1,119}$'`),
+  }),
+);
+
+export const licensedTrendCatalogRevisions = pgTable(
+  "licensed_trend_catalog_revisions",
+  {
+    catalogId: text("catalog_id").notNull(),
+    revision: integer("revision").notNull(),
+    document: jsonb("document").$type<import("@/lib/product-surfaces/licensed-trend-types").LicensedTrendCatalogDocument>().notNull(),
+    documentDigest: text("document_digest").notNull(),
+    contentLanguage: text("content_language").notNull(),
+    arabicVariety: text("arabic_variety"),
+    region: text("region").notNull(),
+    format: text("format").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    metricsObservedAt: timestamp("metrics_observed_at", { withTimezone: true }).notNull(),
+    rightsExpiresAt: timestamp("rights_expires_at", { withTimezone: true }),
+    searchableText: text("searchable_text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "licensed_trend_catalog_revisions_pk", columns: [table.catalogId, table.revision] }),
+    catalogFk: foreignKey({ name: "licensed_trend_catalog_revisions_catalog_fk", columns: [table.catalogId], foreignColumns: [licensedTrendCatalogEntries.id] }).onDelete("restrict"),
+    browseIdx: index("licensed_trend_catalog_revisions_browse_idx").on(table.contentLanguage, table.region, table.format, table.metricsObservedAt, table.catalogId),
+    valuesCheck: check("licensed_trend_catalog_revisions_values_check", sql`${table.revision} > 0 and ${table.documentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.contentLanguage} in ('ar','en') and (${table.contentLanguage} = 'ar' or ${table.arabicVariety} is null) and ${table.metricsObservedAt} >= ${table.publishedAt}`),
+    documentCheck: check("licensed_trend_catalog_revisions_document_check", sql`${table.document}->>'schema' = 'licensed-trend-catalog-entry/v1' and ${table.document}->>'id' = ${table.catalogId} and (${table.document}->>'revision')::integer = ${table.revision} and ${table.document}->>'digest' = ${table.documentDigest}`),
+  }),
+);
+
+export const licensedTrendWorkspaceEntitlements = pgTable(
+  "licensed_trend_workspace_entitlements",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    catalogId: text("catalog_id").notNull(),
+    catalogRevision: integer("catalog_revision").notNull(),
+    catalogDigest: text("catalog_digest").notNull(),
+    state: text("state").notNull(),
+    document: jsonb("document").$type<import("@/lib/product-surfaces/licensed-trend-types").LicensedTrendEntitlementDocument>().notNull(),
+    documentDigest: text("document_digest").notNull(),
+    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "licensed_trend_workspace_entitlements_pk", columns: [table.workspaceId, table.id] }),
+    exactGrantUnique: uniqueIndex("licensed_trend_workspace_entitlements_exact_unique").on(table.workspaceId, table.catalogId, table.catalogRevision),
+    catalogRevisionFk: foreignKey({ name: "licensed_trend_workspace_entitlements_catalog_revision_fk", columns: [table.catalogId, table.catalogRevision], foreignColumns: [licensedTrendCatalogRevisions.catalogId, licensedTrendCatalogRevisions.revision] }).onDelete("restrict"),
+    browseIdx: index("licensed_trend_workspace_entitlements_browse_idx").on(table.workspaceId, table.state, table.expiresAt, table.catalogId),
+    valuesCheck: check("licensed_trend_workspace_entitlements_values_check", sql`${table.catalogRevision} > 0 and ${table.catalogDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.documentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.state} in ('active','revoked') and ((${table.state} = 'active' and ${table.revokedAt} is null) or (${table.state} = 'revoked' and ${table.revokedAt} is not null)) and (${table.expiresAt} is null or ${table.expiresAt} > ${table.grantedAt})`),
+    documentCheck: check("licensed_trend_workspace_entitlements_document_check", sql`${table.document}->>'schema' = 'licensed-trend-workspace-entitlement/v1' and ${table.document}->>'id' = ${table.id} and ${table.document}->>'workspaceId' = ${table.workspaceId} and ${table.document}->>'digest' = ${table.documentDigest}`),
+  }),
+);
+
+/** Recoverable tenant materialization. External S3 copies are fenced by the
+ * lease generation and deterministic destination keys. */
+export const licensedTrendMaterializationJobs = pgTable(
+  "licensed_trend_materialization_jobs",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    entitlementId: text("entitlement_id").notNull(),
+    catalogId: text("catalog_id").notNull(),
+    catalogRevision: integer("catalog_revision").notNull(),
+    catalogDigest: text("catalog_digest").notNull(),
+    state: text("state").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    sourceDestinationKey: text("source_destination_key").notNull(),
+    evidenceDestinationKey: text("evidence_destination_key").notNull(),
+    sourceAssetId: text("source_asset_id").references(() => assets.id, { onDelete: "restrict" }),
+    evidenceDocumentAssetId: text("evidence_document_asset_id").references(() => assets.id, { onDelete: "restrict" }),
+    rightsEvidenceId: text("rights_evidence_id"),
+    rightsSnapshotId: text("rights_snapshot_id"),
+    inspirationItemId: text("inspiration_item_id"),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(5).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseGeneration: integer("lease_generation").default(0).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    failureCode: text("failure_code"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "licensed_trend_materialization_jobs_pk", columns: [table.workspaceId, table.id] }),
+    commandUnique: uniqueIndex("licensed_trend_materialization_jobs_command_unique").on(table.workspaceId, table.idempotencyKey),
+    entitlementUnique: uniqueIndex("licensed_trend_materialization_jobs_entitlement_unique").on(table.workspaceId, table.entitlementId),
+    entitlementFk: foreignKey({ name: "licensed_trend_materialization_jobs_entitlement_fk", columns: [table.workspaceId, table.entitlementId], foreignColumns: [licensedTrendWorkspaceEntitlements.workspaceId, licensedTrendWorkspaceEntitlements.id] }).onDelete("restrict"),
+    catalogRevisionFk: foreignKey({ name: "licensed_trend_materialization_jobs_catalog_revision_fk", columns: [table.catalogId, table.catalogRevision], foreignColumns: [licensedTrendCatalogRevisions.catalogId, licensedTrendCatalogRevisions.revision] }).onDelete("restrict"),
+    inspirationItemFk: foreignKey({ name: "licensed_trend_materialization_jobs_inspiration_item_fk", columns: [table.workspaceId, table.inspirationItemId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id] }).onDelete("restrict"),
+    dueIdx: index("licensed_trend_materialization_jobs_due_idx").on(table.state, table.nextAttemptAt, table.leaseExpiresAt, table.id),
+    valuesCheck: check("licensed_trend_materialization_jobs_values_check", sql`${table.catalogRevision} > 0 and ${table.catalogDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.idempotencyKey}) between 8 and 200 and ${table.state} in ('queued','claimed','succeeded','failed_known') and ${table.attempt} >= 0 and ${table.attempt} <= ${table.maxAttempts} and ${table.maxAttempts} between 1 and 20 and ${table.leaseGeneration} >= 0`),
+    leaseCheck: check("licensed_trend_materialization_jobs_lease_check", sql`(${table.state} = 'claimed' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`),
   }),
 );
 

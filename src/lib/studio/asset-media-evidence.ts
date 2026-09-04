@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 
-export type IngestedAssetType = "image" | "video" | "audio" | "model3d" | "workflow";
+export type IngestedAssetType = "image" | "video" | "audio" | "document" | "model3d" | "workflow";
 
 export interface AssetMediaEvidence {
   checksum: `sha256:${string}`;
@@ -14,6 +14,7 @@ export interface AssetMediaEvidence {
 function assertMediaMimeType(assetType: IngestedAssetType, mimeType: string): void {
   if (assetType === "image" && !mimeType.startsWith("image/")) throw new Error("ASSET_IMAGE_CONTENT_TYPE_INVALID");
   if (assetType === "video" && !["video/mp4", "video/webm", "video/quicktime"].includes(mimeType)) throw new Error("ASSET_VIDEO_FORMAT_UNSUPPORTED");
+  if (assetType === "document" && !["application/pdf", "application/json", "text/plain"].includes(mimeType)) throw new Error("ASSET_DOCUMENT_FORMAT_UNSUPPORTED");
 }
 
 async function inspectImage(source: Buffer | string): Promise<Omit<AssetMediaEvidence, "checksum">> {

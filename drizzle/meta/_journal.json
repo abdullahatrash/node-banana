@@ -869,6 +869,20 @@
       "when": 1788694800000,
       "tag": "0123_youtube_trend_discovery",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1788698400000,
+      "tag": "0124_licensed_trend_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1788702000000,
+      "tag": "0125_document_assets",
+      "breakpoints": true
     }
   ]
 }

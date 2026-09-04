@@ -3,7 +3,7 @@ export type LibraryAssetOrigin = "generated" | "uploaded" | "imported" | "ingest
 export interface LibraryAssetProjection {
   id: string
   name: string
-  type: "image" | "video" | "audio" | "model3d" | "workflow"
+  type: "image" | "video" | "audio" | "document" | "model3d" | "workflow"
   width: number | null
   height: number | null
   durationSeconds: number | null

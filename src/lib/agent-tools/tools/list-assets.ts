@@ -8,6 +8,7 @@ const assetTypeSchema = z.enum([
   "image",
   "video",
   "audio",
+  "document",
   "model3d",
   "workflow",
 ]);
@@ -48,7 +49,7 @@ export const listAssetsTool: ToolDefinition<
 > = {
   name: "list_assets",
   description:
-    "List media assets (image, video, audio, model3d, workflow) in this workspace. Filter by `type` and cap with `limit`. Reference returned ids when composing posts.",
+    "List assets (image, video, audio, document, model3d, workflow) in this workspace. Filter by `type` and cap with `limit`. Reference returned ids when composing posts.",
   requiredPermission: "assets:read",
   inputSchema,
   outputSchema,

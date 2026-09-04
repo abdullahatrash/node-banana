@@ -9,6 +9,7 @@ import type { ArabicVariety, ContentLanguage, InspirationRightsSnapshot } from "
 import { createProductRecordInTransaction, ProductRecordConflictError } from "./repository";
 import { inspirationPayloadSchema, type ContentFormat } from "./definitions";
 import { compileBrandAwareRemixBrief } from "./remix-brief";
+import { assertLicensedCatalogBindingActive } from "./licensed-trend-catalog";
 
 export class InspirationAdmissionError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -45,6 +46,7 @@ export async function queueInspirationCommand(input: { workspaceId: string; user
     if (!record) throw new ProductRecordConflictError("INSPIRATION_NOT_FOUND");
     const source = inspirationPayloadSchema.parse(record.payload);
     if (!source.sourceAssetId || !source.rightsSnapshot || source.rightsStatus === "restricted") throw new InspirationAdmissionError("INSPIRATION_RIGHTS_NOT_ADMITTED");
+    if (source.catalogBinding && !(await assertLicensedCatalogBindingActive({ workspaceId: input.workspaceId, catalogId: source.catalogBinding.catalogId, revision: source.catalogBinding.revision, digest: source.catalogBinding.digest, entitlementId: source.catalogBinding.entitlementId }))) throw new InspirationAdmissionError("INSPIRATION_CATALOG_LICENSE_INACTIVE");
     const [[stored], [brand]] = await Promise.all([
       tx.select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, input.workspaceId), eq(inspirationRightsSnapshots.id, source.rightsSnapshot.id), eq(inspirationRightsSnapshots.revision, source.rightsSnapshot.revision), eq(inspirationRightsSnapshots.digest, source.rightsSnapshot.digest))).limit(1),
       tx.select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, input.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1),

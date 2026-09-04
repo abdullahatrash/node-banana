@@ -35,7 +35,7 @@ export interface DashboardReadModel {
   counts: { media: number; channels: number; reauth: number; content: number; queuedBlitz: number; scheduled: number; failedPublishing: number; failedGeneration: number; consentAttention: number; pendingApprovals: number; availableCredits: number };
   creditCapacity: "available" | "depleted" | "unavailable";
   metricsStale: boolean;
-  recentAssets: Array<{ id: string; type: "image" | "video" | "audio" | "model3d" | "workflow"; createdAt: Date }>;
+  recentAssets: Array<{ id: string; type: "image" | "video" | "audio" | "document" | "model3d" | "workflow"; createdAt: Date }>;
   upcomingPosts: Array<{ id: string; content: string | null; scheduledAt: Date | null; status: string; updatedAt: Date }>;
   sourceEnvelopes: DashboardSourceEnvelope[];
   pendingApprovals: Array<{ id: string; planId: string; targetCount: number; createdAt: Date; expiresAt: Date }>;
