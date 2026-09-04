@@ -182,13 +182,13 @@ export class WorkspaceServiceAgentResolver {
         candidate.workspaceId === input.workspaceId &&
         profile.requestedAccess.every((marker) => candidate.requestedAccess.includes(marker)),
       );
-      const activePrincipal = marked.some((candidate) =>
-        candidate.principalStatus === "active" && !candidate.principalRevokedAt,
+      const bootstrapEligibleActor = marked.some((candidate) =>
+        candidate.principalStatus === "active" &&
+        !candidate.principalRevokedAt &&
+        !candidate.keyRevokedAt &&
+        (!candidate.keyExpiresAt || candidate.keyExpiresAt > now),
       );
-      const usableKey = marked.some((candidate) =>
-        !candidate.keyRevokedAt && (!candidate.keyExpiresAt || candidate.keyExpiresAt > now),
-      );
-      if (marked.length > 0 && (!activePrincipal || !usableKey)) {
+      if (marked.length > 0 && !bootstrapEligibleActor) {
         throw new WorkspaceServiceAgentUnavailableError(input.purpose);
       }
       await this.repository.provision({ ...input, now });

@@ -132,6 +132,24 @@ describe("WorkspaceServiceAgentResolver", () => {
     expect(setup.provision).not.toHaveBeenCalled();
   });
 
+  it("does not combine an active Principal with a usable key owned by a revoked Principal", async () => {
+    const setup = mutableRepository();
+    setup.rows.push(
+      candidate("workspace_a", "principal_active", "key_revoked", "2026-09-03T00:00:00.000Z", {
+        keyRevokedAt: NOW,
+      }),
+      candidate("workspace_a", "principal_revoked", "key_unrevoked", "2026-09-02T00:00:00.000Z", {
+        principalStatus: "revoked",
+        principalRevokedAt: NOW,
+      }),
+    );
+    const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
+
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority }))
+      .rejects.toBeInstanceOf(WorkspaceServiceAgentUnavailableError);
+    expect(setup.provision).not.toHaveBeenCalled();
+  });
+
   it("rejects wrong-Workspace and wrong-purpose actors", async () => {
     const setup = mutableRepository();
     setup.rows.push(
