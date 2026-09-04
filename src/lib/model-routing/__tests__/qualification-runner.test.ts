@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { CURATED_MODELS } from "../catalog";
 import type { QualificationRunLedger } from "../qualification-ledger";
-import { executeReplicateQualification, type QualificationExecutionPort } from "../qualification-runner";
+import { executeReplicateQualification, validateReplicateQualificationPlan, type QualificationExecutionPort } from "../qualification-runner";
 
 const at = new Date("2026-09-04T00:00:00.000Z");
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -43,7 +43,7 @@ function port(overrides: Partial<QualificationExecutionPort> = {}): Qualificatio
     poll: vi.fn(async ({ version }) => ({ status: "succeeded" as const, version, output: "https://replicate.delivery/output.png" })),
     cancel: vi.fn(async ({ version }) => ({ status: "aborted" as const, version })),
     awaitWebhook: vi.fn(async ({ predictionId }) => ({ authentic: true, deliveryId: `delivery-${predictionId}`, status: predictionId === "prediction-3" ? "aborted" as const : "succeeded" as const })),
-    ingest: vi.fn(async ({ caseId }) => ({ receiptId: "artifact-1", contentDigest: `sha256:${"e".repeat(64)}` as const, width: 1080, height: 1920, durationSeconds: null, observedLanguages: [caseId.startsWith("arabic") ? "ar" as const : "en" as const], languageEvidenceDigest: `sha256:${"f".repeat(64)}` as const })),
+    ingest: vi.fn(async ({ caseId }) => ({ kind: "media" as const, receiptId: "artifact-1", contentDigest: `sha256:${"e".repeat(64)}` as const, width: 1080, height: 1920, durationSeconds: null, observedLanguages: [caseId.startsWith("arabic") ? "ar" as const : "en" as const], languageEvidenceDigest: `sha256:${"f".repeat(64)}` as const })),
     reconcile: vi.fn(async ({ predictionId, version }) => ({ status: predictionId === "prediction-3" ? "aborted" as const : "succeeded" as const, version })),
     observeSpend: vi.fn(async ({ predictionId, model, version, account }) => {
       const receipt = { schema: "replicate-qualification-spend-receipt/v1" as const, receiptId: `receipt-${predictionId}`, ...account, predictionId, model, version, currency: "USD" as const, amountUsd: 0.01, observedAt: at.toISOString(), source: "replicate-account-billing" as const };
@@ -127,7 +127,7 @@ describe("executable Replicate qualification runner", () => {
   });
 
   it("does not sign after any incomplete evidence gate", async () => {
-    const execution = port({ ingest: vi.fn().mockResolvedValue({ receiptId: "artifact", contentDigest: `sha256:${"e".repeat(64)}`, width: 1024, height: 1024, durationSeconds: null, observedLanguages: ["ar", "en"], languageEvidenceDigest: `sha256:${"f".repeat(64)}` }) });
+    const execution = port({ ingest: vi.fn().mockResolvedValue({ kind: "media", receiptId: "artifact", contentDigest: `sha256:${"e".repeat(64)}`, width: 1024, height: 1024, durationSeconds: null, observedLanguages: ["ar", "en"], languageEvidenceDigest: `sha256:${"f".repeat(64)}` }) });
     const durable = ledger();
     await expect(executeReplicateQualification(input(), privateKey.export({ type: "pkcs8", format: "pem" }).toString(), execution, durable, at)).rejects.toThrow("QUALIFICATION_OUTPUT_NOT_9_16");
     expect(durable.markOutcomeUnknown).toHaveBeenCalledOnce();
@@ -144,5 +144,55 @@ describe("executable Replicate qualification runner", () => {
     expect(execution.recoverSubmission).toHaveBeenCalledWith(expect.objectContaining({ submissionKey: "qualification:qualification-run-001:arabic-complete" }));
     expect(execution.submit).not.toHaveBeenCalled();
     expect(durable.bindSubmission).toHaveBeenCalledWith(expect.objectContaining({ predictionId: "prediction-recovered" }));
+  });
+
+  it("rejects a capability subset that runtime would refuse after a paid run", () => {
+    const plan = input();
+    const subset = {
+      ...plan,
+      attestation: { ...plan.attestation, capabilities: ["text_to_image"] },
+      cases: [
+        plan.cases[0],
+        { ...plan.cases[1], capability: "text_to_image", input: {} },
+        plan.cases[2],
+      ],
+    };
+    expect(() => validateReplicateQualificationPlan(subset as never, at)).toThrow("QUALIFICATION_CAPABILITY_SET_MISMATCH");
+  });
+
+  it("qualifies bilingual brand-aware text output with text-specific ingestion evidence", async () => {
+    const model = CURATED_MODELS.find((candidate) => candidate.capabilities.includes("text_generation"))!;
+    const brandReference = { assetId: "qualification-brand-logo", digest: `sha256:${"9".repeat(64)}` as const, url: "https://workspace.invalid/brand-logo.png" };
+    const plan = {
+      signingKeyId: "offline-operator-key",
+      runId: "qualification-text-run-001",
+      attestation: {
+        schema: "model-execution-qualification/v1" as const, id: "qualification-text-reviewed-001", revision: 1, provider: "replicate" as const, model: model.model,
+        endpoint: "versioned" as const, version: "immutable-text-provider-version-001", inputSchemaDigest: `sha256:${"a".repeat(64)}` as const,
+        capabilities: ["text_generation" as const], contentLanguages: ["ar" as const, "en" as const], arabicVarieties: ["msa" as const, "gulf" as const], verifiedRegions: ["replicate-us"], executionModes: ["async" as const],
+        executionPriceUsd: { basis: "run" as const, amount: 0.01 }, maxQuantity: 1, cancelAfterSeconds: 900, outputShape: { width: null, height: null, fps: null },
+        inputContract: { promptKey: "prompt", aspectRatioKey: null, quantityKey: null, imageKey: null, imageMode: "single" as const, safety: null, lockedParameters: {} },
+        license: { name: "Reviewed commercial license", commercialUse: true as const, derivativeUse: false, sourceUrl: "https://example.com/license", digest: `sha256:${"b".repeat(64)}` as const },
+        pricingSource: { sourceUrl: "https://example.com/pricing", digest: `sha256:${"c".repeat(64)}` as const, checkedAt: "2026-09-03T00:00:00.000Z" },
+        qualificationRun: { id: "untrusted-placeholder", digest: `sha256:${"d".repeat(64)}` as const, completedAt: "2026-09-03T01:00:00.000Z" },
+        issuedAt: "2026-09-03T02:00:00.000Z", expiresAt: "2026-10-03T02:00:00.000Z",
+      },
+      cases: [
+        { id: "arabic-copy-complete", capability: "text_generation" as const, contentLanguage: "ar" as const, arabicVariety: "gulf" as const, prompt: "اكتب نسخة عربية للعلامة", input: {}, billableQuantity: 1, brandReference, lifecycle: "complete" as const },
+        { id: "english-copy-complete", capability: "text_generation" as const, contentLanguage: "en" as const, arabicVariety: null, prompt: "Write English brand copy", input: {}, billableQuantity: 1, brandReference, lifecycle: "complete" as const },
+        { id: "arabic-copy-cancel", capability: "text_generation" as const, contentLanguage: "ar" as const, arabicVariety: "msa" as const, prompt: "اختبار إلغاء النص", input: {}, billableQuantity: 1, brandReference, lifecycle: "cancel" as const },
+      ],
+    };
+    const execution = port({
+      authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, caseId, account }) => {
+        const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd: 0.01 * billableQuantity, expiresAt: "2026-09-05T00:00:00.000Z", source: "replicate-account-billing" as const };
+        return { ...authorization, digest: canonicalDigest(authorization) as `sha256:${string}`, signingKeyId: "spend-key" };
+      }),
+      inspectSchema: vi.fn().mockResolvedValue({ inputSchemaDigest: `sha256:${"a".repeat(64)}`, inputKeys: ["prompt"] }),
+      ingest: vi.fn(async ({ caseId }) => ({ kind: "text" as const, receiptId: `text-${caseId}`, contentDigest: `sha256:${"e".repeat(64)}` as const, characterCount: 80, observedLanguages: [caseId.startsWith("english") ? "en" as const : "ar" as const], languageEvidenceDigest: `sha256:${"f".repeat(64)}` as const })),
+    });
+    const result = await executeReplicateQualification(plan, privateKey.export({ type: "pkcs8", format: "pem" }).toString(), execution, ledger(), at);
+    expect(result.report).toMatchObject({ model: model.model, maximumSpendUsd: 0.03 });
+    expect(execution.ingest).toHaveBeenCalledTimes(2);
   });
 });

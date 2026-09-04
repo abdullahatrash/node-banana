@@ -8,9 +8,9 @@ import { composeQualifiedProviderInput } from "./provider-input-composition";
 
 export const MAX_QUALIFICATION_SPEND_USD = 0.4;
 
-const smokeCaseSchema = z.object({
+export const qualificationSmokeCaseSchema = z.object({
   id: z.string().min(3).max(100),
-  capability: z.enum(["text_to_image", "image_to_image", "text_to_video", "image_to_video", "video_to_video"]),
+  capability: z.enum(["text_generation", "text_to_image", "image_to_image", "text_to_video", "image_to_video", "video_to_video"]),
   contentLanguage: z.enum(["ar", "en"]),
   arabicVariety: z.enum(["msa", "gulf", "egyptian", "levantine", "maghrebi", "other"]).nullable(),
   prompt: z.string().min(1).max(5_000),
@@ -20,15 +20,32 @@ const smokeCaseSchema = z.object({
   lifecycle: z.enum(["complete", "cancel"]),
 }).strict();
 
-const inputSchema = z.object({
+export const qualificationRunnerInputSchema = z.object({
   attestation: modelQualificationAttestationSchema,
   signingKeyId: z.string().min(1).max(100),
   runId: z.string().min(8).max(200),
-  cases: z.array(smokeCaseSchema).min(3).max(12),
+  cases: z.array(qualificationSmokeCaseSchema).min(3).max(12),
 }).strict();
 
-export type QualificationRunnerInput = z.input<typeof inputSchema>;
-export type QualificationSmokeCase = z.infer<typeof smokeCaseSchema>;
+export type QualificationRunnerInput = z.input<typeof qualificationRunnerInputSchema>;
+export type QualificationSmokeCase = z.infer<typeof qualificationSmokeCaseSchema>;
+export type QualificationIngestionReceipt = {
+  kind: "media";
+  receiptId: string;
+  contentDigest: `sha256:${string}`;
+  width: number;
+  height: number;
+  durationSeconds: number | null;
+  observedLanguages: Array<"ar" | "en">;
+  languageEvidenceDigest: `sha256:${string}`;
+} | {
+  kind: "text";
+  receiptId: string;
+  contentDigest: `sha256:${string}`;
+  characterCount: number;
+  observedLanguages: Array<"ar" | "en">;
+  languageEvidenceDigest: `sha256:${string}`;
+};
 export type QualificationRunOutput = {
   report: { schema: string; matrixId: string; providerAccountId: string; runId: string; model: string; version: string; hardCapUsd: number; maximumSpendUsd: number; observedSpendUsd: number; cases: Array<Record<string, unknown>>; completedAt: string };
   envelope: { version: 1; qualifications: Array<{ attestation: z.infer<typeof modelQualificationAttestationSchema>; signature: { algorithm: "ed25519"; keyId: string; value: string } }> };
@@ -43,7 +60,7 @@ export interface QualificationExecutionPort {
   awaitWebhook(input: { predictionId: string; version: string; caseId: string }): Promise<{ authentic: boolean; deliveryId: string; status: "succeeded" | "failed" | "canceled" | "aborted" }>;
   poll(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string; output: unknown }>;
   cancel(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "canceled" | "aborted"; version: string }>;
-  ingest(input: { predictionId: string; caseId: string; capability: QualificationSmokeCase["capability"]; output: unknown }): Promise<{ receiptId: string; contentDigest: `sha256:${string}`; width: number; height: number; durationSeconds: number | null; observedLanguages: Array<"ar" | "en">; languageEvidenceDigest: `sha256:${string}` }>;
+  ingest(input: { predictionId: string; caseId: string; capability: QualificationSmokeCase["capability"]; output: unknown }): Promise<QualificationIngestionReceipt>;
   reconcile(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string }>;
   observeSpend(input: { predictionId: string; model: string; version: string; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendReceipt>;
 }
@@ -82,17 +99,74 @@ function qualificationSourceUrls(cell: QualificationSmokeCase, imageKey: string 
   return [];
 }
 
-/** Executes every paid smoke cell once, stops below USD 0.40, and signs only complete evidence. */
-export async function executeReplicateQualification(input: QualificationRunnerInput, privateKeyPem: string, execution: QualificationExecutionPort, ledger: QualificationRunLedger, at = new Date()): Promise<QualificationRunOutput> {
-  const parsed = inputSchema.parse(input);
+export type QualificationPlanPreflight = {
+  schema: "replicate-qualification-plan-preflight/v1";
+  runId: string;
+  model: string;
+  version: string;
+  signingKeyId: string;
+  capabilities: QualificationSmokeCase["capability"][];
+  caseCount: number;
+  estimatedMaximumSpendUsd: number;
+  hardCapUsd: number;
+};
+
+/** Pure, no-network validation shared by the operator preflight and paid runner. */
+export function validateReplicateQualificationPlan(input: QualificationRunnerInput, at = new Date()): {
+  parsed: z.infer<typeof qualificationRunnerInputSchema>;
+  summary: QualificationPlanPreflight;
+} {
+  const parsed = qualificationRunnerInputSchema.parse(input);
   const base = parsed.attestation;
   const curated = CURATED_MODELS.find((item) => item.provider === "replicate" && item.model === base.model);
   if (!curated) throw new Error("QUALIFICATION_MODEL_NOT_CURATED");
-  if (base.capabilities.some((capability) => !curated.capabilities.includes(capability))) throw new Error("QUALIFICATION_CAPABILITY_NOT_CURATED");
-  if (new Date(base.issuedAt) > at || new Date(base.expiresAt) <= at) throw new Error("QUALIFICATION_WINDOW_INVALID");
+  const exactCapabilities = base.capabilities.length === curated.capabilities.length
+    && base.capabilities.every((capability) => curated.capabilities.includes(capability));
+  if (!exactCapabilities) throw new Error("QUALIFICATION_CAPABILITY_SET_MISMATCH");
+  const issuedAt = new Date(base.issuedAt);
+  const expiresAt = new Date(base.expiresAt);
+  if (issuedAt > at || expiresAt <= at || expiresAt.getTime() - issuedAt.getTime() > 90 * 24 * 60 * 60_000) throw new Error("QUALIFICATION_WINDOW_INVALID");
+  if (!base.contentLanguages.includes("ar") || !base.contentLanguages.includes("en")) throw new Error("QUALIFICATION_BILINGUAL_SUPPORT_REQUIRED");
+  if (!base.verifiedRegions.includes("replicate-us") || !base.executionModes.includes("async")) throw new Error("QUALIFICATION_RUNTIME_COMPATIBILITY_REQUIRED");
+  if (new Set(parsed.cases.map((cell) => cell.id)).size !== parsed.cases.length) throw new Error("QUALIFICATION_CASE_ID_DUPLICATE");
   requireMatrixCoverage(parsed.cases);
   for (const capability of base.capabilities) if (!parsed.cases.some((item) => item.capability === capability)) throw new Error(`QUALIFICATION_CAPABILITY_CELL_REQUIRED:${capability}`);
+  for (const cell of parsed.cases) {
+    if (!base.capabilities.includes(cell.capability)) throw new Error(`QUALIFICATION_CASE_CAPABILITY_MISMATCH:${cell.id}`);
+    if (!base.contentLanguages.includes(cell.contentLanguage)) throw new Error(`QUALIFICATION_CASE_LANGUAGE_MISMATCH:${cell.id}`);
+    if (cell.contentLanguage === "ar" && (!cell.arabicVariety || !base.arabicVarieties.includes(cell.arabicVariety))) throw new Error(`QUALIFICATION_CASE_ARABIC_VARIETY_MISMATCH:${cell.id}`);
+    if (cell.contentLanguage === "en" && cell.arabicVariety !== null) throw new Error(`QUALIFICATION_CASE_ARABIC_VARIETY_MISMATCH:${cell.id}`);
+    if (cell.billableQuantity > base.maxQuantity) throw new Error(`QUALIFICATION_CASE_QUANTITY_EXCEEDED:${cell.id}`);
+    const sourceUrls = qualificationSourceUrls(cell, base.inputContract.imageKey);
+    if (["image_to_image", "image_to_video", "video_to_video"].includes(cell.capability) && sourceUrls.length === 0) throw new Error(`QUALIFICATION_SOURCE_MEDIA_REQUIRED:${cell.id}`);
+    if (sourceUrls.some((value) => {
+      try { return new URL(value).protocol !== "https:"; } catch { return true; }
+    })) throw new Error(`QUALIFICATION_SOURCE_MEDIA_URL_INVALID:${cell.id}`);
+  }
+  if (base.capabilities.some((capability) => ["image_to_image", "image_to_video", "video_to_video"].includes(capability)) && !base.license.derivativeUse) throw new Error("QUALIFICATION_DERIVATIVE_LICENSE_REQUIRED");
   if (base.inputContract.imageKey && base.capabilities.some((capability) => capability === "text_to_image" || capability === "text_to_video") && !parsed.cases.some((cell) => (cell.capability === "text_to_image" || cell.capability === "text_to_video") && qualificationSourceUrls(cell, base.inputContract.imageKey).length === 0)) throw new Error("QUALIFICATION_BRAND_ONLY_MEDIA_CELL_REQUIRED");
+  const estimatedMaximumSpendUsd = parsed.cases.reduce((sum, cell) => sum + base.executionPriceUsd.amount * cell.billableQuantity, 0);
+  if (!Number.isFinite(estimatedMaximumSpendUsd) || estimatedMaximumSpendUsd <= 0 || estimatedMaximumSpendUsd >= MAX_QUALIFICATION_SPEND_USD) throw new Error("QUALIFICATION_BUDGET_CAP_EXCEEDED");
+  return {
+    parsed,
+    summary: {
+      schema: "replicate-qualification-plan-preflight/v1",
+      runId: parsed.runId,
+      model: base.model,
+      version: base.version,
+      signingKeyId: parsed.signingKeyId,
+      capabilities: [...base.capabilities],
+      caseCount: parsed.cases.length,
+      estimatedMaximumSpendUsd,
+      hardCapUsd: MAX_QUALIFICATION_SPEND_USD,
+    },
+  };
+}
+
+/** Executes every paid smoke cell once, stops below USD 0.40, and signs only complete evidence. */
+export async function executeReplicateQualification(input: QualificationRunnerInput, privateKeyPem: string, execution: QualificationExecutionPort, ledger: QualificationRunLedger, at = new Date()): Promise<QualificationRunOutput> {
+  const { parsed } = validateReplicateQualificationPlan(input, at);
+  const base = parsed.attestation;
   const privateKey = createPrivateKey(privateKeyPem);
   if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("QUALIFICATION_SIGNING_KEY_INVALID");
 
@@ -189,7 +263,9 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
       let ingestion: Awaited<ReturnType<QualificationExecutionPort["ingest"]>> | null = null;
       if (cell.lifecycle === "complete") {
         ingestion = await execution.ingest({ predictionId: submitted.predictionId, caseId: cell.id, capability: cell.capability, output });
-        if (ingestion.width * 16 !== ingestion.height * 9) throw new Error(`QUALIFICATION_OUTPUT_NOT_9_16:${cell.id}`);
+        if (cell.capability === "text_generation") {
+          if (ingestion.kind !== "text" || ingestion.characterCount <= 0) throw new Error(`QUALIFICATION_TEXT_OUTPUT_INVALID:${cell.id}`);
+        } else if (ingestion.kind !== "media" || ingestion.width * 16 !== ingestion.height * 9) throw new Error(`QUALIFICATION_OUTPUT_NOT_9_16:${cell.id}`);
         if (!ingestion.observedLanguages.includes(cell.contentLanguage)) throw new Error(`QUALIFICATION_LANGUAGE_EVIDENCE_MISSING:${cell.id}`);
       }
       const result = { id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: authoritativeMaximum, spendAuthorizationId: spendAuthorizations[index]!.authorizationId, spendAuthorizationDigest: spendAuthorizations[index]!.digest, observedSpendUsd: receipt.amountUsd, spendReceiptId: receipt.receiptId, spendReceiptDigest: receipt.digest, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, providerCompositionDigest: composed.evidence.digest, composedPromptDigest: composed.evidence.composedPromptDigest, providerInputDigest: composed.providerInputDigest, safetyVerified: Boolean(base.inputContract.safety), webhookDeliveryId: webhook.deliveryId, ingestion };

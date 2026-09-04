@@ -39,7 +39,7 @@ export type QualificationSpendAuthorization = QualificationProviderAccount & {
   authorizationId: string;
   model: string;
   version: string;
-  capability: "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "video_to_video";
+  capability: "text_generation" | "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "video_to_video";
   billableQuantity: number;
   maximumAmountUsd: number;
   expiresAt: string;

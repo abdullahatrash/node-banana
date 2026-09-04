@@ -28,7 +28,7 @@ const envelopeSchema = z.object({
 
 const authorizationPayloadSchema = z.object({
   schema: z.literal("replicate-qualification-spend-authorization/v1"), authorizationId: z.string().min(8).max(200), provider: z.literal("replicate"), accountId: z.string().min(1).max(200), credentialFingerprint: digest,
-  model: z.string().min(1).max(200), version: z.string().min(8).max(200), capability: z.enum(["text_to_image", "image_to_image", "text_to_video", "image_to_video", "video_to_video"]), billableQuantity: z.number().positive().max(600), maximumAmountUsd: z.number().positive().max(1_000_000), expiresAt: z.string().datetime({ offset: true }), source: z.literal("replicate-account-billing"), digest,
+  model: z.string().min(1).max(200), version: z.string().min(8).max(200), capability: z.enum(["text_generation", "text_to_image", "image_to_image", "text_to_video", "image_to_video", "video_to_video"]), billableQuantity: z.number().positive().max(600), maximumAmountUsd: z.number().positive().max(1_000_000), expiresAt: z.string().datetime({ offset: true }), source: z.literal("replicate-account-billing"), digest,
 }).strict();
 const authorizationEnvelopeSchema = z.object({ authorization: authorizationPayloadSchema, signature: z.object({ algorithm: z.literal("ed25519"), keyId: z.string().min(1).max(100), value: z.string().min(40).max(500) }).strict() }).strict();
 

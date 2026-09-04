@@ -8,7 +8,10 @@ const terminal = z.enum(["succeeded", "failed", "canceled", "aborted"]);
 const predictionSchema = z.object({ id: z.string().min(1), status: z.enum(["starting", "processing", "succeeded", "failed", "canceled", "aborted"]), version: z.string().min(1), output: z.unknown().optional() }).passthrough();
 const observerSchema = z.object({ authentic: z.literal(true), deliveryId: z.string().min(1), predictionId: z.string().min(1), version: z.string().min(1), status: terminal }).strict();
 const recoveredSubmissionSchema = z.object({ predictionId: z.string().min(1), version: z.string().min(1) }).strict();
-const ingestionSchema = z.object({ receiptId: z.string().min(1), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().nonnegative().nullable(), observedLanguages: z.array(z.enum(["ar", "en"])).min(1), languageEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
+const ingestionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("media"), receiptId: z.string().min(1), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().nonnegative().nullable(), observedLanguages: z.array(z.enum(["ar", "en"])).min(1), languageEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict(),
+  z.object({ kind: z.literal("text"), receiptId: z.string().min(1), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), characterCount: z.number().int().positive(), observedLanguages: z.array(z.enum(["ar", "en"])).min(1), languageEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict(),
+]);
 const accountSchema = z.object({ username: z.string().min(1).max(200) }).passthrough();
 
 type QualificationEnvironment = Readonly<Record<string, string | undefined>>;
@@ -120,7 +123,7 @@ export class ReplicateQualificationHttpExecution implements QualificationExecuti
     return { status: prediction.status, version: prediction.version };
   }
 
-  async ingest(input: { predictionId: string; caseId: string; capability: "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "video_to_video"; output: unknown }) {
+  async ingest(input: Parameters<QualificationExecutionPort["ingest"]>[0]) {
     const response = await this.harness(this.ingestionUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
     if (!response.ok) throw new Error(`QUALIFICATION_INGESTION_HTTP_${response.status}`);
     return ingestionSchema.parse(await response.json()) as Awaited<ReturnType<QualificationExecutionPort["ingest"]>>;
