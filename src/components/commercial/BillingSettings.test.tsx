@@ -15,6 +15,11 @@ const summary = {
   referrals: { codes: [], rewards: [], payoutEntries: [] },
 };
 
+const withSubscription = (subscription: NonNullable<typeof summary["subscription"]> | Record<string, unknown>) => ({
+  ...summary,
+  subscription,
+});
+
 describe("BillingSettings default plan", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -28,5 +33,49 @@ describe("BillingSettings default plan", () => {
     expect(await screen.findByText(currentLabel)).toBeInTheDocument();
     expect(screen.getByText(locale === "ar" ? "البداية" : "Starter")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: locale === "ar" ? "الاشتراك بأمان" : "Subscribe securely" })).toHaveLength(1);
+  });
+
+  it("keeps upgrade plans visible for a provisioned Free subscription", async () => {
+    window.localStorage.setItem("node-banana-active-workspace-id", "workspace-1");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      data: withSubscription({
+        state: "active",
+        planId: "free",
+        planVersion: 1,
+        currentPeriodEndsAt: "2026-10-04T00:00:00.000Z",
+        graceEndsAt: null,
+        merchantCustomerRef: null,
+        merchantSubscriptionRef: null,
+      }),
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    render(<I18nTestProvider locale="en"><BillingSettings canManage canPurchase /></I18nTestProvider>);
+
+    expect(await screen.findByText("Starter")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start trial" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open billing portal" })).not.toBeInTheDocument();
+  });
+
+  it("does not offer unsupported plan switching or a portal during a local trial", async () => {
+    window.localStorage.setItem("node-banana-active-workspace-id", "workspace-1");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      data: withSubscription({
+        state: "trialing",
+        planId: "starter",
+        planVersion: 1,
+        currentPeriodEndsAt: "2026-09-11T00:00:00.000Z",
+        graceEndsAt: null,
+        merchantCustomerRef: null,
+        merchantSubscriptionRef: null,
+      }),
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    render(<I18nTestProvider locale="en"><BillingSettings canManage canPurchase /></I18nTestProvider>);
+
+    expect(await screen.findByText("Trial")).toBeInTheDocument();
+    expect(screen.queryByText("Starter")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open billing portal" })).not.toBeInTheDocument();
   });
 });

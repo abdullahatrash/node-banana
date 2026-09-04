@@ -1,5 +1,5 @@
 export type CommercialSummary = {
-  subscription: null | { state: string; planId: string; planVersion: number; currentPeriodEndsAt: string; graceEndsAt: string | null; merchantCustomerRef: string | null };
+  subscription: null | { state: string; planId: string; planVersion: number; currentPeriodEndsAt: string; graceEndsAt: string | null; merchantCustomerRef: string | null; merchantSubscriptionRef: string | null };
   plans: Array<{ planId: string; version: number; authoredName: { ar: string; en: string }; currency: string; priceMinor: number; billingInterval: string; trialDays: number; trialCreditUnits: number; entitlements: Record<string, number | boolean> }>;
   creditPacks: Array<{ packId: string; version: number; authoredName: { ar: string; en: string }; creditUnits: number; currency: string; priceMinor: number; taxMinor: number }>;
   quotes: Array<{ id: string; state: string; purposeRef: string; maxCreditDebit: number; currency: string | null; localPriceMinor: number | null; taxMinor: number | null; expiresAt: string }>;
