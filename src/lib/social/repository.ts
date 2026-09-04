@@ -62,6 +62,16 @@ export class SocialAccountNotFoundError extends Error {
   }
 }
 
+export class SocialAccountQuotaExceededError extends Error {
+  constructor(
+    readonly current: number,
+    readonly limit: number,
+  ) {
+    super("Connected Channel entitlement exhausted.");
+    this.name = "SocialAccountQuotaExceededError";
+  }
+}
+
 export class SocialPostNotFoundError extends Error {
   constructor(id?: string) {
     super(id ? `Social post "${id}" not found.` : "Social post not found.");
@@ -557,39 +567,47 @@ export async function upsertSocialAccount(input: {
   tokenExpiresAt?: Date;
   additionalSettings?: Record<string, unknown>;
   createdByUserId: string;
+  maxActiveChannels?: number;
 }) {
   const db = getDb();
   const id = `sacct_${randomUUID()}`;
   const now = new Date();
 
-  const [row] = await db
-    .insert(socialAccounts)
-    .values({
-      id,
-      workspaceId: input.workspaceId,
-      platform: input.platform,
-      platformUserId: input.platformUserId,
-      displayName: input.displayName,
-      username: input.username ?? null,
-      avatarUrl: input.avatarUrl ?? null,
-      accessTokenEncrypted: input.accessTokenEncrypted,
-      refreshTokenEncrypted: input.refreshTokenEncrypted ?? null,
-      accessTokenSecret: input.accessTokenSecret ?? null,
-      tokenExpiresAt: input.tokenExpiresAt ?? null,
-      additionalSettings: input.additionalSettings ?? null,
-      requiresReauth: false,
-      disabled: false,
-      createdByUserId: input.createdByUserId,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [
-        socialAccounts.workspaceId,
-        socialAccounts.platform,
-        socialAccounts.platformUserId,
-      ],
-      set: {
+  return db.transaction(async (tx) => {
+    if (input.maxActiveChannels !== undefined) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.workspaceId}))`);
+      const [existing] = await tx
+        .select({ id: socialAccounts.id, disabled: socialAccounts.disabled })
+        .from(socialAccounts)
+        .where(and(
+          eq(socialAccounts.workspaceId, input.workspaceId),
+          eq(socialAccounts.platform, input.platform),
+          eq(socialAccounts.platformUserId, input.platformUserId),
+        ))
+        .limit(1);
+
+      if (!existing || existing.disabled) {
+        const [usage] = await tx
+          .select({ count: sql<number>`cast(count(*) as int)` })
+          .from(socialAccounts)
+          .where(and(
+            eq(socialAccounts.workspaceId, input.workspaceId),
+            eq(socialAccounts.disabled, false),
+          ));
+        const current = usage?.count ?? 0;
+        if (current >= input.maxActiveChannels) {
+          throw new SocialAccountQuotaExceededError(current, input.maxActiveChannels);
+        }
+      }
+    }
+
+    const [row] = await tx
+      .insert(socialAccounts)
+      .values({
+        id,
+        workspaceId: input.workspaceId,
+        platform: input.platform,
+        platformUserId: input.platformUserId,
         displayName: input.displayName,
         username: input.username ?? null,
         avatarUrl: input.avatarUrl ?? null,
@@ -600,12 +618,34 @@ export async function upsertSocialAccount(input: {
         additionalSettings: input.additionalSettings ?? null,
         requiresReauth: false,
         disabled: false,
+        createdByUserId: input.createdByUserId,
+        createdAt: now,
         updatedAt: now,
-      },
-    })
-    .returning();
+      })
+      .onConflictDoUpdate({
+        target: [
+          socialAccounts.workspaceId,
+          socialAccounts.platform,
+          socialAccounts.platformUserId,
+        ],
+        set: {
+          displayName: input.displayName,
+          username: input.username ?? null,
+          avatarUrl: input.avatarUrl ?? null,
+          accessTokenEncrypted: input.accessTokenEncrypted,
+          refreshTokenEncrypted: input.refreshTokenEncrypted ?? null,
+          accessTokenSecret: input.accessTokenSecret ?? null,
+          tokenExpiresAt: input.tokenExpiresAt ?? null,
+          additionalSettings: input.additionalSettings ?? null,
+          requiresReauth: false,
+          disabled: false,
+          updatedAt: now,
+        },
+      })
+      .returning();
 
-  return row;
+    return row;
+  });
 }
 
 export async function listSocialAccounts(workspaceId: string) {
@@ -756,54 +796,59 @@ export async function updateSocialAccount(
     disabled?: boolean;
     additionalSettings?: Record<string, unknown> | null;
   },
+  options?: { maxActiveChannels?: number },
 ) {
   const db = getDb();
-  let additionalSettings = data.additionalSettings;
-  if (data.additionalSettings !== undefined) {
-    const [current] = await db
-      .select({
-        platform: socialAccounts.platform,
-        additionalSettings: socialAccounts.additionalSettings,
-      })
-      .from(socialAccounts)
-      .where(
-        and(
-          eq(socialAccounts.workspaceId, workspaceId),
-          eq(socialAccounts.id, accountId),
-        ),
-      )
-      .limit(1);
-    if (!current) throw new SocialAccountNotFoundError(accountId);
-    if (current.platform === "linkedin") {
-      additionalSettings = preserveLinkedInAuthorKind(
-        current.additionalSettings,
-        data.additionalSettings,
-      );
+  return db.transaction(async (tx) => {
+    if (data.disabled === false && options?.maxActiveChannels !== undefined) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
+      const [current] = await tx
+        .select({ disabled: socialAccounts.disabled })
+        .from(socialAccounts)
+        .where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.id, accountId)))
+        .limit(1);
+      if (!current) throw new SocialAccountNotFoundError(accountId);
+      if (current.disabled) {
+        const [usage] = await tx
+          .select({ count: sql<number>`cast(count(*) as int)` })
+          .from(socialAccounts)
+          .where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.disabled, false)));
+        const active = usage?.count ?? 0;
+        if (active >= options.maxActiveChannels) {
+          throw new SocialAccountQuotaExceededError(active, options.maxActiveChannels);
+        }
+      }
     }
-  }
-  const [row] = await db
-    .update(socialAccounts)
-    .set({
-      ...(data.displayName !== undefined && { displayName: data.displayName }),
-      ...(data.disabled !== undefined && { disabled: data.disabled }),
-      ...(data.additionalSettings !== undefined && {
-        additionalSettings,
-      }),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(socialAccounts.workspaceId, workspaceId),
-        eq(socialAccounts.id, accountId),
-      ),
-    )
-    .returning();
 
-  if (!row) {
-    throw new SocialAccountNotFoundError(accountId);
-  }
+    let additionalSettings = data.additionalSettings;
+    if (data.additionalSettings !== undefined) {
+      const [current] = await tx
+        .select({
+          platform: socialAccounts.platform,
+          additionalSettings: socialAccounts.additionalSettings,
+        })
+        .from(socialAccounts)
+        .where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.id, accountId)))
+        .limit(1);
+      if (!current) throw new SocialAccountNotFoundError(accountId);
+      if (current.platform === "linkedin") {
+        additionalSettings = preserveLinkedInAuthorKind(current.additionalSettings, data.additionalSettings);
+      }
+    }
+    const [row] = await tx
+      .update(socialAccounts)
+      .set({
+        ...(data.displayName !== undefined && { displayName: data.displayName }),
+        ...(data.disabled !== undefined && { disabled: data.disabled }),
+        ...(data.additionalSettings !== undefined && { additionalSettings }),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.id, accountId)))
+      .returning();
 
-  return row;
+    if (!row) throw new SocialAccountNotFoundError(accountId);
+    return row;
+  });
 }
 
 export async function countSocialPostsForAccount(

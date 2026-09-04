@@ -5,6 +5,7 @@ import {
   OAuthSelectionSessionExpiredError,
   OAuthSelectionSessionNotFoundError,
   SocialAccountNotFoundError,
+  SocialAccountQuotaExceededError,
   SocialPostNotFoundError,
   SocialPostMediaBindingError,
   SocialPostStateTransitionError,
@@ -25,6 +26,8 @@ const mockWhere = vi.fn();
 const mockOrderBy = vi.fn();
 const mockLimit = vi.fn();
 const mockOffset = vi.fn();
+const mockExecute = vi.fn();
+const mockTransaction = vi.fn();
 
 function setupChainableMock(returnValue: unknown[] = []) {
   mockReturning.mockResolvedValue(returnValue);
@@ -54,16 +57,23 @@ function setupChainableMock(returnValue: unknown[] = []) {
 }
 
 vi.mock("@/lib/db", () => ({
-  getDb: () => ({
-    insert: mockInsert,
-    select: mockSelect,
-    update: mockUpdate,
-    delete: mockDelete,
-  }),
+  getDb: () => {
+    const database = {
+      insert: mockInsert,
+      select: mockSelect,
+      update: mockUpdate,
+      delete: mockDelete,
+      execute: mockExecute,
+    };
+    return {
+      ...database,
+      transaction: (callback: (tx: typeof database) => unknown) => mockTransaction(callback, database),
+    };
+  },
 }));
 
 vi.mock("@/lib/db/schema", () => ({
-  socialAccounts: { workspaceId: "workspace_id", id: "id", platform: "platform", platformUserId: "platform_user_id" },
+  socialAccounts: { workspaceId: "workspace_id", id: "id", platform: "platform", platformUserId: "platform_user_id", disabled: "disabled" },
   socialPosts: { workspaceId: "workspace_id", id: "id", status: "status", socialAccountId: "social_account_id", retryCount: "retry_count", createdAt: "created_at" },
   socialOAuthStates: { id: "id", state: "state", expiresAt: "expires_at" },
   socialOAuthSelectionSessions: { id: "id", expiresAt: "expires_at", workspaceId: "workspace_id", platform: "platform" },
@@ -72,6 +82,7 @@ vi.mock("@/lib/db/schema", () => ({
 describe("social/repository", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTransaction.mockImplementation((callback, database) => callback(database));
   });
 
   describe("error classes", () => {
@@ -279,6 +290,49 @@ describe("social/repository", () => {
 
       expect(mockInsert).toHaveBeenCalled();
       expect(result).toEqual(mockAccount);
+    });
+
+    it("serializes final admission and rejects a new account at the immutable Plan limit", async () => {
+      const { upsertSocialAccount } = await import("@/lib/social/repository");
+      mockWhere
+        .mockReturnValueOnce({ limit: vi.fn().mockResolvedValue([]) })
+        .mockResolvedValueOnce([{ count: 2 }]);
+
+      await expect(upsertSocialAccount({
+        workspaceId: "ws_1",
+        platform: "linkedin",
+        platformUserId: "new-user",
+        displayName: "New user",
+        accessTokenEncrypted: "enc_token",
+        createdByUserId: "user_1",
+        maxActiveChannels: 2,
+      })).rejects.toEqual(new SocialAccountQuotaExceededError(2, 2));
+
+      expect(mockExecute).toHaveBeenCalledOnce();
+      expect(mockInsert).not.toHaveBeenCalled();
+    });
+
+    it("allows an existing active Channel to reauthorize while the allowance is full", async () => {
+      const account = { id: "sacct_existing", platform: "linkedin", displayName: "Existing" };
+      setupChainableMock([account]);
+      mockWhere.mockReturnValueOnce({
+        limit: vi.fn().mockResolvedValue([{ id: "sacct_existing", disabled: false }]),
+      });
+      const { upsertSocialAccount } = await import("@/lib/social/repository");
+
+      await expect(upsertSocialAccount({
+        workspaceId: "ws_1",
+        platform: "linkedin",
+        platformUserId: "existing-user",
+        displayName: "Existing",
+        accessTokenEncrypted: "new_token",
+        createdByUserId: "user_1",
+        maxActiveChannels: 2,
+      })).resolves.toEqual(account);
+
+      expect(mockExecute).toHaveBeenCalledOnce();
+      expect(mockSelect).toHaveBeenCalledOnce();
+      expect(mockInsert).toHaveBeenCalledOnce();
     });
   });
 

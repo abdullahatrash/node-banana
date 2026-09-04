@@ -9,9 +9,12 @@ import {
   consumeOAuthState,
   getOAuthStateByState,
   upsertSocialAccount,
+  SocialAccountQuotaExceededError,
   OAuthStateNotFoundError,
   OAuthStateExpiredError,
 } from "@/lib/social/repository";
+import { getWorkspaceChannelEntitlement } from "@/lib/commercial/channel-entitlement";
+import { quotaExceededPayload } from "@/lib/social/limits";
 import { withLinkedInAuthorKind } from "@/lib/social/linkedin-author-kind";
 import type { SocialPlatform } from "@/lib/db/schema";
 import type { PageInfo } from "@/lib/social/provider-interface";
@@ -32,6 +35,11 @@ interface CallbackResponse {
   requiresPageSelection?: boolean;
   selectionSessionId?: string;
   error?: string;
+  code?: string;
+  billingUrl?: string;
+  section?: string;
+  current?: number;
+  limit?: number;
 }
 
 const OAUTH_SELECTION_SESSION_TTL_MS = 10 * 60 * 1000;
@@ -244,6 +252,7 @@ export async function POST(
     }
 
     // Save the social account with encrypted tokens
+    const entitlement = await getWorkspaceChannelEntitlement(oauthState.workspaceId);
     const account = await upsertSocialAccount({
       workspaceId: oauthState.workspaceId,
       platform: body.platform as SocialPlatform,
@@ -266,6 +275,7 @@ export async function POST(
           ? withLinkedInAuthorKind(undefined, "person")
           : undefined,
       createdByUserId: result.session.user.id,
+      maxActiveChannels: entitlement.connectedChannels,
     });
     logger.info("system", "Social account connected", {
       workspaceId: oauthState.workspaceId,
@@ -284,6 +294,12 @@ export async function POST(
       account: safeAccount,
     });
   } catch (error) {
+    if (error instanceof SocialAccountQuotaExceededError) {
+      return callbackJson(
+        quotaExceededPayload({ section: "channels", current: error.current, limit: error.limit }),
+        { status: 402 },
+      );
+    }
     if (
       error instanceof OAuthStateNotFoundError ||
       error instanceof OAuthStateExpiredError

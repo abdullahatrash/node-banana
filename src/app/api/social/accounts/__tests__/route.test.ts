@@ -20,6 +20,7 @@ const mockIsProviderRegistered = vi.fn();
 const mockIsPlatformConfigured = vi.fn();
 const mockEncryptToken = vi.fn();
 const mockDecryptToken = vi.fn();
+const mockGetWorkspaceChannelEntitlement = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -49,6 +50,12 @@ vi.mock("@/lib/social/repository", () => ({
   upsertSocialAccount: (...args: unknown[]) => mockUpsertSocialAccount(...args),
   SocialAccountNotFoundError: class extends Error {
     constructor(id?: string) { super(`Account "${id}" not found.`); this.name = "SocialAccountNotFoundError"; }
+  },
+  SocialAccountQuotaExceededError: class extends Error {
+    constructor(readonly current: number, readonly limit: number) {
+      super("Connected Channel entitlement exhausted.");
+      this.name = "SocialAccountQuotaExceededError";
+    }
   },
   OAuthStateNotFoundError: class extends Error {
     constructor() { super("OAuth state not found."); this.name = "OAuthStateNotFoundError"; }
@@ -80,6 +87,11 @@ vi.mock("@/lib/social/crypto", () => ({
   decryptToken: (...args: unknown[]) => mockDecryptToken(...args),
 }));
 
+vi.mock("@/lib/commercial/channel-entitlement", () => ({
+  getWorkspaceChannelEntitlement: (...args: unknown[]) =>
+    mockGetWorkspaceChannelEntitlement(...args),
+}));
+
 const mockSession = {
   user: { id: "user_1", name: "Test", email: "test@example.com" },
   workspace: { id: "ws_1", organizationId: "org_1" },
@@ -90,6 +102,13 @@ const mockSession = {
 
 function authorized() {
   mockWithApiPermission.mockResolvedValue({ authorized: true, session: mockSession });
+  mockGetWorkspaceChannelEntitlement.mockResolvedValue({
+    planId: "free",
+    planVersion: 1,
+    subscriptionState: "active",
+    authoredName: { ar: "مجانية", en: "Free" },
+    connectedChannels: 2,
+  });
 }
 
 function unauthorized(status: 401 | 403) {
@@ -267,7 +286,7 @@ describe("/api/social/accounts/connect POST", () => {
   it("returns 402 when channel quota is exceeded", async () => {
     authorized();
     mockIsProviderRegistered.mockReturnValue(true);
-    mockCountActiveSocialAccounts.mockResolvedValue(3);
+    mockCountActiveSocialAccounts.mockResolvedValue(2);
 
     const { POST } = await import("../../accounts/connect/route");
     const response = await POST(
@@ -281,6 +300,7 @@ describe("/api/social/accounts/connect POST", () => {
     expect(data.success).toBe(false);
     expect(data.code).toBe("quota_exceeded");
     expect(data.section).toBe("channels");
+    expect(data.limit).toBe(2);
   });
 });
 
@@ -380,6 +400,7 @@ describe("/api/social/accounts/callback POST", () => {
         additionalSettings: {
           "nodeBanana.runtime.linkedinAuthorKind": "person",
         },
+        maxActiveChannels: 2,
       }),
     );
   });
@@ -513,6 +534,7 @@ describe("/api/social/accounts/select-page POST", () => {
         additionalSettings: {
           "nodeBanana.runtime.linkedinAuthorKind": "organization",
         },
+        maxActiveChannels: 2,
       }),
     );
   });
@@ -757,5 +779,54 @@ describe("/api/social/accounts/[accountId] PATCH", () => {
     expect(mockUpdateSocialAccount).toHaveBeenCalledWith("ws_1", "sacct_1", {
       disabled: true,
     });
+  });
+
+  it("uses the versioned Plan allowance when re-enabling a Channel", async () => {
+    authorized();
+    mockUpdateSocialAccount.mockResolvedValue({
+      id: "sacct_1",
+      platform: "linkedin",
+      displayName: "Test",
+      disabled: false,
+      accessTokenEncrypted: "enc_secret",
+      refreshTokenEncrypted: null,
+      accessTokenSecret: null,
+    });
+
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "PATCH",
+        body: JSON.stringify({ disabled: false }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateSocialAccount).toHaveBeenCalledWith(
+      "ws_1",
+      "sacct_1",
+      { disabled: false },
+      { maxActiveChannels: 2 },
+    );
+  });
+
+  it("returns the exact entitlement evidence when atomic re-enable admission loses a race", async () => {
+    authorized();
+    const { SocialAccountQuotaExceededError } = await import("@/lib/social/repository");
+    mockUpdateSocialAccount.mockRejectedValue(new SocialAccountQuotaExceededError(2, 2));
+
+    const mod = await import("../../accounts/[accountId]/route");
+    const response = await mod.PATCH(
+      createRequest("http://localhost:3000/api/social/accounts/sacct_1", {
+        method: "PATCH",
+        body: JSON.stringify({ disabled: false }),
+      }),
+      { params: Promise.resolve({ accountId: "sacct_1" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(402);
+    expect(data).toMatchObject({ code: "quota_exceeded", section: "channels", current: 2, limit: 2 });
   });
 });

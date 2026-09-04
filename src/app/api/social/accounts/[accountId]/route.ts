@@ -7,12 +7,20 @@ import {
   getSocialAccount,
   updateSocialAccount,
   SocialAccountNotFoundError,
+  SocialAccountQuotaExceededError,
 } from "@/lib/social/repository";
+import { getWorkspaceChannelEntitlement } from "@/lib/commercial/channel-entitlement";
+import { quotaExceededPayload } from "@/lib/social/limits";
 
 interface AccountResponse {
   success: boolean;
   account?: Record<string, unknown>;
   error?: string;
+  code?: string;
+  billingUrl?: string;
+  section?: string;
+  current?: number;
+  limit?: number;
 }
 
 interface AccountPatchRequest {
@@ -194,19 +202,17 @@ export async function PATCH(
       );
     }
 
-    const account = await updateSocialAccount(
-      result.session.workspace.id,
-      accountId,
-      {
-        ...(body.displayName !== undefined
-          ? { displayName: body.displayName.trim() }
-          : {}),
-        ...(body.disabled !== undefined ? { disabled: body.disabled } : {}),
-        ...(body.additionalSettings !== undefined
-          ? { additionalSettings: body.additionalSettings }
-          : {}),
-      },
-    );
+    const entitlement = body.disabled === false
+      ? await getWorkspaceChannelEntitlement(result.session.workspace.id)
+      : null;
+    const update = {
+      ...(body.displayName !== undefined ? { displayName: body.displayName.trim() } : {}),
+      ...(body.disabled !== undefined ? { disabled: body.disabled } : {}),
+      ...(body.additionalSettings !== undefined ? { additionalSettings: body.additionalSettings } : {}),
+    };
+    const account = entitlement
+      ? await updateSocialAccount(result.session.workspace.id, accountId, update, { maxActiveChannels: entitlement.connectedChannels })
+      : await updateSocialAccount(result.session.workspace.id, accountId, update);
 
     const {
       accessTokenEncrypted,
@@ -217,6 +223,12 @@ export async function PATCH(
 
     return NextResponse.json({ success: true, account: safeAccount });
   } catch (error) {
+    if (error instanceof SocialAccountQuotaExceededError) {
+      return NextResponse.json(
+        quotaExceededPayload({ section: "channels", current: error.current, limit: error.limit }),
+        { status: 402 },
+      );
+    }
     if (error instanceof SocialAccountNotFoundError) {
       return NextResponse.json(
         { success: false, error: error.message },
