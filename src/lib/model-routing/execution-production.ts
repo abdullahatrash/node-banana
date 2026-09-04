@@ -12,7 +12,11 @@ import { PostgresCanonicalTextOutputIngestion } from "./text-output-receipts";
 
 export function productionGenerationExecution(credential: { key: string; ref: DurableProviderCredentialRef }) {
   const routing = new PostgresModelRoutingRepository(getDb);
-  const adapter = new ReplicatePredictionAdapter(
+  return new GenerationExecutionService(routing, PRODUCTION_OPERATION_STATUS, productionReplicateAdapter(credential), undefined, undefined, PRODUCTION_GENERATION_REGIONS);
+}
+
+export function productionReplicateAdapter(credential: { key: string; ref: DurableProviderCredentialRef }) {
+  return new ReplicatePredictionAdapter(
     new ReplicateHttpClient(() => credential.key),
     new PostgresProviderEffectClaims(getDb),
     new S3CanonicalArtifactIngestion(),
@@ -21,5 +25,4 @@ export function productionGenerationExecution(credential: { key: string; ref: Du
     undefined,
     new PostgresCanonicalTextOutputIngestion(getDb),
   );
-  return new GenerationExecutionService(routing, PRODUCTION_OPERATION_STATUS, adapter, undefined, undefined, PRODUCTION_GENERATION_REGIONS);
 }
