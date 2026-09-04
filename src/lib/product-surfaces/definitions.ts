@@ -81,8 +81,9 @@ const trendRankingSignalsSchema = z.object({
 const trendEvidenceSchema = z.object({
   schema: z.literal("inspiration-trend-evidence/v1"),
   source: z.object({
-    sourceId: text(200), sourceKind: z.enum(["official_api", "licensed_dataset", "public_metadata", "embeddable_feed"]), adapterKey: text(200),
+    sourceId: text(200), sourceKind: z.enum(["official_api", "licensed_dataset", "public_metadata", "embeddable_feed", "workspace_owned_analytics"]), adapterKey: text(200),
     externalItemId: text(200), sourceContentDigest: sha256Digest, capturedAt: z.string().datetime(), publishedAt: z.string().datetime(), observationDigest: sha256Digest,
+    observationProvenance: z.object({ kind: z.literal("workspace_attested"), ref: text(500), digest: sha256Digest }).strict().nullable().default(null),
   }).strict(),
   rights: z.object({ status: z.enum(["licensed", "user_submitted", "embeddable", "metadata_only", "restricted"]), evidenceRef: text(500), evidenceDigest: sha256Digest, observedAt: z.string().datetime(), expiresAt: z.string().datetime().nullable() }).strict(),
   ranking: z.object({
@@ -102,7 +103,7 @@ export const inspirationPayloadSchema = z.object({
   sourceName: text(200),
   capturedAt: z.string().datetime(),
   metricsObservedAt: z.string().datetime(),
-  metrics: z.object({ views: z.number().int().nonnegative(), likes: z.number().int().nonnegative() }),
+  metrics: z.object({ views: z.number().int().nonnegative(), likes: z.number().int().nonnegative(), comments: z.number().int().nonnegative().optional() }),
   region: optionalText(80),
   contentLanguage: z.enum(["ar", "en"]),
   arabicVariety: z.enum(ARABIC_VARIETIES).nullable().default(null),

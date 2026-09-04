@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lte, or, sql } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
 import {
@@ -16,6 +16,7 @@ import { ARABIC_VARIETIES, CONTENT_FORMATS, inspirationPayloadSchema, type Conte
 import { createProductRecordInTransaction, updateProductRecordInTransaction } from "./repository";
 import { TrendAdapterRegistry, TrendIngestionWorker, type ClaimedTrendIngestionJob, type RankedTrendCandidate, type TrendIngestionRepository } from "./trend-ingestion-worker";
 import { TREND_SOURCE_KINDS, trendRankingContextSchema, type TrendIngestionAdapter, type TrendRankingContext, type TrendSourceKind } from "./trend-types";
+import { ensureWorkspaceOwnedTrendSource, workspaceOwnedTrendAdapter } from "./workspace-owned-trend-adapter";
 
 type Executor = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 const MAX_PAGE_COUNT = 20;
@@ -81,7 +82,7 @@ function payload(source: typeof inspirationTrendSources.$inferSelect, item: Rank
     rightsSnapshot: item.candidate.rights.rightsSnapshot, permittedInfluence: item.candidate.rights.permittedInfluence, whyThisAppears: item.ranking.reasonCodes, tags: item.candidate.tags,
     trendEvidence: {
       schema: "inspiration-trend-evidence/v1",
-      source: { sourceId: source.id, sourceKind: source.sourceKind, adapterKey: source.adapterKey, externalItemId: item.candidate.externalItemId, sourceContentDigest: item.candidate.sourceContentDigest, capturedAt: capturedAt.toISOString(), publishedAt: item.candidate.sourcePublishedAt, observationDigest },
+      source: { sourceId: source.id, sourceKind: source.sourceKind, adapterKey: source.adapterKey, externalItemId: item.candidate.externalItemId, sourceContentDigest: item.candidate.sourceContentDigest, capturedAt: capturedAt.toISOString(), publishedAt: item.candidate.sourcePublishedAt, observationDigest, observationProvenance: item.candidate.observationProvenance },
       rights: { status: item.candidate.rights.status, evidenceRef: item.candidate.rights.evidenceRef, evidenceDigest: item.candidate.rights.evidenceDigest, observedAt: item.candidate.rights.observedAt, expiresAt: item.candidate.rights.expiresAt },
       ranking: item.ranking,
     },
@@ -180,6 +181,7 @@ export class PostgresTrendIngestionRepository implements TrendIngestionRepositor
 
 export async function requestWorkspaceTrendRefresh(input: { workspaceId: string; userId: string; idempotencyKey: string; at?: Date }) {
   const at = input.at ?? new Date();
+  await ensureWorkspaceOwnedTrendSource({ workspaceId: input.workspaceId, userId: input.userId, at });
   return getDb().transaction(async (tx) => {
     const sources = await tx.select().from(inspirationTrendSources).where(and(eq(inspirationTrendSources.workspaceId, input.workspaceId), eq(inspirationTrendSources.state, "active"))).orderBy(asc(inspirationTrendSources.id)).limit(100);
     let scheduled = 0; let replayed = 0;
@@ -204,5 +206,6 @@ export function createProductionTrendIngestionWorker(adapters: TrendIngestionAda
   return new TrendIngestionWorker(new PostgresTrendIngestionRepository(), new TrendAdapterRegistry(adapters));
 }
 
-/** Empty by default: production deployments explicitly supply audited adapters. */
-export const PRODUCTION_TREND_INGESTION_WORKER = createProductionTrendIngestionWorker([]);
+/** Only the Workspace-owned adapter is enabled by default. External sources
+ * remain fail-closed until their provider-specific policy is audited. */
+export const PRODUCTION_TREND_INGESTION_WORKER = createProductionTrendIngestionWorker([workspaceOwnedTrendAdapter]);

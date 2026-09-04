@@ -205,6 +205,9 @@ qualification, Workspace Replicate credentials, plan/pack catalog, credits,
 and the optional Merchant-of-Record adapter. Use `--json` for machine-readable
 output.
 
+To test the rights-safe Inspiration trend loop against the real local backend,
+follow [Workspace winning-content trends](docs/operations/workspace-winning-content.md).
+
 ### Installation
 
 ```bash

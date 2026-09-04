@@ -6496,6 +6496,7 @@ export const assets = pgTable(
   },
   (table) => ({
     workspaceIdx: index("assets_workspace_idx").on(table.workspaceId),
+    workspaceIdUnique: uniqueIndex("assets_workspace_id_unique").on(table.workspaceId, table.id),
     projectIdx: index("assets_project_idx").on(table.projectId),
     storageIdx: uniqueIndex("assets_storage_provider_key_unique").on(
       table.storageProvider,
@@ -6724,6 +6725,7 @@ export const socialPosts = pgTable(
   },
   (table) => ({
     workspaceIdx: index("social_posts_workspace_idx").on(table.workspaceId),
+    workspaceIdUnique: uniqueIndex("social_posts_workspace_id_unique").on(table.workspaceId, table.id),
     socialAccountIdx: index("social_posts_account_idx").on(
       table.socialAccountId,
     ),
@@ -6866,6 +6868,49 @@ export const socialEvents = pgTable(
     postIdx: index("social_events_post_idx").on(table.postId),
     accountIdx: index("social_events_account_idx").on(table.accountId),
     createdAtIdx: index("social_events_created_at_idx").on(table.createdAt),
+  }),
+);
+
+/** Explicit Workspace-owned performance observations used to identify reusable
+ * winning content. These are never inferred from arbitrary social event
+ * metadata, and every row pins the exact published post, ready Studio Asset,
+ * and Rights Snapshot that can later enter the Inspiration/Blitz pipeline. */
+export const workspaceContentPerformanceObservations = pgTable(
+  "workspace_content_performance_observations",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    postId: text("post_id").notNull(),
+    sourceAssetId: text("source_asset_id").notNull(),
+    rightsSnapshotId: text("rights_snapshot_id").notNull(),
+    rightsSnapshotRevision: integer("rights_snapshot_revision").notNull(),
+    rightsSnapshotDigest: text("rights_snapshot_digest").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    views: bigint("views", { mode: "number" }).notNull(),
+    likes: bigint("likes", { mode: "number" }).notNull(),
+    comments: bigint("comments", { mode: "number" }).default(0).notNull(),
+    region: text("region").notNull(),
+    contentLanguage: text("content_language").notNull(),
+    arabicVariety: text("arabic_variety"),
+    format: text("format").notNull(),
+    tags: jsonb("tags").$type<string[]>().notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "workspace_content_performance_observations_pk", columns: [table.workspaceId, table.id] }),
+    idempotencyUnique: uniqueIndex("workspace_content_performance_observations_idempotency_unique").on(table.workspaceId, table.idempotencyKey),
+    postFk: foreignKey({ name: "workspace_content_performance_observations_post_fk", columns: [table.workspaceId, table.postId], foreignColumns: [socialPosts.workspaceId, socialPosts.id] }).onDelete("restrict"),
+    assetFk: foreignKey({ name: "workspace_content_performance_observations_asset_fk", columns: [table.workspaceId, table.sourceAssetId], foreignColumns: [assets.workspaceId, assets.id] }).onDelete("restrict"),
+    cursorIdx: index("workspace_content_performance_observations_cursor_idx").on(table.workspaceId, table.observedAt.desc(), table.id.desc()),
+    postCursorIdx: index("workspace_content_performance_observations_post_cursor_idx").on(table.workspaceId, table.postId, table.observedAt.desc(), table.id.desc()),
+    assetIdx: index("workspace_content_performance_observations_asset_idx").on(table.workspaceId, table.sourceAssetId),
+    valuesCheck: check("workspace_content_performance_observations_values_check", sql`${table.sourceKind} = 'workspace_attested' and length(${table.sourceRef}) between 1 and 500 and ${table.sourceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rightsSnapshotDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rightsSnapshotRevision} > 0 and ${table.views} between 0 and 9007199254740991 and ${table.likes} between 0 and 9007199254740991 and ${table.comments} between 0 and 9007199254740991 and ${table.contentLanguage} in ('ar','en') and (${table.arabicVariety} is null or ${table.arabicVariety} in ('msa','gulf','egyptian','levantine','maghrebi')) and ${table.format} in ('slideshow','wall_of_text','video_hook_demo','speaking_hook_demo','talking_head_ugc','green_screen_meme','talking_head_green_screen','product_spokesperson','green_screen_mobile_app','claymation','character_swap','custom_upload') and jsonb_typeof(${table.tags}) = 'array' and ${table.observedAt} <= ${table.capturedAt} and length(${table.idempotencyKey}) between 8 and 200 and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
   }),
 );
 
@@ -9259,7 +9304,7 @@ export const inspirationTrendSources = pgTable(
   (table) => ({
     pk: primaryKey({ name: "inspiration_trend_sources_pk", columns: [table.workspaceId, table.id] }),
     dueIdx: index("inspiration_trend_sources_due_idx").on(table.state, table.nextRunAt, table.workspaceId, table.id),
-    valuesCheck: check("inspiration_trend_sources_values_check", sql`${table.state} in ('active','paused') and ${table.sourceKind} in ('official_api','licensed_dataset','public_metadata','embeddable_feed') and ${table.adapterKey} ~ '^[a-z][a-z0-9._-]{1,119}$' and ${table.scheduleMinutes} between 5 and 10080`),
+    valuesCheck: check("inspiration_trend_sources_values_check", sql`${table.state} in ('active','paused') and ${table.sourceKind} in ('official_api','licensed_dataset','public_metadata','embeddable_feed','workspace_owned_analytics') and ${table.adapterKey} ~ '^[a-z][a-z0-9._-]{1,119}$' and ${table.scheduleMinutes} between 5 and 10080`),
   }),
 );
 

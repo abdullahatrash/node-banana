@@ -89,4 +89,10 @@ describe("explainable trend ranking", () => {
     expect(result.eligibleForBlitz).toBe(false);
     expect(result.reasonCodes).toContain("metadata_only_rights");
   });
+
+  it("uses observed comments as an engagement signal without requiring them from older adapters", () => {
+    const withoutComments = rankTrendCandidate({ candidate: { ...candidate, metrics: { views: 0, likes: 0 } }, context, evaluatedAt: now });
+    const withComments = rankTrendCandidate({ candidate: { ...candidate, metrics: { views: 0, likes: 0, comments: 1_000 } }, context, evaluatedAt: now });
+    expect(withComments.signals.performance).toBeGreaterThan(withoutComments.signals.performance);
+  });
 });

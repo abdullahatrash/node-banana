@@ -36,7 +36,7 @@ export function rankTrendCandidate(input: { candidate: TrendIngestionCandidate; 
   const signals = {
     freshness: freshness(ageHours(candidate.metricsObservedAt, evaluatedAt)),
     recency: recency(ageHours(candidate.sourcePublishedAt, evaluatedAt)),
-    performance: Math.min(100, Math.round(Math.log10(candidate.metrics.views + candidate.metrics.likes * 4 + 1) * 20)),
+    performance: Math.min(100, Math.round(Math.log10(candidate.metrics.views + candidate.metrics.likes * 4 + (candidate.metrics.comments ?? 0) * 8 + 1) * 20)),
     brandFit, region, language, arabicVariety, format,
     rights: evidenceCurrent ? rightsScore(candidate.rights.status) : 0,
     preference,

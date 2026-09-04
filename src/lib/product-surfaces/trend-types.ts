@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ARABIC_VARIETIES, CONTENT_FORMATS } from "./definitions";
 
-export const TREND_SOURCE_KINDS = ["official_api", "licensed_dataset", "public_metadata", "embeddable_feed"] as const;
+export const TREND_SOURCE_KINDS = ["official_api", "licensed_dataset", "public_metadata", "embeddable_feed", "workspace_owned_analytics"] as const;
 export const TREND_RIGHTS_STATUSES = ["licensed", "user_submitted", "embeddable", "metadata_only", "restricted"] as const;
 export const TREND_INFLUENCE_TYPES = ["topic", "hook", "pacing", "structure"] as const;
 
@@ -16,7 +16,12 @@ export const trendIngestionCandidateSchema = z.object({
   sourcePublishedAt: z.string().datetime(),
   sourceContentDigest: digest,
   metricsObservedAt: z.string().datetime(),
-  metrics: z.object({ views: z.number().int().nonnegative(), likes: z.number().int().nonnegative() }).strict(),
+  metrics: z.object({ views: z.number().int().nonnegative(), likes: z.number().int().nonnegative(), comments: z.number().int().nonnegative().optional() }).strict(),
+  observationProvenance: z.object({
+    kind: z.literal("workspace_attested"),
+    ref: z.string().trim().min(1).max(500),
+    digest,
+  }).strict().nullable().optional(),
   region: z.string().trim().max(80),
   contentLanguage: z.enum(["ar", "en"]),
   arabicVariety: z.enum(ARABIC_VARIETIES).nullable(),

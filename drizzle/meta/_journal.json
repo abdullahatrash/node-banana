@@ -834,6 +834,20 @@
       "when": 1788676800000,
       "tag": "0118_workspace_free_plan_activation",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1788680400000,
+      "tag": "0119_workspace_owned_performance_trends",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1788684000000,
+      "tag": "0120_trend_ranking_context_repair",
+      "breakpoints": true
     }
   ]
 }
