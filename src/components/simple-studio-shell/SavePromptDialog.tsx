@@ -93,6 +93,7 @@ export function SavePromptDialog() {
             </label>
             <textarea
               id="save-prompt-text"
+              dir="auto"
               className="max-h-48 min-h-24 w-full resize-y rounded-md border bg-background p-2 text-sm"
               placeholder={t("promptPlaceholder")}
               value={promptText}

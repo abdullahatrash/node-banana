@@ -36,6 +36,7 @@ describe("SavePromptDialog", () => {
     render(<SavePromptDialog />);
     const textarea = screen.getByLabelText(/prompt text/i) as HTMLTextAreaElement;
     expect(textarea).toBeInTheDocument();
+    expect(textarea).toHaveAttribute("dir", "auto");
     expect(textarea.value).toBe("A cat");
   });
 
