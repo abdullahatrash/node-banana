@@ -22,6 +22,7 @@
     "lint": "eslint src",
     "i18n:check": "node scripts/check-i18n.mjs",
     "qualify:replicate": "tsx scripts/qualify-replicate-model.ts",
+    "qualify:replicate:check": "tsx scripts/check-replicate-qualification.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:gate-a": "vitest run src/app/api/studio/workspaces/__tests__/route.test.ts src/app/api/studio/assets/__tests__/route.test.ts src/app/api/studio/assets/[assetId]/__tests__/route.test.ts src/app/api/studio/assets/presign/__tests__/route.test.ts src/app/api/social/accounts/__tests__/route.test.ts src/app/api/social/posts/__tests__/route.test.ts",

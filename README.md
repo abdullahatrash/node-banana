@@ -113,6 +113,16 @@ qualification and verified processing-region evidence. Run
 `pnpm doctor:local -- --workspace seed_ws_alice` to see the exact remaining
 gates without calling a provider or spending credits.
 
+Once a reviewed qualification plan exists, validate it and the operator trust
+configuration without network access or provider spend:
+
+```bash
+pnpm qualify:replicate:check reviewed-plan.json
+```
+
+This command rejects the paid-execution flag. The separate
+`qualify:replicate` command remains the only explicitly paid path.
+
 Verified email signup and the Arabic-first onboarding rollout also require the `AUTH_*`, `RESEND_*`, and `ONBOARDING_*` values documented in [`.env.example`](.env.example). Apply the onboarding migrations and legacy backfill in the order described by [`docs/onboarding-rollout.md`](docs/onboarding-rollout.md) before enabling product gates.
 
 ### Marketing and product domains

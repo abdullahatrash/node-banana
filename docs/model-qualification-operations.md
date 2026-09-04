@@ -2,6 +2,14 @@
 
 Model qualification is an operator-only, explicitly paid procedure. Normal application startup, tests, catalog discovery, and `pnpm qualify:replicate <plan.json>` without the exact confirmation flag make no provider calls.
 
+Before considering a paid run, execute the secret-safe, no-network operator preflight:
+
+```bash
+pnpm qualify:replicate:check reviewed-plan.json
+```
+
+The preflight validates the complete reviewed plan, exact curated capability set, bilingual and Arabic-variety cells, lifecycle coverage, source-media URLs, derivative-use evidence, runtime-compatible region/mode, per-cell quantities, the local `$0.40` ceiling, dedicated credential separation, safe harness endpoints, and both Ed25519 trust maps. It never constructs a provider client and rejects the paid-execution flag. Use `--json` for machine-readable output.
+
 ## Safety boundary
 
 The only paid invocation is:
@@ -17,7 +25,7 @@ The literal `--execute-paid-smoke` flag is mandatory. Review the plan and its im
 
 1. Apply database migrations through `0103_model_qualification_account_spend`.
 2. Set a dedicated, least-privileged `REPLICATE_QUALIFICATION_API_TOKEN`. Customer BYOK credentials must never be used.
-3. Configure the HTTPS webhook receiver, webhook observer, secure ingestion service, and spend observer with `QUALIFICATION_WEBHOOK_URL`, `QUALIFICATION_WEBHOOK_OBSERVER_URL`, `QUALIFICATION_INGESTION_URL`, and `QUALIFICATION_SPEND_OBSERVER_URL`.
+3. Configure the HTTPS webhook receiver, webhook observer, secure ingestion service, and spend observer with `QUALIFICATION_WEBHOOK_URL`, `QUALIFICATION_WEBHOOK_OBSERVER_URL`, `QUALIFICATION_INGESTION_URL`, and `QUALIFICATION_SPEND_OBSERVER_URL`. The ingestion receipt must use `kind: "media"` with dimensions/duration or `kind: "text"` with a positive character count; both forms require content and language-evidence digests.
 4. Configure `QUALIFICATION_HARNESS_TOKEN` for those internal services.
 5. Pin the spend observer's Ed25519 public keys in `QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON`. The observer must bind signed preflight authorizations and observed receipts to the Replicate account, credential fingerprint, immutable model version, stable run/case identity, and prediction.
 6. Supply `MODEL_QUALIFICATION_SIGNING_PRIVATE_KEY` only for the command invocation. Keep the corresponding public key in `MODEL_QUALIFICATION_PUBLIC_KEYS_JSON` for runtime verification.
