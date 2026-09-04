@@ -14,7 +14,7 @@ const NAV_ITEMS = [
   { href: "/social/compose", labelKey: "compose", Icon: ComposeIcon },
   { href: "/social/posts", labelKey: "posts", Icon: PostsIcon },
   { href: "/social/channels", labelKey: "channels", Icon: ChannelsIcon },
-];
+] as const;
 
 export function SocialSidebar() {
   const t = useTranslations("social.sidebar");

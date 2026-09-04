@@ -1,10 +1,11 @@
 "use client"
 
 import { useRef, useState } from "react"
+import { useFormatter, useTranslations } from "next-intl"
 import { useDrag } from "react-dnd"
 import { PlatformIcon } from "@/components/social/shared/PlatformIcon"
 import { POST_STATUS_CONFIG } from "@/lib/social/constants"
-import { format, isPast } from "date-fns"
+import { isPast } from "date-fns"
 import { CalendarPostDetailsPopover } from "./CalendarPostDetailsPopover"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
@@ -19,13 +20,15 @@ interface CalendarPostCardProps {
 export const POST_DND_TYPE = "social-post"
 
 export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
+  const t = useTranslations("social.calendarUi")
+  const formatValue = useFormatter()
   const cardRef = useRef<HTMLDivElement | null>(null)
   const [showDetails, setShowDetails] = useState(false)
   const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const account = accounts.find((item) => item.id === post.socialAccountId)
   const resolvedPlatform = (platform ?? account?.platform ?? "linkedin") as SocialPlatform
-  const channelName = account?.displayName ?? "Unknown channel"
+  const channelName = account?.displayName ?? t("unknownChannel")
   const statusConfig = POST_STATUS_CONFIG[post.status as SocialPostStatus]
   const postTime = post.scheduledAt || post.publishedAt || post.createdAt
   const isInPast = postTime ? isPast(new Date(postTime)) : false
@@ -92,20 +95,20 @@ export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
               </span>
               {postTime && (
                 <span className="flex-shrink-0 text-muted-foreground">
-                  {format(new Date(postTime), "HH:mm")}
+                  {formatValue.dateTime(new Date(postTime), { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
             </div>
             <div className="truncate text-muted-foreground">
               {post.status === "draft" && (
-                <span className="me-1">Draft:</span>
+                <span className="me-1">{t("draftPrefix")}</span>
               )}
-              {post.content?.slice(0, 48) || "No content"}
+              {post.content?.slice(0, 48) || t("noContent")}
             </div>
           </div>
           {!account && (
             <span className="sr-only">
-              Destination channel information is unavailable.
+              {t("destinationUnavailable")}
             </span>
           )}
         </div>

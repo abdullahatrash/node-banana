@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
+import { useTranslations } from "next-intl"
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 import { useShallow } from "zustand/shallow"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
@@ -10,6 +11,7 @@ import { Separator } from "@/components/ui/separator"
 import type { SocialPlatform } from "@/lib/db/schema"
 
 export function CalendarFilters() {
+  const t = useTranslations("social.calendarUi")
   const {
     viewMode,
     setViewMode,
@@ -42,7 +44,7 @@ export function CalendarFilters() {
               : "text-muted-foreground hover:bg-accent"
           }`}
         >
-          Day
+          {t("views.day")}
         </button>
         <button
           onClick={() => setViewMode("week")}
@@ -52,7 +54,7 @@ export function CalendarFilters() {
               : "text-muted-foreground hover:bg-accent"
           }`}
         >
-          Week
+          {t("views.week")}
         </button>
         <button
           onClick={() => setViewMode("month")}
@@ -62,7 +64,7 @@ export function CalendarFilters() {
               : "text-muted-foreground hover:bg-accent"
           }`}
         >
-          Month
+          {t("views.month")}
         </button>
         <button
           onClick={() => setViewMode("list")}
@@ -72,21 +74,21 @@ export function CalendarFilters() {
               : "text-muted-foreground hover:bg-accent"
           }`}
         >
-          List
+          {t("views.list")}
         </button>
       </div>
 
       <Separator orientation="vertical" className="h-4" />
 
       {/* Navigation */}
-      <Button variant="ghost" size="icon" className="size-7" onClick={navigatePrev}>
+      <Button variant="ghost" size="icon" className="size-7" onClick={navigatePrev} aria-label={t("previous")}>
         <ChevronLeftIcon className="size-4" />
       </Button>
-      <Button variant="ghost" size="icon" className="size-7" onClick={navigateNext}>
+      <Button variant="ghost" size="icon" className="size-7" onClick={navigateNext} aria-label={t("next")}>
         <ChevronRightIcon className="size-4" />
       </Button>
       <Button variant="outline" size="sm" className="text-xs" onClick={goToToday}>
-        Today
+        {t("today")}
       </Button>
 
       {/* Date range */}
@@ -103,7 +105,7 @@ export function CalendarFilters() {
         }}
         className="h-8 min-w-[180px] rounded-md border bg-background px-2 text-xs"
       >
-        <option value="">All channels</option>
+        <option value="">{t("allChannels")}</option>
         {accounts.map((account) => (
           <option key={account.id} value={account.id}>
             {account.displayName} ({account.platform as SocialPlatform})

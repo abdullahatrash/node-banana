@@ -17,10 +17,5 @@
   "src/components/social/ChannelCard.tsx",
   "src/components/social/ChannelsPageClient.tsx",
   "src/components/social/ProviderKeysSettings.tsx",
-  "src/components/social/calendar/CalendarFilters.tsx",
-  "src/components/social/calendar/CalendarListView.tsx",
-  "src/components/social/calendar/CalendarMonth.tsx",
-  "src/components/social/calendar/CalendarPostCard.tsx",
-  "src/components/social/calendar/CalendarPostDetailsPopover.tsx",
   "src/components/social/compose/PublishingSettingsPanels.tsx"
 ]

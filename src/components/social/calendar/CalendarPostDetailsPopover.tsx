@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { useFormatter, useTranslations } from "next-intl"
 import { createPortal } from "react-dom"
 import { useRouter } from "next/navigation"
 import {
@@ -13,7 +14,6 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react"
-import { format } from "date-fns"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { PlatformIcon } from "@/components/social/shared/PlatformIcon"
@@ -38,10 +38,6 @@ interface CalendarPostDetailsPopoverProps {
   onMutate: () => void | Promise<void>
 }
 
-function formatDateTime(value?: string | null) {
-  return value ? format(new Date(value), "MMM d, yyyy HH:mm") : "Not set"
-}
-
 function toDateTimeLocalValue(value?: string | null) {
   const date = value ? new Date(value) : new Date()
   const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
@@ -55,6 +51,11 @@ export function CalendarPostDetailsPopover({
   onClose,
   onMutate,
 }: CalendarPostDetailsPopoverProps) {
+  const t = useTranslations("social.calendarUi")
+  const formatValue = useFormatter()
+  const formatDateTime = (value?: string | null) => value
+    ? formatValue.dateTime(new Date(value), { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : t("notSet")
   const router = useRouter()
   const { show: showToast } = useToast()
   const accounts = useSocialAccountsStore((s) => s.accounts)
@@ -144,7 +145,7 @@ export function CalendarPostDetailsPopover({
       await action()
       await onMutate()
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Action failed", "error")
+      showToast(error instanceof Error ? error.message : t("errors.action"), "error")
     } finally {
       setIsActing(false)
     }
@@ -163,14 +164,14 @@ export function CalendarPostDetailsPopover({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="truncate text-sm font-medium">
-              {account?.displayName ?? "Unknown channel"}
+              {account?.displayName ?? t("unknownChannel")}
             </p>
             <Badge variant="secondary" className={`text-[10px] ${statusConfig?.color ?? ""}`}>
-              {statusConfig?.label ?? post.status}
+              {t(`status.${post.status}`)}
             </Badge>
           </div>
           <p className="mt-1 whitespace-pre-wrap break-words text-sm">
-            {post.content || "No content"}
+            {post.content || t("noContent")}
           </p>
         </div>
         <Button variant="ghost" size="icon" className="size-7" onClick={onClose}>
@@ -180,20 +181,20 @@ export function CalendarPostDetailsPopover({
 
       <div className="space-y-2 border-t px-4 py-3 text-xs text-muted-foreground">
         <div className="flex items-center justify-between gap-3">
-          <span>Scheduled</span>
+          <span>{t("scheduled")}</span>
           <span className="text-foreground">{formatDateTime(post.scheduledAt)}</span>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <span>Published</span>
+          <span>{t("published")}</span>
           <span className="text-foreground">{formatDateTime(post.publishedAt)}</span>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <span>Created</span>
+          <span>{t("created")}</span>
           <span className="text-foreground">{formatDateTime(post.createdAt)}</span>
         </div>
         {media.length > 0 && (
           <div>
-            <div className="mb-2">{media.length} media attached</div>
+            <div className="mb-2">{t("mediaAttached", { count: media.length })}</div>
             <div className="flex gap-1.5 overflow-hidden">
               {media.slice(0, 4).map((item, index) => (
                 item.type === "image" ? (
@@ -208,7 +209,7 @@ export function CalendarPostDetailsPopover({
                     key={`${item.url}-${index}`}
                     className="flex size-12 items-center justify-center rounded border bg-muted text-[10px]"
                   >
-                    Video
+                    {t("video")}
                   </div>
                 )
               ))}
@@ -239,12 +240,12 @@ export function CalendarPostDetailsPopover({
                   post.id,
                   new Date(rescheduleValue).toISOString(),
                 )
-                showToast("Post rescheduled", "success")
+                showToast(t("toast.rescheduled"), "success")
                 setShowReschedule(false)
               })
             }
           >
-            Save
+            {t("actions.save")}
           </Button>
         </div>
       )}
@@ -253,7 +254,7 @@ export function CalendarPostDetailsPopover({
         {canEdit && (
           <Button size="sm" variant="outline" onClick={() => router.push(`/social/compose/${post.id}`)}>
             <PencilIcon className="size-3.5" />
-            Edit
+            {t("actions.edit")}
           </Button>
         )}
         {canPublishNow && (
@@ -261,16 +262,16 @@ export function CalendarPostDetailsPopover({
             size="sm"
             disabled={isActing}
             onClick={() => {
-              if (!confirm("Publish this post now? This bypasses its schedule.")) return
+              if (!confirm(t("confirmPublishNow"))) return
               runAction(async () => {
                 await publishSocialPostNow(post.id)
-                showToast("Post queued for immediate publishing", "success")
+                showToast(t("toast.queuedNow"), "success")
                 onClose()
               })
             }}
           >
             <SendIcon className="size-3.5" />
-            Publish now
+            {t("actions.publishNow")}
           </Button>
         )}
         {post.status === "failed" && (
@@ -281,13 +282,13 @@ export function CalendarPostDetailsPopover({
             onClick={() =>
               runAction(async () => {
                 await retrySocialPost(post.id)
-                showToast("Post re-queued", "success")
+                showToast(t("toast.requeued"), "success")
                 onClose()
               })
             }
           >
             <RefreshCwIcon className="size-3.5" />
-            Retry
+            {t("actions.retry")}
           </Button>
         )}
         {canReschedule && (
@@ -297,7 +298,7 @@ export function CalendarPostDetailsPopover({
             onClick={() => setShowReschedule((value) => !value)}
           >
             <CalendarClockIcon className="size-3.5" />
-            Reschedule
+            {t("actions.reschedule")}
           </Button>
         )}
         {isPublished && post.platformPostUrl && (
@@ -308,7 +309,7 @@ export function CalendarPostDetailsPopover({
             nativeButton={false}
           >
             <ExternalLinkIcon className="size-3.5" />
-            Open
+            {t("actions.open")}
           </Button>
         )}
         <Button
@@ -324,13 +325,13 @@ export function CalendarPostDetailsPopover({
                 mediaReferences: post.stableMediaRefs?.map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset", id: reference.assetId, digest: reference.assetDigest })),
                 platformSettings: post.platformSettings ?? undefined,
               })
-              showToast("Post duplicated as draft", "success")
+              showToast(t("toast.duplicated"), "success")
               router.push(`/social/compose/${duplicated.id}`)
             })
           }
         >
           <CopyIcon className="size-3.5" />
-          Duplicate
+          {t("actions.duplicate")}
         </Button>
         {canDelete && (
           <Button
@@ -339,22 +340,22 @@ export function CalendarPostDetailsPopover({
             className="text-destructive hover:text-destructive"
             disabled={isActing}
             onClick={() => {
-              if (!confirm("Delete this post?")) return
+              if (!confirm(t("confirmDelete"))) return
               runAction(async () => {
                 await deleteSocialPost(post.id)
-                showToast("Post deleted", "success")
+                showToast(t("toast.deleted"), "success")
                 onClose()
               })
             }}
           >
             <Trash2Icon className="size-3.5" />
-            Delete
+            {t("actions.delete")}
           </Button>
         )}
       </div>
       {postTime && (
         <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
-          Calendar time: {formatDateTime(postTime)}
+          {t("calendarTime", { value: formatDateTime(postTime) })}
         </div>
       )}
     </div>,

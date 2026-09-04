@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
+import { useTranslations } from "next-intl"
 import { useDrop } from "react-dnd"
 import { DndProvider } from "react-dnd"
 import { HTML5Backend } from "react-dnd-html5-backend"
@@ -20,7 +21,7 @@ import { useToast } from "@/components/Toast"
 import { CalendarPostCard, POST_DND_TYPE } from "./CalendarPostCard"
 import type { SocialPlatform } from "@/lib/db/schema"
 
-const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+const WEEK_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const
 const MAX_VISIBLE_POSTS = 3
 
 interface CalendarDragItem {
@@ -54,6 +55,7 @@ function CalendarMonthDayCell({
   posts: SocialPost[]
   platformForPost: (post: SocialPost) => SocialPlatform | undefined
 }) {
+  const t = useTranslations("social.calendarUi")
   const { show: showToast } = useToast()
   const setViewMode = useSocialCalendarStore((s) => s.setViewMode)
   const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
@@ -80,7 +82,7 @@ function CalendarMonthDayCell({
       }
 
       if (!canRescheduleItem(item, target)) {
-        showToast("This post cannot be rescheduled.", "warning")
+        showToast(t("errors.cannotReschedule"), "warning")
         return
       }
 
@@ -90,11 +92,11 @@ function CalendarMonthDayCell({
       try {
         const updatedPost = await rescheduleSocialPost(item.postId, scheduledAt)
         replacePost(updatedPost)
-        showToast("Post rescheduled", "success")
+        showToast(t("toast.rescheduled"), "success")
       } catch (error) {
         if (previousPosts) restorePosts(previousPosts)
         showToast(
-          error instanceof Error ? error.message : "Failed to reschedule",
+          error instanceof Error ? error.message : t("errors.reschedule"),
           "error",
         )
       }
@@ -103,7 +105,7 @@ function CalendarMonthDayCell({
       isOver: monitor.isOver(),
       canDrop: monitor.canDrop(),
     }),
-  }), [applyOptimisticReschedule, day, replacePost, restorePosts, showToast])
+  }), [applyOptimisticReschedule, day, replacePost, restorePosts, showToast, t])
 
   const visiblePosts = posts.slice(0, MAX_VISIBLE_POSTS)
   const hiddenCount = Math.max(0, posts.length - visiblePosts.length)
@@ -148,7 +150,7 @@ function CalendarMonthDayCell({
               setViewMode("day")
             }}
           >
-            +{hiddenCount} more
+            {t("more", { count: hiddenCount })}
           </button>
         )}
       </div>
@@ -157,6 +159,7 @@ function CalendarMonthDayCell({
 }
 
 export function CalendarMonth() {
+  const t = useTranslations("social.calendarUi")
   const { currentDate, posts } = useSocialCalendarStore()
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const monthStart = startOfMonth(currentDate)
@@ -206,7 +209,7 @@ export function CalendarMonth() {
               key={day}
               className="p-2 text-center text-xs font-medium text-muted-foreground"
             >
-              {day}
+              {t(`weekdays.${day}`)}
             </div>
           ))}
         </div>
