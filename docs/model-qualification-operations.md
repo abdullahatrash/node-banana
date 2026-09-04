@@ -10,6 +10,22 @@ pnpm qualify:replicate:check reviewed-plan.json
 
 The preflight validates the complete reviewed plan, exact curated capability set, bilingual and Arabic-variety cells, lifecycle coverage, source-media URLs, derivative-use evidence, runtime-compatible region/mode, per-cell quantities, the local `$0.40` ceiling, dedicated credential separation, safe harness endpoints, and both Ed25519 trust maps. It never constructs a provider client and rejects the paid-execution flag. Use `--json` for machine-readable output.
 
+Before authoring that plan, inspect the current Official Model contract with the
+dedicated qualification token:
+
+```bash
+pnpm qualify:replicate:inspect prunaai/p-image > /tmp/p-image-contract.json
+```
+
+This command makes exactly one authenticated `GET /v1/models/{owner}/{name}`
+request. It cannot accept the paid-execution flag, never creates a prediction,
+and sends no prompt, Brand, media, or Workspace data. The report pins the model
+identity, exact input-schema digest, required keys, enums, defaults, and numeric
+limits. It intentionally does not treat mutable catalog price estimates as
+qualification evidence: review and digest current license and pricing sources
+separately, then map the prompt, aspect ratio, quantity, media, safety, and locked
+parameters into the reviewed plan.
+
 ## Replicate target identity
 
 Replicate has two supported target contracts and the reviewed plan must name the

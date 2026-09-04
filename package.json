@@ -23,6 +23,7 @@
     "i18n:check": "node scripts/check-i18n.mjs",
     "qualify:replicate": "tsx scripts/qualify-replicate-model.ts",
     "qualify:replicate:check": "tsx scripts/check-replicate-qualification.ts",
+    "qualify:replicate:inspect": "tsx scripts/inspect-replicate-qualification-contract.ts",
     "governance:region-evidence": "tsx scripts/sign-governance-region-evidence.ts",
     "test": "vitest",
     "test:run": "vitest run",

@@ -10,6 +10,7 @@ describe("Replicate qualification operator contract", () => {
     const script = readFileSync("scripts/qualify-replicate-model.ts", "utf8")
     expect(script).toContain('process.argv[3] !== "--execute-paid-smoke"')
     expect(packageJson).toContain('"qualify:replicate:check": "tsx scripts/check-replicate-qualification.ts"')
+    expect(packageJson).toContain('"qualify:replicate:inspect": "tsx scripts/inspect-replicate-qualification-contract.ts"')
     expect(preflight).toContain('args.includes("--execute-paid-smoke")')
     expect(preflight).toContain("paidCallsMade: false")
     expect(preflight).toContain("loadEnvConfig(process.cwd())")
