@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import type { ProjectedSourceOperation } from "./source-reader";
+import { advanceOperationProjectionCheckpoints, type ProjectionCheckpoints } from "./projection-checkpoints";
+import type { OperationProjectionSourceId, ProjectedSourceOperation } from "./source-reader";
 import type { OperationStatusService } from "./service";
 import type { OperationState } from "./types";
 
@@ -43,4 +44,35 @@ export async function synchronizeOperationProjections(service: OperationStatusSe
     }
   }
   return summary;
+}
+
+export async function synchronizeBoundedOperationProjectionPages(input: {
+  service: OperationStatusService;
+  sourceIds: readonly OperationProjectionSourceId[];
+  checkpoints: ProjectionCheckpoints;
+  pageSize: number;
+  maxPages: number;
+  renewLease(): Promise<boolean>;
+  readPage(sourceId: OperationProjectionSourceId, checkpoint: ProjectionCheckpoints[string] | undefined, pageSize: number): Promise<ProjectedSourceOperation[]>;
+  persistPage(sourceId: OperationProjectionSourceId, checkpoint: ProjectionCheckpoints[string]): Promise<void>;
+  shouldContinue(): boolean;
+}) {
+  const totals = { created: 0, transitioned: 0, unchanged: 0, conflicts: 0, pages: 0, complete: true };
+  let checkpoints = { ...input.checkpoints };
+  for (const sourceId of input.sourceIds) {
+    for (;;) {
+      if (totals.pages >= input.maxPages || !input.shouldContinue()) return { ...totals, complete: false, checkpoints };
+      if (!await input.renewLease()) throw new Error("OPERATION_PROJECTION_LEASE_LOST");
+      const rows = await input.readPage(sourceId, checkpoints[sourceId], input.pageSize);
+      totals.pages++;
+      if (!rows.length) break;
+      const summary = await synchronizeOperationProjections(input.service, rows);
+      totals.created += summary.created; totals.transitioned += summary.transitioned; totals.unchanged += summary.unchanged; totals.conflicts += summary.conflicts;
+      if (summary.conflicts) return { ...totals, complete: false, checkpoints };
+      checkpoints = advanceOperationProjectionCheckpoints(checkpoints, rows);
+      await input.persistPage(sourceId, checkpoints[sourceId]!);
+      if (rows.length < input.pageSize) break;
+    }
+  }
+  return { ...totals, checkpoints };
 }

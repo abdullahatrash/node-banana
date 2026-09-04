@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gt, lte, sql } from "drizzle-orm";
 import type { getDb } from "@/lib/db";
 import { runtimeOperationProjectionLeases } from "./db-schema";
 
@@ -16,4 +16,9 @@ export async function claimOperationProjectionWorkspaces(database: Db, input: { 
 
 export async function completeOperationProjectionLease(database: Db, input: { workspaceId: string; owner: string; at: Date }) {
   await database.update(runtimeOperationProjectionLeases).set({ leaseOwner: null, leaseExpiresAt: input.at, lastProjectedAt: input.at, updatedAt: input.at }).where(and(eq(runtimeOperationProjectionLeases.workspaceId, input.workspaceId), eq(runtimeOperationProjectionLeases.leaseOwner, input.owner)));
+}
+
+export async function renewOperationProjectionLease(database: Db, input: { workspaceId: string; owner: string; at: Date; leaseMs: number }) {
+  const rows = await database.update(runtimeOperationProjectionLeases).set({ leaseExpiresAt: new Date(input.at.getTime() + input.leaseMs), updatedAt: input.at }).where(and(eq(runtimeOperationProjectionLeases.workspaceId, input.workspaceId), eq(runtimeOperationProjectionLeases.leaseOwner, input.owner), gt(runtimeOperationProjectionLeases.leaseExpiresAt, input.at))).returning({ workspaceId: runtimeOperationProjectionLeases.workspaceId });
+  return rows.length === 1;
 }

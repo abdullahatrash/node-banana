@@ -25,8 +25,8 @@ export function advanceOperationProjectionCheckpoints(current: ProjectionCheckpo
 /** Persists source watermarks only while this worker still owns the Workspace lease. */
 export async function saveOperationProjectionCheckpoints(database: Db, input: { workspaceId: string; owner: string; checkpoints: ProjectionCheckpoints; at: Date }) {
   return database.transaction(async (tx) => {
-    const [lease] = await tx.select({ owner: runtimeOperationProjectionLeases.leaseOwner }).from(runtimeOperationProjectionLeases).where(and(eq(runtimeOperationProjectionLeases.workspaceId, input.workspaceId), eq(runtimeOperationProjectionLeases.leaseOwner, input.owner))).limit(1).for("update");
-    if (!lease) throw new Error("OPERATION_PROJECTION_LEASE_LOST");
+    const [lease] = await tx.select({ owner: runtimeOperationProjectionLeases.leaseOwner, expiresAt: runtimeOperationProjectionLeases.leaseExpiresAt }).from(runtimeOperationProjectionLeases).where(and(eq(runtimeOperationProjectionLeases.workspaceId, input.workspaceId), eq(runtimeOperationProjectionLeases.leaseOwner, input.owner))).limit(1).for("update");
+    if (!lease || lease.expiresAt <= input.at) throw new Error("OPERATION_PROJECTION_LEASE_LOST");
     for (const [sourceAdapter, checkpoint] of Object.entries(input.checkpoints)) {
       await tx.insert(runtimeOperationProjectionCheckpoints).values({ workspaceId: input.workspaceId, sourceAdapter, lastSourceUpdatedAt: checkpoint.updatedAt, lastResourceId: checkpoint.resourceId, updatedAt: input.at }).onConflictDoUpdate({ target: [runtimeOperationProjectionCheckpoints.workspaceId, runtimeOperationProjectionCheckpoints.sourceAdapter], set: { lastSourceUpdatedAt: checkpoint.updatedAt, lastResourceId: checkpoint.resourceId, updatedAt: input.at } });
     }
