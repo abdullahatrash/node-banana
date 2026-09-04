@@ -23,15 +23,15 @@ import {
   deleteSocialPost,
   publishSocialPostNow,
   retrySocialPost,
-  type SocialPost,
 } from "@/lib/social/client"
+import type { CalendarItem } from "@/lib/product-surfaces/calendar-projection"
 import { canonicalCalendarReschedule } from "./canonical-reschedule"
 import { POST_STATUS_CONFIG } from "@/lib/social/constants"
 import { useToast } from "@/components/Toast"
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
 
 interface CalendarPostDetailsPopoverProps {
-  post: SocialPost
+  post: CalendarItem
   anchor: HTMLElement | null
   open: boolean
   onClose: () => void
@@ -70,17 +70,18 @@ export function CalendarPostDetailsPopover({
   const platform = (account?.platform ?? "linkedin") as SocialPlatform
   const statusConfig = POST_STATUS_CONFIG[post.status as SocialPostStatus]
   const isPublished = post.status === "published"
-  const canEdit = post.status === "draft" || post.status === "failed"
-  const canDelete = post.status !== "published"
+  const isLegacy = post.authority.kind === "legacy_compatibility"
+  const canEdit = isLegacy && (post.status === "draft" || post.status === "failed")
+  const canDelete = isLegacy && post.status !== "published"
   const canPublishNow =
-    post.status === "draft" ||
+    isLegacy && (post.status === "draft" ||
     post.status === "failed" ||
     post.status === "queued" ||
     (post.status === "publishing" &&
       post.scheduledAt !== null &&
       post.scheduledAt !== undefined &&
-      new Date(post.scheduledAt).getTime() > Date.now())
-  const canReschedule = post.status !== "published"
+      new Date(post.scheduledAt).getTime() > Date.now()))
+  const canReschedule = !isLegacy && post.status !== "published"
   const postTime = post.scheduledAt || post.publishedAt || post.createdAt
 
   const media = useMemo(() => post.mediaUrls ?? [], [post.mediaUrls])
@@ -173,6 +174,9 @@ export function CalendarPostDetailsPopover({
           <p className="mt-1 whitespace-pre-wrap break-words text-sm">
             {post.content || t("noContent")}
           </p>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            {t(`authority.${post.authority.kind}`)}
+          </p>
         </div>
         <Button variant="ghost" size="icon" className="size-7" onClick={onClose}>
           <XIcon className="size-3.5" />
@@ -236,8 +240,9 @@ export function CalendarPostDetailsPopover({
             disabled={isActing || !rescheduleValue}
             onClick={() =>
               runAction(async () => {
+                if (post.authority.kind !== "canonical") return
                 const result = await canonicalCalendarReschedule({
-                  postId: post.id,
+                  source: post.authority.binding,
                   scheduledAt: new Date(rescheduleValue).toISOString(),
                   confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")),
                 })

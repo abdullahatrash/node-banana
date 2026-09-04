@@ -10,7 +10,7 @@ export interface CalendarRescheduleSource {
 }
 
 export interface CalendarReschedulePorts {
-  loadSource(input: { workspaceId: string; approvalRequestId: string; revisionId: string; targetId: string }): Promise<CalendarRescheduleSource | null>;
+  loadSource(input: { workspaceId: string; planId: string; revisionId: string; targetId: string }): Promise<CalendarRescheduleSource | null>;
   cancelDelivery(input: { workspaceId: string; userId: string; deliveryId: string; channelIds: string[]; artifactIds: string[] }): Promise<PublishingDeliveryCancellationDto>;
   createPlanRevision(input: {
     workspaceId: string;
@@ -82,8 +82,9 @@ export class CalendarRescheduleService {
     workspaceId: string;
     userId: string;
     initiator: CalendarRescheduleInitiator;
+    planId: string;
     revisionId: string;
-    approvalRequestId: string;
+    revisionDigest: string;
     targetId: string;
     expectedRevision: number;
     scheduledAt: string;
@@ -92,18 +93,19 @@ export class CalendarRescheduleService {
   }): Promise<CalendarRescheduleResult> {
     if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1 || !/^[!-~]{8,200}$/.test(input.idempotencyKey)) throw new CalendarRescheduleError("INVALID_INPUT");
     const scheduledAt = canonicalFuture(input.scheduledAt, this.now());
-    const source = await this.ports.loadSource({ workspaceId: input.workspaceId, approvalRequestId: input.approvalRequestId, revisionId: input.revisionId, targetId: input.targetId });
+    const source = await this.ports.loadSource({ workspaceId: input.workspaceId, planId: input.planId, revisionId: input.revisionId, targetId: input.targetId });
     if (!source) throw new CalendarRescheduleError("NOT_FOUND");
-    if (source.revision.workspaceId !== input.workspaceId || source.revision.id !== input.revisionId || source.revision.revision !== input.expectedRevision || !source.revision.definition.targets.some((target) => target.targetId === input.targetId)) throw new CalendarRescheduleError("STALE_REVISION");
+    if (source.revision.workspaceId !== input.workspaceId || source.revision.planId !== input.planId || source.revision.id !== input.revisionId || source.revision.revision !== input.expectedRevision || source.revision.definitionDigest !== input.revisionDigest || !source.revision.definition.targets.some((target) => target.targetId === input.targetId)) throw new CalendarRescheduleError("STALE_REVISION");
     if (source.approval?.consumed && !source.delivery) throw new CalendarRescheduleError("INCONSISTENT_RELEASE");
     if (source.delivery && !source.approval?.consumed) throw new CalendarRescheduleError("INCONSISTENT_RELEASE");
     if (source.delivery && !input.confirmCancelReleasedDelivery) throw new CalendarRescheduleError("EXPLICIT_CANCELLATION_REQUIRED");
 
     const requestDigest = canonicalDigest({
       workspaceId: input.workspaceId,
+      planId: input.planId,
       revisionId: input.revisionId,
+      revisionDigest: input.revisionDigest,
       expectedRevision: input.expectedRevision,
-      approvalRequestId: input.approvalRequestId,
       targetId: input.targetId,
       scheduledAt,
       confirmCancelReleasedDelivery: input.confirmCancelReleasedDelivery,

@@ -9,11 +9,11 @@ import { isPast } from "date-fns"
 import { CalendarPostDetailsPopover } from "./CalendarPostDetailsPopover"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
-import type { SocialPost } from "@/lib/social/client"
+import type { CalendarItem } from "@/lib/product-surfaces/calendar-projection"
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
 
 interface CalendarPostCardProps {
-  post: SocialPost
+  post: CalendarItem
   platform?: SocialPlatform
 }
 
@@ -47,6 +47,7 @@ export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
       scheduledAt: post.scheduledAt,
       publishedAt: post.publishedAt,
       createdAt: post.createdAt,
+      source: post.authority.kind === "canonical" ? post.authority.binding : null,
     },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
@@ -104,6 +105,9 @@ export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
                 <span className="me-1">{t("draftPrefix")}</span>
               )}
               {post.content?.slice(0, 48) || t("noContent")}
+            </div>
+            <div className="truncate text-[9px] text-muted-foreground">
+              {t(`authority.${post.authority.kind}`)}
             </div>
           </div>
           {!account && (

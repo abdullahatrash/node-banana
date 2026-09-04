@@ -20,7 +20,7 @@ import {
 } from "@/store/socialCalendarStore"
 import { useDirectionStore } from "@/store/directionStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
-import { type SocialPost } from "@/lib/social/client"
+import type { CalendarItem, CanonicalCalendarBinding } from "@/lib/product-surfaces/calendar-projection"
 import { useToast } from "@/components/Toast"
 import { CalendarPostCard, POST_DND_TYPE } from "./CalendarPostCard"
 import type { SocialPlatform } from "@/lib/db/schema"
@@ -35,14 +35,15 @@ interface CalendarDragItem {
   scheduledAt?: string | null
   publishedAt?: string | null
   createdAt?: string | null
+  source: CanonicalCalendarBinding | null
 }
 
-function getCalendarDate(post: SocialPost) {
+function getCalendarDate(post: CalendarItem) {
   return post.scheduledAt || post.publishedAt || post.createdAt
 }
 
 function canRescheduleItem(item: CalendarDragItem, targetTime: Date) {
-  if (item.status === "published" || targetTime.getTime() < Date.now()) {
+  if (!item.source || item.status === "published" || targetTime.getTime() < Date.now()) {
     return false
   }
   if (item.status !== "publishing") return true
@@ -58,8 +59,8 @@ function CalendarMonthDayCell({
 }: {
   day: Date
   inCurrentMonth: boolean
-  posts: SocialPost[]
-  platformForPost: (post: SocialPost) => SocialPlatform | undefined
+  posts: CalendarItem[]
+  platformForPost: (post: CalendarItem) => SocialPlatform | undefined
   locale: "ar" | "en"
 }) {
   const t = useTranslations("social.calendarUi")
@@ -97,7 +98,8 @@ function CalendarMonthDayCell({
       const previousPosts = applyOptimisticReschedule(item.postId, scheduledAt)
 
       try {
-        const result = await canonicalCalendarReschedule({ postId: item.postId, scheduledAt, confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")) })
+        if (!item.source) return
+        const result = await canonicalCalendarReschedule({ source: item.source, scheduledAt, confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")) })
         if (previousPosts) restorePosts(previousPosts)
         await fetchPosts()
         if (result.kind === "cancellation_not_guaranteed") showToast(t("errors.cancellationNotGuaranteed"), "warning")
@@ -193,7 +195,7 @@ export function CalendarMonth() {
   }, [calendarStart, calendarEnd])
 
   const postsByDate = useMemo(() => {
-    const map = new Map<string, SocialPost[]>()
+    const map = new Map<string, CalendarItem[]>()
     for (const post of posts) {
       const dateStr = getCalendarDate(post)
       if (!dateStr) continue
@@ -210,7 +212,7 @@ export function CalendarMonth() {
     return postsByDate.get(format(day, "yyyy-MM-dd")) ?? []
   }
 
-  function platformForPost(post: SocialPost) {
+  function platformForPost(post: CalendarItem) {
     return accounts.find((account) => account.id === post.socialAccountId)
       ?.platform as SocialPlatform | undefined
   }

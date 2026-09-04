@@ -3,6 +3,7 @@ import "server-only";
 import { dispatchCapability } from "@/lib/agent-runtime/server-dispatcher";
 import { PRODUCTION_PUBLISHING_APPROVAL_REPOSITORY } from "@/lib/agent-runtime/publishing-approvals/production";
 import { PRODUCTION_PUBLISHING_APPROVAL_REVISIONS } from "@/lib/agent-runtime/publishing-approvals/production";
+import { PRODUCTION_PUBLISHING_APPROVAL_SERVICE } from "@/lib/agent-runtime/publishing-approvals/production";
 import { publishingDeliveryCancelAuthorizationContractDigest } from "@/lib/agent-runtime/publishing-deliveries/authorization-contract";
 import { PRODUCTION_PUBLISHING_DELIVERY_SERVICE } from "@/lib/agent-runtime/publishing-deliveries/production";
 import { PRODUCTION_PUBLISHING_PLAN_SERVICE } from "@/lib/agent-runtime/publishing-plans/production";
@@ -32,11 +33,20 @@ export function productionCalendarRescheduleService(input: {
   const receipts = new CalendarRescheduleCommandRepository({ principalId: servicePrincipalId, keyId: serviceKeyId });
   const ports: CalendarReschedulePorts = {
     async loadSource(sourceInput) {
-      const approval = await PRODUCTION_PUBLISHING_APPROVAL_REPOSITORY.getRequest({ workspaceId: sourceInput.workspaceId, approvalRequestId: sourceInput.approvalRequestId });
-      if (!approval || approval.planRevisionId !== sourceInput.revisionId || !approval.targetIds.includes(sourceInput.targetId)) return null;
       const currentRevision = await PRODUCTION_PUBLISHING_APPROVAL_REVISIONS.getCurrentRevision({ workspaceId: sourceInput.workspaceId, revisionId: sourceInput.revisionId });
       if (!currentRevision) return null;
       const revision = await PRODUCTION_PUBLISHING_PLAN_SERVICE.getRevision(sourceInput.workspaceId, sourceInput.revisionId);
+      if (revision.planId !== sourceInput.planId) return null;
+      const approvals = await PRODUCTION_PUBLISHING_APPROVAL_SERVICE.list({
+        workspaceId: sourceInput.workspaceId,
+        filters: { planRevisionId: sourceInput.revisionId },
+        limit: 101,
+        viewer: { kind: "human", userId: input.userId },
+      });
+      const approvalDto = approvals.find((candidate) => candidate.targetIds.includes(sourceInput.targetId)) ?? null;
+      const approval = approvalDto
+        ? await PRODUCTION_PUBLISHING_APPROVAL_REPOSITORY.getRequest({ workspaceId: sourceInput.workspaceId, approvalRequestId: approvalDto.id })
+        : null;
       const deliveries = await PRODUCTION_PUBLISHING_DELIVERY_SERVICE.list({
         workspaceId: sourceInput.workspaceId,
         actor: { kind: "human", userId: input.userId },
@@ -45,11 +55,12 @@ export function productionCalendarRescheduleService(input: {
         filters: { planRevisionId: sourceInput.revisionId, targetId: sourceInput.targetId },
         limit: 10,
       });
-      const delivery = deliveries.find((candidate) => candidate.approvalRequestId === approval.id) ?? null;
+      const delivery = deliveries[0] ?? null;
+      if (delivery && (!approval || delivery.approvalRequestId !== approval.id)) return null;
       return {
         revision,
         targetId: sourceInput.targetId,
-        approval: { id: approval.id, consumed: Boolean(approval.consumption) },
+        approval: approval ? { id: approval.id, consumed: Boolean(approval.consumption) } : null,
         delivery: delivery ? { id: delivery.id, channelId: delivery.channelId, artifactIds: [...delivery.artifactIds] } : null,
       };
     },

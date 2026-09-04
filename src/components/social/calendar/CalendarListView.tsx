@@ -88,6 +88,9 @@ export function CalendarListView() {
                     <p className="truncate text-xs">
                       {post.content?.slice(0, 80) || t("noContent")}
                     </p>
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {t(`authority.${post.authority.kind}`)}
+                    </p>
                   </div>
                   <Badge
                     variant="secondary"
@@ -100,7 +103,7 @@ export function CalendarListView() {
                       {formatValue.dateTime(new Date(time), { hour: "2-digit", minute: "2-digit" })}
                     </span>
                   )}
-                  {post.status === "draft" && (
+                  {post.authority.kind === "legacy_compatibility" && post.status === "draft" && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -110,7 +113,7 @@ export function CalendarListView() {
                       {t("actions.edit")}
                     </Button>
                   )}
-                  {post.status === "failed" && (
+                  {post.authority.kind === "legacy_compatibility" && post.status === "failed" && (
                     <Button
                       variant="ghost"
                       size="sm"

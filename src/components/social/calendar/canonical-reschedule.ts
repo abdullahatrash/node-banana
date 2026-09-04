@@ -1,17 +1,18 @@
 import { StudioApiError } from "@/lib/studio/client";
 import { reschedulePublishingPlanTarget } from "@/lib/social/client";
+import type { CanonicalCalendarBinding } from "@/lib/product-surfaces/calendar-projection";
 
 export async function canonicalCalendarReschedule(input: {
-  postId: string;
+  source: CanonicalCalendarBinding;
   scheduledAt: string;
   confirmReleasedDelivery: () => boolean;
   idempotencyKey?: string;
   execute?: typeof reschedulePublishingPlanTarget;
 }) {
   const execute = input.execute ?? reschedulePublishingPlanTarget;
-  const idempotencyKey = input.idempotencyKey ?? `calendar-${input.postId}-${crypto.randomUUID()}`;
+  const idempotencyKey = input.idempotencyKey ?? `calendar-${input.source.planId}-${input.source.targetId}-${crypto.randomUUID()}`;
   const request = (confirmCancelReleasedDelivery: boolean) => execute({
-    postId: input.postId,
+    source: input.source,
     scheduledAt: input.scheduledAt,
     confirmCancelReleasedDelivery,
     idempotencyKey,

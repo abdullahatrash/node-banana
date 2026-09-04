@@ -17,7 +17,8 @@ import {
   type Day,
 } from "date-fns"
 import type { AppLocale } from "@/i18n/config"
-import { listSocialPosts, type SocialPost } from "@/lib/social/client"
+import { listCalendarItems } from "@/lib/social/client"
+import type { CalendarItem } from "@/lib/product-surfaces/calendar-projection"
 import { useDirectionStore } from "@/store/directionStore"
 
 type ViewMode = "day" | "week" | "month" | "list"
@@ -26,7 +27,7 @@ interface SocialCalendarState {
   viewMode: ViewMode
   currentDate: Date
   channelFilter: string | null
-  posts: SocialPost[]
+  posts: CalendarItem[]
   isLoading: boolean
   timezone: string
   weekStartsOn: Day
@@ -38,9 +39,9 @@ interface SocialCalendarState {
   setChannelFilter: (accountId: string | null) => void
   setCalendarPreferences: (preferences: { timezone: string; weekStartsOn: Day }) => void
   fetchPosts: () => Promise<void>
-  applyOptimisticReschedule: (postId: string, scheduledAt: string) => SocialPost[] | null
-  restorePosts: (posts: SocialPost[]) => void
-  replacePost: (post: SocialPost) => void
+  applyOptimisticReschedule: (postId: string, scheduledAt: string) => CalendarItem[] | null
+  restorePosts: (posts: CalendarItem[]) => void
+  replacePost: (post: CalendarItem) => void
   getWeekStart: () => Date
   getWeekEnd: () => Date
   getDateRangeLabel: (locale?: AppLocale) => string
@@ -62,6 +63,8 @@ const calendarLocale = (locale: AppLocale) =>
 function selectedLocale(): AppLocale {
   return useDirectionStore.getState().locale
 }
+
+let calendarFetchSequence = 0
 
 export function getCalendarWeekStart(date: Date, weekStartsOn: Day): Date {
   return startOfWeek(date, { weekStartsOn })
@@ -183,7 +186,7 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
 
     fetchPosts: async () => {
       const { currentDate, channelFilter } = get()
-      if (get().isLoading) return
+      const requestSequence = ++calendarFetchSequence
       set({ isLoading: true })
       try {
         const range =
@@ -201,14 +204,14 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
                   start: getCalendarWeekStart(currentDate, get().weekStartsOn),
                   end: getCalendarWeekEnd(currentDate, get().weekStartsOn),
                 }
-        const posts = await listSocialPosts({
+        const posts = await listCalendarItems({
           startDate: range.start.toISOString(),
           endDate: range.end.toISOString(),
           socialAccountId: channelFilter ?? undefined,
         })
-        set({ posts, isLoading: false })
+        if (requestSequence === calendarFetchSequence) set({ posts, isLoading: false })
       } catch {
-        set({ isLoading: false })
+        if (requestSequence === calendarFetchSequence) set({ isLoading: false })
       }
     },
 

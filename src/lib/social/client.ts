@@ -6,6 +6,7 @@
 import { getActiveWorkspaceId, StudioApiError } from "@/lib/studio/client";
 import type { ProviderCapabilities } from "@/lib/social/provider-interface";
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema";
+import type { CalendarItem, CanonicalCalendarBinding } from "@/lib/product-surfaces/calendar-projection";
 
 // ---------------------------------------------------------------------------
 // Internal helpers (reuse studio client patterns)
@@ -263,6 +264,20 @@ export async function listSocialPosts(filters?: {
   return (data.posts as SocialPost[]) || [];
 }
 
+export async function listCalendarItems(filters: {
+  startDate: string;
+  endDate: string;
+  socialAccountId?: string;
+}): Promise<CalendarItem[]> {
+  const params = new URLSearchParams({
+    start: filters.startDate,
+    end: filters.endDate,
+  });
+  if (filters.socialAccountId) params.set("socialAccountId", filters.socialAccountId);
+  const data = await socialFetch(`/api/studio/calendar?${params.toString()}`);
+  return (data.items as CalendarItem[]) || [];
+}
+
 export async function createSocialPost(input: {
   socialAccountId: string;
   content?: string;
@@ -312,7 +327,7 @@ export async function rescheduleSocialPost(
 }
 
 export async function reschedulePublishingPlanTarget(input: {
-  postId: string;
+  source: CanonicalCalendarBinding;
   scheduledAt: string;
   confirmCancelReleasedDelivery: boolean;
   idempotencyKey: string;

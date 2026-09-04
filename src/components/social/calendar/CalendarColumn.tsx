@@ -7,14 +7,14 @@ import { isPast } from "date-fns"
 import { POST_DND_TYPE, CalendarPostCard } from "./CalendarPostCard"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useToast } from "@/components/Toast"
-import type { SocialPost } from "@/lib/social/client"
+import type { CalendarItem, CanonicalCalendarBinding } from "@/lib/product-surfaces/calendar-projection"
 import { canonicalCalendarReschedule } from "./canonical-reschedule"
 
 interface CalendarColumnProps {
   date: Date
   hour: number
   minute?: number
-  posts: SocialPost[]
+  posts: CalendarItem[]
 }
 
 interface CalendarDragItem {
@@ -23,10 +23,11 @@ interface CalendarDragItem {
   scheduledAt?: string | null
   publishedAt?: string | null
   createdAt?: string | null
+  source: CanonicalCalendarBinding | null
 }
 
 function canRescheduleItem(item: CalendarDragItem, isInPast: boolean) {
-  if (isInPast || item.status === "published") return false
+  if (!item.source || isInPast || item.status === "published") return false
   if (item.status !== "publishing") return true
   return item.scheduledAt ? new Date(item.scheduledAt).getTime() > Date.now() : false
 }
@@ -58,7 +59,8 @@ export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumn
       const previousPosts = applyOptimisticReschedule(item.postId, scheduledAt)
 
       try {
-        const result = await canonicalCalendarReschedule({ postId: item.postId, scheduledAt, confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")) })
+        if (!item.source) return
+        const result = await canonicalCalendarReschedule({ source: item.source, scheduledAt, confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")) })
         if (previousPosts) restorePosts(previousPosts)
         await fetchPosts()
         if (result.kind === "cancellation_not_guaranteed") showToast(t("errors.cancellationNotGuaranteed"), "warning")

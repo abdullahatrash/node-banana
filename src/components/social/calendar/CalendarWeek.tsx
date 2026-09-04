@@ -16,7 +16,7 @@ import {
 } from "@/store/socialCalendarStore"
 import { useDirectionStore } from "@/store/directionStore"
 import { CalendarColumn } from "./CalendarColumn"
-import type { SocialPost } from "@/lib/social/client"
+import type { CalendarItem } from "@/lib/product-surfaces/calendar-projection"
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const MINUTES = [0, 15, 30, 45]
@@ -30,7 +30,7 @@ export function CalendarWeek() {
 
   // Group posts by day + hour
   const postsBySlot = useMemo(() => {
-    const map = new Map<string, SocialPost[]>()
+    const map = new Map<string, CalendarItem[]>()
     for (const post of posts) {
       const dateStr = post.scheduledAt || post.publishedAt || post.createdAt
       if (!dateStr) continue
@@ -44,7 +44,7 @@ export function CalendarWeek() {
     return map
   }, [posts])
 
-  function getPostsForSlot(day: Date, hour: number, minute: number): SocialPost[] {
+  function getPostsForSlot(day: Date, hour: number, minute: number): CalendarItem[] {
     const key = `${format(day, "yyyy-MM-dd")}-${hour}-${minute}`
     return postsBySlot.get(key) ?? []
   }
