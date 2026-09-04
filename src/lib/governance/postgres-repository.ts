@@ -25,6 +25,18 @@ type Db = ReturnType<typeof getDb>;
 
 class GovernanceCommitConflict extends Error {}
 
+export function governanceReceiptLockKey(input: {
+  workspaceId: string;
+  capability: string;
+  idempotencyKey: string;
+}): string {
+  return `workspace-governance-receipt:${canonicalDigest({
+    workspaceId: input.workspaceId,
+    capability: input.capability,
+    idempotencyKey: input.idempotencyKey,
+  })}`;
+}
+
 async function applyCanonicalEffect(
   tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
   effect: GovernanceCanonicalEffect,
@@ -305,7 +317,7 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
     try {
       return await this.database().transaction(async (tx) => {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`workspace-governance:${input.receipt.workspaceId}`}, 0))`);
-        const receiptLock = `${input.receipt.workspaceId}\u0000${input.receipt.capability}\u0000${input.receipt.idempotencyKey}`;
+        const receiptLock = governanceReceiptLockKey(input.receipt);
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${receiptLock}, 0))`);
         const [existing] = await tx
           .select()

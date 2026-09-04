@@ -1,7 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
-import { DrizzleGovernanceRepository } from "../postgres-repository";
+import { DrizzleGovernanceRepository, governanceReceiptLockKey } from "../postgres-repository";
 
 describe("DrizzleGovernanceRepository", () => {
+  it("builds a PostgreSQL-safe, unambiguous receipt advisory lock key", () => {
+    const key = governanceReceiptLockKey({
+      workspaceId: "workspace-a",
+      capability: "governance.view@1",
+      idempotencyKey: "step-up-key",
+    });
+
+    expect(key).toMatch(/^workspace-governance-receipt:sha256:[a-f0-9]{64}$/);
+    expect(key).not.toContain("\u0000");
+    expect(key).not.toBe(governanceReceiptLockKey({
+      workspaceId: "workspace-a",
+      capability: "governance.view@1",
+      idempotencyKey: "step-up-key-2",
+    }));
+  });
+
   it("rejects any cross-Workspace mutation bundle before opening a transaction", async () => {
     const database = vi.fn(() => { throw new Error("database must not be reached"); });
     const repository = new DrizzleGovernanceRepository(database as never);
