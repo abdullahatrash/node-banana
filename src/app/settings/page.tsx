@@ -130,8 +130,8 @@ export default async function SettingsPage({
             </nav>
           </aside>
           <div className="min-w-0 flex-1 overflow-y-auto">
-            {activeSection === "billing" ? (
-              <BillingSettings canManage={canManageBilling} canPurchase={canPurchaseBilling} />
+            {activeSection === "billing" && workspaceId ? (
+              <BillingSettings workspaceId={workspaceId} canManage={canManageBilling} canPurchase={canPurchaseBilling} />
             ) : activeSection === "language" && contentLanguage && workspaceId ? (
               <WorkspaceLanguageSettings workspaceId={workspaceId} initialInterfaceLocale={interfaceLocale} initialContentLanguage={contentLanguage} canManageContent={permissions.includes("product:content:write")} />
             ) : activeSection === "preferences" && preferences ? (

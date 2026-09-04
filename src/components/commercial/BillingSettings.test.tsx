@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nTestProvider } from "@/test/i18n";
 import { BillingSettings } from "./BillingSettings";
@@ -27,9 +28,8 @@ describe("BillingSettings default plan", () => {
     ["en" as const, "Current free plan"],
     ["ar" as const, "الباقة المجانية الحالية"],
   ])("does not offer an impossible zero-dollar checkout in %s", async (locale, currentLabel) => {
-    window.localStorage.setItem("node-banana-active-workspace-id", "workspace-1");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: true, data: summary }), { status: 200, headers: { "content-type": "application/json" } })));
-    const { container } = render(<I18nTestProvider locale={locale}><BillingSettings canManage canPurchase /></I18nTestProvider>);
+    const { container } = render(<I18nTestProvider locale={locale}><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
     expect(await screen.findByText(currentLabel)).toBeInTheDocument();
     expect(screen.getByText(locale === "ar" ? "البداية" : "Starter")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: locale === "ar" ? "الاشتراك بأمان" : "Subscribe securely" })).toHaveLength(1);
@@ -37,7 +37,6 @@ describe("BillingSettings default plan", () => {
   });
 
   it("keeps upgrade plans visible for a provisioned Free subscription", async () => {
-    window.localStorage.setItem("node-banana-active-workspace-id", "workspace-1");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       success: true,
       data: withSubscription({
@@ -51,7 +50,7 @@ describe("BillingSettings default plan", () => {
       }),
     }), { status: 200, headers: { "content-type": "application/json" } })));
 
-    render(<I18nTestProvider locale="en"><BillingSettings canManage canPurchase /></I18nTestProvider>);
+    render(<I18nTestProvider locale="en"><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
 
     expect(await screen.findByText("Starter")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start trial" })).toBeInTheDocument();
@@ -59,7 +58,6 @@ describe("BillingSettings default plan", () => {
   });
 
   it("does not offer unsupported plan switching or a portal during a local trial", async () => {
-    window.localStorage.setItem("node-banana-active-workspace-id", "workspace-1");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       success: true,
       data: withSubscription({
@@ -73,10 +71,34 @@ describe("BillingSettings default plan", () => {
       }),
     }), { status: 200, headers: { "content-type": "application/json" } })));
 
-    render(<I18nTestProvider locale="en"><BillingSettings canManage canPurchase /></I18nTestProvider>);
+    render(<I18nTestProvider locale="en"><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
 
     expect(await screen.findByText("Trial")).toBeInTheDocument();
     expect(screen.queryByText("Starter")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open billing portal" })).not.toBeInTheDocument();
+  });
+
+  it("shows workspace-scoped credit history and accepts an active exact quote", async () => {
+    const evidence = {
+      ...summary,
+      quotes: [{ id: "quote-1", state: "offered", purposeRef: "generation:video-1", maxCreditDebit: 14, currency: "USD", localPriceMinor: 700, taxMinor: 100, expiresAt: "2026-09-05T10:00:00.000Z" }],
+      credit: {
+        ...summary.credit,
+        recentEntries: [{ id: "entry-1", entryType: "reserve", deltaUnits: -14, balanceAfterUnits: 96, createdAt: "2026-09-04T10:00:00.000Z" }],
+      },
+    };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify(init?.method === "POST" ? { success: true, result: { state: "accepted" } } : { success: true, data: evidence }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<I18nTestProvider locale="en"><BillingSettings workspaceId="workspace-server" canManage canPurchase /></I18nTestProvider>);
+
+    expect(await screen.findByText("Execution reservation")).toBeInTheDocument();
+    expect(screen.getByText("-14")).toBeInTheDocument();
+    expect(screen.getByText("Up to 14 Generation Credits")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Accept exact quote" }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/studio/billing", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ "x-workspace-id": "workspace-server" }),
+    }));
   });
 });

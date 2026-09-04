@@ -18,13 +18,14 @@ export default async function BillingPage() {
       })
     : [];
 
-  if (!permissions.includes("product:billing:read")) {
+  if (!workspaceId || !permissions.includes("product:billing:read")) {
     return <main className="flex-1 p-8"><p role="alert">{t("forbidden")}</p></main>;
   }
 
   return (
     <main className="flex-1 overflow-y-auto">
       <BillingSettings
+        workspaceId={workspaceId}
         canManage={permissions.includes("product:billing:manage")}
         canPurchase={permissions.includes("product:billing:purchase")}
       />
