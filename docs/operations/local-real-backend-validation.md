@@ -34,6 +34,7 @@ Run these from another terminal while the app is running:
 pnpm doctor:local -- --workspace seed_ws_alice
 APP_BASE_URL=http://localhost:3002 pnpm smoke:infra
 APP_BASE_URL=http://localhost:3002 pnpm smoke:i18n-shell
+APP_BASE_URL=http://localhost:3002 pnpm smoke:product
 pnpm smoke:licensed-trends
 pnpm test:run
 pnpm typecheck
@@ -56,7 +57,7 @@ server-owned managed token and stable key revision.
 | Public pricing | `/ar/pricing` and `/en/pricing` | Active versioned billing catalog | Plans and authored prices render in both languages without authentication. | None |
 | Balance, plans, and packs | Header credit control and `/billing` | Subscription, credit buckets and ledger | Header and billing page agree on available credits; plan/pack actions clearly report merchant availability. | None until checkout is explicitly opened |
 | Brand memory | `/brand` | Accepted immutable Brand Profile | The active revision contains audience, voice, visual and Arabic-language direction; generation remains closed without an accepted revision. | None |
-| Provider credentials | `/settings?section=credentials` | `BYOK_KEY_ENCRYPTION_KEY`, step-up delivery, Workspace vault | Saving a Replicate token requires fresh verification, validates the account without a prediction, stores ciphertext only, and never returns the token. | No generation spend |
+| Provider credentials | `/settings?section=providers` | `BYOK_KEY_ENCRYPTION_KEY`, step-up delivery, Workspace vault | Saving a Replicate token requires fresh verification, validates the account without a prediction, stores ciphertext only, and never returns the token. | No generation spend |
 | Workspace media | `/library` and upload controls | MinIO/S3-compatible storage and Postgres | Presign, upload, finalize, preview, list and soft-delete preserve Workspace isolation and storage quota. | None |
 | AI model catalog | Image/video/copy model selector | Signed qualification envelope and trust key | Only unexpired, capability-matching, region-admitted Replicate models are selectable; model/version/schema and unit price are pinned. | None |
 | Generation admission | `/simple-studio/images`, `/simple-studio/videos`, `/simple-studio/copy` | Brand, rights, model, budget, region and selected funding mode | The panel explains BYOK versus managed billing and shows a provider-cost estimate. Managed mode requires an exact expiring credit quote before dispatch. | None until the user confirms a managed quote or submits with BYOK |
@@ -91,6 +92,12 @@ Start with the least expensive admitted path: one 9:16 image or one short draft
 video, one output, BYOK, and no retry. Confirm the resulting Generation Intent,
 Operation, Asset, provider receipt, and cost settlement before increasing batch
 count or duration.
+
+`smoke:product` never crosses that boundary. Its generation request deliberately
+names an unqualified sentinel model and must receive `MODEL_NOT_EXECUTABLE`
+before provider dispatch; the command also verifies that the Workspace credit
+balance is unchanged. It is safe to run repeatedly and cannot be repurposed for
+a real model because the sentinel reference is embedded in the script.
 
 ## 5. Interpret the Fastlane-style trend loop correctly
 
