@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 
 const copyKeys = [
-  "eyebrow", "title", "subtitle", "continue", "back", "optional", "saving",
+  "brandBase", "brandAccent", "eyebrow", "title", "subtitle", "continue", "back", "optional", "saving",
   "loading", "retry", "identityTitle", "fullName", "companyName",
   "contentLanguage", "logo", "uploadLogo", "logoHelp", "arabic", "english",
   "sourceTitle", "sourceSubtitle", "website", "description", "websitePlaceholder",

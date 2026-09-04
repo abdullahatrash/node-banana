@@ -256,6 +256,7 @@
     "email": { "verificationSubject": "Verify your email", "verificationBody": "Verify your email address to start setting up your workspace:", "verificationAction": "Verify email" }
   },
   "onboarding": {
+    "brandBase": "tasmeem", "brandAccent": "ai",
     "eyebrow": "Let’s prepare your workspace", "title": "Tell us about your brand", "subtitle": "A few short answers help us build a Brand Profile you review before it is used.", "continue": "Continue", "back": "Back", "optional": "Optional", "saving": "Saving…", "loading": "Restoring your progress…", "retry": "Try again", "identityTitle": "Let’s start with you", "fullName": "Full name", "companyName": "Company or brand name", "contentLanguage": "Default content language", "logo": "Company logo (optional)", "uploadLogo": "Choose logo", "logoHelp": "PNG or JPG, up to 5 MB", "arabic": "العربية", "english": "English", "sourceTitle": "How should we learn about your brand?", "sourceSubtitle": "Enter your website to read key public pages, or describe the brand yourself.", "website": "Website", "description": "Brand description", "websitePlaceholder": "https://example.com", "descriptionPlaceholder": "What do you offer, for whom, and what makes it different?", "teamTitle": "Tell us about your current stage", "teamSize": "How big is your current team?", "revenue": "What is your current monthly revenue?", "roleTitle": "What is your primary role?", "businessTitle": "How would you describe the business?", "businessModel": "Business model", "categories": "Business category", "goalsTitle": "What do you want to achieve?", "intent": "Are you ready to market now?", "outcomes": "Choose your most important outcomes", "attributionTitle": "How did you hear about us?", "attributionSubtitle": "You can skip this step.", "preparing": "Preparing your workspace", "preparingDetail": "We are analyzing the source and building a structured Brand Profile.", "profileTitle": "Review your Brand Profile", "profileSubtitle": "This is an AI-generated draft, not an accepted fact, until you approve it.", "acceptProfile": "Accept profile and continue", "editProfile": "Correct profile", "saveProfile": "Save corrections", "cancel": "Cancel", "sourceFailed": "We couldn’t prepare the Brand Profile", "sourceFailedDetail": "Try again, or go back and provide a manual description.", "educationTitle": "Your workspace is ready", "educationSubtitle": "Your first suggestions use the Brand Profile you accepted.", "finish": "See my first suggestion", "error": "Something went wrong. Please try again.", "changeSource": "Use a different source",
     "educationFeatures": { "identity": "Structured identity", "audience": "Clear audience", "suggestion": "Ready suggestion" },
     "profileLabels": { "identity": "Brand essence", "offering": "Offering", "audiences": "Audiences", "benefits": "Benefits", "positioning": "Positioning", "voice": "Voice", "angles": "Content angles", "uncertainty": "Items requiring your review" },
@@ -434,5 +435,236 @@
     "gateHelp": { "performance": "Versioned clients need current warm/cold MENA measurements for Web Vitals, APIs, critical actions, provider regions, and job stages.", "accessibility": "Every route/client/locale needs WCAG 2.2 AA evidence including focus restoration, live updates, captions, transcripts, and Arabic screen readers.", "flags": "Flags require explicit eligibility, dependencies, evaluation telemetry, rollback, expiry, safe defaults, and current evidence.", "incidents": "Any unresolved customer-impacting incident blocks release and reports operation, credit, and publishing risk.", "recovery": "RPO/RTO require encrypted regional backups, PITR, and current artifact/external-effect reconciliation drills.", "migrations": "Expand, migrate, and contract phases need resumable cursors, compatibility windows, and rollback evidence.", "parity": "Every signed route × feature × state × role × entitlement × viewport × direction cell needs current evidence and five independent sign-offs.", "privacy": "Product telemetry accepts only enumerated events and properties; prompts, content, assets, credentials, and free text are rejected." },
     "status": { "degraded": "Some services are degraded", "majorOutage": "Major service outage", "criticalOutage": "Critical service outage", "unknown": "Service status is temporarily unavailable" },
     "statusPage": { "brand": "Node Banana", "title": "Service status", "operational": "All systems operational", "degraded": "Some services are degraded", "majorOutage": "Major service outage", "criticalOutage": "Critical service outage", "unknown": "Status cannot be verified", "noIncidents": "No recent service incidents.", "resolved": "Resolved", "investigating": "Investigating", "identified": "Identified", "monitoring": "Monitoring", "services": "Impacted services", "risks": "Operation: {operation} · credits: {credit} · publishing: {publishing}", "operation": { "none": "none", "waiting": "waiting", "blocked": "blocked", "failed_known": "known failure", "outcome_unknown": "outcome unknown" }, "credit": { "none": "none", "at_risk": "at risk", "incorrect_charge": "possible incorrect charge" }, "publishing": { "none": "none", "delay": "delay", "duplicate": "duplicate risk", "outcome_unknown": "outcome unknown" } }
+  },
+  "marketingHome": {
+    "nav": {
+      "product": "Product",
+      "how": "How it works",
+      "platforms": "Platforms",
+      "faq": "FAQ",
+      "signIn": "Sign in",
+      "start": "Get started"
+    },
+    "hero": {
+      "badge": "New · A short-form calendar built for MENA",
+      "titleBefore": "30 days of short-form",
+      "titleAccent": "content, in minutes",
+      "body": "Discover what works in your market, turn it into branded videos and slides, then review and publish across TikTok, Instagram Reels, and YouTube Shorts.",
+      "primary": "Build my calendar free",
+      "secondary": "See how it works",
+      "note": "Free early access · Your accounts stay yours"
+    },
+    "mockup": {
+      "eyebrow": "Short-form engine",
+      "heading": "30-day content plan",
+      "prompt": "Turn this product into a series of short videos for Saudi audiences...",
+      "generate": "Build the plan",
+      "calendar": "Content calendar",
+      "ready": "12 ideas ready",
+      "social": "Short-form video"
+    },
+    "marketStrip": {
+      "label": "Choose a market",
+      "markets": [
+        "Saudi Arabia",
+        "UAE",
+        "Egypt",
+        "Kuwait",
+        "Morocco"
+      ],
+      "note": "Local trends, dialects, and seasons"
+    },
+    "transformation": {
+      "eyebrow": "From the trend to your brand",
+      "title": "Turn what your audience watches into content for your product",
+      "body": "Instead of starting from scratch every day, Tasmeemai begins with your market, audience, and what is working now, then builds a content plan in your brand voice.",
+      "cards": [
+        {
+          "number": "01",
+          "title": "Choose your market and niche",
+          "body": "Set the country, audience, and topic you want to own."
+        },
+        {
+          "number": "02",
+          "title": "Turn trends into content",
+          "body": "Create original, brand-specific takes on formats that work."
+        },
+        {
+          "number": "03",
+          "title": "Fill the calendar and publish",
+          "body": "Review the plan, edit what you want, then schedule it."
+        }
+      ]
+    },
+    "showcase": {
+      "eyebrow": "Every short-form format",
+      "title": "One idea, dozens of publish-ready pieces",
+      "body": "Turn the same idea into a short video, slideshow, product post, or faceless clip without losing your brand identity.",
+      "items": [
+        {
+          "title": "Product promotion",
+          "tag": "Short video"
+        },
+        {
+          "title": "Quick explainer",
+          "tag": "TikTok slideshow"
+        },
+        {
+          "title": "Seasonal offer",
+          "tag": "Instagram Reel"
+        },
+        {
+          "title": "Faceless content",
+          "tag": "YouTube Short"
+        }
+      ]
+    },
+    "steps": {
+      "eyebrow": "How it works",
+      "title": "From your product link to a full calendar",
+      "items": [
+        {
+          "title": "Add your site or product",
+          "body": "We learn your offer, audience, and brand voice."
+        },
+        {
+          "title": "Choose the market",
+          "body": "Set the country, niche, and channels you want to grow."
+        },
+        {
+          "title": "Let Tasmeemai build the plan",
+          "body": "Generate ideas, videos, and slides across the calendar."
+        },
+        {
+          "title": "Review and publish",
+          "body": "Edit the content, then schedule it through connected accounts."
+        }
+      ]
+    },
+    "mena": {
+      "eyebrow": "Built here, for the region",
+      "title": "What works in Riyadh may not work in Cairo",
+      "body": "Tasmeemai treats MENA as distinct markets with their own dialects, seasons, and culture, so content feels local rather than translated.",
+      "points": [
+        "Trends by market and niche",
+        "Arabic copy and dialects for your audience",
+        "Campaigns built around regional moments"
+      ],
+      "examples": [
+        {
+          "market": "Riyadh",
+          "dialect": "Gulf",
+          "hook": "A premium result in less time"
+        },
+        {
+          "market": "Cairo",
+          "dialect": "Egyptian",
+          "hook": "3 steps that change your routine"
+        },
+        {
+          "market": "Casablanca",
+          "dialect": "Moroccan",
+          "hook": "A lighter routine for a faster day"
+        }
+      ]
+    },
+    "platforms": {
+      "eyebrow": "One calendar, every channel",
+      "title": "Create once, publish where your audience watches",
+      "body": "Prepare every piece for the right format and channel, then review and schedule everything from one calendar.",
+      "names": [
+        "TikTok",
+        "Instagram Reels",
+        "YouTube Shorts"
+      ],
+      "footnote": "You connect your existing brand accounts and always keep ownership and control."
+    },
+    "early": {
+      "eyebrow": "Next month's content starts now",
+      "title": "Stop starting from a blank page every day",
+      "body": "Add your product, choose the market, and let Tasmeemai build your first short-form content calendar. Early access is free.",
+      "primary": "Build my calendar free",
+      "secondary": "Open the app"
+    },
+    "faq": {
+      "eyebrow": "Frequently asked questions",
+      "title": "Straight answers before you begin",
+      "items": [
+        {
+          "question": "What is Tasmeemai?",
+          "answer": "Tasmeemai is a short-form content creation and publishing platform for MENA. It turns trends and brand ideas into videos and slides placed on a calendar for review and publishing."
+        },
+        {
+          "question": "What content can I create?",
+          "answer": "Tasmeemai focuses on short videos, slideshow posts, product content, faceless content, and the scripts and captions that go with them."
+        },
+        {
+          "question": "Can it fill my content calendar automatically?",
+          "answer": "That is the core of the product: build a recurring content plan from your product and market, then review and edit each piece before scheduling or publishing."
+        },
+        {
+          "question": "Is the product available outside MENA?",
+          "answer": "The product is currently focused exclusively on the Middle East and North Africa so we can build a deeper experience for regional content teams."
+        },
+        {
+          "question": "Can I publish directly to my accounts?",
+          "answer": "Yes. The publishing workflow focuses on TikTok, Instagram Reels, and YouTube Shorts, subject to each platform's policies and permissions."
+        },
+        {
+          "question": "Do you sell TikTok or Instagram accounts?",
+          "answer": "No. Tasmeemai does not sell accounts or operate fake identities. You connect the brand accounts that you own and control."
+        },
+        {
+          "question": "Can I use the interface in English?",
+          "answer": "Yes. Arabic is the default, and you can switch to English from the language control at any time."
+        },
+        {
+          "question": "Is there a free plan?",
+          "answer": "It is currently free to start during early access. Any future plan changes will be communicated clearly before they take effect."
+        }
+      ]
+    },
+    "footer": {
+      "description": "Short-form content creation and publishing for MENA.",
+      "product": "Product",
+      "company": "Tasmeemai",
+      "links": [
+        "Trend to content",
+        "How it works",
+        "Platforms",
+        "FAQ"
+      ],
+      "start": "Start free",
+      "rights": "All rights reserved.",
+      "region": "Built for the Middle East and North Africa"
+    },
+    "ui": {
+      "home": "Tasmeemai home",
+      "brandGlyph": "T",
+      "brandName": "Tasmeemai",
+      "navigation": "Main navigation",
+      "calendar30": "30-day calendar",
+      "brandUrl": "Brand URL",
+      "brandUrlExample": "https://yourbrand.com",
+      "format": "Format",
+      "platformFormats": "TikTok · Reels · Shorts",
+      "regionSignature": "MENA · Arabic-first · RTL",
+      "contentEngine": "Tasmeemai · Content Engine",
+      "scheduledReel": "Instagram Reels · 18:30",
+      "hookFormat": "9:16 · Hook",
+      "mena": "MENA",
+      "arabic": "Arabic",
+      "trend": "Trending format",
+      "brandVersion": "Your brand version",
+      "days": "30 days",
+      "trendingNow": "Trending now",
+      "brandVoice": "In your brand voice",
+      "ready": "Ready to publish",
+      "brandAngle": "Brand angle",
+      "brandResult": "A clear result in less time",
+      "contentCalendar": "Content calendar",
+      "daysAhead": "30 days ahead",
+      "completeCalendar": "30 / 30"
+    }
   }
 }
