@@ -8,6 +8,7 @@ export type OperationState = (typeof OPERATION_STATES)[number];
 export type OperationKind =
   | "workflow_run" | "brand_ingestion" | "governance_export"
   | "governance_bulk" | "workspace_import" | "automation"
+  | "campaign_automation"
   | "publishing_delivery" | "generation" | "persona_training"
   | "metric_refresh" | "ingestion";
 

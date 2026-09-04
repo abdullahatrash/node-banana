@@ -11,6 +11,7 @@ export interface CampaignRuntimeRecord {
 export interface CampaignRuntimeScheduleStore {
   schedule(workspaceId: string, plans: ScheduledCampaignSnapshot[]): Promise<{ inserted: number; replayed: number }>;
   markStaleSubmissionsUnknown(input: { before: Date; now: Date; limit?: number }): Promise<number>;
+  reconcileWorkflowRuns(input: { now: Date; limit?: number }): Promise<number>;
 }
 
 function localDateKey(at: Date, timezone: string) {
@@ -28,7 +29,7 @@ export class ProductCampaignRuntimeWorker {
 
   async run(input: { workerId: string }) {
     const now = this.clock(); const campaigns = await this.campaignPage(now);
-    const summary = { scanned: campaigns.length, scheduled: 0, scheduleReplayed: 0, replenished: 0, campaignFailures: 0, staleUnknown: 0, occurrences: { claimed: 0, started: 0, denied: 0, outcomeUnknown: 0 } };
+    const summary = { scanned: campaigns.length, scheduled: 0, scheduleReplayed: 0, replenished: 0, campaignFailures: 0, staleUnknown: 0, reconciled: 0, occurrences: { claimed: 0, started: 0, denied: 0, outcomeUnknown: 0 } };
     for (const row of campaigns) {
       try {
         const campaign = campaignPayloadSchema.parse(row.payload); const authority = campaign.runtime?.scheduleAuthority;
@@ -42,6 +43,7 @@ export class ProductCampaignRuntimeWorker {
       } catch { summary.campaignFailures++; }
     }
     summary.staleUnknown = await this.scheduleStore.markStaleSubmissionsUnknown({ before: new Date(now.getTime() - 5 * 60_000), now, limit: 50 });
+    summary.reconciled = await this.scheduleStore.reconcileWorkflowRuns({ now, limit: 50 });
     summary.occurrences = await this.scheduler.processDue({ workerId: `${input.workerId}:${randomUUID()}`, limit: 20 });
     return summary;
   }

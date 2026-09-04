@@ -1,9 +1,9 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, asc, count, eq, gte, inArray, lte, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, lte, or } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { productCampaignOccurrences } from "@/lib/db/schema";
+import { productCampaignOccurrences, workflowRunMutationReceipts, workflowRuns } from "@/lib/db/schema";
 import type { CampaignSchedulerRepository, ClaimedCampaignOccurrence, ScheduledCampaignSnapshot } from "./campaign-scheduler";
 
 type StoredSnapshot = Omit<ScheduledCampaignSnapshot, "scheduledAt"> & { scheduledAt: string };
@@ -73,8 +73,8 @@ export class PostgresCampaignSchedulerRepository implements CampaignSchedulerRep
     });
   }
 
-  async markSubmitting(input: { occurrence: ClaimedCampaignOccurrence; now: Date }) {
-    const rows = await getDb().update(productCampaignOccurrences).set({ state: "submitting", leaseToken: null, leaseExpiresAt: null, updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, input.occurrence.workspaceId), eq(productCampaignOccurrences.id, input.occurrence.id), eq(productCampaignOccurrences.state, "claimed"), eq(productCampaignOccurrences.leaseToken, input.occurrence.leaseToken))).returning({ id: productCampaignOccurrences.id });
+  async markSubmitting(input: { occurrence: ClaimedCampaignOccurrence; quoteId: string; quotedAmount: string; currency: string; now: Date }) {
+    const rows = await getDb().update(productCampaignOccurrences).set({ state: "submitting", leaseToken: null, leaseExpiresAt: null, quoteId: input.quoteId, quotedAmount: input.quotedAmount, currency: input.currency, updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, input.occurrence.workspaceId), eq(productCampaignOccurrences.id, input.occurrence.id), eq(productCampaignOccurrences.state, "claimed"), eq(productCampaignOccurrences.leaseToken, input.occurrence.leaseToken))).returning({ id: productCampaignOccurrences.id });
     return rows.length === 1;
   }
 
@@ -92,10 +92,31 @@ export class PostgresCampaignSchedulerRepository implements CampaignSchedulerRep
     return getDb().transaction(async (tx) => {
       const rows = await tx.select({ workspaceId: productCampaignOccurrences.workspaceId, id: productCampaignOccurrences.id }).from(productCampaignOccurrences).where(and(eq(productCampaignOccurrences.state, "submitting"), lte(productCampaignOccurrences.updatedAt, input.before))).orderBy(asc(productCampaignOccurrences.updatedAt), asc(productCampaignOccurrences.id)).limit(Math.min(100, Math.max(1, input.limit ?? 50))).for("update", { skipLocked: true });
       if (!rows.length) return 0;
-      for (const row of rows) await tx.update(productCampaignOccurrences).set({ state: "outcome_unknown", failureCode: "CAMPAIGN_WORKFLOW_SUBMISSION_IDENTITY_LOST", updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, row.workspaceId), eq(productCampaignOccurrences.id, row.id), eq(productCampaignOccurrences.state, "submitting")));
+      for (const row of rows) {
+        const [occurrence] = await tx.select().from(productCampaignOccurrences).where(and(eq(productCampaignOccurrences.workspaceId, row.workspaceId), eq(productCampaignOccurrences.id, row.id))).limit(1);
+        const snapshot = occurrence?.snapshot as unknown as StoredSnapshot | undefined;
+        const actor = snapshot?.actor;
+        const [receipt] = actor ? await tx.select({ runId: workflowRunMutationReceipts.runId }).from(workflowRunMutationReceipts).where(and(eq(workflowRunMutationReceipts.workspaceId, row.workspaceId), eq(workflowRunMutationReceipts.principalId, actor.principalId), eq(workflowRunMutationReceipts.keyId, actor.keyId), eq(workflowRunMutationReceipts.capability, "workflow_runs.start@2"), eq(workflowRunMutationReceipts.idempotencyKey, snapshot.occurrenceKey))).limit(1) : [];
+        const [run] = receipt ? await tx.select({ id: workflowRuns.id, startSnapshotDigest: workflowRuns.startSnapshotDigest, state: workflowRuns.state }).from(workflowRuns).where(and(eq(workflowRuns.workspaceId, row.workspaceId), eq(workflowRuns.id, receipt.runId))).limit(1) : [];
+        await tx.update(productCampaignOccurrences).set(run ? { state: run.state === "completed" ? "succeeded" : run.state === "failed" ? "failed_known" : "running", workflowRunId: run.id, startSnapshotDigest: run.startSnapshotDigest, failureCode: run.state === "failed" ? "WORKFLOW_RUN_FAILED" : null, completedAt: ["completed", "failed"].includes(run.state) ? input.now : null, updatedAt: input.now } : { state: "outcome_unknown", failureCode: "CAMPAIGN_WORKFLOW_SUBMISSION_IDENTITY_LOST", updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, row.workspaceId), eq(productCampaignOccurrences.id, row.id), eq(productCampaignOccurrences.state, "submitting")));
+      }
+      return rows.length;
+    });
+  }
+
+  async reconcileWorkflowRuns(input: { now: Date; limit?: number }) {
+    return getDb().transaction(async (tx) => {
+      const rows = await tx.select({ workspaceId: productCampaignOccurrences.workspaceId, id: productCampaignOccurrences.id, state: workflowRuns.state, failureCode: workflowRuns.failureCode }).from(productCampaignOccurrences).innerJoin(workflowRuns, and(eq(workflowRuns.workspaceId, productCampaignOccurrences.workspaceId), eq(workflowRuns.id, productCampaignOccurrences.workflowRunId))).where(and(inArray(productCampaignOccurrences.state, ["running", "outcome_unknown"]), inArray(workflowRuns.state, ["completed", "failed", "cancelled"]))).orderBy(asc(productCampaignOccurrences.updatedAt), asc(productCampaignOccurrences.id)).limit(Math.min(100, Math.max(1, input.limit ?? 50))).for("update", { of: productCampaignOccurrences, skipLocked: true });
+      for (const row of rows) await tx.update(productCampaignOccurrences).set({ state: row.state === "completed" ? "succeeded" : row.state === "cancelled" ? "cancelled" : "failed_known", failureCode: row.failureCode, completedAt: input.now, updatedAt: input.now }).where(and(eq(productCampaignOccurrences.workspaceId, row.workspaceId), eq(productCampaignOccurrences.id, row.id), inArray(productCampaignOccurrences.state, ["running", "outcome_unknown"])));
       return rows.length;
     });
   }
 }
 
 export const PRODUCTION_CAMPAIGN_SCHEDULER_REPOSITORY = new PostgresCampaignSchedulerRepository();
+
+export async function listCampaignOccurrenceStatus(input: { workspaceId: string; campaignIds: string[]; limit?: number }) {
+  if (!input.campaignIds.length) return [];
+  const rows = await getDb().select({ id: productCampaignOccurrences.id, campaignId: productCampaignOccurrences.campaignId, state: productCampaignOccurrences.state, scheduledAt: productCampaignOccurrences.scheduledAt, format: productCampaignOccurrences.format, workflowRunId: productCampaignOccurrences.workflowRunId, quotedAmount: productCampaignOccurrences.quotedAmount, currency: productCampaignOccurrences.currency, failureCode: productCampaignOccurrences.failureCode, updatedAt: productCampaignOccurrences.updatedAt }).from(productCampaignOccurrences).where(and(eq(productCampaignOccurrences.workspaceId, input.workspaceId), inArray(productCampaignOccurrences.campaignId, input.campaignIds))).orderBy(desc(productCampaignOccurrences.scheduledAt), desc(productCampaignOccurrences.id)).limit(Math.min(200, Math.max(1, input.limit ?? 100)));
+  return rows.map((row) => ({ ...row, scheduledAt: row.scheduledAt.toISOString(), updatedAt: row.updatedAt.toISOString() }));
+}
