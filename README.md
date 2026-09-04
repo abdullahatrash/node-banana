@@ -88,6 +88,31 @@ S3_FORCE_PATH_STYLE=false                  # R2 default
 For non-development environments, `BETTER_AUTH_SECRET` is required and you must provide either `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` so auth origin validation works correctly.
 For production/staging-like deployments, `DATABASE_URL` is required for Better Auth (memory adapter fallback is local-only).
 
+#### AI credential modes
+
+`BYOK_KEY_ENCRYPTION_KEY` is **not** an AI-provider credential. It is the
+64-character hexadecimal AES-256-GCM master key that encrypts Workspace BYOK
+credentials at rest. Generate it once with `openssl rand -hex 32`, keep it
+server-side, and do not rotate it without a key-reencryption procedure.
+
+There are two admitted ways to pay for provider execution:
+
+- **Workspace BYOK:** configure `BYOK_KEY_ENCRYPTION_KEY`, then sign in and use
+  Settings → Provider credentials to store the Workspace's real Replicate key.
+  The save flow requires an exact-scope step-up and performs a free account
+  validation before encrypting the key.
+- **Platform-managed:** configure `REPLICATE_MANAGED_API_TOKEN` and a stable
+  `REPLICATE_MANAGED_KEY_REVISION` on the server. Managed runs debit the
+  Workspace Generation Credit ledger; the managed token is never exposed to
+  the browser.
+
+Legacy provider variables such as `REPLICATE_API_KEY` can still support model
+catalog discovery paths, but they do not make the admitted production
+generation pipeline executable. Real execution also requires a signed model
+qualification and verified processing-region evidence. Run
+`pnpm doctor:local -- --workspace seed_ws_alice` to see the exact remaining
+gates without calling a provider or spending credits.
+
 Verified email signup and the Arabic-first onboarding rollout also require the `AUTH_*`, `RESEND_*`, and `ONBOARDING_*` values documented in [`.env.example`](.env.example). Apply the onboarding migrations and legacy backfill in the order described by [`docs/onboarding-rollout.md`](docs/onboarding-rollout.md) before enabling product gates.
 
 ### Marketing and product domains
