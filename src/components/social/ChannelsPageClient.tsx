@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslations } from "next-intl"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { PlusIcon, Loader2Icon } from "lucide-react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformPicker } from "@/components/social/PlatformPicker"
@@ -182,6 +183,7 @@ export function ChannelsPageClient({
               <PlusIcon className="size-4" />
               {t("connect")}
             </Button>
+            <Link href="/channels/onboarding" className="ms-2 inline-flex min-h-9 items-center rounded-md border px-4 text-sm font-medium">{t("managedOnboarding")}</Link>
           </div>
         </div>
         <PlatformPicker open={showPicker} onOpenChange={setShowPicker} />
@@ -204,6 +206,7 @@ export function ChannelsPageClient({
             <PlusIcon className="size-4" />
             {t("connect")}
           </Button>
+          <Link href="/channels/onboarding" className="inline-flex min-h-8 items-center rounded-md border px-3 text-sm font-medium">{t("managedOnboarding")}</Link>
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
