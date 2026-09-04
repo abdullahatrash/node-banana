@@ -7,6 +7,7 @@ describe("typed product command contracts", () => {
   it("uses exact product capabilities rather than Workspace mutation", () => {
     expect(read("src/app/api/product-content/route.ts")).toContain('permission: "product:content:write"');
     expect(read("src/app/api/product-inspiration/route.ts")).toContain('permission: "product:inspiration:write"');
+    expect(read("src/app/api/product-campaigns/route.ts")).toContain('permission: "product:campaigns:write"');
     expect(read("src/app/api/product-support/submit/route.ts")).toContain('permission: "product:support:submit"');
   });
 
@@ -22,5 +23,14 @@ describe("typed product command contracts", () => {
     expect(source).toContain("INSPIRATION_ASSET_NOT_READY");
     expect(source).toContain("INSPIRATION_RIGHTS_NOT_ADMITTED");
     expect(source).toContain("validateRightsEvidence");
+  });
+
+  it("activates campaigns only through a quoted durable Workflow Run", () => {
+    const source = read("src/lib/product-surfaces/campaign-runtime.ts");
+    expect(source).toContain("runtime.preview");
+    expect(source).toContain("issueCampaignAcceptedQuote");
+    expect(read("src/lib/product-surfaces/campaign-quote.ts")).toContain("input.codec.seal(quote)");
+    expect(source).toContain('capability: "workflow_runs.start@2"');
+    expect(source).toContain("acceptedSpendQuoteRef");
   });
 });

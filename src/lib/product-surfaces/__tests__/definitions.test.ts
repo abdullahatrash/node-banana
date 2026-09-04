@@ -73,4 +73,15 @@ describe("product surface definitions", () => {
       validationErrors: [],
     })).not.toThrow();
   });
+
+  it("requires immutable Workflow references before campaign activation", () => {
+    const payload = parseProductPayload("campaign_automation", {
+      currentStep: 10, name: "Launch", formatMix: { slideshow: 100 }, remixRatio: 0,
+      inspirationIds: [], contentLanguage: "ar", arabicVariety: "msa", personaIds: [], mediaSetIds: [], channelIds: [], variantsPerChannel: 1,
+      cadence: { timezone: "Asia/Riyadh", startAt: null, endAt: null, postsPerWeek: 3 },
+      execution: { mode: "managed", modelPolicy: "workspace-default", creditCeiling: 20, budgetCents: 5000 },
+      reviewMode: "request_human", autoPublishGrantId: null, validationErrors: [],
+    });
+    expect(payload).toMatchObject({ execution: { workflow: null }, runtime: null });
+  });
 });

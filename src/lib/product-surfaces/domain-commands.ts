@@ -43,8 +43,11 @@ export async function saveGuidanceProgressCommand(input: Actor & { id?: string; 
 }
 
 export async function saveCampaignDraftCommand(input: Actor & { id?: string; expectedRevision?: number; title: string; payload: Record<string, unknown> }): Promise<ProductRecord | null> {
-  const payload = parseProductPayload("campaign_automation", input.payload);
-  if (!input.id) return createProductRecord({ ...input, kind: "campaign_automation", state: "draft", payload });
+  const requested = parseProductPayload("campaign_automation", { ...input.payload, runtime: null });
+  if (!input.id) return createProductRecord({ ...input, kind: "campaign_automation", state: "draft", payload: requested });
   if (!input.expectedRevision) throw new Error("CAMPAIGN_EXPECTED_REVISION_REQUIRED");
-  return updateProductRecord({ ...input, id: input.id, expectedKind: "campaign_automation", expectedRevision: input.expectedRevision, title: input.title, payload });
+  const [current] = await getDb().select({ payload: workspaceProductRecords.payload }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id), eq(workspaceProductRecords.kind, "campaign_automation"))).limit(1);
+  if (!current) return null;
+  const authoritative = parseProductPayload("campaign_automation", current.payload);
+  return updateProductRecord({ ...input, id: input.id, expectedKind: "campaign_automation", expectedRevision: input.expectedRevision, title: input.title, payload: { ...requested, runtime: authoritative.runtime } });
 }

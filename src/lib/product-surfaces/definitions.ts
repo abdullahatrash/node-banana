@@ -127,7 +127,7 @@ const contentPieceSchema = z.object({
   renderProofStatus: z.enum(["not_requested", "pending", "passed", "failed"]).default("not_requested"),
 });
 
-const campaignSchema = z.object({
+export const campaignPayloadSchema = z.object({
   currentStep: z.number().int().min(1).max(10),
   name: text(200),
   formatMix: z.partialRecord(z.enum(CONTENT_FORMATS), z.number().int().min(0).max(100)),
@@ -140,10 +140,32 @@ const campaignSchema = z.object({
   channelIds: z.array(text(200)).default([]),
   variantsPerChannel: z.number().int().min(1).max(10).default(1),
   cadence: z.object({ timezone: text(100), startAt: z.string().datetime().nullable(), endAt: z.string().datetime().nullable(), postsPerWeek: z.number().int().min(1).max(100) }),
-  execution: z.object({ mode: z.enum(["byok", "managed"]), modelPolicy: text(200), creditCeiling: z.number().int().nonnegative(), budgetCents: z.number().int().nonnegative() }),
+  execution: z.object({
+    mode: z.enum(["byok", "managed"]),
+    modelPolicy: text(200),
+    creditCeiling: z.number().int().nonnegative(),
+    budgetCents: z.number().int().nonnegative(),
+    workflow: z.object({
+      workflowId: text(200),
+      workflowRevisionId: text(200),
+      inputs: z.record(z.string().trim().min(1).max(200), z.string().max(25_000)),
+      inputArtifactIds: z.array(text(200)).max(100),
+    }).nullable().default(null),
+  }),
   reviewMode: z.enum(["request_human", "evaluate_policy"]),
   autoPublishGrantId: text(200).nullable().default(null),
   validationErrors: z.array(text(500)).default([]),
+  runtime: z.object({
+    runId: text(200),
+    workflowId: text(200),
+    workflowRevisionId: text(200),
+    state: z.enum(["accepted", "running", "waiting", "outcome_unknown", "completed", "failed"]),
+    startSnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    quoteId: text(200),
+    quotedAmount: z.string().regex(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/),
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    acceptedAt: z.string().datetime(),
+  }).nullable().default(null),
 }).superRefine((value, context) => {
   const total = Object.values(value.formatMix).reduce((sum, percentage) => sum + percentage, 0);
   if (total !== 100) context.addIssue({ code: "custom", path: ["formatMix"], message: "Content format mix must total 100%." });
@@ -194,7 +216,7 @@ const payloadSchemas: Record<ProductRecordKind, z.ZodType<Record<string, unknown
   inspiration_item: inspirationPayloadSchema,
   blitz_item: blitzSchema,
   content_piece: contentPieceSchema,
-  campaign_automation: campaignSchema,
+  campaign_automation: campaignPayloadSchema,
   creator_persona: personaSchema,
   ...simpleSchemas,
 };
@@ -216,8 +238,21 @@ const PERSONA_TRANSITIONS: Record<string, readonly string[]> = {
   deleted: [],
 };
 
+const CAMPAIGN_TRANSITIONS: Record<string, readonly string[]> = {
+  draft: ["validating", "archived"],
+  validating: ["active", "draft", "archived"],
+  active: ["paused", "archived"],
+  paused: ["active", "archived"],
+  archived: [],
+};
+
 export function productTransitionIssue(input: { kind: ProductRecordKind; from: string; to: string; payload: Record<string, unknown>; now?: Date }): string | null {
   if (input.from === input.to) return null;
+  if (input.kind === "campaign_automation") {
+    return CAMPAIGN_TRANSITIONS[input.from]?.includes(input.to)
+      ? null
+      : "CAMPAIGN_TRANSITION_NOT_ALLOWED";
+  }
   if (input.kind !== "creator_persona") return null;
   if (!PERSONA_TRANSITIONS[input.from]?.includes(input.to)) return "CREATOR_PERSONA_TRANSITION_NOT_ALLOWED";
   const persona = personaSchema.parse(input.payload);
