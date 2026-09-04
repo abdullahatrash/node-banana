@@ -218,6 +218,10 @@ output.
 To test the rights-safe Inspiration trend loop against the real local backend,
 follow [Workspace winning-content trends](docs/operations/workspace-winning-content.md).
 
+For the complete no-spend-first route matrix and the exact point where real
+provider or publishing side effects begin, follow
+[Local real-backend validation](docs/operations/local-real-backend-validation.md).
+
 To verify the primary authenticated shell and public pricing surface in both
 Arabic RTL and English LTR against the real local auth and Workspace backend:
 
