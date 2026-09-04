@@ -57,6 +57,16 @@ describe("typed product command contracts", () => {
     expect(source).toContain("candidateArtifactIds: [...payload.candidateArtifactIds");
   });
 
+  it("pins and revalidates governed Content drafts before rendering", () => {
+    const source = read("src/lib/product-surfaces/domain-commands.ts");
+    expect(source).toContain("resolveActiveContentFormatDefinition");
+    expect(source).toContain("validateContentPayload");
+    expect(source).toContain("creatorPersonaEvidence");
+    expect(source).toContain("contentThemeRevisions");
+    expect(source).toContain('const state = validationIssues.length ? "draft" : "active"');
+    expect(source).toContain("if (validationIssues.length) throw new Error(validationIssues[0])");
+  });
+
   it("turns an accepted Blitz generation into passed Render Proof evidence", () => {
     const source = read("src/lib/product-surfaces/blitz.ts");
     expect(source).toContain("validateReadyPortraitAsset");

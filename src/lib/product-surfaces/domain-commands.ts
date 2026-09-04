@@ -3,7 +3,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { assets, workspaceProductRecords } from "@/lib/db/schema";
+import { assets, contentThemeRevisions, contentThemes, creatorPersonaEvidence, creatorPersonas, workspaceProductRecords } from "@/lib/db/schema";
 import { generationIntents, modelTextOutputReceipts } from "@/lib/model-routing/db-schema";
 import { runtimeOperations } from "@/lib/agent-runtime/operation-status/db-schema";
 import { generationOperationId } from "@/lib/model-routing/generation-operation";
@@ -13,18 +13,51 @@ import { createProductRecord, createProductRecordInTransaction, updateProductRec
 import { contentPieceSchema, parseProductPayload } from "./definitions";
 import { buildContentRenderProof, isAdmittedContentArtifact, validateReadyPortraitAsset, type ContentAssetEvidence, type ContentGenerationReference } from "./content-lineage";
 import { contentExecutionPlan, validateContentExecutionInput } from "./content-execution-plan";
+import { validateContentDraft } from "./content-draft-policy";
+import { resolveActiveContentFormatDefinition } from "./content-format-registry";
+import { evaluatePersonaGate, type CreatorPersona, type CreatorPersonaEvidence } from "@/lib/creator-personas/types";
 
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
+type ContentPiecePayload = ReturnType<typeof contentPieceSchema.parse>;
+
+async function validateContentPayload(executor: Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0], workspaceId: string, payload: ContentPiecePayload, now = new Date()) {
+  const sourceRowsUnordered = payload.sourceAssetIds.length ? await executor.select().from(assets).where(and(eq(assets.workspaceId, workspaceId), inArray(assets.id, payload.sourceAssetIds), isNull(assets.deletedAt))) : [];
+  const sourceById = new Map(sourceRowsUnordered.map((row) => [row.id, row]));
+  const sourceAssets = payload.sourceAssetIds.map((id) => sourceById.get(id)).filter((row): row is typeof assets.$inferSelect => Boolean(row)).map((row) => ({ id: row.id, type: row.type, ready: Boolean(row.checksum && (row.metadata as Record<string, unknown> | null)?.uploadState === "ready") }));
+  let persona: { id: string; state: string; consentCurrent: boolean } | null = null;
+  if (payload.personaId) {
+    const [[row], evidence] = await Promise.all([
+      executor.select().from(creatorPersonas).where(and(eq(creatorPersonas.workspaceId, workspaceId), eq(creatorPersonas.id, payload.personaId), isNull(creatorPersonas.deletedAt))).limit(1),
+      executor.select().from(creatorPersonaEvidence).where(and(eq(creatorPersonaEvidence.workspaceId, workspaceId), eq(creatorPersonaEvidence.personaId, payload.personaId))),
+    ]);
+    if (row) persona = { id: row.id, state: row.state, consentCurrent: evaluatePersonaGate({ persona: row as CreatorPersona, evidence: evidence as CreatorPersonaEvidence[], at: now }).admitted };
+  }
+  const mediaSets = payload.mediaSetIds.length ? await executor.select({ id: workspaceProductRecords.id, state: workspaceProductRecords.state }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, workspaceId), eq(workspaceProductRecords.kind, "media_set"), inArray(workspaceProductRecords.id, payload.mediaSetIds), isNull(workspaceProductRecords.archivedAt))) : [];
+  const themeIds = [...new Set(payload.themeRevisionRefs.map((reference) => reference.themeId))];
+  const themes = themeIds.length ? await executor.select({ id: contentThemes.id, revision: contentThemeRevisions.revision, state: contentThemes.state, licenseExpiresAt: contentThemeRevisions.licenseExpiresAt }).from(contentThemes).innerJoin(contentThemeRevisions, and(eq(contentThemeRevisions.workspaceId, contentThemes.workspaceId), eq(contentThemeRevisions.themeId, contentThemes.id))).where(and(eq(contentThemes.workspaceId, workspaceId), inArray(contentThemes.id, themeIds))) : [];
+  return validateContentDraft({
+    draft: { format: payload.format, formatDefinition: payload.formatDefinition, contentLanguage: payload.contentLanguage, arabicVariety: payload.arabicVariety, aspectRatio: payload.aspectRatio, durationSeconds: payload.durationSeconds, script: payload.script, captionStyle: payload.captionStyle, speaker: payload.speaker, scene: payload.scene, personaId: payload.personaId, mediaSetIds: payload.mediaSetIds, themeRevisionRefs: payload.themeRevisionRefs },
+    sourceAssets,
+    persona,
+    mediaSets,
+    themes: themes.map((theme) => ({ id: theme.id, revision: theme.revision, state: theme.state, licenseCurrent: !theme.licenseExpiresAt || theme.licenseExpiresAt > now })),
+  });
+}
 
 export async function saveContentCommand(input: Actor & { id?: string; expectedRevision?: number; title: string; payload: Record<string, unknown> }) {
-  const requested = contentPieceSchema.parse({ ...input.payload, candidateArtifactIds: [], candidates: [], renderProofStatus: "not_requested", generatedText: null, generatedMedia: null });
-  if (!input.id) return createProductRecord({ ...input, kind: "content_piece", state: "active", payload: requested });
+  const draft = contentPieceSchema.parse({ ...input.payload, candidateArtifactIds: [], candidates: [], renderProofStatus: "not_requested", generatedText: null, generatedMedia: null });
+  const activeDefinition = await resolveActiveContentFormatDefinition(draft.format);
+  const requested = contentPieceSchema.parse({ ...draft, formatDefinition: activeDefinition.reference });
+  const validationIssues = await getDb().transaction((tx) => validateContentPayload(tx, input.workspaceId, requested));
+  const state = validationIssues.length ? "draft" : "active";
+  const validated = { ...requested, validationIssues };
+  if (!input.id) return createProductRecord({ ...input, kind: "content_piece", state, payload: validated });
   if (!input.expectedRevision) throw new Error("CONTENT_EXPECTED_REVISION_REQUIRED");
   const id = input.id;
   const [current] = await getDb().select({ payload: workspaceProductRecords.payload }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1);
   if (!current) return null;
   const authoritative = contentPieceSchema.parse(current.payload);
-  return updateProductRecord({ ...input, id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, payload: { ...requested, candidateArtifactIds: authoritative.candidateArtifactIds, candidates: authoritative.candidates, renderProofStatus: authoritative.renderProofStatus, generatedText: authoritative.generatedText, generatedMedia: authoritative.generatedMedia } });
+  return updateProductRecord({ ...input, id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, state, payload: { ...validated, candidateArtifactIds: authoritative.candidateArtifactIds, candidates: authoritative.candidates, renderProofStatus: authoritative.renderProofStatus, generatedText: authoritative.generatedText, generatedMedia: authoritative.generatedMedia } });
 }
 
 function assetEvidence(row: typeof assets.$inferSelect): ContentAssetEvidence {
@@ -38,6 +71,8 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
     const [record] = await tx.select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1);
     if (!record) return null;
     const payload = contentPieceSchema.parse(record.payload);
+    const validationIssues = await validateContentPayload(tx, input.workspaceId, payload, now);
+    if (validationIssues.length) throw new Error(validationIssues[0]);
     const sourceRowsUnordered = payload.sourceAssetIds.length ? await tx.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, payload.sourceAssetIds), isNull(assets.deletedAt))) : [];
     const sourceById = new Map(sourceRowsUnordered.map((row) => [row.id, row]));
     const sourceRows = payload.sourceAssetIds.map((id) => sourceById.get(id)).filter((row): row is typeof assets.$inferSelect => Boolean(row));
