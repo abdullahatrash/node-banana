@@ -1,4 +1,4 @@
-import { CONTENT_FORMATS, type ContentFormat, type ProductRecordKind } from "./definitions"
+import { CONTENT_FORMATS, contentPieceSchema, type ContentFormat, type ProductRecordKind } from "./definitions"
 
 export type DashboardSource = "brand" | "media" | "channels" | "content" | "publishing"
 export type DashboardSourceStatus = "ready" | "missing" | "attention"
@@ -41,6 +41,11 @@ export interface DashboardContentPiece {
   contentLanguage: "ar" | "en"
   renderProofStatus: "not_requested" | "pending" | "passed" | "failed"
   updatedAt: Date
+}
+
+export function isAcceptedDashboardContent(payload: unknown): boolean {
+  const parsed = contentPieceSchema.safeParse(payload)
+  return parsed.success && parsed.data.renderProofStatus === "passed" && parsed.data.candidates.length > 0
 }
 
 export function projectDashboardContentPiece(row: {

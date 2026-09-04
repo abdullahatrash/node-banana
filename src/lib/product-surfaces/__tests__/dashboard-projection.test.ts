@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildDashboardSourceEnvelopes,
   dashboardReviewHref,
+  isAcceptedDashboardContent,
   projectDashboardContentPiece,
 } from "../dashboard-projection"
 
@@ -26,6 +27,11 @@ describe("dashboard projections", () => {
     expect(projectDashboardContentPiece({ ...base, payload: { format: "invented", contentLanguage: "ar", renderProofStatus: "passed" } })).toBeNull()
     expect(projectDashboardContentPiece({ ...base, payload: { format: "slideshow", contentLanguage: "ar", renderProofStatus: "passed" } }))
       .toMatchObject({ format: "slideshow", contentLanguage: "ar", renderProofStatus: "passed" })
+  })
+
+  it("counts only content with a validated passed render proof as accepted", () => {
+    expect(isAcceptedDashboardContent({ format: "slideshow", contentLanguage: "ar", renderProofStatus: "passed", candidates: [] })).toBe(false)
+    expect(isAcceptedDashboardContent({ format: "slideshow", contentLanguage: "ar", renderProofStatus: "passed", candidates: [{ assetId: "asset", intentId: null, operationId: null, contentDigest: `sha256:${"a".repeat(64)}`, createdAt: "2026-01-01T00:00:00.000Z", renderProof: { schema: "content-render-proof/v1", status: "passed", inputAssets: [], output: { assetId: "asset", contentDigest: `sha256:${"b".repeat(64)}`, width: 1080, height: 1920, durationSeconds: 15 }, intentId: null, operationId: null, verifiedAt: "2026-01-01T00:00:00.000Z", digest: `sha256:${"c".repeat(64)}` } }] })).toBe(true)
   })
 
   it("routes each durable review kind to its authoritative surface", () => {

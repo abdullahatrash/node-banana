@@ -17,6 +17,7 @@ export default async function DashboardPage() {
   const activationEntries = Object.entries(model.activation) as Array<[keyof typeof model.activation, boolean]>;
   const completed = activationEntries.filter(([, done]) => done).length;
   const date = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
+  const attentionCount = model.counts.reauth + model.counts.failedPublishing + model.counts.failedGeneration + model.counts.consentAttention + model.counts.pendingApprovals + (model.creditCapacity === "depleted" ? 1 : 0) + (model.metricsStale ? 1 : 0);
 
   return <main className="flex-1 px-5 py-8 sm:px-8 lg:px-12 lg:py-10">
     <div className="mx-auto max-w-7xl space-y-8">
@@ -32,11 +33,13 @@ export default async function DashboardPage() {
         </div>
         <div className="rounded-3xl bg-stone-950 p-6 text-stone-100 sm:p-8"><Sparkles className="size-6 text-amber-300" /><p className="mt-5 text-xs font-semibold uppercase tracking-[.16em] text-amber-300">{t("nextTitle")}</p><h2 className="mt-2 text-2xl font-semibold">{t(`actions.${model.nextAction.key}`)}</h2><p className="mt-3 text-sm leading-6 text-stone-400">{t(`reasons.${model.nextAction.reason}`)}</p><Link className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-amber-300" href={model.nextAction.href}>{t("open")}<ArrowUpRight className="size-4" /></Link></div>
       </section>
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <Metric icon={ImageIcon} label={t("metrics.media")} value={model.counts.media} />
         <Metric icon={Radio} label={t("metrics.channels")} value={model.counts.channels} warning={model.counts.reauth} />
+        <Metric icon={FileText} label={t("metrics.acceptedContent")} value={model.counts.content} />
         <Metric icon={CalendarClock} label={t("metrics.scheduled")} value={model.counts.scheduled} />
-        <Metric icon={AlertTriangle} label={t("metrics.failures")} value={model.counts.failedPublishing + model.counts.failedGeneration} warning={model.counts.failedPublishing + model.counts.failedGeneration} />
+        <Metric icon={Sparkles} label={t("metrics.credits")} value={model.creditCapacity === "unavailable" ? t("metrics.unavailable") : model.counts.availableCredits} warning={model.creditCapacity === "depleted" ? 1 : 0} />
+        <Metric icon={AlertTriangle} label={t("metrics.failures")} value={attentionCount} warning={attentionCount} />
       </section>
       <section className="rounded-3xl border bg-card p-6 sm:p-8">
         <div><h2 className="text-xl font-semibold">{t("sources.title")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("sources.description")}</p></div>
@@ -73,5 +76,5 @@ export default async function DashboardPage() {
   </main>;
 }
 
-function Metric({ icon: Icon, label, value, warning = 0 }: { icon: typeof ImageIcon; label: string; value: number; warning?: number }) { return <div className="rounded-2xl border bg-card p-5"><div className="flex items-center justify-between"><Icon className="size-5 text-muted-foreground" />{warning > 0 && <span className="size-2 rounded-full bg-red-500" />}</div><p className="mt-5 text-3xl font-semibold">{value}</p><p className="mt-1 text-sm text-muted-foreground">{label}</p></div>; }
+function Metric({ icon: Icon, label, value, warning = 0 }: { icon: typeof ImageIcon; label: string; value: number | string; warning?: number }) { return <div className="rounded-2xl border bg-card p-5"><div className="flex items-center justify-between"><Icon className="size-5 text-muted-foreground" />{warning > 0 && <span className="size-2 rounded-full bg-red-500" />}</div><p className="mt-5 text-3xl font-semibold">{value}</p><p className="mt-1 text-sm text-muted-foreground">{label}</p></div>; }
 function Empty({ text, href, action }: { text: string; href: string; action: string }) { return <div className="rounded-xl border border-dashed p-5 text-center"><p className="text-sm text-muted-foreground">{text}</p><Link href={href} className="mt-3 inline-flex text-sm font-semibold text-amber-700">{action}</Link></div>; }
