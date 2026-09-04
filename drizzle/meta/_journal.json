@@ -652,6 +652,13 @@
       "when": 1788579600000,
       "tag": "0092_product_record_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1788583200000,
+      "tag": "0093_merchant_checkout_effects",
+      "breakpoints": true
     }
   ]
 }
