@@ -272,7 +272,7 @@ export const MessageBranchPrevious = ({
       variant="ghost"
       {...props}
     >
-      {children ?? <ChevronLeftIcon size={14} />}
+      {children ?? <ChevronLeftIcon className="rtl:rotate-180" size={14} />}
     </Button>
   );
 };
@@ -296,7 +296,7 @@ export const MessageBranchNext = ({
       variant="ghost"
       {...props}
     >
-      {children ?? <ChevronRightIcon size={14} />}
+      {children ?? <ChevronRightIcon className="rtl:rotate-180" size={14} />}
     </Button>
   );
 };

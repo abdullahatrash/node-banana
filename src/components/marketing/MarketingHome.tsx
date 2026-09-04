@@ -183,7 +183,7 @@ export function MarketingHome({
                 <CalendarDaysIcon className="size-5 text-[#f19b7f]" aria-hidden="true" />
                 <div><p className="text-xs text-white/45">{copy.ui.brandName}</p><p className="font-bold">{copy.ui.calendar30}</p></div>
               </div>
-              <ArrowRightIcon className="mx-auto size-5 rotate-90 text-[#8ba09a] sm:rotate-0" aria-hidden="true" />
+              <ArrowRightIcon className="mx-auto size-5 rotate-90 text-[#8ba09a] sm:rotate-0 sm:rtl:rotate-180" aria-hidden="true" />
               {copy.platforms.names.map((name) => (
                 <div className="flex flex-1 items-center justify-center gap-2.5 rounded-[22px] border border-[#143f38]/8 bg-[#fbf7ef] px-4 py-5 text-sm font-bold text-[#153d37]" key={name}>
                   <span className="size-2 rounded-full bg-[#e75f45]" />{name}
