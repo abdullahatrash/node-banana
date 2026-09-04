@@ -19,13 +19,13 @@ type Piece = { id: string; title: string; revision: number; payload: Record<stri
 type Translator = (key: string, values?: Record<string, string | number>) => string;
 type Progress = "idle" | "generating" | "succeeded" | "cancelled" | "failed";
 
-function draftPayload(data: FormData, format: ContentFormat, definition: ContentFormatDefinition, authoritative?: Record<string, unknown>) {
+export function contentDraftPayload(data: FormData, format: ContentFormat, definition: ContentFormatDefinition, definitionDigest: `sha256:${string}`, authoritative?: Record<string, unknown>) {
   const language = String(data.get("language"));
   const theme = String(data.get("themeRevision") || "");
   const separator = theme.lastIndexOf(":");
   return {
     format,
-    formatDefinition: { id: definition.id, revision: definition.revision },
+    formatDefinition: { id: definition.id, revision: definition.revision, digest: definitionDigest },
     contentLanguage: language,
     arabicVariety: language === "en" ? null : String(data.get("arabicVariety") || "") || null,
     prompt: String(data.get("prompt") || ""), script: String(data.get("script") || ""), speaker: String(data.get("speaker") || ""), scene: String(data.get("scene") || ""),
@@ -38,7 +38,7 @@ function draftPayload(data: FormData, format: ContentFormat, definition: Content
   };
 }
 
-export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options, definition }: { selectedFormat: ContentFormat; selectedPiece: Piece | null; pieces: Piece[]; options: ContentEditorOptions; definition: ContentFormatDefinition }) {
+export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options, definition, definitionDigest }: { selectedFormat: ContentFormat; selectedPiece: Piece | null; pieces: Piece[]; options: ContentEditorOptions; definition: ContentFormatDefinition; definitionDigest: `sha256:${string}` }) {
   const t = useTranslations("product.content") as Translator;
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null); const recordRef = useRef(selectedPiece); const queue = useRef<Promise<unknown>>(Promise.resolve()); const timer = useRef<ReturnType<typeof setTimeout> | null>(null); const controller = useRef<AbortController | null>(null); const retryMode = useRef<"copy" | "media" | null>(null);
@@ -51,7 +51,7 @@ export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options,
 
   async function persist(data: FormData) {
     const current = recordRef.current;
-    const result = await productRequest("/api/product-content", { ...(current ? { id: current.id, expectedRevision: current.revision } : {}), title: String(data.get("title")), payload: draftPayload(data, selectedFormat, definition, current?.payload), idempotencyKey: crypto.randomUUID() });
+    const result = await productRequest("/api/product-content", { ...(current ? { id: current.id, expectedRevision: current.revision } : {}), title: String(data.get("title")), payload: contentDraftPayload(data, selectedFormat, definition, definitionDigest, current?.payload), idempotencyKey: crypto.randomUUID() });
     const record = result.record as Piece | undefined; if (!record?.id || !record.revision) throw new Error("CONTENT_RESPONSE_INVALID"); recordRef.current = record;
     if (!current) router.replace(`/content?format=${encodeURIComponent(selectedFormat)}&piece=${encodeURIComponent(record.id)}`, { scroll: false });
     return record;
