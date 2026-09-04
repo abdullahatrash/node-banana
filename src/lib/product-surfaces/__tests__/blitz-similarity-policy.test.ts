@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { buildBlitzSimilarityGate, validateBlitzSimilarityGate, type BlitzSimilarityMeasurementInput } from "../blitz-similarity-policy";
 
 const digest = (character: string) => `sha256:${character.repeat(64)}` as const;
-const sourceAsset = { id: "source", contentDigest: digest("a") };
-const candidateAsset = { id: "candidate", contentDigest: digest("b") };
+const sourceAsset = { id: "source", contentDigest: digest("a"), mediaType: "video" as const };
+const candidateAsset = { id: "candidate", contentDigest: digest("b"), mediaType: "video" as const };
 const measurements: BlitzSimilarityMeasurementInput[] = [
   { modality: "text", algorithm: "minhash", algorithmVersion: "1", coverage: "compared", similarityBasisPoints: 2_000, sourceFingerprintDigest: digest("c"), candidateFingerprintDigest: digest("d") },
   { modality: "frame", algorithm: "phash-sequence", algorithmVersion: "1", coverage: "compared", similarityBasisPoints: 5_000, sourceFingerprintDigest: digest("e"), candidateFingerprintDigest: digest("f") },
@@ -52,6 +52,34 @@ describe("Blitz similarity gate", () => {
     expect(evidence.measurements.find((measurement) => measurement.modality === modality)).toMatchObject({ coverage, passed: false });
     expect(evidence.status).toBe("blocked");
     expect(validateBlitzSimilarityGate({ evidence, sourceAsset, candidateAsset })).toMatchObject({ ok: false, code: "BLITZ_SIMILARITY_BLOCKED" });
+  });
+
+  it("allows an image remix to pass frame comparison with qualified explicit N/A evidence", () => {
+    const imageSource = { ...sourceAsset, mediaType: "image" as const };
+    const imageMeasurements: BlitzSimilarityMeasurementInput[] = measurements.map((measurement) => measurement.modality === "frame"
+      ? measurement
+      : { ...measurement, coverage: "not_applicable", similarityBasisPoints: null, sourceFingerprintDigest: null, candidateFingerprintDigest: null });
+    const evidence = buildBlitzSimilarityGate({ sourceAsset: imageSource, candidateAsset, measurements: imageMeasurements, evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1", qualificationDigest: digest("9") } });
+    expect(evidence.measurements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ modality: "text", required: false, coverage: "not_applicable", passed: true }),
+      expect.objectContaining({ modality: "frame", required: true, coverage: "compared", passed: true }),
+      expect.objectContaining({ modality: "audio", required: false, coverage: "not_applicable", passed: true }),
+    ]));
+    expect(validateBlitzSimilarityGate({ evidence, sourceAsset: imageSource, candidateAsset })).toEqual({ ok: true });
+  });
+
+  it("requires every applicable modality for video and audio comparisons", () => {
+    const videoEvidence = buildBlitzSimilarityGate({ sourceAsset, candidateAsset, measurements, evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1", qualificationDigest: digest("9") } });
+    expect(videoEvidence.measurements.every((measurement) => measurement.required)).toBe(true);
+
+    const audioSource = { ...sourceAsset, mediaType: "audio" as const };
+    const audioCandidate = { ...candidateAsset, mediaType: "audio" as const };
+    const audioMeasurements: BlitzSimilarityMeasurementInput[] = measurements.map((measurement) => measurement.modality === "audio"
+      ? measurement
+      : { ...measurement, coverage: "not_applicable", similarityBasisPoints: null, sourceFingerprintDigest: null, candidateFingerprintDigest: null });
+    const audioEvidence = buildBlitzSimilarityGate({ sourceAsset: audioSource, candidateAsset: audioCandidate, measurements: audioMeasurements, evaluatedAt: new Date(), evaluator: { kind: "qualified_internal", adapterId: "similarity", adapterVersion: "1", qualificationDigest: digest("9") } });
+    expect(audioEvidence.measurements.find((measurement) => measurement.modality === "audio")).toMatchObject({ required: true, passed: true });
+    expect(validateBlitzSimilarityGate({ evidence: audioEvidence, sourceAsset: audioSource, candidateAsset: audioCandidate })).toEqual({ ok: true });
   });
 
   it("rejects tampered scores even when the status string remains passed", () => {

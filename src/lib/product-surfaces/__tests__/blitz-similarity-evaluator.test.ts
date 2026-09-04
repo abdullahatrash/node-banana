@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BlitzSimilarityEvaluatorError, createConfiguredBlitzSimilarityEvaluator } from "../blitz-similarity-evaluator";
 
 const digest = `sha256:${"a".repeat(64)}` as const;
-const request = { source: { assetId: "source", contentDigest: digest, downloadUrl: "https://signed.test/source" }, candidate: { assetId: "candidate", contentDigest: digest, downloadUrl: "https://signed.test/candidate" } };
+const request = { source: { assetId: "source", contentDigest: digest, mediaType: "video" as const, downloadUrl: "https://signed.test/source" }, candidate: { assetId: "candidate", contentDigest: digest, mediaType: "video" as const, downloadUrl: "https://signed.test/candidate" } };
 
 describe("configured Blitz similarity evaluator", () => {
   it("fails closed when the qualified evaluator is not configured", async () => {

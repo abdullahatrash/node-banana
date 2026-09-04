@@ -3,7 +3,7 @@ import type { BlitzSimilarityMeasurementInput } from "./blitz-similarity-policy"
 
 const measurementSchema = z.object({
   modality: z.enum(["text", "frame", "audio"]),
-  coverage: z.enum(["compared", "source_absent", "candidate_absent", "both_absent"]),
+  coverage: z.enum(["compared", "not_applicable", "source_absent", "candidate_absent", "both_absent"]),
   similarityBasisPoints: z.number().int().min(0).max(10_000).nullable(),
   sourceFingerprintDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(),
   candidateFingerprintDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(),
@@ -13,8 +13,8 @@ const measurementSchema = z.object({
 const responseSchema = z.object({ evaluatorId: z.string().trim().min(1).max(200), evaluatorVersion: z.string().trim().min(1).max(200), measurements: z.array(measurementSchema).length(3) }).strict();
 
 export interface BlitzSimilarityEvaluationRequest {
-  source: { assetId: string; contentDigest: `sha256:${string}`; downloadUrl: string };
-  candidate: { assetId: string; contentDigest: `sha256:${string}`; downloadUrl: string };
+  source: { assetId: string; contentDigest: `sha256:${string}`; mediaType: "image" | "video" | "audio"; downloadUrl: string };
+  candidate: { assetId: string; contentDigest: `sha256:${string}`; mediaType: "image" | "video" | "audio"; downloadUrl: string };
 }
 export interface BlitzSimilarityEvaluator {
   evaluate(input: BlitzSimilarityEvaluationRequest): Promise<{ evaluator: { id: string; version: string; qualificationDigest: `sha256:${string}` }; measurements: BlitzSimilarityMeasurementInput[] }>;
