@@ -1,6 +1,4 @@
 import type { z } from "zod";
-import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import { loadImmutableBrandContext } from "@/lib/model-routing/brand-context";
 import {
   activationArtifactV1Schema,
   brandProfileV1Schema,
@@ -34,17 +32,33 @@ function formatZodIssues(error: z.ZodError): string[] {
 
 const language = (value: string): "ar" | "en" | "mixed" => value.toLowerCase().startsWith("ar") ? "ar" : value.toLowerCase().startsWith("en") ? "en" : "mixed";
 
-function bootstrapProfile(input: BrandProfileGenerationInput): BrandProfileV1 {
+function deterministicDraftProfile(input: BrandProfileGenerationInput, evidence: ReturnType<typeof buildEvidenceCatalog>): BrandProfileV1 {
   const contentLanguage = language(input.contentLanguage);
   const companyName = input.answers.identity?.companyName ?? "Workspace brand";
   const localizedPending = contentLanguage === "ar" ? "هوية العلامة قيد التحليل من الأدلة التي وافق المستخدم على تقديمها." : "Brand identity pending analysis from evidence the user consented to submit.";
+  const categories = input.answers.businessClassification?.categories ?? ["other" as const];
   return {
     schemaVersion: 1, contentLanguage, identity: { companyName, coreIdentity: localizedPending, logoAssetId: input.answers.identity?.logoAssetId ?? null },
-    offering: input.answers.businessClassification?.categories ?? ["brand analysis"], audiences: [{ name: input.answers.role?.role ?? "workspace team", description: localizedPending, weight: 100 }],
+    offering: categories, audiences: [{ name: input.answers.role?.role ?? "workspace team", description: localizedPending, weight: 100 }],
     problems: [], benefits: input.answers.goals?.expectedOutcomes ?? [], differentiators: [], mission: localizedPending, positioning: localizedPending, ownedSpace: localizedPending,
-    businessModel: input.answers.businessClassification?.businessModel ?? "both", categories: input.answers.businessClassification?.categories ?? [],
-    voice: { descriptors: [], do: [], doNot: [] }, prohibitedClaims: [], prohibitedTopics: [], competitors: [], contentAngles: [], uncertainties: [localizedPending], evidence: [], sourceIds: [input.source.id],
+    businessModel: input.answers.businessClassification?.businessModel ?? "both", categories,
+    voice: { descriptors: [contentLanguage === "ar" ? "واضح" : "clear"], do: [], doNot: [] }, prohibitedClaims: [], prohibitedTopics: [], competitors: [], contentAngles: [contentLanguage === "ar" ? "قدّم قيمة العلامة بوضوح" : "Present the brand value clearly"], uncertainties: [localizedPending], evidence: evidence.slice(0, 3).map(({ sourceId, excerptHash }) => ({ sourceId, excerptHash })), sourceIds: [input.source.id],
   };
+}
+
+function deterministicActivationArtifact(brandProfileId: string, profile: BrandProfileV1): ActivationArtifactV1 {
+  const arabic = language(profile.contentLanguage) === "ar";
+  return activationArtifactV1Schema.parse({
+    schemaVersion: 1,
+    contentLanguage: profile.contentLanguage,
+    kind: "social_post",
+    title: profile.contentAngles[0] ?? (arabic ? "فكرة محتوى أولى" : "First content idea"),
+    hook: arabic ? "ابدأ برسالة واضحة تعكس قيمة علامتك." : "Start with a clear message that reflects your brand value.",
+    body: arabic ? "حوّل هذه الفكرة إلى مسودة، ثم راجع الادعاءات والنبرة قبل النشر." : "Turn this idea into a draft, then review its claims and tone before publishing.",
+    rationale: arabic ? "اقتراح محافظ مشتق من ملف العلامة الذي ينتظر موافقة صريحة." : "A conservative suggestion derived from the Brand Profile awaiting explicit approval.",
+    suggestedFormats: [arabic ? "منشور اجتماعي" : "Social post"],
+    brandProfileId,
+  });
 }
 
 async function generateWithOneRepair<T>(input: {
@@ -107,6 +121,13 @@ export class ValidatedBrandProfileGenerator implements BrandProfileGenerator {
       throw new BrandProfileGenerationError("BRAND_PROFILE_GENERATION_FAILED", false);
     }
 
+    if (this.client.requiresAdmission) {
+      // The first Brand Profile cannot truthfully cite a pre-existing accepted
+      // Brand. Create a conservative evidence-linked draft locally; provider
+      // enhancement remains gated on explicit acceptance of an exact revision.
+      return brandProfileV1Schema.parse(deterministicDraftProfile(input, evidence));
+    }
+
     const prompt = buildBrandProfilePrompt({
       contentLanguage: input.contentLanguage,
       sourceLanguage: input.source.sourceLanguage,
@@ -114,15 +135,6 @@ export class ValidatedBrandProfileGenerator implements BrandProfileGenerator {
       evidence,
       answers: input.answers,
     });
-    let admission: StructuredGenerationRequest["admission"];
-    if (this.client.requiresAdmission) {
-      const bootstrap = bootstrapProfile(input);
-      const acceptedAt = input.source.createdAt;
-      const loaded = await loadImmutableBrandContext({ workspaceId: input.source.workspaceId, profileId: `onboarding_${input.source.id}`, revision: input.source.revision, acceptedAt, profile: bootstrap });
-      if (!loaded) throw new BrandProfileGenerationError("ADMITTED_GENERATION_UNAVAILABLE", false);
-      admission = { workspaceId: input.source.workspaceId, userId: input.source.createdByUserId, idempotencyKey: `onboarding:${input.source.id}:brand-profile:v1`, contentLanguage: language(input.contentLanguage), arabicVariety: language(input.contentLanguage) === "en" ? null : "msa", brand: { profileId: loaded.context.profileId, revision: loaded.context.revision, acceptedAt, profileDigest: canonicalDigest({ sourceId: input.source.id, contentHash: input.source.contentHash, answers: input.answers }) as `sha256:${string}`, context: loaded.context, referenceUrls: loaded.referenceUrls } };
-    }
-
     return generateWithOneRepair({
       client: this.client,
       request: {
@@ -132,7 +144,6 @@ export class ValidatedBrandProfileGenerator implements BrandProfileGenerator {
         schemaDescription: "A versioned, evidence-backed brand profile for human review.",
         system: BRAND_PROFILE_SYSTEM_PROMPT,
         prompt,
-        admission,
       },
       schema: brandProfileV1Schema,
       validate: (profile) => {
@@ -161,9 +172,8 @@ export class ValidatedBrandProfileGenerator implements BrandProfileGenerator {
     let admission: StructuredGenerationRequest["admission"];
     if (this.client.requiresAdmission) {
       if (!input.control) throw new BrandProfileGenerationError("ADMITTED_GENERATION_UNAVAILABLE", false);
-      const loaded = await loadImmutableBrandContext({ workspaceId: input.control.workspaceId, profileId: input.brandProfileId, revision: input.control.revision, acceptedAt: input.control.acceptedAt, profile });
-      if (!loaded) throw new BrandProfileGenerationError("ADMITTED_GENERATION_UNAVAILABLE", false);
-      admission = { workspaceId: input.control.workspaceId, userId: input.control.userId, idempotencyKey: input.control.idempotencyKey, contentLanguage: language(profile.contentLanguage), arabicVariety: language(profile.contentLanguage) === "en" ? null : "msa", brand: { profileId: input.brandProfileId, revision: input.control.revision, acceptedAt: input.control.acceptedAt, profileDigest: canonicalDigest(profile) as `sha256:${string}`, context: loaded.context, referenceUrls: loaded.referenceUrls } };
+      if (input.control.status !== "active") return deterministicActivationArtifact(input.brandProfileId, profile);
+      admission = { workspaceId: input.control.workspaceId, userId: input.control.userId, idempotencyKey: input.control.idempotencyKey, contentLanguage: language(profile.contentLanguage), arabicVariety: language(profile.contentLanguage) === "en" ? null : "msa", brand: { profileId: input.brandProfileId, revision: input.control.revision } };
     }
 
     return generateWithOneRepair({

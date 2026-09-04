@@ -222,7 +222,17 @@ describe("ValidatedBrandProfileGenerator", () => {
     expect(client.requests[0].prompt).toContain("Required brandProfileId: profile_1");
   });
 
-  it("pins onboarding profile and activation work to admitted Workspace and Brand context", async () => {
+  it("does not fabricate a Brand reference for the initial evidence-linked draft", async () => {
+    const client = new SequenceClient([]) as SequenceClient & { requiresAdmission: true };
+    client.requiresAdmission = true;
+    const generator = new ValidatedBrandProfileGenerator(client);
+    const profile = await generator.generateProfile({ source, answers, contentLanguage: "ar" });
+    expect(profile.evidence.length).toBeGreaterThan(0);
+    expect(profile.evidence.every((item) => item.sourceId === source.id)).toBe(true);
+    expect(client.requests).toHaveLength(0);
+  });
+
+  it("pins provider-backed activation to an exact accepted Brand reference", async () => {
     const profile = validProfile("ar");
     const artifact = {
       schemaVersion: 1,
@@ -235,19 +245,26 @@ describe("ValidatedBrandProfileGenerator", () => {
       suggestedFormats: ["منشور اجتماعي"],
       brandProfileId: "profile_1",
     } as const;
-    const client = new SequenceClient([profile, artifact]) as SequenceClient & { requiresAdmission: true };
+    const client = new SequenceClient([artifact]) as SequenceClient & { requiresAdmission: true };
     client.requiresAdmission = true;
     const generator = new ValidatedBrandProfileGenerator(client);
 
-    await generator.generateProfile({ source, answers, contentLanguage: "ar" });
     await generator.generateActivationArtifact({
       brandProfileId: "profile_1",
       profile,
-      control: { workspaceId: source.workspaceId, userId: source.createdByUserId, idempotencyKey: "onboarding:profile_1:activation:v1", revision: 2, acceptedAt: source.createdAt },
+      control: { workspaceId: source.workspaceId, userId: source.createdByUserId, idempotencyKey: "onboarding:profile_1:activation:v1", revision: 2, status: "active" },
     });
 
-    expect(client.requests[0].admission).toMatchObject({ workspaceId: source.workspaceId, userId: source.createdByUserId, contentLanguage: "ar", arabicVariety: "msa", brand: { profileId: `onboarding_${source.id}`, revision: 1 } });
-    expect(client.requests[1].admission).toMatchObject({ workspaceId: source.workspaceId, userId: source.createdByUserId, brand: { profileId: "profile_1", revision: 2 } });
+    expect(client.requests).toHaveLength(1);
+    expect(client.requests[0].admission).toEqual({ workspaceId: source.workspaceId, userId: source.createdByUserId, idempotencyKey: "onboarding:profile_1:activation:v1:attempt:1", contentLanguage: "ar", arabicVariety: "msa", brand: { profileId: "profile_1", revision: 2 } });
+  });
+
+  it("keeps draft activation local until the exact Brand revision is accepted", async () => {
+    const client = new SequenceClient([]) as SequenceClient & { requiresAdmission: true };
+    client.requiresAdmission = true;
+    const generator = new ValidatedBrandProfileGenerator(client);
+    await expect(generator.generateActivationArtifact({ brandProfileId: "profile_1", profile: validProfile("en"), control: { workspaceId: source.workspaceId, userId: source.createdByUserId, idempotencyKey: "draft", revision: 2, status: "draft" } })).resolves.toMatchObject({ brandProfileId: "profile_1", contentLanguage: "en" });
+    expect(client.requests).toHaveLength(0);
   });
 
   it("fails closed when the configured model or API key is unavailable", () => {

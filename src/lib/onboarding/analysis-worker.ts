@@ -249,7 +249,7 @@ export class DefaultOnboardingAnalysisWorker {
     const artifact = await this.dependencies.generator().generateActivationArtifact({
       brandProfileId: profile.id,
       profile: profile.profile,
-      control: { workspaceId: input.workspaceId, userId: context.source.createdByUserId, idempotencyKey: `onboarding:${profile.id}:activation:v1`, revision: profile.revision, acceptedAt: profile.createdAt },
+      control: { workspaceId: input.workspaceId, userId: context.source.createdByUserId, idempotencyKey: `onboarding:${profile.id}:activation:v1`, revision: profile.revision, status: "draft" },
     });
     await this.dependencies.repository.createActivationArtifact({
       id: `activation_${input.runId}`,

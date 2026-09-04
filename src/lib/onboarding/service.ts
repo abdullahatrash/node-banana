@@ -446,7 +446,7 @@ export class DefaultOnboardingService {
       const artifact = await this.profileGenerator().generateActivationArtifact({
         brandProfileId: profileId,
         profile: editedProfile,
-        control: { workspaceId, userId: input.userId, idempotencyKey: `onboarding:${profileId}:activation:v1`, revision: profileRevision, acceptedAt: now },
+        control: { workspaceId, userId: input.userId, idempotencyKey: `onboarding:${profileId}:activation:v1`, revision: profileRevision, status: "draft" },
       });
       replacementProfile = {
         id: profileId,

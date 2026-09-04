@@ -5,7 +5,6 @@ import type {
   BrandProfileV1,
   OnboardingAnswersV1,
 } from "../schemas";
-import type { ImmutableBrandContext } from "@/lib/model-routing/types";
 
 export type StructuredGenerationKind = "brand_profile" | "activation_artifact";
 
@@ -25,10 +24,6 @@ export interface StructuredGenerationRequest {
     brand: {
       profileId: string;
       revision: number;
-      acceptedAt: Date;
-      profileDigest: `sha256:${string}`;
-      context: ImmutableBrandContext;
-      referenceUrls: Array<{ assetId: string; url: string }>;
     };
   };
 }
@@ -52,7 +47,7 @@ export interface ActivationArtifactGenerationInput {
     userId: string;
     idempotencyKey: string;
     revision: number;
-    acceptedAt: Date;
+    status: "draft" | "active";
   };
 }
 
