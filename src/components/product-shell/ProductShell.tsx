@@ -69,6 +69,7 @@ import {
 import type { ProductShellContext } from "@/lib/product-shell/server";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ServiceStatusBanner } from "@/components/release-control/ServiceStatusBanner";
+import { GlobalCopilot } from "./GlobalCopilot";
 
 const primaryIcons = {
   dashboard: CircleGaugeIcon,
@@ -313,6 +314,7 @@ export function ProductShell({
         <div id="product-main-content" tabIndex={-1} className="flex min-h-0 flex-1 flex-col">
           <ServiceStatusBanner />
           {children}
+          <GlobalCopilot />
         </div>
       </SidebarInset>
     </SidebarProvider>
