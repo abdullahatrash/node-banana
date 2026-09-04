@@ -8,7 +8,7 @@ export type ProductCopilotBrandPin = {
   digest: `sha256:${string}`
   acceptedAt: Date
   contentLanguage: "ar" | "en" | "mixed"
-  arabicVariety: "msa" | null
+  arabicVariety: "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other" | null
 }
 
 export function projectProductCopilotContext(input: {

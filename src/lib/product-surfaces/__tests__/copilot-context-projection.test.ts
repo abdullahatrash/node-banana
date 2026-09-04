@@ -13,12 +13,17 @@ const dashboard = {
 } satisfies Pick<DashboardReadModel, "nextAction" | "sourceEnvelopes">
 
 describe("product Copilot context projection", () => {
-  it("pins the accepted Brand revision, language policy, exact non-effect capabilities, and evidence freshness", () => {
-    const context = projectProductCopilotContext({ dashboard, generatedAt, brand: { profileId: "brand_1", revision: 4, digest: `sha256:${"a".repeat(64)}`, acceptedAt: new Date("2026-09-02T00:00:00.000Z"), contentLanguage: "ar", arabicVariety: "msa" } })
+  it("pins the accepted Brand revision, authoritative language policy, exact non-effect capabilities, and evidence freshness", () => {
+    const context = projectProductCopilotContext({ dashboard, generatedAt, brand: { profileId: "brand_1", revision: 4, digest: `sha256:${"a".repeat(64)}`, acceptedAt: new Date("2026-09-02T00:00:00.000Z"), contentLanguage: "ar", arabicVariety: null } })
     expect(context.brand).toMatchObject({ profileId: "brand_1", revision: 4 })
-    expect(context.language).toEqual({ contentLanguage: "ar", arabicVariety: "msa", basis: "active_brand_profile" })
+    expect(context.language).toEqual({ contentLanguage: "ar", arabicVariety: null, basis: "active_brand_profile" })
     expect(context.capabilities).toEqual(["explain_workspace_readiness", "navigate_recommended_action"])
     expect(context.evidence.map(({ freshness }) => freshness)).toEqual(["current", "unknown", "stale"])
+  })
+
+  it("preserves a pinned non-MSA variety when an authoritative source provides one", () => {
+    const context = projectProductCopilotContext({ dashboard, generatedAt, brand: { profileId: "brand_1", revision: 4, digest: `sha256:${"a".repeat(64)}`, acceptedAt: new Date("2026-09-02T00:00:00.000Z"), contentLanguage: "ar", arabicVariety: "gulf" } })
+    expect(context.language.arabicVariety).toBe("gulf")
   })
 
   it("states unavailable language and Brand evidence instead of inventing context", () => {

@@ -23,7 +23,9 @@ export async function getProductCopilotContext(workspaceId: string, generatedAt 
     digest: canonicalDigest(row.profile) as `sha256:${string}`,
     acceptedAt: row.acceptedAt,
     contentLanguage,
-    arabicVariety: contentLanguage === "ar" ? "msa" : null,
+    // Brand Profile v1 does not persist an Arabic Variety. Keep it explicitly
+    // unavailable rather than inferring MSA from Arabic content.
+    arabicVariety: null,
   } : null
   return projectProductCopilotContext({ dashboard, brand, generatedAt })
 }
