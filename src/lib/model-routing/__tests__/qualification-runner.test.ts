@@ -34,8 +34,8 @@ function port(overrides: Partial<QualificationExecutionPort> = {}): Qualificatio
   const mediaItem = { contentDigest: `sha256:${"e".repeat(64)}` as const, width: 1080, height: 1920, durationSeconds: null, fps: null };
   return {
     identifyAccount: vi.fn().mockResolvedValue({ provider: "replicate", accountId: "replicate-account", credentialFingerprint: `sha256:${"8".repeat(64)}` }),
-    authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, caseId, account }) => {
-      const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd: 0.1 * billableQuantity, expiresAt: "2026-09-05T00:00:00.000Z", source: "replicate-account-billing" as const };
+    authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, maximumAmountUsd, pricingSourceDigest, caseId, account }) => {
+      const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest, source: "reviewed-pricing-contract" as const };
       return { ...authorization, digest: canonicalDigest(authorization) as `sha256:${string}`, signingKeyId: "spend-key" };
     }),
     inspectSchema: vi.fn().mockResolvedValue({ inputSchemaDigest: `sha256:${"a".repeat(64)}`, inputKeys: ["prompt", "image", "aspect_ratio", "disable_safety_filter"] }),
@@ -47,7 +47,7 @@ function port(overrides: Partial<QualificationExecutionPort> = {}): Qualificatio
     ingest: vi.fn(async ({ caseId }) => ({ kind: "media" as const, receiptId: "artifact-1", contentDigest: `sha256:${"e".repeat(64)}` as const, itemCount: 1, items: [mediaItem], width: 1080, height: 1920, durationSeconds: null, fps: null, observedLanguages: [caseId.startsWith("arabic") ? "ar" as const : "en" as const], languageEvidenceDigest: `sha256:${"f".repeat(64)}` as const })),
     reconcile: vi.fn(async ({ predictionId, version }) => ({ status: predictionId === "prediction-3" ? "aborted" as const : "succeeded" as const, version })),
     observeSpend: vi.fn(async ({ predictionId, model, version, account }) => {
-      const receipt = { schema: "replicate-qualification-spend-receipt/v1" as const, receiptId: `receipt-${predictionId}`, ...account, predictionId, model, version, currency: "USD" as const, amountUsd: 0.01, observedAt: at.toISOString(), source: "replicate-account-billing" as const };
+      const receipt = { schema: "replicate-qualification-spend-receipt/v1" as const, receiptId: `receipt-${predictionId}`, ...account, predictionId, model, version, currency: "USD" as const, amountUsd: 0.01, observedAt: at.toISOString(), source: "replicate-account-billing" as const, providerEvidence: { kind: "replicate_account_usage_export" as const, scope: "exact_prediction_charge" as const, digest: `sha256:${"4".repeat(64)}` as const, observedBy: "operator@example.com", notesDigest: `sha256:${"5".repeat(64)}` as const } };
       return { ...receipt, digest: canonicalDigest(receipt) as `sha256:${string}`, signingKeyId: "spend-key" };
     }),
     ...overrides,
@@ -104,8 +104,8 @@ describe("executable Replicate qualification runner", () => {
   });
 
   it("makes no paid calls when the provider-authorized matrix reaches the hard cap", async () => {
-    const execution = port({ authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, caseId, account }) => {
-      const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd: 0.14 * billableQuantity, expiresAt: "2026-09-05T00:00:00.000Z", source: "replicate-account-billing" as const };
+    const execution = port({ authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, maximumAmountUsd, pricingSourceDigest, caseId, account }) => {
+      const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest, source: "reviewed-pricing-contract" as const };
       return { ...authorization, digest: canonicalDigest(authorization) as `sha256:${string}`, signingKeyId: "spend-key" };
     }) });
     const durable = ledger();
@@ -202,8 +202,8 @@ describe("executable Replicate qualification runner", () => {
       ],
     };
     const execution = port({
-      authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, caseId, account }) => {
-        const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd: 0.01 * billableQuantity, expiresAt: "2026-09-05T00:00:00.000Z", source: "replicate-account-billing" as const };
+      authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, maximumAmountUsd, pricingSourceDigest, caseId, account }) => {
+        const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest, source: "reviewed-pricing-contract" as const };
         return { ...authorization, digest: canonicalDigest(authorization) as `sha256:${string}`, signingKeyId: "spend-key" };
       }),
       inspectSchema: vi.fn().mockResolvedValue({ inputSchemaDigest: `sha256:${"a".repeat(64)}`, inputKeys: ["prompt"] }),

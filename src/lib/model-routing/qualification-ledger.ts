@@ -30,6 +30,13 @@ export type QualificationSpendReceipt = QualificationProviderAccount & {
   amountUsd: number;
   observedAt: string;
   source: "replicate-account-billing";
+  providerEvidence: {
+    kind: "replicate_account_usage_export" | "replicate_invoice" | "replicate_account_screenshot";
+    scope: "exact_prediction_charge";
+    digest: `sha256:${string}`;
+    observedBy: string;
+    notesDigest: `sha256:${string}`;
+  };
   digest: `sha256:${string}`;
   signingKeyId: string;
 };
@@ -43,7 +50,8 @@ export type QualificationSpendAuthorization = QualificationProviderAccount & {
   billableQuantity: number;
   maximumAmountUsd: number;
   expiresAt: string;
-  source: "replicate-account-billing";
+  pricingSourceDigest: `sha256:${string}`;
+  source: "reviewed-pricing-contract";
   digest: `sha256:${string}`;
   signingKeyId: string;
 };

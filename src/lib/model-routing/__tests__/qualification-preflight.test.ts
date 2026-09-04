@@ -2,7 +2,9 @@ import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { inspectReplicateQualificationEnvironment } from "../qualification-preflight";
 
-const publicPem = generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" }).toString();
+const spendPair = generateKeyPairSync("ed25519");
+const publicPem = spendPair.publicKey.export({ type: "spki", format: "pem" }).toString();
+const privatePem = spendPair.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 
 function readyEnvironment(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -15,6 +17,8 @@ function readyEnvironment(overrides: Record<string, string | undefined> = {}) {
     QUALIFICATION_INGESTION_URL: "https://qualification.example/ingestion",
     QUALIFICATION_SPEND_OBSERVER_URL: "https://spend.example/qualification",
     QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON: JSON.stringify({ "spend-key": publicPem }),
+    QUALIFICATION_SPEND_SIGNING_KEY_ID: "spend-key",
+    QUALIFICATION_SPEND_SIGNING_PRIVATE_KEY: privatePem,
     MODEL_QUALIFICATION_PUBLIC_KEYS_JSON: JSON.stringify({ "operator-key": publicPem }),
     ...overrides,
   };
@@ -24,7 +28,7 @@ describe("Replicate qualification environment preflight", () => {
   it("accepts dedicated secrets, safe endpoints, and independent Ed25519 trust maps", () => {
     const result = inspectReplicateQualificationEnvironment(readyEnvironment(), "operator-key");
     expect(result.ready).toBe(true);
-    expect(result.checks).toHaveLength(5);
+    expect(result.checks).toHaveLength(6);
   });
 
   it("rejects reuse of a legacy token without exposing any token value", () => {
@@ -59,5 +63,12 @@ describe("Replicate qualification environment preflight", () => {
     expect(result.ready).toBe(false);
     expect(result.checks.find((item) => item.id === "harness_endpoints")?.detail).toContain("QUALIFICATION_INGESTION_URL");
     expect(result.checks.find((item) => item.id === "qualification_trust")?.detail).toContain("operator-key");
+  });
+
+  it("rejects a spend signing key that does not match its public trust root", () => {
+    const otherPrivate = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const result = inspectReplicateQualificationEnvironment(readyEnvironment({ QUALIFICATION_SPEND_SIGNING_PRIVATE_KEY: otherPrivate }), "operator-key");
+    expect(result.ready).toBe(false);
+    expect(result.checks.find((item) => item.id === "spend_signing_authority")?.status).toBe("blocked");
   });
 });

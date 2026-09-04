@@ -357,3 +357,45 @@ export const modelQualificationArtifactReviews = pgTable("model_qualification_ar
 }, (table) => ({
   valuesCheck: check("model_qualification_artifact_reviews_values_check", sql`${table.decision} in ('accepted','rejected') and length(${table.reviewerId}) between 3 and 200 and ${table.method} in ('automatic_unicode_script','operator_visual_review','operator_playback_review') and cardinality(${table.observedLanguages}) between 1 and 2 and ${table.observedLanguages} <@ array['ar','en']::text[] and ${table.reviewedContentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.languageEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.notesDigest} ~ '^sha256:[a-f0-9]{64}$'`),
 }));
+
+export const modelQualificationSpendAuthorizations = pgTable("model_qualification_spend_authorizations", {
+  authorizationId: text("authorization_id").primaryKey(),
+  runId: text("run_id").notNull(),
+  caseId: text("case_id").notNull(),
+  providerAccountId: text("provider_account_id").notNull(),
+  credentialFingerprint: text("credential_fingerprint").notNull(),
+  model: text("model").notNull(),
+  modelVersion: text("model_version").notNull(),
+  capability: text("capability").notNull(),
+  billableQuantity: numeric("billable_quantity", { precision: 14, scale: 6 }).notNull(),
+  maximumAmountUsd: numeric("maximum_amount_usd", { precision: 14, scale: 6 }).notNull(),
+  pricingSourceDigest: text("pricing_source_digest").notNull(),
+  payloadDigest: text("payload_digest").notNull(),
+  signingKeyId: text("signing_key_id").notNull(),
+  envelope: jsonb("envelope").$type<Record<string, unknown>>().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  runCaseUnique: uniqueIndex("model_qualification_spend_authorizations_run_case_unique").on(table.runId, table.caseId),
+  valuesCheck: check("model_qualification_spend_authorizations_values_check", sql`${table.authorizationId} ~ '^qsa_[a-f0-9]{32}$' and ${table.credentialFingerprint} ~ '^sha256:[a-f0-9]{64}$' and ${table.capability} in ('text_generation','text_to_image','image_to_image','text_to_video','image_to_video','video_to_video') and ${table.billableQuantity}::numeric > 0 and ${table.maximumAmountUsd}::numeric > 0 and ${table.maximumAmountUsd}::numeric < 0.4 and ${table.pricingSourceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.payloadDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.envelope}->'authorization'->>'authorizationId' = ${table.authorizationId} and ${table.envelope}->'authorization'->>'pricingSourceDigest' = ${table.pricingSourceDigest} and ${table.envelope}->'authorization'->>'source' = 'reviewed-pricing-contract' and ${table.envelope}->'authorization'->>'digest' = ${table.payloadDigest} and ${table.envelope}->'signature'->>'keyId' = ${table.signingKeyId} and ${table.expiresAt} > ${table.createdAt}`),
+}));
+
+export const modelQualificationSpendEvidenceImports = pgTable("model_qualification_spend_evidence_imports", {
+  receiptId: text("receipt_id").primaryKey(),
+  runId: text("run_id").notNull(),
+  caseId: text("case_id").notNull(),
+  predictionId: text("prediction_id").notNull(),
+  providerEvidenceKind: text("provider_evidence_kind").notNull(),
+  providerEvidenceDigest: text("provider_evidence_digest").notNull(),
+  payloadDigest: text("payload_digest").notNull(),
+  signingKeyId: text("signing_key_id").notNull(),
+  envelope: jsonb("envelope").$type<Record<string, unknown>>().notNull(),
+  importedBy: text("imported_by").notNull(),
+  providerObservedAt: timestamp("provider_observed_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  caseFk: foreignKey({ name: "model_qualification_spend_evidence_imports_case_fk", columns: [table.runId, table.caseId], foreignColumns: [modelQualificationCases.runId, modelQualificationCases.caseId] }).onDelete("restrict"),
+  predictionUnique: uniqueIndex("model_qualification_spend_evidence_imports_prediction_unique").on(table.predictionId),
+  caseUnique: uniqueIndex("model_qualification_spend_evidence_imports_case_unique").on(table.runId, table.caseId),
+  valuesCheck: check("model_qualification_spend_evidence_imports_values_check", sql`${table.receiptId} ~ '^qsr_[a-f0-9]{32}$' and ${table.providerEvidenceKind} in ('replicate_account_usage_export','replicate_invoice','replicate_account_screenshot') and ${table.providerEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.payloadDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.envelope}->'receipt'->>'receiptId' = ${table.receiptId} and ${table.envelope}->'receipt'->>'predictionId' = ${table.predictionId} and ${table.envelope}->'receipt'->>'source' = 'replicate-account-billing' and ${table.envelope}->'receipt'->'providerEvidence'->>'kind' = ${table.providerEvidenceKind} and ${table.envelope}->'receipt'->'providerEvidence'->>'scope' = 'exact_prediction_charge' and ${table.envelope}->'receipt'->'providerEvidence'->>'digest' = ${table.providerEvidenceDigest} and ${table.envelope}->'receipt'->>'digest' = ${table.payloadDigest} and ${table.envelope}->'signature'->>'keyId' = ${table.signingKeyId} and length(${table.importedBy}) between 3 and 200`),
+}));

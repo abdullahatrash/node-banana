@@ -1,4 +1,4 @@
-import { createPublicKey } from "node:crypto";
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import { z } from "zod";
 import { readConfiguredSecret } from "@/lib/configured-secret";
 
@@ -42,6 +42,23 @@ function validEd25519KeyMap(raw: string | undefined, requiredKeyId?: string) {
   }
 }
 
+function validSpendSigningAuthority(environment: Readonly<Record<string, string | undefined>>) {
+  const keyId = environment.QUALIFICATION_SPEND_SIGNING_KEY_ID?.trim();
+  const privatePem = readConfiguredSecret(environment.QUALIFICATION_SPEND_SIGNING_PRIVATE_KEY)?.replace(/\\n/g, "\n");
+  const trustRaw = environment.QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON?.trim();
+  if (!keyId || !privatePem || !trustRaw) return false;
+  try {
+    const trust = publicKeyMapSchema.parse(JSON.parse(trustRaw));
+    const publicPem = trust[keyId];
+    if (!publicPem) return false;
+    const privateKey = createPrivateKey(privatePem);
+    const publicKey = createPublicKey(publicPem.replace(/\\n/g, "\n"));
+    return privateKey.asymmetricKeyType === "ed25519" && publicKey.asymmetricKeyType === "ed25519" && createPublicKey(privateKey).equals(publicKey);
+  } catch {
+    return false;
+  }
+}
+
 /** Validates operator configuration without making network or provider calls. */
 export function inspectReplicateQualificationEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
@@ -57,6 +74,7 @@ export function inspectReplicateQualificationEnvironment(
   );
   const endpointFailures = endpointKeys.filter((key) => !safeEndpoint(environment[key]));
   const spendTrustIsValid = validEd25519KeyMap(environment.QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON);
+  const spendSigningAuthorityIsValid = validSpendSigningAuthority(environment);
   const qualificationTrustIsValid = validEd25519KeyMap(environment.MODEL_QUALIFICATION_PUBLIC_KEYS_JSON, signingKeyId);
   const harnessToken = readConfiguredSecret(environment.QUALIFICATION_HARNESS_TOKEN);
   const harnessTokenIsStrong = Boolean(harnessToken && harnessToken.length >= 32);
@@ -88,6 +106,13 @@ export function inspectReplicateQualificationEnvironment(
       spendTrustIsValid
         ? "The independent spend-receipt Ed25519 trust map is valid."
         : "Set QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON to a non-empty Ed25519 public-key map.",
+    ),
+    check(
+      "spend_signing_authority",
+      spendSigningAuthorityIsValid,
+      spendSigningAuthorityIsValid
+        ? "The spend service private key matches its independently trusted Ed25519 public key."
+        : "Set QUALIFICATION_SPEND_SIGNING_KEY_ID and QUALIFICATION_SPEND_SIGNING_PRIVATE_KEY to a key pair present in QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON.",
     ),
     check(
       "qualification_trust",

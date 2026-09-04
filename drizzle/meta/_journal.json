@@ -918,6 +918,13 @@
       "when": 1788720000000,
       "tag": "0130_model_qualification_artifact_reviews",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1788723600000,
+      "tag": "0131_model_qualification_spend_evidence",
+      "breakpoints": true
     }
   ]
 }
