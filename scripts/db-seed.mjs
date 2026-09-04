@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { hashPassword } from "better-auth/crypto";
+import { createHash } from "node:crypto";
 
 const databaseUrl =
   process.env.DATABASE_URL ||
@@ -262,6 +263,108 @@ async function ensureUser(client, seedUser) {
         updated_at = NOW()
     `,
     [`onb_seed_${userId}`, userId, workspaceId],
+  );
+
+  // Legacy-complete seed users bypass interactive onboarding. Give an empty
+  // development Workspace one conservative, accepted Brand baseline so local
+  // generation and Brand-revision flows can be exercised without a provider
+  // call. Any existing Brand history wins and is never changed by reseeding.
+  const seedSourceId = `seed_source_${userId}`;
+  const seedProfileId = `seed_brand_${userId}`;
+  const seedActivationId = `seed_activation_${userId}`;
+  const seedBrandDescription = `${seedUser.workspace.name} is an Arabic-first content studio for MENA teams. It helps brands plan, create, review, and publish useful social content while keeping claims accurate and approvals explicit.`;
+  const seedBrandDigest = `sha256:${createHash("sha256").update(seedBrandDescription).digest("hex")}`;
+  const seedBrandProfile = {
+    schemaVersion: 1,
+    contentLanguage: "ar",
+    identity: {
+      companyName: seedUser.workspace.name,
+      coreIdentity: "استوديو محتوى عربي أولاً يساعد فرق منطقة الشرق الأوسط وشمال أفريقيا على التخطيط والإنتاج والمراجعة والنشر بثقة.",
+      logoAssetId: null,
+    },
+    offering: ["تخطيط المحتوى", "إنشاء الصور والفيديو والنصوص", "المراجعة والنشر الاجتماعي"],
+    audiences: [{ name: "فرق التسويق في المنطقة", description: "فرق عربية تحتاج إلى إنتاج محتوى متسق وسريع مع ضوابط واضحة للعلامة.", weight: 100 }],
+    problems: ["بطء إنتاج المحتوى", "تشتت هوية العلامة بين القنوات", "صعوبة تكييف الأفكار للسوق العربي"],
+    benefits: ["سير عمل موحّد", "سياق علامة ثابت", "محتوى مناسب للغة والسوق"],
+    differentiators: ["تجربة عربية واتجاه من اليمين إلى اليسار", "ضوابط حقوق وموافقات قابلة للتتبع"],
+    mission: "تمكين فرق المنطقة من صناعة محتوى أصيل وفعّال بمسؤولية.",
+    positioning: "منصة تشغيل محتوى عربية أولاً للعلامات والفرق التي تنشر عبر قنوات متعددة.",
+    ownedSpace: "تشغيل المحتوى العربي المدعوم بالذكاء الاصطناعي من الفكرة إلى النشر.",
+    businessModel: "b2b",
+    categories: ["saas"],
+    voice: {
+      descriptors: ["واضح", "عملي", "واثق"],
+      do: ["استخدم لغة عربية طبيعية ومباشرة", "اربط كل فكرة بقيمة واضحة للجمهور"],
+      doNot: ["لا تختلق نتائج أو أرقاماً", "لا تقلّد محتوى المصدر حرفياً"],
+    },
+    prohibitedClaims: ["نتائج مضمونة", "أفضل منصة بلا دليل"],
+    prohibitedTopics: [],
+    competitors: [],
+    contentAngles: ["كيف يختصر الفريق وقت التخطيط", "تحويل اتجاه رائج إلى فكرة أصيلة للعلامة", "بناء تقويم محتوى متسق بالعربية"],
+    uncertainties: ["استبدل ملف العلامة التجريبي بتفاصيل العلامة الحقيقية قبل استخدامه في الإنتاج."],
+    evidence: [{ sourceId: seedSourceId, excerptHash: seedBrandDigest }],
+    sourceIds: [seedSourceId],
+  };
+  const seedActivationArtifact = {
+    schemaVersion: 1,
+    contentLanguage: "ar",
+    kind: "content_brief",
+    title: "فكرة محتوى أولى للعلامة التجريبية",
+    hook: "ابدأ بمشكلة يومية يعرفها فريق التسويق، ثم وضّح كيف يصبح سير العمل أبسط.",
+    body: "أنشئ مسودة قصيرة مرتبطة بقيمة حقيقية، وراجع النبرة والادعاءات قبل النشر.",
+    rationale: "اقتراح محافظ مبني على ملف العلامة التجريبي المقبول في بيئة التطوير المحلية.",
+    suggestedFormats: ["فيديو عمودي 9:16", "منشور اجتماعي", "عرض شرائح"],
+    brandProfileId: seedProfileId,
+  };
+
+  await client.query(
+    `
+      INSERT INTO brand_sources (
+        id, workspace_id, revision, kind, submitted_url,
+        submitted_description, cleaned_text, content_hash, source_language,
+        extracted_bytes, fetched_at, created_by_user_id, created_at
+      )
+      SELECT $1, $2, 1, 'description', NULL, $3, $3, $4, 'en', $5, NOW(), $6, NOW()
+      WHERE NOT EXISTS (
+        SELECT 1 FROM brand_profiles WHERE workspace_id = $2
+      )
+      ON CONFLICT (id) DO NOTHING
+    `,
+    [seedSourceId, workspaceId, seedBrandDescription, seedBrandDigest, Buffer.byteLength(seedBrandDescription), userId],
+  );
+
+  await client.query(
+    `
+      INSERT INTO brand_profiles (
+        id, workspace_id, revision, status, schema_version, profile,
+        generated_from_run_id, source_profile_id, accepted_by_user_id,
+        accepted_at, created_at
+      )
+      SELECT $1, $2, 1, 'active', 1, $3::jsonb, NULL, NULL, $4, NOW(), NOW()
+      WHERE EXISTS (
+        SELECT 1 FROM brand_sources WHERE id = $5 AND workspace_id = $2
+      )
+        AND NOT EXISTS (
+          SELECT 1 FROM brand_profiles WHERE workspace_id = $2
+        )
+      ON CONFLICT (id) DO NOTHING
+    `,
+    [seedProfileId, workspaceId, JSON.stringify(seedBrandProfile), userId, seedSourceId],
+  );
+
+  await client.query(
+    `
+      INSERT INTO onboarding_activation_artifacts (
+        id, workspace_id, brand_profile_id, schema_version, artifact, created_at
+      )
+      SELECT $1, $2, $3, 1, $4::jsonb, NOW()
+      WHERE EXISTS (
+        SELECT 1 FROM brand_profiles
+        WHERE id = $3 AND workspace_id = $2 AND status = 'active'
+      )
+      ON CONFLICT (id) DO NOTHING
+    `,
+    [seedActivationId, workspaceId, seedProfileId, JSON.stringify(seedActivationArtifact)],
   );
 
   await client.query(
