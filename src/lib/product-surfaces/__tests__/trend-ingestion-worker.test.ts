@@ -13,6 +13,7 @@ const candidate: TrendIngestionCandidate = {
 const job: ClaimedTrendIngestionJob = {
   workspaceId: "workspace-1", id: "job-1", sourceId: "source-1", sourceKind: "official_api", adapterKey: "official",
   cursor: null, sourceKey: "scheduled:2026-09-04T12:00:00.000Z", leaseOwner: "worker-1", leaseEpoch: 1, attempt: 0, maxAttempts: 5,
+  rankingEvaluatedAt: now,
   rankingContext: { brandProfile: null, preferredRegions: ["GCC"], preferredArabicVarieties: ["gulf"], preferredFormats: ["video_hook_demo"], preferredTags: [], excludedTags: [] },
 };
 
@@ -77,5 +78,15 @@ describe("durable trend ingestion worker", () => {
     expect(result.retried).toBe(1);
     expect(repo.retry).toHaveBeenCalledWith(expect.objectContaining({ errorCode: "TREND_ADAPTER_CURSOR_STALLED" }));
     expect(repo.persistPage).not.toHaveBeenCalled();
+  });
+
+  it("uses the job-pinned evaluation instant so retry timing cannot change its ranking digest", async () => {
+    const evaluatedAt = new Date("2026-09-04T11:30:00.000Z");
+    const pinnedJob = { ...job, rankingEvaluatedAt: evaluatedAt };
+    const repo = repository({ claim: vi.fn().mockResolvedValueOnce(pinnedJob).mockResolvedValue(null) });
+    const adapter = { key: "official", fetch: vi.fn().mockResolvedValue({ items: [candidate], nextCursor: null, hasMore: false }) };
+    await new TrendIngestionWorker(repo, new TrendAdapterRegistry([adapter]), () => now).run({ workerId: "worker-1", limit: 1 });
+
+    expect(repo.persistPage).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ ranking: expect.objectContaining({ evaluatedAt: evaluatedAt.toISOString() }) })] }));
   });
 });

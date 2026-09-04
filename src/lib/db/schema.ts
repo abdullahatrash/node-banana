@@ -9258,7 +9258,6 @@ export const inspirationTrendSources = pgTable(
   },
   (table) => ({
     pk: primaryKey({ name: "inspiration_trend_sources_pk", columns: [table.workspaceId, table.id] }),
-    adapterUnique: uniqueIndex("inspiration_trend_sources_adapter_unique").on(table.workspaceId, table.adapterKey),
     dueIdx: index("inspiration_trend_sources_due_idx").on(table.state, table.nextRunAt, table.workspaceId, table.id),
     valuesCheck: check("inspiration_trend_sources_values_check", sql`${table.state} in ('active','paused') and ${table.sourceKind} in ('official_api','licensed_dataset','public_metadata','embeddable_feed') and ${table.adapterKey} ~ '^[a-z][a-z0-9._-]{1,119}$' and ${table.scheduleMinutes} between 5 and 10080`),
   }),
@@ -9268,7 +9267,7 @@ export const inspirationTrendIngestionJobs = pgTable(
   "inspiration_trend_ingestion_jobs",
   {
     workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), sourceId: text("source_id").notNull(), sourceKey: text("source_key").notNull(), requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
-    state: text("state").notNull(), cursor: text("cursor"), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), leaseEpoch: integer("lease_epoch").default(0).notNull(),
+    state: text("state").notNull(), cursor: text("cursor"), rankingContext: jsonb("ranking_context").$type<import("@/lib/product-surfaces/trend-types").TrendRankingContext>().notNull(), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), leaseEpoch: integer("lease_epoch").default(0).notNull(),
     attempt: integer("attempt").default(0).notNull(), maxAttempts: integer("max_attempts").default(5).notNull(), pageCount: integer("page_count").default(0).notNull(),
     insertedCount: integer("inserted_count").default(0).notNull(), updatedCount: integer("updated_count").default(0).notNull(), replayedCount: integer("replayed_count").default(0).notNull(), restrictedCount: integer("restricted_count").default(0).notNull(),
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(), failureCode: text("failure_code"), requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(), startedAt: timestamp("started_at", { withTimezone: true }), finishedAt: timestamp("finished_at", { withTimezone: true }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
@@ -9297,7 +9296,7 @@ export const inspirationTrendFeedEntries = pgTable(
     sourceItemUnique: uniqueIndex("inspiration_trend_feed_entries_source_item_unique").on(table.workspaceId, table.sourceId, table.externalItemId),
     itemFk: foreignKey({ name: "inspiration_trend_feed_entries_item_fk", columns: [table.workspaceId, table.inspirationItemId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id] }).onDelete("restrict"),
     sourceFk: foreignKey({ name: "inspiration_trend_feed_entries_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [inspirationTrendSources.workspaceId, inspirationTrendSources.id] }).onDelete("restrict"),
-    rankIdx: index("inspiration_trend_feed_entries_rank_idx").on(table.workspaceId, table.score, table.metricsObservedAt, table.inspirationItemId),
+    rankIdx: index("inspiration_trend_feed_entries_rank_idx").on(table.workspaceId, table.score.desc(), table.metricsObservedAt.desc(), table.inspirationItemId),
     filterIdx: index("inspiration_trend_feed_entries_filter_idx").on(table.workspaceId, table.contentLanguage, table.region, table.format, table.rightsStatus),
     valuesCheck: check("inspiration_trend_feed_entries_values_check", sql`${table.score} between 0 and 10000 and ${table.rankingDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.contentLanguage} in ('ar','en') and ${table.rightsStatus} in ('licensed','user_submitted','embeddable','metadata_only','restricted')`),
   }),

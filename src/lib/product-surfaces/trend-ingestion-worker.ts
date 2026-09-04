@@ -16,6 +16,7 @@ export interface ClaimedTrendIngestionJob {
   leaseEpoch: number;
   attempt: number;
   maxAttempts: number;
+  rankingEvaluatedAt: Date;
   rankingContext: TrendRankingContext;
 }
 
@@ -97,7 +98,7 @@ export class TrendIngestionWorker {
         continue;
       }
       try {
-        const ranked = page.data.items.map((candidate) => ({ candidate, ranking: rankTrendCandidate({ candidate, context: job.rankingContext, evaluatedAt: claimedAt }) }));
+        const ranked = page.data.items.map((candidate) => ({ candidate, ranking: rankTrendCandidate({ candidate, context: job.rankingContext, evaluatedAt: job.rankingEvaluatedAt }) }));
         const persistedAt = this.now();
         const persisted = await this.repository.persistPage({ job, items: ranked, at: persistedAt, leaseUntil: this.leaseAfter(persistedAt) });
         summary.ingested += persisted.inserted;

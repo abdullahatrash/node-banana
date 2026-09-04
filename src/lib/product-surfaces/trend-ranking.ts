@@ -57,7 +57,7 @@ export function rankTrendCandidate(input: { candidate: TrendIngestionCandidate; 
   ];
   const unsigned = {
     schema: "inspiration-trend-ranking/v1" as const, score, signals, reasonCodes,
-    brandProfile: context.brandProfile ? { id: context.brandProfile.id, revision: context.brandProfile.revision, digest: context.brandProfile.digest } : null,
+    brandProfile: context.brandProfile ? { id: context.brandProfile.id, revision: context.brandProfile.revision, digest: context.brandProfile.digest as `sha256:${string}` } : null,
     eligibleForDiscovery, eligibleForBlitz, evaluatedAt: evaluatedAt.toISOString(),
   };
   return { ...unsigned, digest: canonicalDigest(unsigned) as `sha256:${string}` };

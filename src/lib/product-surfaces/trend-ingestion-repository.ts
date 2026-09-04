@@ -15,13 +15,13 @@ import { brandProfileV1Schema } from "@/lib/onboarding/schemas";
 import { ARABIC_VARIETIES, CONTENT_FORMATS, inspirationPayloadSchema, type ContentFormat } from "./definitions";
 import { createProductRecordInTransaction, updateProductRecordInTransaction } from "./repository";
 import { TrendAdapterRegistry, TrendIngestionWorker, type ClaimedTrendIngestionJob, type RankedTrendCandidate, type TrendIngestionRepository } from "./trend-ingestion-worker";
-import { TREND_SOURCE_KINDS, type TrendIngestionAdapter, type TrendRankingContext, type TrendSourceKind } from "./trend-types";
+import { TREND_SOURCE_KINDS, trendRankingContextSchema, type TrendIngestionAdapter, type TrendRankingContext, type TrendSourceKind } from "./trend-types";
 
 type Executor = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 const MAX_PAGE_COUNT = 20;
 
-function strings(value: unknown, maximum: number) {
-  return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()))].slice(0, maximum) : [];
+function strings(value: unknown, maximum: number, itemMaximum = 80) {
+  return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0 && item.trim().length <= itemMaximum).map((item) => item.trim()))].slice(0, maximum) : [];
 }
 
 function rankingContext(source: typeof inspirationTrendSources.$inferSelect, brand: typeof brandProfiles.$inferSelect | undefined): TrendRankingContext {
@@ -33,7 +33,7 @@ function rankingContext(source: typeof inspirationTrendSources.$inferSelect, bra
   ] : [];
   const language = profile?.contentLanguage.toLowerCase().startsWith("ar") ? "ar" as const : "en" as const;
   return {
-    brandProfile: brand && profile ? { id: brand.id, revision: brand.revision, digest: canonicalDigest(profile) as `sha256:${string}`, contentLanguage: language, keywords } : null,
+    brandProfile: brand && profile ? { id: brand.id, revision: brand.revision, digest: canonicalDigest(profile) as `sha256:${string}`, contentLanguage: language, keywords: strings(keywords, 200, 500) } : null,
     preferredRegions: strings(source.preferredRegions, 20),
     preferredArabicVarieties: strings(source.preferredArabicVarieties, 5).filter((item): item is (typeof ARABIC_VARIETIES)[number] => ARABIC_VARIETIES.includes(item as (typeof ARABIC_VARIETIES)[number])),
     preferredFormats: strings(source.preferredFormats, CONTENT_FORMATS.length).filter((item): item is ContentFormat => CONTENT_FORMATS.includes(item as ContentFormat)),
@@ -45,9 +45,14 @@ function owned(job: ClaimedTrendIngestionJob) {
   return and(eq(inspirationTrendIngestionJobs.workspaceId, job.workspaceId), eq(inspirationTrendIngestionJobs.id, job.id), eq(inspirationTrendIngestionJobs.state, "claimed"), eq(inspirationTrendIngestionJobs.leaseOwner, job.leaseOwner), eq(inspirationTrendIngestionJobs.leaseEpoch, job.leaseEpoch));
 }
 
-function jobFromRow(row: typeof inspirationTrendIngestionJobs.$inferSelect, source: typeof inspirationTrendSources.$inferSelect, context: TrendRankingContext): ClaimedTrendIngestionJob {
+function jobFromRow(row: typeof inspirationTrendIngestionJobs.$inferSelect, source: typeof inspirationTrendSources.$inferSelect): ClaimedTrendIngestionJob {
   if (!row.leaseOwner) throw new Error("TREND_INGESTION_LEASE_MISSING");
-  return { workspaceId: row.workspaceId, id: row.id, sourceId: row.sourceId, sourceKind: source.sourceKind as TrendSourceKind, adapterKey: source.adapterKey, cursor: row.cursor, sourceKey: row.sourceKey, leaseOwner: row.leaseOwner, leaseEpoch: row.leaseEpoch, attempt: row.attempt, maxAttempts: row.maxAttempts, rankingContext: context };
+  return { workspaceId: row.workspaceId, id: row.id, sourceId: row.sourceId, sourceKind: source.sourceKind as TrendSourceKind, adapterKey: source.adapterKey, cursor: row.cursor, sourceKey: row.sourceKey, leaseOwner: row.leaseOwner, leaseEpoch: row.leaseEpoch, attempt: row.attempt, maxAttempts: row.maxAttempts, rankingEvaluatedAt: row.requestedAt, rankingContext: trendRankingContextSchema.parse(row.rankingContext) };
+}
+
+async function currentRankingContext(executor: Executor, source: typeof inspirationTrendSources.$inferSelect) {
+  const [brand] = await executor.select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, source.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
+  return rankingContext(source, brand);
 }
 
 async function assertRightsReference(executor: Executor, workspaceId: string, item: RankedTrendCandidate, at: Date) {
@@ -90,7 +95,8 @@ export class PostgresTrendIngestionRepository implements TrendIngestionRepositor
       let scheduled = 0;
       for (const source of sources) {
         const sourceKey = `scheduled:${source.nextRunAt.toISOString()}`;
-        const inserted = await tx.insert(inspirationTrendIngestionJobs).values({ workspaceId: source.workspaceId, id: randomUUID(), sourceId: source.id, sourceKey, requestedByUserId: source.createdByUserId, state: "queued", cursor: source.cursor, nextAttemptAt: input.at, requestedAt: input.at, updatedAt: input.at }).onConflictDoNothing().returning({ id: inspirationTrendIngestionJobs.id });
+        const context = await currentRankingContext(tx, source);
+        const inserted = await tx.insert(inspirationTrendIngestionJobs).values({ workspaceId: source.workspaceId, id: randomUUID(), sourceId: source.id, sourceKey, requestedByUserId: source.createdByUserId, state: "queued", cursor: source.cursor, rankingContext: context, nextAttemptAt: input.at, requestedAt: input.at, updatedAt: input.at }).onConflictDoNothing().returning({ id: inspirationTrendIngestionJobs.id });
         if (!inserted.length) continue;
         scheduled += 1;
         await tx.update(inspirationTrendSources).set({ nextRunAt: new Date(Math.max(input.at.getTime(), source.nextRunAt.getTime()) + source.scheduleMinutes * 60_000), updatedAt: input.at }).where(and(eq(inspirationTrendSources.workspaceId, source.workspaceId), eq(inspirationTrendSources.id, source.id)));
@@ -109,8 +115,7 @@ export class PostgresTrendIngestionRepository implements TrendIngestionRepositor
       if (!due) return null;
       const [claimed] = await tx.update(inspirationTrendIngestionJobs).set({ state: "claimed", leaseOwner: input.workerId, leaseExpiresAt: input.leaseUntil, leaseEpoch: sql`${inspirationTrendIngestionJobs.leaseEpoch} + 1`, attempt: sql`${inspirationTrendIngestionJobs.attempt} + 1`, startedAt: due.job.startedAt ?? input.at, failureCode: null, updatedAt: input.at }).where(and(eq(inspirationTrendIngestionJobs.workspaceId, due.job.workspaceId), eq(inspirationTrendIngestionJobs.id, due.job.id), eq(inspirationTrendIngestionJobs.leaseEpoch, due.job.leaseEpoch))).returning();
       if (!claimed) return null;
-      const [brand] = await tx.select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, due.source.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
-      return jobFromRow(claimed, due.source, rankingContext(due.source, brand));
+      return jobFromRow(claimed, due.source);
     });
   }
 
@@ -179,7 +184,8 @@ export async function requestWorkspaceTrendRefresh(input: { workspaceId: string;
     const sources = await tx.select().from(inspirationTrendSources).where(and(eq(inspirationTrendSources.workspaceId, input.workspaceId), eq(inspirationTrendSources.state, "active"))).orderBy(asc(inspirationTrendSources.id)).limit(100);
     let scheduled = 0; let replayed = 0;
     for (const source of sources) {
-      const rows = await tx.insert(inspirationTrendIngestionJobs).values({ workspaceId: input.workspaceId, id: randomUUID(), sourceId: source.id, sourceKey: `manual:${input.idempotencyKey}`, requestedByUserId: input.userId, state: "queued", cursor: source.cursor, nextAttemptAt: at, requestedAt: at, updatedAt: at }).onConflictDoNothing().returning({ id: inspirationTrendIngestionJobs.id });
+      const context = await currentRankingContext(tx, source);
+      const rows = await tx.insert(inspirationTrendIngestionJobs).values({ workspaceId: input.workspaceId, id: randomUUID(), sourceId: source.id, sourceKey: `manual:${input.idempotencyKey}`, requestedByUserId: input.userId, state: "queued", cursor: source.cursor, rankingContext: context, nextAttemptAt: at, requestedAt: at, updatedAt: at }).onConflictDoNothing().returning({ id: inspirationTrendIngestionJobs.id });
       if (rows.length) scheduled += 1; else replayed += 1;
     }
     return { scheduled, replayed };
@@ -187,7 +193,7 @@ export async function requestWorkspaceTrendRefresh(input: { workspaceId: string;
 }
 
 export async function configureTrendSource(input: { workspaceId: string; userId: string; id: string; adapterKey: string; sourceKind: TrendSourceKind; displayName: string; scheduleMinutes: number; preferredRegions?: string[]; preferredArabicVarieties?: string[]; preferredFormats?: string[]; preferredTags?: string[]; excludedTags?: string[]; at?: Date }) {
-  if (!TREND_SOURCE_KINDS.includes(input.sourceKind) || !/^[a-z][a-z0-9._-]{1,119}$/.test(input.adapterKey) || !Number.isInteger(input.scheduleMinutes) || input.scheduleMinutes < 5 || input.scheduleMinutes > 10_080) throw new Error("TREND_SOURCE_INVALID");
+  if (!input.id.trim() || input.id.length > 200 || !input.displayName.trim() || input.displayName.trim().length > 200 || !TREND_SOURCE_KINDS.includes(input.sourceKind) || !/^[a-z][a-z0-9._-]{1,119}$/.test(input.adapterKey) || !Number.isInteger(input.scheduleMinutes) || input.scheduleMinutes < 5 || input.scheduleMinutes > 10_080) throw new Error("TREND_SOURCE_INVALID");
   const at = input.at ?? new Date();
   const values = { workspaceId: input.workspaceId, id: input.id, adapterKey: input.adapterKey, sourceKind: input.sourceKind, displayName: input.displayName.trim(), state: "active", scheduleMinutes: input.scheduleMinutes, nextRunAt: at, cursor: null, preferredRegions: strings(input.preferredRegions, 20), preferredArabicVarieties: strings(input.preferredArabicVarieties, 5), preferredFormats: strings(input.preferredFormats, CONTENT_FORMATS.length), preferredTags: strings(input.preferredTags, 50), excludedTags: strings(input.excludedTags, 50), createdByUserId: input.userId, createdAt: at, updatedAt: at };
   const [row] = await getDb().insert(inspirationTrendSources).values(values).onConflictDoUpdate({ target: [inspirationTrendSources.workspaceId, inspirationTrendSources.id], set: { adapterKey: values.adapterKey, sourceKind: values.sourceKind, displayName: values.displayName, state: values.state, scheduleMinutes: values.scheduleMinutes, preferredRegions: values.preferredRegions, preferredArabicVarieties: values.preferredArabicVarieties, preferredFormats: values.preferredFormats, preferredTags: values.preferredTags, excludedTags: values.excludedTags, updatedAt: at } }).returning();

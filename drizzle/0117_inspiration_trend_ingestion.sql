@@ -30,8 +30,6 @@ CREATE TABLE "inspiration_trend_sources" (
   )
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX "inspiration_trend_sources_adapter_unique" ON "inspiration_trend_sources" ("workspace_id","adapter_key");
---> statement-breakpoint
 CREATE INDEX "inspiration_trend_sources_due_idx" ON "inspiration_trend_sources" ("state","next_run_at","workspace_id","id");
 --> statement-breakpoint
 ALTER TABLE "inspiration_trend_sources" ADD CONSTRAINT "inspiration_trend_sources_workspace_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE RESTRICT;
@@ -46,6 +44,7 @@ CREATE TABLE "inspiration_trend_ingestion_jobs" (
   "requested_by_user_id" text NOT NULL,
   "state" text NOT NULL,
   "cursor" text,
+  "ranking_context" jsonb NOT NULL,
   "lease_owner" text,
   "lease_expires_at" timestamptz,
   "lease_epoch" integer DEFAULT 0 NOT NULL,
@@ -68,6 +67,7 @@ CREATE TABLE "inspiration_trend_ingestion_jobs" (
     "state" IN ('queued','claimed','succeeded','failed_known')
     AND "lease_epoch">=0 AND "attempt">=0 AND "attempt"<="max_attempts" AND "max_attempts" BETWEEN 1 AND 20
     AND "page_count">=0 AND "inserted_count">=0 AND "updated_count">=0 AND "replayed_count">=0 AND "restricted_count">=0
+    AND jsonb_typeof("ranking_context")='object'
   ),
   CONSTRAINT "inspiration_trend_ingestion_jobs_lease_check" CHECK (
     ("state"='claimed' AND "lease_owner" IS NOT NULL AND "lease_expires_at" IS NOT NULL)

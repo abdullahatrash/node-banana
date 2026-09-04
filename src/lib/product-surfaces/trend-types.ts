@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ARABIC_VARIETIES, CONTENT_FORMATS, type ContentFormat } from "./definitions";
+import { ARABIC_VARIETIES, CONTENT_FORMATS } from "./definitions";
 
 export const TREND_SOURCE_KINDS = ["official_api", "licensed_dataset", "public_metadata", "embeddable_feed"] as const;
 export const TREND_RIGHTS_STATUSES = ["licensed", "user_submitted", "embeddable", "metadata_only", "restricted"] as const;
@@ -46,14 +46,16 @@ export type TrendIngestionCandidate = z.infer<typeof trendIngestionCandidateSche
 export type TrendSourceKind = (typeof TREND_SOURCE_KINDS)[number];
 export type TrendRightsStatus = (typeof TREND_RIGHTS_STATUSES)[number];
 
-export interface TrendRankingContext {
-  brandProfile: { id: string; revision: number; digest: `sha256:${string}`; contentLanguage: "ar" | "en"; keywords: string[] } | null;
-  preferredRegions: string[];
-  preferredArabicVarieties: Array<(typeof ARABIC_VARIETIES)[number]>;
-  preferredFormats: ContentFormat[];
-  preferredTags: string[];
-  excludedTags: string[];
-}
+export const trendRankingContextSchema = z.object({
+  brandProfile: z.object({ id, revision: z.number().int().positive(), digest, contentLanguage: z.enum(["ar", "en"]), keywords: z.array(z.string().max(500)).max(200) }).strict().nullable(),
+  preferredRegions: z.array(z.string().max(80)).max(20),
+  preferredArabicVarieties: z.array(z.enum(ARABIC_VARIETIES)).max(5),
+  preferredFormats: z.array(z.enum(CONTENT_FORMATS)).max(CONTENT_FORMATS.length),
+  preferredTags: z.array(z.string().max(80)).max(50),
+  excludedTags: z.array(z.string().max(80)).max(50),
+}).strict();
+
+export type TrendRankingContext = z.infer<typeof trendRankingContextSchema>;
 
 export interface TrendRankingEvidence {
   schema: "inspiration-trend-ranking/v1";
