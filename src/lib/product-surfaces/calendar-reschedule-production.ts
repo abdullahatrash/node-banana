@@ -9,6 +9,8 @@ import { PRODUCTION_PUBLISHING_PLAN_SERVICE } from "@/lib/agent-runtime/publishi
 import type { PublishingDeliveryCancellationDto } from "@/lib/agent-runtime/publishing-deliveries/types";
 import type { PublishingPlanRevisionDto } from "@/lib/agent-runtime/publishing-plans/types";
 import { CalendarRescheduleService, type CalendarReschedulePorts } from "./calendar-reschedule";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { CalendarRescheduleCommandRepository } from "./calendar-reschedule-repository";
 
 function capabilityResult<T>(response: Awaited<ReturnType<typeof dispatchCapability>>): T {
   if (response.type === "capability_error") {
@@ -24,6 +26,10 @@ export function productionCalendarRescheduleService(input: {
   role: "owner" | "admin" | "member";
   authContextId: string;
 }): CalendarRescheduleService {
+  const servicePrincipalId = process.env.CALENDAR_RESCHEDULE_AGENT_PRINCIPAL_ID;
+  const serviceKeyId = process.env.CALENDAR_RESCHEDULE_AGENT_KEY_ID;
+  if (!servicePrincipalId || !serviceKeyId) throw new Error("CALENDAR_RESCHEDULE_SERVICE_ACTOR_UNAVAILABLE");
+  const receipts = new CalendarRescheduleCommandRepository({ principalId: servicePrincipalId, keyId: serviceKeyId });
   const ports: CalendarReschedulePorts = {
     async loadSource(sourceInput) {
       const approval = await PRODUCTION_PUBLISHING_APPROVAL_REPOSITORY.getRequest({ workspaceId: sourceInput.workspaceId, approvalRequestId: sourceInput.approvalRequestId });
@@ -57,10 +63,22 @@ export function productionCalendarRescheduleService(input: {
       return capabilityResult<PublishingPlanRevisionDto>(await dispatchCapability({
         capability: "publishing_plan_revisions.create@1",
         input: { idempotencyKey: createInput.idempotencyKey, expectedRevision: createInput.expectedRevision, draft: createInput.draft },
-      }, { securityContext: { kind: "agent", workspaceId: createInput.workspaceId, principalId: createInput.principalId, keyId: createInput.keyId } }));
+      }, { securityContext: { kind: "agent", workspaceId: createInput.workspaceId, principalId: servicePrincipalId, keyId: serviceKeyId } }));
     },
+    beginCommand: (commandInput) => receipts.begin(commandInput),
+    completeCommand: (commandInput) => receipts.complete(commandInput),
   };
   return new CalendarRescheduleService(ports);
+}
+
+export function calendarRescheduleInitiator(input: { userId: string; authContextId: string }) {
+  const contextDigest = canonicalDigest({ authContextId: input.authContextId }).slice(7);
+  return {
+    userId: input.userId,
+    principalId: `human:${input.userId}`,
+    keyId: `human-session:${contextDigest}`,
+    authorizationEvidenceRef: `studio-auth:${contextDigest}`,
+  };
 }
 
 export const CALENDAR_CANCELLATION_CONTRACT_DIGEST = publishingDeliveryCancelAuthorizationContractDigest();

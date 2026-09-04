@@ -20,10 +20,11 @@ import {
 } from "@/store/socialCalendarStore"
 import { useDirectionStore } from "@/store/directionStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
-import { rescheduleSocialPost, type SocialPost } from "@/lib/social/client"
+import { type SocialPost } from "@/lib/social/client"
 import { useToast } from "@/components/Toast"
 import { CalendarPostCard, POST_DND_TYPE } from "./CalendarPostCard"
 import type { SocialPlatform } from "@/lib/db/schema"
+import { canonicalCalendarReschedule } from "./canonical-reschedule"
 
 const WEEK_DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const
 const MAX_VISIBLE_POSTS = 3
@@ -66,7 +67,7 @@ function CalendarMonthDayCell({
   const setViewMode = useSocialCalendarStore((s) => s.setViewMode)
   const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
   const restorePosts = useSocialCalendarStore((s) => s.restorePosts)
-  const replacePost = useSocialCalendarStore((s) => s.replacePost)
+  const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
 
   const [{ isOver, canDrop }, dropRef] = useDrop(() => ({
     accept: POST_DND_TYPE,
@@ -96,9 +97,11 @@ function CalendarMonthDayCell({
       const previousPosts = applyOptimisticReschedule(item.postId, scheduledAt)
 
       try {
-        const updatedPost = await rescheduleSocialPost(item.postId, scheduledAt)
-        replacePost(updatedPost)
-        showToast(t("toast.rescheduled"), "success")
+        const result = await canonicalCalendarReschedule({ postId: item.postId, scheduledAt, confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")) })
+        if (previousPosts) restorePosts(previousPosts)
+        await fetchPosts()
+        if (result.kind === "cancellation_not_guaranteed") showToast(t("errors.cancellationNotGuaranteed"), "warning")
+        else showToast(t("toast.approvalRequired"), "success")
       } catch (error) {
         if (previousPosts) restorePosts(previousPosts)
         showToast(
@@ -111,7 +114,7 @@ function CalendarMonthDayCell({
       isOver: monitor.isOver(),
       canDrop: monitor.canDrop(),
     }),
-  }), [applyOptimisticReschedule, day, replacePost, restorePosts, showToast, t])
+  }), [applyOptimisticReschedule, day, fetchPosts, restorePosts, showToast, t])
 
   const visiblePosts = posts.slice(0, MAX_VISIBLE_POSTS)
   const hiddenCount = Math.max(0, posts.length - visiblePosts.length)

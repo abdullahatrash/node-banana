@@ -22,10 +22,10 @@ import {
   createSocialPost,
   deleteSocialPost,
   publishSocialPostNow,
-  rescheduleSocialPost,
   retrySocialPost,
   type SocialPost,
 } from "@/lib/social/client"
+import { canonicalCalendarReschedule } from "./canonical-reschedule"
 import { POST_STATUS_CONFIG } from "@/lib/social/constants"
 import { useToast } from "@/components/Toast"
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
@@ -236,11 +236,13 @@ export function CalendarPostDetailsPopover({
             disabled={isActing || !rescheduleValue}
             onClick={() =>
               runAction(async () => {
-                await rescheduleSocialPost(
-                  post.id,
-                  new Date(rescheduleValue).toISOString(),
-                )
-                showToast(t("toast.rescheduled"), "success")
+                const result = await canonicalCalendarReschedule({
+                  postId: post.id,
+                  scheduledAt: new Date(rescheduleValue).toISOString(),
+                  confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")),
+                })
+                if (result.kind === "cancellation_not_guaranteed") showToast(t("errors.cancellationNotGuaranteed"), "warning")
+                else showToast(t("toast.approvalRequired"), "success")
                 setShowReschedule(false)
               })
             }

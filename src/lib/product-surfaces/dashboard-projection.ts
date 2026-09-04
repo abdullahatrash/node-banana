@@ -1,4 +1,5 @@
 import { CONTENT_FORMATS, contentPieceSchema, type ContentFormat, type ProductRecordKind } from "./definitions"
+import { canonicalDigest } from "@/lib/agent-tools/canonical"
 
 export type DashboardSource = "brand" | "media" | "channels" | "content" | "publishing"
 export type DashboardSourceStatus = "ready" | "missing" | "attention"
@@ -43,9 +44,59 @@ export interface DashboardContentPiece {
   updatedAt: Date
 }
 
-export function isAcceptedDashboardContent(payload: unknown): boolean {
+export interface DashboardContentRevisionSnapshot {
+  workspaceId: string
+  id: string
+  title: string
+  revision: number
+  state: string
+  payload: Record<string, unknown>
+}
+
+export interface DashboardContentAcceptanceProjection {
+  workspaceId: string
+  status: string
+  body: Record<string, unknown>
+}
+
+export function dashboardContentRevisionDigest(
+  revision: DashboardContentRevisionSnapshot,
+): `sha256:${string}` {
+  return canonicalDigest({
+    schema: "content-piece-revision/v1",
+    workspaceId: revision.workspaceId,
+    contentPieceId: revision.id,
+    revision: revision.revision,
+    title: revision.title,
+    state: revision.state,
+    payload: revision.payload,
+  }) as `sha256:${string}`
+}
+
+export function hasQualifiedDashboardRenderProof(payload: unknown): boolean {
   const parsed = contentPieceSchema.safeParse(payload)
   return parsed.success && parsed.data.renderProofStatus === "passed" && parsed.data.candidates.some((candidate) => candidate.renderProof.schema === "content-render-proof/v2" && candidate.renderProof.status === "passed")
+}
+
+export function isAcceptedDashboardContent(
+  revision: DashboardContentRevisionSnapshot,
+  acceptances: readonly DashboardContentAcceptanceProjection[],
+): boolean {
+  if (!hasQualifiedDashboardRenderProof(revision.payload)) return false
+  const revisionDigest = dashboardContentRevisionDigest(revision)
+  return acceptances.some((acceptance) => {
+    const progress = acceptance.body.progress
+    return acceptance.workspaceId === revision.workspaceId
+      && acceptance.status === "accepted"
+      && acceptance.body.purpose === "content_acceptance"
+      && acceptance.body.resourceKind === "content_piece_revision"
+      && acceptance.body.resourceId === revision.id
+      && acceptance.body.revisionDigest === revisionDigest
+      && typeof progress === "object"
+      && progress !== null
+      && !Array.isArray(progress)
+      && (progress as Record<string, unknown>).status === "accepted"
+  })
 }
 
 export function projectDashboardContentPiece(row: {
@@ -59,7 +110,7 @@ export function projectDashboardContentPiece(row: {
   if (typeof format !== "string" || !CONTENT_FORMATS.includes(format as ContentFormat)) return null
   if (contentLanguage !== "ar" && contentLanguage !== "en" && contentLanguage !== "mixed") return null
   if (renderProofStatus !== "not_requested" && renderProofStatus !== "pending" && renderProofStatus !== "passed" && renderProofStatus !== "failed") return null
-  const qualified = isAcceptedDashboardContent(row.payload)
+  const qualified = hasQualifiedDashboardRenderProof(row.payload)
   return { ...row, format: format as ContentFormat, contentLanguage, renderProofStatus: renderProofStatus === "passed" && !qualified ? "failed" : renderProofStatus }
 }
 

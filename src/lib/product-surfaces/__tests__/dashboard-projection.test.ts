@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest"
 import {
   buildDashboardSourceEnvelopes,
   dashboardReviewHref,
+  dashboardContentRevisionDigest,
+  hasQualifiedDashboardRenderProof,
   isAcceptedDashboardContent,
   projectDashboardContentPiece,
 } from "../dashboard-projection"
@@ -29,13 +31,21 @@ describe("dashboard projections", () => {
       .toMatchObject({ format: "slideshow", contentLanguage: "ar", renderProofStatus: "failed" })
   })
 
-  it("counts only content with a validated passed render proof as accepted", () => {
-    expect(isAcceptedDashboardContent({ format: "slideshow", contentLanguage: "ar", renderProofStatus: "passed", candidates: [] })).toBe(false)
+  it("requires both an exact accepted Content Piece Revision and a qualified v2 Render Proof", () => {
+    expect(hasQualifiedDashboardRenderProof({ format: "slideshow", contentLanguage: "ar", renderProofStatus: "passed", candidates: [] })).toBe(false)
     const legacy = { assetId: "asset", intentId: null, operationId: null, contentDigest: `sha256:${"a".repeat(64)}`, createdAt: "2026-01-01T00:00:00.000Z", renderProof: { schema: "content-render-proof/v1", status: "passed", inputAssets: [], output: { assetId: "asset", contentDigest: `sha256:${"b".repeat(64)}`, width: 1080, height: 1920, durationSeconds: 15 }, intentId: null, operationId: null, verifiedAt: "2026-01-01T00:00:00.000Z", digest: `sha256:${"c".repeat(64)}` } }
-    expect(isAcceptedDashboardContent({ format: "slideshow", contentLanguage: "ar", renderProofStatus: "passed", candidates: [legacy] })).toBe(false)
+    expect(hasQualifiedDashboardRenderProof({ format: "slideshow", contentLanguage: "ar", renderProofStatus: "passed", candidates: [legacy] })).toBe(false)
     const digest = `sha256:${"d".repeat(64)}`
     const qualified = { ...legacy, renderProof: { schema: "content-render-proof/v2", status: "passed", formatDefinition: { id: "content-format:slideshow", revision: 1, digest }, inputAssets: [], output: { assetId: "asset", contentDigest: digest, width: 1080, height: 1920, durationSeconds: 15 }, checks: { fonts: { status: "passed", fontManifestDigest: digest, missingGlyphCount: 0 }, bidi: { status: "passed", paragraphCount: 1, visualOrderDigest: digest }, captions: { status: "passed", cueCount: 1, overflowCount: 0, cueLayoutDigest: digest }, timing: { status: "passed", firstFrameMs: 0, lastFrameMs: 15000, audioSyncMaxDriftMs: 0, timelineDigest: digest }, safeAreas: { status: "passed", violationCount: 0, layoutDigest: digest, preset: "short-form-v1" } }, intentId: "intent", operationId: "operation", verifier: { kind: "qualified_internal", adapterId: "verifier", adapterVersion: "1", qualificationDigest: digest }, reportDigest: digest, verifiedAt: "2026-01-01T00:00:00.000Z", digest } }
-    expect(isAcceptedDashboardContent({ format: "slideshow", formatDefinition: { id: "content-format:slideshow", revision: 1, digest }, contentLanguage: "ar", renderProofStatus: "passed", candidates: [qualified] })).toBe(true)
+    const revision = { workspaceId: "workspace-a", id: "content-a", title: "Launch", revision: 2, state: "active", payload: { format: "slideshow", formatDefinition: { id: "content-format:slideshow", revision: 1, digest }, contentLanguage: "ar", renderProofStatus: "passed", candidates: [qualified] } }
+    const revisionDigest = dashboardContentRevisionDigest(revision)
+    expect(hasQualifiedDashboardRenderProof(revision.payload)).toBe(true)
+    expect(isAcceptedDashboardContent(revision, [])).toBe(false)
+    expect(isAcceptedDashboardContent(revision, [{ workspaceId: "workspace-a", status: "accepted", body: { purpose: "content_acceptance", resourceKind: "content_piece_revision", resourceId: "content-a", revisionDigest, progress: { status: "accepted" } } }])).toBe(true)
+    expect(isAcceptedDashboardContent(revision, [{ workspaceId: "workspace-b", status: "accepted", body: { purpose: "content_acceptance", resourceKind: "content_piece_revision", resourceId: "content-a", revisionDigest, progress: { status: "accepted" } } }])).toBe(false)
+    expect(isAcceptedDashboardContent(revision, [{ workspaceId: "workspace-a", status: "accepted", body: { purpose: "content_acceptance", resourceKind: "content_piece_revision", resourceId: "content-a", revisionDigest: `sha256:${"e".repeat(64)}`, progress: { status: "accepted" } } }])).toBe(false)
+    expect(isAcceptedDashboardContent(revision, [{ workspaceId: "workspace-a", status: "accepted", body: { purpose: "content_acceptance", resourceKind: "content_piece_revision", resourceId: "content-a", revisionDigest, progress: { status: "rejected" } } }])).toBe(false)
+    expect(isAcceptedDashboardContent({ ...revision, revision: 3 }, [{ workspaceId: "workspace-a", status: "accepted", body: { purpose: "content_acceptance", resourceKind: "content_piece_revision", resourceId: "content-a", revisionDigest, progress: { status: "accepted" } } }])).toBe(false)
   })
 
   it("routes each durable review kind to its authoritative surface", () => {

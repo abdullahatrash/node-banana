@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { isPast } from "date-fns"
 import { POST_DND_TYPE, CalendarPostCard } from "./CalendarPostCard"
-import { rescheduleSocialPost } from "@/lib/social/client"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useToast } from "@/components/Toast"
 import type { SocialPost } from "@/lib/social/client"
+import { canonicalCalendarReschedule } from "./canonical-reschedule"
 
 interface CalendarColumnProps {
   date: Date
@@ -37,7 +37,7 @@ export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumn
   const { show: showToast } = useToast()
   const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
   const restorePosts = useSocialCalendarStore((s) => s.restorePosts)
-  const replacePost = useSocialCalendarStore((s) => s.replacePost)
+  const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
 
   const slotTime = new Date(date)
   slotTime.setHours(hour, minute, 0, 0)
@@ -58,9 +58,11 @@ export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumn
       const previousPosts = applyOptimisticReschedule(item.postId, scheduledAt)
 
       try {
-        const updatedPost = await rescheduleSocialPost(item.postId, scheduledAt)
-        replacePost(updatedPost)
-        showToast(t("toast.rescheduled"), "success")
+        const result = await canonicalCalendarReschedule({ postId: item.postId, scheduledAt, confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")) })
+        if (previousPosts) restorePosts(previousPosts)
+        await fetchPosts()
+        if (result.kind === "cancellation_not_guaranteed") showToast(t("errors.cancellationNotGuaranteed"), "warning")
+        else showToast(t("toast.approvalRequired"), "success")
       } catch (error) {
         if (previousPosts) restorePosts(previousPosts)
         showToast(

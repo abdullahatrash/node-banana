@@ -15,12 +15,14 @@ import {
   socialAccounts,
   socialPosts,
   workspaceProductRecords,
+  workspaceGovernanceResources,
 } from "@/lib/db/schema";
 import type { ProductRecordKind } from "./definitions";
 import {
   buildDashboardSourceEnvelopes,
   dashboardReviewHref,
   isDashboardReviewKind,
+  isAcceptedDashboardContent,
   projectDashboardContentPiece,
   type DashboardContentPiece,
   type DashboardReviewKind,
@@ -47,18 +49,19 @@ export async function getDashboardReadModel(workspaceId: string): Promise<Dashbo
   const db = getDb();
   const now = new Date();
   const consentAttentionEndsAt = new Date(now.getTime() + 7 * 86_400_000);
-  const [brandRows, mediaCountRows, channelRows, contentRows, blitzRows, postStatusRows, failedGenerationRows, expiredPersonaRows, expiringConsentRows, creditRows, analyticsSourceRows, latestAnalyticsRows, recentAssets, upcomingPosts, pendingApprovalCountRows, pendingApprovalRows, pendingReviewRows, recentContentRows] = await Promise.all([
+  const [brandRows, mediaCountRows, channelRows, acceptedContentRequests, blitzRows, postStatusRows, failedGenerationRows, expiredPersonaRows, expiringConsentRows, creditRows, analyticsSourceRows, latestAnalyticsRows, recentAssets, upcomingPosts, pendingApprovalCountRows, pendingApprovalRows, pendingReviewRows, recentContentRows] = await Promise.all([
     db.select({ createdAt: brandProfiles.createdAt }).from(brandProfiles).where(and(eq(brandProfiles.workspaceId, workspaceId), eq(brandProfiles.status, "active"))).limit(1),
     db.select({ value: count() }).from(assets).where(and(eq(assets.workspaceId, workspaceId), isNull(assets.deletedAt))),
     db.select({ requiresReauth: socialAccounts.requiresReauth, updatedAt: socialAccounts.updatedAt }).from(socialAccounts).where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.disabled, false))),
-    db.select({ value: count() }).from(workspaceProductRecords).where(and(
-      eq(workspaceProductRecords.workspaceId, workspaceId),
-      eq(workspaceProductRecords.kind, "content_piece"),
-      eq(workspaceProductRecords.state, "active"),
-      isNull(workspaceProductRecords.archivedAt),
-      sql`${workspaceProductRecords.payload}->>'renderProofStatus' = 'passed'`,
-      sql`jsonb_path_exists(${workspaceProductRecords.payload}->'candidates', '$[*] ? (@.renderProof.schema == "content-render-proof/v2" && @.renderProof.status == "passed")')`,
-    )),
+    db.select({ workspaceId: workspaceGovernanceResources.workspaceId, status: workspaceGovernanceResources.status, body: workspaceGovernanceResources.body })
+      .from(workspaceGovernanceResources)
+      .where(and(
+        eq(workspaceGovernanceResources.workspaceId, workspaceId),
+        eq(workspaceGovernanceResources.kind, "approval_request"),
+        eq(workspaceGovernanceResources.status, "accepted"),
+        sql`${workspaceGovernanceResources.body}->>'purpose' = 'content_acceptance'`,
+        sql`${workspaceGovernanceResources.body}->>'resourceKind' = 'content_piece_revision'`,
+      )),
     db.select({ value: count() }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, workspaceId), eq(workspaceProductRecords.kind, "blitz_item"), eq(workspaceProductRecords.state, "queued"), isNull(workspaceProductRecords.archivedAt))),
     db.select({ status: socialPosts.status, value: count() }).from(socialPosts).where(eq(socialPosts.workspaceId, workspaceId)).groupBy(socialPosts.status),
     db.select({ value: count() }).from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, workspaceId), eq(runtimeOperations.kind, "generation"), inArray(runtimeOperations.state, ["failed_known", "outcome_unknown"]))),
@@ -96,6 +99,19 @@ export async function getDashboardReadModel(workspaceId: string): Promise<Dashbo
       .where(and(eq(workspaceProductRecords.workspaceId, workspaceId), eq(workspaceProductRecords.kind, "content_piece"), isNull(workspaceProductRecords.archivedAt)))
       .orderBy(desc(workspaceProductRecords.updatedAt)).limit(6),
   ]);
+  const acceptedContentIds = [...new Set(acceptedContentRequests.map((request) => request.body.resourceId).filter((id): id is string => typeof id === "string" && id.length > 0))];
+  const acceptedContentRows = acceptedContentIds.length
+    ? await db.select({ workspaceId: workspaceProductRecords.workspaceId, id: workspaceProductRecords.id, title: workspaceProductRecords.title, revision: workspaceProductRecords.revision, state: workspaceProductRecords.state, payload: workspaceProductRecords.payload, updatedAt: workspaceProductRecords.updatedAt })
+      .from(workspaceProductRecords)
+      .where(and(
+        eq(workspaceProductRecords.workspaceId, workspaceId),
+        eq(workspaceProductRecords.kind, "content_piece"),
+        eq(workspaceProductRecords.state, "active"),
+        isNull(workspaceProductRecords.archivedAt),
+        inArray(workspaceProductRecords.id, acceptedContentIds),
+      ))
+    : [];
+  const acceptedContent = acceptedContentRows.filter((row) => isAcceptedDashboardContent(row, acceptedContentRequests));
   const byStatus = Object.fromEntries(postStatusRows.map((row) => [row.status, row.value]));
   const availableCredits = Number(creditRows[0]?.availableUnits ?? 0);
   const creditCapacity = !creditRows[0]?.bucketCount ? "unavailable" : availableCredits > 0 ? "available" : "depleted";
@@ -104,7 +120,7 @@ export async function getDashboardReadModel(workspaceId: string): Promise<Dashbo
     media: mediaCountRows[0]?.value ?? 0,
     channels: channelRows.length,
     reauth: channelRows.filter((row) => row.requiresReauth).length,
-    content: contentRows[0]?.value ?? 0,
+    content: acceptedContent.length,
     queuedBlitz: blitzRows[0]?.value ?? 0,
     scheduled: (byStatus.queued ?? 0) + (byStatus.publishing ?? 0),
     failedPublishing: byStatus.failed ?? 0,
@@ -123,7 +139,7 @@ export async function getDashboardReadModel(workspaceId: string): Promise<Dashbo
     brand: { active: hasActiveBrand, updatedAt: brandRows[0]?.createdAt ?? null },
     media: { count: counts.media, updatedAt: recentAssets[0]?.createdAt ?? null },
     channels: { count: counts.channels, reauth: counts.reauth, updatedAt: channelRows.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null) },
-    content: { count: counts.content, updatedAt: recentContentPieces[0]?.updatedAt ?? null },
+    content: { count: counts.content, updatedAt: acceptedContent.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null) },
     publishing: { scheduled: counts.scheduled, failures: counts.failedPublishing, updatedAt: upcomingPosts.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null) },
   });
   return {

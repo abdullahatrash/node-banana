@@ -14,12 +14,29 @@ export interface CalendarReschedulePorts {
   cancelDelivery(input: { workspaceId: string; userId: string; deliveryId: string; channelIds: string[]; artifactIds: string[] }): Promise<PublishingDeliveryCancellationDto>;
   createPlanRevision(input: {
     workspaceId: string;
-    principalId: string;
-    keyId: string;
     draft: PublishingPlanDraft;
     expectedRevision: number;
     idempotencyKey: string;
   }): Promise<PublishingPlanRevisionDto>;
+  beginCommand(input: CalendarRescheduleCommand): Promise<{ kind: "started" } | { kind: "replayed"; result: CalendarRescheduleResult }>;
+  completeCommand(input: { workspaceId: string; idempotencyKey: string; requestDigest: string; result: CalendarRescheduleResult }): Promise<void>;
+}
+
+export interface CalendarRescheduleInitiator {
+  userId: string;
+  principalId: string;
+  keyId: string;
+  authorizationEvidenceRef: string;
+}
+
+export interface CalendarRescheduleCommand {
+  workspaceId: string;
+  idempotencyKey: string;
+  requestDigest: string;
+  initiator: CalendarRescheduleInitiator;
+  sourceRevisionId: string;
+  sourceRevision: number;
+  targetId: string;
 }
 
 export type CalendarRescheduleResult =
@@ -27,7 +44,7 @@ export type CalendarRescheduleResult =
   | { kind: "cancellation_not_guaranteed"; cancellation: PublishingDeliveryCancellationDto };
 
 export class CalendarRescheduleError extends Error {
-  constructor(readonly code: "INVALID_INPUT" | "NOT_FOUND" | "STALE_REVISION" | "EXPLICIT_CANCELLATION_REQUIRED" | "INCONSISTENT_RELEASE") { super(code); }
+  constructor(readonly code: "INVALID_INPUT" | "NOT_FOUND" | "STALE_REVISION" | "EXPLICIT_CANCELLATION_REQUIRED" | "INCONSISTENT_RELEASE" | "IDEMPOTENCY_CONFLICT") { super(code); }
 }
 
 function canonicalFuture(value: string, now: Date): string {
@@ -64,6 +81,7 @@ export class CalendarRescheduleService {
   async reschedule(input: {
     workspaceId: string;
     userId: string;
+    initiator: CalendarRescheduleInitiator;
     revisionId: string;
     approvalRequestId: string;
     targetId: string;
@@ -78,29 +96,54 @@ export class CalendarRescheduleService {
     if (!source) throw new CalendarRescheduleError("NOT_FOUND");
     if (source.revision.workspaceId !== input.workspaceId || source.revision.id !== input.revisionId || source.revision.revision !== input.expectedRevision || !source.revision.definition.targets.some((target) => target.targetId === input.targetId)) throw new CalendarRescheduleError("STALE_REVISION");
     if (source.approval?.consumed && !source.delivery) throw new CalendarRescheduleError("INCONSISTENT_RELEASE");
+    if (source.delivery && !source.approval?.consumed) throw new CalendarRescheduleError("INCONSISTENT_RELEASE");
+    if (source.delivery && !input.confirmCancelReleasedDelivery) throw new CalendarRescheduleError("EXPLICIT_CANCELLATION_REQUIRED");
+
+    const requestDigest = canonicalDigest({
+      workspaceId: input.workspaceId,
+      revisionId: input.revisionId,
+      expectedRevision: input.expectedRevision,
+      approvalRequestId: input.approvalRequestId,
+      targetId: input.targetId,
+      scheduledAt,
+      confirmCancelReleasedDelivery: input.confirmCancelReleasedDelivery,
+      initiatingUserId: input.initiator.userId,
+    });
+    const receipt = await this.ports.beginCommand({
+      workspaceId: input.workspaceId,
+      idempotencyKey: input.idempotencyKey,
+      requestDigest,
+      initiator: input.initiator,
+      sourceRevisionId: input.revisionId,
+      sourceRevision: input.expectedRevision,
+      targetId: input.targetId,
+    });
+    if (receipt.kind === "replayed") return receipt.result;
 
     let cancellation: PublishingDeliveryCancellationDto | null = null;
     if (source.delivery) {
-      if (!source.approval?.consumed) throw new CalendarRescheduleError("INCONSISTENT_RELEASE");
-      if (!input.confirmCancelReleasedDelivery) throw new CalendarRescheduleError("EXPLICIT_CANCELLATION_REQUIRED");
       cancellation = await this.ports.cancelDelivery({ workspaceId: input.workspaceId, userId: input.userId, deliveryId: source.delivery.id, channelIds: [source.delivery.channelId], artifactIds: [...source.delivery.artifactIds] });
-      if (cancellation.outcome !== "prevented") return { kind: "cancellation_not_guaranteed", cancellation };
+      if (cancellation.outcome !== "prevented") {
+        const result = { kind: "cancellation_not_guaranteed" as const, cancellation };
+        await this.ports.completeCommand({ workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest, result });
+        return result;
+      }
     }
 
     const revision = await this.ports.createPlanRevision({
       workspaceId: input.workspaceId,
-      principalId: source.revision.author.principalId,
-      keyId: source.revision.author.keyId,
       draft: createDraft(source, scheduledAt),
       expectedRevision: input.expectedRevision,
       idempotencyKey: `calendar:${canonicalDigest({ key: input.idempotencyKey, revisionId: input.revisionId, targetId: input.targetId, scheduledAt }).slice(7)}`,
     });
-    return {
+    const result = {
       kind: "rescheduled",
       revision,
       supersededApprovalId: source.approval && !source.approval.consumed ? source.approval.id : null,
       cancellation,
       requiresApproval: true,
-    };
+    } satisfies CalendarRescheduleResult;
+    await this.ports.completeCommand({ workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest, result });
+    return result;
   }
 }

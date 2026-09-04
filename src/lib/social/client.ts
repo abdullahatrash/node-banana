@@ -54,7 +54,9 @@ async function socialFetch(
   if (record.success === false) {
     const message =
       typeof record.error === "string" ? record.error : "Request failed";
-    throw new StudioApiError(response.status, message);
+    throw new StudioApiError(response.status, message, {
+      code: typeof record.code === "string" ? record.code : null,
+    });
   }
 
   return record;
@@ -310,10 +312,7 @@ export async function rescheduleSocialPost(
 }
 
 export async function reschedulePublishingPlanTarget(input: {
-  approvalRequestId: string;
-  revisionId: string;
-  targetId: string;
-  expectedRevision: number;
+  postId: string;
   scheduledAt: string;
   confirmCancelReleasedDelivery: boolean;
   idempotencyKey: string;

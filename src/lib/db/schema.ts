@@ -9559,6 +9559,30 @@ export const blitzSimilarityEvidence = pgTable("blitz_similarity_evidence", {
   valuesCheck: check("blitz_similarity_evidence_values_check", sql`${table.blitzItemRevision} > 0 and ${table.status} in ('passed','blocked') and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`),
 }));
 
+/** Durable human-attribution and replay receipt for canonical Calendar reschedules. */
+export const calendarRescheduleCommands = pgTable("calendar_reschedule_commands", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  state: text("state").notNull(),
+  initiatingUserId: text("initiating_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  initiatingPrincipalId: text("initiating_principal_id").notNull(),
+  initiatingKeyId: text("initiating_key_id").notNull(),
+  authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
+  servicePrincipalId: text("service_principal_id").notNull(),
+  serviceKeyId: text("service_key_id").notNull(),
+  sourceRevisionId: text("source_revision_id").notNull(),
+  sourceRevision: integer("source_revision").notNull(),
+  targetId: text("target_id").notNull(),
+  result: jsonb("result").$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (table) => ({
+  pk: primaryKey({ name: "calendar_reschedule_commands_pk", columns: [table.workspaceId, table.idempotencyKey] }),
+  sourceIdx: index("calendar_reschedule_commands_source_idx").on(table.workspaceId, table.sourceRevisionId, table.targetId, table.createdAt),
+  valuesCheck: check("calendar_reschedule_commands_values_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.state} in ('pending','completed') and ${table.sourceRevision} > 0 and length(${table.idempotencyKey}) between 8 and 200 and ((${table.state} = 'pending' and ${table.result} is null and ${table.completedAt} is null) or (${table.state} = 'completed' and ${table.result} is not null and ${table.completedAt} is not null))`),
+}));
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
