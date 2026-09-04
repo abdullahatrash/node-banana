@@ -3,7 +3,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { resolveDurableProviderKey, resolveManagedProviderKey } from "@/lib/byok/repository";
 import { getDb } from "@/lib/db";
-import { assets, brandProfiles } from "@/lib/db/schema";
+import { assets, brandProfiles, workflowRuns } from "@/lib/db/schema";
 import { getReleaseControlService } from "@/lib/release-control/production";
 import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { loadImmutableBrandContext } from "./brand-context";
@@ -17,6 +17,7 @@ import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
 import { CreatorPersonaError } from "@/lib/creator-personas/repository";
 import { resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/content-format-registry";
 import { validateContentGenerationRecipe } from "@/lib/product-surfaces/content-generation-recipe";
+import { assertContentModelPolicy } from "@/lib/product-surfaces/content-workflow-runtime";
 
 export type ExecuteAdmittedGenerationResult =
   | { ok: true; status: 202; result: Extract<GenerationExecutionResult, { kind: "accepted" }> }
@@ -34,6 +35,7 @@ export async function executeAdmittedGeneration(input: {
   prompt: string;
   sourceAssetIds: string[];
   idempotencyKey: string;
+  contentWorkflowRunId?: string;
 }): Promise<ExecuteAdmittedGenerationResult> {
   const routing = new PostgresModelRoutingRepository(getDb);
   const intent = await routing.getIntent(input.workspaceId, input.intentId);
@@ -77,6 +79,12 @@ export async function executeAdmittedGeneration(input: {
     try {
       const resolved = await resolveContentFormatDefinitionReference(intent.contentExecution.formatDefinition.id.slice("content-format:".length) as import("@/lib/product-surfaces/definitions").ContentFormat, intent.contentExecution.formatDefinition);
       if (!validateContentGenerationRecipe({ recipe: intent.contentExecution, definition: resolved.definition, capability: intent.capability, rightsSourceAssetIds: sourceIds, providerSourceAssetIds: intent.providerComposition.sourceAssetIds })) return rejected(409, "CONTENT_EXECUTION_RECIPE_MISMATCH");
+      assertContentModelPolicy({ definition: resolved.definition, intent, descriptor });
+      if (!input.contentWorkflowRunId) return rejected(409, "CONTENT_WORKFLOW_RUN_REQUIRED");
+      const [run] = await getDb().select({ workflowId: workflowRuns.workflowId, workflowRevisionId: workflowRuns.workflowRevisionId, startSnapshot: workflowRuns.startSnapshot }).from(workflowRuns).where(and(eq(workflowRuns.workspaceId, input.workspaceId), eq(workflowRuns.id, input.contentWorkflowRunId))).limit(1);
+      const requestInput = run?.startSnapshot.inputs.find((candidate) => candidate.name === "request" && candidate.kind === "text")?.value;
+      const request = typeof requestInput === "string" ? JSON.parse(requestInput) as Record<string, unknown> : null;
+      if (!run || run.workflowId !== intent.contentExecution.workflow.id || run.workflowRevisionId !== intent.contentExecution.workflow.revisionId || request?.intentId !== intent.id || request?.contentExecutionDigest !== intent.contentExecution.digest || canonicalDigest(request?.sourceAssetIds) !== canonicalDigest(sourceIds) || request?.prompt !== input.prompt) return rejected(409, "CONTENT_WORKFLOW_RUN_MISMATCH");
     } catch {
       return rejected(409, "CONTENT_EXECUTION_RECIPE_UNAVAILABLE");
     }

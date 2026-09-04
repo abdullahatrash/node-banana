@@ -1,6 +1,6 @@
 import { bigint, check, foreignKey, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { assets, user, workspaces } from "@/lib/db/schema";
+import { assets, contentWorkflowRevisions, contentWorkflows, user, workflowRuns, workspaces, workspaceProductRecords } from "@/lib/db/schema";
 import type { ExactModelRef, FallbackAuthorization, GenerationIntent, InspirationRightsEvidence, InspirationRightsSnapshot } from "./types";
 import type { DurableProviderCredentialRef } from "@/lib/byok/repository";
 import type { QualificationSpendReceipt } from "./qualification-ledger";
@@ -18,6 +18,25 @@ export const generationIntents = pgTable("generation_intents", {
   rightsSnapshotId: text("rights_snapshot_id"), rightsSnapshotRevision: integer("rights_snapshot_revision"), remixBriefDigest: text("remix_brief_digest"), regionAdmission: jsonb("region_admission").$type<GenerationIntent["regionAdmission"]>(), outputContract: jsonb("output_contract").$type<GenerationIntent["outputContract"]>(),
   createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 }, (table) => ({ pk: primaryKey({ name: "generation_intents_pk", columns: [table.workspaceId, table.id] }), brandIdx: index("generation_intents_brand_idx").on(table.workspaceId, table.brandProfileId, table.brandRevision), digestCheck: check("generation_intents_digest_check", sql`${table.promptDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.brandRevision} > 0`) }));
+
+export const contentWorkflowGenerationRuns = pgTable("content_workflow_generation_runs", {
+  workspaceId: text("workspace_id").notNull(), generationIntentId: text("generation_intent_id").notNull(), generationOperationId: text("generation_operation_id").notNull(),
+  contentPieceId: text("content_piece_id").notNull(), contentPieceRevision: integer("content_piece_revision").notNull(),
+  workflowId: text("workflow_id").notNull(), workflowRevisionId: text("workflow_revision_id").notNull(), workflowRunId: text("workflow_run_id").notNull(),
+  recipeDigest: text("recipe_digest").notNull(), selectedModel: jsonb("selected_model").$type<ExactModelRef>().notNull(),
+  initiatedByUserId: text("initiated_by_user_id").notNull(), initiatingAuthContextDigest: text("initiating_auth_context_digest").notNull(),
+  dispatchReceiptArtifactId: text("dispatch_receipt_artifact_id"), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "content_workflow_generation_runs_pk", columns: [table.workspaceId, table.generationIntentId] }),
+  runUnique: uniqueIndex("content_workflow_generation_runs_run_unique").on(table.workspaceId, table.workflowRunId),
+  intentFk: foreignKey({ name: "content_workflow_generation_runs_intent_fk", columns: [table.workspaceId, table.generationIntentId], foreignColumns: [generationIntents.workspaceId, generationIntents.id] }).onDelete("restrict"),
+  contentPieceFk: foreignKey({ name: "content_workflow_generation_runs_piece_fk", columns: [table.workspaceId, table.contentPieceId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id] }).onDelete("restrict"),
+  workflowFk: foreignKey({ name: "content_workflow_generation_runs_workflow_fk", columns: [table.workspaceId, table.workflowId], foreignColumns: [contentWorkflows.workspaceId, contentWorkflows.id] }).onDelete("restrict"),
+  workflowRevisionFk: foreignKey({ name: "content_workflow_generation_runs_revision_fk", columns: [table.workspaceId, table.workflowId, table.workflowRevisionId], foreignColumns: [contentWorkflowRevisions.workspaceId, contentWorkflowRevisions.workflowId, contentWorkflowRevisions.id] }).onDelete("restrict"),
+  workflowRunFk: foreignKey({ name: "content_workflow_generation_runs_run_fk", columns: [table.workspaceId, table.workflowId, table.workflowRunId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.workflowId, workflowRuns.id] }).onDelete("restrict"),
+  userFk: foreignKey({ name: "content_workflow_generation_runs_user_fk", columns: [table.initiatedByUserId], foreignColumns: [user.id] }).onDelete("restrict"),
+  valuesCheck: check("content_workflow_generation_runs_values_check", sql`${table.contentPieceRevision} > 0 and ${table.recipeDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.initiatingAuthContextDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+}));
 
 export const modelRoutingMutationReceipts = pgTable("model_routing_mutation_receipts", {
   workspaceId: text("workspace_id").notNull(), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), resourceKind: text("resource_kind").notNull(), resourceId: text("resource_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),

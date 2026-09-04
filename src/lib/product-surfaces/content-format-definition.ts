@@ -24,7 +24,7 @@ export interface ContentFormatDefinition {
     modelPolicy: { id: string; revision: number; qualifiedModelsOnly: true; advancedOverrides: "compatible_only" } | null;
   };
   managedQuote: { required: boolean; acceptance: "explicit_before_admission"; maximumQuantity: number };
-  renderProof: { required: true; schema: "content-render-proof/v1"; verifies: readonly ["fonts", "bidi", "captions", "timing", "safe_areas"] };
+  renderProof: { required: true; schema: "content-render-proof/v1" | "content-render-proof/v2"; verifies: readonly ["fonts", "bidi", "captions", "timing", "safe_areas"] };
   editorHandoff: { enabled: true; routeTemplate: "/editor/{assetId}"; requiresPassedRenderProof: true };
   outputs: readonly ["candidate_asset", "immutable_content_revision", "lineage_receipt"];
 }
@@ -47,7 +47,7 @@ function define(format: ContentFormat, input: {
   return {
     schema: "content-format-definition/v1",
     id: `content-format:${format}`,
-    revision: 1,
+    revision: 2,
     format,
     status: "active",
     controls: input.controls,
@@ -60,11 +60,11 @@ function define(format: ContentFormat, input: {
     execution: {
       strategy: generated ? "admitted_generation" : "canonical_upload",
       capability: input.capability,
-      workflow: generated ? { id: `tasmeemai.content.${format}`, revisionId: "builtin-2026-09-04.1" } : null,
-      modelPolicy: generated ? { id: `content.${format}.v1`, revision: 1, qualifiedModelsOnly: true, advancedOverrides: "compatible_only" } : null,
+      workflow: generated ? { id: `tasmeemai_content_${format}`, revisionId: "builtin-2026-09-04-2" } : null,
+      modelPolicy: generated ? { id: `content.${format}.v2`, revision: 2, qualifiedModelsOnly: true, advancedOverrides: "compatible_only" } : null,
     },
     managedQuote: { required: generated, acceptance: "explicit_before_admission", maximumQuantity: 60 },
-    renderProof: { required: true, schema: "content-render-proof/v1", verifies: ["fonts", "bidi", "captions", "timing", "safe_areas"] },
+    renderProof: { required: true, schema: "content-render-proof/v2", verifies: ["fonts", "bidi", "captions", "timing", "safe_areas"] },
     editorHandoff: { enabled: true, routeTemplate: "/editor/{assetId}", requiresPassedRenderProof: true },
     outputs: ["candidate_asset", "immutable_content_revision", "lineage_receipt"],
   };

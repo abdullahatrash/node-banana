@@ -23,6 +23,7 @@ import { CreatorPersonaError } from "@/lib/creator-personas/repository";
 import { contentPieceSchema } from "@/lib/product-surfaces/definitions";
 import { resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/content-format-registry";
 import { assertContentGenerationRequest, buildContentGenerationRecipe, ContentGenerationRecipeError } from "@/lib/product-surfaces/content-generation-recipe";
+import { assertContentModelPolicy, ContentWorkflowRuntimeError } from "@/lib/product-surfaces/content-workflow-runtime";
 
 export interface AdmittedGenerationInput {
   prompt: string; model: ExactModelRef & { provider: "replicate" }; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
@@ -78,8 +79,9 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
       const resolved = await resolveContentFormatDefinitionReference(payload.format, payload.formatDefinition);
       contentExecution = buildContentGenerationRecipe({ contentPieceId: record.id, contentPieceRevision: record.revision, contentPiecePayload: payload, definition: resolved.definition, definitionDigest: resolved.reference.digest as `sha256:${string}`, sourceTypes: new Map(sourceRows.map((row) => [row.id, row.type])) });
       assertContentGenerationRequest({ recipe: contentExecution, format: payload.format, definition: resolved.definition, capability: input.capability, sourceAssetIds, personaId: input.personaId ?? null, payload });
+      assertContentModelPolicy({ definition: resolved.definition, intent: { selectedModel: input.model, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, outputContract: { mediaType: input.capability === "text_generation" ? "text" : input.capability.includes("video") ? "video" : "image", aspectRatio: input.capability === "text_generation" ? null : "9:16" }, quote: { quantity: input.quantity } } as import("./types").GenerationIntent, descriptor: model });
     } catch (error) {
-      return fail(422, error instanceof ContentGenerationRecipeError ? error.code : "CONTENT_EXECUTION_RECIPE_INVALID");
+      return fail(422, error instanceof ContentGenerationRecipeError || error instanceof ContentWorkflowRuntimeError ? error.code : "CONTENT_EXECUTION_RECIPE_INVALID");
     }
   }
   const providerSourceIds = contentExecution?.providerInputArtifactIds ?? sourceAssetIds;

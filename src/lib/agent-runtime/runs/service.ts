@@ -229,6 +229,16 @@ function eligibleWorkflowExecutors(
     Object.values(revision.definition.inputs).filter(
       (definition) => definition.kind === "image",
     ).length === 1;
+  const isContentDispatch =
+    steps.length === 2 &&
+    steps[0]?.operation.identity === "runtime.digest_text@1" &&
+    steps[1]?.operation.identity === "runtime.dispatch_admitted_generation@1" &&
+    steps[1]?.inputs.request?.from === "workflow_input" &&
+    steps[1]?.inputs.guard?.from === "step_output" &&
+    steps[1]?.inputs.guard.step === steps[0]?.id &&
+    steps[1]?.inputs.guard.output === "textDigest" &&
+    revision.definition.outputs.receipt?.binding.step === steps[1]?.id &&
+    revision.definition.outputs.receipt?.binding.output === "receipt";
   const resolved = steps.map((step) =>
     registry.resolve
       ? registry.resolve(
@@ -238,7 +248,7 @@ function eligibleWorkflowExecutors(
         )
       : registry.get(step.operation.identity, step.operation.contractDigest),
   );
-  if ((!isLegacy && !isGolden) || resolved.some((executor) => !executor)) {
+  if ((!isLegacy && !isGolden && !isContentDispatch) || resolved.some((executor) => !executor)) {
     throw new WorkflowRunError(
       "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
       "This runtime slice accepts the exact deterministic digest or frozen two-step golden Workflow.",

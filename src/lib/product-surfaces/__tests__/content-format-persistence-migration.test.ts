@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { CONTENT_FORMATS } from "../definitions";
 
 const migration = readFileSync("drizzle/0100_content_format_definitions_and_similarity.sql", "utf8");
+const v2 = readFileSync("drizzle/0106_content_format_workflow_v2.sql", "utf8");
 
 describe("Content format persistence migration", () => {
   it("seeds every observed format as an exact active revision", () => {
@@ -11,6 +12,13 @@ describe("Content format persistence migration", () => {
     }
     expect(migration).toContain("content_format_definition_revisions_one_active");
     expect(migration).toContain("content_format_definition_revisions_immutable");
+  });
+
+  it("retires v1 and persists v2 Workflow, Model Policy, Render Proof, and lineage", () => {
+    expect(v2).toContain("SET \"status\" = 'retired'");
+    expect(v2).toContain("'content-render-proof/v2'");
+    expect(v2).toContain("'builtin-2026-09-04-2'");
+    expect(v2).toContain('CREATE TABLE "content_workflow_generation_runs"');
   });
 
   it("persists immutable licensed theme and Blitz similarity evidence", () => {

@@ -9,6 +9,7 @@ const terminalStates = new Set(["cancelled", "succeeded", "failed_known", "outco
 const operationSchema = z.object({ id: z.string(), revision: z.number().int().positive(), state: z.string(), metadata: z.record(z.string(), z.unknown()).default({}) }).passthrough();
 const responseSchema = z.object({ success: z.literal(true), intentId: z.string(), operation: operationSchema }).passthrough();
 const executionSchema = z.object({ success: z.literal(true), result: z.object({ kind: z.literal("accepted"), operation: operationSchema, provider: z.object({ artifactIds: z.array(z.string()).optional(), textOutputIds: z.array(z.string()).optional() }).passthrough().optional() }) }).passthrough();
+const workflowExecutionSchema = z.object({ success: z.literal(true), workflowRun: z.object({ id: z.string(), workflowId: z.string(), workflowRevisionId: z.string(), state: z.literal("accepted") }) }).passthrough();
 const inspectionSchema = z.object({ success: z.literal(true), operation: operationSchema }).passthrough();
 const managedCreditQuoteSchema = z.object({ schema: z.literal("managed-generation-credit-quote/v1"), quoteId: z.string(), intentId: z.string(), totalDebitUnits: z.number().int().positive(), currency: z.literal("USD"), subtotalMinor: z.number().int().nonnegative(), taxMinor: z.number().int().nonnegative(), totalMinor: z.number().int().nonnegative(), expiresAt: z.string().datetime(), pricingSnapshotDigest: z.string(), confirmationDigest: z.string() });
 const errorSchema = z.object({ code: z.string().optional(), nextActions: z.array(z.object({ code: z.string() }).passthrough()).optional(), managedCreditQuote: managedCreditQuoteSchema.optional() }).passthrough();
@@ -79,12 +80,18 @@ export async function runAdmittedStudioGeneration(input: StudioGenerationRequest
   input.signal.addEventListener("abort", abort, { once: true });
   try {
     if (input.signal.aborted) { await cancel(); throw new DOMException("Cancelled", "AbortError"); }
-    const execution = await fetch(`/api/studio/model-routing/intents/${encodeURIComponent(admitted.data.intentId)}/execute`, { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": `${input.idempotencyKey}:execute` }, body: JSON.stringify({ prompt: input.prompt, sourceAssetIds: input.sourceAssetIds }), signal: input.signal });
+    const executionUrl = input.contentExecution ? "/api/product-content/workflow-runs" : `/api/studio/model-routing/intents/${encodeURIComponent(admitted.data.intentId)}/execute`;
+    const execution = await fetch(executionUrl, { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": `${input.idempotencyKey}:execute` }, body: JSON.stringify(input.contentExecution ? { intentId: admitted.data.intentId, prompt: input.prompt, sourceAssetIds: input.sourceAssetIds } : { prompt: input.prompt, sourceAssetIds: input.sourceAssetIds }), signal: input.signal });
     if (!execution.ok) throw await errorFrom(execution);
-    const executionResult = executionSchema.safeParse(await execution.json());
-    if (!executionResult.success) throw new StudioGenerationError("GENERATION_EXECUTION_RESPONSE_INVALID");
-    operation = executionResult.data.result.operation;
-    providerTextOutputIds = executionResult.data.result.provider?.textOutputIds ?? [];
+    if (input.contentExecution) {
+      const executionResult = workflowExecutionSchema.safeParse(await execution.json());
+      if (!executionResult.success) throw new StudioGenerationError("CONTENT_WORKFLOW_RESPONSE_INVALID");
+    } else {
+      const executionResult = executionSchema.safeParse(await execution.json());
+      if (!executionResult.success) throw new StudioGenerationError("GENERATION_EXECUTION_RESPONSE_INVALID");
+      operation = executionResult.data.result.operation;
+      providerTextOutputIds = executionResult.data.result.provider?.textOutputIds ?? [];
+    }
     for (let attempt = 0; attempt < 150 && !terminalStates.has(operation.state); attempt++) {
       await new Promise<void>((resolve, reject) => { const timer = window.setTimeout(resolve, 2_000); input.signal.addEventListener("abort", () => { window.clearTimeout(timer); reject(new DOMException("Cancelled", "AbortError")); }, { once: true }); });
       const polled = await fetch(`/api/studio/operations/${encodeURIComponent(operation.id)}`, { headers: { "x-workspace-id": workspaceId }, cache: "no-store", signal: input.signal });

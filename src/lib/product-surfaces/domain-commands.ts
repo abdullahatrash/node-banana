@@ -4,8 +4,8 @@ import { randomBytes } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { assets, contentThemeRevisions, contentThemes, creatorPersonaEvidence, creatorPersonas, workspaceProductRecords } from "@/lib/db/schema";
-import { generationIntents, modelTextOutputReceipts } from "@/lib/model-routing/db-schema";
+import { assets, contentThemeRevisions, contentThemes, creatorPersonaEvidence, creatorPersonas, workflowRuns, workspaceProductRecords } from "@/lib/db/schema";
+import { contentWorkflowGenerationRuns, generationIntents, modelTextOutputReceipts } from "@/lib/model-routing/db-schema";
 import { runtimeOperations } from "@/lib/agent-runtime/operation-status/db-schema";
 import { generationOperationId } from "@/lib/model-routing/generation-operation";
 import { modelArtifactIngestionReceipts } from "@/lib/model-routing/db-schema";
@@ -113,17 +113,21 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
       contentDigest = artifact.checksum!;
     } else {
       if (!input.generation) throw new Error("CONTENT_GENERATION_REQUIRED");
-      const [[receipt], [intentRow], [operation], [artifactRow]] = await Promise.all([
+      const [[receipt], [intentRow], [operation], [artifactRow], [workflowBinding]] = await Promise.all([
         tx.select().from(modelArtifactIngestionReceipts).where(and(eq(modelArtifactIngestionReceipts.workspaceId, input.workspaceId), eq(modelArtifactIngestionReceipts.assetId, input.generation.assetId), eq(modelArtifactIngestionReceipts.intentId, input.generation.intentId), eq(modelArtifactIngestionReceipts.status, "ready"))).limit(1),
         tx.select({ intent: generationIntents.intent }).from(generationIntents).where(and(eq(generationIntents.workspaceId, input.workspaceId), eq(generationIntents.id, input.generation.intentId))).limit(1),
         tx.select({ state: runtimeOperations.state, metadata: runtimeOperations.metadata }).from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, input.workspaceId), eq(runtimeOperations.id, input.generation.operationId), eq(runtimeOperations.resourceId, input.generation.intentId))).limit(1),
         tx.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.id, input.generation.assetId), isNull(assets.deletedAt))).limit(1),
+        tx.select({ binding: contentWorkflowGenerationRuns, runState: workflowRuns.state, finalSnapshot: workflowRuns.finalSnapshot }).from(contentWorkflowGenerationRuns).innerJoin(workflowRuns, and(eq(workflowRuns.workspaceId, contentWorkflowGenerationRuns.workspaceId), eq(workflowRuns.id, contentWorkflowGenerationRuns.workflowRunId))).where(and(eq(contentWorkflowGenerationRuns.workspaceId, input.workspaceId), eq(contentWorkflowGenerationRuns.generationIntentId, input.generation.intentId), eq(contentWorkflowGenerationRuns.generationOperationId, input.generation.operationId))).limit(1),
       ]);
       const operationMetadata = operation?.metadata && typeof operation.metadata === "object" && !Array.isArray(operation.metadata) ? operation.metadata : {};
       if (!artifactRow) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
       const binding = intentRow?.intent.contentExecution;
       const expectedProviderInputs = contentProviderSourceIds(payload.format, sourceAssets, definition);
       if (!binding || binding.contentPiece.id !== record.id || binding.contentPiece.revision !== record.revision || binding.contentPiece.digest !== canonicalDigest(payload) || binding.formatDefinition.id !== payload.formatDefinition?.id || binding.formatDefinition.revision !== payload.formatDefinition?.revision || binding.formatDefinition.digest !== payload.formatDefinition?.digest || binding.workflow.id !== definition.execution.workflow?.id || binding.workflow.revisionId !== definition.execution.workflow?.revisionId || binding.modelPolicy.id !== definition.execution.modelPolicy?.id || binding.modelPolicy.revision !== definition.execution.modelPolicy?.revision || binding.inputArtifactIds.some((id, index) => id !== payload.sourceAssetIds[index]) || binding.inputArtifactIds.length !== payload.sourceAssetIds.length || binding.providerInputArtifactIds.some((id, index) => id !== expectedProviderInputs[index]) || binding.providerInputArtifactIds.length !== expectedProviderInputs.length) throw new Error("CONTENT_EXECUTION_RECIPE_MISMATCH");
+      const dispatchReceiptArtifactId = workflowBinding?.finalSnapshot?.outputs.receipt?.artifactId;
+      if (!workflowBinding || workflowBinding.runState !== "completed" || workflowBinding.binding.contentPieceId !== record.id || workflowBinding.binding.contentPieceRevision !== record.revision || workflowBinding.binding.recipeDigest !== binding.digest || !dispatchReceiptArtifactId) throw new Error("CONTENT_WORKFLOW_LINEAGE_INVALID");
+      if (!workflowBinding.binding.dispatchReceiptArtifactId) await tx.update(contentWorkflowGenerationRuns).set({ dispatchReceiptArtifactId, updatedAt: now }).where(and(eq(contentWorkflowGenerationRuns.workspaceId, input.workspaceId), eq(contentWorkflowGenerationRuns.generationIntentId, input.generation.intentId)));
       artifact = assetEvidence(artifactRow);
       proofAssetRow = artifactRow;
       if (!isAdmittedContentArtifact({ format: payload.format, definition, sourceAssets, personaState, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest, width: receipt.width, height: receipt.height, durationSeconds: receipt.durationSeconds } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifact })) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");

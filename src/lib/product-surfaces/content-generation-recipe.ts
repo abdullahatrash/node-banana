@@ -19,6 +19,7 @@ export function buildContentGenerationRecipe(input: {
   const payload = contentPieceSchema.parse(input.contentPiecePayload);
   if (payload.formatDefinition?.id !== input.definition.id || payload.formatDefinition.revision !== input.definition.revision || payload.formatDefinition.digest !== input.definitionDigest) throw new ContentGenerationRecipeError("CONTENT_FORMAT_DEFINITION_STALE");
   if (input.definition.execution.strategy !== "admitted_generation" || !input.definition.execution.workflow || !input.definition.execution.modelPolicy || !input.definition.execution.capability) throw new ContentGenerationRecipeError("CONTENT_CANONICAL_IMPORT_REQUIRED");
+  if (input.definition.renderProof.schema !== "content-render-proof/v2") throw new ContentGenerationRecipeError("CONTENT_RENDER_PROOF_V2_REQUIRED");
   const orderedSources = payload.sourceAssetIds.map((id) => ({ id, type: input.sourceTypes.get(id) ?? "missing" }));
   const providerInputArtifactIds = contentProviderSourceIds(payload.format, orderedSources, input.definition);
   const value = {

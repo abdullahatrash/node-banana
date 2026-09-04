@@ -14,16 +14,16 @@ describe("versioned Content Format Definitions", () => {
     expect(definition).toMatchObject({
       schema: "content-format-definition/v1",
       format,
-      revision: 1,
+      revision: 2,
       status: "active",
       languages: { unsupportedFallback: "block" },
       layout: { aspectRatios: ["9:16"], approximatePreview: true },
       managedQuote: { acceptance: "explicit_before_admission" },
-      renderProof: { schema: "content-render-proof/v1", required: true },
+      renderProof: { schema: "content-render-proof/v2", required: true },
       editorHandoff: { enabled: true, requiresPassedRenderProof: true },
     });
     if (format === "custom_upload") expect(definition.execution).toMatchObject({ strategy: "canonical_upload", workflow: null, modelPolicy: null });
-    else expect(definition.execution).toMatchObject({ strategy: "admitted_generation", workflow: { revisionId: "builtin-2026-09-04.1" }, modelPolicy: { qualifiedModelsOnly: true } });
+    else expect(definition.execution).toMatchObject({ strategy: "admitted_generation", workflow: { revisionId: "builtin-2026-09-04-2" }, modelPolicy: { revision: 2, qualifiedModelsOnly: true } });
   });
 
   it("keeps format-specific controls and provider inputs in the definition", () => {

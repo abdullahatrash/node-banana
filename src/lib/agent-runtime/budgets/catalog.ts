@@ -31,6 +31,15 @@ const EXACT_ENTRIES: readonly ExactCatalogEntry[] = Object.freeze([
     sourceReference: "runtime-contract:runtime.digest_text@1",
   }),
   Object.freeze({
+    provider: "runtime",
+    providerOperation: "dispatch_admitted_generation",
+    model: "content-workflow-v1",
+    serviceTier: "local",
+    perAttemptCeiling: "0",
+    currency: "USD",
+    sourceReference: "runtime-contract:runtime.dispatch_admitted_generation@1",
+  }),
+  Object.freeze({
     provider: "conformance",
     providerOperation: "generate_text",
     model: "golden-v1",
