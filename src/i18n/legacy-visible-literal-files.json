@@ -1,12 +1,8 @@
 [
-  "src/app/studio/credentials/CredentialCockpit.tsx",
   "src/app/studio/publishing-approvals/PublishingApprovalCockpit.tsx",
-  "src/app/studio/publishing-deliveries/DeliveryIndex.tsx",
   "src/app/studio/publishing-deliveries/DeliveryOperationsCockpit.tsx",
-  "src/app/studio/publishing-deliveries/WorkspaceSpendControl.tsx",
   "src/app/studio/quotas/QuotaCockpit.tsx",
   "src/app/studio/runs/[workflowId]/[runId]/RunCockpit.tsx",
-  "src/app/studio/usage/UsageCockpit.tsx",
   "src/components/marketing/MarketingHome.tsx",
   "src/components/onboarding/OnboardingFlow.tsx"
 ]
