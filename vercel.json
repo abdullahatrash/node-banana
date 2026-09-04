@@ -59,6 +59,9 @@
     },
     "src/app/api/studio/internal/persona-training/dispatch/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/studio/internal/product-analytics-refresh/route.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -100,6 +103,10 @@
     },
     {
       "path": "/api/studio/internal/persona-training/dispatch",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/product-analytics-refresh",
       "schedule": "* * * * *"
     },
     {
