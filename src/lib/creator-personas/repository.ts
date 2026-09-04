@@ -4,10 +4,11 @@ import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
 import {
   assets, creatorPersonaCommandReceipts, creatorPersonaEvidence, creatorPersonaEvents, socialAccounts,
-  creatorPersonas, creatorPersonaTrainingJobs, creatorPersonaTrainingSources, creatorPersonaUsages, workspaceProductRecords,
+  creatorPersonas, creatorPersonaTrainingAdmissions, creatorPersonaTrainingJobs, creatorPersonaTrainingSources, creatorPersonaUsages, workspaceProductRecords,
 } from "@/lib/db/schema";
 import { generationIntents } from "@/lib/model-routing/db-schema";
 import { findCuratedModel } from "@/lib/model-routing/catalog";
+import { parsePersonaTrainingAdmission, serializePersonaTrainingAdmission, type PersonaTrainingAdmissionPlan, type PersonaTrainingAdmissionSnapshot } from "./training-admission";
 import { acceptedUseForPurpose, evaluatePersonaGate, parsePersonaModelRef, serializePersonaModelRef, type CreatorPersona, type CreatorPersonaEvidence, type PersonaReusableModelRef, type PersonaUsagePurpose } from "./types";
 
 type Db = ReturnType<typeof getDb>;
@@ -18,6 +19,7 @@ export class CreatorPersonaError extends Error {
 
 const hydratePersona = (row: typeof creatorPersonas.$inferSelect): CreatorPersona => row as CreatorPersona;
 const hydrateEvidence = (row: typeof creatorPersonaEvidence.$inferSelect): CreatorPersonaEvidence => row as CreatorPersonaEvidence;
+const decimal = (value: number) => value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
 
 export class CreatorPersonaRepository {
   constructor(private readonly database: Db = getDb(), private readonly now = () => new Date()) {}
@@ -39,6 +41,44 @@ export class CreatorPersonaRepository {
       this.database.select().from(creatorPersonaUsages).where(and(eq(creatorPersonaUsages.workspaceId, workspaceId), eq(creatorPersonaUsages.personaId, personaId))).orderBy(desc(creatorPersonaUsages.createdAt)).limit(100),
     ]);
     return { persona: hydratePersona(persona), evidence: evidence.map(hydrateEvidence), sources, jobs, usages };
+  }
+
+  async getTrainingAdmissionContext(workspaceId: string, personaId: string) {
+    const detail = await this.get(workspaceId, personaId);
+    if (!detail) return null;
+    const sources = await this.database.select({ assetId: creatorPersonaTrainingSources.assetId, mediaType: assets.type })
+      .from(creatorPersonaTrainingSources)
+      .innerJoin(assets, and(eq(assets.workspaceId, creatorPersonaTrainingSources.workspaceId), eq(assets.id, creatorPersonaTrainingSources.assetId)))
+      .where(and(eq(creatorPersonaTrainingSources.workspaceId, workspaceId), eq(creatorPersonaTrainingSources.personaId, personaId)))
+      .orderBy(asc(creatorPersonaTrainingSources.ordinal));
+    const [failed] = await this.database.select({ id: creatorPersonaTrainingJobs.id })
+      .from(creatorPersonaTrainingJobs)
+      .where(and(eq(creatorPersonaTrainingJobs.workspaceId, workspaceId), eq(creatorPersonaTrainingJobs.personaId, personaId), eq(creatorPersonaTrainingJobs.state, "failed_known")))
+      .orderBy(desc(creatorPersonaTrainingJobs.updatedAt), desc(creatorPersonaTrainingJobs.id)).limit(1);
+    return { persona: detail.persona, evidence: detail.evidence, sources, latestFailedTrainingJobId: failed?.id ?? null };
+  }
+
+  async getTrainingAdmissionPlan(workspaceId: string, idempotencyKey: string): Promise<PersonaTrainingAdmissionPlan | null> {
+    const [row] = await this.database.select().from(creatorPersonaTrainingAdmissions).where(and(eq(creatorPersonaTrainingAdmissions.workspaceId, workspaceId), eq(creatorPersonaTrainingAdmissions.idempotencyKey, idempotencyKey))).limit(1);
+    return row ? { workspaceId: row.workspaceId, userId: row.createdByUserId, personaId: row.personaId, expectedRevision: row.expectedRevision, idempotencyKey: row.idempotencyKey, jobId: row.jobId, operationId: row.operationId, retryOfJobId: row.retryOfJobId, admission: parsePersonaTrainingAdmission(row.admissionSnapshot) } : null;
+  }
+
+  async createTrainingAdmissionPlan(input: PersonaTrainingAdmissionPlan): Promise<PersonaTrainingAdmissionPlan> {
+    const requestDigest = canonicalDigest({ workspaceId: input.workspaceId, userId: input.userId, personaId: input.personaId, expectedRevision: input.expectedRevision, idempotencyKey: input.idempotencyKey });
+    await this.database.insert(creatorPersonaTrainingAdmissions).values({ workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, personaId: input.personaId, expectedRevision: input.expectedRevision, jobId: input.jobId, operationId: input.operationId, requestDigest, admissionSnapshot: serializePersonaTrainingAdmission(input.admission), retryOfJobId: input.retryOfJobId, createdByUserId: input.userId, expiresAt: input.admission.quote.expiresAt, createdAt: input.admission.quote.quotedAt }).onConflictDoNothing();
+    const persisted = await this.getTrainingAdmissionPlan(input.workspaceId, input.idempotencyKey);
+    if (!persisted) throw new CreatorPersonaError("TRAINING_ADMISSION_PERSIST_FAILED");
+    const persistedDigest = canonicalDigest({ workspaceId: persisted.workspaceId, userId: persisted.userId, personaId: persisted.personaId, expectedRevision: persisted.expectedRevision, idempotencyKey: persisted.idempotencyKey });
+    if (persistedDigest !== requestDigest || persisted.jobId !== input.jobId) throw new CreatorPersonaError("IDEMPOTENCY_CONFLICT");
+    return persisted;
+  }
+
+  async getAdmittedTrainingReplay(input: { workspaceId: string; userId: string; personaId: string; expectedRevision: number; idempotencyKey: string; jobId: string }) {
+    const [receipt] = await this.database.select().from(creatorPersonaCommandReceipts).where(and(eq(creatorPersonaCommandReceipts.workspaceId, input.workspaceId), eq(creatorPersonaCommandReceipts.idempotencyKey, input.idempotencyKey), eq(creatorPersonaCommandReceipts.personaId, input.personaId))).limit(1);
+    if (!receipt) return null;
+    const [job] = await this.database.select().from(creatorPersonaTrainingJobs).where(and(eq(creatorPersonaTrainingJobs.workspaceId, input.workspaceId), eq(creatorPersonaTrainingJobs.id, input.jobId), eq(creatorPersonaTrainingJobs.personaId, input.personaId))).limit(1);
+    if (!job || job.requestedByUserId !== input.userId || job.personaRevision !== input.expectedRevision + 1) throw new CreatorPersonaError("IDEMPOTENCY_CONFLICT");
+    return receipt.result;
   }
 
   private async replay(tx: Parameters<Parameters<Db["transaction"]>[0]>[0], actor: Actor, idempotencyKey: string, requestDigest: string) {
@@ -95,6 +135,54 @@ export class CreatorPersonaRepository {
     return this.addEvidence({ workspaceId: input.workspaceId, userId: input.userId, personaId: input.personaId, expectedRevision: input.expectedRevision, issuer: "workspace_consent_officer", subjectDigest: canonicalDigest({ workspaceId: input.workspaceId, subjectReference: input.subjectReference }), evidenceDigest: canonicalDigest({ scope, effectiveAt: input.effectiveAt.toISOString(), expiresAt: input.expiresAt.toISOString() }), scope, effectiveAt: input.effectiveAt, expiresAt: input.expiresAt, idempotencyKey: input.idempotencyKey });
   }
 
+  async revokeConsent(input: Actor & { personaId: string; expectedRevision: number; evidenceId: string; reasonCode: string; idempotencyKey: string }) {
+    const requestDigest = canonicalDigest({ command: "revoke_consent", ...input });
+    return this.database.transaction(async (tx) => {
+      const replay = await this.replay(tx, input, input.idempotencyKey, requestDigest); if (replay) return replay;
+      const [persona] = await tx.select().from(creatorPersonas).where(and(eq(creatorPersonas.workspaceId, input.workspaceId), eq(creatorPersonas.id, input.personaId))).limit(1).for("update");
+      const [evidence] = await tx.select().from(creatorPersonaEvidence).where(and(eq(creatorPersonaEvidence.workspaceId, input.workspaceId), eq(creatorPersonaEvidence.id, input.evidenceId), eq(creatorPersonaEvidence.personaId, input.personaId), eq(creatorPersonaEvidence.type, "likeness_consent"))).limit(1).for("update");
+      if (!persona || !evidence) throw new CreatorPersonaError("CONSENT_EVIDENCE_NOT_FOUND");
+      if (persona.revision !== input.expectedRevision) throw new CreatorPersonaError("REVISION_CONFLICT");
+      if (persona.state === "deleted") throw new CreatorPersonaError("PERSONA_NOT_MUTABLE");
+      if (evidence.revokedAt) throw new CreatorPersonaError("CONSENT_ALREADY_REVOKED");
+      const now = this.now(), revision = persona.revision + 1;
+      await tx.update(creatorPersonaEvidence).set({ revokedAt: now }).where(and(eq(creatorPersonaEvidence.workspaceId, input.workspaceId), eq(creatorPersonaEvidence.id, input.evidenceId), isNull(creatorPersonaEvidence.revokedAt)));
+      await tx.update(creatorPersonaTrainingJobs).set({ state: "failed_known", failureCode: "CONSENT_REVOKED", updatedAt: now }).where(and(eq(creatorPersonaTrainingJobs.workspaceId, input.workspaceId), eq(creatorPersonaTrainingJobs.personaId, input.personaId), inArray(creatorPersonaTrainingJobs.state, ["queued", "admitted", "running", "waiting_provider", "outcome_unknown"])));
+      await tx.update(creatorPersonas).set({ state: "consent_expired", revision, updatedByUserId: input.userId, updatedAt: now }).where(and(eq(creatorPersonas.workspaceId, input.workspaceId), eq(creatorPersonas.id, input.personaId), eq(creatorPersonas.revision, input.expectedRevision)));
+      await tx.insert(creatorPersonaEvents).values({ workspaceId: input.workspaceId, personaId: input.personaId, revision, id: randomUUID(), type: "persona.consent_revoked", actorUserId: input.userId, facts: { evidenceId: input.evidenceId, reasonCode: input.reasonCode, futureUseBlocked: true }, occurredAt: now });
+      const result = { personaId: input.personaId, evidenceId: input.evidenceId, revision, state: "consent_expired", futureUseBlocked: true };
+      await this.receipt(tx, { actor: input, idempotencyKey: input.idempotencyKey, requestDigest, personaId: input.personaId, revision, result, createdAt: now }); return result;
+    });
+  }
+
+  async materializeExpiredConsents(input: { at: Date; limit?: number }) {
+    return this.database.transaction(async (tx) => {
+      const candidates = await tx.select().from(creatorPersonas).where(and(
+        sql`${creatorPersonas.state} not in ('deleted', 'consent_expired')`,
+        or(
+          lte(creatorPersonas.retentionUntil, input.at),
+          and(eq(creatorPersonas.kind, "consented_likeness"), sql`not exists (
+            select 1 from ${creatorPersonaEvidence} evidence
+            where evidence.workspace_id = ${creatorPersonas.workspaceId}
+              and evidence.persona_id = ${creatorPersonas.id}
+              and evidence.type = 'likeness_consent'
+              and evidence.revoked_at is null
+              and evidence.effective_at <= ${input.at}
+              and evidence.expires_at > ${input.at}
+          )`),
+        ),
+      )).orderBy(asc(creatorPersonas.updatedAt), asc(creatorPersonas.id)).limit(Math.min(input.limit ?? 100, 100)).for("update", { skipLocked: true });
+      for (const persona of candidates) {
+        const revision = persona.revision + 1;
+        const reasonCode = persona.retentionUntil <= input.at ? "RETENTION_EXPIRED" : "CONSENT_EXPIRED";
+        await tx.update(creatorPersonaTrainingJobs).set({ state: "failed_known", failureCode: reasonCode, updatedAt: input.at }).where(and(eq(creatorPersonaTrainingJobs.workspaceId, persona.workspaceId), eq(creatorPersonaTrainingJobs.personaId, persona.id), inArray(creatorPersonaTrainingJobs.state, ["queued", "admitted", "running", "waiting_provider", "outcome_unknown"])));
+        await tx.update(creatorPersonas).set({ state: "consent_expired", revision, updatedAt: input.at }).where(and(eq(creatorPersonas.workspaceId, persona.workspaceId), eq(creatorPersonas.id, persona.id), eq(creatorPersonas.revision, persona.revision)));
+        await tx.insert(creatorPersonaEvents).values({ workspaceId: persona.workspaceId, personaId: persona.id, revision, id: randomUUID(), type: "persona.consent_expired", actorUserId: null, facts: { reasonCode, futureUseBlocked: true, materializedBy: "persona-training-dispatch" }, occurredAt: input.at });
+      }
+      return { materialized: candidates.length };
+    });
+  }
+
   async attachSources(input: Actor & { personaId: string; expectedRevision: number; assetIds: string[]; consentEvidenceId: string | null; idempotencyKey: string }) {
     const requestDigest = canonicalDigest({ command: "attach_sources", ...input });
     return this.database.transaction(async (tx) => {
@@ -120,26 +208,45 @@ export class CreatorPersonaRepository {
     });
   }
 
-  async requestTraining(input: Actor & { personaId: string; expectedRevision: number; provider: string; model: string; modelVersion: string; qualificationDigest: string; idempotencyKey: string }) {
+  async requestAdmittedTraining(input: Actor & { personaId: string; expectedRevision: number; jobId: string; operationId: string; retryOfJobId: string | null; admission: PersonaTrainingAdmissionSnapshot; idempotencyKey: string }) {
     const requestDigest = canonicalDigest({ command: "request_training", ...input });
     return this.database.transaction(async (tx) => {
       const replay = await this.replay(tx, input, input.idempotencyKey, requestDigest); if (replay) return replay;
       const [persona] = await tx.select().from(creatorPersonas).where(and(eq(creatorPersonas.workspaceId, input.workspaceId), eq(creatorPersonas.id, input.personaId))).limit(1);
-      if (!persona) throw new CreatorPersonaError("PERSONA_NOT_FOUND"); if (persona.revision !== input.expectedRevision) throw new CreatorPersonaError("REVISION_CONFLICT"); if (persona.state !== "ready_to_train") throw new CreatorPersonaError("PERSONA_NOT_READY_TO_TRAIN");
+      if (!persona) throw new CreatorPersonaError("PERSONA_NOT_FOUND"); if (persona.revision !== input.expectedRevision) throw new CreatorPersonaError("REVISION_CONFLICT"); if (!["ready_to_train", "training_failed"].includes(persona.state)) throw new CreatorPersonaError("PERSONA_NOT_READY_TO_TRAIN");
       const evidence = (await tx.select().from(creatorPersonaEvidence).where(and(eq(creatorPersonaEvidence.workspaceId, input.workspaceId), eq(creatorPersonaEvidence.personaId, input.personaId)))).map(hydrateEvidence);
-      const gate = evaluatePersonaGate({ persona: hydratePersona(persona), evidence, at: this.now(), requireActive: false }); if (!gate.admitted) throw new CreatorPersonaError("PERSONA_GATES_INCOMPLETE", gate.reasons.join(","));
-      if (gate.evidence.providerAcceptance?.provider !== input.provider) throw new CreatorPersonaError("PROVIDER_ACCEPTANCE_MISMATCH");
+      const now = this.now();
+      const gate = evaluatePersonaGate({ persona: hydratePersona(persona), evidence, at: now, requireActive: false }); if (!gate.admitted) throw new CreatorPersonaError("PERSONA_GATES_INCOMPLETE", gate.reasons.join(","));
+      const qualification = input.admission.qualification;
+      if (gate.evidence.providerAcceptance?.id !== input.admission.providerAcceptanceEvidenceId || gate.evidence.providerAcceptance.provider !== qualification.provider) throw new CreatorPersonaError("PROVIDER_ACCEPTANCE_MISMATCH");
       const acceptanceScope = gate.evidence.providerAcceptance.scope;
-      if (acceptanceScope.model !== input.model || acceptanceScope.modelVersion !== input.modelVersion || acceptanceScope.qualificationDigest !== input.qualificationDigest || !Array.isArray(acceptanceScope.acceptedUses) || !acceptanceScope.acceptedUses.includes("training")) throw new CreatorPersonaError("PROVIDER_ACCEPTANCE_MISMATCH");
-      const qualified = findCuratedModel({ provider: "replicate", model: input.model, version: input.modelVersion, inputSchemaDigest: String(acceptanceScope.inputSchemaDigest ?? "") });
-      if (!qualified || qualified.qualification.status !== "qualified" || qualified.qualification.evidence.digest !== input.qualificationDigest) throw new CreatorPersonaError("TRAINING_MODEL_NOT_QUALIFIED");
-      const sources = await tx.select().from(creatorPersonaTrainingSources).where(and(eq(creatorPersonaTrainingSources.workspaceId, input.workspaceId), eq(creatorPersonaTrainingSources.personaId, input.personaId)));
-      if (sources.length < 3) throw new CreatorPersonaError("TRAINING_SOURCES_INSUFFICIENT");
-      const now = this.now(), revision = persona.revision + 1, jobId = randomUUID(), operationId = `persona_training:${jobId}`;
-      await tx.insert(creatorPersonaTrainingJobs).values({ workspaceId: input.workspaceId, id: jobId, personaId: input.personaId, personaRevision: revision, state: "queued", provider: input.provider, model: input.model, modelVersion: input.modelVersion, qualificationDigest: input.qualificationDigest, providerAcceptanceEvidenceId: gate.evidence.providerAcceptance.id, operationId, requestedByUserId: input.userId, createdAt: now, updatedAt: now });
+      if (acceptanceScope.model !== qualification.model || acceptanceScope.modelVersion !== qualification.version || acceptanceScope.inputSchemaDigest !== qualification.inputSchemaDigest || acceptanceScope.qualificationDigest !== qualification.digest || !Array.isArray(acceptanceScope.acceptedUses) || !acceptanceScope.acceptedUses.includes("training")) throw new CreatorPersonaError("PROVIDER_ACCEPTANCE_MISMATCH");
+      if (input.admission.quote.currency !== "USD" || input.admission.quote.basis !== "run" || input.admission.quote.quantity !== 1 || input.admission.quote.amount !== qualification.priceUsd.amount || input.admission.reservationIds.length === 0) throw new CreatorPersonaError("TRAINING_QUOTE_INVALID");
+      if (new Date(qualification.expiresAt) <= now || input.admission.quote.expiresAt <= now || input.admission.regionAdmission.evidenceExpiresAt <= now || !qualification.verifiedRegions.includes(input.admission.regionAdmission.region)) throw new CreatorPersonaError("TRAINING_ADMISSION_EXPIRED");
+      const sources = await tx.select({ assetId: creatorPersonaTrainingSources.assetId, mediaType: assets.type, checksum: assets.checksum, expectedChecksum: creatorPersonaTrainingSources.assetChecksum, deletedAt: assets.deletedAt, uploadState: assets.metadata })
+        .from(creatorPersonaTrainingSources).innerJoin(assets, and(eq(assets.workspaceId, creatorPersonaTrainingSources.workspaceId), eq(assets.id, creatorPersonaTrainingSources.assetId)))
+        .where(and(eq(creatorPersonaTrainingSources.workspaceId, input.workspaceId), eq(creatorPersonaTrainingSources.personaId, input.personaId))).orderBy(asc(creatorPersonaTrainingSources.ordinal));
+      if (sources.length < qualification.sourceContract.minimum || sources.length > qualification.sourceContract.maximum || sources.some((source) => !qualification.sourceContract.mediaTypes.includes(source.mediaType as "image" | "video") || source.deletedAt || source.checksum !== source.expectedChecksum || (source.uploadState as Record<string, unknown> | null)?.uploadState !== "ready")) throw new CreatorPersonaError("TRAINING_SOURCES_INVALID");
+      if (persona.state === "training_failed") {
+        const [latestFailed] = await tx.select({ id: creatorPersonaTrainingJobs.id }).from(creatorPersonaTrainingJobs).where(and(eq(creatorPersonaTrainingJobs.workspaceId, input.workspaceId), eq(creatorPersonaTrainingJobs.personaId, input.personaId), eq(creatorPersonaTrainingJobs.state, "failed_known"))).orderBy(desc(creatorPersonaTrainingJobs.updatedAt), desc(creatorPersonaTrainingJobs.id)).limit(1);
+        if (!latestFailed || latestFailed.id !== input.retryOfJobId) throw new CreatorPersonaError("TRAINING_RETRY_LINEAGE_CHANGED");
+      } else if (input.retryOfJobId) throw new CreatorPersonaError("TRAINING_RETRY_NOT_ALLOWED");
+      const revision = persona.revision + 1;
+      await tx.insert(creatorPersonaTrainingJobs).values({
+        workspaceId: input.workspaceId, id: input.jobId, personaId: input.personaId, personaRevision: revision, state: "queued",
+        provider: qualification.provider, model: qualification.model, modelVersion: qualification.version, qualificationDigest: qualification.digest,
+        inputSchemaDigest: qualification.inputSchemaDigest, qualificationId: qualification.id, qualificationRevision: qualification.revision,
+        qualificationExpiresAt: new Date(qualification.expiresAt), qualificationSnapshot: qualification,
+        quoteAmountUsd: decimal(qualification.priceUsd.amount), quoteExpiresAt: input.admission.quote.expiresAt, reservationIds: input.admission.reservationIds,
+        regionPolicyId: input.admission.regionAdmission.policyId, regionPolicyVersion: input.admission.regionAdmission.policyVersion,
+        regionEvidenceDigest: input.admission.regionAdmission.evidenceDigest, region: input.admission.regionAdmission.region,
+        regionRouteId: input.admission.regionAdmission.routeId, regionEvidenceExpiresAt: input.admission.regionAdmission.evidenceExpiresAt,
+        retryOfJobId: input.retryOfJobId, providerAcceptanceEvidenceId: gate.evidence.providerAcceptance.id, operationId: input.operationId,
+        requestedByUserId: input.userId, createdAt: now, updatedAt: now,
+      });
       await tx.update(creatorPersonas).set({ state: "training", revision, updatedByUserId: input.userId, updatedAt: now }).where(and(eq(creatorPersonas.workspaceId, input.workspaceId), eq(creatorPersonas.id, input.personaId), eq(creatorPersonas.revision, input.expectedRevision)));
-      await tx.insert(creatorPersonaEvents).values({ workspaceId: input.workspaceId, personaId: input.personaId, revision, id: randomUUID(), type: "persona.training_requested", actorUserId: input.userId, facts: { jobId, operationId, provider: input.provider, model: input.model, modelVersion: input.modelVersion }, occurredAt: now });
-      const result = { personaId: input.personaId, revision, state: "training", trainingJobId: jobId, operationId }; await this.receipt(tx, { actor: input, idempotencyKey: input.idempotencyKey, requestDigest, personaId: input.personaId, revision, result, createdAt: now }); return result;
+      await tx.insert(creatorPersonaEvents).values({ workspaceId: input.workspaceId, personaId: input.personaId, revision, id: randomUUID(), type: input.retryOfJobId ? "persona.training_retried" : "persona.training_requested", actorUserId: input.userId, facts: { jobId: input.jobId, operationId: input.operationId, retryOfJobId: input.retryOfJobId, provider: qualification.provider, model: qualification.model, modelVersion: qualification.version, qualificationId: qualification.id, qualificationRevision: qualification.revision, quoteAmountUsd: decimal(input.admission.quote.amount), reservationIds: input.admission.reservationIds, region: input.admission.regionAdmission.region, regionEvidenceDigest: input.admission.regionAdmission.evidenceDigest }, occurredAt: now });
+      const result = { personaId: input.personaId, revision, state: "training", trainingJobId: input.jobId, operationId: input.operationId, retryOfJobId: input.retryOfJobId }; await this.receipt(tx, { actor: input, idempotencyKey: input.idempotencyKey, requestDigest, personaId: input.personaId, revision, result, createdAt: now }); return result;
     });
   }
 

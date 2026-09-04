@@ -9215,6 +9215,32 @@ export const creatorPersonaTrainingSources = pgTable(
   }),
 );
 
+export const creatorPersonaTrainingAdmissions = pgTable(
+  "creator_persona_training_admissions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    personaId: text("persona_id").notNull(),
+    expectedRevision: integer("expected_revision").notNull(),
+    jobId: text("job_id").notNull(),
+    operationId: text("operation_id").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    admissionSnapshot: jsonb("admission_snapshot").$type<Record<string, unknown>>().notNull(),
+    retryOfJobId: text("retry_of_job_id"),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_training_admissions_pk", columns: [table.workspaceId, table.idempotencyKey] }),
+    jobUnique: uniqueIndex("creator_persona_training_admissions_job_unique").on(table.workspaceId, table.jobId),
+    personaFk: foreignKey({ name: "creator_persona_training_admissions_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    digestCheck: check("creator_persona_training_admissions_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    revisionCheck: check("creator_persona_training_admissions_revision_check", sql`${table.expectedRevision} > 0`),
+    windowCheck: check("creator_persona_training_admissions_window_check", sql`${table.expiresAt} > ${table.createdAt}`),
+  }),
+);
+
 export const creatorPersonaTrainingJobs = pgTable(
   "creator_persona_training_jobs",
   {
@@ -9227,6 +9253,21 @@ export const creatorPersonaTrainingJobs = pgTable(
     model: text("model").notNull(),
     modelVersion: text("model_version").notNull(),
     qualificationDigest: text("qualification_digest").notNull(),
+    inputSchemaDigest: text("input_schema_digest"),
+    qualificationId: text("qualification_id"),
+    qualificationRevision: integer("qualification_revision"),
+    qualificationExpiresAt: timestamp("qualification_expires_at", { withTimezone: true }),
+    qualificationSnapshot: jsonb("qualification_snapshot").$type<Record<string, unknown>>(),
+    quoteAmountUsd: text("quote_amount_usd"),
+    quoteExpiresAt: timestamp("quote_expires_at", { withTimezone: true }),
+    reservationIds: jsonb("reservation_ids").$type<string[]>(),
+    regionPolicyId: text("region_policy_id"),
+    regionPolicyVersion: integer("region_policy_version"),
+    regionEvidenceDigest: text("region_evidence_digest"),
+    region: text("region"),
+    regionRouteId: text("region_route_id"),
+    regionEvidenceExpiresAt: timestamp("region_evidence_expires_at", { withTimezone: true }),
+    retryOfJobId: text("retry_of_job_id"),
     providerAcceptanceEvidenceId: text("provider_acceptance_evidence_id").notNull(),
     operationId: text("operation_id").notNull(),
     providerJobRef: text("provider_job_ref"),
@@ -9240,11 +9281,14 @@ export const creatorPersonaTrainingJobs = pgTable(
     pk: primaryKey({ name: "creator_persona_training_jobs_pk", columns: [table.workspaceId, table.id] }),
     personaFk: foreignKey({ name: "creator_persona_training_jobs_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
     acceptanceFk: foreignKey({ name: "creator_persona_training_jobs_acceptance_fk", columns: [table.workspaceId, table.providerAcceptanceEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    retryFk: foreignKey({ name: "creator_persona_training_jobs_retry_fk", columns: [table.workspaceId, table.retryOfJobId], foreignColumns: [table.workspaceId, table.id] }).onDelete("restrict"),
     operationUnique: uniqueIndex("creator_persona_training_jobs_operation_unique").on(table.workspaceId, table.operationId),
     personaCursorIdx: index("creator_persona_training_jobs_persona_cursor_idx").on(table.workspaceId, table.personaId, table.createdAt, table.id),
     stateCursorIdx: index("creator_persona_training_jobs_state_cursor_idx").on(table.workspaceId, table.state, table.updatedAt, table.id),
+    retryIdx: index("creator_persona_training_jobs_retry_idx").on(table.workspaceId, table.retryOfJobId),
     stateCheck: check("creator_persona_training_jobs_state_check", sql`${table.state} in ('queued','admitted','running','waiting_provider','succeeded','failed_known','outcome_unknown','cancelled')`),
     digestCheck: check("creator_persona_training_jobs_digest_check", sql`${table.qualificationDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    admissionCompleteCheck: check("creator_persona_training_jobs_admission_complete_check", sql`(${table.inputSchemaDigest} is null and ${table.qualificationId} is null and ${table.qualificationRevision} is null and ${table.qualificationExpiresAt} is null and ${table.qualificationSnapshot} is null and ${table.quoteAmountUsd} is null and ${table.quoteExpiresAt} is null and ${table.reservationIds} is null and ${table.regionPolicyId} is null and ${table.regionPolicyVersion} is null and ${table.regionEvidenceDigest} is null and ${table.region} is null and ${table.regionRouteId} is null and ${table.regionEvidenceExpiresAt} is null) or (${table.inputSchemaDigest} is not null and ${table.qualificationId} is not null and ${table.qualificationRevision} is not null and ${table.qualificationExpiresAt} is not null and ${table.qualificationSnapshot} is not null and ${table.quoteAmountUsd} is not null and ${table.quoteExpiresAt} is not null and ${table.reservationIds} is not null and ${table.regionPolicyId} is not null and ${table.regionPolicyVersion} is not null and ${table.regionEvidenceDigest} is not null and ${table.region} is not null and ${table.regionRouteId} is not null and ${table.regionEvidenceExpiresAt} is not null)`),
   }),
 );
 

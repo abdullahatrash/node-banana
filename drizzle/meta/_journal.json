@@ -708,6 +708,13 @@
       "when": 1788608400000,
       "tag": "0100_content_format_definitions_and_similarity",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1788612000000,
+      "tag": "0101_creator_persona_training_admission",
+      "breakpoints": true
     }
   ]
 }

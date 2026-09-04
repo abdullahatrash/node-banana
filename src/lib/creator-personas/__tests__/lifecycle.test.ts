@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { acceptedUseForPurpose, evaluatePersonaGate, parsePersonaModelRef, serializePersonaModelRef, type CreatorPersona, type CreatorPersonaEvidence } from "../types";
 import { personaAttestationMessage, verifyPersonaAttestation } from "../attestation";
-import { addPersonaEvidenceSchema, createPersonaSchema, recordPersonaConsentSchema, requestPersonaTrainingSchema } from "../schemas";
+import { addPersonaEvidenceSchema, createPersonaSchema, recordPersonaConsentSchema, requestPersonaTrainingSchema, revokePersonaConsentSchema } from "../schemas";
 
 const at = new Date("2026-09-04T12:00:00.000Z");
 const digest = `sha256:${"a".repeat(64)}` as const;
@@ -20,7 +20,8 @@ describe("Creator Persona safety gates", () => {
 
   it("requires Arabic variety and exact immutable training qualification", () => {
     expect(createPersonaSchema.safeParse({ action: "create", name: "A", kind: "synthetic", contentLanguage: "ar", arabicVariety: null, disclosure: "long enough disclosure", retentionUntil: "2027-01-01T00:00:00.000Z", idempotencyKey: "idem-key" }).success).toBe(false);
-    expect(requestPersonaTrainingSchema.safeParse({ action: "request_training", expectedRevision: 4, provider: "replicate", model: "owner/model", modelVersion: "immutable-version", qualificationDigest: digest, idempotencyKey: "idem-key" }).success).toBe(true);
+    expect(requestPersonaTrainingSchema.safeParse({ action: "request_training", expectedRevision: 4, idempotencyKey: "idem-key" }).success).toBe(true);
+    expect(requestPersonaTrainingSchema.safeParse({ action: "request_training", expectedRevision: 4, provider: "replicate", model: "caller-model", modelVersion: "mutable", qualificationDigest: digest, idempotencyKey: "idem-key" }).success).toBe(false);
   });
 
   it("verifies non-human evidence with a constant-time server attestation", () => {
@@ -48,5 +49,6 @@ describe("Creator Persona safety gates", () => {
     expect(recordPersonaConsentSchema.safeParse(valid).success).toBe(true);
     expect(recordPersonaConsentSchema.safeParse({ ...valid, allowedPurposes: [] }).success).toBe(false);
     expect(recordPersonaConsentSchema.safeParse({ ...valid, expiresAt: valid.effectiveAt }).success).toBe(false);
+    expect(revokePersonaConsentSchema.safeParse({ action: "revoke_consent", expectedRevision: 8, evidenceId: "consent-1", reasonCode: "subject.withdrawn", idempotencyKey: "revoke-1" }).success).toBe(true);
   });
 });

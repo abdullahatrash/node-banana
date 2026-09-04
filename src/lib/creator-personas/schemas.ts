@@ -91,11 +91,13 @@ export const attachPersonaSourcesSchema = z.object({
 export const requestPersonaTrainingSchema = z.object({
   action: z.literal("request_training"),
   expectedRevision: z.number().int().positive(),
-  provider: z.literal("replicate"),
-  model: id,
-  modelVersion: id,
-  qualificationDigest: digest,
+  managedQuoteAcceptance: z.object({ quoteId: id, confirmationDigest: digest }).strict().nullable().optional(),
   idempotencyKey: id,
+}).strict();
+
+export const revokePersonaConsentSchema = z.object({
+  action: z.literal("revoke_consent"), expectedRevision: z.number().int().positive(), evidenceId: id,
+  reasonCode: z.string().regex(/^[a-z][a-z0-9_.-]{2,99}$/), idempotencyKey: id,
 });
 
 export const resolvePersonaTrainingSchema = z.object({
@@ -128,7 +130,7 @@ export const bindPersonaUsageSchema = z.object({
 });
 
 export const personaCommandSchema = z.discriminatedUnion("action", [
-  addPersonaEvidenceSchema, recordPersonaConsentSchema, attachPersonaSourcesSchema, requestPersonaTrainingSchema,
+  addPersonaEvidenceSchema, recordPersonaConsentSchema, revokePersonaConsentSchema, attachPersonaSourcesSchema, requestPersonaTrainingSchema,
   activatePersonaSchema, suspendPersonaSchema,
   deletePersonaSchema, bindPersonaUsageSchema,
 ]);

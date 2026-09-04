@@ -9,11 +9,12 @@ describe("productRequest", () => {
   });
 
   it("retains bounded machine codes for localized presentation", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: false, code: "CONTENT_REVISION_CONFLICT" }), { status: 409 })));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: false, code: "CONTENT_REVISION_CONFLICT", managedCreditQuote: { quoteId: "quote-1" } }), { status: 409 })));
 
     await expect(productRequest("/api/product-content", {})).rejects.toMatchObject({
       name: "ProductRequestError",
       code: "CONTENT_REVISION_CONFLICT",
+      details: { managedCreditQuote: { quoteId: "quote-1" } },
     });
   });
 

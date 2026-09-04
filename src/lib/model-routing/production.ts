@@ -12,11 +12,12 @@ const managedCommercial = {
   reserveQuote: async (...args: Parameters<(typeof import("@/lib/commercial/production"))["COMMERCIAL"]["reserveQuote"]>) => (await import("@/lib/commercial/production")).COMMERCIAL.reserveQuote(...args),
   settleGenerationEffect: async (...args: Parameters<(typeof import("@/lib/commercial/production"))["COMMERCIAL"]["settleGenerationEffect"]>) => (await import("@/lib/commercial/production")).COMMERCIAL.settleGenerationEffect(...args),
 };
+export const PRODUCTION_GENERATION_BUDGET = new ManagedGenerationBudgetAuthority(new RuntimeGenerationBudgetAuthority(getDb), managedCommercial);
 export const PRODUCTION_MODEL_ROUTING = new ModelRoutingService(
   new PostgresModelRoutingRepository(getDb),
   undefined,
   undefined,
-  new ManagedGenerationBudgetAuthority(new RuntimeGenerationBudgetAuthority(getDb), managedCommercial),
+  PRODUCTION_GENERATION_BUDGET,
   PRODUCTION_GENERATION_REGIONS,
 );
 export { PRODUCTION_GENERATION_REGIONS };

@@ -4,7 +4,7 @@ import { personaCommandSchema } from "@/lib/creator-personas/schemas";
 import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
 import { CreatorPersonaError } from "@/lib/creator-personas/repository";
 import { verifyPersonaAttestation } from "@/lib/creator-personas/attestation";
-import { PRODUCTION_OPERATION_STATUS } from "@/lib/agent-runtime/operation-status/production";
+import { PRODUCTION_PERSONA_TRAINING_ADMISSION } from "@/lib/creator-personas/training-admission-production";
 
 type Context = { params: Promise<{ personaId: string }> };
 export const POST = withStudioAuth<Context>({ route: "/api/studio/personas/[personaId]/commands", action: "write", permission: "product:personas:manage" }, async (request, authz, context) => {
@@ -28,8 +28,14 @@ export const POST = withStudioAuth<Context>({ route: "/api/studio/personas/[pers
     } else if (parsed.data.action === "attach_sources") {
       const { action: _action, ...command } = parsed.data; result = await CREATOR_PERSONAS.attachSources({ ...command, personaId, workspaceId: authz.workspaceId, userId: authz.userId });
     } else if (parsed.data.action === "request_training") {
-      const { action: _action, ...command } = parsed.data; result = await CREATOR_PERSONAS.requestTraining({ ...command, personaId, workspaceId: authz.workspaceId, userId: authz.userId });
-      if (typeof result.operationId === "string" && typeof result.trainingJobId === "string") await PRODUCTION_OPERATION_STATUS.create({ workspaceId: authz.workspaceId, operationId: result.operationId, kind: "persona_training", resourceId: result.trainingJobId, actor: { type: "human", userId: authz.userId }, metadata: { provider: command.provider, model: command.model, version: command.modelVersion, personaId, qualificationDigest: command.qualificationDigest, nextAction: "await_provider_dispatch" }, idempotencyKey: `persona-training:${result.trainingJobId}` });
+      const { action: _action, ...command } = parsed.data;
+      const admission = await PRODUCTION_PERSONA_TRAINING_ADMISSION.request({ ...command, personaId, workspaceId: authz.workspaceId, userId: authz.userId });
+      if (admission.kind === "confirmation_required") return NextResponse.json({ success: false, code: "MANAGED_CREDIT_CONFIRMATION_REQUIRED", managedCreditQuote: admission.quote }, { status: 409 });
+      if (admission.kind !== "admitted") return NextResponse.json({ success: false, code: admission.code }, { status: admission.kind === "unavailable" ? 503 : admission.code === "REVISION_CONFLICT" ? 409 : 422 });
+      result = admission.result;
+    } else if (parsed.data.action === "revoke_consent") {
+      if (!["owner", "admin"].includes(authz.role)) return NextResponse.json({ success: false, code: "EVIDENCE_ISSUER_FORBIDDEN" }, { status: 403 });
+      const { action: _action, ...command } = parsed.data; result = await CREATOR_PERSONAS.revokeConsent({ ...command, personaId, workspaceId: authz.workspaceId, userId: authz.userId });
     } else if (parsed.data.action === "activate") {
       const { action: _action, ...command } = parsed.data; result = await CREATOR_PERSONAS.activate({ ...command, personaId, workspaceId: authz.workspaceId, userId: authz.userId });
     } else if (parsed.data.action === "suspend") {
