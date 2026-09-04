@@ -53,22 +53,26 @@ export async function getAudienceAnalytics(input: { workspaceId: string; days: 7
   const drilldownScope = { returned: drilldown.length, total: selected.length, truncated: selected.length > drilldown.length }
   type SourceRow = (typeof sources)[number]
   type SourceModel =
-    | (Omit<SourceRow, "kind" | "payload"> & { kind: "website_analytics_source"; payload: ReturnType<typeof websiteAnalyticsSourceSchema.parse>; evidence: SourceEvidenceScope; refreshJob: SourceRefreshJob | null })
-    | (Omit<SourceRow, "kind" | "payload"> & { kind: "geo_analytics_source"; payload: ReturnType<typeof geoAnalyticsSourceSchema.parse>; evidence: SourceEvidenceScope; refreshJob: SourceRefreshJob | null })
+    | (Omit<SourceRow, "kind" | "payload"> & { kind: "website_analytics_source"; payload: ReturnType<typeof websiteAnalyticsSourceSchema.parse>; evidence: SourceEvidenceScope; historicalEvidence: SourceEvidenceScope[]; totalEvidenceEvents: number; refreshJob: SourceRefreshJob | null })
+    | (Omit<SourceRow, "kind" | "payload"> & { kind: "geo_analytics_source"; payload: ReturnType<typeof geoAnalyticsSourceSchema.parse>; evidence: SourceEvidenceScope; historicalEvidence: SourceEvidenceScope[]; totalEvidenceEvents: number; refreshJob: SourceRefreshJob | null })
   const sourceModels: SourceModel[] = []
+  const currentSourceRevisions = new Map(sources.map((source) => [source.id, source.revision]))
+  const sourceRevisionEvidence = buildSourceRevisionEvidence(observations, currentSourceRevisions)
   for (const source of sources) {
     const sourceObservations = observations.filter((observation) => observation.sourceId === source.id && observation.sourceRevision === source.revision)
     const latest = sourceObservations.at(-1)
     const refreshJob = refreshJobs.find((job) => job.sourceId === source.id) ?? null
     const refresh = refreshJob ? sourceRefreshJob(refreshJob) : null
     const evidence = sourceEvidenceScope(source.id, source.revision, sourceObservations)
-    if (source.kind === "website_analytics_source") { const payload = websiteAnalyticsSourceSchema.parse(source.payload); sourceModels.push({ ...source, kind: "website_analytics_source", payload: withObservationFreshness(payload, latest?.capturedAt ?? null, "lastEventAt", refresh), evidence, refreshJob: refresh }) }
-    if (source.kind === "geo_analytics_source") { const payload = geoAnalyticsSourceSchema.parse(source.payload); sourceModels.push({ ...source, kind: "geo_analytics_source", payload: withObservationFreshness(payload, latest?.capturedAt ?? null, "lastObservationAt", refresh), evidence, refreshJob: refresh }) }
+    const historicalEvidence = sourceRevisionEvidence.filter((item) => item.sourceId === source.id && item.classification === "historical").map(({ classification: _classification, metricTotals: _metricTotals, ...item }) => item)
+    const totalEvidenceEvents = evidence.eventCount + historicalEvidence.reduce((sum, item) => sum + item.eventCount, 0)
+    if (source.kind === "website_analytics_source") { const payload = websiteAnalyticsSourceSchema.parse(source.payload); sourceModels.push({ ...source, kind: "website_analytics_source", payload: withObservationFreshness(payload, latest?.capturedAt ?? null, "lastEventAt", refresh), evidence, historicalEvidence, totalEvidenceEvents, refreshJob: refresh }) }
+    if (source.kind === "geo_analytics_source") { const payload = geoAnalyticsSourceSchema.parse(source.payload); sourceModels.push({ ...source, kind: "geo_analytics_source", payload: withObservationFreshness(payload, latest?.capturedAt ?? null, "lastObservationAt", refresh), evidence, historicalEvidence, totalEvidenceEvents, refreshJob: refresh }) }
   }
   const freshness = [events[0]?.createdAt, observations.at(-1)?.capturedAt].filter((value): value is Date => Boolean(value)).sort((left, right) => right.getTime() - left.getTime())[0] ?? null
   const evidenceScope = {
     complete: true, from, to: now, socialEvents: events.length, publishingRecords: posts.length, signedObservations: observations.length,
-    sourceRevisions: sourceModels.map((source) => ({ id: source.id, revision: source.revision })),
+    sourceRevisions: sourceRevisionEvidence,
     regions: unique(observations.map((row) => row.scope.region)), consentRevisions: unique(observations.map((row) => row.scope.consentRevision)), retentionUntil: earliestDate(observations.map((row) => row.scope.retentionUntil)),
     campaignTags: unique(observations.flatMap((row) => row.scope.campaignTag ? [row.scope.campaignTag] : [])), contentTypes: unique(observations.map((row) => row.scope.contentType)), platforms: unique(observations.map((row) => row.scope.platform)), publishingStates: unique(observations.map((row) => row.scope.publishingState)),
   }
@@ -105,8 +109,19 @@ function earliestDate(values: string[]) { return values.length ? values.sort()[0
 
 type SourceEvidenceScope = ReturnType<typeof sourceEvidenceScope>
 type SourceRefreshJob = ReturnType<typeof sourceRefreshJob>
-function sourceEvidenceScope(sourceId: string, sourceRevision: number, rows: Array<{ capturedAt: Date; occurredAt: Date; scope: { region: string; consentRevision: string; retentionUntil: string; campaignTag: string | null; contentType: string; platform: string; publishingState: string } }>) {
-  return { sourceId, sourceRevision, eventCount: rows.length, occurredFrom: rows[0]?.occurredAt ?? null, occurredTo: rows.at(-1)?.occurredAt ?? null, capturedFrom: rows[0]?.capturedAt ?? null, capturedTo: rows.at(-1)?.capturedAt ?? null, regions: unique(rows.map((row) => row.scope.region)), consentRevisions: unique(rows.map((row) => row.scope.consentRevision)), retentionUntil: earliestDate(rows.map((row) => row.scope.retentionUntil)), campaignTags: unique(rows.flatMap((row) => row.scope.campaignTag ? [row.scope.campaignTag] : [])), contentTypes: unique(rows.map((row) => row.scope.contentType)), platforms: unique(rows.map((row) => row.scope.platform)), publishingStates: unique(rows.map((row) => row.scope.publishingState)) }
+type SourceEvidenceRow = { sourceId: string; sourceRevision: number; capturedAt: Date; occurredAt: Date; metric: string; value: number; scope: { region: string; consentRevision: string; retentionUntil: string; campaignTag: string | null; contentType: string; platform: string; publishingState: string } }
+function sourceEvidenceScope(sourceId: string, sourceRevision: number, rows: SourceEvidenceRow[]) {
+  const occurred = rows.map((row) => row.occurredAt).sort((left, right) => left.getTime() - right.getTime())
+  const captured = rows.map((row) => row.capturedAt).sort((left, right) => left.getTime() - right.getTime())
+  return { sourceId, sourceRevision, eventCount: rows.length, occurredFrom: occurred[0] ?? null, occurredTo: occurred.at(-1) ?? null, capturedFrom: captured[0] ?? null, capturedTo: captured.at(-1) ?? null, regions: unique(rows.map((row) => row.scope.region)), consentRevisions: unique(rows.map((row) => row.scope.consentRevision)), retentionUntil: earliestDate(rows.map((row) => row.scope.retentionUntil)), campaignTags: unique(rows.flatMap((row) => row.scope.campaignTag ? [row.scope.campaignTag] : [])), contentTypes: unique(rows.map((row) => row.scope.contentType)), platforms: unique(rows.map((row) => row.scope.platform)), publishingStates: unique(rows.map((row) => row.scope.publishingState)) }
+}
+export function buildSourceRevisionEvidence(rows: SourceEvidenceRow[], currentRevisions: ReadonlyMap<string, number>) {
+  const groups = new Map<string, SourceEvidenceRow[]>()
+  for (const row of rows) { const key = `${row.sourceId}:${row.sourceRevision}`; groups.set(key, [...(groups.get(key) ?? []), row]) }
+  return [...groups.values()].map((group) => {
+    const first = group[0]!
+    return { ...sourceEvidenceScope(first.sourceId, first.sourceRevision, group), classification: currentRevisions.get(first.sourceId) === first.sourceRevision ? "current" as const : "historical" as const, metricTotals: Object.fromEntries([...new Set(group.map((row) => row.metric))].sort().map((metric) => [metric, group.filter((row) => row.metric === metric).reduce((sum, row) => sum + row.value, 0)])) }
+  }).sort((left, right) => left.sourceId.localeCompare(right.sourceId) || right.sourceRevision - left.sourceRevision)
 }
 function sourceRefreshJob(row: typeof productAnalyticsRefreshJobs.$inferSelect) { return { id: row.id, state: row.state, sourceRevision: row.sourceRevision, processedEvents: row.processedEvents, cursor: row.cursor, attempt: row.attempt, maxAttempts: row.maxAttempts, requestedAt: row.requestedAt, updatedAt: row.updatedAt, errorCode: row.lastErrorCode } }
 function refreshStatus(job: SourceRefreshJob): "queued" | "running" | "succeeded" | "failed" { if (job.state === "succeeded") return "succeeded"; if (job.state === "failed_known" || job.state === "outcome_unknown") return "failed"; if (job.state === "claimed" || job.state === "running") return "running"; return "queued" }
