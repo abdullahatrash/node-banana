@@ -309,6 +309,25 @@ export async function rescheduleSocialPost(
   return updateSocialPost(postId, { scheduledAt });
 }
 
+export async function reschedulePublishingPlanTarget(input: {
+  approvalRequestId: string;
+  revisionId: string;
+  targetId: string;
+  expectedRevision: number;
+  scheduledAt: string;
+  confirmCancelReleasedDelivery: boolean;
+  idempotencyKey: string;
+}) {
+  const data = await socialFetch("/api/studio/calendar/reschedule", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return data.result as
+    | { kind: "rescheduled"; revision: { id: string; revision: number }; supersededApprovalId: string | null; requiresApproval: true }
+    | { kind: "cancellation_not_guaranteed"; cancellation: { outcome: "conditional" | "unknown" | "too_late" } };
+}
+
 export async function deleteSocialPost(postId: string): Promise<void> {
   await socialFetch(`/api/social/posts/${postId}`, { method: "DELETE" });
 }
