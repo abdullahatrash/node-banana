@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
+import { defaultSocialNotificationPreferences } from "@/lib/social/notification-preferences";
 
 const mockWithApiPermission = vi.fn();
 const mockGetSocialNotificationPreferences = vi.fn();
@@ -126,6 +127,7 @@ describe("/api/social/notifications/preferences", () => {
 
   it("upserts notification preferences", async () => {
     authorized();
+    const preferences = defaultSocialNotificationPreferences({ locale: "en", timeZone: "Asia/Dubai" });
     mockUpsertSocialNotificationPreferences.mockResolvedValue({
       workspaceId: "ws_1",
       userId: "user_1",
@@ -133,7 +135,7 @@ describe("/api/social/notifications/preferences", () => {
       emailEnabled: true,
       webhookEnabled: false,
       muteAll: false,
-      preferences: { severities: ["error"] },
+      preferences,
     });
 
     const { PUT } = await import("../route");
@@ -143,7 +145,7 @@ describe("/api/social/notifications/preferences", () => {
         body: JSON.stringify({
           inAppEnabled: false,
           emailEnabled: true,
-          preferences: { severities: ["error"] },
+          preferences,
         }),
       }),
     );
@@ -158,7 +160,15 @@ describe("/api/social/notifications/preferences", () => {
       emailEnabled: true,
       webhookEnabled: undefined,
       muteAll: undefined,
-      preferences: { severities: ["error"] },
+      preferences,
     });
+  });
+
+  it("rejects unversioned or unsupported preference documents", async () => {
+    authorized();
+    const { PUT } = await import("../route");
+    const response = await PUT(createRequest("http://localhost:3000/api/social/notifications/preferences", { method: "PUT", body: JSON.stringify({ preferences: { deliveryLocale: "fr" } }) }));
+    expect(response.status).toBe(400);
+    expect(mockUpsertSocialNotificationPreferences).not.toHaveBeenCalled();
   });
 });

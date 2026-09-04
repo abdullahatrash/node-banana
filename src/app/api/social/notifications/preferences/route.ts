@@ -7,6 +7,7 @@ import {
   upsertSocialNotificationPreferences,
 } from "@/lib/social/repository";
 import { isRecord } from "@/lib/social/utils";
+import { validateSocialNotificationPreferencesDocument } from "@/lib/social/notification-preferences";
 
 interface NotificationPreferencesResponse {
   success: boolean;
@@ -130,7 +131,11 @@ export async function PUT(
       return result.response;
     }
 
-    const body = (await request.json()) as NotificationPreferencesBody;
+    let rawBody: unknown;
+    try { rawBody = await request.json(); }
+    catch { return NextResponse.json({ success: false, error: "INVALID_NOTIFICATION_PREFERENCES" }, { status: 400 }); }
+    if (!isRecord(rawBody)) return NextResponse.json({ success: false, error: "INVALID_NOTIFICATION_PREFERENCES" }, { status: 400 });
+    const body = rawBody as NotificationPreferencesBody;
 
     if (
       !isBooleanOrUndefined(body.inAppEnabled) ||
@@ -160,6 +165,11 @@ export async function PUT(
         },
         { status: 400 },
       );
+    }
+
+    if (body.preferences !== undefined && body.preferences !== null) {
+      try { body.preferences = validateSocialNotificationPreferencesDocument(body.preferences); }
+      catch { return NextResponse.json({ success: false, error: "INVALID_NOTIFICATION_PREFERENCES" }, { status: 400 }); }
     }
 
     const workspaceId = result.session.workspace.id;

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArchiveIcon, BriefcaseBusinessIcon, CreditCardIcon, FileClockIcon, Globe2Icon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, BellIcon, BriefcaseBusinessIcon, CreditCardIcon, FileClockIcon, Globe2Icon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { ApiTokensSettings } from "@/components/social/ApiTokensSettings";
 import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
@@ -8,6 +8,7 @@ import { GovernanceSettingsSurface, type GovernanceSettingsSection } from "@/com
 import { BillingSettings } from "@/components/commercial/BillingSettings";
 import { WorkspacePreferencesSettings } from "@/components/product-shell/WorkspacePreferencesSettings";
 import { WorkspaceLanguageSettings } from "@/components/product-shell/WorkspaceLanguageSettings";
+import { WorkspaceNotificationSettings } from "@/components/product-shell/WorkspaceNotificationSettings";
 import { isAppLocale } from "@/i18n/config";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
 import { getWorkspaceCalendarPreferences } from "@/lib/product-surfaces/calendar-preferences";
@@ -26,6 +27,7 @@ const sections = [
   { key: "portability", icon: ArchiveIcon },
   { key: "language", icon: LanguagesIcon },
   { key: "preferences", icon: Globe2Icon },
+  { key: "notifications", icon: BellIcon },
   { key: "billing", icon: CreditCardIcon },
   { key: "api", icon: KeyRoundIcon },
   { key: "providers", icon: PlugZapIcon },
@@ -60,9 +62,10 @@ export default async function SettingsPage({
   const canReadBilling = permissions.includes("product:billing:read");
   const canManageBilling = permissions.includes("product:billing:manage");
   const canPurchaseBilling = permissions.includes("product:billing:purchase");
-  const visibleSections = sections.filter(({ key }) => key !== "billing" || canReadBilling);
+  const canManageNotifications = permissions.includes("social:view");
+  const visibleSections = sections.filter(({ key }) => (key !== "billing" || canReadBilling) && (key !== "notifications" || canManageNotifications));
   const requestedSection = readSection(section);
-  const activeSection = requestedSection === "billing" && !canReadBilling ? "members" : requestedSection;
+  const activeSection = (requestedSection === "billing" && !canReadBilling) || (requestedSection === "notifications" && !canManageNotifications) ? "members" : requestedSection;
 
   return (
     <SettingsSheet>
@@ -133,6 +136,8 @@ export default async function SettingsPage({
               <WorkspaceLanguageSettings workspaceId={workspaceId} initialInterfaceLocale={interfaceLocale} initialContentLanguage={contentLanguage} canManageContent={permissions.includes("product:content:write")} />
             ) : activeSection === "preferences" && preferences ? (
               <WorkspacePreferencesSettings initialPreferences={preferences} canManage={permissions.includes("social:publish")} />
+            ) : activeSection === "notifications" && workspaceId && preferences ? (
+              <WorkspaceNotificationSettings workspaceId={workspaceId} interfaceLocale={interfaceLocale} workspaceTimeZone={preferences.timezone} />
             ) : activeSection === "providers" ? (
               <ProviderKeysSettings />
             ) : activeSection === "api" ? (

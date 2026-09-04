@@ -49,6 +49,7 @@ import {
   type SocialTokenRefreshLeaseState,
   type SocialWebhookDeadLetterReplayState,
 } from "@/lib/db/schema";
+import { buildSocialNotificationPreferenceUpdate } from "@/lib/social/notification-preferences";
 
 // ---------------------------------------------------------------------------
 // Error classes
@@ -1913,6 +1914,7 @@ export async function upsertSocialNotificationPreferences(input: {
 }) {
   const db = getDb();
   const now = new Date();
+  const update = buildSocialNotificationPreferenceUpdate(input, now);
 
   const [row] = await db
     .insert(socialNotificationPreferences)
@@ -1932,14 +1934,7 @@ export async function upsertSocialNotificationPreferences(input: {
         socialNotificationPreferences.workspaceId,
         socialNotificationPreferences.userId,
       ],
-      set: {
-        inAppEnabled: input.inAppEnabled ?? true,
-        emailEnabled: input.emailEnabled ?? false,
-        webhookEnabled: input.webhookEnabled ?? false,
-        muteAll: input.muteAll ?? false,
-        preferences: input.preferences ?? null,
-        updatedAt: now,
-      },
+      set: update,
     })
     .returning();
 
