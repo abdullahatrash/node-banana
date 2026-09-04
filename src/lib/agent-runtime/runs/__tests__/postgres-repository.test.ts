@@ -136,6 +136,19 @@ describe("DrizzleWorkflowRunRepository", () => {
     expect(getDatabase).not.toHaveBeenCalled();
   });
 
+  it("binds start@3 receipt evidence to exact Artifact and Studio Asset membership without replacing snapshot order", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/agent-runtime/runs/postgres-repository.ts"),
+      "utf8",
+    );
+    const start = source.slice(source.indexOf("  async start("), source.indexOf("  async getById("));
+    expect(start).toContain('input.receipt.capability === "workflow_runs.start@3"');
+    expect(start).toContain('resource.kind === "studio_asset"');
+    expect(start).toContain("canonicalDigest([...authorizedStudioAssetIds].sort())");
+    expect(start).toContain("canonicalDigest([...snapshottedStudioAssetIds].sort())");
+    expect(start).toContain("input.run.startSnapshot.studioAssetReferences.map");
+  });
+
   it("keeps implementation-critical PostgreSQL concurrency contracts explicit", () => {
     const source = readFileSync(
       resolve(

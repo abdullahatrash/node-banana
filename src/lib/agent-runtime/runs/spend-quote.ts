@@ -9,7 +9,7 @@ export interface WorkflowRunAcceptedSpendQuote {
   requestedByUserId: string;
   delegatedPrincipalId: string;
   delegatedKeyId: string;
-  capability: "workflow_runs.start@2";
+  capability: "workflow_runs.start@2" | "workflow_runs.start@3";
   workflowId: string;
   workflowRevisionId: string;
   inputDigest: string;
@@ -39,12 +39,14 @@ export function workflowRunQuoteInputDigest(input: {
   revisionId: string;
   inputs: Record<string, unknown>;
   inputArtifactIds: string[];
+  studioAssetReferences?: import("./types").WorkflowRunStudioAssetReference[];
 }): string {
   return canonicalDigest({
     workflowId: input.workflowId,
     revisionId: input.revisionId,
     inputs: input.inputs,
     inputArtifactIds: [...input.inputArtifactIds].sort(),
+    ...(input.studioAssetReferences ? { studioAssetReferences: input.studioAssetReferences } : {}),
   });
 }
 
@@ -81,7 +83,7 @@ export class WorkflowRunSpendQuoteCodec {
       const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as WorkflowRunAcceptedSpendQuote;
       if (
         value.schema !== "workflow-run-accepted-spend-quote/v1" ||
-        value.capability !== "workflow_runs.start@2" ||
+        (value.capability !== "workflow_runs.start@2" && value.capability !== "workflow_runs.start@3") ||
         typeof value.quoteId !== "string" ||
         !value.quoteId.startsWith("quote_") ||
         value.ceiling?.maximumAmount !== value.amount ||

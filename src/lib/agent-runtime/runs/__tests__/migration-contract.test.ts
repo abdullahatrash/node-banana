@@ -38,8 +38,21 @@ const byokArtifactMetadataMigration = readFileSync(
   resolve(process.cwd(), "drizzle/0041_grey_blink.sql"),
   "utf8",
 );
+const studioAssetSnapshotMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0113_workflow_run_studio_asset_snapshot.sql"),
+  "utf8",
+);
 
 describe("Workflow Run PostgreSQL migration", () => {
+  it("adds exact v3 Studio Asset snapshots while retaining v1 and v2", () => {
+    expect(studioAssetSnapshotMigration).toContain("'workflow-run-start-snapshot/v1', 'workflow-run-start-snapshot/v2', 'workflow-run-start-snapshot/v3'");
+    expect(studioAssetSnapshotMigration).toContain("valid_workflow_run_studio_asset_references");
+    expect(studioAssetSnapshotMigration).toContain("jsonb_typeof(\"start_snapshot\"->'providerResolutions') = 'array'");
+    expect(studioAssetSnapshotMigration).toContain("jsonb_array_length(\"start_snapshot\"->'providerResolutions') > 0");
+    for (const field of ["assetId", "digest", "type", "mediaType", "sizeBytes", "width", "height", "durationSeconds"]) {
+      expect(studioAssetSnapshotMigration).toContain(`'${field}'`);
+    }
+  });
   it("creates Run authority, retained events, scoped receipts, outbox, and leases", () => {
     for (const table of [
       "workflow_runs",

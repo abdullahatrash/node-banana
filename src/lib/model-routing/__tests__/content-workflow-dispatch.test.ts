@@ -50,6 +50,7 @@ import { AesGcmWorkflowRunEventCursorCodec } from "@/lib/agent-runtime/runs/curs
 import { WorkflowRunExecutorRegistry } from "@/lib/agent-runtime/runs/executors";
 import { InMemoryWorkflowRunQueue, InMemoryWorkflowRunRepository, InMemoryWorkflowRunRevisionReader } from "@/lib/agent-runtime/runs/memory";
 import { WorkflowRunService } from "@/lib/agent-runtime/runs/service";
+import { WorkflowRunSpendQuoteCodec } from "@/lib/agent-runtime/runs/spend-quote";
 import type { WorkflowRunArtifactPort } from "@/lib/agent-runtime/runs/types";
 import { InMemoryUsageRepository } from "@/lib/agent-runtime/usage/memory";
 import { UsageLedgerService } from "@/lib/agent-runtime/usage/service";
@@ -97,6 +98,7 @@ describe("typed Content Workflow provider dispatch", () => {
     const brandContext = { schema: "brand-context/v1", profileId: "brand_1", revision: 1, acceptedAt: now, contentLanguage: "ar", identity: { companyName: "Test", coreIdentity: "Test" }, offering: ["Test"], audiences: [{ name: "Creators", description: "Creators", weight: 1 }], benefits: ["Test"], differentiators: ["Test"], positioning: "Test", voice: { descriptors: ["clear"], do: ["be clear"], doNot: ["mislead"] }, palette: ["#000000"], constraints: { prohibitedClaims: [], prohibitedTopics: [] }, contentAngles: ["Test"], referenceAssets: [] };
     const context = { ...brandContext, digest: canonicalDigest(brandContext) as `sha256:${string}` };
     const sourceDigest = `sha256:${"3".repeat(64)}` as const;
+    const studioAssetReferences = sourceAssetIds.map((assetId) => ({ assetId, digest: sourceDigest, type: "image" as const, mediaType: "image/png", sizeBytes: 42, width: 1080, height: 1920, durationSeconds: null }));
     const intent = { schema: "generation-intent/v1", id: "intent_1", workspaceId, brand: { profileId: "brand_1", revision: 1, digest: brandDigest, acceptedAt: now, context }, promptDigest: canonicalDigest(prompt), providerComposition: { schema: "provider-input-composition/v1", sourceAssetIds, providerMediaAssetIds: sourceAssetIds }, capability: "image_to_video", contentLanguage: "ar", arabicVariety: "gulf", rights: { snapshotId: "rights_1", revision: 1, digest: `sha256:${"f".repeat(64)}`, basis: "owned", permittedRemix: "transform", evidence: sourceAssetIds.map((sourceAssetId) => ({ sourceAssetId, sourceDigest })), sourceAssetIds }, remixBrief: { digest: `sha256:${"1".repeat(64)}`, preserve: [], transform: [], avoid: [] }, qualification: { id: "qualification_1", revision: 1, digest: `sha256:${"b".repeat(64)}`, expiresAt: new Date("2026-12-01T00:00:00Z") }, regionAdmission: { policyId: "region", policyVersion: 1, evidenceDigest: `sha256:${"2".repeat(64)}`, region: "replicate-us", routeId: "replicate", evidenceExpiresAt: new Date("2026-12-01T00:00:00Z") }, outputContract: { mediaType: "video", aspectRatio: "9:16", width: 1080, height: 1920, durationSeconds: 5, fps: 30, safetyParameterKey: "safe", safetyValue: true, lockedParametersDigest: canonicalDigest({ safe: true }) }, requestedModel: model, selectedModel: model, fallbackAuthorizationId: null, fundingMode: "byok", contentExecution, persona: null, quote: { currency: "USD", amount: 0.01, basis: "second", quantity: 5, quotedAt: now, expiresAt: new Date("2026-12-01T00:00:00Z") }, reservationIds: ["reservation_1"], createdByUserId: userId, createdAt: now } as unknown as GenerationIntent;
     mocks.intent = intent; mocks.definition = definition; mocks.descriptor = descriptor; mocks.resources = resources;
     mocks.providerExecute.mockResolvedValue({ kind: "accepted", operation: { id: "operation_1", state: "waiting_provider" }, provider: { state: "waiting_provider", predictionId: "prediction_1" } });
@@ -123,18 +125,45 @@ describe("typed Content Workflow provider dispatch", () => {
         return value.artifact;
       },
     };
-    const runService = new WorkflowRunService(repository, revisions, new InMemoryWorkflowRunQueue(), executors, new AesGcmWorkflowRunEventCursorCodec(keyring), { now: () => now }, artifacts, new UsageLedgerService(usageRepository));
-    const runtime = { ensureRevision: async () => undefined, start: (input: Parameters<import("@/lib/product-surfaces/content-workflow-runtime").ContentWorkflowRuntimePort["start"]>[0]) => runService.start({ workspaceId: input.workspaceId, workflowId: input.workflowId, revisionId: input.revisionId, inputs: input.inputs, inputArtifactIds: [], capability: "workflow_runs.start@2", principalId: input.servicePrincipalId, keyId: input.serviceKeyId, authorizationEvidenceRef: "test:content", idempotencyKey: input.idempotencyKey }), bind: async () => undefined };
+    const runService = new WorkflowRunService(repository, revisions, new InMemoryWorkflowRunQueue(), executors, new AesGcmWorkflowRunEventCursorCodec(keyring), { now: () => now }, artifacts, new UsageLedgerService(usageRepository), undefined, undefined, new WorkflowRunSpendQuoteCodec(null), { resolveStudioAssets: async ({ workspaceId: requestedWorkspaceId, assetIds }) => requestedWorkspaceId === workspaceId ? assetIds.map((id) => studioAssetReferences.find((reference) => reference.assetId === id)!).filter(Boolean) : [] });
+    const runtime = { ensureRevision: async () => undefined, start: (input: Parameters<import("@/lib/product-surfaces/content-workflow-runtime").ContentWorkflowRuntimePort["start"]>[0]) => runService.start({ workspaceId: input.workspaceId, workflowId: input.workflowId, revisionId: input.revisionId, inputs: input.inputs, inputArtifactIds: [], inputStudioAssetIds: input.authorizedStudioAssetIds, capability: "workflow_runs.start@3", principalId: input.servicePrincipalId, keyId: input.serviceKeyId, authorizationEvidenceRef: "test:content", idempotencyKey: input.idempotencyKey }), bind: async () => undefined };
     const accepted = await new ContentGenerationWorkflowService(runtime).start({ workspaceId, userId, authContextId: "auth_1", role: "owner", planTier: "pro", intent, definition, descriptor, prompt, sourceAssetIds, idempotencyKey: "content-run-1", servicePrincipalId: "agent_content", serviceKeyId: "key_content", authorizedStudioAssetIds: sourceAssetIds });
     const durable = repository.runs.get(`${workspaceId}\u0000${accepted.run.id}`)!;
     expect(durable.startSnapshot.inputs.some((candidate) => candidate.name === "recipe")).toBe(true);
     expect(durable.startSnapshot.artifactReferences).toEqual([]);
+    expect(durable.startSnapshot).toMatchObject({ schema: "workflow-run-start-snapshot/v3", studioAssetReferences });
     expect(durable.startSnapshot.inputs.some((candidate) => candidate.name === "request")).toBe(false);
     const historical = structuredClone(durable);
     historical.startSnapshot.inputs = historical.startSnapshot.inputs.map((candidate) => candidate.name === "recipe" ? { ...candidate, name: "request" } : candidate);
     expect(contentWorkflowRequestFromRun({ run: historical, intent, workspaceId, userId, prompt, sourceAssetIds })).toBeNull();
     const recipeText = durable.startSnapshot.inputs.find((candidate) => candidate.name === "recipe")!.value as string;
     expect(JSON.parse(recipeText)).toMatchObject({ orderedInputArtifactIds: sourceAssetIds, orderedInputArtifacts: sourceAssetIds.map((artifactId) => ({ artifactId, digest: sourceDigest })), providerInputArtifactIds: sourceAssetIds });
+    expect(contentWorkflowRequestFromRun({ run: durable, intent, workspaceId, userId, prompt, sourceAssetIds, studioAssets: studioAssetReferences })).not.toBeNull();
+    const tampered = structuredClone(durable);
+    if (tampered.startSnapshot.schema !== "workflow-run-start-snapshot/v3") throw new Error("Expected v3 snapshot");
+    tampered.startSnapshot.studioAssetReferences = tampered.startSnapshot.studioAssetReferences.slice(1);
+    expect(contentWorkflowRequestFromRun({ run: tampered, intent, workspaceId, userId, prompt, sourceAssetIds, studioAssets: studioAssetReferences })).toBeNull();
+    const seedCompletedGuard = (runId: string, workflow: typeof resolved, recipe: string, suffix: string) => {
+      const guardText = canonicalDigest(recipe);
+      const guardArtifactDigest = canonicalDigest(guardText);
+      const artifactId = `artifact_guard_${suffix}`;
+      generated.set(artifactId, { artifact: { id: artifactId, workspaceId, digest: guardArtifactDigest, kind: "text", mediaType: "text/plain; charset=utf-8", sizeBytes: Buffer.byteLength(guardText) } as never, textContent: guardText });
+      repository.stepAttempts.set(`guard_${suffix}`, { id: `attempt_guard_${suffix}`, workspaceId, runId, stepId: workflow.steps[0]!.id, attempt: 1, state: "completed", operationIdentity: workflow.steps[0]!.operation.identity, operationContractDigest: workflow.steps[0]!.operation.contractDigest, provider: "runtime", providerOperation: "digest_text", model: "sha256", intentDigest: canonicalDigest(recipe), effectKey: `workflow-effect:v1:${workspaceId}:${runId}:${workflow.steps[0]!.id}:1`, inputs: [], outputs: { textDigest: { artifactId, digest: guardArtifactDigest, kind: "text", mediaType: "text/plain; charset=utf-8", sizeBytes: Buffer.byteLength(guardText) } }, providerOperationRef: guardText, outcome: { kind: "succeeded", providerOperationRef: guardText }, reconciliation: null, failureCode: null, startedAt: now, completedAt: now } as never);
+    };
+    const executionRows = (policyDigest: string, run: typeof durable) => [
+      [{ acceptedAt: now, profile: brandProfile }],
+      [{ status: "held", amount: "0.05" }],
+      [{ digest: intent.rights.digest, permittedRemix: "transform" }],
+      sourceAssetIds.map((id) => ({ id, type: "image", storageKey: id, checksum: sourceDigest, mimeType: "image/png", sizeBytes: 42, width: 1080, height: 1920, durationSeconds: null, metadata: { uploadState: "ready", dimensionEvidence: "server-media-probe/v1" } })),
+      [{ payload }],
+      [{ digest: policyDigest }],
+      [{ workflowId: run.workflowId, workflowRevisionId: run.workflowRevisionId, startSnapshot: run.startSnapshot }],
+    ];
+    seedCompletedGuard(accepted.run.id, resolved, recipeText, "v5");
+    mocks.selectRows = executionRows(policy.digest, durable);
+    await expect(runService.executeOne({ workspaceId, runId: accepted.run.id, workerId: "worker_v5" })).resolves.toMatchObject({ state: "completed" });
+    expect(mocks.providerExecute).toHaveBeenCalledOnce();
+    expect(mocks.providerExecute).toHaveBeenLastCalledWith(expect.objectContaining({ sourceUrls: sourceAssetIds.map((id) => `https://assets.test/${id}`) }));
     const v3Intent = structuredClone(intent) as GenerationIntent;
     const v3Definition = structuredClone(definition);
     const v3Binding = v3Intent.contentExecution! as unknown as { formatDefinition: { revision: number }; workflow: { id: string; revisionId: string; operation: string; inputs: string[] }; workflowInputs: Record<string, unknown>; digest: string; [key: string]: unknown };
@@ -160,26 +189,14 @@ describe("typed Content Workflow provider dispatch", () => {
     const v3Run = repository.runs.get(`${workspaceId}\u0000${v3Accepted.run.id}`)!;
     expect(contentWorkflowRequestFromRun({ run: v3Run, intent: v3Intent, workspaceId, userId, prompt, sourceAssetIds })).not.toBeNull();
     const v3RecipeText = v3Run.startSnapshot.inputs.find((candidate) => candidate.name === "recipe")!.value as string;
-    const guardText = canonicalDigest(v3RecipeText);
-    const guardArtifactDigest = canonicalDigest(guardText);
-    const guardArtifact = { artifact: { id: "artifact_guard", workspaceId, digest: guardArtifactDigest, kind: "text", mediaType: "text/plain; charset=utf-8", sizeBytes: Buffer.byteLength(guardText) } as never, textContent: guardText };
-    generated.set("artifact_guard", guardArtifact);
-    repository.stepAttempts.set("guard", { id: "attempt_guard", workspaceId, runId: v3Accepted.run.id, stepId: v3Resolved.steps[0]!.id, attempt: 1, state: "completed", operationIdentity: v3Resolved.steps[0]!.operation.identity, operationContractDigest: v3Resolved.steps[0]!.operation.contractDigest, provider: "runtime", providerOperation: "digest_text", model: "sha256", intentDigest: canonicalDigest(v3RecipeText), effectKey: `workflow-effect:v1:${workspaceId}:${v3Accepted.run.id}:${v3Resolved.steps[0]!.id}:1`, inputs: [], outputs: { textDigest: { artifactId: "artifact_guard", digest: guardArtifactDigest, kind: "text", mediaType: "text/plain; charset=utf-8", sizeBytes: Buffer.byteLength(guardText) } }, providerOperationRef: guardText, outcome: { kind: "succeeded", providerOperationRef: guardText }, reconciliation: null, failureCode: null, startedAt: now, completedAt: now } as never);
+    seedCompletedGuard(v3Accepted.run.id, v3Resolved, v3RecipeText, "v3");
 
     mocks.intent = v3Intent; mocks.definition = v3Definition;
 
-    mocks.selectRows = [
-      [{ acceptedAt: now, profile: brandProfile }],
-      [{ status: "held", amount: "0.05" }],
-      [{ digest: intent.rights.digest, permittedRemix: "transform" }],
-      sourceAssetIds.map((id) => ({ id, type: "image", storageKey: id, checksum: sourceDigest, mimeType: "image/png", width: 1080, height: 1920, durationSeconds: null, metadata: { uploadState: "ready", dimensionEvidence: "server-media-probe/v1" } })),
-      [{ payload }],
-      [{ digest: v3Policy.digest }],
-      [{ workflowId: v3Run.workflowId, workflowRevisionId: v3Run.workflowRevisionId, startSnapshot: v3Run.startSnapshot }],
-    ];
+    mocks.selectRows = executionRows(v3Policy.digest, v3Run);
     await expect(runService.executeOne({ workspaceId, runId: v3Accepted.run.id, workerId: "worker_1" })).resolves.toMatchObject({ state: "completed" });
-    expect(mocks.providerExecute).toHaveBeenCalledOnce();
-    expect(mocks.providerExecute).toHaveBeenCalledWith(expect.objectContaining({ workspaceId, userId, intentId: v3Intent.id, rawPrompt: prompt, sourceUrls: sourceAssetIds.map((id) => `https://assets.test/${id}`) }));
+    expect(mocks.providerExecute).toHaveBeenCalledTimes(2);
+    expect(mocks.providerExecute).toHaveBeenLastCalledWith(expect.objectContaining({ workspaceId, userId, intentId: v3Intent.id, rawPrompt: prompt, sourceUrls: sourceAssetIds.map((id) => `https://assets.test/${id}`) }));
     expect(mocks.selectRows).toHaveLength(0);
   });
 });

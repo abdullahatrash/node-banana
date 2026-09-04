@@ -35,10 +35,11 @@ export const POST = withStudioAuth<undefined>({ route: "/api/product-content/wor
     const rightsDigestById = new Map(intent.rights.evidence.map((evidence) => [evidence.sourceAssetId, evidence.sourceDigest]));
     if (artifactIds.some((id) => { const row = artifactById.get(id); return !row || row.checksum !== rightsDigestById.get(id) || (row.metadata as Record<string, unknown> | null)?.uploadState !== "ready"; })) return noStoreJson({ success: false, code: "CONTENT_WORKFLOW_ARTIFACT_UNAVAILABLE" }, { status: 409 });
     const contractDigest = authorizationContractDigestFor(
-      { name: "workflow_runs.start", version: 2 },
+      { name: "workflow_runs.start", version: 3 },
       { resources: [
         { kind: "workflow", inputPath: "workflowId" },
         { kind: "artifact", inputPath: "inputArtifactIds" },
+        { kind: "studio_asset", inputPath: "inputStudioAssetIds" },
       ] },
     );
     const emptyResources = { channelIds: [], credentialProfileIds: [], workflowIds: [], automationIds: [], artifactIds: [], studioAssetIds: [] };
@@ -46,7 +47,7 @@ export const POST = withStudioAuth<undefined>({ route: "/api/product-content/wor
       workspaceId: authz.workspaceId,
       purpose: "content_workflow",
       provisioningActorUserId: authz.userId,
-      authority: { capability: "workflow_runs.start@2", authorizationContractDigest: contractDigest, resources: emptyResources },
+      authority: { capability: "workflow_runs.start@3", authorizationContractDigest: contractDigest, resources: emptyResources },
     });
     await productionContentWorkflowRuntime(actor).ensureRevision({ workspaceId: authz.workspaceId, definition: resolved.definition });
     actor = await WORKSPACE_SERVICE_AGENT_RESOLVER.resolve({
@@ -54,7 +55,7 @@ export const POST = withStudioAuth<undefined>({ route: "/api/product-content/wor
       purpose: "content_workflow",
       provisioningActorUserId: authz.userId,
       authority: {
-        capability: "workflow_runs.start@2",
+        capability: "workflow_runs.start@3",
         authorizationContractDigest: contractDigest,
         resources: { ...emptyResources, workflowIds: [workflow.id], studioAssetIds: artifactIds },
       },

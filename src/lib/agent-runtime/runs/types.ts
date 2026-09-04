@@ -119,11 +119,36 @@ export type WorkflowRunStartSnapshot =
   | (WorkflowRunStartSnapshotBase & {
       schema: "workflow-run-start-snapshot/v1";
       providerResolutions?: never;
+      studioAssetReferences?: never;
     })
   | (WorkflowRunStartSnapshotBase & {
       schema: "workflow-run-start-snapshot/v2";
       providerResolutions: WorkflowRunProviderResolution[];
+      studioAssetReferences?: never;
+    })
+  | (WorkflowRunStartSnapshotBase & {
+      schema: "workflow-run-start-snapshot/v3";
+      providerResolutions: WorkflowRunProviderResolution[];
+      studioAssetReferences: WorkflowRunStudioAssetReference[];
     });
+
+export interface WorkflowRunStudioAssetReference {
+  assetId: string;
+  digest: string;
+  type: "image" | "video" | "audio" | "model3d" | "workflow";
+  mediaType: string;
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  durationSeconds: number | null;
+}
+
+export interface WorkflowRunStudioAssetPort {
+  resolveStudioAssets(input: {
+    workspaceId: string;
+    assetIds: string[];
+  }): Promise<WorkflowRunStudioAssetReference[]>;
+}
 
 export interface WorkflowProviderLaunchSafety {
   mode: "native_effect_key" | "durable_at_most_once";
@@ -323,6 +348,7 @@ export interface WorkflowRunMutationReceiptRecord {
   capability:
     | "workflow_runs.start@1"
     | "workflow_runs.start@2"
+    | "workflow_runs.start@3"
     | "workflow_runs.retry@1"
     | "workflow_runs.reconcile@1"
     | "workflow_runs.resume@1";

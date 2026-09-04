@@ -13,7 +13,7 @@ import { InMemoryBudgetRepository } from "../../budgets/memory";
 import { workflowRunWorkerId } from "../worker-identity";
 import { GOLDEN_WORKFLOW_OPERATION_REGISTRY } from "../../workflows";
 import type { ResolvedWorkflowDefinition } from "../../workflows/types";
-import type { WorkflowRunBudgetPort } from "../types";
+import type { WorkflowRunBudgetPort, WorkflowRunStudioAssetPort } from "../types";
 import { InMemoryQuotaRepository } from "../../quotas/memory";
 import { QuotaService } from "../../quotas/service";
 import { WorkflowRunSpendQuoteCodec, workflowRunQuoteCeilingDigest, workflowRunQuoteInputDigest, type WorkflowRunAcceptedSpendQuote } from "../spend-quote";
@@ -60,7 +60,7 @@ function definition(
   };
 }
 
-function setup() {
+function setup(studioAssets?: WorkflowRunStudioAssetPort) {
   const repository = new InMemoryWorkflowRunRepository();
   const revisions = new InMemoryWorkflowRunRevisionReader();
   const queue = new InMemoryWorkflowRunQueue();
@@ -87,6 +87,12 @@ function setup() {
     ),
     cursor,
     { now: () => new Date(now) },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    new WorkflowRunSpendQuoteCodec(null),
+    studioAssets,
   );
   const start = (overrides: Partial<Parameters<typeof service.start>[0]> = {}) =>
     service.start({
@@ -114,6 +120,21 @@ function setup() {
 }
 
 describe("WorkflowRunService", () => {
+  it("pins exact ordered Studio Asset evidence at start@3 and preserves historical @2 replay", async () => {
+    const references = ["asset_z", "asset_a"].map((assetId) => ({ assetId, digest: `sha256:${(assetId === "asset_z" ? "a" : "b").repeat(64)}`, type: "image" as const, mediaType: "image/png", sizeBytes: 42, width: 1080, height: 1920, durationSeconds: null }));
+    const value = setup({ resolveStudioAssets: async ({ workspaceId, assetIds }) => workspaceId === "workspace_1" ? assetIds.map((id) => references.find((reference) => reference.assetId === id)!).filter(Boolean) : [] });
+    const accepted = await value.start({ capability: "workflow_runs.start@3", inputArtifactIds: [], inputStudioAssetIds: ["asset_z", "asset_a"] });
+    const stored = await value.repository.getById({ workspaceId: "workspace_1", runId: accepted.run.id });
+    expect(stored?.startSnapshot).toMatchObject({ schema: "workflow-run-start-snapshot/v3", studioAssetReferences: references });
+    await expect(value.start({ capability: "workflow_runs.start@3", inputArtifactIds: [], inputStudioAssetIds: ["asset_a", "asset_z"] })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    const missing = setup({ resolveStudioAssets: async () => references.slice(0, 1) });
+    await expect(missing.start({ capability: "workflow_runs.start@3", inputArtifactIds: [], inputStudioAssetIds: ["asset_z", "asset_a"] })).rejects.toMatchObject({ code: "WORKFLOW_RUN_UNAVAILABLE" });
+
+    const historical = setup();
+    const first = await historical.start({ capability: "workflow_runs.start@2", inputArtifactIds: [] });
+    await expect(historical.start({ capability: "workflow_runs.start@2", inputArtifactIds: [], authorizationEvidenceRef: "trace_replay" })).resolves.toEqual(first);
+  });
   it("durably waits on concurrency, survives restart, and resumes the same Run", async () => {
     const at = new Date("2026-07-25T12:00:00.000Z");
     const quotaRepository = new InMemoryQuotaRepository(() => new Date(at));
@@ -602,7 +623,7 @@ describe("WorkflowRunService", () => {
     expect(budgetRepository.reservations.size).toBe(1);
   });
 
-  it("verifies, pins, atomically redeems, and caps one accepted provider-spend quote", async () => {
+  it.each(["workflow_runs.start@2", "workflow_runs.start@3"] as const)("verifies, pins, atomically redeems, and caps one accepted provider-spend quote for %s", async (capability) => {
     const at = new Date("2026-07-25T12:00:00.000Z");
     const budgetRepository = new InMemoryBudgetRepository();
     const budgets = new BudgetService(budgetRepository);
@@ -610,14 +631,16 @@ describe("WorkflowRunService", () => {
     const base = setup();
     const repository = new InMemoryWorkflowRunRepository(undefined, budgetRepository);
     const codec = new WorkflowRunSpendQuoteCodec(Buffer.alloc(32, 9));
-    const service = new WorkflowRunService(repository, base.revisions, base.queue, createDeterministicWorkflowRunExecutorRegistry(GOLDEN_WORKFLOW_OPERATION_REGISTRY), base.cursor, { now: () => at }, undefined, undefined, budgets, undefined, codec);
-    const request = { workspaceId: "workspace_1", workflowId: "workflow_1", revisionId: "revision_1", inputs: { text: "hello" }, inputArtifactIds: [], principalId: "principal_1", keyId: "key_1", authorizationEvidenceRef: "trace_quote", idempotencyKey: "quoted_start_1", capability: "workflow_runs.start@2" as const };
+    const studioAssetReferences = [{ assetId: "asset_z", digest: `sha256:${"a".repeat(64)}`, type: "image" as const, mediaType: "image/png", sizeBytes: 42, width: 1080, height: 1920, durationSeconds: null }];
+    const studioAssets = { resolveStudioAssets: async () => studioAssetReferences };
+    const service = new WorkflowRunService(repository, base.revisions, base.queue, createDeterministicWorkflowRunExecutorRegistry(GOLDEN_WORKFLOW_OPERATION_REGISTRY), base.cursor, { now: () => at }, undefined, undefined, budgets, undefined, codec, studioAssets);
+    const request = { workspaceId: "workspace_1", workflowId: "workflow_1", revisionId: "revision_1", inputs: { text: "hello" }, inputArtifactIds: [], ...(capability === "workflow_runs.start@3" ? { inputStudioAssetIds: ["asset_z"] } : {}), principalId: "principal_1", keyId: "key_1", authorizationEvidenceRef: "trace_quote", idempotencyKey: "quoted_start_1", capability };
     const preview = await service.preview(request);
     const providerModels = preview.stepExposures.map((exposure) => ({ provider: exposure.provider, model: exposure.model, pricePerAttempt: exposure.amountPerAttempt ?? "", automaticAttempts: exposure.automaticAttempts, pricingSnapshotIds: [...exposure.pricingSnapshotIds].sort() }));
     const pricingSnapshotIds = [...new Set(providerModels.flatMap((item) => item.pricingSnapshotIds))].sort();
     const quote: WorkflowRunAcceptedSpendQuote = {
-      schema: "workflow-run-accepted-spend-quote/v1", quoteId: "quote_fixed_1", sourceWorkspaceId: "portfolio_1", targetWorkspaceId: request.workspaceId, requestedByUserId: "owner_1", delegatedPrincipalId: request.principalId, delegatedKeyId: request.keyId, capability: "workflow_runs.start@2", workflowId: request.workflowId, workflowRevisionId: request.revisionId,
-      inputDigest: workflowRunQuoteInputDigest(request), targetStateDigest: canonicalDigest({ workflowId: request.workflowId, revisionId: request.revisionId }), amount: preview.ceiling.amount!, currency: preview.ceiling.currency!, providerModels, pricingSnapshotIds, ceiling: { maximumAmount: preview.ceiling.amount!, currency: preview.ceiling.currency!, maximumProviderAttempts: providerModels.reduce((total, model) => total + model.automaticAttempts, 0) }, ceilingDigest: "", quotedAt: at.toISOString(), expiresAt: new Date(at.getTime() + 300_000).toISOString(),
+      schema: "workflow-run-accepted-spend-quote/v1", quoteId: `quote_fixed_${capability.endsWith("@3") ? "3" : "2"}`, sourceWorkspaceId: "portfolio_1", targetWorkspaceId: request.workspaceId, requestedByUserId: "owner_1", delegatedPrincipalId: request.principalId, delegatedKeyId: request.keyId, capability, workflowId: request.workflowId, workflowRevisionId: request.revisionId,
+      inputDigest: workflowRunQuoteInputDigest({ ...request, ...(capability === "workflow_runs.start@3" ? { studioAssetReferences } : {}) }), targetStateDigest: canonicalDigest({ workflowId: request.workflowId, revisionId: request.revisionId }), amount: preview.ceiling.amount!, currency: preview.ceiling.currency!, providerModels, pricingSnapshotIds, ceiling: { maximumAmount: preview.ceiling.amount!, currency: preview.ceiling.currency!, maximumProviderAttempts: providerModels.reduce((total, model) => total + model.automaticAttempts, 0) }, ceilingDigest: "", quotedAt: at.toISOString(), expiresAt: new Date(at.getTime() + 300_000).toISOString(),
     };
     quote.ceilingDigest = workflowRunQuoteCeilingDigest(quote);
     const acceptedSpendQuoteRef = codec.seal(quote);

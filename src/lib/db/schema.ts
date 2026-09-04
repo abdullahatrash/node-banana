@@ -5361,13 +5361,17 @@ export const workflowRuns = pgTable(
     snapshotCheck: check(
       "workflow_runs_snapshot_check",
       sql`jsonb_typeof(${table.startSnapshot}) = 'object'
-        and ${table.startSnapshot}->>'schema' in ('workflow-run-start-snapshot/v1', 'workflow-run-start-snapshot/v2')
+        and ${table.startSnapshot}->>'schema' in ('workflow-run-start-snapshot/v1', 'workflow-run-start-snapshot/v2', 'workflow-run-start-snapshot/v3')
         and (
-          ${table.startSnapshot}->>'schema' <> 'workflow-run-start-snapshot/v2'
+          ${table.startSnapshot}->>'schema' = 'workflow-run-start-snapshot/v1'
           or (
             jsonb_typeof(${table.startSnapshot}->'providerResolutions') = 'array'
             and jsonb_array_length(${table.startSnapshot}->'providerResolutions') > 0
           )
+        )
+        and (
+          ${table.startSnapshot}->>'schema' <> 'workflow-run-start-snapshot/v3'
+          or valid_workflow_run_studio_asset_references(${table.startSnapshot}->'studioAssetReferences')
         )
         and ${table.startSnapshot}->>'workflowId' = ${table.workflowId}
         and ${table.startSnapshot}->>'workflowRevisionId' = ${table.workflowRevisionId}

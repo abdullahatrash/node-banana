@@ -365,8 +365,12 @@ function mapStepAttempt(
 
 function capabilityVersion(
   capability: WorkflowRunMutationReceiptRecord["capability"],
-): 1 | 2 {
-  return capability === "workflow_runs.start@2" ? 2 : 1;
+): 1 | 2 | 3 {
+  return capability === "workflow_runs.start@3"
+    ? 3
+    : capability === "workflow_runs.start@2"
+      ? 2
+      : 1;
 }
 
 function validStartInput(
@@ -391,7 +395,8 @@ function validStartInput(
     run.workspaceId === receipt.workspaceId &&
     run.id === receipt.runId &&
     (receipt.capability === "workflow_runs.start@1" ||
-      receipt.capability === "workflow_runs.start@2") &&
+      receipt.capability === "workflow_runs.start@2" ||
+      receipt.capability === "workflow_runs.start@3") &&
     receipt.result === null &&
     run.startSnapshot.workflowId === run.workflowId &&
     run.startSnapshot.workflowRevisionId === run.workflowRevisionId &&
@@ -839,13 +844,27 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           .limit(1)
           .for("share");
         const evidence = evidenceRows[0];
+        const authorizedArtifactIds = evidence?.resources
+          .filter((resource) => resource.kind === "artifact")
+          .map((resource) => resource.id) ?? [];
+        const authorizedStudioAssetIds = evidence?.resources
+          .filter((resource) => resource.kind === "studio_asset")
+          .map((resource) => resource.id) ?? [];
+        const snapshottedArtifactIds = input.run.startSnapshot.artifactReferences.map((reference) => reference.artifactId);
+        const snapshottedStudioAssetIds = input.run.startSnapshot.schema === "workflow-run-start-snapshot/v3"
+          ? input.run.startSnapshot.studioAssetReferences.map((reference) => reference.assetId)
+          : [];
         if (
           !evidence ||
           !evidence.resources.some(
             (resource) =>
               resource.kind === "workflow" &&
               resource.id === input.run.workflowId,
-          )
+          ) ||
+          (input.receipt.capability === "workflow_runs.start@3" && (
+            canonicalDigest([...authorizedArtifactIds].sort()) !== canonicalDigest([...snapshottedArtifactIds].sort()) ||
+            canonicalDigest([...authorizedStudioAssetIds].sort()) !== canonicalDigest([...snapshottedStudioAssetIds].sort())
+          ))
         ) {
           return { kind: "unavailable" as const };
         }

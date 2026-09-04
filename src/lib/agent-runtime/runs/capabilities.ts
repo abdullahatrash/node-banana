@@ -22,6 +22,7 @@ export const WORKFLOW_RUN_CAPABILITY_IDENTITIES = {
   preview: { name: "workflow_runs.preview", version: 1 },
   start: { name: "workflow_runs.start", version: 1 },
   startV2: { name: "workflow_runs.start", version: 2 },
+  startV3: { name: "workflow_runs.start", version: 3 },
   retry: { name: "workflow_runs.retry", version: 1 },
   reconcile: { name: "workflow_runs.reconcile", version: 1 },
   resume: { name: "workflow_runs.resume", version: 1 },
@@ -78,6 +79,20 @@ const previewInputArtifactIds = z
     "Input Artifact IDs must be unique.",
   )
   .default([]);
+const boundInputArtifactIds = z
+  .array(id)
+  .max(100)
+  .refine(
+    (values) => new Set(values).size === values.length,
+    "Input Artifact IDs must be unique.",
+  );
+const inputStudioAssetIds = z
+  .array(id)
+  .max(100)
+  .refine(
+    (values) => new Set(values).size === values.length,
+    "Input Studio Asset IDs must be unique.",
+  );
 
 const safeRunRefSchema: JsonSchema = {
   ...object,
@@ -493,6 +508,21 @@ const startSnapshotProperties: Record<string, JsonSchema> = {
   authorization: { type: "object" },
 };
 
+const studioAssetReferenceSchema: JsonSchema = {
+  ...object,
+  required: ["assetId", "digest", "type", "mediaType", "sizeBytes", "width", "height", "durationSeconds"],
+  properties: {
+    assetId: { type: "string" },
+    digest: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
+    type: { type: "string", enum: ["image", "video", "audio", "model3d", "workflow"] },
+    mediaType: { type: "string" },
+    sizeBytes: { type: "integer", minimum: 0 },
+    width: { type: ["integer", "null"], minimum: 1 },
+    height: { type: ["integer", "null"], minimum: 1 },
+    durationSeconds: { type: ["integer", "null"], minimum: 0 },
+  },
+};
+
 const startSnapshotSchema: JsonSchema = {
   oneOf: [
     {
@@ -513,6 +543,24 @@ const startSnapshotSchema: JsonSchema = {
           type: "array",
           minItems: 1,
           items: providerResolutionSchema,
+        },
+      },
+    },
+    {
+      ...object,
+      required: [...startSnapshotRequired, "providerResolutions", "studioAssetReferences"],
+      properties: {
+        schema: { const: "workflow-run-start-snapshot/v3" },
+        ...startSnapshotProperties,
+        providerResolutions: {
+          type: "array",
+          minItems: 1,
+          items: providerResolutionSchema,
+        },
+        studioAssetReferences: {
+          type: "array",
+          maxItems: 100,
+          items: studioAssetReferenceSchema,
         },
       },
     },
@@ -1373,7 +1421,7 @@ export function createWorkflowRunRegistrations(
       identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.startV2,
       summary:
         "Durably accept one Artifact-bound Workflow Run after exact Workflow and input Artifact authorization.",
-      lifecycle,
+      lifecycle: { ...lifecycle, recommended: false },
       input: z
         .object({
           workflowId: id,
@@ -1413,6 +1461,57 @@ export function createWorkflowRunRegistrations(
             keyId: principal.keyId,
             authorizationEvidenceRef: authorizationEvidence(context),
             capability: "workflow_runs.start@2",
+            ...input,
+          }),
+        );
+      },
+    }),
+    defineCapability({
+      identity: WORKFLOW_RUN_CAPABILITY_IDENTITIES.startV3,
+      summary:
+        "Durably accept one Workflow Run with exact runtime Artifact and external Studio Asset snapshots.",
+      lifecycle,
+      input: z
+        .object({
+          workflowId: id,
+          revisionId: id,
+          idempotencyKey,
+          inputs: z.record(z.string(), z.unknown()),
+          inputArtifactIds: boundInputArtifactIds,
+          inputStudioAssetIds,
+          acceptedSpendQuoteRef: z.string().min(64).max(16_384).optional(),
+        })
+        .strict(),
+      outputSchema: acceptedSchema,
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "durable-async",
+        reversibility: "conditional",
+        maySpendProviderBudget: true,
+      },
+      approval: { mode: "none" },
+      idempotency: { mode: "key-required" },
+      authorization: {
+        resources: [
+          { kind: "workflow", inputPath: "workflowId" },
+          { kind: "artifact", inputPath: "inputArtifactIds" },
+          { kind: "studio_asset", inputPath: "inputStudioAssetIds" },
+        ],
+      },
+      errors: [
+        ...COMMON_DISCOVERY_ERRORS,
+        ...WORKFLOW_RUN_PUBLIC_ERROR_CONTRACTS,
+      ],
+      handler: (input, context) => {
+        const principal = agent(context.securityContext);
+        return domain(() =>
+          service.start({
+            workspaceId: principal.workspaceId,
+            principalId: principal.principalId,
+            keyId: principal.keyId,
+            authorizationEvidenceRef: authorizationEvidence(context),
+            capability: "workflow_runs.start@3",
             ...input,
           }),
         );

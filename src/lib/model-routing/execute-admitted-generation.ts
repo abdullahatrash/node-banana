@@ -41,10 +41,14 @@ export function contentWorkflowRequestFromRun(input: {
   userId: string;
   prompt: string;
   sourceAssetIds: readonly string[];
+  studioAssets?: import("@/lib/agent-runtime/runs/types").WorkflowRunStudioAssetReference[];
 }): Record<string, unknown> | null {
   const binding = input.intent.contentExecution;
   const run = input.run;
-  if (!binding || !run || run.workflowId !== binding.workflow.id || run.workflowRevisionId !== binding.workflow.revisionId || run.startSnapshot.schema !== "workflow-run-start-snapshot/v2" || run.startSnapshot.workflowRevision !== binding.formatDefinition.revision) return null;
+  const expectedSnapshotSchema = binding?.formatDefinition.revision && binding.formatDefinition.revision >= 5
+    ? "workflow-run-start-snapshot/v3"
+    : "workflow-run-start-snapshot/v2";
+  if (!binding || !run || run.workflowId !== binding.workflow.id || run.workflowRevisionId !== binding.workflow.revisionId || run.startSnapshot.schema !== expectedSnapshotSchema || run.startSnapshot.workflowRevision !== binding.formatDefinition.revision) return null;
   const expectedInputs = [...binding.workflow.inputs].sort();
   const actualInputs = run.startSnapshot.inputs.map((candidate) => candidate.name).sort();
   const declaredInputs = Object.keys(run.startSnapshot.definition.inputs).sort();
@@ -63,7 +67,12 @@ export function contentWorkflowRequestFromRun(input: {
   const evidenceByAssetId = new Map(input.intent.rights.evidence.map((evidence) => [evidence.sourceAssetId, evidence.sourceDigest]));
   const expectedArtifactReferences = binding.inputArtifactIds.map((artifactId) => ({ artifactId, digest: evidenceByAssetId.get(artifactId) ?? null }));
   const artifactReferencesMatch = binding.formatDefinition.revision < 5 || (!expectedArtifactReferences.some((reference) => !reference.digest) && canonicalDigest(request.orderedInputArtifacts) === canonicalDigest(expectedArtifactReferences));
-  if (!artifactReferencesMatch || canonicalDigest(request.sourceAssetIds) !== canonicalDigest(input.sourceAssetIds) || canonicalDigest(request.workflow) !== canonicalDigest(binding.workflow) || canonicalDigest(request.modelPolicy) !== canonicalDigest(binding.modelPolicy) || canonicalDigest(request.workflowInputs) !== canonicalDigest(binding.workflowInputs) || canonicalDigest(request.orderedInputArtifactIds) !== canonicalDigest(binding.inputArtifactIds) || canonicalDigest(request.providerInputArtifactIds) !== canonicalDigest(binding.providerInputArtifactIds) || canonicalDigest(request.selectedModel) !== canonicalDigest(input.intent.selectedModel)) return null;
+  const studioAssetReferencesMatch = binding.formatDefinition.revision < 5 || (
+    run.startSnapshot.schema === "workflow-run-start-snapshot/v3" &&
+    Boolean(input.studioAssets) &&
+    canonicalDigest(run.startSnapshot.studioAssetReferences) === canonicalDigest(input.studioAssets)
+  );
+  if (!artifactReferencesMatch || !studioAssetReferencesMatch || canonicalDigest(request.sourceAssetIds) !== canonicalDigest(input.sourceAssetIds) || canonicalDigest(request.workflow) !== canonicalDigest(binding.workflow) || canonicalDigest(request.modelPolicy) !== canonicalDigest(binding.modelPolicy) || canonicalDigest(request.workflowInputs) !== canonicalDigest(binding.workflowInputs) || canonicalDigest(request.orderedInputArtifactIds) !== canonicalDigest(binding.inputArtifactIds) || canonicalDigest(request.providerInputArtifactIds) !== canonicalDigest(binding.providerInputArtifactIds) || canonicalDigest(request.selectedModel) !== canonicalDigest(input.intent.selectedModel)) return null;
   return request;
 }
 
@@ -109,7 +118,7 @@ export async function executeAdmittedGeneration(input: {
   if (sourceIds.length !== intent.rights.sourceAssetIds.length || sourceIds.some((id, index) => id !== intent.rights.sourceAssetIds[index])) return rejected(409, "RIGHTS_EVIDENCE_MISMATCH");
   const rightsValidation = validateRightsEvidence({ workspaceId: input.workspaceId, basis: intent.rights.basis, permittedRemix: intent.rights.permittedRemix, sourceAssetIds: intent.rights.sourceAssetIds, evidence: intent.rights.evidence, at: new Date() });
   if (!rightsValidation.ok) return rejected(409, rightsValidation.code);
-  const fetchedRows = sourceIds.length ? await getDb().select({ id: assets.id, type: assets.type, storageKey: assets.storageKey, checksum: assets.checksum, mimeType: assets.mimeType, width: assets.width, height: assets.height, durationSeconds: assets.durationSeconds, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
+  const fetchedRows = sourceIds.length ? await getDb().select({ id: assets.id, type: assets.type, storageKey: assets.storageKey, checksum: assets.checksum, mimeType: assets.mimeType, sizeBytes: assets.sizeBytes, width: assets.width, height: assets.height, durationSeconds: assets.durationSeconds, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, sourceIds), isNull(assets.deletedAt))) : [];
   const sourceById = new Map(fetchedRows.map((row) => [row.id, row]));
   const sourceRows = sourceIds.map((id) => sourceById.get(id)).filter((row): row is (typeof fetchedRows)[number] => Boolean(row));
   if (sourceRows.length !== sourceIds.length || sourceRows.some((asset) => !asset.storageKey)) return rejected(409, "SOURCE_ASSET_UNAVAILABLE");
@@ -135,13 +144,14 @@ export async function executeAdmittedGeneration(input: {
       if (storedPolicy?.digest !== intent.contentExecution.modelPolicy.digest) return rejected(409, "CONTENT_MODEL_POLICY_UNAVAILABLE");
       if (!input.contentWorkflowRunId) return rejected(409, "CONTENT_WORKFLOW_RUN_REQUIRED");
       const [run] = await getDb().select({ workflowId: workflowRuns.workflowId, workflowRevisionId: workflowRuns.workflowRevisionId, startSnapshot: workflowRuns.startSnapshot }).from(workflowRuns).where(and(eq(workflowRuns.workspaceId, input.workspaceId), eq(workflowRuns.id, input.contentWorkflowRunId))).limit(1);
-      if (!contentWorkflowRequestFromRun({ run, intent, workspaceId: input.workspaceId, userId: input.userId, prompt: input.prompt, sourceAssetIds: sourceIds })) return rejected(409, "CONTENT_WORKFLOW_RUN_MISMATCH");
+      const studioAssetReferences = sourceRows.map((asset) => ({ assetId: asset.id, digest: asset.checksum ?? "", type: asset.type, mediaType: asset.mimeType ?? "", sizeBytes: asset.sizeBytes ?? -1, width: asset.width, height: asset.height, durationSeconds: asset.durationSeconds }));
+      if (!contentWorkflowRequestFromRun({ run, intent, workspaceId: input.workspaceId, userId: input.userId, prompt: input.prompt, sourceAssetIds: sourceIds, studioAssets: studioAssetReferences })) return rejected(409, "CONTENT_WORKFLOW_RUN_MISMATCH");
     } catch {
       return rejected(409, "CONTENT_EXECUTION_RECIPE_UNAVAILABLE");
     }
   }
-  const providerSet = new Set(providerIds);
-  const providerRows = sourceRows.filter((row) => providerSet.has(row.id));
+  const providerRows = providerIds.map((id) => sourceById.get(id)).filter((row): row is (typeof fetchedRows)[number] => Boolean(row));
+  if (providerRows.length !== providerIds.length) return rejected(409, "SOURCE_ASSET_UNAVAILABLE");
   const sourceValidation = validateGenerationSources(intent.capability, providerIds, providerRows.map((row) => ({ ...row, metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : null })), descriptor.qualification.inputContract.imageMode);
   if (!sourceValidation.ok) return rejected(409, sourceValidation.code);
   const sourceUrls = await Promise.all(providerRows.map(async (asset) => (await createPresignedDownload({ key: asset.storageKey! })).downloadUrl));

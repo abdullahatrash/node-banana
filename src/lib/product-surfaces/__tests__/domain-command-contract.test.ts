@@ -43,6 +43,16 @@ describe("typed product command contracts", () => {
     expect(source).toContain("validateCampaignAuthoringPayload");
   });
 
+  it("starts Content with the exact external Studio Asset-bound v3 capability", () => {
+    const route = read("src/app/api/product-content/workflow-runs/route.ts");
+    const runtime = read("src/lib/product-surfaces/content-workflow-runtime-production.ts");
+    expect(route).toContain('capability: "workflow_runs.start@3"');
+    expect(route).toContain('studioAssetIds: artifactIds');
+    expect(runtime).toContain('capability: "workflow_runs.start@3"');
+    expect(runtime).toContain('inputStudioAssetIds: startInput.authorizedStudioAssetIds');
+    expect(runtime).toContain('inputArtifactIds: []');
+  });
+
   it("binds generated Copy only from a succeeded canonical text receipt", () => {
     const source = read("src/lib/product-surfaces/domain-commands.ts");
     expect(source).toContain("modelTextOutputReceipts");

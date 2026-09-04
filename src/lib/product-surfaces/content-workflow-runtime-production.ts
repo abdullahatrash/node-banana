@@ -56,7 +56,7 @@ export function productionContentWorkflowRuntime(input: { principalId: string; k
       });
     },
     async start(startInput) {
-      const response = await dispatchCapability({ capability: "workflow_runs.start@2", input: { workflowId: startInput.workflowId, revisionId: startInput.revisionId, inputs: startInput.inputs, inputArtifactIds: [], idempotencyKey: startInput.idempotencyKey } }, { securityContext: { kind: "agent", workspaceId: startInput.workspaceId, principalId: startInput.servicePrincipalId, keyId: startInput.serviceKeyId } });
+      const response = await dispatchCapability({ capability: "workflow_runs.start@3", input: { workflowId: startInput.workflowId, revisionId: startInput.revisionId, inputs: startInput.inputs, inputArtifactIds: [], inputStudioAssetIds: startInput.authorizedStudioAssetIds, idempotencyKey: startInput.idempotencyKey } }, { securityContext: { kind: "agent", workspaceId: startInput.workspaceId, principalId: startInput.servicePrincipalId, keyId: startInput.serviceKeyId } });
       if (response.type === "capability_error") throw new ContentWorkflowRuntimeError(response.code);
       return response.output as unknown as WorkflowRunAcceptedDto;
     },
