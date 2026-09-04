@@ -68,7 +68,7 @@ export function buildBlitzSimilarityGate(input: {
     evaluatedAt: input.evaluatedAt.toISOString(),
     evaluator: input.evaluator,
   };
-  return { ...facts, digest: canonicalDigest(facts) };
+  return { ...facts, digest: canonicalDigest(facts) as `sha256:${string}` };
 }
 
 export function validateBlitzSimilarityGate(input: {
