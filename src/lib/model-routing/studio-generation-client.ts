@@ -6,7 +6,8 @@ import type { ArabicVariety, ContentLanguage, ExactModelRef, GenerationCapabilit
 
 const terminalStates = new Set(["cancelled", "succeeded", "failed_known", "outcome_unknown"]);
 const operationSchema = z.object({ id: z.string(), revision: z.number().int().positive(), state: z.string(), metadata: z.record(z.string(), z.unknown()).default({}) }).passthrough();
-const responseSchema = z.object({ success: z.literal(true), operation: operationSchema, provider: z.object({ artifactIds: z.array(z.string()).optional() }).passthrough().optional() }).passthrough();
+const responseSchema = z.object({ success: z.literal(true), intentId: z.string(), operation: operationSchema }).passthrough();
+const executionSchema = z.object({ success: z.literal(true), result: z.object({ kind: z.literal("accepted"), operation: operationSchema, provider: z.object({ artifactIds: z.array(z.string()).optional() }).passthrough().optional() }) }).passthrough();
 const inspectionSchema = z.object({ success: z.literal(true), operation: operationSchema }).passthrough();
 const errorSchema = z.object({ code: z.string().optional(), nextActions: z.array(z.object({ code: z.string() }).passthrough()).optional() }).passthrough();
 
@@ -36,20 +37,42 @@ export async function runAdmittedStudioGeneration(input: StudioGenerationRequest
   const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new StudioGenerationError("WORKSPACE_REQUIRED");
   const capability: GenerationCapability = input.mode === "video" ? (input.sourceAssetIds.length ? input.sourceMediaType === "video" ? "video_to_video" : "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image");
   const contentLanguage = classifyContentLanguage(input.prompt);
-  const response = await fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief }), signal: input.signal });
+  // Admission intentionally ignores the UI abort signal: it cannot spend, and
+  // completing it gives the client a durable operation it can safely cancel.
+  const response = await fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief }) });
   if (!response.ok) throw await errorFrom(response);
   const admitted = responseSchema.safeParse(await response.json()); if (!admitted.success) throw new StudioGenerationError("GENERATION_RESPONSE_INVALID");
-  let operation = admitted.data.operation; const abort = () => { if (terminalStates.has(operation.state)) return; void fetch(`/api/studio/operations/${encodeURIComponent(operation.id)}`, { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": `simple-cancel:${operation.id}:${crypto.randomUUID()}` }, body: JSON.stringify({ action: "cancel", expectedRevision: operation.revision }), keepalive: true }).catch(() => {}); };
+  let operation = admitted.data.operation;
+  const cancel = async () => {
+    if (terminalStates.has(operation.state)) return;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const cancelled = await fetch(`/api/studio/operations/${encodeURIComponent(operation.id)}`, { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": `simple-cancel:${operation.id}:${operation.revision}` }, body: JSON.stringify({ action: "cancel", expectedRevision: operation.revision }), keepalive: true }).catch(() => null);
+      if (cancelled?.ok) return;
+      const inspected = await fetch(`/api/studio/operations/${encodeURIComponent(operation.id)}`, { headers: { "x-workspace-id": workspaceId }, cache: "no-store" }).catch(() => null);
+      if (!inspected?.ok) return;
+      const parsed = inspectionSchema.safeParse(await inspected.json());
+      if (!parsed.success || terminalStates.has(parsed.data.operation.state)) return;
+      operation = parsed.data.operation;
+    }
+  };
+  const abort = () => { void cancel(); };
   input.signal.addEventListener("abort", abort, { once: true });
   try {
+    if (input.signal.aborted) { await cancel(); throw new DOMException("Cancelled", "AbortError"); }
+    const execution = await fetch(`/api/studio/model-routing/intents/${encodeURIComponent(admitted.data.intentId)}/execute`, { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": `${input.idempotencyKey}:execute` }, body: JSON.stringify({ prompt: input.prompt, sourceAssetIds: input.sourceAssetIds }), signal: input.signal });
+    if (!execution.ok) throw await errorFrom(execution);
+    const executionResult = executionSchema.safeParse(await execution.json());
+    if (!executionResult.success) throw new StudioGenerationError("GENERATION_EXECUTION_RESPONSE_INVALID");
+    operation = executionResult.data.result.operation;
     for (let attempt = 0; attempt < 150 && !terminalStates.has(operation.state); attempt++) {
       await new Promise<void>((resolve, reject) => { const timer = window.setTimeout(resolve, 2_000); input.signal.addEventListener("abort", () => { window.clearTimeout(timer); reject(new DOMException("Cancelled", "AbortError")); }, { once: true }); });
       const polled = await fetch(`/api/studio/operations/${encodeURIComponent(operation.id)}`, { headers: { "x-workspace-id": workspaceId }, cache: "no-store", signal: input.signal });
       if (!polled.ok) throw await errorFrom(polled); const parsed = inspectionSchema.safeParse(await polled.json()); if (!parsed.success) throw new StudioGenerationError("OPERATION_RESPONSE_INVALID"); operation = parsed.data.operation;
     }
   } finally { input.signal.removeEventListener("abort", abort); }
+  if (!terminalStates.has(operation.state)) throw new StudioGenerationError("GENERATION_PENDING_RECOVERY", "inspect_operations");
   if (operation.state !== "succeeded") throw new StudioGenerationError(operation.state === "outcome_unknown" ? "PROVIDER_OUTCOME_UNKNOWN" : `GENERATION_${operation.state.toUpperCase()}`);
   const metadataIds = Array.isArray(operation.metadata.artifactIds) ? operation.metadata.artifactIds.filter((item): item is string => typeof item === "string") : [];
-  const assetId = metadataIds[0] ?? admitted.data.provider?.artifactIds?.[0]; if (!assetId) throw new StudioGenerationError("CANONICAL_ARTIFACT_RECEIPT_MISSING");
+  const assetId = metadataIds[0]; if (!assetId) throw new StudioGenerationError("CANONICAL_ARTIFACT_RECEIPT_MISSING");
   const download = await getStudioAssetDownloadUrl(assetId); return { result: download.downloadUrl, assetId };
 }

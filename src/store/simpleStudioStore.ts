@@ -8,7 +8,7 @@ import { create } from "zustand";
 import {
   ingestStudioAsset,
 } from "@/lib/studio/client";
-import { runAdmittedStudioGeneration } from "@/lib/model-routing/studio-generation-client";
+import { runAdmittedStudioGeneration, StudioGenerationError } from "@/lib/model-routing/studio-generation-client";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -188,6 +188,10 @@ async function executeGenerationEntry(input: { set: StudioSet; state: SimpleStud
     setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "complete", result: admitted.result, assetId: admitted.assetId } : value));
   } catch (error) {
     if (input.signal.aborted) return;
+    if (error instanceof StudioGenerationError && error.code === "GENERATION_PENDING_RECOVERY") {
+      setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "pending", error: error.code } : value));
+      return;
+    }
     setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "failed", error: error instanceof Error ? error.message : "GENERATION_FAILED" } : value));
   }
 }

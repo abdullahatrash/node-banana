@@ -8,6 +8,7 @@ import type { ExactModelRef, ModelDescriptor } from "./types";
 import { authorizeFallback } from "./compatibility";
 import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } from "./generation-region";
 import { validateImmutableBrandContext } from "./brand-context";
+import { ensureAdmittedGenerationOperation } from "./generation-operation";
 
 export type GenerationExecutionResult =
   | { kind: "accepted"; operation: OperationRecord; provider: ReplicateExecutionResult }
@@ -57,10 +58,8 @@ export class GenerationExecutionService {
     if (contract.imageKey && input.sourceUrls.length) providerInput[contract.imageKey] = contract.imageMode === "array" ? input.sourceUrls : input.sourceUrls[0];
 
     const actor = { type: "human" as const, userId: input.userId };
-    const created = await this.operations.create({ workspaceId: input.workspaceId, kind: "generation", resourceId: intent.id, actor, metadata: { provider: "replicate", intentId: intent.id, model: intent.selectedModel.model, version: intent.selectedModel.version, inputSchemaDigest: intent.selectedModel.inputSchemaDigest, brandProfileId: intent.brand.profileId, brandRevision: intent.brand.revision, brandContextDigest: intent.brand.context.digest, brandReferenceAssetIds: intent.brand.context.referenceAssets.map((item) => item.assetId), contentLanguage: intent.contentLanguage, arabicVariety: intent.arabicVariety, quoteAmountUsd: intent.quote.amount, quoteQuantity: intent.quote.quantity, quoteBasis: intent.quote.basis, reservationIds: intent.reservationIds, rightsSnapshotId: intent.rights.snapshotId, rightsSnapshotRevision: intent.rights.revision, rightsEvidenceRefs: intent.rights.evidence.map((item) => item.id), provenanceRefs: intent.rights.sourceAssetIds, region: intent.regionAdmission.region, regionPolicyId: intent.regionAdmission.policyId, regionPolicyVersion: intent.regionAdmission.policyVersion, regionEvidenceDigest: intent.regionAdmission.evidenceDigest, aspectRatio: intent.outputContract.aspectRatio, width: intent.outputContract.width, height: intent.outputContract.height, fps: intent.outputContract.fps, providerState: "admitted", nextAction: "submit_provider" }, idempotencyKey: `${input.idempotencyKey}:operation` });
-    if (created.kind !== "applied" && created.kind !== "replayed") return { kind: "unavailable", code: `OPERATION_${created.kind.toUpperCase()}` };
-    let operation = created.operation;
-    if (operation.state === "queued") operation = await this.transition(operation, "admitted", null, actor, `${input.idempotencyKey}:admit`, "generation.intent_admitted");
+    let operation = await ensureAdmittedGenerationOperation(this.operations, intent);
+    if (!operation) return { kind: "unavailable", code: "OPERATION_UNAVAILABLE" };
     if (operation.state === "admitted") operation = await this.transition(operation, "running", "provider.submit", actor, `${input.idempotencyKey}:run`, "generation.provider_submission_claimed");
     if (operation.state !== "running") return { kind: "accepted", operation, provider: { state: "waiting_provider", predictionId: typeof operation.metadata.predictionId === "string" ? operation.metadata.predictionId : null, code: "OPERATION_ALREADY_ACTIVE" } };
 
