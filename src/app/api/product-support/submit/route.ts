@@ -13,13 +13,13 @@ const submissionSchema = z.discriminatedUnion("kind", [
 
 export const POST = withStudioAuth<undefined>({ route: "/api/product-support/submit", action: "write", permission: "product:support:submit" }, async (request, authz) => {
   const parsed = submissionSchema.safeParse(await request.json());
-  if (!parsed.success) return NextResponse.json({ success: false, code: "SUPPORT_SUBMISSION_INVALID", error: "Invalid support submission." }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ success: false, code: "SUPPORT_SUBMISSION_INVALID" }, { status: 400 });
   try {
     const record = await submitSupportCommand({ workspaceId: authz.workspaceId, userId: authz.userId, ...parsed.data });
     return NextResponse.json({ success: true, record }, { status: 201 });
   } catch (error) {
-    if (error instanceof SupportAttachmentPolicyError) return NextResponse.json({ success: false, code: error.code, error: error.code }, { status: 422 });
-    if (error instanceof ProductRecordIdempotencyError) return NextResponse.json({ success: false, code: "SUPPORT_SUBMISSION_IDEMPOTENCY_CONFLICT", error: error.message }, { status: 409 });
+    if (error instanceof SupportAttachmentPolicyError) return NextResponse.json({ success: false, code: error.code }, { status: 422 });
+    if (error instanceof ProductRecordIdempotencyError) return NextResponse.json({ success: false, code: "SUPPORT_SUBMISSION_IDEMPOTENCY_CONFLICT" }, { status: 409 });
     throw error;
   }
 });
