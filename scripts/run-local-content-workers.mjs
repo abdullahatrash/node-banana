@@ -13,6 +13,7 @@ if (!secret) throw new Error("STUDIO_INTERNAL_API_SECRET is missing from the loc
 
 const routes = [
   ["performance", "/api/studio/internal/social-performance-sync?limit=20"],
+  ["youtube-trends", "/api/studio/internal/youtube-trends?limit=20"],
   ["trends", "/api/studio/internal/inspiration-trends?limit=20"],
 ];
 

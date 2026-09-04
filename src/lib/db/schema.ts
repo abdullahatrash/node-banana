@@ -9437,6 +9437,94 @@ export const inspirationTrendIngestionReceipts = pgTable(
   }),
 );
 
+/** Policy-isolated YouTube chart configuration. YouTube API Data must never
+ * enter the scored/immutable Inspiration tables above. */
+export const youtubeTrendDiscoverySources = pgTable(
+  "youtube_trend_discovery_sources",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    regionCode: text("region_code").notNull(),
+    categoryId: text("category_id").default("0").notNull(),
+    displayName: text("display_name").notNull(),
+    state: text("state").default("active").notNull(),
+    scheduleMinutes: integer("schedule_minutes").default(360).notNull(),
+    pageSize: integer("page_size").default(25).notNull(),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+    lastRefreshedAt: timestamp("last_refreshed_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "youtube_trend_discovery_sources_pk", columns: [table.workspaceId, table.id] }),
+    chartUnique: uniqueIndex("youtube_trend_discovery_sources_chart_unique").on(table.workspaceId, table.regionCode, table.categoryId),
+    dueIdx: index("youtube_trend_discovery_sources_due_idx").on(table.nextRunAt, table.workspaceId, table.id).where(sql`${table.state} = 'active'`),
+    valuesCheck: check("youtube_trend_discovery_sources_values_check", sql`${table.regionCode} ~ '^[A-Z]{2}$' and ${table.categoryId} ~ '^(0|[1-9][0-9]*)$' and ${table.state} in ('active','paused') and ${table.scheduleMinutes} between 60 and 10080 and ${table.pageSize} between 1 and 50 and length(${table.displayName}) between 1 and 200`),
+  }),
+);
+
+/** Mutable, purgeable latest-view projection of YouTube API Data. Counter
+ * strings preserve the API's unsigned-long values without lossy conversion. */
+export const youtubeTrendDiscoveryEntries = pgTable(
+  "youtube_trend_discovery_entries",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    videoId: text("video_id").notNull(),
+    providerRank: integer("provider_rank").notNull(),
+    title: text("title").notNull(),
+    channelId: text("channel_id").notNull(),
+    channelTitle: text("channel_title").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    thumbnailUrl: text("thumbnail_url"),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    viewCount: text("view_count"),
+    likeCount: text("like_count"),
+    commentCount: text("comment_count"),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "youtube_trend_discovery_entries_pk", columns: [table.workspaceId, table.sourceId, table.videoId] }),
+    sourceFk: foreignKey({ name: "youtube_trend_discovery_entries_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [youtubeTrendDiscoverySources.workspaceId, youtubeTrendDiscoverySources.id] }).onDelete("cascade"),
+    providerOrderIdx: index("youtube_trend_discovery_entries_order_idx").on(table.workspaceId, table.sourceId, table.providerRank, table.videoId),
+    expiryIdx: index("youtube_trend_discovery_entries_expiry_idx").on(table.expiresAt, table.workspaceId, table.sourceId),
+    valuesCheck: check("youtube_trend_discovery_entries_values_check", sql`${table.providerRank} between 1 and 50 and length(${table.videoId}) between 1 and 32 and length(${table.title}) between 1 and 240 and length(${table.channelId}) between 1 and 200 and length(${table.channelTitle}) between 1 and 200 and ${table.sourceUrl} = 'https://www.youtube.com/watch?v=' || ${table.videoId} and (${table.thumbnailUrl} is null or ${table.thumbnailUrl} ~ '^https://') and (${table.viewCount} is null or ${table.viewCount} ~ '^(0|[1-9][0-9]*)$') and (${table.likeCount} is null or ${table.likeCount} ~ '^(0|[1-9][0-9]*)$') and (${table.commentCount} is null or ${table.commentCount} ~ '^(0|[1-9][0-9]*)$') and ${table.publishedAt} <= ${table.observedAt} and ${table.expiresAt} > ${table.observedAt} and ${table.expiresAt} <= ${table.observedAt} + interval '30 days'`),
+  }),
+);
+
+export const youtubeTrendDiscoveryJobs = pgTable(
+  "youtube_trend_discovery_jobs",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceKey: text("source_key").notNull(),
+    state: text("state").default("queued").notNull(),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(4).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    leaseGeneration: integer("lease_generation").default(0).notNull(),
+    failureCode: text("failure_code"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "youtube_trend_discovery_jobs_pk", columns: [table.workspaceId, table.id] }),
+    sourceKeyUnique: uniqueIndex("youtube_trend_discovery_jobs_source_key_unique").on(table.workspaceId, table.sourceId, table.sourceKey),
+    activeSourceUnique: uniqueIndex("youtube_trend_discovery_jobs_active_source_unique").on(table.workspaceId, table.sourceId).where(sql`${table.state} in ('queued','claimed')`),
+    sourceFk: foreignKey({ name: "youtube_trend_discovery_jobs_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [youtubeTrendDiscoverySources.workspaceId, youtubeTrendDiscoverySources.id] }).onDelete("cascade"),
+    dueIdx: index("youtube_trend_discovery_jobs_due_idx").on(table.nextAttemptAt, table.workspaceId, table.id).where(sql`${table.state} = 'queued'`),
+    valuesCheck: check("youtube_trend_discovery_jobs_values_check", sql`${table.state} in ('queued','claimed','succeeded','failed_known') and ${table.attempt} between 0 and ${table.maxAttempts} and ${table.maxAttempts} between 1 and 10 and ${table.leaseGeneration} >= 0 and length(${table.sourceKey}) between 1 and 200 and ((${table.state} = 'claimed' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null))`),
+  }),
+);
+
 export const productBlitzReplenishmentRuns = pgTable(
   "product_blitz_replenishment_runs",
   {
