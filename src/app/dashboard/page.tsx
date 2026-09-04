@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowUpRight, CalendarClock, Check, Circle, ImageIcon, Radio, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, CalendarClock, Check, Circle, ClipboardCheck, Database, FileText, ImageIcon, Radio, Sparkles } from "lucide-react";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
 import { getDashboardReadModel } from "@/lib/product-surfaces/dashboard";
@@ -10,9 +10,10 @@ export default async function DashboardPage() {
   const { aggregate } = await requireOnboardingComplete("/dashboard");
   const workspaceId = aggregate?.session.workspaceId;
   const t = await getTranslations("product.dashboard");
+  const contentT = await getTranslations("product.content");
   const locale = await getLocale();
   if (!workspaceId) return null;
-  const model = await getDashboardReadModel(workspaceId, Boolean(aggregate.activeProfile));
+  const model = await getDashboardReadModel(workspaceId);
   const activationEntries = Object.entries(model.activation) as Array<[keyof typeof model.activation, boolean]>;
   const completed = activationEntries.filter(([, done]) => done).length;
   const date = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
@@ -36,6 +37,33 @@ export default async function DashboardPage() {
         <Metric icon={Radio} label={t("metrics.channels")} value={model.counts.channels} warning={model.counts.reauth} />
         <Metric icon={CalendarClock} label={t("metrics.scheduled")} value={model.counts.scheduled} />
         <Metric icon={AlertTriangle} label={t("metrics.failures")} value={model.counts.failedPublishing + model.counts.failedGeneration} warning={model.counts.failedPublishing + model.counts.failedGeneration} />
+      </section>
+      <section className="rounded-3xl border bg-card p-6 sm:p-8">
+        <div><h2 className="text-xl font-semibold">{t("sources.title")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("sources.description")}</p></div>
+        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">{model.sourceEnvelopes.map((envelope) => <Link key={envelope.source} href={envelope.href} className="group rounded-2xl border p-4 transition-colors hover:border-amber-300 hover:bg-amber-50/40 dark:hover:bg-amber-950/10">
+          <div className="flex items-start justify-between gap-3"><Database className="size-5 text-muted-foreground" /><span className={`rounded-full px-2 py-1 text-xs font-semibold ${envelope.status === "ready" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : envelope.status === "attention" ? "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200" : "bg-muted text-muted-foreground"}`}>{t(`sources.status.${envelope.status}`)}</span></div>
+          <h3 className="mt-4 font-semibold">{t(`sources.items.${envelope.source}.title`)}</h3>
+          <p className="mt-1 min-h-16 text-sm leading-5 text-muted-foreground">{t(`sources.items.${envelope.source}.guidance.${envelope.status}`)}</p>
+          <p className="mt-4 text-xs text-muted-foreground">{t("sources.records", { count: envelope.count })}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{envelope.updatedAt ? t("sources.updated", { time: date.format(envelope.updatedAt) }) : t("sources.never")}</p>
+          <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-amber-700">{t("sources.open")}<ArrowUpRight className="size-3" /></span>
+        </Link>)}</div>
+      </section>
+      <section className="grid gap-5 lg:grid-cols-2">
+        <div className="rounded-3xl border bg-card p-6">
+          <div className="flex items-start justify-between gap-4"><div><h2 className="flex items-center gap-2 text-lg font-semibold"><ClipboardCheck className="size-5" />{t("pending.approvalsTitle")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("pending.approvalsDescription")}</p></div><Link href="/approvals" className="shrink-0 text-sm text-amber-700">{t("viewAll")}</Link></div>
+          <div className="mt-4 space-y-3">{model.pendingApprovals.length ? model.pendingApprovals.map((approval) => <Link key={approval.id} href={`/approvals?request=${encodeURIComponent(approval.id)}`} className="block rounded-xl bg-muted/50 p-3 hover:bg-muted">
+            <p className="text-sm font-medium">{t("pending.approvalLabel", { count: approval.targetCount })}</p><p className="mt-1 text-xs text-muted-foreground">{t("pending.plan", { id: approval.planId })}</p><p className="mt-1 text-xs text-muted-foreground">{t("pending.expires", { time: date.format(approval.expiresAt) })}</p>
+          </Link>) : <Empty text={t("pending.emptyApprovals")} href="/approvals" action={t("pending.openApprovals")} />}</div>
+        </div>
+        <div className="rounded-3xl border bg-card p-6">
+          <div className="flex items-start justify-between gap-4"><div><h2 className="flex items-center gap-2 text-lg font-semibold"><ClipboardCheck className="size-5" />{t("pending.reviewsTitle")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("pending.reviewsDescription")}</p></div></div>
+          <div className="mt-4 space-y-3">{model.pendingReviews.length ? model.pendingReviews.map((review) => <Link key={review.id} href={review.href} className="block rounded-xl bg-muted/50 p-3 hover:bg-muted"><p className="line-clamp-1 text-sm font-medium">{review.title}</p><p className="mt-1 text-xs text-muted-foreground">{t(`pending.kinds.${review.kind}`)} · {t("pending.awaitingReview")}</p><p className="mt-1 text-xs text-muted-foreground">{date.format(review.updatedAt)}</p></Link>) : <Empty text={t("pending.emptyReviews")} href="/blitz" action={t("pending.openReviews")} />}</div>
+        </div>
+      </section>
+      <section className="rounded-3xl border bg-card p-6">
+        <div className="flex items-start justify-between gap-4"><div><h2 className="flex items-center gap-2 text-lg font-semibold"><FileText className="size-5" />{t("recentContent.title")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("recentContent.description")}</p></div><Link href="/content" className="shrink-0 text-sm text-amber-700">{t("viewAll")}</Link></div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{model.recentContentPieces.length ? model.recentContentPieces.map((piece) => <Link key={piece.id} href={`/content?piece=${encodeURIComponent(piece.id)}`} className="rounded-xl border p-4 hover:border-amber-300"><p className="line-clamp-1 font-medium">{piece.title}</p><p className="mt-2 text-xs text-muted-foreground">{contentT(`formats.${piece.format}`)} · {contentT(`languages.${piece.contentLanguage}`)}</p><div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>{t("recentContent.revision", { revision: piece.revision })}</span><span>{t(`recentContent.proof.${piece.renderProofStatus}`)}</span></div><p className="mt-2 text-xs text-muted-foreground">{date.format(piece.updatedAt)}</p></Link>) : <div className="md:col-span-2 xl:col-span-3"><Empty text={t("recentContent.empty")} href="/content" action={t("recentContent.create")} /></div>}</div>
       </section>
       <section className="grid gap-5 lg:grid-cols-2">
         <div className="rounded-3xl border bg-card p-6"><div className="flex justify-between"><h2 className="text-lg font-semibold">{t("upcoming")}</h2><Link href="/calendar" className="text-sm text-amber-700">{t("viewAll")}</Link></div><div className="mt-4 space-y-3">{model.upcomingPosts.length ? model.upcomingPosts.map((post) => <div key={post.id} className="rounded-xl bg-muted/50 p-3"><p className="line-clamp-2 text-sm">{post.content || t("untitledPost")}</p><p className="mt-1 text-xs text-muted-foreground">{post.scheduledAt ? date.format(post.scheduledAt) : t("notScheduled")}</p></div>) : <Empty text={t("emptyUpcoming")} href="/compose" action={t("createPost")} />}</div></div>

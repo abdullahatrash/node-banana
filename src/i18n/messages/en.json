@@ -601,7 +601,24 @@
       "open": "Open workspace",
       "metrics": { "media": "Media assets", "channels": "Connected Channels", "scheduled": "Scheduled posts", "failures": "Needs attention" },
       "upcoming": "Upcoming publishing", "recentMedia": "Recent media", "viewAll": "View all", "untitledPost": "Untitled post", "notScheduled": "Schedule pending", "emptyUpcoming": "No publications are currently queued.", "createPost": "Compose a post", "emptyMedia": "No reusable media yet.", "createMedia": "Create media",
-      "assetType": { "image": "Image", "video": "Video", "audio": "Audio", "model3d": "3D model", "workflow": "Workflow" }
+      "assetType": { "image": "Image", "video": "Video", "audio": "Audio", "model3d": "3D model", "workflow": "Workflow" },
+      "sources": {
+        "title": "Workspace source readiness", "description": "Each operational source has its own evidence, freshness, and next-step guidance.", "records": "{count, plural, one {# record} other {# records}}", "updated": "Latest change {time}", "never": "No evidence recorded", "open": "Open source",
+        "status": { "ready": "Ready", "missing": "Missing", "attention": "Needs attention" },
+        "items": {
+          "brand": { "title": "Brand Profile", "guidance": { "ready": "An approved Brand revision is available to creation flows.", "missing": "Review and approve a Brand revision before relying on generated output.", "attention": "Review the current Brand evidence before creating content." } },
+          "media": { "title": "Workspace media", "guidance": { "ready": "Reusable Workspace-owned media is available.", "missing": "Upload or create canonical media for repeatable production.", "attention": "Review media provenance and readiness before reuse." } },
+          "channels": { "title": "Publishing Channels", "guidance": { "ready": "Connected Channels are available for publishing plans.", "missing": "Connect and verify a Channel before scheduling publication.", "attention": "One or more Channels require renewed authorization." } },
+          "content": { "title": "Content Pieces", "guidance": { "ready": "Versioned Content Pieces are available for review and production.", "missing": "Accept a Blitz proposal or create a guided Content Piece.", "attention": "Review Content Piece evidence before production." } },
+          "publishing": { "title": "Publishing", "guidance": { "ready": "Approved publishing work is queued or in progress.", "missing": "Schedule approved content when Channel readiness is confirmed.", "attention": "Resolve failed publishing records before scheduling more work." } }
+        }
+      },
+      "pending": {
+        "approvalsTitle": "Pending publishing approvals", "approvalsDescription": "Unexpired requests without a recorded decision.", "approvalLabel": "{count, plural, one {Approval for # target} other {Approval for # targets}}", "plan": "Plan {id}", "expires": "Decision window closes {time}", "emptyApprovals": "No publishing approval is awaiting a decision.", "openApprovals": "Open approvals",
+        "reviewsTitle": "Pending product reviews", "reviewsDescription": "Durable drafts and proposals still awaiting an explicit review step.", "awaitingReview": "Awaiting review", "emptyReviews": "No product record is awaiting review.", "openReviews": "Open Blitz Queue",
+        "kinds": { "blitz_item": "Blitz proposal", "campaign_automation": "Campaign Automation", "creator_persona": "Creator Persona", "channel_onboarding_order": "Channel onboarding" }
+      },
+      "recentContent": { "title": "Recent Content Pieces", "description": "Latest durable content revisions, language, and Render Proof status.", "revision": "Revision {revision}", "empty": "No Content Piece revision is available yet.", "create": "Create content", "proof": { "not_requested": "Proof not requested", "pending": "Proof pending", "passed": "Proof passed", "failed": "Proof failed" } }
     },
     "inspiration": {
       "eyebrow": "Market evidence", "title": "Inspiration Library", "description": "Capture licensed or user-submitted trend evidence, keep source and metric freshness visible, and turn only permitted influence into a Remix Brief.",
