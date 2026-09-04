@@ -85,17 +85,17 @@ export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
                 {initials}
               </div>
             )}
-            <div className="absolute -bottom-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full border border-border bg-background shadow-sm">
+            <div className="absolute -bottom-0.5 -end-0.5 flex size-3.5 items-center justify-center rounded-full border border-border bg-background shadow-sm">
               <PlatformIcon platform={resolvedPlatform} size={9} />
             </div>
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1">
-              <span className="min-w-0 flex-1 truncate font-medium" title={channelName}>
+              <span dir="auto" className="min-w-0 flex-1 truncate font-medium" title={channelName}>
                 {channelName}
               </span>
               {postTime && (
-                <span className="flex-shrink-0 text-muted-foreground">
+                <span className="flex-shrink-0 text-muted-foreground" dir="auto">
                   {formatValue.dateTime(new Date(postTime), { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
@@ -104,7 +104,7 @@ export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
               {post.status === "draft" && (
                 <span className="me-1">{t("draftPrefix")}</span>
               )}
-              {post.content?.slice(0, 48) || t("noContent")}
+              <span dir="auto">{post.content?.slice(0, 48) || t("noContent")}</span>
             </div>
             <div className="truncate text-[9px] text-muted-foreground">
               {t(`authority.${post.authority.kind}`)}

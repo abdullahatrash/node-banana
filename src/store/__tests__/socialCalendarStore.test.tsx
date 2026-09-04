@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it } from "vitest"
 import { CalendarFilters } from "@/components/social/calendar/CalendarFilters"
 import { I18nTestProvider } from "@/test/i18n"
@@ -60,6 +60,12 @@ describe("social calendar locale semantics", () => {
     expect(dateLabel).toHaveTextContent(
       useSocialCalendarStore.getState().getDateRangeLabel(locale),
       { normalizeWhitespace: false },
+    )
+    expect(screen.getByTestId("calendar-previous-icon")).toHaveClass(
+      direction === "rtl" ? "lucide-chevron-right" : "lucide-chevron-left",
+    )
+    expect(screen.getByTestId("calendar-next-icon")).toHaveClass(
+      direction === "rtl" ? "lucide-chevron-left" : "lucide-chevron-right",
     )
   })
 })

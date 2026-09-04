@@ -37,7 +37,7 @@ export function MediaAttachments({ onOpenMediaPool }: MediaAttachmentsProps) {
             )}
             <button
               onClick={() => removeMedia(index)}
-              className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100"
+              className="absolute end-1 top-1 flex size-5 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100"
               aria-label={t("media.remove", { number: index + 1 })}
             >
               <XIcon className="size-3" />

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRightIcon, CoinsIcon } from "lucide-react";
+import { ArrowUpLeftIcon, ArrowUpRightIcon, CoinsIcon } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { readCommercialSummary, type CommercialSummary } from "@/lib/commercial/summary";
 import { getActiveWorkspaceId } from "@/lib/studio/client";
@@ -34,6 +34,7 @@ export function CommercialStatus({ workspaceId, authorizedWorkspaces }: { worksp
   const planName = plan?.authoredName[locale] ?? (subscription?.planId || t("free"));
   const trialEndsAt = subscription?.state === "trialing" ? new Date(subscription.currentPeriodEndsAt) : null;
   const trialDays = trialEndsAt && Number.isFinite(trialEndsAt.getTime()) ? Math.max(0, Math.ceil((trialEndsAt.getTime() - Date.now()) / 86_400_000)) : null;
+  const UpgradeIcon = locale === "ar" ? ArrowUpLeftIcon : ArrowUpRightIcon;
 
   return (
     <div className="rounded-lg border bg-sidebar-accent/35 p-2.5 group-data-[collapsible=icon]:p-1.5" data-testid="shell-commercial-status">
@@ -45,7 +46,7 @@ export function CommercialStatus({ workspaceId, authorizedWorkspaces }: { worksp
         </div>
       </div>
       <Link href="/settings?section=billing" className="mt-2 flex min-h-8 items-center justify-center gap-1 rounded-md bg-primary px-2 text-xs font-semibold text-primary-foreground group-data-[collapsible=icon]:sr-only">
-        {t("upgrade")}<ArrowUpRightIcon className="size-3" aria-hidden="true" />
+        {t("upgrade")}<UpgradeIcon className="size-3" aria-hidden="true" />
       </Link>
     </div>
   );

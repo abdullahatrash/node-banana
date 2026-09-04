@@ -8,6 +8,7 @@ import { PLATFORM_LABELS, PLATFORM_COLORS } from "@/lib/social/constants"
 import { CheckIcon } from "lucide-react"
 import type { SocialPlatform } from "@/lib/db/schema"
 import { useTranslations } from "next-intl"
+import { isolateLtr } from "@/i18n/bidi"
 
 export function PlatformSelector() {
   const t = useTranslations("social.compose")
@@ -47,7 +48,7 @@ export function PlatformSelector() {
             <button
               key={account.id}
               onClick={() => toggleAccount(account.id, platform)}
-              title={`${PLATFORM_LABELS[platform]}${account.username ? ` · @${account.username}` : ""}`}
+              title={`${PLATFORM_LABELS[platform]}${account.username ? ` · ${isolateLtr(`@${account.username}`)}` : ""}`}
               className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-all ${
                 isSelected
                   ? "text-foreground"
@@ -63,7 +64,7 @@ export function PlatformSelector() {
               }
             >
               <PlatformIcon platform={platform} size={16} />
-              <span>{account.displayName}</span>
+              <span dir="auto">{account.displayName}</span>
               {isSelected && <CheckIcon className="size-3" style={{ color }} />}
             </button>
           )

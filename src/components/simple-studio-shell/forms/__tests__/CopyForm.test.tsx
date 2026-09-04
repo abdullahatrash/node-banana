@@ -34,6 +34,8 @@ describe("CopyForm", () => {
       selectedModelVersion: "immutable-version",
       selectedModelSchemaDigest: `sha256:${"a".repeat(64)}`,
       rightsConfirmed: true,
+      generationsByMode: { photo: [], video: [], copy: [] },
+      generations: [],
     });
     global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
   });
@@ -47,6 +49,11 @@ describe("CopyForm", () => {
     render(<CopyForm />);
     expect(screen.getByLabelText(/tone/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/platform/i)).toBeInTheDocument();
+  });
+
+  it("stacks paired selectors until the small-screen breakpoint", () => {
+    const { container } = render(<CopyForm />);
+    expect(container.querySelector(".grid-cols-1.sm\\:grid-cols-2")).toBeInTheDocument();
   });
 
   it("renders a Generate button", () => {
@@ -79,5 +86,28 @@ describe("CopyForm", () => {
     render(<CopyForm />);
     await userEvent.click(screen.getByRole("button", { name: "Both" }));
     expect(useSimpleStudioStore.getState().outputLanguage).toBe("both");
+  });
+
+  it("gives mixed-language generated copy its own automatic direction", () => {
+    const result = {
+      id: "generation-1",
+      batchId: "batch-1",
+      status: "complete" as const,
+      result: "English result داخل واجهة عربية",
+      assetId: null,
+      error: null,
+      mode: "copy" as const,
+      aspectRatio: "9:16",
+      prompt: "Prompt",
+      createdAt: Date.now(),
+      modelName: "model",
+    };
+    useSimpleStudioStore.setState({
+      generationsByMode: { photo: [], video: [], copy: [result] },
+      generations: [result],
+    });
+
+    render(<CopyForm />);
+    expect(screen.getByText(result.result)).toHaveAttribute("dir", "auto");
   });
 });

@@ -29,10 +29,11 @@ describe("BillingSettings default plan", () => {
   ])("does not offer an impossible zero-dollar checkout in %s", async (locale, currentLabel) => {
     window.localStorage.setItem("node-banana-active-workspace-id", "workspace-1");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: true, data: summary }), { status: 200, headers: { "content-type": "application/json" } })));
-    render(<I18nTestProvider locale={locale}><BillingSettings canManage canPurchase /></I18nTestProvider>);
+    const { container } = render(<I18nTestProvider locale={locale}><BillingSettings canManage canPurchase /></I18nTestProvider>);
     expect(await screen.findByText(currentLabel)).toBeInTheDocument();
     expect(screen.getByText(locale === "ar" ? "البداية" : "Starter")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: locale === "ar" ? "الاشتراك بأمان" : "Subscribe securely" })).toHaveLength(1);
+    expect(container.firstElementChild).toHaveAttribute("dir", locale === "ar" ? "rtl" : "ltr");
   });
 
   it("keeps upgrade plans visible for a provisioned Free subscription", async () => {

@@ -99,6 +99,7 @@ export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) 
   return (
     <select
       id={id}
+      dir="auto"
       className="w-full rounded-md border bg-background p-2 text-sm"
       value={selectedModelId ?? ""}
       onChange={handleChange}
@@ -113,7 +114,7 @@ export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) 
       )}
       {!hasError && !isLoading && sorted.length === 0 && <option disabled>{t("none")}</option>}
       {sorted.map((m) => (
-        <option key={m.model} value={m.model}>
+        <option key={m.model} value={m.model} dir="auto">
           {m.qualification.status === "qualified" ? `${m.label} · ${t("price", { amount: new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(m.qualification.executionPriceUsd.amount), basis: t(`basis.${m.qualification.executionPriceUsd.basis}`) })}` : m.label}
         </option>
       ))}

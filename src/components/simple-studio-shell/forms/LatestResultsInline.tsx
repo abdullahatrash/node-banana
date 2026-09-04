@@ -7,6 +7,7 @@ import {
   type SimpleStudioMode,
 } from "@/store/simpleStudioStore";
 import { useTranslations } from "next-intl";
+import { ArrowRightIcon } from "lucide-react";
 
 interface LatestResultsInlineProps {
   mode: SimpleStudioMode;
@@ -34,7 +35,7 @@ function ResultCard({ gen }: { gen: Generation }) {
 
   if (gen.mode === "copy") {
     return (
-      <div className="rounded-md border p-3 text-sm whitespace-pre-wrap">
+      <div dir="auto" className="rounded-md border p-3 text-sm whitespace-pre-wrap">
         {gen.result ?? "(no output)"}
       </div>
     );
@@ -88,7 +89,7 @@ export function LatestResultsInline({ mode }: LatestResultsInlineProps) {
           href="/simple-studio/library"
           className="text-xs text-muted-foreground hover:underline"
         >
-          {t("viewAll")} <span aria-hidden>→</span>
+          {t("viewAll")} <ArrowRightIcon className="inline size-3 rtl:rotate-180" aria-hidden="true" />
         </Link>
       </div>
       <div className="space-y-2">

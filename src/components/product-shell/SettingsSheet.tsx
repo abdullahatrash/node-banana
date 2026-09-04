@@ -2,10 +2,14 @@
 
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { useLocale } from "next-intl";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { getDirection } from "@/i18n/config";
 
 export function SettingsSheet({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const locale = useLocale();
+  const isArabic = locale === "ar";
 
   return (
     <Sheet
@@ -15,7 +19,8 @@ export function SettingsSheet({ children }: { children: ReactNode }) {
       }}
     >
       <SheetContent
-        side="right"
+        side={isArabic ? "left" : "right"}
+        dir={getDirection(isArabic ? "ar" : "en")}
         showCloseButton={false}
         aria-labelledby="settings-title"
         aria-describedby="settings-description"

@@ -103,6 +103,7 @@ function YouTubeSettings({
         <FieldLabel>{t("title")}</FieldLabel>
         <Input
           value={asString(settings.title)}
+          dir="auto"
           onChange={(event) => update({ title: event.target.value })}
           maxLength={100}
         />
@@ -120,6 +121,7 @@ function YouTubeSettings({
         <FieldLabel>{t("tags")}</FieldLabel>
         <Input
           value={tagsToInput(settings.tags)}
+          dir="auto"
           onChange={(event) => update({ tags: inputToTags(event.target.value) })}
         />
       </div>
@@ -238,6 +240,7 @@ function RedditSettings({
           <FieldLabel>{t("link")}</FieldLabel>
           <Input
             value={asString(settings.url)}
+            dir="ltr"
             onChange={(event) => update({ url: event.target.value })}
             type="url"
           />
@@ -295,6 +298,7 @@ function MastodonSettings({
         <FieldLabel>{t("contentWarning")}</FieldLabel>
         <Input
           value={asString(settings.contentWarning)}
+          dir="auto"
           onChange={(event) => update({ contentWarning: event.target.value })}
           placeholder={t("contentWarningPlaceholder")}
         />

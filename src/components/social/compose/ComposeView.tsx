@@ -35,6 +35,8 @@ import type { SocialPlatform } from "@/lib/db/schema"
 
 export function ComposeView() {
   const t = useTranslations("social.compose")
+  const tShell = useTranslations("shell.actions")
+  const tPosts = useTranslations("social.posts.actions")
   const router = useRouter()
   const { show: showToast } = useToast()
   const [isSubmitting, setIsSubmitting] = useState<
@@ -277,9 +279,9 @@ export function ComposeView() {
   }
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex min-w-0 flex-1 flex-col">
       {/* Top bar */}
-      <div className="flex items-center gap-2 border-b px-4 py-2">
+      <div className="flex min-w-0 items-center gap-2 border-b px-4 py-2">
         <Button
           variant="ghost"
           size="sm"
@@ -289,19 +291,19 @@ export function ComposeView() {
             router.push("/social/calendar")
           }}
         >
-          <ArrowLeftIcon className="size-4" />
+          <ArrowLeftIcon className="size-4 rtl:rotate-180" />
           {t("back")}
         </Button>
         <Separator orientation="vertical" className="h-4" />
-        <span className="text-sm font-medium">
-          {postId ? "Edit Draft" : "New Post"}
+        <span className="min-w-0 truncate text-sm font-medium">
+          {postId ? tPosts("edit") : tShell("newPost")}
         </span>
       </div>
 
       {/* Main content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row">
         {/* Left: editor */}
-        <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-6">
+        <div className="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto p-4 sm:p-6">
           <PlatformSelector />
           <PublishingSettingsPanels />
           <PostEditor />
@@ -317,7 +319,7 @@ export function ComposeView() {
       </div>
 
       {/* Bottom action bar */}
-      <div className="flex items-center gap-2 border-t px-6 py-3">
+      <div className="flex flex-wrap items-center gap-2 border-t px-4 py-3 sm:px-6">
         <Button
           variant="outline"
           size="sm"

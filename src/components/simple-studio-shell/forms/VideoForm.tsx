@@ -165,7 +165,7 @@ export function VideoForm() {
 
         <div>
           <label className="mb-2 block text-sm font-medium">{t("video.duration")}</label>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2" dir="ltr">
             {DURATIONS.map((d) => (
               <button
                 key={d}
@@ -214,7 +214,7 @@ export function VideoForm() {
               <label className="mb-2 block text-sm font-medium">
                 {t("video.dialogueLanguage")}
               </label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {DIALOGUE_LANGUAGES.map((lang) => (
                   <button
                     key={lang}

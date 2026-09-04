@@ -121,6 +121,8 @@ describe("ProductShell", () => {
       "page",
     );
     expect(document.querySelector('[data-slot="sidebar"][data-side="right"]')).toBeTruthy();
+    expect(document.querySelector('[data-slot="sidebar-wrapper"]')).toHaveAttribute("dir", "rtl");
+    expect(screen.getAllByText("noura@example.com")[0]).toHaveAttribute("dir", "ltr");
   });
 
   it("shows authoritative plan, trial, credits, and Upgrade state in English", async () => {

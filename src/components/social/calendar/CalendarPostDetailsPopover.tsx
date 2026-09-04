@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { useFormatter, useTranslations } from "next-intl"
+import { useFormatter, useLocale, useTranslations } from "next-intl"
 import { createPortal } from "react-dom"
 import { useRouter } from "next/navigation"
 import {
@@ -44,6 +44,30 @@ function toDateTimeLocalValue(value?: string | null) {
   return offsetDate.toISOString().slice(0, 16)
 }
 
+export function getCalendarPopoverLeft({
+  anchorLeft,
+  anchorRight,
+  viewportWidth,
+  direction,
+}: {
+  anchorLeft: number
+  anchorRight: number
+  viewportWidth: number
+  direction: "rtl" | "ltr"
+}) {
+  const gutter = 8
+  const popoverWidth = Math.max(0, Math.min(320, viewportWidth - gutter * 2))
+  const preferredLeft = direction === "rtl"
+    ? anchorLeft - popoverWidth - gutter
+    : anchorRight + gutter
+  const alternateLeft = direction === "rtl"
+    ? anchorRight + gutter
+    : anchorLeft - popoverWidth - gutter
+  const maxLeft = Math.max(gutter, viewportWidth - popoverWidth - gutter)
+  const preferredFits = preferredLeft >= gutter && preferredLeft <= maxLeft
+  return Math.max(gutter, Math.min(preferredFits ? preferredLeft : alternateLeft, maxLeft))
+}
+
 export function CalendarPostDetailsPopover({
   post,
   anchor,
@@ -52,6 +76,8 @@ export function CalendarPostDetailsPopover({
   onMutate,
 }: CalendarPostDetailsPopoverProps) {
   const t = useTranslations("social.calendarUi")
+  const locale = useLocale()
+  const direction = locale === "ar" ? "rtl" : "ltr"
   const formatValue = useFormatter()
   const formatDateTime = (value?: string | null) => value
     ? formatValue.dateTime(new Date(value), { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -98,7 +124,12 @@ export function CalendarPostDetailsPopover({
 
     function updatePosition() {
       const rect = anchorElement.getBoundingClientRect()
-      const left = Math.min(rect.right + 8, window.innerWidth - 340)
+      const left = getCalendarPopoverLeft({
+        anchorLeft: rect.left,
+        anchorRight: rect.right,
+        viewportWidth: window.innerWidth,
+        direction,
+      })
       const top = Math.min(rect.top, window.innerHeight - 380)
       setPosition({
         top: Math.max(8, top),
@@ -113,7 +144,7 @@ export function CalendarPostDetailsPopover({
       window.removeEventListener("resize", updatePosition)
       window.removeEventListener("scroll", updatePosition, true)
     }
-  }, [anchor, open])
+  }, [anchor, direction, open])
 
   useEffect(() => {
     if (!open) return
@@ -155,7 +186,8 @@ export function CalendarPostDetailsPopover({
   return createPortal(
     <div
       data-calendar-post-popover
-      className="fixed z-50 w-[320px] rounded-lg border bg-popover text-popover-foreground shadow-xl"
+      dir={direction}
+      className="fixed z-50 max-h-[calc(100vh-1rem)] w-[min(320px,calc(100vw-1rem))] overflow-y-auto rounded-lg border bg-popover text-popover-foreground shadow-xl"
       style={{ top: position.top, left: position.left }}
       onClick={(event) => event.stopPropagation()}
     >
@@ -164,14 +196,14 @@ export function CalendarPostDetailsPopover({
         <PlatformIcon platform={platform} size={24} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-medium">
+            <p dir="auto" className="truncate text-sm font-medium">
               {account?.displayName ?? t("unknownChannel")}
             </p>
             <Badge variant="secondary" className={`text-[10px] ${statusConfig?.color ?? ""}`}>
               {t(`status.${post.status}`)}
             </Badge>
           </div>
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm">
+          <p dir="auto" className="mt-1 whitespace-pre-wrap break-words text-sm">
             {post.content || t("noContent")}
           </p>
           <p className="mt-1 text-[10px] text-muted-foreground">
@@ -186,15 +218,15 @@ export function CalendarPostDetailsPopover({
       <div className="space-y-2 border-t px-4 py-3 text-xs text-muted-foreground">
         <div className="flex items-center justify-between gap-3">
           <span>{t("scheduled")}</span>
-          <span className="text-foreground">{formatDateTime(post.scheduledAt)}</span>
+          <bdi className="text-foreground">{formatDateTime(post.scheduledAt)}</bdi>
         </div>
         <div className="flex items-center justify-between gap-3">
           <span>{t("published")}</span>
-          <span className="text-foreground">{formatDateTime(post.publishedAt)}</span>
+          <bdi className="text-foreground">{formatDateTime(post.publishedAt)}</bdi>
         </div>
         <div className="flex items-center justify-between gap-3">
           <span>{t("created")}</span>
-          <span className="text-foreground">{formatDateTime(post.createdAt)}</span>
+          <bdi className="text-foreground">{formatDateTime(post.createdAt)}</bdi>
         </div>
         {media.length > 0 && (
           <div>
@@ -221,7 +253,7 @@ export function CalendarPostDetailsPopover({
           </div>
         )}
         {post.errorMessage && (
-          <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-destructive">
+          <div dir="auto" className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-destructive">
             {post.errorMessage}
           </div>
         )}
@@ -231,6 +263,7 @@ export function CalendarPostDetailsPopover({
         <div className="flex items-center gap-2 border-t px-4 py-3">
           <input
             type="datetime-local"
+            dir="ltr"
             value={rescheduleValue}
             onChange={(event) => setRescheduleValue(event.target.value)}
             className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs"
