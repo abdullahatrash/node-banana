@@ -36,6 +36,7 @@ export async function productionCalendarRescheduleService(input: {
   const actor = await WORKSPACE_SERVICE_AGENT_RESOLVER.resolve({
     workspaceId: input.workspaceId,
     purpose: "calendar_reschedule",
+    provisioningActorUserId: input.userId,
     authority: {
       capability: "publishing_plan_revisions.create@1",
       authorizationContractDigest: publishingPlanAuthorizationContractDigest("publishing_plan_revisions.create@1"),

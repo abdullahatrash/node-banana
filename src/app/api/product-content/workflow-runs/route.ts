@@ -38,12 +38,14 @@ export const POST = withStudioAuth<undefined>({ route: "/api/product-content/wor
     let actor = await WORKSPACE_SERVICE_AGENT_RESOLVER.resolve({
       workspaceId: authz.workspaceId,
       purpose: "content_workflow",
+      provisioningActorUserId: authz.userId,
       authority: { capability: "workflow_runs.start@2", authorizationContractDigest: contractDigest, resources: emptyResources },
     });
     await productionContentWorkflowRuntime(actor).ensureRevision({ workspaceId: authz.workspaceId, definition: resolved.definition });
     actor = await WORKSPACE_SERVICE_AGENT_RESOLVER.resolve({
       workspaceId: authz.workspaceId,
       purpose: "content_workflow",
+      provisioningActorUserId: authz.userId,
       authority: {
         capability: "workflow_runs.start@2",
         authorizationContractDigest: contractDigest,

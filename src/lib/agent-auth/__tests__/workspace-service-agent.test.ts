@@ -67,23 +67,25 @@ describe("WorkspaceServiceAgentResolver", () => {
     const setup = mutableRepository();
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
 
-    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority })).resolves.toEqual({
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "owner_a" })).resolves.toEqual({
       workspaceId: "workspace_a",
       principalId: "principal_workspace_a",
       keyId: "key_workspace_a",
     });
-    await expect(resolver.resolve({ workspaceId: "workspace_b", purpose: "content_workflow", authority })).resolves.toEqual({
+    await expect(resolver.resolve({ workspaceId: "workspace_b", purpose: "content_workflow", authority, provisioningActorUserId: "owner_b" })).resolves.toEqual({
       workspaceId: "workspace_b",
       principalId: "principal_workspace_b",
       keyId: "key_workspace_b",
     });
     expect(setup.provision).toHaveBeenCalledTimes(2);
+    expect(setup.provision).toHaveBeenNthCalledWith(1, expect.objectContaining({ actorUserId: "owner_a" }));
+    expect(setup.provision).toHaveBeenNthCalledWith(2, expect.objectContaining({ actorUserId: "owner_b" }));
   });
 
   it("coalesces concurrent bootstrap idempotently per Workspace and purpose", async () => {
     const setup = mutableRepository();
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
-    const request = { workspaceId: "workspace_a", purpose: "content_workflow" as const, authority };
+    const request = { workspaceId: "workspace_a", purpose: "content_workflow" as const, authority, provisioningActorUserId: "owner_a" };
 
     const [first, second] = await Promise.all([resolver.resolve(request), resolver.resolve(request)]);
 
@@ -99,7 +101,7 @@ describe("WorkspaceServiceAgentResolver", () => {
     }));
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
 
-    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority }))
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "owner_a" }))
       .resolves.toMatchObject({ workspaceId: "workspace_a" });
     expect(setup.provision).toHaveBeenCalledOnce();
   });
@@ -112,7 +114,7 @@ describe("WorkspaceServiceAgentResolver", () => {
     );
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
 
-    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority }))
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "owner_a" }))
       .resolves.toMatchObject({ principalId: "principal_new", keyId: "key_new" });
     expect(setup.provision).not.toHaveBeenCalled();
   });
@@ -121,7 +123,7 @@ describe("WorkspaceServiceAgentResolver", () => {
     const setup = mutableRepository();
     setup.rows.push(candidate("workspace_a", "principal_a", "key_old", "2026-09-01T00:00:00.000Z"));
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
-    const request = { workspaceId: "workspace_a", purpose: "content_workflow" as const, authority };
+    const request = { workspaceId: "workspace_a", purpose: "content_workflow" as const, authority, provisioningActorUserId: "owner_a" };
 
     await expect(resolver.resolve(request)).resolves.toMatchObject({ keyId: "key_old" });
     setup.rows[0].keyRevokedAt = NOW;
@@ -145,7 +147,7 @@ describe("WorkspaceServiceAgentResolver", () => {
     );
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
 
-    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority }))
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "owner_a" }))
       .rejects.toBeInstanceOf(WorkspaceServiceAgentUnavailableError);
     expect(setup.provision).not.toHaveBeenCalled();
   });
@@ -164,7 +166,7 @@ describe("WorkspaceServiceAgentResolver", () => {
       listCandidates: vi.fn(async () => setup.rows),
     }, () => NOW);
 
-    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority }))
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "owner_a" }))
       .rejects.toBeInstanceOf(WorkspaceServiceAgentUnavailableError);
   });
 

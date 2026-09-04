@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
 import {
@@ -54,6 +54,7 @@ export interface WorkspaceServiceAgentRepository {
     workspaceId: string;
     purpose: WorkspaceServiceAgentPurpose;
     authority: WorkspaceServiceAgentAuthority;
+    actorUserId: string;
     now: Date;
   }): Promise<void>;
 }
@@ -154,8 +155,9 @@ export class WorkspaceServiceAgentResolver {
     workspaceId: string;
     purpose: WorkspaceServiceAgentPurpose;
     authority: WorkspaceServiceAgentAuthority;
+    provisioningActorUserId: string;
   }): Promise<WorkspaceServiceAgentActor> {
-    const cacheKey = `${input.workspaceId}:${input.purpose}:${canonicalDigest(input.authority)}`;
+    const cacheKey = `${input.workspaceId}:${input.purpose}:${input.provisioningActorUserId}:${canonicalDigest(input.authority)}`;
     const pending = this.inFlight.get(cacheKey);
     if (pending) return pending;
     const resolution = this.resolveFresh(input).finally(() => {
@@ -169,6 +171,7 @@ export class WorkspaceServiceAgentResolver {
     workspaceId: string;
     purpose: WorkspaceServiceAgentPurpose;
     authority: WorkspaceServiceAgentAuthority;
+    provisioningActorUserId: string;
   }): Promise<WorkspaceServiceAgentActor> {
     const profile = workspaceServiceAgentProvisioningProfile(input.purpose);
     if (input.authority.capability !== profile.capabilities[0]) {
@@ -191,7 +194,13 @@ export class WorkspaceServiceAgentResolver {
       if (marked.length > 0 && !bootstrapEligibleActor) {
         throw new WorkspaceServiceAgentUnavailableError(input.purpose);
       }
-      await this.repository.provision({ ...input, now });
+      await this.repository.provision({
+        workspaceId: input.workspaceId,
+        purpose: input.purpose,
+        authority: input.authority,
+        actorUserId: input.provisioningActorUserId,
+        now,
+      });
       const refreshedAt = this.now();
       candidates = await this.repository.listCandidates({ ...input, now: refreshedAt });
       eligible = this.eligible(candidates, input, refreshedAt);
@@ -246,15 +255,19 @@ class DrizzleWorkspaceServiceAgentRepository implements WorkspaceServiceAgentRep
     }));
   }
 
-  async provision(input: { workspaceId: string; purpose: WorkspaceServiceAgentPurpose; authority: WorkspaceServiceAgentAuthority; now: Date }): Promise<void> {
+  async provision(input: { workspaceId: string; purpose: WorkspaceServiceAgentPurpose; authority: WorkspaceServiceAgentAuthority; actorUserId: string; now: Date }): Promise<void> {
     const profile = workspaceServiceAgentProvisioningProfile(input.purpose);
     const principalId = `service_${canonicalDigest({ schema: "workspace-service-agent-principal/v1", workspaceId: input.workspaceId, purpose: input.purpose }).slice(7, 39)}`;
     const principal = await getDb().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`workspace-service-agent:${input.workspaceId}:${input.purpose}`}, 0))`);
       const [administrator] = await tx.select({ userId: workspaceMembers.userId })
         .from(workspaceMembers)
-        .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), inArray(workspaceMembers.role, ["owner", "admin"])))
-        .orderBy(asc(workspaceMembers.createdAt), asc(workspaceMembers.userId)).limit(1);
+        .where(and(
+          eq(workspaceMembers.workspaceId, input.workspaceId),
+          eq(workspaceMembers.userId, input.actorUserId),
+          inArray(workspaceMembers.role, ["owner", "admin"]),
+        ))
+        .limit(1);
       if (!administrator) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
       await tx.insert(agentPrincipals).values({
         id: principalId,
