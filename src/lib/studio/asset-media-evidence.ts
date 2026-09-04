@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdtemp, open, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import sharp from "sharp";
 
 export type IngestedAssetType = "image" | "video" | "audio" | "document" | "model3d" | "workflow";
@@ -56,4 +59,34 @@ export async function collectBufferedAssetEvidence(input: { assetType: IngestedA
 export async function collectFileAssetEvidence(input: { assetType: IngestedAssetType; mimeType: string; path: string; checksum: `sha256:${string}` }): Promise<AssetMediaEvidence> {
   if (!/^sha256:[a-f0-9]{64}$/.test(input.checksum)) throw new Error("ASSET_CHECKSUM_INVALID");
   return { checksum: input.checksum, ...await inspectDecodedMedia(input.assetType, input.mimeType, input.path) };
+}
+
+export async function collectStreamedAssetEvidence(input: {
+  assetType: IngestedAssetType;
+  mimeType: string;
+  body: AsyncIterable<Uint8Array>;
+  maximumBytes: number;
+}): Promise<AssetMediaEvidence & { sizeBytes: number }> {
+  const directory = await mkdtemp(join(tmpdir(), "node-banana-asset-evidence-"));
+  const path = join(directory, "asset-upload");
+  const file = await open(path, "wx");
+  const checksum = createHash("sha256");
+  let sizeBytes = 0;
+
+  try {
+    for await (const sourceChunk of input.body) {
+      const chunk = Buffer.from(sourceChunk);
+      sizeBytes += chunk.byteLength;
+      if (sizeBytes > input.maximumBytes) throw new Error("ASSET_SIZE_LIMIT_EXCEEDED");
+      checksum.update(chunk);
+      await file.write(chunk);
+    }
+    if (sizeBytes === 0) throw new Error("ASSET_CONTENT_EMPTY");
+    await file.close();
+    const digest = `sha256:${checksum.digest("hex")}` as const;
+    return { sizeBytes, ...await collectFileAssetEvidence({ assetType: input.assetType, mimeType: input.mimeType, path, checksum: digest }) };
+  } finally {
+    await file.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
 }
