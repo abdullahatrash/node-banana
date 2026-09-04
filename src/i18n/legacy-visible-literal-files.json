@@ -1,5 +1,4 @@
 [
-  "src/app/studio/budgets/BudgetCockpit.tsx",
   "src/app/studio/credentials/CredentialCockpit.tsx",
   "src/app/studio/publishing-approvals/PublishingApprovalCockpit.tsx",
   "src/app/studio/publishing-deliveries/DeliveryIndex.tsx",

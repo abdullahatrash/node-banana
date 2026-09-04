@@ -271,6 +271,19 @@
       "sources": { "x": "X", "linkedin": "LinkedIn", "youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram", "facebook": "Facebook", "podcast": "بودكاست", "newsletter": "نشرة بريدية", "google": "Google", "reddit": "Reddit", "referral": "ترشيح", "other": "أخرى" }
     }
   },
+  "runtimeUi": {
+    "budgets": {
+      "eyebrow": "ضوابط التشغيل", "title": "الميزانيات والتسعير", "description": "ضوابط بإصدارات لإنفاق المزودين الخارجيين. تسمح الحجوزات بتنفيذ محدود، لكنها ليست أموالًا لدى المزود ولا فواتير.", "refresh": "تحديث",
+      "spend": { "title": "ضبط الإنفاق الطارئ", "suspended": "إنفاق المزود معلّق", "active": "إنفاق المزود نشط", "reason": "سبب ضبط الإنفاق", "reasonPlaceholder": "سبب لأغراض التدقيق", "suspend": "تعليق", "resume": "استئناف" },
+      "policies": { "title": "سياسات الميزانية", "warning": "تحذير", "empty": "لا توجد سياسة ميزانية مهيأة.", "create": "إنشاء مراجعة سياسة", "createAction": "إنشاء المراجعة" },
+      "fields": { "principal": "معرّف الوكيل", "principalPlaceholder": "معرّف الوكيل (فارغ يعني مساحة العمل)", "currency": "عملة الميزانية", "period": "فترة الميزانية", "timezone": "منطقة الميزانية الزمنية", "warning": "حد التحذير", "hardLimit": "الحد الأقصى", "unknownPrice": "معالجة السعر المجهول", "allowance": "بدل السعر المجهول", "allowancePlaceholder": "بدل ثابت اختياري", "unit": "وحدة التسعير" },
+      "period": { "day": "يوم تقويمي", "week": "أسبوع تقويمي", "month": "شهر تقويمي", "lifetime": "مدى الحياة" }, "unknownPrice": { "deny": "رفض السعر المجهول", "allowance": "بدل ثابت" },
+      "overrides": { "title": "تجاوزات التسعير", "ceiling": "السقف", "revoke": "إلغاء", "empty": "لا يوجد تجاوز تسعير لمساحة العمل.", "create": "إنشاء تجاوز تسعير", "createAction": "إنشاء التجاوز" },
+      "overrideFields": { "provider": "المزود", "providerOperation": "عملية المزود", "model": "النموذج والإصدار", "serviceTier": "فئة الخدمة", "dimension": "بُعد الاستخدام وإصداره", "price": "السعر الدقيق", "currency": "العملة", "perQuantity": "لكل كمية", "runCeiling": "سقف التشغيل", "sourceRef": "مرجع المصدر", "effectiveFrom": "وقت السريان بصيغة ISO" },
+      "unit": { "count": "عدد", "byte": "بايت", "millisecond": "مللي ثانية", "megapixel": "ميغابكسل" },
+      "errors": { "workspace": "اختر مساحة عمل قبل إدارة الميزانيات.", "createPolicy": "تعذر إنشاء سياسة الميزانية.", "createOverride": "تعذر إنشاء تجاوز التسعير.", "revokeOverride": "تعذر إلغاء تجاوز التسعير.", "reason": "سجّل سببًا قبل تغيير ضوابط الإنفاق الطارئ.", "spendControl": "تعذر تحديث ضبط الإنفاق." }
+    }
+  },
   "agentManagement": {
     "title": "وكلاء مساحة العمل", "description": "اربط الوكلاء المحليين وأدر بيانات اعتمادهم المرتبطة بمساحة العمل.", "workspace": "مساحة العمل", "selectWorkspace": "اختر مساحة عمل", "selectWorkspaceHelp": "اختر مساحة عمل تملكها أو تديرها لعرض وكلائها.", "empty": "لا توجد وكلاء مرتبطون.",
     "suspend": "تعليق", "resume": "استئناف", "rotateKey": "تدوير المفتاح", "revokeAgent": "إلغاء الوكيل", "expires": "ينتهي", "lastUsed": "آخر استخدام", "never": "أبدًا", "revokeKey": "إلغاء المفتاح", "revoked": "ملغى", "newKey": "مفتاح وكيل جديد", "copyNow": "انسخ مفتاح الوكيل الآن", "shownOnce": "يظهر مرة واحدة ولا يمكن استعادته.", "saved": "حفظته", "confirmRevokeKey": "هل تريد إلغاء مفتاح الوكيل؟ لا يمكن التراجع عن ذلك.",

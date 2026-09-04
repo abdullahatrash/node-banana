@@ -271,6 +271,19 @@
       "sources": { "x": "X", "linkedin": "LinkedIn", "youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram", "facebook": "Facebook", "podcast": "Podcast", "newsletter": "Newsletter", "google": "Google", "reddit": "Reddit", "referral": "Referral", "other": "Other" }
     }
   },
+  "runtimeUi": {
+    "budgets": {
+      "eyebrow": "Runtime controls", "title": "Budgets and pricing", "description": "Versioned guardrails for external provider spend. Reservations authorize bounded execution; they are not provider funds or invoices.", "refresh": "Refresh",
+      "spend": { "title": "Emergency spend control", "suspended": "Provider spend suspended", "active": "Provider spend active", "reason": "Spend control reason", "reasonPlaceholder": "Audit reason", "suspend": "Suspend", "resume": "Resume" },
+      "policies": { "title": "Budget policies", "warning": "warning", "empty": "No budget policy configured.", "create": "Create policy revision", "createAction": "Create revision" },
+      "fields": { "principal": "Agent principal ID", "principalPlaceholder": "Agent principal ID (blank means Workspace)", "currency": "Budget currency", "period": "Budget period", "timezone": "Budget timezone", "warning": "Warning threshold", "hardLimit": "Hard limit", "unknownPrice": "Unknown price treatment", "allowance": "Unknown price allowance", "allowancePlaceholder": "Optional fixed allowance", "unit": "Pricing unit" },
+      "period": { "day": "Calendar day", "week": "Calendar week", "month": "Calendar month", "lifetime": "Lifetime" }, "unknownPrice": { "deny": "Deny unknown price", "allowance": "Fixed allowance" },
+      "overrides": { "title": "Pricing overrides", "ceiling": "ceiling", "revoke": "Revoke", "empty": "No Workspace pricing override configured.", "create": "Create pricing override", "createAction": "Create override" },
+      "overrideFields": { "provider": "Provider", "providerOperation": "Provider operation", "model": "Model and version", "serviceTier": "Service tier", "dimension": "Usage dimension and version", "price": "Exact price", "currency": "Currency", "perQuantity": "Per quantity", "runCeiling": "Run ceiling", "sourceRef": "Source reference", "effectiveFrom": "Effective ISO time" },
+      "unit": { "count": "count", "byte": "byte", "millisecond": "millisecond", "megapixel": "megapixel" },
+      "errors": { "workspace": "Select a Workspace before managing budgets.", "createPolicy": "Budget policy creation failed.", "createOverride": "Pricing override creation failed.", "revokeOverride": "Pricing override revocation failed.", "reason": "Record a reason before changing emergency spend controls.", "spendControl": "Spend control update failed." }
+    }
+  },
   "agentManagement": {
     "title": "Workspace agents", "description": "Pair local agents and manage their Workspace-bound credentials.", "workspace": "Workspace", "selectWorkspace": "Select a Workspace", "selectWorkspaceHelp": "Select an owner or admin Workspace to view its agents.", "empty": "No paired agents.",
     "suspend": "Suspend", "resume": "Resume", "rotateKey": "Rotate key", "revokeAgent": "Revoke agent", "expires": "expires", "lastUsed": "last used", "never": "never", "revokeKey": "Revoke key", "revoked": "revoked", "newKey": "New agent key", "copyNow": "Copy this agent key now", "shownOnce": "It is shown once and cannot be recovered.", "saved": "I saved it", "confirmRevokeKey": "Revoke this agent key? This cannot be undone.",
