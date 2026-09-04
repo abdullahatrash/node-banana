@@ -64,7 +64,7 @@ async function projectGenerationOperation(database: Db, operations: OperationSta
 export function recoveryDisposition(result: ReplicateExecutionResult): { operationState: OperationState; effectState: "submitted" | "outcome_unknown" | "succeeded" | "failed_known" | "cancelled"; budgetState: "held" | "released" | "settled" | "outcome_unknown" } {
   if (result.state === "waiting_provider") return { operationState: "waiting_provider", effectState: "submitted", budgetState: "held" };
   if (result.state === "succeeded") return { operationState: "succeeded", effectState: "succeeded", budgetState: "settled" };
-  if (result.state === "failed_known") return { operationState: "failed_known", effectState: "failed_known", budgetState: "released" };
+  if (result.state === "failed_known") return { operationState: "failed_known", effectState: "failed_known", budgetState: "outcome_unknown" };
   if (result.state === "aborted_pre_start") return { operationState: "cancelled", effectState: "cancelled", budgetState: "released" };
   if (result.state === "cancelled") return { operationState: "cancelled", effectState: "cancelled", budgetState: "outcome_unknown" };
   return { operationState: "outcome_unknown", effectState: "outcome_unknown", budgetState: "outcome_unknown" };

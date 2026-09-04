@@ -58,7 +58,7 @@ export class ManagedGenerationBudgetAuthority implements GenerationBudgetAuthori
   async release(input: Parameters<GenerationBudgetAuthority["release"]>[0]) {
     await this.runtime.release(input);
     try {
-      await this.commercial.settleGenerationEffect({ workspaceId: input.workspaceId, intentId: input.intentId, outcome: "failed_known" });
+      await this.commercial.settleGenerationEffect({ workspaceId: input.workspaceId, intentId: input.intentId, outcome: "pre_start_cancelled" });
     } catch {
       // A held credit reservation remains recoverable and is safer than hiding
       // the primary admission failure behind a secondary settlement outage.

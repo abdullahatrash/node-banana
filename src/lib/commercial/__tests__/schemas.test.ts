@@ -6,7 +6,7 @@ describe("internal commercial command idempotency", () => {
   const commands = [
     { action: "issue_quote", workspaceId: "ws", purposeRef: "generation:intent", maxCreditDebit: 4, pricingSnapshotDigest: digest, expiresAt: "2026-09-05T00:00:00.000Z", localPriceMinor: null, currency: null, taxMinor: null },
     { action: "reserve_quote", workspaceId: "ws", quoteId: "quote", externalEffectRef: "intent" },
-    { action: "settle_reservation", workspaceId: "ws", reservationId: "reservation", outcome: "failed_known", actualDebitUnits: null },
+    { action: "settle_reservation", workspaceId: "ws", reservationId: "reservation", outcome: "pre_start_cancelled", actualDebitUnits: null },
     { action: "grant_purchased_credits", workspaceId: "ws", merchantReceiptRef: "receipt", units: 10 },
     { action: "attribute_referral", code: "ABCDEF", referredIdentityDigest: digest, referredWorkspaceId: "referred", attributionDigest: digest },
     { action: "decide_referral", attributionId: "attribution", decision: "hold", policyVersion: "v1", evidenceDigest: digest, reviewerRef: "reviewer", creditUnits: null, cashMinor: null, currency: null, thresholdMinor: null },
