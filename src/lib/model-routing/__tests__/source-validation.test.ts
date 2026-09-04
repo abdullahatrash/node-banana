@@ -8,6 +8,12 @@ describe("paid generation source admission", () => {
     expect(validateGenerationSources("image_to_video", ["asset-1"], [source()])).toEqual({ ok: true });
   });
 
+  it("admits ordered multi-image recipes only for an array-qualified model contract", () => {
+    const sources = [source({ id: "asset-1" }), source({ id: "asset-2" })];
+    expect(validateGenerationSources("image_to_video", sources.map((item) => item.id), sources, "array")).toEqual({ ok: true });
+    expect(validateGenerationSources("image_to_video", sources.map((item) => item.id), sources, "single")).toEqual({ ok: false, code: "SOURCE_CARDINALITY_INVALID" });
+  });
+
   it("rejects missing decoded evidence before provider admission", () => {
     expect(validateGenerationSources("image_to_video", ["asset-1"], [source({ metadata: { uploadState: "ready" } })])).toEqual({ ok: false, code: "SOURCE_DECODED_DIMENSIONS_REQUIRED" });
   });

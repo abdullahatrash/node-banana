@@ -28,6 +28,7 @@ export interface StudioGenerationRequest {
   prompt: string; model: ExactModelRef; mode: "photo" | "video" | "copy"; sourceMediaType: "image" | "video" | null; sourceAssetIds: string[]; quantity: number;
   fundingMode: "byok" | "managed";
   personaId?: string | null;
+  contentExecution?: { contentPieceId: string; contentPieceRevision: number } | null;
   contentLanguage?: ContentLanguage;
   arabicVariety: ArabicVariety | null; rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
   permittedRemix: "reference_only" | "transform" | "derivative"; rightsEvidenceIds: string[];
@@ -43,7 +44,7 @@ export async function runAdmittedStudioGeneration(input: StudioGenerationRequest
   const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new StudioGenerationError("WORKSPACE_REQUIRED");
   const capability: GenerationCapability = input.mode === "copy" ? "text_generation" : input.mode === "video" ? (input.sourceAssetIds.length ? input.sourceMediaType === "video" ? "video_to_video" : "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image");
   const contentLanguage = input.contentLanguage ?? classifyContentLanguage(input.prompt);
-  const admissionBody = (managedQuoteAcceptance: ManagedCreditQuoteAcceptance | null) => ({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief, fundingMode: input.fundingMode, personaId: input.personaId ?? null, managedQuoteAcceptance });
+  const admissionBody = (managedQuoteAcceptance: ManagedCreditQuoteAcceptance | null) => ({ prompt: input.prompt, model: input.model, capability, contentLanguage, arabicVariety: contentLanguage === "en" ? null : input.arabicVariety, quantity: input.quantity, sourceAssetIds: input.sourceAssetIds, rightsBasis: input.rightsBasis, permittedRemix: input.permittedRemix, rightsEvidenceIds: input.rightsEvidenceIds, remixBrief: input.remixBrief, fundingMode: input.fundingMode, personaId: input.personaId ?? null, contentExecution: input.contentExecution ?? null, managedQuoteAcceptance });
   // Admission intentionally ignores the UI abort signal: it cannot spend, and
   // completing it gives the client a durable operation it can safely cancel.
   const requestAdmission = (acceptance: ManagedCreditQuoteAcceptance | null) => fetch("/api/studio/generations", { method: "POST", headers: { "Content-Type": "application/json", "x-workspace-id": workspaceId, "idempotency-key": input.idempotencyKey }, body: JSON.stringify(admissionBody(acceptance)) });

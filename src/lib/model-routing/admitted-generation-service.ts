@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { resolveDurableProviderKey, resolveManagedProviderKey } from "@/lib/byok/repository";
 import { getDb } from "@/lib/db";
-import { assets, brandProfiles } from "@/lib/db/schema";
+import { assets, brandProfiles, workspaceProductRecords } from "@/lib/db/schema";
 import { canUseS3Storage } from "@/lib/storage";
 import { configuredCatalog, findCuratedModel } from "./catalog";
 import { inspirationRightsSnapshots } from "./db-schema";
@@ -20,6 +20,9 @@ import { PRODUCTION_OPERATION_STATUS } from "@/lib/agent-runtime/operation-statu
 import { ensureAdmittedGenerationOperation } from "./generation-operation";
 import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
 import { CreatorPersonaError } from "@/lib/creator-personas/repository";
+import { contentPieceSchema } from "@/lib/product-surfaces/definitions";
+import { resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/content-format-registry";
+import { assertContentGenerationRequest, buildContentGenerationRecipe, ContentGenerationRecipeError } from "@/lib/product-surfaces/content-generation-recipe";
 
 export interface AdmittedGenerationInput {
   prompt: string; model: ExactModelRef & { provider: "replicate" }; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
@@ -28,6 +31,7 @@ export interface AdmittedGenerationInput {
   fundingMode: "byok" | "managed";
   managedQuoteAcceptance?: ManagedCreditQuoteAcceptance | null;
   personaId?: string | null;
+  contentExecution?: { contentPieceId: string; contentPieceRevision: number } | null;
 }
 export type AdmittedGenerationResult = { ok: true; status: 200 | 202; value: { intentId: string; operation: OperationRecord; provider: unknown; operationHref: string } } | { ok: false; status: 402 | 409 | 422 | 503; code: string; nextActions?: Array<{ code: string; href: string }>; managedCreditQuote?: ManagedCreditQuote };
 const fail = (status: 402 | 409 | 422 | 503, code: string, nextActions?: Array<{ code: string; href: string }>, managedCreditQuote?: ManagedCreditQuote): AdmittedGenerationResult => ({ ok: false, status, code, ...(nextActions ? { nextActions } : {}), ...(managedCreditQuote ? { managedCreditQuote } : {}) });
@@ -64,7 +68,24 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   const fetchedRows = sourceAssetIds.length ? await getDb().select({ id: assets.id, type: assets.type, storageKey: assets.storageKey, checksum: assets.checksum, mimeType: assets.mimeType, width: assets.width, height: assets.height, durationSeconds: assets.durationSeconds, metadata: assets.metadata, createdByUserId: assets.createdByUserId, createdAt: assets.createdAt }).from(assets).where(and(eq(assets.workspaceId, context.workspaceId), inArray(assets.id, sourceAssetIds), isNull(assets.deletedAt))) : [];
   const byId = new Map(fetchedRows.map((row) => [row.id, row]));
   const sourceRows = sourceAssetIds.map((id) => byId.get(id)).filter((row): row is (typeof fetchedRows)[number] => Boolean(row));
-  const sourceValidation = validateGenerationSources(input.capability, sourceAssetIds, sourceRows.map((row) => ({ ...row, metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : null })), model.qualification.inputContract.imageMode);
+  let contentExecution: import("./types").GenerationIntent["contentExecution"] = null;
+  if (input.contentExecution) {
+    try {
+      const [record] = await getDb().select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, context.workspaceId), eq(workspaceProductRecords.id, input.contentExecution.contentPieceId), eq(workspaceProductRecords.kind, "content_piece"), isNull(workspaceProductRecords.archivedAt))).limit(1);
+      if (!record || record.revision !== input.contentExecution.contentPieceRevision || record.state !== "active") throw new ContentGenerationRecipeError("CONTENT_EXECUTION_REVISION_STALE");
+      const payload = contentPieceSchema.parse(record.payload);
+      if (!payload.formatDefinition) throw new ContentGenerationRecipeError("CONTENT_FORMAT_DEFINITION_STALE");
+      const resolved = await resolveContentFormatDefinitionReference(payload.format, payload.formatDefinition);
+      contentExecution = buildContentGenerationRecipe({ contentPieceId: record.id, contentPieceRevision: record.revision, contentPiecePayload: payload, definition: resolved.definition, definitionDigest: resolved.reference.digest as `sha256:${string}`, sourceTypes: new Map(sourceRows.map((row) => [row.id, row.type])) });
+      assertContentGenerationRequest({ recipe: contentExecution, format: payload.format, definition: resolved.definition, capability: input.capability, sourceAssetIds, personaId: input.personaId ?? null, payload });
+    } catch (error) {
+      return fail(422, error instanceof ContentGenerationRecipeError ? error.code : "CONTENT_EXECUTION_RECIPE_INVALID");
+    }
+  }
+  const providerSourceIds = contentExecution?.providerInputArtifactIds ?? sourceAssetIds;
+  const providerSourceSet = new Set(providerSourceIds);
+  const providerRows = sourceRows.filter((row) => providerSourceSet.has(row.id));
+  const sourceValidation = validateGenerationSources(input.capability, providerSourceIds, providerRows.map((row) => ({ ...row, metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : null })), model.qualification.inputContract.imageMode);
   if (!sourceValidation.ok) return fail(422, sourceValidation.code, [{ code: "prepare_source", href: "/simple-studio/library" }]);
   if (input.permittedRemix === "reference_only" && input.remixBrief.transform.length) return fail(422, "REMIX_SCOPE_CONFLICT");
   const at = new Date(); const snapshotId = rightsId(context.workspaceId, context.idempotencyKey);
@@ -76,7 +97,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   const [inserted] = await getDb().insert(inspirationRightsSnapshots).values({ workspaceId: context.workspaceId, id: snapshot.id, revision: 1, snapshot, digest: snapshot.digest, basis: snapshot.basis, permittedRemix: snapshot.permittedRemix, createdByUserId: context.userId, createdAt: at }).onConflictDoNothing().returning({ snapshot: inspirationRightsSnapshots.snapshot });
   const stored = inserted?.snapshot ?? (await getDb().select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, context.workspaceId), eq(inspirationRightsSnapshots.id, snapshotId), eq(inspirationRightsSnapshots.revision, 1))).limit(1))[0]?.snapshot; const rights = stored ? hydrateRightsSnapshot(stored) : null;
   if (!rights || rights.digest !== snapshot.digest) return fail(409, "IDEMPOTENCY_CONFLICT");
-  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: context.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, fundingMode: input.fundingMode, managedQuoteAcceptance: input.managedQuoteAcceptance ?? null, persona, quantity: input.quantity, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent` });
+  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: context.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, providerSourceAssetIds: providerSourceIds, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, fundingMode: input.fundingMode, managedQuoteAcceptance: input.managedQuoteAcceptance ?? null, persona, contentExecution, quantity: input.quantity, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent` });
   if (created.kind === "managed_quote_confirmation_required") return fail(409, "MANAGED_CREDIT_CONFIRMATION_REQUIRED", undefined, created.quote);
   if (created.kind !== "created" && created.kind !== "replayed") return fail(created.kind === "unavailable" || created.kind === "budget_unavailable" ? 503 : created.kind === "budget_denied" ? 402 : 422, "code" in created && typeof created.code === "string" ? created.code : created.kind.toUpperCase(), [{ code: "inspect_operations", href: "/studio/operations" }]);
   if (!created.intent) return fail(503, "GENERATION_INTENT_UNAVAILABLE");

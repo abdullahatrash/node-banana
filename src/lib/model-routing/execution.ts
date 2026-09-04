@@ -30,7 +30,7 @@ export class GenerationExecutionService {
     if (!intent) return { kind: "not_found", code: "GENERATION_INTENT_NOT_FOUND" };
     if (intent.quote.expiresAt <= this.now()) return { kind: "expired", code: "GENERATION_QUOTE_EXPIRED" };
     if (canonicalDigest(input.rawPrompt) !== intent.promptDigest) return { kind: "invalid", code: "PROMPT_DIGEST_MISMATCH" };
-    if (input.sourceUrls.length !== intent.rights.sourceAssetIds.length || input.sourceUrls.length !== intent.rights.evidence.length) return { kind: "invalid", code: "RIGHTS_EVIDENCE_REQUIRED" };
+    if (input.sourceUrls.length !== intent.providerComposition.sourceAssetIds.length) return { kind: "invalid", code: "PROVIDER_SOURCE_BINDING_MISMATCH" };
     if (!validateImmutableBrandContext(intent.brand.context) || intent.brand.context.profileId !== intent.brand.profileId || intent.brand.context.revision !== intent.brand.revision || input.brandReferenceUrls.length !== intent.brand.context.referenceAssets.length || input.brandReferenceUrls.some((reference, index) => reference.assetId !== intent.brand.context.referenceAssets[index]?.assetId)) return { kind: "invalid", code: "BRAND_CONTEXT_MISMATCH" };
     const descriptor = this.resolveModel(intent.selectedModel);
     if (!descriptor || descriptor.qualification.status !== "qualified") return { kind: "unavailable", code: "MODEL_NOT_EXECUTABLE" };
@@ -55,7 +55,7 @@ export class GenerationExecutionService {
       composition = composeQualifiedProviderInput({
         rawPrompt: input.rawPrompt,
         brand: intent.brand.context,
-        sourceAssetIds: intent.rights.sourceAssetIds,
+        sourceAssetIds: intent.providerComposition.sourceAssetIds,
         sourceUrls: input.sourceUrls,
         brandReferenceUrls: input.brandReferenceUrls,
         model: intent.selectedModel,

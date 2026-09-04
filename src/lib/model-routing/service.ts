@@ -91,11 +91,11 @@ export class ModelRoutingService {
   async createIntent(input: {
     workspaceId: string; brand: GenerationIntent["brand"]; rawPrompt: string;
     capability: GenerationCapability; contentLanguage: ContentLanguage;
-    arabicVariety: ArabicVariety | null; rights: GenerationIntent["rights"];
+    arabicVariety: ArabicVariety | null; rights: GenerationIntent["rights"]; providerSourceAssetIds?: string[];
     requestedModel: ExactModelRef; selectedModel: ExactModelRef;
     fallbackAuthorizationId: string | null; quantity: number;
     remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
-    userId: string; idempotencyKey: string; fundingMode?: GenerationIntent["fundingMode"]; managedQuoteAcceptance?: ManagedCreditQuoteAcceptance | null; persona?: GenerationIntent["persona"]; id?: string;
+    userId: string; idempotencyKey: string; fundingMode?: GenerationIntent["fundingMode"]; managedQuoteAcceptance?: ManagedCreditQuoteAcceptance | null; persona?: GenerationIntent["persona"]; contentExecution?: GenerationIntent["contentExecution"]; id?: string;
   }) {
     const at = this.now();
     const id = input.id ?? stableId("intent", input.workspaceId, input.idempotencyKey);
@@ -142,7 +142,7 @@ export class ModelRoutingService {
     const providerComposition = createProviderCompositionEvidence({
       rawPrompt: input.rawPrompt,
       brand: input.brand.context,
-      sourceAssetIds: input.rights.sourceAssetIds,
+      sourceAssetIds: input.providerSourceAssetIds ?? input.rights.sourceAssetIds,
       model: input.selectedModel,
       capability: input.capability,
       contract: selected.qualification.inputContract,
@@ -158,7 +158,7 @@ export class ModelRoutingService {
       regionAdmission: region.evidence,
       outputContract: { mediaType: input.capability === "text_generation" ? "text" : input.capability.includes("video") ? "video" : "image", aspectRatio: input.capability === "text_generation" ? null : "9:16", width: selected.qualification.outputShape.width, height: selected.qualification.outputShape.height, durationSeconds: input.capability.includes("video") ? input.quantity : null, fps: selected.qualification.outputShape.fps, safetyParameterKey: selected.qualification.inputContract.safety?.parameterKey ?? null, safetyValue: selected.qualification.inputContract.safety?.safeValue ?? null, lockedParametersDigest: digest(selected.qualification.inputContract.lockedParameters) },
       requestedModel: input.requestedModel, selectedModel: input.selectedModel,
-      fallbackAuthorizationId: input.fallbackAuthorizationId, fundingMode, persona: input.persona ?? null, quote,
+      fallbackAuthorizationId: input.fallbackAuthorizationId, fundingMode, persona: input.persona ?? null, contentExecution: input.contentExecution ?? null, quote,
       reservationIds: reservation.reservationIds, createdByUserId: input.userId, createdAt: at,
     };
     const requestDigest = digest({ command: "intent", ...value, id: input.id ?? null, createdAt: undefined });

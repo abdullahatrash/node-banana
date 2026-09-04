@@ -15,6 +15,8 @@ import { validateRightsEvidence } from "./rights-evidence";
 import { validateGenerationSources } from "./source-validation";
 import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
 import { CreatorPersonaError } from "@/lib/creator-personas/repository";
+import { resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/content-format-registry";
+import { validateContentGenerationRecipe } from "@/lib/product-surfaces/content-generation-recipe";
 
 export type ExecuteAdmittedGenerationResult =
   | { ok: true; status: 202; result: Extract<GenerationExecutionResult, { kind: "accepted" }> }
@@ -70,9 +72,20 @@ export async function executeAdmittedGeneration(input: {
   if (sourceRows.some((asset) => intent.rights.evidence.find((item) => item.sourceAssetId === asset.id)?.sourceDigest !== asset.checksum)) return rejected(409, "RIGHTS_SOURCE_DIGEST_MISMATCH");
   const descriptor = findCuratedModel(intent.selectedModel);
   if (!descriptor || descriptor.qualification.status !== "qualified") return rejected(409, "MODEL_NOT_EXECUTABLE");
-  const sourceValidation = validateGenerationSources(intent.capability, sourceIds, sourceRows.map((row) => ({ ...row, metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : null })), descriptor.qualification.inputContract.imageMode);
+  const providerIds = intent.contentExecution?.providerInputArtifactIds ?? sourceIds;
+  if (intent.contentExecution) {
+    try {
+      const resolved = await resolveContentFormatDefinitionReference(intent.contentExecution.formatDefinition.id.slice("content-format:".length) as import("@/lib/product-surfaces/definitions").ContentFormat, intent.contentExecution.formatDefinition);
+      if (!validateContentGenerationRecipe({ recipe: intent.contentExecution, definition: resolved.definition, capability: intent.capability, rightsSourceAssetIds: sourceIds, providerSourceAssetIds: intent.providerComposition.sourceAssetIds })) return rejected(409, "CONTENT_EXECUTION_RECIPE_MISMATCH");
+    } catch {
+      return rejected(409, "CONTENT_EXECUTION_RECIPE_UNAVAILABLE");
+    }
+  }
+  const providerSet = new Set(providerIds);
+  const providerRows = sourceRows.filter((row) => providerSet.has(row.id));
+  const sourceValidation = validateGenerationSources(intent.capability, providerIds, providerRows.map((row) => ({ ...row, metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : null })), descriptor.qualification.inputContract.imageMode);
   if (!sourceValidation.ok) return rejected(409, sourceValidation.code);
-  const sourceUrls = await Promise.all(sourceRows.map(async (asset) => (await createPresignedDownload({ key: asset.storageKey! })).downloadUrl));
+  const sourceUrls = await Promise.all(providerRows.map(async (asset) => (await createPresignedDownload({ key: asset.storageKey! })).downloadUrl));
   const brandContext = await loadImmutableBrandContext({ workspaceId: input.workspaceId, profileId: intent.brand.profileId, revision: intent.brand.revision, acceptedAt: brand.acceptedAt, profile: brand.profile });
   if (!brandContext || brandContext.context.digest !== intent.brand.context.digest) return rejected(409, "BRAND_CONTEXT_MISMATCH");
   const credential = intent.fundingMode === "managed" ? resolveManagedProviderKey("replicate") : await resolveDurableProviderKey(input.workspaceId, "replicate");

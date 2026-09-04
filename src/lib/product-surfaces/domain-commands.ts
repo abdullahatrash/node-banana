@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { assets, contentThemeRevisions, contentThemes, creatorPersonaEvidence, creatorPersonas, workspaceProductRecords } from "@/lib/db/schema";
@@ -12,7 +13,7 @@ import { createPresignedDownload } from "@/lib/storage";
 import { createProductRecord, createProductRecordInTransaction, updateProductRecord, updateProductRecordInTransaction, type ProductRecord } from "./repository";
 import { contentPieceSchema, parseProductPayload } from "./definitions";
 import { isAdmittedContentArtifact, validateReadyPortraitAsset, type ContentAssetEvidence, type ContentGenerationReference } from "./content-lineage";
-import { contentExecutionPlan, validateContentExecutionInput } from "./content-execution-plan";
+import { contentExecutionPlan, contentProviderSourceIds, validateContentExecutionInput } from "./content-execution-plan";
 import { validateContentDraft } from "./content-draft-policy";
 import { ContentFormatRegistryError, resolveActiveContentFormatDefinition, resolveContentFormatDefinitionReference } from "./content-format-registry";
 import type { ContentFormatDefinition } from "./content-format-definition";
@@ -120,6 +121,9 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
       ]);
       const operationMetadata = operation?.metadata && typeof operation.metadata === "object" && !Array.isArray(operation.metadata) ? operation.metadata : {};
       if (!artifactRow) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
+      const binding = intentRow?.intent.contentExecution;
+      const expectedProviderInputs = contentProviderSourceIds(payload.format, sourceAssets, definition);
+      if (!binding || binding.contentPiece.id !== record.id || binding.contentPiece.revision !== record.revision || binding.contentPiece.digest !== canonicalDigest(payload) || binding.formatDefinition.id !== payload.formatDefinition?.id || binding.formatDefinition.revision !== payload.formatDefinition?.revision || binding.formatDefinition.digest !== payload.formatDefinition?.digest || binding.workflow.id !== definition.execution.workflow?.id || binding.workflow.revisionId !== definition.execution.workflow?.revisionId || binding.modelPolicy.id !== definition.execution.modelPolicy?.id || binding.modelPolicy.revision !== definition.execution.modelPolicy?.revision || binding.inputArtifactIds.some((id, index) => id !== payload.sourceAssetIds[index]) || binding.inputArtifactIds.length !== payload.sourceAssetIds.length || binding.providerInputArtifactIds.some((id, index) => id !== expectedProviderInputs[index]) || binding.providerInputArtifactIds.length !== expectedProviderInputs.length) throw new Error("CONTENT_EXECUTION_RECIPE_MISMATCH");
       artifact = assetEvidence(artifactRow);
       proofAssetRow = artifactRow;
       if (!isAdmittedContentArtifact({ format: payload.format, definition, sourceAssets, personaState, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest, width: receipt.width, height: receipt.height, durationSeconds: receipt.durationSeconds } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifact })) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");

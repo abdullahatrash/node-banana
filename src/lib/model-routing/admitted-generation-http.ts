@@ -10,12 +10,13 @@ const bodySchema = z.object({
   prompt: z.string().trim().min(1).max(50_000), model: modelRef,
   capability: z.enum(["text_generation","text_to_image","image_to_image","text_to_video","image_to_video","video_to_video"]),
   contentLanguage: z.enum(["ar","en","mixed"]), arabicVariety: z.enum(["msa","gulf","egyptian","levantine","maghrebi","other"]).nullable(),
-  quantity: z.number().positive().max(600), sourceAssetIds: z.array(z.string().min(1).max(200)).max(8).default([]),
-  rightsBasis: z.enum(["owned","licensed","public_domain","consented"]), permittedRemix: z.enum(["reference_only","transform","derivative"]), rightsEvidenceIds: z.array(z.string().min(1).max(200)).max(8).default([]),
+  quantity: z.number().positive().max(600), sourceAssetIds: z.array(z.string().min(1).max(200)).max(20).default([]),
+  rightsBasis: z.enum(["owned","licensed","public_domain","consented"]), permittedRemix: z.enum(["reference_only","transform","derivative"]), rightsEvidenceIds: z.array(z.string().min(1).max(200)).max(20).default([]),
   remixBrief: z.object({ preserve: briefList, transform: briefList, avoid: briefList }).strict(),
   fundingMode: z.enum(["byok", "managed"]).default("byok"),
   managedQuoteAcceptance: z.object({ quoteId: z.string().uuid(), confirmationDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).transform((value) => value as `sha256:${string}`) }).strict().nullable().optional(),
   personaId: z.string().min(1).max(200).nullable().default(null),
+  contentExecution: z.object({ contentPieceId: z.string().min(1).max(200), contentPieceRevision: z.number().int().positive() }).strict().nullable().default(null),
 }).strict();
 
 export function createAdmittedGenerationPost(route: string) {

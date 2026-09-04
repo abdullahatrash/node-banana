@@ -71,6 +71,16 @@ export interface GenerationIntent {
   regionAdmission: { policyId: string; policyVersion: number; evidenceDigest: `sha256:${string}`; region: string; routeId: string; evidenceExpiresAt: Date };
   outputContract: { mediaType: "text" | "image" | "video"; aspectRatio: "9:16" | null; width: number | null; height: number | null; durationSeconds: number | null; fps: number | null; safetyParameterKey: string | null; safetyValue: string | number | boolean | null; lockedParametersDigest: `sha256:${string}` };
   requestedModel: ExactModelRef; selectedModel: ExactModelRef; fallbackAuthorizationId: string | null; fundingMode: GenerationFundingMode;
+  contentExecution?: {
+    schema: "content-format-execution-binding/v1";
+    contentPiece: { id: string; revision: number; digest: `sha256:${string}` };
+    formatDefinition: { id: string; revision: number; digest: `sha256:${string}` };
+    workflow: { id: string; revisionId: string };
+    modelPolicy: { id: string; revision: number; qualifiedModelsOnly: true };
+    inputArtifactIds: string[];
+    providerInputArtifactIds: string[];
+    digest: `sha256:${string}`;
+  } | null;
   persona?: GenerationPersonaBinding | null;
   quote: CostQuote; reservationIds: string[]; createdByUserId: string; createdAt: Date;
 }
