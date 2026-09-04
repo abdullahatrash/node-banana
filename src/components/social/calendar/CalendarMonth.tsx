@@ -16,7 +16,6 @@ import {
   formatCalendarDayNumber,
   getCalendarWeekEnd,
   getCalendarWeekStart,
-  getCalendarWeekStartsOn,
   useSocialCalendarStore,
 } from "@/store/socialCalendarStore"
 import { useDirectionStore } from "@/store/directionStore"
@@ -168,13 +167,13 @@ function CalendarMonthDayCell({
 export function CalendarMonth() {
   const t = useTranslations("social.calendarUi")
   const locale = useDirectionStore((state) => state.locale)
-  const { currentDate, posts } = useSocialCalendarStore()
+  const { currentDate, posts, weekStartsOn } = useSocialCalendarStore()
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const monthStart = startOfMonth(currentDate)
   const monthEnd = endOfMonth(currentDate)
-  const calendarStart = getCalendarWeekStart(monthStart, locale)
-  const calendarEnd = getCalendarWeekEnd(monthEnd, locale)
-  const firstWeekday = getCalendarWeekStartsOn(locale)
+  const calendarStart = getCalendarWeekStart(monthStart, weekStartsOn)
+  const calendarEnd = getCalendarWeekEnd(monthEnd, weekStartsOn)
+  const firstWeekday = weekStartsOn
   const weekdays = Array.from(
     { length: 7 },
     (_, offset) => WEEK_DAYS[(firstWeekday + offset) % 7]!,

@@ -400,6 +400,8 @@ export const workspaceSettings = pgTable(
     defaultContentLanguage: text("default_content_language")
       .default("ar")
       .notNull(),
+    schedulingTimezone: text("scheduling_timezone").default("UTC").notNull(),
+    schedulingWeekStart: integer("scheduling_week_start").default(1).notNull(),
     brandKit: jsonb("brand_kit").$type<Record<string, unknown>>(),
     billingCustomerId: text("billing_customer_id"),
     billingSubscriptionId: text("billing_subscription_id"),
@@ -416,6 +418,11 @@ export const workspaceSettings = pgTable(
       table.organizationId,
     ),
     planTierIdx: index("workspace_settings_plan_tier_idx").on(table.planTier),
+    schedulingPreferencesCheck: check(
+      "workspace_settings_scheduling_preferences_check",
+      sql`length(${table.schedulingTimezone}) between 1 and 100
+        and ${table.schedulingWeekStart} between 0 and 6`,
+    ),
   }),
 );
 

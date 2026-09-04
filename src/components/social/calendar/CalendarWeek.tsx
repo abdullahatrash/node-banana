@@ -22,10 +22,10 @@ const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const MINUTES = [0, 15, 30, 45]
 
 export function CalendarWeek() {
-  const { currentDate, posts } = useSocialCalendarStore()
+  const { currentDate, posts, weekStartsOn } = useSocialCalendarStore()
   const locale = useDirectionStore((state) => state.locale)
 
-  const weekStart = getCalendarWeekStart(currentDate, locale)
+  const weekStart = getCalendarWeekStart(currentDate, weekStartsOn)
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
   // Group posts by day + hour

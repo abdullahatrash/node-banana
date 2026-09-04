@@ -23,6 +23,7 @@ export default function CalendarPage() {
     currentDate,
     channelFilter,
     setChannelFilter,
+    setCalendarPreferences,
   } =
     useSocialCalendarStore()
   const { accounts, selectedChannelFilter } = useSocialAccountsStore(useShallow((s) => ({
@@ -33,6 +34,22 @@ export default function CalendarPage() {
   useEffect(() => {
     fetchPosts()
   }, [fetchPosts, viewMode, currentDate, channelFilter])
+
+  useEffect(() => {
+    const workspaceId = window.localStorage.getItem("node-banana-active-workspace-id")
+    if (!workspaceId) return
+    const controller = new AbortController()
+    void fetch("/api/studio/calendar/preferences", {
+      cache: "no-store",
+      headers: { "x-workspace-id": workspaceId },
+      signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) return
+      const body = await response.json() as { preferences?: { timezone: string; weekStartsOn: 0 | 1 | 2 | 3 | 4 | 5 | 6 } }
+      if (body.preferences) setCalendarPreferences(body.preferences)
+    }).catch(() => undefined)
+    return () => controller.abort()
+  }, [setCalendarPreferences])
 
   // Keep calendar filter aligned with sidebar channel filter
   useEffect(() => {

@@ -21,23 +21,25 @@ describe("social calendar locale semantics", () => {
       channelFilter: null,
       posts: [],
       isLoading: false,
+      timezone: "Asia/Riyadh",
+      weekStartsOn: 6,
     })
   })
 
-  it("uses the Arabic Saturday-to-Friday week and Gregorian Arabic labels", () => {
-    expect(getCalendarWeekStart(DATE, "ar").getDay()).toBe(6)
-    expect(getCalendarWeekEnd(DATE, "ar").getDay()).toBe(5)
+  it("uses the Workspace Saturday-to-Friday week and Gregorian Arabic labels", () => {
+    expect(getCalendarWeekStart(DATE, 6).getDay()).toBe(6)
+    expect(getCalendarWeekEnd(DATE, 6).getDay()).toBe(5)
 
-    const label = formatCalendarDateRange(DATE, "week", "ar")
+    const label = formatCalendarDateRange(DATE, "week", "ar", 6)
     expect(label).toMatch(/[\u0600-\u06ff]/u)
     expect(label).toContain("٢٠٢٦")
   })
 
-  it("uses the English Sunday-to-Saturday week and Latin Gregorian labels", () => {
-    expect(getCalendarWeekStart(DATE, "en").getDay()).toBe(0)
-    expect(getCalendarWeekEnd(DATE, "en").getDay()).toBe(6)
+  it("keeps the configured week when the interface changes to English", () => {
+    expect(getCalendarWeekStart(DATE, 6).getDay()).toBe(6)
+    expect(getCalendarWeekEnd(DATE, 6).getDay()).toBe(5)
 
-    const label = formatCalendarDateRange(DATE, "week", "en")
+    const label = formatCalendarDateRange(DATE, "week", "en", 6)
     expect(label).toMatch(/Jan/u)
     expect(label).toContain("2026")
   })

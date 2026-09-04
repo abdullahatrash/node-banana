@@ -28,18 +28,21 @@ interface SocialCalendarState {
   channelFilter: string | null
   posts: SocialPost[]
   isLoading: boolean
+  timezone: string
+  weekStartsOn: Day
 
   setViewMode: (mode: ViewMode) => void
   navigateNext: () => void
   navigatePrev: () => void
   goToToday: () => void
   setChannelFilter: (accountId: string | null) => void
+  setCalendarPreferences: (preferences: { timezone: string; weekStartsOn: Day }) => void
   fetchPosts: () => Promise<void>
   applyOptimisticReschedule: (postId: string, scheduledAt: string) => SocialPost[] | null
   restorePosts: (posts: SocialPost[]) => void
   replacePost: (post: SocialPost) => void
-  getWeekStart: (locale?: AppLocale) => Date
-  getWeekEnd: (locale?: AppLocale) => Date
+  getWeekStart: () => Date
+  getWeekEnd: () => Date
   getDateRangeLabel: (locale?: AppLocale) => string
   hydrateFromStorage: () => void
 }
@@ -60,23 +63,19 @@ function selectedLocale(): AppLocale {
   return useDirectionStore.getState().locale
 }
 
-/** CLDR week starts: Saturday for generic Arabic, Sunday for generic English. */
-export function getCalendarWeekStartsOn(locale: AppLocale): Day {
-  return locale === "ar" ? 6 : 0
+export function getCalendarWeekStart(date: Date, weekStartsOn: Day): Date {
+  return startOfWeek(date, { weekStartsOn })
 }
 
-export function getCalendarWeekStart(date: Date, locale: AppLocale): Date {
-  return startOfWeek(date, { weekStartsOn: getCalendarWeekStartsOn(locale) })
-}
-
-export function getCalendarWeekEnd(date: Date, locale: AppLocale): Date {
-  return endOfWeek(date, { weekStartsOn: getCalendarWeekStartsOn(locale) })
+export function getCalendarWeekEnd(date: Date, weekStartsOn: Day): Date {
+  return endOfWeek(date, { weekStartsOn })
 }
 
 export function formatCalendarDateRange(
   date: Date,
   viewMode: ViewMode,
   locale: AppLocale,
+  weekStartsOn: Day,
 ): string {
   const localeName = calendarLocale(locale)
   if (viewMode === "day") {
@@ -99,8 +98,8 @@ export function formatCalendarDateRange(
     year: "numeric",
   })
   return formatter.formatRange(
-    getCalendarWeekStart(date, locale),
-    getCalendarWeekEnd(date, locale),
+    getCalendarWeekStart(date, weekStartsOn),
+    getCalendarWeekEnd(date, weekStartsOn),
   )
 }
 
@@ -140,6 +139,8 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
     channelFilter: null,
     posts: [],
     isLoading: false,
+    timezone: "UTC",
+    weekStartsOn: 1,
 
     setViewMode: (mode) => {
       if (typeof window !== "undefined") {
@@ -178,6 +179,8 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
       set({ channelFilter: accountId })
     },
 
+    setCalendarPreferences: (preferences) => set(preferences),
+
     fetchPosts: async () => {
       const { currentDate, channelFilter } = get()
       if (get().isLoading) return
@@ -195,8 +198,8 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
                   end: endOfMonth(currentDate),
                 }
               : {
-                  start: getCalendarWeekStart(currentDate, selectedLocale()),
-                  end: getCalendarWeekEnd(currentDate, selectedLocale()),
+                  start: getCalendarWeekStart(currentDate, get().weekStartsOn),
+                  end: getCalendarWeekEnd(currentDate, get().weekStartsOn),
                 }
         const posts = await listSocialPosts({
           startDate: range.start.toISOString(),
@@ -242,10 +245,8 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
       }))
     },
 
-    getWeekStart: (locale = selectedLocale()) =>
-      getCalendarWeekStart(get().currentDate, locale),
-    getWeekEnd: (locale = selectedLocale()) =>
-      getCalendarWeekEnd(get().currentDate, locale),
+    getWeekStart: () => getCalendarWeekStart(get().currentDate, get().weekStartsOn),
+    getWeekEnd: () => getCalendarWeekEnd(get().currentDate, get().weekStartsOn),
 
     hydrateFromStorage: () => {
       const stored = getStoredViewMode()
@@ -255,6 +256,6 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
     },
 
     getDateRangeLabel: (locale = selectedLocale()) =>
-      formatCalendarDateRange(get().currentDate, get().viewMode, locale),
+      formatCalendarDateRange(get().currentDate, get().viewMode, locale, get().weekStartsOn),
   }),
 )
