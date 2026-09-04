@@ -1,0 +1,114 @@
+import { z } from "zod";
+
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import type { QualificationExecutionPort } from "./qualification-runner";
+
+const terminal = z.enum(["succeeded", "failed", "canceled", "aborted"]);
+const predictionSchema = z.object({ id: z.string().min(1), status: z.enum(["starting", "processing", "succeeded", "failed", "canceled", "aborted"]), version: z.string().min(1), output: z.unknown().optional() }).passthrough();
+const observerSchema = z.object({ authentic: z.literal(true), deliveryId: z.string().min(1), predictionId: z.string().min(1), version: z.string().min(1), status: terminal }).strict();
+const ingestionSchema = z.object({ receiptId: z.string().min(1), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().nonnegative().nullable(), observedLanguages: z.array(z.enum(["ar", "en"])).min(1), languageEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
+
+type QualificationEnvironment = Readonly<Record<string, string | undefined>>;
+
+function required(environment: QualificationEnvironment, key: string) {
+  const value = environment[key]?.trim();
+  if (!value) throw new Error(`QUALIFICATION_CONFIGURATION_REQUIRED:${key}`);
+  return value;
+}
+
+function endpoint(value: string, key: string) {
+  const url = new URL(value);
+  if (url.protocol !== "https:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") throw new Error(`QUALIFICATION_ENDPOINT_UNSAFE:${key}`);
+  return url;
+}
+
+const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+/** Explicit operator-only network adapter. Constructing it performs no calls. */
+export class ReplicateQualificationHttpExecution implements QualificationExecutionPort {
+  private readonly apiToken: string;
+  private readonly observerToken: string;
+  private readonly apiBase: URL;
+  private readonly webhookUrl: URL;
+  private readonly observerUrl: URL;
+  private readonly ingestionUrl: URL;
+
+  constructor(private readonly environment: QualificationEnvironment = process.env, private readonly fetcher: typeof fetch = fetch) {
+    this.apiToken = required(environment, "REPLICATE_QUALIFICATION_API_TOKEN");
+    this.observerToken = required(environment, "QUALIFICATION_HARNESS_TOKEN");
+    this.apiBase = endpoint(environment.REPLICATE_QUALIFICATION_API_BASE_URL?.trim() || "https://api.replicate.com/v1/", "REPLICATE_QUALIFICATION_API_BASE_URL");
+    this.webhookUrl = endpoint(required(environment, "QUALIFICATION_WEBHOOK_URL"), "QUALIFICATION_WEBHOOK_URL");
+    this.observerUrl = endpoint(required(environment, "QUALIFICATION_WEBHOOK_OBSERVER_URL"), "QUALIFICATION_WEBHOOK_OBSERVER_URL");
+    this.ingestionUrl = endpoint(required(environment, "QUALIFICATION_INGESTION_URL"), "QUALIFICATION_INGESTION_URL");
+  }
+
+  async inspectSchema(input: { model: string; version: string }) {
+    const [owner, name, extra] = input.model.split("/");
+    if (!owner || !name || extra) throw new Error("QUALIFICATION_MODEL_ID_INVALID");
+    const response = await this.replicate(`models/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/versions/${encodeURIComponent(input.version)}`, { method: "GET" });
+    const body = z.object({ openapi_schema: z.object({ components: z.object({ schemas: z.object({ Input: z.object({ properties: z.record(z.string(), z.unknown()) }).passthrough() }).passthrough() }).passthrough() }).passthrough() }).passthrough().parse(await response.json());
+    const inputSchema = body.openapi_schema.components.schemas.Input;
+    return { inputSchemaDigest: canonicalDigest(inputSchema) as `sha256:${string}`, inputKeys: Object.keys(inputSchema.properties) };
+  }
+
+  async submit(input: { model: string; version: string; providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string }) {
+    const webhook = new URL(this.webhookUrl); webhook.searchParams.set("caseId", input.caseId);
+    const response = await this.replicate("predictions", { method: "POST", headers: { "Cancel-After": `${input.cancelAfterSeconds}s`, Prefer: "respond-async" }, body: JSON.stringify({ version: input.version, input: input.providerInput, webhook: webhook.toString(), webhook_events_filter: ["completed"] }) });
+    const prediction = predictionSchema.parse(await response.json());
+    return { predictionId: prediction.id, version: prediction.version, acceptedInput: structuredClone(input.providerInput) };
+  }
+
+  async awaitWebhook(input: { predictionId: string; version: string; caseId: string }) {
+    const url = new URL(this.observerUrl); url.searchParams.set("predictionId", input.predictionId); url.searchParams.set("caseId", input.caseId);
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const response = await this.harness(url, { method: "GET" });
+      if (response.status === 404) { await wait(2_000); continue; }
+      if (!response.ok) throw new Error(`QUALIFICATION_WEBHOOK_OBSERVER_HTTP_${response.status}`);
+      const observed = observerSchema.parse(await response.json());
+      if (observed.predictionId !== input.predictionId || observed.version !== input.version) throw new Error("QUALIFICATION_WEBHOOK_IDENTITY_MISMATCH");
+      return { authentic: observed.authentic, deliveryId: observed.deliveryId, status: observed.status };
+    }
+    throw new Error("QUALIFICATION_WEBHOOK_TIMEOUT");
+  }
+
+  async poll(input: { predictionId: string; version: string; caseId: string }) {
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const response = await this.replicate(`predictions/${encodeURIComponent(input.predictionId)}`, { method: "GET" });
+      const prediction = predictionSchema.parse(await response.json());
+      if (prediction.version !== input.version) throw new Error("QUALIFICATION_VERSION_MISMATCH");
+      if (prediction.status === "starting" || prediction.status === "processing") { await wait(2_000); continue; }
+      return { status: prediction.status, version: prediction.version, output: prediction.output };
+    }
+    throw new Error(`QUALIFICATION_POLL_TIMEOUT:${input.caseId}`);
+  }
+
+  async cancel(input: { predictionId: string; version: string; caseId: string }) {
+    const response = await this.replicate(`predictions/${encodeURIComponent(input.predictionId)}/cancel`, { method: "POST" });
+    const prediction = predictionSchema.parse(await response.json());
+    if (prediction.version !== input.version || (prediction.status !== "canceled" && prediction.status !== "aborted")) throw new Error(`QUALIFICATION_CANCEL_NOT_CONFIRMED:${input.caseId}`);
+    return { status: prediction.status, version: prediction.version };
+  }
+
+  async ingest(input: { predictionId: string; caseId: string; capability: "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "video_to_video"; output: unknown }) {
+    const response = await this.harness(this.ingestionUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+    if (!response.ok) throw new Error(`QUALIFICATION_INGESTION_HTTP_${response.status}`);
+    return ingestionSchema.parse(await response.json()) as Awaited<ReturnType<QualificationExecutionPort["ingest"]>>;
+  }
+
+  async reconcile(input: { predictionId: string; version: string; caseId: string }) {
+    const response = await this.replicate(`predictions/${encodeURIComponent(input.predictionId)}`, { method: "GET" });
+    const prediction = predictionSchema.parse(await response.json());
+    if (prediction.status === "starting" || prediction.status === "processing") throw new Error(`QUALIFICATION_RECONCILIATION_NOT_TERMINAL:${input.caseId}`);
+    return { status: prediction.status, version: prediction.version };
+  }
+
+  private async replicate(path: string, init: RequestInit) {
+    const response = await this.fetcher(new URL(path, this.apiBase), { ...init, headers: { Authorization: `Bearer ${this.apiToken}`, "Content-Type": "application/json", ...init.headers }, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) throw new Error(`QUALIFICATION_REPLICATE_HTTP_${response.status}`);
+    return response;
+  }
+
+  private harness(url: URL, init: RequestInit) {
+    return this.fetcher(url, { ...init, headers: { Authorization: `Bearer ${this.observerToken}`, ...init.headers }, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(30_000) });
+  }
+}

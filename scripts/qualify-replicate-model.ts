@@ -1,12 +1,14 @@
 import { readFile } from "node:fs/promises";
-import { produceReplicateQualificationEnvelope } from "@/lib/model-routing/qualification-runner";
+import { ReplicateQualificationHttpExecution } from "@/lib/model-routing/qualification-http-execution";
+import { executeReplicateQualification } from "@/lib/model-routing/qualification-runner";
 
 async function main() {
   const sourcePath = process.argv[2];
   const privateKey = process.env.MODEL_QUALIFICATION_SIGNING_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (!sourcePath || !privateKey) throw new Error("Usage: MODEL_QUALIFICATION_SIGNING_PRIVATE_KEY='<PEM>' pnpm qualify:replicate <reviewed-attestation.json>");
+  if (!sourcePath || !privateKey || process.argv[3] !== "--execute-paid-smoke") throw new Error("Usage: MODEL_QUALIFICATION_SIGNING_PRIVATE_KEY='<PEM>' pnpm qualify:replicate <qualification-plan.json> --execute-paid-smoke");
   const source = JSON.parse(await readFile(sourcePath, "utf8")) as unknown;
-  process.stdout.write(`${JSON.stringify(produceReplicateQualificationEnvelope(source as never, privateKey), null, 2)}\n`);
+  const result = await executeReplicateQualification(source as never, privateKey, new ReplicateQualificationHttpExecution());
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 void main().catch((error: unknown) => {
