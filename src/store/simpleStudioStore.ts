@@ -137,6 +137,10 @@ function requestManagedQuoteConfirmation(set: StudioSet, quote: ManagedCreditQuo
   });
 }
 
+export function requestStudioManagedCreditQuoteConfirmation(quote: ManagedCreditQuote): Promise<boolean> {
+  return requestManagedQuoteConfirmation(useSimpleStudioStore.setState, quote);
+}
+
 const CONCURRENT_LIMIT = 4;
 
 async function submitAdmittedGeneration(input: { set: StudioSet; state: SimpleStudioState; prompt: string; mode: SimpleStudioMode; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
