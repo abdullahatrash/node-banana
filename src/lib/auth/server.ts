@@ -14,7 +14,7 @@ import {
 } from "@/lib/auth/features";
 import { getAuthServerBaseURL } from "@/lib/auth/origins";
 import { getDb, isDatabaseConfigured, schema } from "@/lib/db";
-import { getEmailSender, verificationEmail } from "@/lib/auth/email-sender";
+import { changeEmailConfirmationEmail, getEmailSender, verificationEmail } from "@/lib/auth/email-sender";
 import {
   getOnboardingAnalytics,
   recordOnboardingEventBestEffort,
@@ -136,6 +136,18 @@ export const auth = betterAuth({
   trustedOrigins: getTrustedOrigins(configuredBaseUrl),
   database: getAuthDatabase(),
   plugins: authPlugins,
+  user: {
+    changeEmail: {
+      enabled: true,
+      sendChangeEmailConfirmation: async ({ user, newEmail, url }) => {
+        await getEmailSender().send(changeEmailConfirmationEmail({
+          to: user.email,
+          newEmail,
+          confirmationUrl: url,
+        }));
+      },
+    },
+  },
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,

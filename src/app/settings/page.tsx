@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArchiveIcon, BellIcon, BriefcaseBusinessIcon, CreditCardIcon, FileClockIcon, Globe2Icon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, BellIcon, BriefcaseBusinessIcon, CircleUserRoundIcon, CreditCardIcon, FileClockIcon, Globe2Icon, KeyRoundIcon, LanguagesIcon, PlugZapIcon, ScaleIcon, ShieldAlertIcon, ShieldCheckIcon, UsersIcon, WaypointsIcon, XIcon } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { ApiTokensSettings } from "@/components/social/ApiTokensSettings";
 import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
@@ -9,6 +9,8 @@ import { BillingSettings } from "@/components/commercial/BillingSettings";
 import { WorkspacePreferencesSettings } from "@/components/product-shell/WorkspacePreferencesSettings";
 import { WorkspaceLanguageSettings } from "@/components/product-shell/WorkspaceLanguageSettings";
 import { WorkspaceNotificationSettings } from "@/components/product-shell/WorkspaceNotificationSettings";
+import { AccountSettings } from "@/components/product-shell/AccountSettings";
+import { getAuthFeatureFlags } from "@/lib/auth/features";
 import { isAppLocale } from "@/i18n/config";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
 import { getWorkspaceCalendarPreferences } from "@/lib/product-surfaces/calendar-preferences";
@@ -16,6 +18,7 @@ import { getWorkspaceContentLanguage } from "@/lib/product-surfaces/workspace-la
 import { resolveWorkspaceMemberPermissions, type ContentOSPermission } from "@/lib/studio/authz";
 
 const sections = [
+  { key: "account", icon: CircleUserRoundIcon },
   { key: "members", icon: UsersIcon },
   { key: "roles", icon: ShieldCheckIcon },
   { key: "approval", icon: ScaleIcon },
@@ -39,7 +42,7 @@ function readSection(value: string | string[] | undefined): SettingsSection {
   const selected = Array.isArray(value) ? value[0] : value;
   return sections.some((section) => section.key === selected)
     ? (selected as SettingsSection)
-    : "members";
+    : "account";
 }
 
 export default async function SettingsPage({
@@ -63,6 +66,7 @@ export default async function SettingsPage({
   const canManageBilling = permissions.includes("product:billing:manage");
   const canPurchaseBilling = permissions.includes("product:billing:purchase");
   const canManageNotifications = permissions.includes("social:view");
+  const authFeatures = getAuthFeatureFlags();
   const visibleSections = sections.filter(({ key }) => (key !== "billing" || canReadBilling) && (key !== "notifications" || canManageNotifications));
   const requestedSection = readSection(section);
   const activeSection = (requestedSection === "billing" && !canReadBilling) || (requestedSection === "notifications" && !canManageNotifications) ? "members" : requestedSection;
@@ -130,7 +134,13 @@ export default async function SettingsPage({
             </nav>
           </aside>
           <div className="min-w-0 flex-1 overflow-y-auto">
-            {activeSection === "billing" && workspaceId ? (
+            {activeSection === "account" ? (
+              <AccountSettings
+                initialUser={{ name: access.session.user.name, email: access.session.user.email, emailVerified: access.session.user.emailVerified }}
+                currentSessionId={access.session.session.id}
+                enabledSocialProviders={[...(authFeatures.googleOAuth ? ["google" as const] : []), ...(authFeatures.githubOAuth ? ["github" as const] : [])]}
+              />
+            ) : activeSection === "billing" && workspaceId ? (
               <BillingSettings workspaceId={workspaceId} canManage={canManageBilling} canPurchase={canPurchaseBilling} />
             ) : activeSection === "language" && contentLanguage && workspaceId ? (
               <WorkspaceLanguageSettings workspaceId={workspaceId} initialInterfaceLocale={interfaceLocale} initialContentLanguage={contentLanguage} canManageContent={permissions.includes("product:content:write")} />

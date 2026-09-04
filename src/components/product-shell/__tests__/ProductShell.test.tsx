@@ -273,6 +273,6 @@ describe("ProductShell", () => {
       }),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Account" }));
-    expect(router.push).toHaveBeenCalledWith("/settings");
+    expect(router.push).toHaveBeenCalledWith("/settings?section=account");
   });
 });

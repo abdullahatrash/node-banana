@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ConsoleEmailSender,
   ResendEmailSender,
+  changeEmailConfirmationEmail,
   verificationEmail,
 } from "../email-sender";
 
@@ -68,6 +69,18 @@ describe("auth email sender", () => {
       to: "user@example.com",
       verificationUrl: 'https://app.example.com/verify?a=1&next="><script>',
     });
+    expect(message.html).not.toContain("<script>");
+    expect(message.html).toContain("&amp;");
+  });
+
+  it("authors a bilingual current-email confirmation without injectable HTML", () => {
+    const message = changeEmailConfirmationEmail({
+      to: "current@example.com",
+      newEmail: 'next+"><script>@example.com',
+      confirmationUrl: 'https://app.example.com/change-email?token=secret&next="',
+    });
+    expect(message.subject).toContain("Approve your email change");
+    expect(message.subject).toContain("الموافقة على تغيير البريد الإلكتروني");
     expect(message.html).not.toContain("<script>");
     expect(message.html).toContain("&amp;");
   });

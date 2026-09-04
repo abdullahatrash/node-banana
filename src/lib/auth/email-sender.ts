@@ -97,3 +97,26 @@ export function verificationEmail(input: {
     html: `<div><section lang="ar" dir="rtl"><p>${ar("verificationBody")}</p><p><a href="${safeUrl}">${ar("verificationAction")}</a></p></section><hr><section lang="en" dir="ltr"><p>${en("verificationBody")}</p><p><a href="${safeUrl}">${en("verificationAction")}</a></p></section></div>`,
   };
 }
+
+export function changeEmailConfirmationEmail(input: {
+  to: string;
+  newEmail: string;
+  confirmationUrl: string;
+}): TransactionalEmail {
+  const safeUrl = escapeHtml(input.confirmationUrl);
+  const safeEmail = escapeHtml(input.newEmail);
+  const ar = createTranslator({ locale: "ar", messages: arMessages, namespace: "auth.email" });
+  const en = createTranslator({ locale: "en", messages: enMessages, namespace: "auth.email" });
+  return {
+    to: input.to,
+    subject: `${ar("changeEmailSubject")} | ${en("changeEmailSubject")}`,
+    text: [
+      ar("changeEmailBody", { email: input.newEmail }),
+      input.confirmationUrl,
+      "",
+      en("changeEmailBody", { email: input.newEmail }),
+      input.confirmationUrl,
+    ].join("\n"),
+    html: `<div><section lang="ar" dir="rtl"><p>${ar("changeEmailBody", { email: safeEmail })}</p><p><a href="${safeUrl}">${ar("changeEmailAction")}</a></p></section><hr><section lang="en" dir="ltr"><p>${en("changeEmailBody", { email: safeEmail })}</p><p><a href="${safeUrl}">${en("changeEmailAction")}</a></p></section></div>`,
+  };
+}
