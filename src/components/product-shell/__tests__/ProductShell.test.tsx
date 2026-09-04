@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductShell } from "../ProductShell";
 import { I18nTestProvider } from "@/test/i18n";
 import type { ProductShellContext } from "@/lib/product-shell/server";
@@ -48,6 +48,8 @@ function renderShell(locale: "ar" | "en" = "en") {
 }
 
 describe("ProductShell", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   beforeEach(() => {
     pathname.mockReturnValue("/dashboard");
     router.push.mockReset();
@@ -119,6 +121,56 @@ describe("ProductShell", () => {
       "page",
     );
     expect(document.querySelector('[data-slot="sidebar"][data-side="right"]')).toBeTruthy();
+  });
+
+  it("shows authoritative plan, trial, credits, and Upgrade state in English", async () => {
+    const trialEndsAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== "/api/studio/billing") return new Response(null, { status: 204 });
+      return new Response(JSON.stringify({ success: true, data: {
+        subscription: { state: "trialing", planId: "starter", planVersion: 1, currentPeriodEndsAt: trialEndsAt, graceEndsAt: null, merchantCustomerRef: null },
+        plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }, { planId: "starter", version: 1, authoredName: { ar: "البداية", en: "Starter" } }],
+        credit: { availableUnits: 21 },
+      } }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    renderShell();
+    expect(await screen.findByText("Starter trial · 3d left")).toBeInTheDocument();
+    expect(screen.getByText("21 credits available")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Upgrade" })).toHaveAttribute("href", "/settings?section=billing");
+  });
+
+  it("localizes authoritative Free and credit state in Arabic", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== "/api/studio/billing") return new Response(null, { status: 204 });
+      return new Response(JSON.stringify({ success: true, data: {
+        subscription: null,
+        plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }],
+        credit: { availableUnits: 10 },
+      } }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    renderShell("ar");
+    expect(await screen.findByText("مجانية")).toBeInTheDocument();
+    expect(screen.getByText("10 رصيدًا متاحًا")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "ترقية الباقة" })).toBeInTheDocument();
+  });
+
+  it("reads commercial state for the same authorized workspace selected by the switcher", async () => {
+    window.localStorage.setItem("node-banana-active-workspace-id", "workspace-2");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) !== "/api/studio/billing") return new Response(null, { status: 204 });
+      return new Response(JSON.stringify({ success: true, data: {
+        subscription: null,
+        plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }],
+        credit: { availableUnits: 7 },
+      } }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderShell();
+    expect(await screen.findByText("7 credits available")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/studio/billing", expect.objectContaining({ headers: { "x-workspace-id": "workspace-2" } }));
   });
 
   it("bootstraps a validated workspace context", async () => {

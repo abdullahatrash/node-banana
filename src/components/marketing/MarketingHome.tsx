@@ -58,6 +58,7 @@ export function MarketingHome({
             <a className="transition-colors hover:text-[#e75f45]" href="#product">{copy.nav.product}</a>
             <a className="transition-colors hover:text-[#e75f45]" href="#how">{copy.nav.how}</a>
             <a className="transition-colors hover:text-[#e75f45]" href="#platforms">{copy.nav.platforms}</a>
+            <Link className="transition-colors hover:text-[#e75f45]" href={`/${locale}/pricing`}>{copy.nav.pricing}</Link>
             <a className="transition-colors hover:text-[#e75f45]" href="#faq">{copy.nav.faq}</a>
           </nav>
 

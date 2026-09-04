@@ -75,6 +75,7 @@ import type { ProductShellContext } from "@/lib/product-shell/server";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ServiceStatusBanner } from "@/components/release-control/ServiceStatusBanner";
 import { GlobalCopilot } from "./GlobalCopilot";
+import { CommercialStatus } from "./CommercialStatus";
 
 const primaryIcons = {
   dashboard: CircleGaugeIcon,
@@ -293,6 +294,7 @@ export function ProductShell({
           </nav>
         </SidebarContent>
         <SidebarFooter>
+          <CommercialStatus workspaceId={context.initialWorkspaceId} authorizedWorkspaces={context.workspaces} />
           <LanguageSwitcher className="w-full justify-start group-data-[collapsible=icon]:px-2" />
           <NavUser user={context.user} />
         </SidebarFooter>
