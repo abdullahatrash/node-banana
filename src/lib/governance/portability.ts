@@ -19,19 +19,11 @@ import {
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { copyObjectInS3 } from "@/lib/storage/s3";
+import { GOVERNANCE_PORTABLE_KINDS, type GovernancePortableKind } from "./portability-contract";
 import { GOVERNANCE_REGION_ROUTES, requireGovernanceRegionRoute } from "./region-enforcement";
 
-export const GOVERNANCE_PORTABLE_KINDS = [
-  "media",
-  "content_revision",
-  "prompt",
-  "brand_source",
-  "calendar_plan",
-  "caption",
-  "platform_observation",
-  "platform_export_metadata",
-] as const;
-export type GovernancePortableKind = (typeof GOVERNANCE_PORTABLE_KINDS)[number];
+export { GOVERNANCE_PORTABLE_KINDS } from "./portability-contract";
+export type { GovernancePortableKind } from "./portability-contract";
 
 const id = z.string().min(1).max(500);
 const timestamp = z.string().datetime({ offset: true }).nullable();

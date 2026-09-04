@@ -31,7 +31,7 @@ import {
 } from "@/lib/governance/types";
 import type { GovernanceCommandRunner, GovernanceSettingsSection } from "./GovernanceSettingsSurface";
 import { TRUSTED_RETENTION_LEGAL_FLOORS } from "@/lib/governance/retention-policy";
-import { GOVERNANCE_PORTABLE_KINDS } from "@/lib/governance/portability";
+import { GOVERNANCE_PORTABLE_KINDS } from "@/lib/governance/portability-contract";
 
 type Can = (capability: GovernanceCapability) => boolean;
 type Props = { section: GovernanceSettingsSection; snapshot: GovernanceSnapshot; run: GovernanceCommandRunner; can: Can; busy: boolean };
