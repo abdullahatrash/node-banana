@@ -47,7 +47,7 @@ export function SchedulePicker() {
           value={dateStr}
           onChange={(e) => handleDateChange(e.target.value)}
           dir="ltr"
-          className="min-w-0 rounded-md border border-input bg-background px-3 py-1.5 text-left text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="min-w-0 rounded-md border border-input bg-background px-3 py-1.5 text-start text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
         <input
           type="time"
@@ -55,7 +55,7 @@ export function SchedulePicker() {
           onChange={(e) => handleTimeChange(e.target.value)}
           disabled={!scheduledAt}
           dir="ltr"
-          className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-left text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+          className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-start text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
         />
       </div>
       {scheduledAt && scheduledAt < new Date() && (

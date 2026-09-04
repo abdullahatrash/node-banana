@@ -621,7 +621,7 @@ export function PublishingApprovalCockpit() {
             </button>
           </form>
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[48rem] text-left text-xs">
+            <table className="w-full min-w-[48rem] text-start text-xs">
               <caption className="sr-only">{t("copy.publishingApprovalAuthorityGrants")}</caption>
               <thead className="text-neutral-500">
                 <tr>
@@ -650,7 +650,7 @@ export function PublishingApprovalCockpit() {
                       <td className="px-2 py-3">{t("copy.linkedin2")} {grant.action}</td>
                       <td className="px-2 py-3">{formatDate(grant.issuedAt)}<span className="block text-neutral-500">{grant.expiresAt ? formatDate(grant.expiresAt) : "no expiry"}</span></td>
                       <td className="px-2 py-3">{state}</td>
-                      <td className="px-2 py-3 text-right">
+                      <td className="px-2 py-3 text-end">
                         <button
                           type="button"
                           disabled={busy || state !== "active"}
@@ -692,7 +692,7 @@ export function PublishingApprovalCockpit() {
                         setSelectedId(item.id);
                         void loadInspection(item.id).catch((cause) => setError(String(cause)));
                       }}
-                      className="w-full rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-left hover:border-neutral-600 disabled:opacity-60 aria-[current=true]:border-amber-600"
+                      className="w-full rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-start hover:border-neutral-600 disabled:opacity-60 aria-[current=true]:border-amber-600"
                     >
                       <span className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium">{t("copy.planRevision")} {item.planRevision}</span>

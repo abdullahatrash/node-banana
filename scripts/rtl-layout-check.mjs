@@ -1,7 +1,7 @@
-const physicalDirectionalUtility = /(?:^|:)(?:(?:m[lr]|p[lr]|scroll-m[lr])-[A-Za-z0-9_[\]./()-]+|border-[lr](?:-[A-Za-z0-9_[\]./()-]+)?|rounded-[lr](?:-[A-Za-z0-9_[\]./()-]+)?)$/u;
+const physicalDirectionalUtility = /(?:^|:)(?:(?:m[lr]|p[lr]|scroll-m[lr])-[A-Za-z0-9_[\]./()-]+|border-[lr](?:-[A-Za-z0-9_[\]./()-]+)?|rounded-[lr](?:-[A-Za-z0-9_[\]./()-]+)?|text-(?:left|right))$/u;
 
 /**
- * Finds physical Tailwind spacing/border utilities that should normally be
+ * Finds physical Tailwind spacing, border, and text-alignment utilities that should normally be
  * logical in bilingual product surfaces.
  *
  * A drawer with an explicit left/right direction is a physical-edge contract,

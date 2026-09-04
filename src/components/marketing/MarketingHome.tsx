@@ -179,7 +179,7 @@ export function MarketingHome({
           <div className="mx-auto max-w-7xl text-center">
             <SectionHeading centered eyebrow={copy.platforms.eyebrow} title={copy.platforms.title} body={copy.platforms.body} />
             <div className="mx-auto mt-12 flex max-w-5xl flex-col items-stretch gap-3 rounded-[32px] border border-[#143f38]/10 bg-[#eee6da] p-4 shadow-[0_22px_65px_rgba(16,45,42,0.08)] sm:flex-row sm:items-center" dir="ltr">
-              <div className="flex flex-1 items-center gap-3 rounded-[22px] bg-[#102d2a] p-4 text-left text-white">
+              <div dir="auto" className="flex flex-1 items-center gap-3 rounded-[22px] bg-[#102d2a] p-4 text-start text-white">
                 <CalendarDaysIcon className="size-5 text-[#f19b7f]" aria-hidden="true" />
                 <div><p className="text-xs text-white/45">{copy.ui.brandName}</p><p className="font-bold">{copy.ui.calendar30}</p></div>
               </div>
