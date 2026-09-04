@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { CircleCheck, LoaderCircle, ShieldCheck, UserRoundPlus } from "lucide-react";
 import { productRequest } from "@/components/product-surfaces/ProductApi";
 import { ARABIC_VARIETIES } from "@/lib/product-surfaces/definitions";
@@ -11,6 +11,7 @@ import type { CreatorPersona } from "@/lib/creator-personas/types";
 
 export function PersonaManager({ personas }: { personas: CreatorPersona[] }) {
   const t = useTranslations("product.personas") as (key: string, values?: Record<string, string | number>) => string;
+  const locale = useLocale();
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -28,6 +29,7 @@ export function PersonaManager({ personas }: { personas: CreatorPersona[] }) {
   async function submitCommand(event: FormEvent<HTMLFormElement>, persona: CreatorPersona, action: string) {
     event.preventDefault(); const data = new FormData(event.currentTarget); const base = { action, expectedRevision: persona.revision, idempotencyKey: crypto.randomUUID() }; let body: Record<string, unknown> = base;
     if (action === "attach_sources") body = { ...base, assetIds: split(data, "assetIds"), consentEvidenceId: value(data, "consentEvidenceId") };
+    if (action === "record_consent") body = { ...base, subjectReference: String(data.get("subjectReference")), sourceAssetIds: split(data, "assetIds"), allowedPurposes: data.getAll("allowedPurposes").map(String), geographies: split(data, "geographies"), effectiveAt: new Date(String(data.get("effectiveAt"))).toISOString(), expiresAt: new Date(String(data.get("expiresAt"))).toISOString() };
     if (action === "request_training") body = { ...base, provider: String(data.get("provider")), model: String(data.get("model")), modelVersion: String(data.get("modelVersion")), qualificationDigest: String(data.get("qualificationDigest")) };
     if (action === "bind_usage") body = { ...base, purpose: String(data.get("purpose")), resourceId: String(data.get("resourceId")) };
     if (action === "suspend") body = { ...base, reasonCode: String(data.get("reasonCode")) };
@@ -44,7 +46,8 @@ export function PersonaManager({ personas }: { personas: CreatorPersona[] }) {
     {error && <p role="alert" className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
     <section className="grid gap-4 lg:grid-cols-2">{personas.map((persona) => <article key={persona.id} className="rounded-2xl border bg-card p-5">
       <div className="flex items-start justify-between gap-3"><div><h2 dir="auto" className="font-semibold">{persona.name}</h2><p className="mt-1 text-xs text-muted-foreground">{t(`kinds.${persona.kind}`)} · v{persona.revision}</p></div><span className="rounded-full bg-muted px-2 py-1 text-xs">{t(`states.${persona.state}`)}</span></div>
-      <div className="mt-4 grid gap-2 text-sm"><p><ShieldCheck className="me-2 inline size-4 text-emerald-600" />{t("retention", { date: new Date(persona.retentionUntil).toLocaleDateString() })}</p><p><CircleCheck className="me-2 inline size-4 text-emerald-600" />{persona.disclosure}</p></div>
+      <div className="mt-4 grid gap-2 text-sm"><p><ShieldCheck className="me-2 inline size-4 text-emerald-600" />{t("retention", { date: new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(persona.retentionUntil)) })}</p><p><CircleCheck className="me-2 inline size-4 text-emerald-600" />{persona.disclosure}</p></div>
+      {persona.state === "consent_review" && persona.kind === "consented_likeness" && <form className="mt-5 grid gap-3 sm:grid-cols-2" onSubmit={(event) => submitCommand(event, persona, "record_consent")}><Field name="subjectReference" label={t("fields.subjectReference")} /><Field name="assetIds" label={t("fields.consentAssets")} /><Field name="geographies" label={t("fields.geographies")} /><Field name="effectiveAt" label={t("fields.effectiveAt")} type="datetime-local" /><Field name="expiresAt" label={t("fields.expiresAt")} type="datetime-local" /><fieldset className="grid gap-2 rounded-xl border p-3 text-sm sm:col-span-2"><legend className="px-1 font-medium">{t("fields.allowedPurposes")}</legend>{["training", "generation", "content_set", "channel", "blitz"].map((purpose) => <label key={purpose} className="flex items-center gap-2"><input type="checkbox" name="allowedPurposes" value={purpose} />{t(`purposes.${purpose}`)}</label>)}</fieldset><button className="min-h-10 rounded-lg border px-3 text-sm sm:col-span-2">{t("actions.recordConsent")}</button></form>}
       {!["deleted", "suspended"].includes(persona.state) && <form className="mt-5 grid gap-3 sm:grid-cols-2" onSubmit={(event) => submitCommand(event, persona, "attach_sources")}><Field name="assetIds" label={t("fields.assets")} /><Field name="consentEvidenceId" label={t("fields.consentEvidence")} required={false} /><button className="min-h-10 rounded-lg border px-3 text-sm sm:col-span-2">{t("actions.attachSources")}</button></form>}
       {persona.state === "consent_review" && <p className="mt-5 rounded-lg bg-muted p-3 text-xs leading-5">{t("evidenceBoundary")}</p>}
       {persona.state === "ready_to_train" && <form className="mt-5 grid gap-3 sm:grid-cols-2" onSubmit={(event) => submitCommand(event, persona, "request_training")}><Field name="provider" label={t("fields.provider")} /><Field name="model" label={t("fields.model")} /><Field name="modelVersion" label={t("fields.modelVersion")} /><Field name="qualificationDigest" label={t("fields.qualification")} /><p className="text-xs text-muted-foreground sm:col-span-2">{t("providerBoundary")}</p><button className="min-h-10 rounded-lg bg-stone-950 px-3 text-sm font-semibold text-white sm:col-span-2">{t("actions.training")}</button></form>}
