@@ -169,7 +169,7 @@ export const campaignPayloadSchema = z.object({
   mediaSetIds: z.array(text(200)).default([]),
   channelIds: z.array(text(200)).default([]),
   variantsPerChannel: z.number().int().min(1).max(10).default(1),
-  cadence: z.object({ timezone: text(100), startAt: z.string().datetime().nullable(), endAt: z.string().datetime().nullable(), postsPerWeek: z.number().int().min(1).max(100) }),
+  cadence: z.object({ timezone: text(100), weekStart: z.number().int().min(0).max(6).default(1), startAt: z.string().datetime().nullable(), endAt: z.string().datetime().nullable(), postsPerWeek: z.number().int().min(1).max(100) }),
   execution: z.object({
     mode: z.enum(["byok", "managed"]),
     modelPolicy: text(200),
