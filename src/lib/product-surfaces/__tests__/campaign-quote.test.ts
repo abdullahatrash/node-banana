@@ -25,6 +25,11 @@ describe("campaign accepted quote", () => {
     expect(seal).toHaveBeenCalledOnce();
   });
 
+  it("can bind a stable launch quote identity for crash-safe replay", () => {
+    const result = issueCampaignAcceptedQuote({ ...base, preview: preview(), quoteId: "quote_campaign_revision_2", codec: { seal: vi.fn(() => "signed.quote") } });
+    expect(result.quote.quoteId).toBe("quote_campaign_revision_2");
+  });
+
   it("fails closed for denied or inexact pricing", () => {
     expect(() => issueCampaignAcceptedQuote({ ...base, preview: preview({ admissible: false }), codec: { seal: vi.fn() } })).toThrow("BUDGET_LIMIT_EXCEEDED");
     expect(() => issueCampaignAcceptedQuote({ ...base, preview: preview({ exact: false }), codec: { seal: vi.fn() } })).toThrow("CAMPAIGN_EXACT_QUOTE_UNAVAILABLE");

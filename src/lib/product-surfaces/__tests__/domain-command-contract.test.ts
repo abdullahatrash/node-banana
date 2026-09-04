@@ -39,6 +39,8 @@ describe("typed product command contracts", () => {
     expect(read("src/lib/product-surfaces/campaign-quote.ts")).toContain("input.codec.seal(quote)");
     expect(source).toContain('capability: "workflow_runs.start@2"');
     expect(source).toContain("acceptedSpendQuoteRef");
+    expect(source).toContain("stableActivationQuoteId");
+    expect(source).toContain("validateCampaignAuthoringPayload");
   });
 
   it("binds generated Copy only from a succeeded canonical text receipt", () => {

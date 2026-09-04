@@ -30,6 +30,7 @@ export function issueCampaignAcceptedQuote(input: {
   campaignRevision: number;
   now: Date;
   codec: CampaignQuoteCodec;
+  quoteId?: string;
 }) {
   const { preview, binding } = input;
   if (!preview.admissible) throw new CampaignQuoteError(preview.denialReasons[0] ?? "CAMPAIGN_BUDGET_DENIED");
@@ -38,7 +39,7 @@ export function issueCampaignAcceptedQuote(input: {
   if (providerModels.some((model) => !model.pricePerAttempt || model.pricingSnapshotIds.length === 0)) throw new CampaignQuoteError("CAMPAIGN_EXACT_QUOTE_UNAVAILABLE");
   const pricingSnapshotIds = [...new Set(providerModels.flatMap((model) => model.pricingSnapshotIds))].sort();
   const quote: WorkflowRunAcceptedSpendQuote = {
-    schema: "workflow-run-accepted-spend-quote/v1", quoteId: `quote_${randomUUID().replaceAll("-", "")}`,
+    schema: "workflow-run-accepted-spend-quote/v1", quoteId: input.quoteId ?? `quote_${randomUUID().replaceAll("-", "")}`,
     sourceWorkspaceId: input.workspaceId, targetWorkspaceId: input.workspaceId, requestedByUserId: input.userId,
     delegatedPrincipalId: input.userId, delegatedKeyId: input.keyId, capability: "workflow_runs.start@2",
     workflowId: binding.workflowId, workflowRevisionId: binding.workflowRevisionId,

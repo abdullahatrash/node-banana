@@ -9,6 +9,8 @@ import { campaignPayloadSchema } from "./definitions";
 import { updateProductRecord, type ProductRecord } from "@/lib/product-surfaces/repository";
 import { CampaignQuoteError, issueCampaignAcceptedQuote } from "./campaign-quote";
 import { PRODUCTION_CAMPAIGN_SCHEDULER_REPOSITORY } from "./campaign-scheduler-repository";
+import { validateCampaignAuthoringPayload } from "./campaign-authoring";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
 export class CampaignRuntimeError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -17,6 +19,62 @@ export class CampaignRuntimeError extends Error {
 export interface CampaignWorkflowRuntime {
   preview(input: { workspaceId: string; workflowId: string; revisionId: string; inputs: Record<string, unknown>; principalId: string; inputArtifactIds: string[] }): Promise<RunAdmissionPreview>;
   start(input: { workspaceId: string; workflowId: string; revisionId: string; inputs: Record<string, unknown>; principalId: string; keyId: string; authorizationEvidenceRef: string; idempotencyKey: string; inputArtifactIds: string[]; capability: "workflow_runs.start@2"; acceptedSpendQuoteRef: string }): Promise<WorkflowRunAcceptedDto>;
+}
+
+async function campaignRecord(input: { workspaceId: string; id: string }) {
+  const [record] = await getDb().select().from(workspaceProductRecords).where(and(
+    eq(workspaceProductRecords.workspaceId, input.workspaceId),
+    eq(workspaceProductRecords.id, input.id),
+    eq(workspaceProductRecords.kind, "campaign_automation"),
+  )).limit(1);
+  if (!record) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
+  return record;
+}
+
+function stableActivationQuoteId(campaignId: string, campaignRevision: number) {
+  return `quote_${canonicalDigest({ campaignId, campaignRevision, purpose: "campaign_activation" }).slice("sha256:".length)}`;
+}
+
+export async function previewCampaignCommand(input: {
+  workspaceId: string;
+  userId: string;
+  authContextId: string;
+  id: string;
+  expectedRevision: number;
+  runtime?: CampaignWorkflowRuntime;
+  now?: Date;
+}) {
+  const record = await campaignRecord(input);
+  if (record.revision !== input.expectedRevision) throw new CampaignRuntimeError("CAMPAIGN_REVISION_CONFLICT");
+  const campaign = campaignPayloadSchema.parse(record.payload);
+  const validation = await validateCampaignAuthoringPayload({ workspaceId: input.workspaceId, userId: input.userId, payload: campaign, complete: true, now: input.now });
+  if (validation.issues.length) throw new CampaignRuntimeError(validation.issues[0]!);
+  const binding = campaign.execution.workflow!;
+  const preview = await (input.runtime ?? PRODUCTION_WORKFLOW_RUN_SERVICE).preview({ workspaceId: input.workspaceId, workflowId: binding.workflowId, revisionId: binding.workflowRevisionId, inputs: binding.inputs, principalId: input.userId, inputArtifactIds: binding.inputArtifactIds });
+  if (!preview.admissible) return { admissible: false as const, denialReasons: preview.denialReasons, warnings: preview.warnings, evaluatedAt: preview.evaluatedAt.toISOString() };
+  let quote;
+  try {
+    quote = issueCampaignAcceptedQuote({
+      preview, binding, workspaceId: input.workspaceId, userId: input.userId,
+      keyId: `human-session:${input.authContextId}`, campaignId: record.id,
+      campaignRevision: record.revision, now: input.now ?? new Date(),
+      codec: productionWorkflowRunSpendQuoteCodec(),
+      quoteId: stableActivationQuoteId(record.id, record.revision),
+    }).quote;
+  } catch (error) {
+    throw new CampaignRuntimeError(error instanceof CampaignQuoteError ? error.code : "CAMPAIGN_QUOTE_SIGNING_UNAVAILABLE");
+  }
+  return {
+    admissible: true as const,
+    denialReasons: [],
+    warnings: preview.warnings,
+    evaluatedAt: preview.evaluatedAt.toISOString(),
+    quote: {
+      quoteId: quote.quoteId, amount: quote.amount, currency: quote.currency,
+      expiresAt: quote.expiresAt, maximumProviderAttempts: quote.ceiling.maximumProviderAttempts,
+      providerModels: quote.providerModels.map(({ provider, model, pricePerAttempt, automaticAttempts }) => ({ provider, model, pricePerAttempt, automaticAttempts })),
+    },
+  };
 }
 
 export async function activateCampaignCommand(input: {
@@ -30,14 +88,11 @@ export async function activateCampaignCommand(input: {
   now?: Date;
 }): Promise<ProductRecord> {
   const runtime = input.runtime ?? PRODUCTION_WORKFLOW_RUN_SERVICE;
-  const [record] = await getDb().select().from(workspaceProductRecords).where(and(
-    eq(workspaceProductRecords.workspaceId, input.workspaceId),
-    eq(workspaceProductRecords.id, input.id),
-    eq(workspaceProductRecords.kind, "campaign_automation"),
-  )).limit(1);
-  if (!record) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
+  const record = await campaignRecord(input);
   if (record.revision !== input.expectedRevision && record.state !== "validating") throw new CampaignRuntimeError("CAMPAIGN_REVISION_CONFLICT");
   const campaign = campaignPayloadSchema.parse(record.payload);
+  const validation = await validateCampaignAuthoringPayload({ workspaceId: input.workspaceId, userId: input.userId, payload: campaign, complete: true, now: input.now });
+  if (validation.issues.length) throw new CampaignRuntimeError(validation.issues[0]!);
   const binding = campaign.execution.workflow;
   if (!binding) throw new CampaignRuntimeError("CAMPAIGN_WORKFLOW_BINDING_REQUIRED");
   if (campaign.validationErrors.length) throw new CampaignRuntimeError("CAMPAIGN_VALIDATION_FAILED");
@@ -57,7 +112,7 @@ export async function activateCampaignCommand(input: {
   const now = input.now ?? new Date();
   const preview = await runtime.preview({ workspaceId: input.workspaceId, workflowId: binding.workflowId, revisionId: binding.workflowRevisionId, inputs: binding.inputs, principalId: input.userId, inputArtifactIds: artifactIds });
   let acceptedQuote;
-  try { acceptedQuote = issueCampaignAcceptedQuote({ preview, binding, workspaceId: input.workspaceId, userId: input.userId, keyId, campaignId: record.id, campaignRevision: validating.revision, now, codec: productionWorkflowRunSpendQuoteCodec() }); }
+  try { acceptedQuote = issueCampaignAcceptedQuote({ preview, binding, workspaceId: input.workspaceId, userId: input.userId, keyId, campaignId: record.id, campaignRevision: validating.revision, now, codec: productionWorkflowRunSpendQuoteCodec(), quoteId: stableActivationQuoteId(record.id, validating.revision) }); }
   catch (error) { throw new CampaignRuntimeError(error instanceof CampaignQuoteError ? error.code : "CAMPAIGN_QUOTE_SIGNING_UNAVAILABLE"); }
   const accepted = await runtime.start({
     workspaceId: input.workspaceId,
@@ -67,7 +122,7 @@ export async function activateCampaignCommand(input: {
     principalId: input.userId,
     keyId,
     authorizationEvidenceRef: `campaign:${record.id}:revision:${validating.revision}`,
-    idempotencyKey: `${input.idempotencyKey}:run`,
+    idempotencyKey: `campaign-activation:${record.id}:revision:${validating.revision}`,
     inputArtifactIds: artifactIds,
     capability: "workflow_runs.start@2",
     acceptedSpendQuoteRef: acceptedQuote.ref,
@@ -106,4 +161,24 @@ export async function pauseCampaignCommand(input: { workspaceId: string; userId:
   if (!paused) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
   await PRODUCTION_CAMPAIGN_SCHEDULER_REPOSITORY.cancelFuture(input.workspaceId, input.id, new Date());
   return paused;
+}
+
+export async function resumeCampaignCommand(input: { workspaceId: string; userId: string; id: string; expectedRevision: number; idempotencyKey: string; now?: Date }) {
+  const record = await campaignRecord(input);
+  if (record.state !== "paused") throw new CampaignRuntimeError("CAMPAIGN_RESUME_NOT_ALLOWED");
+  const payload = campaignPayloadSchema.parse(record.payload);
+  const validation = await validateCampaignAuthoringPayload({ workspaceId: input.workspaceId, userId: input.userId, payload, complete: true, now: input.now });
+  if (validation.issues.length) throw new CampaignRuntimeError(validation.issues[0]!);
+  const active = await updateProductRecord({ ...input, expectedKind: "campaign_automation", state: "active" });
+  if (!active) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
+  return active;
+}
+
+export async function archiveCampaignCommand(input: { workspaceId: string; userId: string; id: string; expectedRevision: number; idempotencyKey: string; discard: boolean }) {
+  const record = await campaignRecord(input);
+  if (input.discard && record.state !== "draft") throw new CampaignRuntimeError("CAMPAIGN_DISCARD_NOT_ALLOWED");
+  const archived = await updateProductRecord({ workspaceId: input.workspaceId, userId: input.userId, id: input.id, expectedRevision: input.expectedRevision, expectedKind: "campaign_automation", state: "archived", idempotencyKey: input.idempotencyKey });
+  if (!archived) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
+  await PRODUCTION_CAMPAIGN_SCHEDULER_REPOSITORY.cancelFuture(input.workspaceId, input.id, new Date());
+  return archived;
 }
