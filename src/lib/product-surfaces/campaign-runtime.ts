@@ -52,14 +52,15 @@ export async function previewCampaignCommand(input: {
   const binding = campaign.execution.workflow!;
   const preview = await (input.runtime ?? PRODUCTION_WORKFLOW_RUN_SERVICE).preview({ workspaceId: input.workspaceId, workflowId: binding.workflowId, revisionId: binding.workflowRevisionId, inputs: binding.inputs, principalId: input.userId, inputArtifactIds: binding.inputArtifactIds });
   if (!preview.admissible) return { admissible: false as const, denialReasons: preview.denialReasons, warnings: preview.warnings, evaluatedAt: preview.evaluatedAt.toISOString() };
+  const activationRevision = record.state === "draft" ? record.revision + 1 : record.revision;
   let quote;
   try {
     quote = issueCampaignAcceptedQuote({
       preview, binding, workspaceId: input.workspaceId, userId: input.userId,
       keyId: `human-session:${input.authContextId}`, campaignId: record.id,
-      campaignRevision: record.revision, now: input.now ?? new Date(),
+      campaignRevision: activationRevision, now: input.now ?? new Date(),
       codec: productionWorkflowRunSpendQuoteCodec(),
-      quoteId: stableActivationQuoteId(record.id, record.revision),
+      quoteId: stableActivationQuoteId(record.id, activationRevision),
     }).quote;
   } catch (error) {
     throw new CampaignRuntimeError(error instanceof CampaignQuoteError ? error.code : "CAMPAIGN_QUOTE_SIGNING_UNAVAILABLE");
@@ -98,6 +99,16 @@ export async function activateCampaignCommand(input: {
   if (campaign.validationErrors.length) throw new CampaignRuntimeError("CAMPAIGN_VALIDATION_FAILED");
   const artifactIds = [...new Set(binding.inputArtifactIds)];
   if (artifactIds.length !== binding.inputArtifactIds.length) throw new CampaignRuntimeError("CAMPAIGN_ARTIFACT_BINDINGS_INVALID");
+  const keyId = `human-session:${input.authContextId}`;
+  const now = input.now ?? new Date();
+  // Admission and quote signing happen before any state transition. A denied or
+  // unquotable request therefore remains an editable draft rather than a
+  // misleading partially-launched campaign.
+  const preview = await runtime.preview({ workspaceId: input.workspaceId, workflowId: binding.workflowId, revisionId: binding.workflowRevisionId, inputs: binding.inputs, principalId: input.userId, inputArtifactIds: artifactIds });
+  const activationRevision = record.state === "validating" ? record.revision : record.revision + 1;
+  let acceptedQuote;
+  try { acceptedQuote = issueCampaignAcceptedQuote({ preview, binding, workspaceId: input.workspaceId, userId: input.userId, keyId, campaignId: record.id, campaignRevision: activationRevision, now, codec: productionWorkflowRunSpendQuoteCodec(), quoteId: stableActivationQuoteId(record.id, activationRevision) }); }
+  catch (error) { throw new CampaignRuntimeError(error instanceof CampaignQuoteError ? error.code : "CAMPAIGN_QUOTE_SIGNING_UNAVAILABLE"); }
   const validating = record.state === "validating" ? record : await updateProductRecord({
     workspaceId: input.workspaceId,
     userId: input.userId,
@@ -108,12 +119,7 @@ export async function activateCampaignCommand(input: {
     idempotencyKey: `${input.idempotencyKey}:validate`,
   });
   if (!validating) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
-  const keyId = `human-session:${input.authContextId}`;
-  const now = input.now ?? new Date();
-  const preview = await runtime.preview({ workspaceId: input.workspaceId, workflowId: binding.workflowId, revisionId: binding.workflowRevisionId, inputs: binding.inputs, principalId: input.userId, inputArtifactIds: artifactIds });
-  let acceptedQuote;
-  try { acceptedQuote = issueCampaignAcceptedQuote({ preview, binding, workspaceId: input.workspaceId, userId: input.userId, keyId, campaignId: record.id, campaignRevision: validating.revision, now, codec: productionWorkflowRunSpendQuoteCodec(), quoteId: stableActivationQuoteId(record.id, validating.revision) }); }
-  catch (error) { throw new CampaignRuntimeError(error instanceof CampaignQuoteError ? error.code : "CAMPAIGN_QUOTE_SIGNING_UNAVAILABLE"); }
+  if (validating.revision !== activationRevision) throw new CampaignRuntimeError("CAMPAIGN_REVISION_CONFLICT");
   const accepted = await runtime.start({
     workspaceId: input.workspaceId,
     workflowId: binding.workflowId,

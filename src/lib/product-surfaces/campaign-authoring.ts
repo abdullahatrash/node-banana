@@ -10,6 +10,7 @@ import {
   contentThemes,
   contentWorkflowRevisions,
   contentWorkflows,
+  creatorPersonas,
   runtimePublishingApprovalAuthorityGrants,
   runtimePublishingApprovalAuthorityRevocations,
   socialAccounts,
@@ -70,28 +71,32 @@ export async function loadCampaignAuthoringOptions(input: {
 }): Promise<CampaignAuthoringOptions> {
   const database = getDb();
   const now = input.now ?? new Date();
-  const [records, assetRows, channelRows, workflowRows, themeRows, brandRows, grantRows] = await Promise.all([
+  const [records, personaRows, assetRows, channelRows, workflowRows, themeRows, brandRows, grantRows] = await Promise.all([
     database.select({ id: workspaceProductRecords.id, kind: workspaceProductRecords.kind, title: workspaceProductRecords.title, state: workspaceProductRecords.state, revision: workspaceProductRecords.revision })
       .from(workspaceProductRecords)
       .where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), isNull(workspaceProductRecords.archivedAt)))
-      .orderBy(desc(workspaceProductRecords.updatedAt)).limit(500),
+      .orderBy(desc(workspaceProductRecords.updatedAt)),
+    database.select({ id: creatorPersonas.id, name: creatorPersonas.name, revision: creatorPersonas.revision })
+      .from(creatorPersonas)
+      .where(and(eq(creatorPersonas.workspaceId, input.workspaceId), eq(creatorPersonas.state, "active"), isNull(creatorPersonas.deletedAt)))
+      .orderBy(desc(creatorPersonas.updatedAt)),
     database.select({ id: assets.id, type: assets.type, checksum: assets.checksum, metadata: assets.metadata })
-      .from(assets).where(and(eq(assets.workspaceId, input.workspaceId), isNull(assets.deletedAt))).orderBy(desc(assets.updatedAt)).limit(500),
+      .from(assets).where(and(eq(assets.workspaceId, input.workspaceId), isNull(assets.deletedAt))).orderBy(desc(assets.updatedAt)),
     database.select({ id: socialAccounts.id, platform: socialAccounts.platform, displayName: socialAccounts.displayName, username: socialAccounts.username })
-      .from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), eq(socialAccounts.disabled, false), eq(socialAccounts.requiresReauth, false))).orderBy(desc(socialAccounts.updatedAt)).limit(250),
+      .from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), eq(socialAccounts.disabled, false), eq(socialAccounts.requiresReauth, false))).orderBy(desc(socialAccounts.updatedAt)),
     database.select({ workflowId: contentWorkflows.id, revisionId: contentWorkflowRevisions.id, revision: contentWorkflowRevisions.revision, definitionDigest: contentWorkflowRevisions.definitionDigest, definition: contentWorkflowRevisions.definition })
       .from(contentWorkflows).innerJoin(contentWorkflowRevisions, and(eq(contentWorkflowRevisions.workspaceId, contentWorkflows.workspaceId), eq(contentWorkflowRevisions.workflowId, contentWorkflows.id), eq(contentWorkflowRevisions.revision, contentWorkflows.currentRevision)))
-      .where(eq(contentWorkflows.workspaceId, input.workspaceId)).orderBy(desc(contentWorkflows.updatedAt)).limit(250),
+      .where(eq(contentWorkflows.workspaceId, input.workspaceId)).orderBy(desc(contentWorkflows.updatedAt)),
     database.select({ themeId: contentThemes.id, title: contentThemes.title, revision: contentThemeRevisions.revision, digest: contentThemeRevisions.documentDigest, licenseExpiresAt: contentThemeRevisions.licenseExpiresAt })
       .from(contentThemes).innerJoin(contentThemeRevisions, and(eq(contentThemeRevisions.workspaceId, contentThemes.workspaceId), eq(contentThemeRevisions.themeId, contentThemes.id), eq(contentThemeRevisions.revision, contentThemes.activeRevision)))
-      .where(and(eq(contentThemes.workspaceId, input.workspaceId), eq(contentThemes.state, "active"), isNull(contentThemes.archivedAt))).orderBy(desc(contentThemes.updatedAt)).limit(250),
+      .where(and(eq(contentThemes.workspaceId, input.workspaceId), eq(contentThemes.state, "active"), isNull(contentThemes.archivedAt))).orderBy(desc(contentThemes.updatedAt)),
     database.select({ id: brandProfiles.id, revision: brandProfiles.revision, profile: brandProfiles.profile })
       .from(brandProfiles).where(and(eq(brandProfiles.workspaceId, input.workspaceId), eq(brandProfiles.status, "active"))).limit(1),
     database.select({ grant: runtimePublishingApprovalAuthorityGrants, revokedId: runtimePublishingApprovalAuthorityRevocations.grantId })
       .from(runtimePublishingApprovalAuthorityGrants)
       .leftJoin(runtimePublishingApprovalAuthorityRevocations, and(eq(runtimePublishingApprovalAuthorityRevocations.workspaceId, runtimePublishingApprovalAuthorityGrants.workspaceId), eq(runtimePublishingApprovalAuthorityRevocations.grantId, runtimePublishingApprovalAuthorityGrants.id)))
       .where(and(eq(runtimePublishingApprovalAuthorityGrants.workspaceId, input.workspaceId), eq(runtimePublishingApprovalAuthorityGrants.userId, input.userId), eq(runtimePublishingApprovalAuthorityGrants.action, "publish"), lte(runtimePublishingApprovalAuthorityGrants.issuedAt, now), isNull(runtimePublishingApprovalAuthorityRevocations.grantId)))
-      .orderBy(desc(runtimePublishingApprovalAuthorityGrants.issuedAt)).limit(250),
+      .orderBy(desc(runtimePublishingApprovalAuthorityGrants.issuedAt)),
   ]);
 
   const labelRecord = (kind: string, states: readonly string[]) => records
@@ -104,9 +109,14 @@ export async function loadCampaignAuthoringOptions(input: {
     const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : null;
     return { id: row.id, label: metadataLabel(metadata, row.id), detail: row.type };
   });
-  const qualifiedModels = configuredCatalog(now === undefined ? undefined : process.env.REPLICATE_MODEL_QUALIFICATIONS_JSON, undefined, now)
-    .filter((model) => model.qualification.status === "qualified")
-    .map((model) => ({ id: `${model.provider}:${model.model}@${model.qualification.status === "qualified" ? model.qualification.version : ""}`, label: model.label, detail: model.capabilities.join(" · ") }));
+  const qualifiedModels = configuredCatalog(undefined, undefined, now).flatMap((model) => {
+    const qualification = model.qualification;
+    return qualification.status === "qualified" ? [{
+      id: `${model.provider}:${model.model}@${qualification.version}#${qualification.inputSchemaDigest}`,
+      label: model.label,
+      detail: `${model.capabilities.join(" · ")} · ${qualification.inputSchemaDigest}`,
+    }] : [];
+  });
   const brand = brandRows[0]
     ? { id: brandRows[0].id, revision: brandRows[0].revision, digest: canonicalDigest(brandRows[0].profile), label: `v${brandRows[0].revision}` }
     : null;
@@ -114,7 +124,7 @@ export async function loadCampaignAuthoringOptions(input: {
   return {
     brand,
     inspirations: labelRecord("inspiration_item", ["active", "saved"]),
-    personas: labelRecord("creator_persona", ["active"]),
+    personas: personaRows.map((row) => ({ id: row.id, label: row.name, detail: `v${row.revision}` })),
     demoAssets: readyAssets,
     mediaSets: labelRecord("media_set", ["active"]),
     themes: themeRows.filter((row) => !row.licenseExpiresAt || row.licenseExpiresAt > now).map((row) => ({ id: `${row.themeId}:${row.revision}`, themeId: row.themeId, revision: row.revision, digest: row.digest, label: row.title, detail: `v${row.revision}` })),
