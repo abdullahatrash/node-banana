@@ -132,6 +132,15 @@ describe("ProductShell", () => {
     );
   });
 
+  it("opens the workspace switcher menu without losing its group context", async () => {
+    const user = userEvent.setup();
+    renderShell();
+
+    await user.click(screen.getByRole("button", { name: /Noura Studio/ }));
+
+    expect(await screen.findByRole("menuitem", { name: /Client Brand/ })).toBeInTheDocument();
+  });
+
   it("does not silently select the first authorized workspace", async () => {
     render(
       <I18nTestProvider locale="en">

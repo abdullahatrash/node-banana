@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
@@ -88,23 +89,25 @@ export function WorkspaceSwitcher({
             <ChevronsUpDownIcon className="ms-auto size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-64" align="start" sideOffset={6}>
-            <DropdownMenuLabel>{t("select")}</DropdownMenuLabel>
-            {workspaces.map((workspace) => (
-              <DropdownMenuItem
-                key={workspace.id}
-                onSelect={() => void selectWorkspace(workspace.id)}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{workspace.name}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t(workspace.role)}
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>{t("select")}</DropdownMenuLabel>
+              {workspaces.map((workspace) => (
+                <DropdownMenuItem
+                  key={workspace.id}
+                  onSelect={() => void selectWorkspace(workspace.id)}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{workspace.name}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {t(workspace.role)}
+                    </span>
                   </span>
-                </span>
-                {workspace.id === activeWorkspace?.id ? (
-                  <CheckIcon className="ms-auto size-4" />
-                ) : null}
-              </DropdownMenuItem>
-            ))}
+                  {workspace.id === activeWorkspace?.id ? (
+                    <CheckIcon className="ms-auto size-4" />
+                  ) : null}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
