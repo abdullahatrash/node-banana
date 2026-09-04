@@ -15,6 +15,7 @@ const {
   mockBuildCdnDownloadUrl,
   mockCreatePresignedDownload,
   mockPutObjectToS3,
+  mockCollectBufferedAssetEvidence,
 } = vi.hoisted(() => ({
   mockAuthorize: vi.fn(),
   mockIsDatabaseConfigured: vi.fn(() => true),
@@ -27,6 +28,7 @@ const {
   mockBuildCdnDownloadUrl: vi.fn(),
   mockCreatePresignedDownload: vi.fn(),
   mockPutObjectToS3: vi.fn(),
+  mockCollectBufferedAssetEvidence: vi.fn(),
 }));
 
 const { MockStudioAssetQuotaExceededError } = vi.hoisted(() => {
@@ -75,6 +77,12 @@ vi.mock("@/lib/social/repository", () => ({
   listSocialAccounts: vi.fn(),
 }));
 
+vi.mock("@/lib/studio/asset-media-evidence", () => ({
+  collectBufferedAssetEvidence: (...args: unknown[]) =>
+    mockCollectBufferedAssetEvidence(...args),
+  collectFileAssetEvidence: vi.fn(),
+}));
+
 import { GET, POST } from "../route";
 
 function createRequest(url: string, headers?: HeadersInit): NextRequest {
@@ -120,6 +128,13 @@ beforeEach(() => {
   });
   mockRecordPending.mockResolvedValue({ id: "asset_new" });
   mockFinalizeAssetUpload.mockResolvedValue({ id: "asset_new" });
+  mockCollectBufferedAssetEvidence.mockResolvedValue({
+    checksum: `sha256:${"b".repeat(64)}`,
+    width: 1080,
+    height: 1920,
+    durationSeconds: null,
+    metadata: { dimensionEvidence: "server-media-probe/v1" },
+  });
 });
 
 describe("/api/v1/assets GET", () => {
@@ -235,6 +250,14 @@ describe("/api/v1/assets POST", () => {
     expect(data.downloadUrl).toBe("https://signed.example/file.png");
     expect(mockRecordPending).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceId: "ws_1", type: "image" }),
+    );
+    expect(mockFinalizeAssetUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uploadState: "ready",
+        checksum: `sha256:${"b".repeat(64)}`,
+        width: 1080,
+        height: 1920,
+      }),
     );
     expect(mockAuthorize).toHaveBeenCalledWith(
       expect.anything(),
