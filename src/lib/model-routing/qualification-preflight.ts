@@ -1,5 +1,6 @@
 import { createPublicKey } from "node:crypto";
 import { z } from "zod";
+import { hasConfiguredSecret, readConfiguredSecret } from "@/lib/configured-secret";
 
 export type QualificationPreflightCheck = {
   id: string;
@@ -20,9 +21,10 @@ function check(id: string, ready: boolean, detail: string): QualificationPreflig
 }
 
 function safeEndpoint(value: string | undefined) {
-  if (!value?.trim()) return false;
+  const configured = readConfiguredSecret(value);
+  if (!configured) return false;
   try {
-    const url = new URL(value);
+    const url = new URL(configured);
     return url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(url.hostname));
   } catch {
     return false;
@@ -45,11 +47,13 @@ export function inspectReplicateQualificationEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
   signingKeyId?: string,
 ) {
-  const qualificationToken = environment.REPLICATE_QUALIFICATION_API_TOKEN?.trim();
+  const qualificationToken = readConfiguredSecret(environment.REPLICATE_QUALIFICATION_API_TOKEN);
+  const legacyToken = readConfiguredSecret(environment.REPLICATE_API_KEY);
+  const managedToken = readConfiguredSecret(environment.REPLICATE_MANAGED_API_TOKEN);
   const tokenIsDedicated = Boolean(
     qualificationToken
-    && qualificationToken !== environment.REPLICATE_API_KEY?.trim()
-    && qualificationToken !== environment.REPLICATE_MANAGED_API_TOKEN?.trim(),
+    && qualificationToken !== legacyToken
+    && qualificationToken !== managedToken,
   );
   const endpointFailures = endpointKeys.filter((key) => !safeEndpoint(environment[key]));
   const spendTrustIsValid = validEd25519KeyMap(environment.QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON);
@@ -64,8 +68,8 @@ export function inspectReplicateQualificationEnvironment(
     ),
     check(
       "harness_token",
-      Boolean(environment.QUALIFICATION_HARNESS_TOKEN?.trim()),
-      environment.QUALIFICATION_HARNESS_TOKEN?.trim()
+      hasConfiguredSecret(environment.QUALIFICATION_HARNESS_TOKEN),
+      hasConfiguredSecret(environment.QUALIFICATION_HARNESS_TOKEN)
         ? "The qualification harness bearer secret is configured."
         : "Set QUALIFICATION_HARNESS_TOKEN for the operator-only harness.",
     ),

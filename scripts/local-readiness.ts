@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import { configuredCatalog } from "@/lib/model-routing/catalog";
 import { buildLocalReadinessReport, type LocalReadinessFacts } from "@/lib/local-readiness";
 import { evaluateXAdsAttributionReadiness, loadXAdsAttributionConfig } from "@/lib/marketing-attribution/config";
+import { hasConfiguredSecret } from "@/lib/configured-secret";
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -72,19 +73,19 @@ async function run() {
       process.env.STORAGE_BACKEND?.trim().toLowerCase() === "s3" &&
       Boolean(process.env.S3_BUCKET_NAME?.trim()) &&
       Boolean(process.env.S3_REGION?.trim()) &&
-      Boolean(process.env.S3_ACCESS_KEY_ID?.trim()) &&
-      Boolean(process.env.S3_SECRET_ACCESS_KEY?.trim()),
+      hasConfiguredSecret(process.env.S3_ACCESS_KEY_ID) &&
+      hasConfiguredSecret(process.env.S3_SECRET_ACCESS_KEY),
     encryptionKeyConfigured: Boolean(encryptionKey),
     encryptionKeyValid: /^[a-fA-F0-9]{64}$/.test(encryptionKey),
     stepUpDeliveryConfigured:
       (process.env.AUTH_EMAIL_DELIVERY?.trim().toLowerCase() === "resend" &&
-        Boolean(process.env.RESEND_API_KEY?.trim()) &&
+        hasConfiguredSecret(process.env.RESEND_API_KEY) &&
         Boolean(process.env.AUTH_FROM_EMAIL?.trim())) ||
       process.env.AUTH_ALLOW_CONSOLE_EMAIL_LINKS === "true",
     qualifiedReplicateModels: configuredCatalog().filter((model) => model.provider === "replicate" && model.qualification.status === "qualified").length,
-    qualificationDedicatedTokenConfigured: Boolean(process.env.REPLICATE_QUALIFICATION_API_TOKEN?.trim()),
+    qualificationDedicatedTokenConfigured: hasConfiguredSecret(process.env.REPLICATE_QUALIFICATION_API_TOKEN),
     qualificationHarnessConfigured: Boolean(
-      process.env.QUALIFICATION_HARNESS_TOKEN?.trim() &&
+      hasConfiguredSecret(process.env.QUALIFICATION_HARNESS_TOKEN) &&
       process.env.QUALIFICATION_WEBHOOK_URL?.trim() &&
       process.env.QUALIFICATION_WEBHOOK_OBSERVER_URL?.trim() &&
       process.env.QUALIFICATION_INGESTION_URL?.trim() &&
@@ -92,17 +93,17 @@ async function run() {
     ),
     qualificationSpendTrustConfigured: Boolean(process.env.QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON?.trim()),
     qualificationSigningTrustConfigured: Boolean(process.env.MODEL_QUALIFICATION_PUBLIC_KEYS_JSON?.trim()),
-    legacyReplicateKeyConfigured: Boolean(process.env.REPLICATE_API_KEY?.trim()),
+    legacyReplicateKeyConfigured: hasConfiguredSecret(process.env.REPLICATE_API_KEY),
     acceptedBrand,
     verifiedReplicateRegion,
     replicateVaultKey,
     replicateVaultKeyValidated,
-    managedReplicateKey: Boolean(process.env.REPLICATE_MANAGED_API_TOKEN?.trim()),
+    managedReplicateKey: hasConfiguredSecret(process.env.REPLICATE_MANAGED_API_TOKEN),
     managedReplicateRevision: Boolean(process.env.REPLICATE_MANAGED_KEY_REVISION?.trim()),
     activePlans,
     activeCreditPacks,
     availableCredits,
-    merchantConfigured: Boolean(process.env.MERCHANT_OF_RECORD_BASE_URL?.trim() && process.env.MERCHANT_OF_RECORD_API_TOKEN?.trim()),
+    merchantConfigured: Boolean(process.env.MERCHANT_OF_RECORD_BASE_URL?.trim() && hasConfiguredSecret(process.env.MERCHANT_OF_RECORD_API_TOKEN)),
     xAdsAttributionAvailable: xAdsReadiness.available,
     xAdsAttributionBlockers: xAdsReadiness.blockers,
   };

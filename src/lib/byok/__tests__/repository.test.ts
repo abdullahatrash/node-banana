@@ -214,6 +214,13 @@ describe("byok/repository", () => {
       await expect(resolveProviderKeyByRef("ws_1", { id: "managed:replicate", provider: "replicate", source: "managed", revision: "vault-revision-7" })).resolves.toBeNull();
     });
 
+    it("does not resolve an example-file placeholder as a managed credential", async () => {
+      const { resolveManagedProviderKey } = await loadRepository();
+      vi.stubEnv("REPLICATE_MANAGED_API_TOKEN", "your_replicate_api_key_here");
+      vi.stubEnv("REPLICATE_MANAGED_KEY_REVISION", "vault-revision-8");
+      expect(resolveManagedProviderKey("replicate")).toBeNull();
+    });
+
     it("returns the exact stored key revision as a non-secret reference", async () => {
       const { resolveDurableProviderKey } = await loadRepository();
       const { encryptProviderKey } = await import("../crypto");

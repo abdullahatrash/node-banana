@@ -35,6 +35,16 @@ describe("Replicate qualification environment preflight", () => {
     expect(JSON.stringify(result)).not.toContain("legacy-secret");
   });
 
+  it("rejects example-file placeholders as credentials", () => {
+    const result = inspectReplicateQualificationEnvironment(readyEnvironment({
+      REPLICATE_QUALIFICATION_API_TOKEN: "your_replicate_api_key_here",
+      QUALIFICATION_HARNESS_TOKEN: "replace_me",
+    }), "operator-key");
+    expect(result.ready).toBe(false);
+    expect(result.checks.find((item) => item.id === "dedicated_token")?.status).toBe("blocked");
+    expect(result.checks.find((item) => item.id === "harness_token")?.status).toBe("blocked");
+  });
+
   it("rejects missing plan signing trust and unsafe public endpoints", () => {
     const result = inspectReplicateQualificationEnvironment(readyEnvironment({
       QUALIFICATION_INGESTION_URL: "http://qualification.example/ingestion",

@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db";
 import { workspaceProviderKeys } from "@/lib/db/schema";
+import { readConfiguredSecret } from "@/lib/configured-secret";
 
 import { decryptProviderKey, encryptProviderKey } from "./crypto";
 import { maskProviderKey } from "./mask";
@@ -227,7 +228,7 @@ export async function resolveProviderKeyByRef(
   if (ref.source === "managed") {
     if (ref.provider !== "replicate" || ref.id !== "managed:replicate") return null;
     const revision = process.env.REPLICATE_MANAGED_KEY_REVISION?.trim();
-    const key = process.env.REPLICATE_MANAGED_API_TOKEN?.trim();
+    const key = readConfiguredSecret(process.env.REPLICATE_MANAGED_API_TOKEN);
     return key && revision && revision === ref.revision ? key : null;
   }
   const [row] = await getDb()
@@ -246,7 +247,7 @@ export async function resolveProviderKeyByRef(
 /** Resolve the platform-managed credential without ever exposing it to a Workspace surface. */
 export function resolveManagedProviderKey(provider: ByokProvider, environment: NodeJS.ProcessEnv = process.env): { key: string; ref: DurableProviderCredentialRef } | null {
   if (provider !== "replicate") return null;
-  const key = environment.REPLICATE_MANAGED_API_TOKEN?.trim();
+  const key = readConfiguredSecret(environment.REPLICATE_MANAGED_API_TOKEN);
   const revision = environment.REPLICATE_MANAGED_KEY_REVISION?.trim();
   if (!key || !revision || revision.length > 200) return null;
   return { key, ref: { id: "managed:replicate", provider, source: "managed", revision } };
