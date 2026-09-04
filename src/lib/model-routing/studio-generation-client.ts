@@ -12,7 +12,11 @@ const executionSchema = z.object({ success: z.literal(true), result: z.object({ 
 const workflowExecutionSchema = z.object({ success: z.literal(true), workflowRun: z.object({ id: z.string(), workflowId: z.string(), workflowRevisionId: z.string(), state: z.literal("accepted") }) }).passthrough();
 const inspectionSchema = z.object({ success: z.literal(true), operation: operationSchema }).passthrough();
 const managedCreditQuoteSchema = z.object({ schema: z.literal("managed-generation-credit-quote/v1"), quoteId: z.string(), intentId: z.string(), totalDebitUnits: z.number().int().positive(), currency: z.literal("USD"), subtotalMinor: z.number().int().nonnegative(), taxMinor: z.number().int().nonnegative(), totalMinor: z.number().int().nonnegative(), expiresAt: z.string().datetime(), pricingSnapshotDigest: z.string(), confirmationDigest: z.string() });
-const errorSchema = z.object({ code: z.string().optional(), nextActions: z.array(z.object({ code: z.string() }).passthrough()).optional(), managedCreditQuote: managedCreditQuoteSchema.optional() }).passthrough();
+const nextActionSchema = z.object({
+  code: z.string(),
+  href: z.string().max(500).regex(/^\/(?!\/)[^\r\n\\]*$/),
+}).passthrough();
+const errorSchema = z.object({ code: z.string().optional(), nextActions: z.array(z.unknown()).optional(), managedCreditQuote: managedCreditQuoteSchema.optional() }).passthrough();
 
 export function classifyContentLanguage(value: string): ContentLanguage {
   let arabic = 0; let latin = 0;
@@ -39,13 +43,34 @@ export interface StudioGenerationRequest {
   confirmManagedCreditQuote?: (quote: ManagedCreditQuote) => Promise<boolean>;
 }
 
-export class StudioGenerationError extends Error { constructor(readonly code: string, readonly nextActionCode: string | null = null) { super(code); } }
+export class StudioGenerationError extends Error {
+  constructor(
+    readonly code: string,
+    readonly nextActionCode: string | null = null,
+    readonly nextActionHref: string | null = null,
+  ) {
+    super(code);
+  }
+}
 
 export function resolveStudioGenerationCapability(input: Pick<StudioGenerationRequest, "capability" | "mode" | "sourceAssetIds" | "sourceMediaType">): GenerationCapability {
   return input.capability ?? (input.mode === "copy" ? "text_generation" : input.mode === "video" ? (input.sourceAssetIds.length ? input.sourceMediaType === "video" ? "video_to_video" : "image_to_video" : "text_to_video") : (input.sourceAssetIds.length ? "image_to_image" : "text_to_image"));
 }
 
-async function errorFrom(response: Response) { const parsed = errorSchema.safeParse(await response.json().catch(() => null)); return new StudioGenerationError(parsed.success ? parsed.data.code ?? "GENERATION_ADMISSION_FAILED" : "GENERATION_ADMISSION_FAILED", parsed.success ? parsed.data.nextActions?.[0]?.code ?? null : null); }
+export function parseStudioGenerationError(value: unknown): StudioGenerationError {
+  const parsed = errorSchema.safeParse(value);
+  const parsedAction = nextActionSchema.safeParse(parsed.success ? parsed.data.nextActions?.[0] : undefined);
+  const action = parsedAction.success ? parsedAction.data : null;
+  return new StudioGenerationError(
+    parsed.success ? parsed.data.code ?? "GENERATION_ADMISSION_FAILED" : "GENERATION_ADMISSION_FAILED",
+    action?.code ?? null,
+    action?.href ?? null,
+  );
+}
+
+async function errorFrom(response: Response) {
+  return parseStudioGenerationError(await response.json().catch(() => null));
+}
 
 export async function runAdmittedStudioGeneration(input: StudioGenerationRequest): Promise<{ result: string; assetId: string | null; textOutputId: string | null; intentId: string; operationId: string }> {
   const workspaceId = getActiveWorkspaceId(); if (!workspaceId) throw new StudioGenerationError("WORKSPACE_REQUIRED");
@@ -104,7 +129,7 @@ export async function runAdmittedStudioGeneration(input: StudioGenerationRequest
       if (!polled.ok) throw await errorFrom(polled); const parsed = inspectionSchema.safeParse(await polled.json()); if (!parsed.success) throw new StudioGenerationError("OPERATION_RESPONSE_INVALID"); operation = parsed.data.operation;
     }
   } finally { input.signal.removeEventListener("abort", abort); }
-  if (!terminalStates.has(operation.state)) throw new StudioGenerationError("GENERATION_PENDING_RECOVERY", "inspect_operations");
+  if (!terminalStates.has(operation.state)) throw new StudioGenerationError("GENERATION_PENDING_RECOVERY", "inspect_operations", "/studio/operations");
   if (operation.state !== "succeeded") throw new StudioGenerationError(operation.state === "outcome_unknown" ? "PROVIDER_OUTCOME_UNKNOWN" : `GENERATION_${operation.state.toUpperCase()}`);
   if (input.mode === "copy") {
     const outputIds = Array.isArray(operation.metadata.textOutputIds) ? operation.metadata.textOutputIds.filter((item): item is string => typeof item === "string") : [];

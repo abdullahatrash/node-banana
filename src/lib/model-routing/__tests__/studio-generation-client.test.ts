@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyContentLanguage, resolveStudioGenerationCapability } from "../studio-generation-client";
+import { classifyContentLanguage, parseStudioGenerationError, resolveStudioGenerationCapability } from "../studio-generation-client";
 import { readFileSync } from "node:fs";
 
 describe("Simple Studio content-language classification", () => {
@@ -20,5 +20,17 @@ describe("Simple Studio content-language classification", () => {
   });
   it("keeps a declared text-to-video Content format when Media Set assets are retained for rights and lineage", () => {
     expect(resolveStudioGenerationCapability({ capability: "text_to_video", mode: "video", sourceAssetIds: ["media_set_asset"], sourceMediaType: null })).toBe("text_to_video");
+  });
+  it("preserves only a safe same-origin recovery action", () => {
+    expect(parseStudioGenerationError({ code: "MODEL_NOT_EXECUTABLE", nextActions: [{ code: "configure_model", href: "/studio/model-routing" }] })).toMatchObject({
+      code: "MODEL_NOT_EXECUTABLE",
+      nextActionCode: "configure_model",
+      nextActionHref: "/studio/model-routing",
+    });
+    expect(parseStudioGenerationError({ code: "MODEL_NOT_EXECUTABLE", nextActions: [{ code: "configure_model", href: "https://malicious.invalid" }] })).toMatchObject({
+      code: "MODEL_NOT_EXECUTABLE",
+      nextActionCode: null,
+      nextActionHref: null,
+    });
   });
 });

@@ -24,6 +24,8 @@ export interface Generation {
   result: string | null;
   assetId: string | null;
   error: string | null;
+  nextActionCode?: string | null;
+  nextActionHref?: string | null;
   mode: SimpleStudioMode;
   aspectRatio: string;
   prompt: string;
@@ -205,17 +207,23 @@ function setGenerations(
 
 type StudioSet = (fn: (state: SimpleStudioState) => Partial<SimpleStudioState>) => void;
 async function executeGenerationEntry(input: { set: StudioSet; state: SimpleStudioState; generation: Generation; mode: SimpleStudioMode; prompt: string; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
-  setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "generating", error: null } : value));
+  setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "generating", error: null, nextActionCode: null, nextActionHref: null } : value));
   try {
     const admitted = await submitAdmittedGeneration({ set: input.set, state: input.state, prompt: input.prompt, mode: input.mode, sourceAssetIds: input.sourceAssetIds, idempotencyKey: input.idempotencyKey, signal: input.signal });
     setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "complete", result: admitted.result, assetId: admitted.assetId } : value));
   } catch (error) {
     if (input.signal.aborted) return;
     if (error instanceof StudioGenerationError && error.code === "GENERATION_PENDING_RECOVERY") {
-      setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "pending", error: error.code } : value));
+      setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "pending", error: error.code, nextActionCode: error.nextActionCode, nextActionHref: error.nextActionHref } : value));
       return;
     }
-    setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "failed", error: error instanceof Error ? error.message : "GENERATION_FAILED" } : value));
+    setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? {
+      ...value,
+      status: "failed",
+      error: error instanceof Error ? error.message : "GENERATION_FAILED",
+      nextActionCode: error instanceof StudioGenerationError ? error.nextActionCode : null,
+      nextActionHref: error instanceof StudioGenerationError ? error.nextActionHref : null,
+    } : value));
   }
 }
 
@@ -346,6 +354,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         result: null,
         assetId: null,
         error: null,
+        nextActionCode: null,
+        nextActionHref: null,
         mode: genMode,
         aspectRatio: state.aspectRatio,
         prompt: finalPrompt,
@@ -364,7 +374,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         sourceAssetIds = await resolveSourceAssetIds(state, genMode, `inspiration-${batchId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Inspiration media could not be stored safely.";
-        setGenerations(set, genMode, (prev) => prev.map((generation) => generation.batchId === batchId ? { ...generation, status: "failed" as const, error: message } : generation));
+        setGenerations(set, genMode, (prev) => prev.map((generation) => generation.batchId === batchId ? { ...generation, status: "failed" as const, error: message, nextActionCode: null, nextActionHref: null } : generation));
         set({ isGenerating: false, currentBatchId: null }); abortController = null; return;
       }
     }
@@ -389,7 +399,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       setGenerations(set, m, (prev) =>
         prev.map((g) =>
           g.status === "pending" || g.status === "generating"
-            ? { ...g, status: "failed" as const, error: "Cancelled" }
+            ? { ...g, status: "failed" as const, error: "Cancelled", nextActionCode: null, nextActionHref: null }
             : g,
         ),
       );
@@ -431,6 +441,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
               result: asset.storageKey as string,
               assetId: asset.id as string,
               error: null,
+              nextActionCode: null,
+              nextActionHref: null,
               mode: (metadata.mode as SimpleStudioMode) || "photo",
               aspectRatio: (metadata.aspectRatio as string) || "1:1",
               prompt: (metadata.prompt as string) || "",

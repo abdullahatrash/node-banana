@@ -1167,5 +1167,41 @@
         "action": "الفوترة"
       }
     }
+  },
+  "generationRecovery": {
+    "errors": {
+      "MODEL_NOT_EXECUTABLE": "لا يملك هذا النموذج اعتماد تشغيل موقّعًا وساريًا.",
+      "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE": "تخزين وسائط مساحة العمل غير متاح.",
+      "MANAGED_REPLICATE_CREDENTIAL_UNAVAILABLE": "تشغيل Replicate المُدار غير معدّ.",
+      "DURABLE_REPLICATE_CREDENTIAL_REQUIRED": "تحتاج مساحة العمل إلى مفتاح Replicate متحقق منه.",
+      "ACCEPTED_BRAND_REVISION_REQUIRED": "اعتمد نسخة من ملف العلامة قبل التوليد.",
+      "VERIFIED_PROCESSING_REGION_REQUIRED": "مسار معالجة Replicate غير مشمول بأدلة منطقة متحققة وسارية.",
+      "GENERATION_PENDING_RECOVERY": "عملية التوليد الدائمة ما زالت قابلة للاستعادة وتحتاج إلى فحص.",
+      "MANAGED_CREDIT_QUOTE_DECLINED": "رُفض عرض الأرصدة المُدارة ولم يُنفق شيء.",
+      "BRAND_REFERENCE_ASSET_NOT_READY": "يتضمن ملف العلامة المعتمد وسائط مرجعية غير جاهزة.",
+      "PERSONA_USAGE_DENIED": "شخصية صانع المحتوى هذه غير معتمدة حاليًا للتوليد.",
+      "PERSONA_MODEL_MISMATCH": "النموذج المحدد لا يطابق النموذج المعتمد لشخصية صانع المحتوى.",
+      "BLITZ_REVISION_STALE": "تغيّر اقتراح Blitz بعد فتحه.",
+      "BLITZ_BRIEF_SNAPSHOT_REQUIRED": "يحتاج الاقتراح إلى موجز مزج جديد يراعي الحقوق والعلامة.",
+      "BLITZ_GENERATION_CONTRACT_MISMATCH": "لم تعد إعدادات التوليد تطابق اقتراح Blitz هذا.",
+      "SOURCE_INVALID": "وسائط المصدر غير جاهزة أو لا تطابق متطلبات التنسيق الدقيقة للنموذج.",
+      "RIGHTS_EVIDENCE_REQUIRED": "أدلة حقوق المصدر مفقودة أو منتهية أو غير متوافقة مع هذا المزج."
+    },
+    "actions": {
+      "configure_model": "إعداد النماذج",
+      "configure_storage": "إعداد التخزين",
+      "inspect_billing": "فتح الفوترة",
+      "configure_provider_key": "إضافة مفتاح Replicate",
+      "accept_brand": "مراجعة العلامة",
+      "configure_region_policy": "مراجعة منطقة البيانات",
+      "inspect_operations": "فحص العمليات",
+      "prepare_source": "مراجعة وسائط المصدر",
+      "refresh_blitz": "تحديث Blitz",
+      "review_brand": "مراجعة العلامة",
+      "review_persona": "مراجعة الشخصية",
+      "review_rights": "مراجعة الحقوق",
+      "select_persona_model": "اختيار نموذج الشخصية",
+      "requeue_inspiration": "إعادة الإلهام إلى قائمة الانتظار"
+    }
   }
 }

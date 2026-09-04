@@ -1167,5 +1167,41 @@
         "action": "Billing"
       }
     }
+  },
+  "generationRecovery": {
+    "errors": {
+      "MODEL_NOT_EXECUTABLE": "This model does not have a current signed execution qualification.",
+      "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE": "Workspace media storage is unavailable.",
+      "MANAGED_REPLICATE_CREDENTIAL_UNAVAILABLE": "Managed Replicate execution is not configured.",
+      "DURABLE_REPLICATE_CREDENTIAL_REQUIRED": "This workspace needs a validated Replicate key.",
+      "ACCEPTED_BRAND_REVISION_REQUIRED": "Accept a Brand Profile revision before generating.",
+      "VERIFIED_PROCESSING_REGION_REQUIRED": "The Replicate processing route is not covered by current verified region evidence.",
+      "GENERATION_PENDING_RECOVERY": "The durable operation is still recoverable and needs inspection.",
+      "MANAGED_CREDIT_QUOTE_DECLINED": "The managed credit quote was declined; nothing was spent.",
+      "BRAND_REFERENCE_ASSET_NOT_READY": "The accepted Brand Profile contains reference media that is not ready.",
+      "PERSONA_USAGE_DENIED": "This Creator Persona is not currently admitted for generation.",
+      "PERSONA_MODEL_MISMATCH": "The selected model does not match the Creator Persona's qualified model.",
+      "BLITZ_REVISION_STALE": "This Blitz proposal changed after it was opened.",
+      "BLITZ_BRIEF_SNAPSHOT_REQUIRED": "This proposal needs a new rights-aware Brand remix brief.",
+      "BLITZ_GENERATION_CONTRACT_MISMATCH": "The generation settings no longer match this Blitz proposal.",
+      "SOURCE_INVALID": "The source media is not ready or does not meet this model's exact format requirements.",
+      "RIGHTS_EVIDENCE_REQUIRED": "The source rights evidence is missing, expired, or incompatible with this remix."
+    },
+    "actions": {
+      "configure_model": "Configure models",
+      "configure_storage": "Configure storage",
+      "inspect_billing": "Open billing",
+      "configure_provider_key": "Add Replicate key",
+      "accept_brand": "Review brand",
+      "configure_region_policy": "Review data region",
+      "inspect_operations": "Inspect operations",
+      "prepare_source": "Review source media",
+      "refresh_blitz": "Refresh Blitz",
+      "review_brand": "Review brand",
+      "review_persona": "Review persona",
+      "review_rights": "Review rights",
+      "select_persona_model": "Select persona model",
+      "requeue_inspiration": "Requeue inspiration"
+    }
   }
 }

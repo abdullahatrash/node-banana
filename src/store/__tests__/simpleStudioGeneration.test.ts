@@ -5,7 +5,7 @@ vi.mock("@/lib/studio/client", () => ({ getActiveWorkspaceId: () => "ws", getStu
 import { useSimpleStudioStore } from "../simpleStudioStore";
 
 describe("Simple Studio admitted media generation", () => {
-  beforeEach(() => { vi.clearAllMocks(); useSimpleStudioStore.setState({ mode: "video", prompt: "إعلان خليجي", rewrittenPrompt: null, rewriteEnabled: false, selectedModelId: "google/veo-3.1-lite", selectedModelProvider: "replicate", selectedModelName: "Veo", selectedModelVersion: "immutable-version-1", selectedModelSchemaDigest: `sha256:${"a".repeat(64)}`, aspectRatio: "9:16", batchCount: 1, sourceImage: null, sourceMediaType: null, videoDuration: 5, dialogueEnabled: false, dialogueLanguage: "ar", arabicVariety: "gulf", rightsBasis: "owned", permittedRemix: "transform", rightsConfirmed: true, isGenerating: false, generationsByMode: { photo: [], video: [], copy: [] }, generations: [] }); });
+  beforeEach(() => { vi.clearAllMocks(); useSimpleStudioStore.setState({ mode: "video", prompt: "إعلان خليجي", rewrittenPrompt: null, rewriteEnabled: false, selectedModelId: "google/veo-3.1-lite", selectedModelProvider: "replicate", selectedModelName: "Veo", selectedModelVersion: "immutable-version-1", selectedModelSchemaDigest: `sha256:${"a".repeat(64)}`, aspectRatio: "9:16", batchCount: 1, sourceImage: null, sourceMediaType: null, videoDuration: 5, dialogueEnabled: false, dialogueLanguage: "ar", arabicVariety: "gulf", fundingMode: "byok", rightsBasis: "owned", permittedRemix: "transform", rightsConfirmed: true, isGenerating: false, generationsByMode: { photo: [], video: [], copy: [] }, generations: [] }); });
   it("pins Workspace, brand-aware model identity, Arabic variety, rights, and 9:16 intent through the admitted endpoint", async () => {
     const fetcher = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
       const payload = String(url) === "/api/studio/generations"
@@ -77,5 +77,21 @@ describe("Simple Studio admitted media generation", () => {
     const body = JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body));
     expect(body).toMatchObject({ capability: "text_generation", sourceAssetIds: [], quantity: 1, contentLanguage: "ar" });
     expect(useSimpleStudioStore.getState().generations[0]).toMatchObject({ status: "complete", assetId: null, result: "إعلان جاهز للنشر" });
+  });
+
+  it("preserves the admitted backend recovery action on a failed generation", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "DURABLE_REPLICATE_CREDENTIAL_REQUIRED",
+      nextActions: [{ code: "configure_provider_key", href: "/settings?section=providers" }],
+    }), { status: 422, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+
+    await useSimpleStudioStore.getState().generate();
+
+    expect(useSimpleStudioStore.getState().generations[0]).toMatchObject({
+      status: "failed",
+      error: "DURABLE_REPLICATE_CREDENTIAL_REQUIRED",
+      nextActionCode: "configure_provider_key",
+      nextActionHref: "/settings?section=providers",
+    });
   });
 });

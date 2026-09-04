@@ -67,7 +67,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
     ? fail(503, "MANAGED_REPLICATE_CREDENTIAL_UNAVAILABLE", [{ code: "inspect_billing", href: "/billing" }])
     : fail(422, "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", [{ code: "configure_provider_key", href: "/settings?section=providers" }]);
   const [brand] = await getDb().select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, context.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
-  if (!brand?.acceptedAt) return fail(422, "ACCEPTED_BRAND_REVISION_REQUIRED", [{ code: "accept_brand", href: "/onboarding/brand-review" }]);
+  if (!brand?.acceptedAt) return fail(422, "ACCEPTED_BRAND_REVISION_REQUIRED", [{ code: "accept_brand", href: "/brand" }]);
   if (input.blitzContext) {
     const [row] = await getDb().select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, context.workspaceId), eq(workspaceProductRecords.id, input.blitzContext.itemId), eq(workspaceProductRecords.kind, "blitz_item"), isNull(workspaceProductRecords.archivedAt))).limit(1);
     if (!row || row.state !== "queued" || row.revision !== input.blitzContext.expectedRevision) return fail(409, "BLITZ_REVISION_STALE", [{ code: "refresh_blitz", href: "/blitz" }]);
@@ -75,7 +75,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
     if (!contract.ok) return fail(422, contract.code, [{ code: contract.code === "BLITZ_BRIEF_SNAPSHOT_REQUIRED" ? "requeue_inspiration" : "refresh_blitz", href: contract.code === "BLITZ_BRIEF_SNAPSHOT_REQUIRED" ? "/inspiration" : "/blitz" }]);
   }
   const brandContext = await loadImmutableBrandContext({ workspaceId: context.workspaceId, profileId: brand.id, revision: brand.revision, acceptedAt: brand.acceptedAt, profile: brand.profile });
-  if (!brandContext) return fail(422, "BRAND_REFERENCE_ASSET_NOT_READY", [{ code: "review_brand", href: "/onboarding/brand-review" }]);
+  if (!brandContext) return fail(422, "BRAND_REFERENCE_ASSET_NOT_READY", [{ code: "review_brand", href: "/brand" }]);
   let sourceAssetIds = [...input.sourceAssetIds];
   let preparedContent: { record: typeof workspaceProductRecords.$inferSelect; payload: ReturnType<typeof contentPieceSchema.parse>; resolved: Awaited<ReturnType<typeof resolveContentFormatDefinitionReference>>; policy: NonNullable<ReturnType<typeof resolveContentModelPolicy>>; resources: Awaited<ReturnType<typeof loadContentExecutionResources>> } | null = null;
   if (input.contentExecution) {
