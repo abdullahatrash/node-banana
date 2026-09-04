@@ -5,10 +5,10 @@ import {
   buildCdnDownloadUrl,
   canUseS3Storage,
   createPresignedDownload,
-  deleteObjectFromS3,
   putObjectToS3,
   streamUploadToS3,
 } from "@/lib/storage";
+import { fetchPublicRemoteFile } from "@/lib/security/remote-file-fetch";
 import {
   getProject,
   finalizeAssetUpload,
@@ -138,97 +138,6 @@ function decodeBase64(content: string): Buffer {
   return bytes;
 }
 
-async function fetchRemoteStream(sourceUrl: string): Promise<{
-  mimeType: string | null;
-  body: ReadableStream<Uint8Array>;
-  contentLength: number | null;
-}> {
-  let parsed: URL;
-  try {
-    parsed = new URL(sourceUrl);
-  } catch {
-    throw new ToolError({
-      code: "invalid_input",
-      message: "sourceUrl must be a valid URL.",
-      fix: "Pass an absolute http(s) URL.",
-    });
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new ToolError({
-      code: "invalid_input",
-      message: "sourceUrl must use http or https.",
-      fix: "Pass an absolute http(s) URL.",
-    });
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-  let response: Response;
-  try {
-    response = await fetch(sourceUrl, { signal: controller.signal });
-  } catch (error) {
-    clearTimeout(timeout);
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new ToolError({
-        code: "invalid_input",
-        message: `sourceUrl fetch timed out after ${FETCH_TIMEOUT_MS}ms.`,
-        fix: "Use a URL that responds quickly, or upload the content directly via base64Content.",
-      });
-    }
-    throw new ToolError({
-      code: "invalid_input",
-      message: `Failed to fetch sourceUrl: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      fix: "Confirm the URL is reachable, or upload the content directly via base64Content.",
-    });
-  }
-
-  if (!response.ok) {
-    clearTimeout(timeout);
-    throw new ToolError({
-      code: "invalid_input",
-      message: `Failed to fetch sourceUrl: HTTP ${response.status}`,
-      fix: "Confirm the URL is publicly reachable and returns a success status.",
-    });
-  }
-
-  const contentLengthHeader = response.headers.get("content-length");
-  let contentLength: number | null = null;
-  if (contentLengthHeader) {
-    const length = Number(contentLengthHeader);
-    if (Number.isFinite(length)) {
-      if (length > MAX_UPLOAD_BYTES) {
-        clearTimeout(timeout);
-        throw new ToolError({
-          code: "invalid_input",
-          message: `Source size exceeds ${MAX_UPLOAD_BYTES} bytes.`,
-          fix: "Upload a smaller file.",
-        });
-      }
-      contentLength = length;
-    }
-  }
-
-  const contentType = response.headers.get("content-type");
-  const mimeType = contentType ? contentType.split(";")[0].trim().toLowerCase() : null;
-
-  if (!response.body) {
-    clearTimeout(timeout);
-    throw new ToolError({
-      code: "invalid_input",
-      message: "sourceUrl response has no body.",
-      fix: "Use a URL that returns file content, or upload via base64Content.",
-    });
-  }
-
-  // Timeout intentionally stays active during stream consumption to bound the
-  // overall fetch, mirroring the ingest route's behaviour.
-  return { mimeType, body: response.body, contentLength };
-}
-
 async function resolveDownloadUrl(
   key: string,
 ): Promise<{ downloadUrl: string; expiresInSeconds: number | null }> {
@@ -349,86 +258,22 @@ export const uploadAssetTool: ToolDefinition<typeof inputSchema, typeof outputSc
         return { assetId: pending.id, downloadUrl, expiresInSeconds };
       }
 
-      const fetched = await fetchRemoteStream(input.sourceUrl!.trim());
-
-      uploadMimeType =
-        input.mimeType?.trim().toLowerCase() ||
-        fetched.mimeType ||
-        pickDefaultMimeType(input.assetType);
-      const sanitizedName = sanitizeFileName(input.fileName);
-      const extension =
-        getExtensionFromFileName(sanitizedName) ||
-        getExtensionForMimeType(uploadMimeType, "bin");
-
-      const key = buildAssetObjectKey({
-        workspaceId,
-        projectId,
-        assetType: input.assetType,
-        fileExtension: extension,
-      });
-
-      const expectedSizeBytes = fetched.contentLength ?? MAX_UPLOAD_BYTES;
-
-      const pending = await recordPendingS3AssetWithQuota({
-        workspaceId,
-        userId,
-        projectId,
-        type: input.assetType,
-        storageBucket: process.env.S3_BUCKET_NAME || null,
-        storageKey: key,
-        mimeType: uploadMimeType,
-        originalFileName: sanitizedName,
-        expectedSizeBytes,
-      });
-      createdAssetId = pending.id;
-
-      const { sizeBytes } = await streamUploadToS3({
-        key,
-        body: fetched.body,
-        contentType: uploadMimeType,
-        contentLength: fetched.contentLength ?? undefined,
-      });
-
-      if (sizeBytes === 0) {
-        await deleteObjectFromS3({ key }).catch(() => {});
-        await finalizeAssetUpload({
-          workspaceId,
-          assetId: pending.id,
-          uploadState: "failed",
-          error: "Source content is empty.",
-        });
-        throw new ToolError({
-          code: "invalid_input",
-          message: "Source content is empty.",
-          fix: "Use a sourceUrl that returns non-empty content.",
-        });
+      const fetched = await fetchPublicRemoteFile({ sourceUrl: input.sourceUrl!.trim(), maximumBytes: MAX_UPLOAD_BYTES, timeoutMs: FETCH_TIMEOUT_MS });
+      try {
+        uploadMimeType = input.mimeType?.trim().toLowerCase() || fetched.mimeType || pickDefaultMimeType(input.assetType);
+        const sanitizedName = sanitizeFileName(input.fileName);
+        const extension = getExtensionFromFileName(sanitizedName) || getExtensionForMimeType(uploadMimeType, "bin");
+        const key = buildAssetObjectKey({ workspaceId, projectId, assetType: input.assetType, fileExtension: extension });
+        const pending = await recordPendingS3AssetWithQuota({ workspaceId, userId, projectId, type: input.assetType, storageBucket: process.env.S3_BUCKET_NAME || null, storageKey: key, mimeType: uploadMimeType, originalFileName: sanitizedName, expectedSizeBytes: fetched.sizeBytes });
+        createdAssetId = pending.id;
+        const { sizeBytes } = await streamUploadToS3({ key, body: fetched.createReadStream(), contentType: uploadMimeType, contentLength: fetched.sizeBytes });
+        if (sizeBytes !== fetched.sizeBytes) throw new Error("Remote asset upload size mismatch.");
+        await finalizeAssetUpload({ workspaceId, assetId: pending.id, uploadState: "ready", sizeBytes, mimeType: uploadMimeType });
+        const { downloadUrl, expiresInSeconds } = await resolveDownloadUrl(key);
+        return { assetId: pending.id, downloadUrl, expiresInSeconds };
+      } finally {
+        await fetched.cleanup();
       }
-
-      if (sizeBytes > MAX_UPLOAD_BYTES) {
-        await deleteObjectFromS3({ key }).catch(() => {});
-        await finalizeAssetUpload({
-          workspaceId,
-          assetId: pending.id,
-          uploadState: "failed",
-          error: `Source size exceeds ${MAX_UPLOAD_BYTES} bytes.`,
-        });
-        throw new ToolError({
-          code: "invalid_input",
-          message: `Source size exceeds ${MAX_UPLOAD_BYTES} bytes.`,
-          fix: "Use a smaller source file.",
-        });
-      }
-
-      await finalizeAssetUpload({
-        workspaceId,
-        assetId: pending.id,
-        uploadState: "ready",
-        sizeBytes,
-        mimeType: uploadMimeType,
-      });
-
-      const { downloadUrl, expiresInSeconds } = await resolveDownloadUrl(key);
-      return { assetId: pending.id, downloadUrl, expiresInSeconds };
     } catch (error) {
       if (error instanceof StudioAssetQuotaExceededError) {
         throw new ToolError({
