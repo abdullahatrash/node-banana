@@ -49,4 +49,33 @@ describe("Simple Studio admitted media generation", () => {
     expect(fetcher.mock.calls.some(([url]) => String(url).includes("/api/studio/operations/operation-3"))).toBe(true);
     expect(fetcher.mock.calls.some(([url]) => String(url).includes("/execute"))).toBe(false);
   });
+
+  it("runs copy through text admission and resolves the canonical output receipt", async () => {
+    useSimpleStudioStore.setState({
+      mode: "copy",
+      prompt: "اكتب إعلاناً قصيراً",
+      selectedModelId: "meta/meta-llama-3-8b-instruct",
+      selectedModelProvider: "replicate",
+      selectedModelName: "Llama 3 8B Instruct",
+      selectedModelVersion: "immutable-text-version",
+      selectedModelSchemaDigest: `sha256:${"b".repeat(64)}`,
+      tone: "friendly",
+      platform: "instagram",
+      outputLanguage: "ar",
+    });
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(url);
+      if (path === "/api/studio/generations") return { ok: true, json: async () => ({ success: true, intentId: "intent-copy", operation: { id: "operation-copy", state: "admitted", revision: 2, metadata: {} } }) } as Response;
+      if (path.includes("/execute")) return { ok: true, json: async () => ({ success: true, result: { kind: "accepted", operation: { id: "operation-copy", state: "succeeded", revision: 4, metadata: { textOutputIds: ["text-output-1"] } }, provider: { state: "succeeded", textOutputIds: ["text-output-1"] } } }) } as Response;
+      if (path === "/api/studio/copy/outputs/text-output-1") return { ok: true, json: async () => ({ success: true, output: { content: "إعلان جاهز للنشر" } }) } as Response;
+      throw new Error(`unexpected fetch: ${path} ${init?.method ?? "GET"}`);
+    });
+    global.fetch = fetcher as unknown as typeof fetch;
+
+    await useSimpleStudioStore.getState().generate();
+
+    const body = JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body).toMatchObject({ capability: "text_generation", sourceAssetIds: [], quantity: 1, contentLanguage: "ar" });
+    expect(useSimpleStudioStore.getState().generations[0]).toMatchObject({ status: "complete", assetId: null, result: "إعلان جاهز للنشر" });
+  });
 });

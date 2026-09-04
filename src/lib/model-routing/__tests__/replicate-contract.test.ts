@@ -35,7 +35,20 @@ describe("ReplicatePredictionAdapter mocked contract", () => {
     );
     const result = await adapter.submit(intent, { prompt: "not persisted here" });
     expect(order).toEqual(["persist", "ingest"]);
-    expect(result).toEqual({ state: "succeeded", predictionId: "pred", artifactIds: ["artifact"] });
+    expect(result).toEqual({ state: "succeeded", predictionId: "pred", artifactIds: ["artifact"], textOutputIds: [] });
+  });
+
+  it("writes text output through an exactly-once canonical receipt seam", async () => {
+    const textIndex = 9;
+    const textIntent: GenerationIntent = { ...intent, capability: "text_generation", selectedModel: testRef(textIndex), requestedModel: testRef(textIndex), qualification: testQualification(textIndex), outputContract: testOutputContract(textIndex, 1), quote: { ...intent.quote, basis: "run", quantity: 1 } };
+    const artifacts = { ingest: vi.fn() }; const textOutputs = { ingest: vi.fn(async () => ({ textOutputIds: ["text_123"] })) };
+    const adapter = new ReplicatePredictionAdapter(
+      { create: vi.fn(async () => ({ id: "pred-text", status: "succeeded" as const, version: textIntent.selectedModel.version, output: ["مرحبا", " بالعالم"] })), get: vi.fn(), cancel: vi.fn() },
+      effectClaims(), artifacts, TEST_CREDENTIAL_REF, undefined, resolveTestModel, textOutputs,
+    );
+    await expect(adapter.submit(textIntent, {})).resolves.toEqual({ state: "succeeded", predictionId: "pred-text", artifactIds: [], textOutputIds: ["text_123"] });
+    expect(textOutputs.ingest).toHaveBeenCalledWith(expect.objectContaining({ providerPredictionId: "pred-text", output: ["مرحبا", " بالعالم"] }));
+    expect(artifacts.ingest).not.toHaveBeenCalled();
   });
 
   it("maps aborted to cancelled and transport loss to outcome_unknown without retry", async () => {

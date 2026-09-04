@@ -29,7 +29,13 @@ describe("CopyForm", () => {
       batchCount: 1,
       isGenerating: false,
       outputLanguage: "en",
+      selectedModelId: "qualified-copy-model",
+      selectedModelProvider: "replicate",
+      selectedModelVersion: "immutable-version",
+      selectedModelSchemaDigest: `sha256:${"a".repeat(64)}`,
+      rightsConfirmed: true,
     });
+    global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
   });
 
   it("renders a prompt textarea", () => {
@@ -48,13 +54,12 @@ describe("CopyForm", () => {
     expect(screen.getByRole("button", { name: /generate/i })).toBeInTheDocument();
   });
 
-  it("keeps generation disabled while text adapters are unadmitted", async () => {
+  it("submits Copy through the admitted generation action", async () => {
     const generateSpy = vi.fn().mockResolvedValue(undefined);
     useSimpleStudioStore.setState({ prompt: "Ad copy", generate: generateSpy });
     render(<CopyForm />);
     await userEvent.click(screen.getByRole("button", { name: /generate/i }));
-    expect(generateSpy).not.toHaveBeenCalled();
-    expect(screen.getByRole("status")).toHaveTextContent(/paused/i);
+    expect(generateSpy).toHaveBeenCalledOnce();
   });
 
   it("Generate is disabled with empty prompt", () => {

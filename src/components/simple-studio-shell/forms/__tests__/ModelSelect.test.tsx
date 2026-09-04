@@ -14,7 +14,15 @@ describe("ModelSelect capability admission", () => {
     global.fetch = vi.fn().mockResolvedValue({ json: async () => ({ success: true, items: [
       { model: "text-model", label: "Text", provider: "replicate", capabilities: ["text_to_image"], qualification },
       { model: "edit-model", label: "Edit", provider: "replicate", capabilities: ["image_to_image"], qualification },
+      { model: "copy-model", label: "Copy", provider: "replicate", capabilities: ["text_generation"], qualification: { ...qualification, executionPriceUsd: { basis: "run", amount: 0.02 } } },
     ] }) }) as unknown as typeof fetch;
+  });
+
+  it("only exposes qualified text-generation models in Copy", async () => {
+    render(<ModelSelect mode="copy" id="model" />);
+    await waitFor(() => expect(screen.getByRole("option", { name: /Copy/ })).toBeInTheDocument());
+    expect(screen.queryByRole("option", { name: /Text/ })).not.toBeInTheDocument();
+    expect(useSimpleStudioStore.getState().selectedModelId).toBe("copy-model");
   });
 
   it("switches to an image-to-image-qualified model when references are present", async () => {

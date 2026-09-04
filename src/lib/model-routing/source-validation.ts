@@ -18,7 +18,7 @@ export type SourceValidationResult = { ok: true } | { ok: false; code: "SOURCE_A
 export function validateGenerationSources(capability: GenerationCapability, expectedIds: string[], sources: CanonicalGenerationSource[], imageMode: "single" | "array" = "single"): SourceValidationResult {
   if (new Set(expectedIds).size !== expectedIds.length) return { ok: false, code: "SOURCE_ASSET_DUPLICATE" };
   if (sources.length !== expectedIds.length || sources.some((source) => source.metadata?.uploadState !== "ready" || !source.storageKey || !/^sha256:[a-f0-9]{64}$/.test(source.checksum ?? ""))) return { ok: false, code: "SOURCE_ASSET_NOT_READY" };
-  if (capability === "text_to_image" || capability === "text_to_video") return expectedIds.length === 0 ? { ok: true } : { ok: false, code: "SOURCE_CARDINALITY_INVALID" };
+  if (capability === "text_generation" || capability === "text_to_image" || capability === "text_to_video") return expectedIds.length === 0 ? { ok: true } : { ok: false, code: "SOURCE_CARDINALITY_INVALID" };
   if (capability === "image_to_image" && (expectedIds.length < 1 || (imageMode === "single" && expectedIds.length !== 1))) return { ok: false, code: "SOURCE_CARDINALITY_INVALID" };
   if ((capability === "image_to_video" || capability === "video_to_video") && expectedIds.length !== 1) return { ok: false, code: "SOURCE_CARDINALITY_INVALID" };
   const expectedType = capability === "video_to_video" ? "video" : "image";

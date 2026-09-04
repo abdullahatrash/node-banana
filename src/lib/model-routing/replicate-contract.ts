@@ -11,11 +11,12 @@ export interface ProviderEffectClaimPort {
   markOutcomeUnknown(input: { workspaceId: string; intentId: string; claimToken: string; at: Date }): Promise<void>;
 }
 export interface CanonicalArtifactIngestionPort { ingest(input: { workspaceId: string; intent: GenerationIntent; providerPredictionId: string; output: unknown }): Promise<{ artifactIds: string[] }>; }
-export type ReplicateExecutionResult = { state: "waiting_provider"; predictionId: string | null; code?: string } | { state: "succeeded"; predictionId: string; artifactIds: string[] } | { state: "cancelled"; predictionId: string } | { state: "failed_known"; predictionId: string | null; code: string } | { state: "outcome_unknown"; predictionId: string | null; code: string };
+export interface CanonicalTextOutputIngestionPort { ingest(input: { workspaceId: string; intent: GenerationIntent; providerPredictionId: string; output: unknown }): Promise<{ textOutputIds: string[] }>; }
+export type ReplicateExecutionResult = { state: "waiting_provider"; predictionId: string | null; code?: string } | { state: "succeeded"; predictionId: string; artifactIds: string[]; textOutputIds: string[] } | { state: "cancelled"; predictionId: string } | { state: "failed_known"; predictionId: string | null; code: string } | { state: "outcome_unknown"; predictionId: string | null; code: string };
 
 /** A single-attempt contract. Scheduling/poll cadence belongs to the durable worker; this adapter never retries or selects a fallback. */
 export class ReplicatePredictionAdapter {
-  constructor(private readonly client: ReplicateClientPort, private readonly effects: ProviderEffectClaimPort, private readonly artifacts: CanonicalArtifactIngestionPort, private readonly credentialRef: DurableProviderCredentialRef, private readonly now = () => new Date(), private readonly resolveModel: (ref: ExactModelRef) => ModelDescriptor | null = findCuratedModel) {}
+  constructor(private readonly client: ReplicateClientPort, private readonly effects: ProviderEffectClaimPort, private readonly artifacts: CanonicalArtifactIngestionPort, private readonly credentialRef: DurableProviderCredentialRef, private readonly now = () => new Date(), private readonly resolveModel: (ref: ExactModelRef) => ModelDescriptor | null = findCuratedModel, private readonly textOutputs?: CanonicalTextOutputIngestionPort) {}
   async submit(intent: GenerationIntent, providerInput: Record<string, unknown>): Promise<ReplicateExecutionResult> {
     if (intent.selectedModel.provider !== "replicate") return { state: "failed_known", predictionId: null, code: "PROVIDER_MISMATCH" };
     const descriptor = this.resolveModel(intent.selectedModel);
@@ -49,7 +50,14 @@ export class ReplicatePredictionAdapter {
     if (value.status === "starting" || value.status === "processing") return { state: "waiting_provider", predictionId: value.id };
     if (value.status === "canceled" || value.status === "aborted") return { state: "cancelled", predictionId: value.id };
     if (value.status === "failed") return { state: "failed_known", predictionId: value.id, code: "REPLICATE_FAILED" };
-    try { const result = await this.artifacts.ingest({ workspaceId: intent.workspaceId, intent, providerPredictionId: value.id, output: value.output }); return { state: "succeeded", predictionId: value.id, artifactIds: result.artifactIds }; }
+    try {
+      if (intent.outputContract.mediaType === "text") {
+        if (!this.textOutputs) return { state: "failed_known", predictionId: value.id, code: "TEXT_OUTPUT_INGESTION_UNAVAILABLE" };
+        const result = await this.textOutputs.ingest({ workspaceId: intent.workspaceId, intent, providerPredictionId: value.id, output: value.output });
+        return { state: "succeeded", predictionId: value.id, artifactIds: [], textOutputIds: result.textOutputIds };
+      }
+      const result = await this.artifacts.ingest({ workspaceId: intent.workspaceId, intent, providerPredictionId: value.id, output: value.output }); return { state: "succeeded", predictionId: value.id, artifactIds: result.artifactIds, textOutputIds: [] };
+    }
     catch (error) { return error && typeof error === "object" && "code" in error && error.code === "ARTIFACT_INGESTION_BUSY" ? { state: "waiting_provider", predictionId: value.id, code: "ARTIFACT_INGESTION_IN_PROGRESS" } : { state: "failed_known", predictionId: value.id, code: "ARTIFACT_INGESTION_FAILED" }; }
   }
 }

@@ -46,14 +46,15 @@ export class GenerationExecutionService {
       if (!compatible.authorized) return { kind: "invalid", code: `FALLBACK_AUTHORIZATION_${compatible.reasons.join("_").toUpperCase()}` };
     }
     const contract = descriptor.qualification.inputContract;
-    if (intent.outputContract.aspectRatio !== "9:16" || intent.outputContract.width !== descriptor.qualification.outputShape.width || intent.outputContract.height !== descriptor.qualification.outputShape.height || intent.outputContract.fps !== descriptor.qualification.outputShape.fps || intent.outputContract.durationSeconds !== (intent.outputContract.mediaType === "video" ? intent.quote.quantity : null) || intent.outputContract.safetyParameterKey !== contract.safety.parameterKey || intent.outputContract.safetyValue !== contract.safety.safeValue || intent.outputContract.lockedParametersDigest !== canonicalDigest(contract.lockedParameters)) return { kind: "invalid", code: "OUTPUT_CONTRACT_MISMATCH" };
+    const expectedAspectRatio = intent.outputContract.mediaType === "text" ? null : "9:16";
+    if (intent.outputContract.aspectRatio !== expectedAspectRatio || intent.outputContract.width !== descriptor.qualification.outputShape.width || intent.outputContract.height !== descriptor.qualification.outputShape.height || intent.outputContract.fps !== descriptor.qualification.outputShape.fps || intent.outputContract.durationSeconds !== (intent.outputContract.mediaType === "video" ? intent.quote.quantity : null) || intent.outputContract.safetyParameterKey !== (contract.safety?.parameterKey ?? null) || intent.outputContract.safetyValue !== (contract.safety?.safeValue ?? null) || intent.outputContract.lockedParametersDigest !== canonicalDigest(contract.lockedParameters)) return { kind: "invalid", code: "OUTPUT_CONTRACT_MISMATCH" };
     if (input.sourceUrls.length && !contract.imageKey) return { kind: "invalid", code: "MODEL_IMAGE_INPUT_UNSUPPORTED" };
     const providerInput: Record<string, unknown> = {
       ...structuredClone(contract.lockedParameters),
       [contract.promptKey]: input.rawPrompt,
       [contract.brandContextKey]: JSON.stringify({ ...intent.brand.context, referenceAssets: intent.brand.context.referenceAssets.map((reference, index) => ({ ...reference, url: input.brandReferenceUrls[index]!.url })) }),
-      [contract.aspectRatioKey]: "9:16",
     };
+    if (contract.aspectRatioKey) providerInput[contract.aspectRatioKey] = "9:16";
     if (contract.quantityKey) providerInput[contract.quantityKey] = intent.quote.quantity;
     if (contract.imageKey && input.sourceUrls.length) providerInput[contract.imageKey] = contract.imageMode === "array" ? input.sourceUrls : input.sourceUrls[0];
 
@@ -77,7 +78,7 @@ export class GenerationExecutionService {
   private async projectProvider(operation: OperationRecord, provider: ReplicateExecutionResult, actor: { type: "human"; userId: string }, key: string) {
     const metadata = { predictionId: provider.predictionId, providerCode: "code" in provider ? provider.code ?? null : null, providerState: provider.state, nextAction: provider.state === "waiting_provider" ? "poll_provider" : provider.state === "outcome_unknown" ? "reconcile_provider" : "none" };
     if (provider.state === "waiting_provider") return this.transition(operation, "waiting_provider", null, actor, `${key}:waiting`, "generation.waiting_provider", metadata);
-    if (provider.state === "succeeded") return this.transition(operation, "succeeded", null, actor, `${key}:succeeded`, "generation.succeeded", { ...metadata, artifactIds: provider.artifactIds, artifactCount: provider.artifactIds.length });
+    if (provider.state === "succeeded") return this.transition(operation, "succeeded", null, actor, `${key}:succeeded`, "generation.succeeded", { ...metadata, artifactIds: provider.artifactIds, artifactCount: provider.artifactIds.length, textOutputIds: provider.textOutputIds, textOutputCount: provider.textOutputIds.length });
     if (provider.state === "failed_known") return this.transition(operation, "failed_known", null, actor, `${key}:failed`, "generation.failed_known", metadata);
     if (provider.state === "outcome_unknown") return this.transition(operation, "outcome_unknown", null, actor, `${key}:unknown`, "generation.outcome_unknown", metadata);
     const cancelling = await this.transition(operation, "cancelling", null, actor, `${key}:cancelling`, "generation.provider_reported_cancelled", metadata);

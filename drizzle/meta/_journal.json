@@ -610,6 +610,13 @@
       "when": 1788558000000,
       "tag": "0086_workspace_product_surfaces",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1788561600000,
+      "tag": "0087_model_text_output_receipts",
+      "breakpoints": true
     }
   ]
 }

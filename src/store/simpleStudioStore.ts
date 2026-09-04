@@ -124,10 +124,14 @@ let abortController: AbortController | null = null;
 
 const CONCURRENT_LIMIT = 4;
 
-async function submitAdmittedGeneration(input: { state: SimpleStudioState; prompt: string; mode: "photo" | "video"; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
+async function submitAdmittedGeneration(input: { state: SimpleStudioState; prompt: string; mode: SimpleStudioMode; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
   if (!input.state.selectedModelId || input.state.selectedModelProvider !== "replicate" || !input.state.selectedModelVersion || !input.state.selectedModelSchemaDigest) throw new Error("MODEL_NOT_SELECTED");
   if (!input.state.rightsConfirmed) throw new Error("RIGHTS_CONFIRMATION_REQUIRED");
-  return runAdmittedStudioGeneration({ prompt: input.prompt, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : ["composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal });
+  const prompt = input.mode === "copy" ? `${input.prompt}\n\nTone: ${input.state.tone}. Platform: ${input.state.platform}. Output language: ${input.state.outputLanguage}.` : input.prompt;
+  const contentLanguage = input.mode === "copy"
+    ? input.state.outputLanguage === "both" ? "mixed" : input.state.outputLanguage
+    : undefined;
+  return runAdmittedStudioGeneration({ prompt, contentLanguage, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : [input.mode === "copy" ? "wording for the selected channel" : "composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal });
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +187,6 @@ type StudioSet = (fn: (state: SimpleStudioState) => Partial<SimpleStudioState>) 
 async function executeGenerationEntry(input: { set: StudioSet; state: SimpleStudioState; generation: Generation; mode: SimpleStudioMode; prompt: string; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
   setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "generating", error: null } : value));
   try {
-    if (input.mode === "copy") throw new Error("TEXT_GENERATION_NOT_ADMITTED");
     const admitted = await submitAdmittedGeneration({ state: input.state, prompt: input.prompt, mode: input.mode, sourceAssetIds: input.sourceAssetIds, idempotencyKey: input.idempotencyKey, signal: input.signal });
     setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "complete", result: admitted.result, assetId: admitted.assetId } : value));
   } catch (error) {

@@ -25,10 +25,10 @@ export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>(
   let raw: unknown = null; try { raw = await request.json(); } catch { /* invalid below */ }
   const parsed = bodySchema.safeParse(raw);
   if (!intentId || !key || key.length < 8 || request.headers.get("x-workspace-id") !== authz.workspaceId || !parsed.success) return noStoreJson({ success: false, code: "INVALID_INPUT" }, { status: 400 });
-  if (!canUseS3Storage()) return noStoreJson({ success: false, code: "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE" }, { status: 503 });
   const routing = new PostgresModelRoutingRepository(getDb);
   const intent = await routing.getIntent(authz.workspaceId, intentId);
   if (!intent) return noStoreJson({ success: false, code: "GENERATION_INTENT_NOT_FOUND" }, { status: 404 });
+  if (intent.outputContract.mediaType !== "text" && !canUseS3Storage()) return noStoreJson({ success: false, code: "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE" }, { status: 503 });
   const releaseFlagId = process.env.ADMITTED_GENERATION_RELEASE_FLAG_ID?.trim();
   if (!releaseFlagId && process.env.NODE_ENV === "production") return noStoreJson({ success: false, code: "GENERATION_RELEASE_FLAG_UNCONFIGURED" }, { status: 503 });
   if (releaseFlagId) {

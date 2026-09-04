@@ -31,7 +31,7 @@ const rightsId = (workspaceId: string, key: string) => `rights_${createHash("sha
 export async function admitStudioGeneration(context: { workspaceId: string; userId: string; role: string; planTier: string; idempotencyKey: string; input: AdmittedGenerationInput }): Promise<AdmittedGenerationResult> {
   const { input } = context; const model = findCuratedModel(input.model, configuredCatalog());
   if (!model || model.qualification.status !== "qualified") return fail(422, "MODEL_NOT_EXECUTABLE", [{ code: "configure_model", href: "/studio/model-routing" }]);
-  if (!canUseS3Storage()) return fail(503, "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE", [{ code: "configure_storage", href: "/studio/settings/storage" }]);
+  if (input.capability !== "text_generation" && !canUseS3Storage()) return fail(503, "CANONICAL_ARTIFACT_STORAGE_UNAVAILABLE", [{ code: "configure_storage", href: "/studio/settings/storage" }]);
   const releaseFlagId = process.env.ADMITTED_GENERATION_RELEASE_FLAG_ID?.trim();
   if (!releaseFlagId && process.env.NODE_ENV === "production") return fail(503, "GENERATION_RELEASE_FLAG_UNCONFIGURED");
   if (releaseFlagId) {

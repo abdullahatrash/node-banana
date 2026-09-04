@@ -1,4 +1,4 @@
-export type GenerationCapability = "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "video_to_video";
+export type GenerationCapability = "text_generation" | "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "video_to_video";
 export type GenerationQuality = "preview" | "standard" | "premium";
 export type ExecutionMode = "sync" | "async";
 export type ContentLanguage = "ar" | "en" | "mixed";
@@ -33,7 +33,7 @@ export interface ImmutableBrandContext {
 }
 export type ModelExecutionQualification =
   | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
-  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number; height: number; fps: number | null }; inputContract: { promptKey: string; brandContextKey: string; aspectRatioKey: string; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean }; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
+  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number | null; height: number | null; fps: number | null }; inputContract: { promptKey: string; brandContextKey: string; aspectRatioKey: string | null; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean } | null; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
 export interface ModelDescriptor {
   provider: ExactModelRef["provider"]; model: string; label: string;
   capabilities: readonly GenerationCapability[]; quality: GenerationQuality;
@@ -59,7 +59,7 @@ export interface GenerationIntent {
   remixBrief: { digest: `sha256:${string}`; preserve: string[]; transform: string[]; avoid: string[] };
   qualification: { id: string; revision: number; digest: `sha256:${string}`; expiresAt: Date };
   regionAdmission: { policyId: string; policyVersion: number; evidenceDigest: `sha256:${string}`; region: string; routeId: string; evidenceExpiresAt: Date };
-  outputContract: { mediaType: "image" | "video"; aspectRatio: "9:16"; width: number; height: number; durationSeconds: number | null; fps: number | null; safetyParameterKey: string; safetyValue: string | number | boolean; lockedParametersDigest: `sha256:${string}` };
+  outputContract: { mediaType: "text" | "image" | "video"; aspectRatio: "9:16" | null; width: number | null; height: number | null; durationSeconds: number | null; fps: number | null; safetyParameterKey: string | null; safetyValue: string | number | boolean | null; lockedParametersDigest: `sha256:${string}` };
   requestedModel: ExactModelRef; selectedModel: ExactModelRef; fallbackAuthorizationId: string | null;
   quote: CostQuote; reservationIds: string[]; createdByUserId: string; createdAt: Date;
 }

@@ -14,7 +14,7 @@ interface ProviderModel {
 }
 
 interface ModelSelectProps {
-  mode: "photo" | "video";
+  mode: "photo" | "video" | "copy";
   id: string;
 }
 
@@ -46,7 +46,7 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
         if (data.success) {
           const seen = new Set<string>();
           const unique = (data.items || []).filter((m: ProviderModel) => {
-            const requiredCapability = mode === "video"
+            const requiredCapability = mode === "copy" ? "text_generation" : mode === "video"
               ? sourceMediaType === "video" ? "video_to_video" : sourceMediaType === "image" ? "image_to_video" : "text_to_video"
               : referenceImageCount > 0 ? "image_to_image" : "text_to_image";
             const supported = m.capabilities?.includes(requiredCapability);

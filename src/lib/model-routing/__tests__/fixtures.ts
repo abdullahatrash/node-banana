@@ -38,14 +38,14 @@ export const testOutputContract = (index: number, quantity = 8) => {
   const model = QUALIFIED_TEST_MODELS[index];
   if (!model || model.qualification.status !== "qualified") throw new Error(`Test model ${index} is not qualified`);
   return {
-    mediaType: model.capabilities.some((capability) => capability.endsWith("video")) ? "video" as const : "image" as const,
-    aspectRatio: "9:16" as const,
+    mediaType: model.capabilities.includes("text_generation") ? "text" as const : model.capabilities.some((capability) => capability.endsWith("video")) ? "video" as const : "image" as const,
+    aspectRatio: model.capabilities.includes("text_generation") ? null : "9:16" as const,
     width: model.qualification.outputShape.width,
     height: model.qualification.outputShape.height,
     durationSeconds: model.capabilities.some((capability) => capability.endsWith("video")) ? quantity : null,
     fps: model.qualification.outputShape.fps,
-    safetyParameterKey: model.qualification.inputContract.safety.parameterKey,
-    safetyValue: model.qualification.inputContract.safety.safeValue,
+    safetyParameterKey: model.qualification.inputContract.safety?.parameterKey ?? null,
+    safetyValue: model.qualification.inputContract.safety?.safeValue ?? null,
     lockedParametersDigest: canonicalDigest(model.qualification.inputContract.lockedParameters) as `sha256:${string}`,
   };
 };

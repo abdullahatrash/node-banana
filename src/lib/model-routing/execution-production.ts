@@ -8,6 +8,7 @@ import { S3CanonicalArtifactIngestion } from "./artifact-ingestion";
 import { GenerationExecutionService } from "./execution";
 import type { DurableProviderCredentialRef } from "@/lib/byok/repository";
 import { PRODUCTION_GENERATION_REGIONS } from "./production";
+import { PostgresCanonicalTextOutputIngestion } from "./text-output-receipts";
 
 export function productionGenerationExecution(credential: { key: string; ref: DurableProviderCredentialRef }) {
   const routing = new PostgresModelRoutingRepository(getDb);
@@ -16,6 +17,9 @@ export function productionGenerationExecution(credential: { key: string; ref: Du
     new PostgresProviderEffectClaims(getDb),
     new S3CanonicalArtifactIngestion(),
     credential.ref,
+    undefined,
+    undefined,
+    new PostgresCanonicalTextOutputIngestion(getDb),
   );
   return new GenerationExecutionService(routing, PRODUCTION_OPERATION_STATUS, adapter, undefined, undefined, PRODUCTION_GENERATION_REGIONS);
 }

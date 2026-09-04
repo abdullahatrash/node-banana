@@ -94,6 +94,18 @@ export const modelArtifactIngestionReceipts = pgTable("model_artifact_ingestion_
   valueCheck: check("model_artifact_ingestion_receipts_value_check", sql`${table.outputIndex} >= 0 and ${table.leaseEpoch} > 0 and ${table.status} in ('claimed','ready') and (${table.status} <> 'ready' or (${table.assetId} is not null and ${table.contentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.sizeBytes} > 0 and ${table.width} > 0 and ${table.height} > 0))`),
 }));
 
+export const modelTextOutputReceipts = pgTable("model_text_output_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  id: text("id").notNull(), predictionId: text("prediction_id").notNull().references(() => replicatePredictionIdentities.predictionId, { onDelete: "restrict" }), outputIndex: integer("output_index").notNull(), intentId: text("intent_id").notNull(),
+  content: text("content").notNull(), contentDigest: text("content_digest").notNull(), byteLength: integer("byte_length").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "model_text_output_receipts_pk", columns: [table.workspaceId, table.id] }),
+  predictionOutputUnique: uniqueIndex("model_text_output_receipts_prediction_output_unique").on(table.workspaceId, table.predictionId, table.outputIndex),
+  intentIdx: index("model_text_output_receipts_intent_idx").on(table.workspaceId, table.intentId, table.createdAt),
+  intentFk: foreignKey({ name: "model_text_output_receipts_intent_fk", columns: [table.workspaceId, table.intentId], foreignColumns: [generationIntents.workspaceId, generationIntents.id] }).onDelete("restrict"),
+  valuesCheck: check("model_text_output_receipts_values_check", sql`${table.id} ~ '^text_[a-f0-9]{32}$' and ${table.outputIndex} >= 0 and ${table.byteLength} > 0 and ${table.byteLength} <= 100000 and ${table.contentDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+}));
+
 export const modelProviderWebhookReceipts = pgTable("model_provider_webhook_receipts", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), provider: text("provider").notNull(), eventId: text("event_id").notNull(), predictionId: text("prediction_id").notNull().references(() => replicatePredictionIdentities.predictionId, { onDelete: "restrict" }),
   payloadDigest: text("payload_digest").notNull(), status: text("status").notNull(), receivedAt: timestamp("received_at", { withTimezone: true }).notNull(), processedAt: timestamp("processed_at", { withTimezone: true }),
