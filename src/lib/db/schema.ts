@@ -1022,6 +1022,7 @@ type StoredAgentResourceConstraints = {
   credentialProfileIds: string[];
   workflowIds: string[];
   automationIds: string[];
+  studioAssetIds?: string[];
   artifactIds?: string[];
 };
 
@@ -6080,6 +6081,7 @@ export const workflowRunMutationReceipts = pgTable(
       sql`${table.capability} in (
         'workflow_runs.start@1',
         'workflow_runs.start@2',
+        'workflow_runs.start@3',
         'workflow_runs.retry@1',
         'workflow_runs.reconcile@1',
         'workflow_runs.resume@1'
@@ -6107,7 +6109,8 @@ export const workflowRunMutationReceipts = pgTable(
       sql`(
         ${table.capability} in (
           'workflow_runs.start@1',
-          'workflow_runs.start@2'
+          'workflow_runs.start@2',
+          'workflow_runs.start@3'
         )
         and ${table.result} is null
       ) or (
@@ -6367,11 +6370,11 @@ export const builtInAgentAuthorityProvisioningReceipts = pgTable(
     requestUnique: uniqueIndex("built_in_agent_authority_receipts_request_unique").on(table.workspaceId, table.purpose, table.requestId),
     keyUnique: uniqueIndex("built_in_agent_authority_receipts_key_unique").on(table.keyId),
     initiatorIdx: index("built_in_agent_authority_receipts_initiator_idx").on(table.workspaceId, table.initiatingUserId, table.createdAt),
-    purposeCheck: check("built_in_agent_authority_receipts_purpose_check", sql`(${table.purpose} = 'content_workflow' and ${table.capability} = 'workflow_runs.start@2') or (${table.purpose} = 'calendar_reschedule' and ${table.capability} = 'publishing_plan_revisions.create@1')`),
+    purposeCheck: check("built_in_agent_authority_receipts_purpose_check", sql`(${table.purpose} = 'content_workflow' and ${table.capability} in ('workflow_runs.start@2', 'workflow_runs.start@3')) or (${table.purpose} = 'calendar_reschedule' and ${table.capability} = 'publishing_plan_revisions.create@1')`),
     actorCheck: check("built_in_agent_authority_receipts_actor_check", sql`${table.systemActorId} = 'tasmeemai:builtin-service-authority@1'`),
     digestCheck: check("built_in_agent_authority_receipts_digest_check", sql`${table.authorizationContractDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`),
     revisionCheck: check("built_in_agent_authority_receipts_revision_check", sql`${table.grantRevision} > 0 and ${table.policyRevision} > 0`),
-    resourcesCheck: check("built_in_agent_authority_receipts_resources_check", sql`jsonb_typeof(${table.resources}) = 'object' and ${table.resources} ?& array['channelIds','credentialProfileIds','workflowIds','automationIds','artifactIds'] and (${table.resources} - array['channelIds','credentialProfileIds','workflowIds','automationIds','artifactIds']) = '{}'::jsonb and jsonb_typeof(${table.resources}->'channelIds') = 'array' and jsonb_typeof(${table.resources}->'credentialProfileIds') = 'array' and jsonb_typeof(${table.resources}->'workflowIds') = 'array' and jsonb_typeof(${table.resources}->'automationIds') = 'array' and jsonb_typeof(${table.resources}->'artifactIds') = 'array' and ((${table.purpose} = 'content_workflow' and ${table.resources}->'channelIds' = '[]'::jsonb and ${table.resources}->'credentialProfileIds' = '[]'::jsonb and ${table.resources}->'automationIds' = '[]'::jsonb) or (${table.purpose} = 'calendar_reschedule' and ${table.resources}->'credentialProfileIds' = '[]'::jsonb and ${table.resources}->'workflowIds' = '[]'::jsonb and ${table.resources}->'automationIds' = '[]'::jsonb))`),
+    resourcesCheck: check("built_in_agent_authority_receipts_resources_check", sql`jsonb_typeof(${table.resources}) = 'object' and ${table.resources} ?& array['channelIds','credentialProfileIds','workflowIds','automationIds','artifactIds'] and (${table.resources} - array['channelIds','credentialProfileIds','workflowIds','automationIds','studioAssetIds','artifactIds']) = '{}'::jsonb and jsonb_typeof(${table.resources}->'channelIds') = 'array' and jsonb_typeof(${table.resources}->'credentialProfileIds') = 'array' and jsonb_typeof(${table.resources}->'workflowIds') = 'array' and jsonb_typeof(${table.resources}->'automationIds') = 'array' and (not (${table.resources} ? 'studioAssetIds') or jsonb_typeof(${table.resources}->'studioAssetIds') = 'array') and jsonb_typeof(${table.resources}->'artifactIds') = 'array' and (${table.capability} <> 'workflow_runs.start@3' or ${table.resources} ? 'studioAssetIds') and ((${table.purpose} = 'content_workflow' and ${table.resources}->'channelIds' = '[]'::jsonb and ${table.resources}->'credentialProfileIds' = '[]'::jsonb and ${table.resources}->'automationIds' = '[]'::jsonb) or (${table.purpose} = 'calendar_reschedule' and ${table.resources}->'credentialProfileIds' = '[]'::jsonb and ${table.resources}->'workflowIds' = '[]'::jsonb and ${table.resources}->'automationIds' = '[]'::jsonb and (not (${table.resources} ? 'studioAssetIds') or ${table.resources}->'studioAssetIds' = '[]'::jsonb)))`),
   }),
 );
 

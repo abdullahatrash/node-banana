@@ -18,12 +18,17 @@ const EMPTY = {
   credentialProfileIds: [],
   workflowIds: [],
   automationIds: [],
+  studioAssetIds: [],
   artifactIds: [],
 };
 const authority: WorkspaceServiceAgentAuthority = {
-  capability: "workflow_runs.start@2",
+  capability: "workflow_runs.start@3",
   authorizationContractDigest: `sha256:${"a".repeat(64)}`,
-  resources: { ...EMPTY, workflowIds: ["workflow_1"] },
+  resources: {
+    ...EMPTY,
+    workflowIds: ["workflow_1"],
+    studioAssetIds: ["asset_direct", "asset_from_media_set"],
+  },
 };
 
 function candidate(
@@ -85,6 +90,11 @@ describe("WorkspaceServiceAgentResolver", () => {
     expect(setup.provision).toHaveBeenCalledTimes(2);
     expect(setup.provision).toHaveBeenNthCalledWith(1, expect.objectContaining({ initiatingUserId: "member_a" }));
     expect(setup.provision).toHaveBeenNthCalledWith(2, expect.objectContaining({ initiatingUserId: "owner_b" }));
+    expect(setup.provision.mock.calls[0]?.[0].authority.resources).toMatchObject({
+      workflowIds: ["workflow_1"],
+      studioAssetIds: ["asset_direct", "asset_from_media_set"],
+      artifactIds: [],
+    });
   });
 
   it("coalesces concurrent bootstrap idempotently per Workspace and purpose", async () => {
@@ -99,10 +109,17 @@ describe("WorkspaceServiceAgentResolver", () => {
     expect(setup.rows).toHaveLength(1);
   });
 
-  it("reconciles an active actor when a newly required resource is outside its current scope", async () => {
+  it("expands an active actor scope when a Studio asset is newly required", async () => {
     const setup = mutableRepository();
     setup.rows.push(candidate("workspace_a", workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"), "key_old", "2026-09-01T00:00:00.000Z", {
-      authorizationScopes: [{ ...authority, resources: { ...EMPTY, workflowIds: ["workflow_old"] } }],
+      authorizationScopes: [{
+        ...authority,
+        resources: {
+          ...EMPTY,
+          workflowIds: ["workflow_1"],
+          studioAssetIds: ["asset_direct"],
+        },
+      }],
     }));
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
 
@@ -110,6 +127,8 @@ describe("WorkspaceServiceAgentResolver", () => {
       .resolves.toMatchObject({ workspaceId: "workspace_a" });
     expect(setup.provision).toHaveBeenCalledOnce();
     expect(setup.provision).toHaveBeenCalledWith(expect.objectContaining({ initiatingUserId: "member_a" }));
+    expect(setup.provision.mock.calls[0]?.[0].authority.resources.studioAssetIds)
+      .toEqual(["asset_direct", "asset_from_media_set"]);
   });
 
   it("upgrades an existing tenant's active legacy service Principal for an ordinary member", async () => {
@@ -235,12 +254,17 @@ describe("WorkspaceServiceAgentResolver", () => {
       authorizationContractDigest: authority.authorizationContractDigest,
       resources: { ...EMPTY, workflowIds: ["workflow_1"] },
     })).toThrow(WorkspaceServiceAgentUnavailableError);
+    expect(() => validateWorkspaceServiceAgentAuthority("calendar_reschedule", {
+      capability: "publishing_plan_revisions.create@1",
+      authorizationContractDigest: authority.authorizationContractDigest,
+      resources: { ...EMPTY, studioAssetIds: ["asset_1"] },
+    })).toThrow(WorkspaceServiceAgentUnavailableError);
   });
 
   it("publishes exact existing-Agent provisioning profiles for both purposes", () => {
     expect(workspaceServiceAgentProvisioningProfile("content_workflow")).toEqual({
       requestedAccess: ["service:content-workflow"],
-      capabilities: ["workflow_runs.start@2"],
+      capabilities: ["workflow_runs.start@3"],
     });
     expect(workspaceServiceAgentProvisioningProfile("calendar_reschedule")).toEqual({
       requestedAccess: ["service:calendar-reschedule"],

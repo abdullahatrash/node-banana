@@ -15,6 +15,7 @@ import {
   agentPrincipals,
   agentSecurityEvents,
   artifacts,
+  assets,
   contentWorkflows,
   credentialProfiles,
   runtimeAutomations,
@@ -67,6 +68,7 @@ function normalizeStoredGrants(
     ...grant,
     resources: {
       ...grant.resources,
+      studioAssetIds: grant.resources.studioAssetIds ?? [],
       artifactIds: grant.resources.artifactIds ?? [],
     },
   }));
@@ -81,6 +83,7 @@ function keyFromRow(
       ...scope,
       resources: {
         ...scope.resources,
+        studioAssetIds: scope.resources.studioAssetIds ?? [],
         artifactIds: scope.resources.artifactIds ?? [],
       },
     })),
@@ -335,6 +338,17 @@ export class DrizzleAgentAuthorizationRepository
         );
         effectiveResources.credentialProfileIds =
           activeCredentialProfiles.map((resource) => resource.id);
+        const activeStudioAssets = await this.findActiveResourcesWith(
+          tx,
+          request.securityContext.workspaceId,
+          (effectiveResources.studioAssetIds ?? []).map((id) => ({
+            kind: "studio_asset" as const,
+            id,
+          })),
+        );
+        effectiveResources.studioAssetIds = activeStudioAssets.map(
+          (resource) => resource.id,
+        );
         const activeArtifacts = await this.findActiveResourcesWith(
           tx,
           request.securityContext.workspaceId,
@@ -382,6 +396,7 @@ export class DrizzleAgentAuthorizationRepository
     const credentialProfileIds = idsFor("credential_profile");
     const workflowIds = idsFor("workflow");
     const automationIds = idsFor("automation");
+    const studioAssetIds = idsFor("studio_asset");
     const artifactIds = idsFor("artifact");
 
     const channels = channelIds.length === 0
@@ -451,11 +466,25 @@ export class DrizzleAgentAuthorizationRepository
               ),
             )
             .for("share");
+    const selectedStudioAssets = studioAssetIds.length === 0
+      ? []
+      : await database
+            .select({ id: assets.id })
+            .from(assets)
+            .where(
+              and(
+                eq(assets.workspaceId, workspaceId),
+                inArray(assets.id, studioAssetIds),
+                isNull(assets.deletedAt),
+              ),
+            )
+            .for("share");
     return resourceConstraintRefs({
       channelIds: channels.map((row) => row.id),
       credentialProfileIds: credentials.map((row) => row.id),
       workflowIds: selectedWorkflows.map((row) => row.id),
       automationIds: automations.map((row) => row.id),
+      studioAssetIds: selectedStudioAssets.map((row) => row.id),
       artifactIds: selectedArtifacts.map((row) => row.id),
     });
   }

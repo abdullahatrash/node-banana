@@ -7,6 +7,7 @@ export type AgentResourceKind =
   | "credential_profile"
   | "workflow"
   | "automation"
+  | "studio_asset"
   | "artifact";
 
 export interface AgentResourceRef {
@@ -19,6 +20,11 @@ export interface AgentResourceConstraints {
   credentialProfileIds: string[];
   workflowIds: string[];
   automationIds: string[];
+  /**
+   * Studio media-library assets stored in the `assets` table. This is
+   * intentionally distinct from immutable runtime Artifacts.
+   */
+  studioAssetIds?: string[];
   /**
    * Optional while deserializing authority JSON written before Artifact
    * resources existed. All server normalizers materialize this as an array.

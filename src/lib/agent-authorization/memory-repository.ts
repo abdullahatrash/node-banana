@@ -189,6 +189,13 @@ export class InMemoryAgentAuthorizationRepository
             `${request.securityContext.workspaceId}:credential_profile:${id}`,
           ),
         );
+      effectiveResources.studioAssetIds = (
+        effectiveResources.studioAssetIds ?? []
+      ).filter((id) =>
+        this.activeResources.has(
+          `${request.securityContext.workspaceId}:studio_asset:${id}`,
+        ),
+      );
       effectiveResources.artifactIds = (
         effectiveResources.artifactIds ?? []
       ).filter((id) =>

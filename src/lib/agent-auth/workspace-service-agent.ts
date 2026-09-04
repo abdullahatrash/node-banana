@@ -10,6 +10,7 @@ import {
   agentPrincipals,
   agentSecurityEvents,
   artifacts,
+  assets,
   builtInAgentAuthorityProvisioningReceipts,
   contentWorkflows,
   socialAccounts,
@@ -71,7 +72,7 @@ export interface WorkspaceServiceAgentRepository {
 const PURPOSE = {
   content_workflow: {
     marker: "service:content-workflow",
-    capability: "workflow_runs.start@2",
+    capability: "workflow_runs.start@3",
   },
   calendar_reschedule: {
     marker: "service:calendar-reschedule",
@@ -109,6 +110,7 @@ const RESOURCE_KEYS = [
   "credentialProfileIds",
   "workflowIds",
   "automationIds",
+  "studioAssetIds",
   "artifactIds",
 ] as const satisfies readonly (keyof AgentResourceConstraints)[];
 
@@ -126,7 +128,7 @@ export function validateWorkspaceServiceAgentAuthority(
   const resources = normalizedResources(authority.resources);
   const forbidden = purpose === "content_workflow"
     ? [...resources.channelIds, ...resources.credentialProfileIds, ...resources.automationIds]
-    : [...resources.credentialProfileIds, ...resources.workflowIds, ...resources.automationIds];
+    : [...resources.credentialProfileIds, ...resources.workflowIds, ...resources.automationIds, ...(resources.studioAssetIds ?? [])];
   if (
     authority.capability !== profile.capabilities[0] ||
     !/^sha256:[a-f0-9]{64}$/.test(authority.authorizationContractDigest) ||
@@ -305,7 +307,11 @@ class DrizzleWorkspaceServiceAgentRepository implements WorkspaceServiceAgentRep
       requestedAccess: principal.requestedAccess ?? [],
       authorizationScopes: (key.authorizationScopes ?? []).map((scope) => ({
         ...scope,
-        resources: { ...scope.resources, artifactIds: scope.resources.artifactIds ?? [] },
+        resources: {
+          ...scope.resources,
+          studioAssetIds: scope.resources.studioAssetIds ?? [],
+          artifactIds: scope.resources.artifactIds ?? [],
+        },
       })),
       workspacePolicyEnabled: policies[0]?.enabled === true,
     }));
@@ -410,14 +416,16 @@ class DrizzleWorkspaceServiceAgentRepository implements WorkspaceServiceAgentRep
       if (setRow?.disabledAt) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
 
       const activeResourceIds = async () => {
-        const [channels, workflows, selectedArtifacts] = await Promise.all([
+        const [channels, workflows, selectedStudioAssets, selectedArtifacts] = await Promise.all([
           authority.resources.channelIds.length ? tx.select({ id: socialAccounts.id }).from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), inArray(socialAccounts.id, authority.resources.channelIds), eq(socialAccounts.disabled, false), eq(socialAccounts.requiresReauth, false))).for("share") : [],
           authority.resources.workflowIds.length ? tx.select({ id: contentWorkflows.id }).from(contentWorkflows).where(and(eq(contentWorkflows.workspaceId, input.workspaceId), inArray(contentWorkflows.id, authority.resources.workflowIds))).for("share") : [],
+          (authority.resources.studioAssetIds ?? []).length ? tx.select({ id: assets.id }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, authority.resources.studioAssetIds ?? []), isNull(assets.deletedAt))).for("share") : [],
           (authority.resources.artifactIds ?? []).length ? tx.select({ id: artifacts.id }).from(artifacts).where(and(eq(artifacts.workspaceId, input.workspaceId), inArray(artifacts.id, authority.resources.artifactIds ?? []), isNull(artifacts.deletedAt))).for("share") : [],
         ]);
         return {
           channelIds: channels.map(({ id }) => id),
           workflowIds: workflows.map(({ id }) => id),
+          studioAssetIds: selectedStudioAssets.map(({ id }) => id),
           artifactIds: selectedArtifacts.map(({ id }) => id),
         };
       };
@@ -425,6 +433,7 @@ class DrizzleWorkspaceServiceAgentRepository implements WorkspaceServiceAgentRep
       if (
         authority.resources.channelIds.some((id) => !active.channelIds.includes(id)) ||
         authority.resources.workflowIds.some((id) => !active.workflowIds.includes(id)) ||
+        (authority.resources.studioAssetIds ?? []).some((id) => !active.studioAssetIds.includes(id)) ||
         (authority.resources.artifactIds ?? []).some((id) => !active.artifactIds.includes(id))
       ) {
         throw new WorkspaceServiceAgentUnavailableError(input.purpose);

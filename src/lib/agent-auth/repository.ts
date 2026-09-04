@@ -54,6 +54,7 @@ function keyFromRow(row: typeof agentKeys.$inferSelect): AgentKeyRecord {
       ...scope,
       resources: {
         ...scope.resources,
+        studioAssetIds: scope.resources.studioAssetIds ?? [],
         artifactIds: scope.resources.artifactIds ?? [],
       },
     })),

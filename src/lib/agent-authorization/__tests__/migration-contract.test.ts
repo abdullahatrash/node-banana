@@ -103,6 +103,37 @@ describe("Agent authorization migration contracts", () => {
     expect(activeResources).toContain("isNull(artifacts.deletedAt)");
   });
 
+  it("keeps Studio assets distinct from runtime Artifacts and validates live Workspace ownership", () => {
+    const source = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/lib/agent-authorization/repository.ts",
+      ),
+      "utf8",
+    );
+    const activeResources = source.slice(
+      source.indexOf("private async findActiveResourcesWith"),
+      source.indexOf("async issueAttenuatedKey"),
+    );
+    expect(source).toContain("effectiveResources.studioAssetIds");
+    expect(activeResources).toContain('idsFor("studio_asset")');
+    expect(activeResources).toContain("inArray(assets.id, studioAssetIds)");
+    expect(activeResources).toContain("eq(assets.workspaceId, workspaceId)");
+    expect(activeResources).toContain("isNull(assets.deletedAt)");
+    expect(activeResources).toContain("inArray(artifacts.id, artifactIds)");
+
+    const bootstrap = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/lib/agent-auth/workspace-service-agent.ts",
+      ),
+      "utf8",
+    );
+    expect(bootstrap).toContain("inArray(assets.id, authority.resources.studioAssetIds");
+    expect(bootstrap).toContain("eq(assets.workspaceId, input.workspaceId)");
+    expect(bootstrap).toContain("isNull(assets.deletedAt)");
+  });
+
   it("stores replay receipts without plaintext or credential hashes", () => {
     const sql = migration("0021_parallel_alex_power.sql");
 
@@ -128,6 +159,18 @@ describe("Agent authorization migration contracts", () => {
     expect(sql).toContain("built_in_agent_authority_receipts_immutable");
     expect(sql).not.toContain("plaintext");
     expect(sql).not.toContain("secret_hash");
+  });
+
+  it("adds Studio asset scope without rewriting immutable historical @2 receipts", () => {
+    const sql = migration("0112_studio_asset_agent_resource.sql");
+    expect(sql).toContain("DROP CONSTRAINT \"built_in_agent_authority_receipts_resources_check\"");
+    expect(sql).toContain("'studioAssetIds'");
+    expect(sql).toContain("'workflow_runs.start@2', 'workflow_runs.start@3'");
+    expect(sql).toContain("NOT (\"resources\" ? 'studioAssetIds')");
+    expect(sql).toContain('DROP CONSTRAINT "workflow_run_mutation_receipts_capability_check"');
+    expect(sql).toContain('DROP CONSTRAINT "workflow_run_mutation_receipts_result_check"');
+    expect(sql).toContain("'workflow_runs.start@3'");
+    expect(sql).not.toContain("UPDATE \"built_in_agent_authority_provisioning_receipts\"");
   });
 
   it("locks the Workspace before reading absent policy state", () => {

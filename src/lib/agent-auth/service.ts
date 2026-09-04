@@ -229,6 +229,7 @@ function cleanResourceConstraints(
     credentialProfileIds: clean(resources.credentialProfileIds),
     workflowIds: clean(resources.workflowIds),
     automationIds: clean(resources.automationIds),
+    studioAssetIds: clean(resources.studioAssetIds ?? []),
     artifactIds: clean(resources.artifactIds ?? []),
   };
 }
