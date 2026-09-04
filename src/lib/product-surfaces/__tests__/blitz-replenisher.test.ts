@@ -6,14 +6,21 @@ const run = { workspaceId: "ws", runId: "run", leaseToken: "lease", sourceKey: "
 
 describe("Blitz replenisher", () => {
   it("claims and appends a bounded queue without any provider port", async () => {
-    const repository = { claim: vi.fn().mockResolvedValue({ kind: "claimed", run }), append: vi.fn().mockResolvedValue({ created: 1, replayed: 0 }), complete: vi.fn(), fail: vi.fn() } satisfies BlitzReplenishmentRepository;
+    const repository = { claim: vi.fn().mockResolvedValue({ kind: "claimed", run }), append: vi.fn().mockResolvedValue({ created: 1, replayed: 0 }), complete: vi.fn(), fail: vi.fn(), recoverExpired: vi.fn().mockResolvedValue([]) } satisfies BlitzReplenishmentRepository;
     await expect(new BlitzReplenisher(repository, () => now).replenish({ workspaceId: "ws", campaignId: "campaign", invocation: "daily", actorUserId: "user", sourceKey: "daily:2026-09-04" })).resolves.toMatchObject({ kind: "completed", created: 1 });
     expect(repository.append).toHaveBeenCalledWith(expect.objectContaining({ selected: [expect.objectContaining({ id: "source" })] }));
   });
 
   it("replays the durable result for the same source occurrence key", async () => {
-    const repository = { claim: vi.fn().mockResolvedValue({ kind: "replayed", created: 2, stopReason: "run_limit_reached" }), append: vi.fn(), complete: vi.fn(), fail: vi.fn() } satisfies BlitzReplenishmentRepository;
+    const repository = { claim: vi.fn().mockResolvedValue({ kind: "replayed", created: 2, stopReason: "run_limit_reached" }), append: vi.fn(), complete: vi.fn(), fail: vi.fn(), recoverExpired: vi.fn().mockResolvedValue([]) } satisfies BlitzReplenishmentRepository;
     await expect(new BlitzReplenisher(repository, () => now).replenish({ workspaceId: "ws", campaignId: "campaign", invocation: "manual", actorUserId: "user", sourceKey: "manual:key" })).resolves.toMatchObject({ kind: "replayed", created: 2 });
     expect(repository.append).not.toHaveBeenCalled();
+  });
+
+  it("reclaims expired durable runs and executes them through the same bounded path", async () => {
+    const recoverable = { workspaceId: "ws", campaignId: "campaign", invocation: "daily" as const, actorUserId: "user", sourceKey: "daily:2026-09-04" };
+    const repository = { claim: vi.fn().mockResolvedValue({ kind: "claimed", run }), append: vi.fn().mockResolvedValue({ created: 1, replayed: 0 }), complete: vi.fn(), fail: vi.fn(), recoverExpired: vi.fn().mockResolvedValue([recoverable]) } satisfies BlitzReplenishmentRepository;
+    await expect(new BlitzReplenisher(repository, () => now).recoverExpired()).resolves.toEqual({ found: 1, requeued: 1, failed: 0 });
+    expect(repository.claim).toHaveBeenCalledWith(expect.objectContaining({ ...recoverable, now }));
   });
 });

@@ -22,14 +22,15 @@ export class ProductCampaignRuntimeWorker {
   constructor(
     private readonly scheduleStore: CampaignRuntimeScheduleStore,
     private readonly scheduler: Pick<CampaignOccurrenceScheduler, "processDue">,
-    private readonly replenisher: Pick<BlitzReplenisher, "replenish">,
+    private readonly replenisher: Pick<BlitzReplenisher, "replenish" | "recoverExpired">,
     private readonly clock: () => Date,
     private readonly campaignPage: (at: Date) => Promise<CampaignRuntimeRecord[]>,
   ) {}
 
   async run(input: { workerId: string }) {
     const now = this.clock(); const campaigns = await this.campaignPage(now);
-    const summary = { scanned: campaigns.length, scheduled: 0, scheduleReplayed: 0, replenished: 0, campaignFailures: 0, staleUnknown: 0, reconciled: 0, occurrences: { claimed: 0, started: 0, denied: 0, outcomeUnknown: 0 } };
+    const recovery = await this.replenisher.recoverExpired({ limit: 20 });
+    const summary = { scanned: campaigns.length, scheduled: 0, scheduleReplayed: 0, replenished: 0, replenishmentRecovery: recovery, campaignFailures: 0, staleUnknown: 0, reconciled: 0, occurrences: { claimed: 0, started: 0, denied: 0, outcomeUnknown: 0 } };
     for (const row of campaigns) {
       try {
         const campaign = campaignPayloadSchema.parse(row.payload); const authority = campaign.runtime?.scheduleAuthority;

@@ -104,7 +104,12 @@ export class PostgresBlitzReplenishmentRepository implements BlitzReplenishmentR
   async recoverExpired(input: { at: Date; limit?: number }) {
     return getDb().transaction(async (tx) => {
       const rows = await tx.select().from(productBlitzReplenishmentRuns).where(and(eq(productBlitzReplenishmentRuns.state, "claimed"), lte(productBlitzReplenishmentRuns.leaseExpiresAt, input.at))).orderBy(asc(productBlitzReplenishmentRuns.leaseExpiresAt), asc(productBlitzReplenishmentRuns.id)).limit(Math.min(100, Math.max(1, input.limit ?? 50))).for("update", { skipLocked: true });
-      return rows.length;
+      const recoverable = [];
+      for (const row of rows) {
+        const [released] = await tx.update(productBlitzReplenishmentRuns).set({ state: "failed_known", failureCode: "BLITZ_REPLENISHMENT_LEASE_EXPIRED", leaseToken: null, leaseExpiresAt: null, completedAt: input.at, updatedAt: input.at }).where(and(eq(productBlitzReplenishmentRuns.workspaceId, row.workspaceId), eq(productBlitzReplenishmentRuns.id, row.id), eq(productBlitzReplenishmentRuns.state, "claimed"), eq(productBlitzReplenishmentRuns.leaseGeneration, row.leaseGeneration))).returning({ id: productBlitzReplenishmentRuns.id });
+        if (released) recoverable.push({ workspaceId: row.workspaceId, campaignId: row.campaignId, invocation: row.invocation as "daily" | "manual", sourceKey: row.sourceKey, actorUserId: row.actorUserId });
+      }
+      return recoverable;
     });
   }
 }

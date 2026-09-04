@@ -19,11 +19,20 @@ export interface ClaimedBlitzReplenishment {
   context: BlitzReplenishmentContext;
 }
 
+export interface RecoverableBlitzReplenishment {
+  workspaceId: string;
+  campaignId: string;
+  invocation: "daily" | "manual";
+  sourceKey: string;
+  actorUserId: string;
+}
+
 export interface BlitzReplenishmentRepository {
   claim(input: { workspaceId: string; campaignId: string; invocation: "daily" | "manual"; sourceKey: string; actorUserId: string; now: Date; leaseUntil: Date }): Promise<{ kind: "claimed"; run: ClaimedBlitzReplenishment } | { kind: "replayed"; created: number; stopReason: string } | { kind: "busy" }>;
   append(input: { run: ClaimedBlitzReplenishment; selected: BlitzReplenishmentSource[]; now: Date }): Promise<{ created: number; replayed: number }>;
   complete(input: { run: ClaimedBlitzReplenishment; created: number; stopReason: string; now: Date }): Promise<void>;
   fail(input: { run: ClaimedBlitzReplenishment; code: string; now: Date }): Promise<void>;
+  recoverExpired(input: { at: Date; limit?: number }): Promise<RecoverableBlitzReplenishment[]>;
 }
 
 /** Queue replenishment is metadata-only and must never call a generation provider. */
@@ -44,5 +53,21 @@ export class BlitzReplenisher {
       await this.repository.fail({ run: claim.run, code: error instanceof Error ? error.message : "BLITZ_REPLENISHMENT_FAILED", now: this.clock() });
       throw error;
     }
+  }
+
+  async recoverExpired(input: { limit?: number } = {}) {
+    const expired = await this.repository.recoverExpired({ at: this.clock(), limit: input.limit });
+    let requeued = 0;
+    let failed = 0;
+    for (const run of expired) {
+      try {
+        const result = await this.replenish(run);
+        if (result.kind === "completed" || result.kind === "replayed") requeued++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    return { found: expired.length, requeued, failed };
   }
 }
