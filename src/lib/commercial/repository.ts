@@ -45,18 +45,25 @@ export class CommercialRepository {
     return this.database.transaction(async (tx) => {
       const command = await claimCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, request: { action: "start_trial", userId: input.userId, planId: input.planId, planVersion: input.planVersion } });
       if (command.kind === "replay") return command.result;
-      const [identity, plan, existing] = await Promise.all([
+      const [identity, plan] = await Promise.all([
         tx.select({ email: user.email }).from(user).where(eq(user.id, input.userId)).limit(1),
         tx.select().from(billingPlanVersions).where(and(eq(billingPlanVersions.planId, input.planId), eq(billingPlanVersions.version, input.planVersion), eq(billingPlanVersions.status, "active"))).limit(1),
-        tx.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, input.workspaceId)).limit(1),
       ]);
-      if (!identity[0] || !plan[0] || plan[0].trialDays <= 0) throw new CommercialError("TRIAL_NOT_AVAILABLE"); if (existing[0]) throw new CommercialError("SUBSCRIPTION_EXISTS");
+      if (!identity[0] || !plan[0] || plan[0].trialDays <= 0) throw new CommercialError("TRIAL_NOT_AVAILABLE");
+      const existing = await tx.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, input.workspaceId)).for("update").limit(1);
+      const current = existing[0] ?? null;
+      const isFreeUpgrade = current?.state === "active" && current.planId === "free" && current.planVersion === 1;
+      if (current && !isFreeUpgrade) throw new CommercialError("SUBSCRIPTION_EXISTS");
       const beneficiaryIdentityDigest = digest(identity[0].email.trim().toLowerCase()); const already = await tx.select({ id: billingTrialGrants.id }).from(billingTrialGrants).where(eq(billingTrialGrants.beneficiaryIdentityDigest, beneficiaryIdentityDigest)).limit(1); if (already[0]) throw new CommercialError("TRIAL_ALREADY_USED");
-      const now = this.now(), expiresAt = new Date(now.getTime() + plan[0].trialDays * 86_400_000), trialId = randomUUID(), bucketId = randomUUID();
+      const now = this.now(), expiresAt = new Date(now.getTime() + plan[0].trialDays * 86_400_000), trialId = randomUUID(), bucketId = randomUUID(), revision = (current?.revision ?? 0) + 1;
       await tx.insert(billingTrialGrants).values({ id: trialId, workspaceId: input.workspaceId, beneficiaryIdentityDigest, planId: input.planId, planVersion: input.planVersion, status: "active", grantedAt: now, expiresAt });
-      await tx.insert(workspaceSubscriptions).values({ workspaceId: input.workspaceId, state: "trialing", planId: input.planId, planVersion: input.planVersion, trialGrantId: trialId, currentPeriodStartsAt: now, currentPeriodEndsAt: expiresAt, revision: 1, updatedAt: now });
-      await tx.insert(workspaceSubscriptionEvents).values({ workspaceId: input.workspaceId, revision: 1, id: randomUUID(), fromState: null, toState: "trialing", reasonCode: "trial.started", actorRef: `human:${input.userId}`, facts: { planId: input.planId, planVersion: input.planVersion, trialGrantId: trialId }, occurredAt: now });
-      if (plan[0].trialCreditUnits > 0) { await tx.insert(generationCreditBuckets).values({ workspaceId: input.workspaceId, id: bucketId, kind: "allowance", sourceRef: `trial:${trialId}`, grantedUnits: plan[0].trialCreditUnits, availableUnits: plan[0].trialCreditUnits, expiresAt, revision: 1, createdAt: now, updatedAt: now }); await tx.insert(generationCreditLedgerEntries).values({ workspaceId: input.workspaceId, sequence: 1, id: randomUUID(), bucketId, reservationId: null, entryType: "grant", deltaUnits: plan[0].trialCreditUnits, balanceAfterUnits: plan[0].trialCreditUnits, sourceRef: `trial:${trialId}`, createdAt: now }); }
+      if (current) {
+        await tx.update(workspaceSubscriptions).set({ state: "trialing", planId: input.planId, planVersion: input.planVersion, trialGrantId: trialId, merchantCustomerRef: null, merchantSubscriptionRef: null, currentPeriodStartsAt: now, currentPeriodEndsAt: expiresAt, graceEndsAt: null, revision, updatedAt: now }).where(and(eq(workspaceSubscriptions.workspaceId, input.workspaceId), eq(workspaceSubscriptions.revision, current.revision)));
+      } else {
+        await tx.insert(workspaceSubscriptions).values({ workspaceId: input.workspaceId, state: "trialing", planId: input.planId, planVersion: input.planVersion, trialGrantId: trialId, currentPeriodStartsAt: now, currentPeriodEndsAt: expiresAt, revision, updatedAt: now });
+      }
+      await tx.insert(workspaceSubscriptionEvents).values({ workspaceId: input.workspaceId, revision, id: randomUUID(), fromState: current?.state ?? null, toState: "trialing", reasonCode: "trial.started", actorRef: `human:${input.userId}`, facts: { planId: input.planId, planVersion: input.planVersion, trialGrantId: trialId, upgradedFromPlanId: current?.planId ?? null, upgradedFromPlanVersion: current?.planVersion ?? null }, occurredAt: now });
+      if (plan[0].trialCreditUnits > 0) { const sequence = await safeSequence(tx, input.workspaceId, generationCreditLedgerEntries); await tx.insert(generationCreditBuckets).values({ workspaceId: input.workspaceId, id: bucketId, kind: "allowance", sourceRef: `trial:${trialId}`, grantedUnits: plan[0].trialCreditUnits, availableUnits: plan[0].trialCreditUnits, expiresAt, revision: 1, createdAt: now, updatedAt: now }); await tx.insert(generationCreditLedgerEntries).values({ workspaceId: input.workspaceId, sequence, id: randomUUID(), bucketId, reservationId: null, entryType: "grant", deltaUnits: plan[0].trialCreditUnits, balanceAfterUnits: plan[0].trialCreditUnits, sourceRef: `trial:${trialId}`, createdAt: now }); }
       const result = { subscriptionState: "trialing", trialId, expiresAt: expiresAt.toISOString(), grantedUnits: plan[0].trialCreditUnits };
       await completeCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest: command.requestDigest, result });
       return result;

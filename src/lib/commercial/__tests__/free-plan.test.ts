@@ -75,4 +75,20 @@ describe("Free plan provisioning", () => {
     );
     expect(studio.match(/await ensureWorkspaceFreePlan\(/g)).toHaveLength(3);
   });
+
+  it("allows the paid trial path to upgrade the provisioned Free subscription", () => {
+    const repository = readFileSync("src/lib/commercial/repository.ts", "utf8");
+    const startTrial = repository.slice(
+      repository.indexOf("async startTrial"),
+      repository.indexOf("async issueQuote"),
+    );
+
+    expect(startTrial).toContain('current?.state === "active"');
+    expect(startTrial).toContain('current.planId === "free"');
+    expect(startTrial).toContain('current.planVersion === 1');
+    expect(startTrial).toContain('.for("update")');
+    expect(startTrial).toContain('revision = (current?.revision ?? 0) + 1');
+    expect(startTrial).toContain("const sequence = await safeSequence");
+    expect(startTrial).not.toContain("sequence: 1");
+  });
 });
