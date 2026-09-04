@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl"
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 import { useShallow } from "zustand/shallow"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
+import { useDirectionStore } from "@/store/directionStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -12,6 +13,7 @@ import type { SocialPlatform } from "@/lib/db/schema"
 
 export function CalendarFilters() {
   const t = useTranslations("social.calendarUi")
+  const { locale, direction } = useDirectionStore()
   const {
     viewMode,
     setViewMode,
@@ -33,7 +35,7 @@ export function CalendarFilters() {
   }, [hydrateFromStorage])
 
   return (
-    <div className="flex items-center gap-2 border-b px-4 py-2">
+    <div className="flex items-center gap-2 border-b px-4 py-2" dir={direction}>
       {/* View toggle */}
       <div className="flex rounded-md border">
         <button
@@ -92,7 +94,7 @@ export function CalendarFilters() {
       </Button>
 
       {/* Date range */}
-      <span className="text-sm font-medium">{getDateRangeLabel()}</span>
+      <span className="text-sm font-medium" lang={locale}>{getDateRangeLabel(locale)}</span>
 
       <Separator orientation="vertical" className="h-4" />
 

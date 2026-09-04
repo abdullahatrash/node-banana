@@ -4,12 +4,17 @@ import { useMemo } from "react"
 import { DndProvider } from "react-dnd"
 import { HTML5Backend } from "react-dnd-html5-backend"
 import {
-  startOfWeek,
   addDays,
   format,
   isToday,
 } from "date-fns"
-import { useSocialCalendarStore } from "@/store/socialCalendarStore"
+import {
+  formatCalendarDayHeader,
+  formatCalendarTime,
+  getCalendarWeekStart,
+  useSocialCalendarStore,
+} from "@/store/socialCalendarStore"
+import { useDirectionStore } from "@/store/directionStore"
 import { CalendarColumn } from "./CalendarColumn"
 import type { SocialPost } from "@/lib/social/client"
 
@@ -18,8 +23,9 @@ const MINUTES = [0, 15, 30, 45]
 
 export function CalendarWeek() {
   const { currentDate, posts } = useSocialCalendarStore()
+  const locale = useDirectionStore((state) => state.locale)
 
-  const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
+  const weekStart = getCalendarWeekStart(currentDate, locale)
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
   // Group posts by day + hour
@@ -55,7 +61,7 @@ export function CalendarWeek() {
               key={hour}
               className="flex h-28 items-start justify-end border-b pe-2 pt-0.5 text-[10px] text-muted-foreground"
             >
-              {format(new Date().setHours(hour, 0), "HH:mm")}
+              {formatCalendarTime(new Date(new Date().setHours(hour, 0)), locale)}
             </div>
           ))}
         </div>
@@ -72,7 +78,7 @@ export function CalendarWeek() {
                     : "text-muted-foreground"
                 }`}
               >
-                <span>{format(day, "EEE d")}</span>
+                <span lang={locale}>{formatCalendarDayHeader(day, locale)}</span>
               </div>
 
               {/* Hour slots */}

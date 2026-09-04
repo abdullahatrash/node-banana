@@ -14,9 +14,11 @@ import {
   subDays,
   subWeeks,
   subMonths,
-  format,
+  type Day,
 } from "date-fns"
+import type { AppLocale } from "@/i18n/config"
 import { listSocialPosts, type SocialPost } from "@/lib/social/client"
+import { useDirectionStore } from "@/store/directionStore"
 
 type ViewMode = "day" | "week" | "month" | "list"
 
@@ -36,9 +38,9 @@ interface SocialCalendarState {
   applyOptimisticReschedule: (postId: string, scheduledAt: string) => SocialPost[] | null
   restorePosts: (posts: SocialPost[]) => void
   replacePost: (post: SocialPost) => void
-  getWeekStart: () => Date
-  getWeekEnd: () => Date
-  getDateRangeLabel: () => string
+  getWeekStart: (locale?: AppLocale) => Date
+  getWeekEnd: (locale?: AppLocale) => Date
+  getDateRangeLabel: (locale?: AppLocale) => string
   hydrateFromStorage: () => void
 }
 
@@ -49,6 +51,86 @@ function getStoredViewMode(): ViewMode | null {
     return stored
   }
   return null
+}
+
+const calendarLocale = (locale: AppLocale) =>
+  locale === "ar" ? "ar-u-ca-gregory-nu-arab" : "en-u-ca-gregory-nu-latn"
+
+function selectedLocale(): AppLocale {
+  return useDirectionStore.getState().locale
+}
+
+/** CLDR week starts: Saturday for generic Arabic, Sunday for generic English. */
+export function getCalendarWeekStartsOn(locale: AppLocale): Day {
+  return locale === "ar" ? 6 : 0
+}
+
+export function getCalendarWeekStart(date: Date, locale: AppLocale): Date {
+  return startOfWeek(date, { weekStartsOn: getCalendarWeekStartsOn(locale) })
+}
+
+export function getCalendarWeekEnd(date: Date, locale: AppLocale): Date {
+  return endOfWeek(date, { weekStartsOn: getCalendarWeekStartsOn(locale) })
+}
+
+export function formatCalendarDateRange(
+  date: Date,
+  viewMode: ViewMode,
+  locale: AppLocale,
+): string {
+  const localeName = calendarLocale(locale)
+  if (viewMode === "day") {
+    return new Intl.DateTimeFormat(localeName, {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(date)
+  }
+  if (viewMode === "month" || viewMode === "list") {
+    return new Intl.DateTimeFormat(localeName, {
+      month: "long",
+      year: "numeric",
+    }).format(date)
+  }
+  const formatter = new Intl.DateTimeFormat(localeName, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })
+  return formatter.formatRange(
+    getCalendarWeekStart(date, locale),
+    getCalendarWeekEnd(date, locale),
+  )
+}
+
+export function formatCalendarDayHeader(date: Date, locale: AppLocale): string {
+  return new Intl.DateTimeFormat(calendarLocale(locale), {
+    weekday: "short",
+    day: "numeric",
+  }).format(date)
+}
+
+export function formatCalendarDayHeading(date: Date, locale: AppLocale): string {
+  return new Intl.DateTimeFormat(calendarLocale(locale), {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).format(date)
+}
+
+export function formatCalendarDayNumber(date: Date, locale: AppLocale): string {
+  return new Intl.DateTimeFormat(calendarLocale(locale), {
+    day: "numeric",
+  }).format(date)
+}
+
+export function formatCalendarTime(date: Date, locale: AppLocale): string {
+  return new Intl.DateTimeFormat(calendarLocale(locale), {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date)
 }
 
 export const useSocialCalendarStore = create<SocialCalendarState>(
@@ -113,8 +195,8 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
                   end: endOfMonth(currentDate),
                 }
               : {
-                  start: startOfWeek(currentDate, { weekStartsOn: 1 }),
-                  end: endOfWeek(currentDate, { weekStartsOn: 1 }),
+                  start: getCalendarWeekStart(currentDate, selectedLocale()),
+                  end: getCalendarWeekEnd(currentDate, selectedLocale()),
                 }
         const posts = await listSocialPosts({
           startDate: range.start.toISOString(),
@@ -160,8 +242,10 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
       }))
     },
 
-    getWeekStart: () => startOfWeek(get().currentDate, { weekStartsOn: 1 }),
-    getWeekEnd: () => endOfWeek(get().currentDate, { weekStartsOn: 1 }),
+    getWeekStart: (locale = selectedLocale()) =>
+      getCalendarWeekStart(get().currentDate, locale),
+    getWeekEnd: (locale = selectedLocale()) =>
+      getCalendarWeekEnd(get().currentDate, locale),
 
     hydrateFromStorage: () => {
       const stored = getStoredViewMode()
@@ -170,17 +254,7 @@ export const useSocialCalendarStore = create<SocialCalendarState>(
       }
     },
 
-    getDateRangeLabel: () => {
-      const viewMode = get().viewMode
-      if (viewMode === "day") {
-        return format(get().currentDate, "EEEE, MMM d, yyyy")
-      }
-      if (viewMode === "month" || viewMode === "list") {
-        return format(get().currentDate, "MMMM yyyy")
-      }
-      const start = startOfWeek(get().currentDate, { weekStartsOn: 1 })
-      const end = endOfWeek(get().currentDate, { weekStartsOn: 1 })
-      return `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")}`
-    },
+    getDateRangeLabel: (locale = selectedLocale()) =>
+      formatCalendarDateRange(get().currentDate, get().viewMode, locale),
   }),
 )

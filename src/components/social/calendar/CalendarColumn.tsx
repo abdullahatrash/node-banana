@@ -2,6 +2,7 @@
 
 import { useDrop } from "react-dnd"
 import { useRouter } from "next/navigation"
+import { useTranslations } from "next-intl"
 import { isPast } from "date-fns"
 import { POST_DND_TYPE, CalendarPostCard } from "./CalendarPostCard"
 import { rescheduleSocialPost } from "@/lib/social/client"
@@ -32,6 +33,7 @@ function canRescheduleItem(item: CalendarDragItem, isInPast: boolean) {
 
 export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumnProps) {
   const router = useRouter()
+  const t = useTranslations("social.calendarUi")
   const { show: showToast } = useToast()
   const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
   const restorePosts = useSocialCalendarStore((s) => s.restorePosts)
@@ -48,7 +50,7 @@ export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumn
       if (isInPast) return
 
       if (!canRescheduleItem(item, isInPast)) {
-        showToast("This post cannot be rescheduled.", "warning")
+        showToast(t("errors.cannotReschedule"), "warning")
         return
       }
 
@@ -58,11 +60,11 @@ export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumn
       try {
         const updatedPost = await rescheduleSocialPost(item.postId, scheduledAt)
         replacePost(updatedPost)
-        showToast("Post rescheduled", "success")
+        showToast(t("toast.rescheduled"), "success")
       } catch (error) {
         if (previousPosts) restorePosts(previousPosts)
         showToast(
-          error instanceof Error ? error.message : "Failed to reschedule",
+          error instanceof Error ? error.message : t("errors.reschedule"),
           "error",
         )
       }

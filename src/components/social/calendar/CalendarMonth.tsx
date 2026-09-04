@@ -8,20 +8,25 @@ import { HTML5Backend } from "react-dnd-html5-backend"
 import {
   addDays,
   endOfMonth,
-  endOfWeek,
   format,
   isSameMonth,
   startOfMonth,
-  startOfWeek,
 } from "date-fns"
-import { useSocialCalendarStore } from "@/store/socialCalendarStore"
+import {
+  formatCalendarDayNumber,
+  getCalendarWeekEnd,
+  getCalendarWeekStart,
+  getCalendarWeekStartsOn,
+  useSocialCalendarStore,
+} from "@/store/socialCalendarStore"
+import { useDirectionStore } from "@/store/directionStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { rescheduleSocialPost, type SocialPost } from "@/lib/social/client"
 import { useToast } from "@/components/Toast"
 import { CalendarPostCard, POST_DND_TYPE } from "./CalendarPostCard"
 import type { SocialPlatform } from "@/lib/db/schema"
 
-const WEEK_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const
+const WEEK_DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const
 const MAX_VISIBLE_POSTS = 3
 
 interface CalendarDragItem {
@@ -49,11 +54,13 @@ function CalendarMonthDayCell({
   inCurrentMonth,
   posts,
   platformForPost,
+  locale,
 }: {
   day: Date
   inCurrentMonth: boolean
   posts: SocialPost[]
   platformForPost: (post: SocialPost) => SocialPlatform | undefined
+  locale: "ar" | "en"
 }) {
   const t = useTranslations("social.calendarUi")
   const { show: showToast } = useToast()
@@ -131,7 +138,7 @@ function CalendarMonthDayCell({
         }}
         className="mb-1 text-xs font-medium"
       >
-        {format(day, "d")}
+        <span lang={locale}>{formatCalendarDayNumber(day, locale)}</span>
       </button>
       <div className="space-y-1">
         {visiblePosts.map((post) => (
@@ -160,12 +167,18 @@ function CalendarMonthDayCell({
 
 export function CalendarMonth() {
   const t = useTranslations("social.calendarUi")
+  const locale = useDirectionStore((state) => state.locale)
   const { currentDate, posts } = useSocialCalendarStore()
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const monthStart = startOfMonth(currentDate)
   const monthEnd = endOfMonth(currentDate)
-  const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 })
-  const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 })
+  const calendarStart = getCalendarWeekStart(monthStart, locale)
+  const calendarEnd = getCalendarWeekEnd(monthEnd, locale)
+  const firstWeekday = getCalendarWeekStartsOn(locale)
+  const weekdays = Array.from(
+    { length: 7 },
+    (_, offset) => WEEK_DAYS[(firstWeekday + offset) % 7]!,
+  )
 
   const days = useMemo(() => {
     const values: Date[] = []
@@ -204,7 +217,7 @@ export function CalendarMonth() {
     <DndProvider backend={HTML5Backend}>
       <div className="flex flex-1 flex-col overflow-auto">
         <div className="grid grid-cols-7 border-b">
-          {WEEK_DAYS.map((day) => (
+          {weekdays.map((day) => (
             <div
               key={day}
               className="p-2 text-center text-xs font-medium text-muted-foreground"
@@ -221,6 +234,7 @@ export function CalendarMonth() {
               inCurrentMonth={isSameMonth(day, currentDate)}
               posts={getPostsForDate(day)}
               platformForPost={platformForPost}
+              locale={locale}
             />
           ))}
         </div>

@@ -2,8 +2,12 @@
 
 import { DndProvider } from "react-dnd"
 import { HTML5Backend } from "react-dnd-html5-backend"
-import { format } from "date-fns"
-import { useSocialCalendarStore } from "@/store/socialCalendarStore"
+import {
+  formatCalendarDayHeading,
+  formatCalendarTime,
+  useSocialCalendarStore,
+} from "@/store/socialCalendarStore"
+import { useDirectionStore } from "@/store/directionStore"
 import { CalendarColumn } from "./CalendarColumn"
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
@@ -11,6 +15,7 @@ const MINUTES = [0, 15, 30, 45]
 
 export function CalendarDay() {
   const { currentDate, posts } = useSocialCalendarStore()
+  const locale = useDirectionStore((state) => state.locale)
   const day = new Date(currentDate)
 
   function getPostsForSlot(hour: number, minute: number) {
@@ -39,13 +44,13 @@ export function CalendarDay() {
               key={hour}
               className="flex h-28 items-start justify-end border-b pe-2 pt-0.5 text-[10px] text-muted-foreground"
             >
-              {format(new Date().setHours(hour, 0), "HH:mm")}
+              {formatCalendarTime(new Date(new Date().setHours(hour, 0)), locale)}
             </div>
           ))}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex h-8 items-center justify-center border-b text-xs font-medium text-muted-foreground">
-            {format(day, "EEEE, MMM d")}
+            <span lang={locale}>{formatCalendarDayHeading(day, locale)}</span>
           </div>
           {HOURS.map((hour) => (
             <div key={hour}>
