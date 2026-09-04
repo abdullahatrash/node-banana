@@ -30,7 +30,7 @@ describe("app navigation registry", () => {
       primaryNavigation
         .filter((item) => "availability" in item)
         .map((item) => item.key),
-    ).toEqual(["inspiration", "influencers", "brand"]);
+    ).toEqual([]);
   });
 
   it("keeps legacy deep links active under their canonical destination", () => {

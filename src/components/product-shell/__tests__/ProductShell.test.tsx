@@ -104,12 +104,11 @@ describe("ProductShell", () => {
     expect(document.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   });
 
-  it("shows later-slice destinations honestly instead of linking dead routes", () => {
+  it("links the committed inspiration, influencer, and Brand destinations", () => {
     renderShell();
-    expect(screen.getByRole("button", { name: /InspirationPlanned/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /InfluencersPlanned/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /BrandPlanned/ })).toBeDisabled();
-    expect(screen.queryByRole("link", { name: "Inspiration" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Inspiration" })).toHaveAttribute("href", "/inspiration");
+    expect(screen.getByRole("link", { name: "Influencers" })).toHaveAttribute("href", "/influencers");
+    expect(screen.getByRole("link", { name: "Brand" })).toHaveAttribute("href", "/brand");
   });
 
   it("renders Arabic labels and places the RTL sidebar on the right", () => {
