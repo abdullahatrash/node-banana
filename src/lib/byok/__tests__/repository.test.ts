@@ -198,6 +198,22 @@ describe("byok/repository", () => {
   });
 
   describe("durable async credential resolution", () => {
+    it("pins a managed Replicate key to an operator revision without exposing it to Workspace storage", async () => {
+      const { resolveManagedProviderKey, resolveProviderKeyByRef } = await loadRepository();
+      vi.stubEnv("REPLICATE_MANAGED_API_TOKEN", "r8_managed_secret");
+      vi.stubEnv("REPLICATE_MANAGED_KEY_REVISION", "vault-revision-7");
+      const credential = resolveManagedProviderKey("replicate");
+      expect(credential).toEqual({ key: "r8_managed_secret", ref: { id: "managed:replicate", provider: "replicate", source: "managed", revision: "vault-revision-7" } });
+      await expect(resolveProviderKeyByRef("unrelated-workspace", credential!.ref)).resolves.toBe("r8_managed_secret");
+    });
+
+    it("fails closed after a managed key revision rotates", async () => {
+      const { resolveProviderKeyByRef } = await loadRepository();
+      vi.stubEnv("REPLICATE_MANAGED_API_TOKEN", "r8_managed_secret");
+      vi.stubEnv("REPLICATE_MANAGED_KEY_REVISION", "vault-revision-8");
+      await expect(resolveProviderKeyByRef("ws_1", { id: "managed:replicate", provider: "replicate", source: "managed", revision: "vault-revision-7" })).resolves.toBeNull();
+    });
+
     it("returns the exact stored key revision as a non-secret reference", async () => {
       const { resolveDurableProviderKey } = await loadRepository();
       const { encryptProviderKey } = await import("../crypto");

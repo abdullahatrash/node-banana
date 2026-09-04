@@ -87,7 +87,7 @@ export class ModelRoutingService {
     requestedModel: ExactModelRef; selectedModel: ExactModelRef;
     fallbackAuthorizationId: string | null; quantity: number;
     remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
-    userId: string; idempotencyKey: string; id?: string;
+    userId: string; idempotencyKey: string; fundingMode?: GenerationIntent["fundingMode"]; id?: string;
   }) {
     const at = this.now();
     const id = input.id ?? stableId("intent", input.workspaceId, input.idempotencyKey);
@@ -124,7 +124,8 @@ export class ModelRoutingService {
 
     if (selected.qualification.status !== "qualified" || input.quantity > selected.qualification.maxQuantity) return { kind: "invalid" as const };
     const quote: CostQuote = { currency: "USD", amount: selected.qualification.executionPriceUsd.amount, basis: selected.qualification.executionPriceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
-    const reservation = await this.budgets.reserve({ workspaceId: input.workspaceId, principalId: input.userId, intentId: id, model: input.selectedModel, quote, at });
+    const fundingMode = input.fundingMode ?? "byok";
+    const reservation = await this.budgets.reserve({ workspaceId: input.workspaceId, principalId: input.userId, intentId: id, model: input.selectedModel, quote, fundingMode, at });
     if (reservation.kind !== "reserved") {
       if (fallbackReservation?.disposition === "created") await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });
       return reservation.kind === "denied" ? { kind: "budget_denied" as const, code: reservation.code } : { kind: "budget_unavailable" as const, code: reservation.code };
@@ -140,7 +141,7 @@ export class ModelRoutingService {
       regionAdmission: region.evidence,
       outputContract: { mediaType: input.capability === "text_generation" ? "text" : input.capability.includes("video") ? "video" : "image", aspectRatio: input.capability === "text_generation" ? null : "9:16", width: selected.qualification.outputShape.width, height: selected.qualification.outputShape.height, durationSeconds: input.capability.includes("video") ? input.quantity : null, fps: selected.qualification.outputShape.fps, safetyParameterKey: selected.qualification.inputContract.safety?.parameterKey ?? null, safetyValue: selected.qualification.inputContract.safety?.safeValue ?? null, lockedParametersDigest: digest(selected.qualification.inputContract.lockedParameters) },
       requestedModel: input.requestedModel, selectedModel: input.selectedModel,
-      fallbackAuthorizationId: input.fallbackAuthorizationId, quote,
+      fallbackAuthorizationId: input.fallbackAuthorizationId, fundingMode, quote,
       reservationIds: reservation.reservationIds, createdByUserId: input.userId, createdAt: at,
     };
     const requestDigest = digest({ command: "intent", ...value, id: input.id ?? null, createdAt: undefined });

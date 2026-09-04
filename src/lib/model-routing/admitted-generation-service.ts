@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import { resolveDurableProviderKey } from "@/lib/byok/repository";
+import { resolveDurableProviderKey, resolveManagedProviderKey } from "@/lib/byok/repository";
 import { getDb } from "@/lib/db";
 import { assets, brandProfiles } from "@/lib/db/schema";
 import { canUseS3Storage } from "@/lib/storage";
@@ -22,6 +22,7 @@ export interface AdmittedGenerationInput {
   prompt: string; model: ExactModelRef & { provider: "replicate" }; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
   quantity: number; sourceAssetIds: string[]; rightsBasis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; rightsEvidenceIds: string[];
   remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
+  fundingMode: "byok" | "managed";
 }
 export type AdmittedGenerationResult = { ok: true; status: 200 | 202; value: { intentId: string; operation: OperationRecord; provider: unknown; operationHref: string } } | { ok: false; status: 402 | 409 | 422 | 503; code: string; nextActions?: Array<{ code: string; href: string }> };
 const fail = (status: 402 | 409 | 422 | 503, code: string, nextActions?: Array<{ code: string; href: string }>): AdmittedGenerationResult => ({ ok: false, status, code, ...(nextActions ? { nextActions } : {}) });
@@ -38,8 +39,12 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
     try { const flag = await getReleaseControlService().evaluateReleaseFlag(context.workspaceId, context.userId, releaseFlagId, { role: context.role, entitlement: context.planTier, locale: input.contentLanguage === "en" ? "en" : "ar", entryPoint: "simple_studio_generation" }, `${context.idempotencyKey}:flag`); if (!flag.enabled) return fail(409, "GENERATION_RELEASE_FLAG_DISABLED"); }
     catch { return fail(503, "GENERATION_RELEASE_FLAG_UNAVAILABLE"); }
   }
-  const credential = await resolveDurableProviderKey(context.workspaceId, "replicate");
-  if (!credential) return fail(422, "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", [{ code: "configure_provider_key", href: "/studio/settings/provider-keys" }]);
+  const credential = input.fundingMode === "managed"
+    ? resolveManagedProviderKey("replicate")
+    : await resolveDurableProviderKey(context.workspaceId, "replicate");
+  if (!credential) return input.fundingMode === "managed"
+    ? fail(503, "MANAGED_REPLICATE_CREDENTIAL_UNAVAILABLE", [{ code: "inspect_billing", href: "/billing" }])
+    : fail(422, "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", [{ code: "configure_provider_key", href: "/studio/settings/provider-keys" }]);
   const [brand] = await getDb().select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, context.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
   if (!brand?.acceptedAt) return fail(422, "ACCEPTED_BRAND_REVISION_REQUIRED", [{ code: "accept_brand", href: "/onboarding/brand-review" }]);
   const brandContext = await loadImmutableBrandContext({ workspaceId: context.workspaceId, profileId: brand.id, revision: brand.revision, acceptedAt: brand.acceptedAt, profile: brand.profile });
@@ -60,7 +65,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   const [inserted] = await getDb().insert(inspirationRightsSnapshots).values({ workspaceId: context.workspaceId, id: snapshot.id, revision: 1, snapshot, digest: snapshot.digest, basis: snapshot.basis, permittedRemix: snapshot.permittedRemix, createdByUserId: context.userId, createdAt: at }).onConflictDoNothing().returning({ snapshot: inspirationRightsSnapshots.snapshot });
   const stored = inserted?.snapshot ?? (await getDb().select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, context.workspaceId), eq(inspirationRightsSnapshots.id, snapshotId), eq(inspirationRightsSnapshots.revision, 1))).limit(1))[0]?.snapshot; const rights = stored ? hydrateRightsSnapshot(stored) : null;
   if (!rights || rights.digest !== snapshot.digest) return fail(409, "IDEMPOTENCY_CONFLICT");
-  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: context.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, quantity: input.quantity, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent` });
+  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: context.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, fundingMode: input.fundingMode, quantity: input.quantity, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent` });
   if (created.kind !== "created" && created.kind !== "replayed") return fail(created.kind === "unavailable" || created.kind === "budget_unavailable" ? 503 : created.kind === "budget_denied" ? 402 : 422, "code" in created && typeof created.code === "string" ? created.code : created.kind.toUpperCase(), [{ code: "inspect_operations", href: "/studio/operations" }]);
   if (!created.intent) return fail(503, "GENERATION_INTENT_UNAVAILABLE");
   void credential;

@@ -84,6 +84,8 @@ export interface SimpleStudioState {
   setOutputLanguage: (lang: "ar" | "en" | "both") => void;
   arabicVariety: "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other";
   setArabicVariety: (value: SimpleStudioState["arabicVariety"]) => void;
+  fundingMode: "byok" | "managed";
+  setFundingMode: (value: SimpleStudioState["fundingMode"]) => void;
   rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
   setRightsBasis: (value: SimpleStudioState["rightsBasis"]) => void;
   permittedRemix: "reference_only" | "transform" | "derivative";
@@ -131,7 +133,7 @@ async function submitAdmittedGeneration(input: { state: SimpleStudioState; promp
   const contentLanguage = input.mode === "copy"
     ? input.state.outputLanguage === "both" ? "mixed" : input.state.outputLanguage
     : undefined;
-  return runAdmittedStudioGeneration({ prompt, contentLanguage, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : [input.mode === "copy" ? "wording for the selected channel" : "composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal });
+  return runAdmittedStudioGeneration({ prompt, contentLanguage, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, fundingMode: input.state.fundingMode, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : [input.mode === "copy" ? "wording for the selected channel" : "composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal });
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +251,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setOutputLanguage: (lang) => set({ outputLanguage: lang }),
   arabicVariety: "msa",
   setArabicVariety: (arabicVariety) => set({ arabicVariety }),
+  fundingMode: "byok",
+  setFundingMode: (fundingMode) => set({ fundingMode }),
   rightsBasis: "owned",
   setRightsBasis: (rightsBasis) => set((state) => ({ rightsBasis, rightsConfirmed: false, rightsEvidenceIds: rightsBasis === "owned" ? [] : state.rightsEvidenceIds })),
   permittedRemix: "transform",
@@ -443,6 +447,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
             dialogueText: state.dialogueText,
             dialogueLanguage: state.dialogueLanguage,
             copyModelId: state.copyModelId,
+            fundingMode: state.fundingMode,
           },
         }),
       });
@@ -500,6 +505,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       dialogueText: (config.dialogueText as string) || "",
       dialogueLanguage: (config.dialogueLanguage as "ar" | "en") || "en",
       copyModelId: (config.copyModelId as string) || "gemini-2.5-flash",
+      fundingMode: config.fundingMode === "managed" ? "managed" : "byok",
     });
   },
 }));

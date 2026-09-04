@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
-import { resolveDurableProviderKey } from "@/lib/byok/repository";
+import { resolveDurableProviderKey, resolveManagedProviderKey } from "@/lib/byok/repository";
 import { getDb } from "@/lib/db";
 import { assets, brandProfiles } from "@/lib/db/schema";
 import { productionGenerationExecution } from "@/lib/model-routing/execution-production";
@@ -61,8 +61,12 @@ export const POST = withStudioAuth<{ params: Promise<Record<string, string>> }>(
   const sourceUrls = await Promise.all(sourceRows.map(async (asset) => (await createPresignedDownload({ key: asset.storageKey! })).downloadUrl));
   const brandContext = await loadImmutableBrandContext({ workspaceId: authz.workspaceId, profileId: intent.brand.profileId, revision: intent.brand.revision, acceptedAt: brand.acceptedAt, profile: brand.profile });
   if (!brandContext || brandContext.context.digest !== intent.brand.context.digest) return noStoreJson({ success: false, code: "BRAND_CONTEXT_MISMATCH" }, { status: 409 });
-  const credential = await resolveDurableProviderKey(authz.workspaceId, "replicate");
-  if (!credential) return noStoreJson({ success: false, code: "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", error: "Async generation requires a Workspace-stored Replicate key; transient request headers are not accepted." }, { status: 409 });
+  const credential = intent.fundingMode === "managed"
+    ? resolveManagedProviderKey("replicate")
+    : await resolveDurableProviderKey(authz.workspaceId, "replicate");
+  if (!credential) return intent.fundingMode === "managed"
+    ? noStoreJson({ success: false, code: "MANAGED_REPLICATE_CREDENTIAL_UNAVAILABLE" }, { status: 503 })
+    : noStoreJson({ success: false, code: "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", error: "Async generation requires a Workspace-stored Replicate key; transient request headers are not accepted." }, { status: 409 });
   const result = await productionGenerationExecution(credential).execute({ workspaceId: authz.workspaceId, userId: authz.userId, intentId, rawPrompt: parsed.data.prompt, sourceUrls, brandReferenceUrls: brandContext.referenceUrls, idempotencyKey: key });
   const status = result.kind === "accepted" ? 202 : result.kind === "not_found" ? 404 : result.kind === "invalid" || result.kind === "expired" ? 409 : 503;
   return noStoreJson({ success: result.kind === "accepted", result }, { status });

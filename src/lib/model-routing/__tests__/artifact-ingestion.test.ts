@@ -9,7 +9,7 @@ const intent: GenerationIntent = {
   brand: testBrand("brand", 4, new Date("2026-09-03T00:00:00Z")),
   promptDigest: `sha256:${"b".repeat(64)}`, capability: "text_to_video", contentLanguage: "ar", arabicVariety: "gulf",
   rights: TEST_RIGHTS, remixBrief: { digest: `sha256:${"e".repeat(64)}`, preserve: [], transform: [], avoid: [] }, qualification: testQualification(5), regionAdmission: TEST_REGION_ADMISSION,
-  outputContract: testOutputContract(5, 8), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null,
+  outputContract: testOutputContract(5, 8), requestedModel: testRef(5), selectedModel: testRef(5), fallbackAuthorizationId: null, fundingMode: "byok",
   quote: { currency: "USD", amount: 0.4, basis: "second", quantity: 8, quotedAt: new Date("2026-09-03T00:00:00Z"), expiresAt: new Date("2026-09-03T00:05:00Z") },
   reservationIds: ["reservation"], createdByUserId: "user", createdAt: new Date("2026-09-03T00:00:00Z"),
 };

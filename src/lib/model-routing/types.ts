@@ -1,6 +1,7 @@
 export type GenerationCapability = "text_generation" | "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "video_to_video";
 export type GenerationQuality = "preview" | "standard" | "premium";
 export type ExecutionMode = "sync" | "async";
+export type GenerationFundingMode = "byok" | "managed";
 export type ContentLanguage = "ar" | "en" | "mixed";
 export type ArabicVariety = "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other";
 
@@ -60,7 +61,7 @@ export interface GenerationIntent {
   qualification: { id: string; revision: number; digest: `sha256:${string}`; expiresAt: Date };
   regionAdmission: { policyId: string; policyVersion: number; evidenceDigest: `sha256:${string}`; region: string; routeId: string; evidenceExpiresAt: Date };
   outputContract: { mediaType: "text" | "image" | "video"; aspectRatio: "9:16" | null; width: number | null; height: number | null; durationSeconds: number | null; fps: number | null; safetyParameterKey: string | null; safetyValue: string | number | boolean | null; lockedParametersDigest: `sha256:${string}` };
-  requestedModel: ExactModelRef; selectedModel: ExactModelRef; fallbackAuthorizationId: string | null;
+  requestedModel: ExactModelRef; selectedModel: ExactModelRef; fallbackAuthorizationId: string | null; fundingMode: GenerationFundingMode;
   quote: CostQuote; reservationIds: string[]; createdByUserId: string; createdAt: Date;
 }
 

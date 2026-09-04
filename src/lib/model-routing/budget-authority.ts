@@ -1,4 +1,4 @@
-import type { CostQuote, ExactModelRef } from "./types";
+import type { CostQuote, ExactModelRef, GenerationFundingMode } from "./types";
 
 export interface GenerationBudgetAuthority {
   reserve(input: {
@@ -7,6 +7,7 @@ export interface GenerationBudgetAuthority {
     intentId: string;
     model: ExactModelRef;
     quote: CostQuote;
+    fundingMode?: GenerationFundingMode;
     at: Date;
   }): Promise<
     | { kind: "reserved"; reservationIds: string[]; disposition: "created" | "replayed" }

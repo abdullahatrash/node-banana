@@ -13,6 +13,7 @@ const bodySchema = z.object({
   quantity: z.number().positive().max(600), sourceAssetIds: z.array(z.string().min(1).max(200)).max(8).default([]),
   rightsBasis: z.enum(["owned","licensed","public_domain","consented"]), permittedRemix: z.enum(["reference_only","transform","derivative"]), rightsEvidenceIds: z.array(z.string().min(1).max(200)).max(8).default([]),
   remixBrief: z.object({ preserve: briefList, transform: briefList, avoid: briefList }).strict(),
+  fundingMode: z.enum(["byok", "managed"]).default("byok"),
 }).strict();
 
 export function createAdmittedGenerationPost(route: string) {
