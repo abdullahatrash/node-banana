@@ -7,7 +7,7 @@ import { verifyPersonaAttestation } from "@/lib/creator-personas/attestation";
 import { PRODUCTION_OPERATION_STATUS } from "@/lib/agent-runtime/operation-status/production";
 
 type Context = { params: Promise<{ personaId: string }> };
-export const POST = withStudioAuth<Context>({ route: "/api/studio/personas/[personaId]/commands", action: "write" }, async (request, authz, context) => {
+export const POST = withStudioAuth<Context>({ route: "/api/studio/personas/[personaId]/commands", action: "write", permission: "product:personas:manage" }, async (request, authz, context) => {
   const body = await request.json(); const parsed = personaCommandSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ success: false, code: "INVALID_PERSONA_COMMAND", issues: parsed.error.issues }, { status: 400 });
   const { personaId } = await context.params;

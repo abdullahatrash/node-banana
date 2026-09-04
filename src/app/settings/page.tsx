@@ -6,6 +6,8 @@ import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
 import { SettingsSheet } from "@/components/product-shell/SettingsSheet";
 import { GovernanceSettingsSurface, type GovernanceSettingsSection } from "@/components/governance/GovernanceSettingsSurface";
 import { BillingSettings } from "@/components/commercial/BillingSettings";
+import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { resolveWorkspaceMemberPermissions } from "@/lib/studio/authz";
 
 const sections = [
   { key: "members", icon: UsersIcon },
@@ -36,11 +38,19 @@ export default async function SettingsPage({
 }: {
   searchParams: Promise<{ section?: string | string[] }>;
 }) {
-  const [{ section }, t] = await Promise.all([
+  const [{ section }, t, access] = await Promise.all([
     searchParams,
     getTranslations("shell.settings"),
+    requireOnboardingComplete("/settings"),
   ]);
-  const activeSection = readSection(section);
+  const workspaceId = access.aggregate?.session.workspaceId;
+  const permissions = workspaceId ? await resolveWorkspaceMemberPermissions({ workspaceId, userId: access.session.user.id }) : [];
+  const canReadBilling = permissions.includes("product:billing:read");
+  const canManageBilling = permissions.includes("product:billing:manage");
+  const canPurchaseBilling = permissions.includes("product:billing:purchase");
+  const visibleSections = sections.filter(({ key }) => key !== "billing" || canReadBilling);
+  const requestedSection = readSection(section);
+  const activeSection = requestedSection === "billing" && !canReadBilling ? "members" : requestedSection;
 
   return (
     <SettingsSheet>
@@ -74,7 +84,7 @@ export default async function SettingsPage({
             {t(`sections.${activeSection}`)}
           </summary>
           <nav aria-label={t("navigationLabel")} className="mt-3 grid gap-1">
-            {sections.map(({ key, icon: Icon }) => (
+            {visibleSections.map(({ key, icon: Icon }) => (
               <Link
                 key={key}
                 href={`/settings?section=${key}`}
@@ -91,7 +101,7 @@ export default async function SettingsPage({
         <div className="flex min-h-0 flex-1">
           <aside className="hidden w-56 shrink-0 border-e p-4 md:block">
             <nav aria-label={t("navigationLabel")} className="grid gap-1">
-              {sections.map(({ key, icon: Icon }) => (
+              {visibleSections.map(({ key, icon: Icon }) => (
                 <Link
                   key={key}
                   href={`/settings?section=${key}`}
@@ -106,7 +116,7 @@ export default async function SettingsPage({
           </aside>
           <div className="min-w-0 flex-1 overflow-y-auto">
             {activeSection === "billing" ? (
-              <BillingSettings />
+              <BillingSettings canManage={canManageBilling} canPurchase={canPurchaseBilling} />
             ) : activeSection === "providers" ? (
               <ProviderKeysSettings />
             ) : activeSection === "api" ? (

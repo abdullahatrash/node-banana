@@ -9,7 +9,7 @@ function failure(error: unknown) {
   throw error;
 }
 
-export const GET = withStudioAuth<undefined>({ route: "/api/studio/personas", action: "read" }, async (request, authz) => {
+export const GET = withStudioAuth<undefined>({ route: "/api/studio/personas", action: "read", permission: "product:personas:read" }, async (request, authz) => {
   const beforeAt = request.nextUrl.searchParams.get("beforeAt");
   const beforeId = request.nextUrl.searchParams.get("beforeId");
   const limit = Math.min(Math.max(Number(request.nextUrl.searchParams.get("limit") ?? 30), 1), 100);
@@ -17,7 +17,7 @@ export const GET = withStudioAuth<undefined>({ route: "/api/studio/personas", ac
   const page = items.slice(0, limit), last = page.at(-1);
   return NextResponse.json({ success: true, items: page, nextCursor: items.length > limit && last ? { updatedAt: last.updatedAt.toISOString(), id: last.id } : null });
 });
-export const POST = withStudioAuth<undefined>({ route: "/api/studio/personas", action: "write" }, async (request, authz) => {
+export const POST = withStudioAuth<undefined>({ route: "/api/studio/personas", action: "write", permission: "product:personas:manage" }, async (request, authz) => {
   const parsed = createPersonaSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ success: false, code: "INVALID_PERSONA", issues: parsed.error.issues }, { status: 400 });
   try {

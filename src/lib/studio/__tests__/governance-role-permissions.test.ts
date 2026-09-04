@@ -23,7 +23,15 @@ describe("governed legacy product permissions", () => {
       "product:campaigns:write",
       "product:analytics:write",
       "product:support:submit",
+      "product:personas:read",
+      "product:personas:manage",
     ]));
+  });
+
+  it("gives the billing administrator exact billing authority without Workspace mutation", () => {
+    expect(permissions("billing_admin")).toEqual(expect.arrayContaining(["product:billing:read", "product:billing:manage", "product:billing:purchase", "product:billing:refund"]));
+    expect(permissions("billing_admin")).not.toContain("workspaces:write");
+    expect(permissions("creator")).not.toContain("product:billing:read");
   });
 
   it("keeps product viewers read-only while allowing them to contact support", () => {

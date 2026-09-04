@@ -12,8 +12,7 @@ const purpose = z.discriminatedUnion("kind", [
 ]);
 const bodySchema = z.object({ purpose, idempotencyKey: id }).strict();
 
-export const POST = withStudioAuth<undefined>({ route: "/api/studio/billing/checkout", action: "write" }, async (request: NextRequest, authz) => {
-  if (!["owner", "admin"].includes(authz.role)) return NextResponse.json({ success: false, code: "BILLING_ADMIN_REQUIRED" }, { status: 403 });
+export const POST = withStudioAuth<undefined>({ route: "/api/studio/billing/checkout", action: "write", permission: "product:billing:purchase" }, async (request: NextRequest, authz) => {
   const parsed = bodySchema.safeParse(await request.json()); if (!parsed.success) return NextResponse.json({ success: false, code: "INVALID_CHECKOUT" }, { status: 400 });
   try { const checkout = await MERCHANT_CHECKOUTS.create({ workspaceId: authz.workspaceId, userId: authz.userId, purpose: parsed.data.purpose, idempotencyKey: parsed.data.idempotencyKey, successPath: "/settings?section=billing&checkout=success", cancelPath: "/settings?section=billing&checkout=cancelled" }); return NextResponse.json({ success: true, checkout }, { status: 201 }); }
   catch (error) { if (error instanceof MerchantCheckoutError) return NextResponse.json({ success: false, code: error.code }, { status: 422 }); throw error; }

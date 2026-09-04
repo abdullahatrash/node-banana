@@ -54,6 +54,12 @@ export type SocialPermission =
 
 export type ProductPermission =
   | "product:read"
+  | "product:personas:read"
+  | "product:personas:manage"
+  | "product:billing:read"
+  | "product:billing:manage"
+  | "product:billing:purchase"
+  | "product:billing:refund"
   | "product:content:write"
   | "product:inspiration:write"
   | "product:campaigns:write"
@@ -68,6 +74,8 @@ const READ_ONLY_CONTENT_OS_PERMISSIONS = new Set<ContentOSPermission>([
   "assets:read",
   "social:view",
   "product:read",
+  "product:personas:read",
+  "product:billing:read",
 ]);
 
 const WRITE_BLOCKING_CLOSURE_STATUSES = [
@@ -244,6 +252,9 @@ function mapActionToPermission(
   route: string,
   action: StudioAccessAction,
 ): ContentOSPermission {
+  if (route.includes("/billing") || route.includes("/personas")) {
+    throw new Error("EXPLICIT_PRODUCT_PERMISSION_REQUIRED");
+  }
   const resource = route.includes("/projects")
     ? "projects"
     : route.includes("/assets")

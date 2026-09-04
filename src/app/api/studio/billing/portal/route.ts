@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 import { COMMERCIAL, MERCHANT_OF_RECORD } from "@/lib/commercial/production";
-export const POST = withStudioAuth<undefined>({ route: "/api/studio/billing/portal", action: "write" }, async (_request, authz) => {
-  if (!["owner", "admin"].includes(authz.role)) return NextResponse.json({ success: false, code: "BILLING_ADMIN_REQUIRED" }, { status: 403 });
+export const POST = withStudioAuth<undefined>({ route: "/api/studio/billing/portal", action: "write", permission: "product:billing:manage" }, async (_request, authz) => {
   const { subscription } = await COMMERCIAL.summary(authz.workspaceId); if (!subscription?.merchantCustomerRef) return NextResponse.json({ success: false, code: "MERCHANT_ACCOUNT_NOT_READY" }, { status: 422 });
   const portal = await MERCHANT_OF_RECORD.createPortal({ workspaceId: authz.workspaceId, customerRef: subscription.merchantCustomerRef, returnPath: "/settings?section=billing" });
   if (portal.kind !== "ready") return NextResponse.json({ success: false, code: "MERCHANT_PORTAL_UNAVAILABLE" }, { status: 503 });

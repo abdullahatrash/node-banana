@@ -126,6 +126,12 @@ export const CONTENT_OS_PERMISSION_CAPABILITIES = Object.freeze({
   "social:publish": ref("social.posts.submit"),
   "social:manage": ref("social.content.manage"),
   "product:read": ref("product.records.read"),
+  "product:personas:read": ref("product.personas.read"),
+  "product:personas:manage": ref("product.personas.manage"),
+  "product:billing:read": ref("product.billing.read"),
+  "product:billing:manage": ref("product.billing.manage"),
+  "product:billing:purchase": ref("product.billing.purchase"),
+  "product:billing:refund": ref("product.billing.refund"),
   "product:content:write": ref("product.content.write"),
   "product:inspiration:write": ref("product.inspiration.write"),
   "product:campaigns:write": ref("product.campaigns.write"),
@@ -139,6 +145,7 @@ const PRODUCT_READ = [
   CONTENT_OS_PERMISSION_CAPABILITIES["assets:read"],
   CONTENT_OS_PERMISSION_CAPABILITIES["social:view"],
   CONTENT_OS_PERMISSION_CAPABILITIES["product:read"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:personas:read"],
 ] as const;
 const PRODUCT_CREATE = [
   ...PRODUCT_READ,
@@ -150,6 +157,7 @@ const PRODUCT_CREATE = [
   CONTENT_OS_PERMISSION_CAPABILITIES["product:campaigns:write"],
   CONTENT_OS_PERMISSION_CAPABILITIES["product:analytics:write"],
   CONTENT_OS_PERMISSION_CAPABILITIES["product:support:submit"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:personas:manage"],
 ] as const;
 const PRODUCT_ADMIN = [
   ...PRODUCT_CREATE,
@@ -162,6 +170,7 @@ const PRODUCT_ADMIN = [
 ] as const;
 
 const FINANCIAL_READ = [
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:billing:read"],
   ref("usage_records.get"),
   ref("usage_records.list"),
   ref("cost_valuations.get"),
@@ -173,6 +182,12 @@ const FINANCIAL_READ = [
   ref("pricing_overrides.list"),
   ref("spend_controls.get", 2),
   ref("quota_policies.list"),
+] as const;
+
+const BILLING_ADMIN = [
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:billing:manage"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:billing:purchase"],
+  CONTENT_OS_PERMISSION_CAPABILITIES["product:billing:refund"],
 ] as const;
 
 const ANALYTICS_READ = [
@@ -187,9 +202,9 @@ const ANALYTICS_READ = [
  * publishing release, provider-spending runs, payouts, and refunds.
  */
 export const BUILT_IN_ROLE_APPLICATION_CAPABILITIES = Object.freeze({
-  owner: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...FINANCIAL_READ, ...ANALYTICS_READ, ...PRODUCT_ADMIN]),
-  admin: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...FINANCIAL_READ, ...ANALYTICS_READ, ...PRODUCT_ADMIN]),
-  billing_admin: Object.freeze([...FINANCIAL_READ, ref("credentials.audit.list"), CONTENT_OS_PERMISSION_CAPABILITIES["workspaces:read"]]),
+  owner: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...FINANCIAL_READ, ...BILLING_ADMIN, ...ANALYTICS_READ, ...PRODUCT_ADMIN]),
+  admin: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...FINANCIAL_READ, ...BILLING_ADMIN, ...ANALYTICS_READ, ...PRODUCT_ADMIN]),
+  billing_admin: Object.freeze([...FINANCIAL_READ, ...BILLING_ADMIN, ref("credentials.audit.list"), CONTENT_OS_PERMISSION_CAPABILITIES["workspaces:read"]]),
   creator: Object.freeze([...CORE_READ, ...SAFE_CREATION, ...PRODUCT_CREATE]),
   approver: Object.freeze([...CORE_READ, ...PRODUCT_READ]),
   analyst: Object.freeze([...CORE_READ, ...FINANCIAL_READ, ...ANALYTICS_READ, ...PRODUCT_READ]),
