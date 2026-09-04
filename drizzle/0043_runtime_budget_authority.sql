@@ -228,6 +228,32 @@ CREATE TABLE "runtime_workspace_pricing_overrides" (
 );
 --> statement-breakpoint
 ALTER TABLE "runtime_cost_valuations" DROP CONSTRAINT "runtime_cost_valuations_state_check";--> statement-breakpoint
+CREATE INDEX "runtime_budget_admission_grants_grant_idx" ON "runtime_budget_admission_grants" USING btree ("grant_id");--> statement-breakpoint
+CREATE INDEX "runtime_budget_admissions_principal_created_idx" ON "runtime_budget_admissions" USING btree ("workspace_id","principal_id","created_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_attempt_allocations_workspace_id_unique" ON "runtime_budget_attempt_allocations" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_attempt_allocations_attempt_unique" ON "runtime_budget_attempt_allocations" USING btree ("workspace_id","run_id","step_attempt_id");--> statement-breakpoint
+CREATE INDEX "runtime_budget_attempt_allocations_run_step_idx" ON "runtime_budget_attempt_allocations" USING btree ("workspace_id","run_id","step_id","attempt");--> statement-breakpoint
+CREATE INDEX "runtime_budget_attempt_allocations_grant_idx" ON "runtime_budget_attempt_allocations" USING btree ("grant_id");--> statement-breakpoint
+CREATE INDEX "runtime_budget_attempt_reservation_allocations_reservation_idx" ON "runtime_budget_attempt_reservation_allocations" USING btree ("workspace_id","reservation_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_periods_workspace_id_unique" ON "runtime_budget_periods" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_periods_window_unique" ON "runtime_budget_periods" USING btree ("workspace_id","policy_id","starts_at","ends_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_policies_workspace_id_unique" ON "runtime_budget_policies" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_policies_active_workspace_unique" ON "runtime_budget_policies" USING btree ("workspace_id") WHERE "runtime_budget_policies"."status" = 'active' and "runtime_budget_policies"."principal_id" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_policies_active_principal_unique" ON "runtime_budget_policies" USING btree ("workspace_id","principal_id") WHERE "runtime_budget_policies"."status" = 'active' and "runtime_budget_policies"."principal_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_policy_revisions_workspace_id_unique" ON "runtime_budget_policy_revisions" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_policy_revisions_policy_revision_unique" ON "runtime_budget_policy_revisions" USING btree ("workspace_id","policy_id","revision");--> statement-breakpoint
+CREATE INDEX "runtime_budget_policy_revisions_principal_idx" ON "runtime_budget_policy_revisions" USING btree ("workspace_id","principal_id");--> statement-breakpoint
+CREATE INDEX "runtime_budget_reservation_events_reservation_occurred_idx" ON "runtime_budget_reservation_events" USING btree ("workspace_id","reservation_id","occurred_at");--> statement-breakpoint
+CREATE INDEX "runtime_budget_reservation_events_valuation_idx" ON "runtime_budget_reservation_events" USING btree ("workspace_id","cost_valuation_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_reservations_workspace_id_unique" ON "runtime_budget_reservations" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_budget_reservations_run_policy_unique" ON "runtime_budget_reservations" USING btree ("workspace_id","run_id","policy_id");--> statement-breakpoint
+CREATE INDEX "runtime_budget_reservations_period_state_idx" ON "runtime_budget_reservations" USING btree ("workspace_id","period_id","state");--> statement-breakpoint
+CREATE INDEX "runtime_budget_reservations_principal_created_idx" ON "runtime_budget_reservations" USING btree ("workspace_id","admitted_principal_id","created_at");--> statement-breakpoint
+CREATE INDEX "runtime_budget_reservations_revision_idx" ON "runtime_budget_reservations" USING btree ("workspace_id","policy_revision_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_spend_control_events_workspace_revision_unique" ON "runtime_spend_control_events" USING btree ("workspace_id","revision");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_workspace_pricing_override_revisions_unique" ON "runtime_workspace_pricing_override_revisions" USING btree ("workspace_id","override_id","revision");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_workspace_pricing_overrides_workspace_id_unique" ON "runtime_workspace_pricing_overrides" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_workspace_pricing_overrides_active_identity_unique" ON "runtime_workspace_pricing_overrides" USING btree ("workspace_id","provider","provider_operation","model","service_tier","dimension") WHERE "runtime_workspace_pricing_overrides"."status" = 'active';--> statement-breakpoint
 ALTER TABLE "runtime_budget_admin_receipts" ADD CONSTRAINT "runtime_budget_admin_receipts_workspace_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_budget_admission_grants" ADD CONSTRAINT "runtime_budget_admission_grants_admission_fk" FOREIGN KEY ("workspace_id","run_id") REFERENCES "public"."runtime_budget_admissions"("workspace_id","run_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_budget_admission_grants" ADD CONSTRAINT "runtime_budget_admission_grants_grant_fk" FOREIGN KEY ("grant_id") REFERENCES "public"."credential_spend_grants"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
@@ -263,32 +289,6 @@ ALTER TABLE "runtime_workspace_pricing_override_revisions" ADD CONSTRAINT "runti
 ALTER TABLE "runtime_workspace_pricing_overrides" ADD CONSTRAINT "runtime_workspace_pricing_overrides_created_by_user_id_user_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_workspace_pricing_overrides" ADD CONSTRAINT "runtime_workspace_pricing_overrides_revoked_by_user_id_user_id_fk" FOREIGN KEY ("revoked_by_user_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_workspace_pricing_overrides" ADD CONSTRAINT "runtime_workspace_pricing_overrides_workspace_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "runtime_budget_admission_grants_grant_idx" ON "runtime_budget_admission_grants" USING btree ("grant_id");--> statement-breakpoint
-CREATE INDEX "runtime_budget_admissions_principal_created_idx" ON "runtime_budget_admissions" USING btree ("workspace_id","principal_id","created_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_attempt_allocations_workspace_id_unique" ON "runtime_budget_attempt_allocations" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_attempt_allocations_attempt_unique" ON "runtime_budget_attempt_allocations" USING btree ("workspace_id","run_id","step_attempt_id");--> statement-breakpoint
-CREATE INDEX "runtime_budget_attempt_allocations_run_step_idx" ON "runtime_budget_attempt_allocations" USING btree ("workspace_id","run_id","step_id","attempt");--> statement-breakpoint
-CREATE INDEX "runtime_budget_attempt_allocations_grant_idx" ON "runtime_budget_attempt_allocations" USING btree ("grant_id");--> statement-breakpoint
-CREATE INDEX "runtime_budget_attempt_reservation_allocations_reservation_idx" ON "runtime_budget_attempt_reservation_allocations" USING btree ("workspace_id","reservation_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_periods_workspace_id_unique" ON "runtime_budget_periods" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_periods_window_unique" ON "runtime_budget_periods" USING btree ("workspace_id","policy_id","starts_at","ends_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_policies_workspace_id_unique" ON "runtime_budget_policies" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_policies_active_workspace_unique" ON "runtime_budget_policies" USING btree ("workspace_id") WHERE "runtime_budget_policies"."status" = 'active' and "runtime_budget_policies"."principal_id" is null;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_policies_active_principal_unique" ON "runtime_budget_policies" USING btree ("workspace_id","principal_id") WHERE "runtime_budget_policies"."status" = 'active' and "runtime_budget_policies"."principal_id" is not null;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_policy_revisions_workspace_id_unique" ON "runtime_budget_policy_revisions" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_policy_revisions_policy_revision_unique" ON "runtime_budget_policy_revisions" USING btree ("workspace_id","policy_id","revision");--> statement-breakpoint
-CREATE INDEX "runtime_budget_policy_revisions_principal_idx" ON "runtime_budget_policy_revisions" USING btree ("workspace_id","principal_id");--> statement-breakpoint
-CREATE INDEX "runtime_budget_reservation_events_reservation_occurred_idx" ON "runtime_budget_reservation_events" USING btree ("workspace_id","reservation_id","occurred_at");--> statement-breakpoint
-CREATE INDEX "runtime_budget_reservation_events_valuation_idx" ON "runtime_budget_reservation_events" USING btree ("workspace_id","cost_valuation_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_reservations_workspace_id_unique" ON "runtime_budget_reservations" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_budget_reservations_run_policy_unique" ON "runtime_budget_reservations" USING btree ("workspace_id","run_id","policy_id");--> statement-breakpoint
-CREATE INDEX "runtime_budget_reservations_period_state_idx" ON "runtime_budget_reservations" USING btree ("workspace_id","period_id","state");--> statement-breakpoint
-CREATE INDEX "runtime_budget_reservations_principal_created_idx" ON "runtime_budget_reservations" USING btree ("workspace_id","admitted_principal_id","created_at");--> statement-breakpoint
-CREATE INDEX "runtime_budget_reservations_revision_idx" ON "runtime_budget_reservations" USING btree ("workspace_id","policy_revision_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_spend_control_events_workspace_revision_unique" ON "runtime_spend_control_events" USING btree ("workspace_id","revision");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_workspace_pricing_override_revisions_unique" ON "runtime_workspace_pricing_override_revisions" USING btree ("workspace_id","override_id","revision");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_workspace_pricing_overrides_workspace_id_unique" ON "runtime_workspace_pricing_overrides" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_workspace_pricing_overrides_active_identity_unique" ON "runtime_workspace_pricing_overrides" USING btree ("workspace_id","provider","provider_operation","model","service_tier","dimension") WHERE "runtime_workspace_pricing_overrides"."status" = 'active';--> statement-breakpoint
 ALTER TABLE "runtime_cost_valuations" ADD CONSTRAINT "runtime_cost_valuations_state_check" CHECK (("runtime_cost_valuations"."source" = 'unknown' and "runtime_cost_valuations"."amount" is null and "runtime_cost_valuations"."currency" is null)
         or ("runtime_cost_valuations"."source" = 'effect_not_created' and "runtime_cost_valuations"."amount" = '0' and "runtime_cost_valuations"."currency" is null)
         or ("runtime_cost_valuations"."source" in ('provider_reported', 'workspace_override', 'builtin_catalog', 'mixed')

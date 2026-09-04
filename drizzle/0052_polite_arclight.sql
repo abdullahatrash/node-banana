@@ -252,6 +252,9 @@ CREATE TABLE "workspace_provider_keys" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_automation_occurrences_automation_id_unique" ON "runtime_automation_occurrences" USING btree ("workspace_id","automation_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_automation_revisions_identity_unique" ON "runtime_automation_revisions" USING btree ("workspace_id","automation_id","id","revision");--> statement-breakpoint
+CREATE UNIQUE INDEX "content_workflow_revisions_workspace_workflow_identity_unique" ON "content_workflow_revisions" USING btree ("workspace_id","workflow_id","id","revision","definition_digest");--> statement-breakpoint
 ALTER TABLE "api_tokens" ADD CONSTRAINT "api_tokens_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "api_tokens" ADD CONSTRAINT "api_tokens_created_by_user_id_user_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "project_workflow_runs" ADD CONSTRAINT "project_workflow_runs_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -308,7 +311,6 @@ CREATE INDEX "runtime_automation_events_sequence_idx" ON "runtime_automation_eve
 CREATE UNIQUE INDEX "runtime_automation_occurrence_artifacts_unique" ON "runtime_automation_occurrence_artifacts" USING btree ("workspace_id","occurrence_id","artifact_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "runtime_automation_occurrence_cancellations_id_unique" ON "runtime_automation_occurrence_cancellations" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "runtime_automation_occurrences_source_key_unique" ON "runtime_automation_occurrences" USING btree ("workspace_id","automation_id","source_occurrence_key");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_automation_occurrences_automation_id_unique" ON "runtime_automation_occurrences" USING btree ("workspace_id","automation_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "runtime_automation_occurrences_workflow_run_unique" ON "runtime_automation_occurrences" USING btree ("workspace_id","workflow_run_id");--> statement-breakpoint
 CREATE INDEX "runtime_automation_occurrences_accepted_idx" ON "runtime_automation_occurrences" USING btree ("workspace_id","automation_id","accepted_at","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "runtime_automation_outbox_occurrence_generation_unique" ON "runtime_automation_outbox_intents" USING btree ("workspace_id","occurrence_id","generation");--> statement-breakpoint
@@ -316,9 +318,7 @@ CREATE UNIQUE INDEX "runtime_automation_outbox_dedupe_key_unique" ON "runtime_au
 CREATE INDEX "runtime_automation_outbox_claim_idx" ON "runtime_automation_outbox_intents" USING btree ("state","available_at","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "runtime_automation_revision_artifact_bindings_position_unique" ON "runtime_automation_revision_artifact_bindings" USING btree ("workspace_id","automation_id","revision_id","position");--> statement-breakpoint
 CREATE UNIQUE INDEX "runtime_automation_revisions_number_unique" ON "runtime_automation_revisions" USING btree ("workspace_id","automation_id","revision");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_automation_revisions_identity_unique" ON "runtime_automation_revisions" USING btree ("workspace_id","automation_id","id","revision");--> statement-breakpoint
 CREATE UNIQUE INDEX "runtime_automation_stage_attempts_number_unique" ON "runtime_automation_stage_attempts" USING btree ("workspace_id","occurrence_id","stage","attempt");--> statement-breakpoint
 CREATE INDEX "runtime_automations_workspace_state_idx" ON "runtime_automations" USING btree ("workspace_id","control_state","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "workspace_provider_keys_workspace_provider_unique" ON "workspace_provider_keys" USING btree ("workspace_id","provider");--> statement-breakpoint
 CREATE INDEX "workspace_provider_keys_workspace_idx" ON "workspace_provider_keys" USING btree ("workspace_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "content_workflow_revisions_workspace_workflow_identity_unique" ON "content_workflow_revisions" USING btree ("workspace_id","workflow_id","id","revision","definition_digest");

@@ -272,6 +272,26 @@ CREATE TABLE "usage_ledger_receipts" (
 --> statement-breakpoint
 ALTER TABLE "artifact_generated_origins" DROP CONSTRAINT "artifact_generated_origins_provider_metadata_redaction_check";--> statement-breakpoint
 ALTER TABLE "workflow_step_attempts" DROP CONSTRAINT "workflow_step_attempts_payload_check";--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_cost_valuations_superseded_unique" ON "runtime_cost_valuations" USING btree ("supersedes_cost_valuation_id") WHERE "runtime_cost_valuations"."supersedes_cost_valuation_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_cost_valuations_chain_target_unique" ON "runtime_cost_valuations" USING btree ("workspace_id","settlement_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_cost_valuations_workspace_id_unique" ON "runtime_cost_valuations" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE INDEX "runtime_cost_valuations_workspace_recorded_idx" ON "runtime_cost_valuations" USING btree ("workspace_id","recorded_at","id");--> statement-breakpoint
+CREATE INDEX "runtime_fx_snapshots_pair_observed_idx" ON "runtime_fx_snapshots" USING btree ("base_currency","quote_currency","observed_at");--> statement-breakpoint
+CREATE INDEX "runtime_pricing_snapshots_lookup_idx" ON "runtime_pricing_snapshots" USING btree ("workspace_id","provider","provider_operation","model","effective_from");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_pricing_snapshots_workspace_id_unique" ON "runtime_pricing_snapshots" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_pricing_snapshots_id_source_unique" ON "runtime_pricing_snapshots" USING btree ("id","source");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_usage_artifact_attributions_settlement_unique" ON "runtime_usage_artifact_attributions" USING btree ("workspace_id","settlement_id");--> statement-breakpoint
+CREATE INDEX "runtime_usage_metering_events_workspace_occurred_idx" ON "runtime_usage_metering_events" USING btree ("workspace_id","occurred_at","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_usage_records_settlement_dimension_unique" ON "runtime_usage_records" USING btree ("settlement_id","dimension","unit") WHERE "runtime_usage_records"."supersedes_usage_record_id" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_usage_records_superseded_unique" ON "runtime_usage_records" USING btree ("supersedes_usage_record_id") WHERE "runtime_usage_records"."supersedes_usage_record_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_usage_records_chain_target_unique" ON "runtime_usage_records" USING btree ("workspace_id","settlement_id","dimension","unit","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_usage_records_workspace_id_unique" ON "runtime_usage_records" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_usage_records_workspace_settlement_id_unique" ON "runtime_usage_records" USING btree ("workspace_id","settlement_id","id");--> statement-breakpoint
+CREATE INDEX "runtime_usage_records_workspace_recorded_idx" ON "runtime_usage_records" USING btree ("workspace_id","recorded_at","id");--> statement-breakpoint
+CREATE INDEX "runtime_usage_records_run_idx" ON "runtime_usage_records" USING btree ("workspace_id","run_id");--> statement-breakpoint
+CREATE INDEX "runtime_usage_records_attempt_idx" ON "runtime_usage_records" USING btree ("workspace_id","step_attempt_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "usage_ledger_receipts_workspace_id_unique" ON "usage_ledger_receipts" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "artifact_generated_origins_workspace_generation_identity_unique" ON "artifact_generated_origins" USING btree ("workspace_id","artifact_id","run_id","step_attempt_id","effect_key","output_name");--> statement-breakpoint
 ALTER TABLE "runtime_cost_valuation_pricing_snapshots" ADD CONSTRAINT "runtime_cost_valuation_pricing_snapshots_valuation_fk" FOREIGN KEY ("workspace_id","cost_valuation_id") REFERENCES "public"."runtime_cost_valuations"("workspace_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_cost_valuation_pricing_snapshots" ADD CONSTRAINT "runtime_cost_valuation_pricing_snapshots_workspace_pricing_fk" FOREIGN KEY ("pricing_workspace_id","pricing_snapshot_id") REFERENCES "public"."runtime_pricing_snapshots"("workspace_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_cost_valuation_pricing_snapshots" ADD CONSTRAINT "runtime_cost_valuation_pricing_snapshots_identity_fk" FOREIGN KEY ("pricing_snapshot_id","pricing_source") REFERENCES "public"."runtime_pricing_snapshots"("id","source") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
@@ -294,27 +314,7 @@ ALTER TABLE "runtime_usage_records" ADD CONSTRAINT "runtime_usage_records_worksp
 ALTER TABLE "runtime_usage_records" ADD CONSTRAINT "runtime_usage_records_workspace_principal_fk" FOREIGN KEY ("workspace_id","principal_id") REFERENCES "public"."agent_principals"("workspace_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_usage_records" ADD CONSTRAINT "runtime_usage_records_supersedes_fk" FOREIGN KEY ("workspace_id","settlement_id","dimension","unit","supersedes_usage_record_id") REFERENCES "public"."runtime_usage_records"("workspace_id","settlement_id","dimension","unit","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "usage_ledger_receipts" ADD CONSTRAINT "usage_ledger_receipts_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_cost_valuations_superseded_unique" ON "runtime_cost_valuations" USING btree ("supersedes_cost_valuation_id") WHERE "runtime_cost_valuations"."supersedes_cost_valuation_id" is not null;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_cost_valuations_chain_target_unique" ON "runtime_cost_valuations" USING btree ("workspace_id","settlement_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_cost_valuations_workspace_id_unique" ON "runtime_cost_valuations" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE INDEX "runtime_cost_valuations_workspace_recorded_idx" ON "runtime_cost_valuations" USING btree ("workspace_id","recorded_at","id");--> statement-breakpoint
-CREATE INDEX "runtime_fx_snapshots_pair_observed_idx" ON "runtime_fx_snapshots" USING btree ("base_currency","quote_currency","observed_at");--> statement-breakpoint
-CREATE INDEX "runtime_pricing_snapshots_lookup_idx" ON "runtime_pricing_snapshots" USING btree ("workspace_id","provider","provider_operation","model","effective_from");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_pricing_snapshots_workspace_id_unique" ON "runtime_pricing_snapshots" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_pricing_snapshots_id_source_unique" ON "runtime_pricing_snapshots" USING btree ("id","source");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_usage_artifact_attributions_settlement_unique" ON "runtime_usage_artifact_attributions" USING btree ("workspace_id","settlement_id");--> statement-breakpoint
-CREATE INDEX "runtime_usage_metering_events_workspace_occurred_idx" ON "runtime_usage_metering_events" USING btree ("workspace_id","occurred_at","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_usage_records_settlement_dimension_unique" ON "runtime_usage_records" USING btree ("settlement_id","dimension","unit") WHERE "runtime_usage_records"."supersedes_usage_record_id" is null;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_usage_records_superseded_unique" ON "runtime_usage_records" USING btree ("supersedes_usage_record_id") WHERE "runtime_usage_records"."supersedes_usage_record_id" is not null;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_usage_records_chain_target_unique" ON "runtime_usage_records" USING btree ("workspace_id","settlement_id","dimension","unit","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_usage_records_workspace_id_unique" ON "runtime_usage_records" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_usage_records_workspace_settlement_id_unique" ON "runtime_usage_records" USING btree ("workspace_id","settlement_id","id");--> statement-breakpoint
-CREATE INDEX "runtime_usage_records_workspace_recorded_idx" ON "runtime_usage_records" USING btree ("workspace_id","recorded_at","id");--> statement-breakpoint
-CREATE INDEX "runtime_usage_records_run_idx" ON "runtime_usage_records" USING btree ("workspace_id","run_id");--> statement-breakpoint
-CREATE INDEX "runtime_usage_records_attempt_idx" ON "runtime_usage_records" USING btree ("workspace_id","step_attempt_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "usage_ledger_receipts_workspace_id_unique" ON "usage_ledger_receipts" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE INDEX "usage_ledger_receipts_workspace_created_idx" ON "usage_ledger_receipts" USING btree ("workspace_id","created_at","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "artifact_generated_origins_workspace_generation_identity_unique" ON "artifact_generated_origins" USING btree ("workspace_id","artifact_id","run_id","step_attempt_id","effect_key","output_name");--> statement-breakpoint
 ALTER TABLE "artifact_generated_origins" ADD CONSTRAINT "artifact_generated_origins_provider_metadata_redaction_check" CHECK ("artifact_generated_origins"."provider_metadata" is null or (
         "artifact_generated_origins"."provider_metadata"::text !~* '"[^"]*(secret|token|password|ciphertext)[^"]*"\s*:'
         and (

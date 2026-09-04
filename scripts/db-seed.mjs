@@ -234,6 +234,53 @@ async function ensureUser(client, seedUser) {
     [organizationMemberId(workspaceId, userId), organizationId, userId],
   );
 
+  await client.query(
+    `
+      INSERT INTO onboarding_sessions (
+        id,
+        user_id,
+        workspace_id,
+        status,
+        current_step,
+        answers,
+        content_language,
+        revision,
+        completed_at,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, 'completed_legacy', 'education', '{"schemaVersion":1}'::jsonb, 'ar', 1, NOW(), NOW(), NOW())
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        workspace_id = EXCLUDED.workspace_id,
+        status = EXCLUDED.status,
+        current_step = EXCLUDED.current_step,
+        answers = EXCLUDED.answers,
+        content_language = EXCLUDED.content_language,
+        revision = EXCLUDED.revision,
+        completed_at = EXCLUDED.completed_at,
+        updated_at = NOW()
+    `,
+    [`onb_seed_${userId}`, userId, workspaceId],
+  );
+
+  await client.query(
+    `
+      INSERT INTO user_preferences (
+        user_id,
+        interface_locale,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, 'ar', NOW(), NOW())
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        interface_locale = EXCLUDED.interface_locale,
+        updated_at = NOW()
+    `,
+    [userId],
+  );
+
   return {
     userId,
     email: seedUser.email,

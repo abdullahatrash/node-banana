@@ -158,6 +158,24 @@ CREATE TABLE "runtime_quota_windows" (
 );
 --> statement-breakpoint
 ALTER TABLE "workflow_runs" DROP CONSTRAINT "workflow_runs_lifecycle_check";--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_policies_workspace_id_unique" ON "runtime_quota_policies" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_policies_active_workspace_identity_unique" ON "runtime_quota_policies" USING btree ("workspace_id","kind","boundary","dimension","unit","window","timezone","reservation_rule") WHERE "runtime_quota_policies"."status" = 'active' and "runtime_quota_policies"."principal_id" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_policies_active_principal_identity_unique" ON "runtime_quota_policies" USING btree ("workspace_id","principal_id","kind","boundary","dimension","unit","window","timezone","reservation_rule") WHERE "runtime_quota_policies"."status" = 'active' and "runtime_quota_policies"."principal_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_policy_revisions_workspace_id_unique" ON "runtime_quota_policy_revisions" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_policy_revisions_policy_id_unique" ON "runtime_quota_policy_revisions" USING btree ("workspace_id","policy_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_policy_revisions_policy_revision_unique" ON "runtime_quota_policy_revisions" USING btree ("workspace_id","policy_id","revision");--> statement-breakpoint
+CREATE INDEX "runtime_quota_reservation_events_reservation_occurred_idx" ON "runtime_quota_reservation_events" USING btree ("workspace_id","reservation_id","occurred_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_reservations_workspace_id_unique" ON "runtime_quota_reservations" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_reservations_transition_policy_unique" ON "runtime_quota_reservations" USING btree ("workspace_id","transition_key","policy_revision_id");--> statement-breakpoint
+CREATE INDEX "runtime_quota_reservations_window_state_idx" ON "runtime_quota_reservations" USING btree ("workspace_id","window_id","state");--> statement-breakpoint
+CREATE INDEX "runtime_quota_reservations_subject_idx" ON "runtime_quota_reservations" USING btree ("workspace_id","subject_kind","subject_id");--> statement-breakpoint
+CREATE INDEX "runtime_quota_reservations_run_idx" ON "runtime_quota_reservations" USING btree ("workspace_id","run_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_waits_workspace_id_unique" ON "runtime_quota_waits" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_waits_transition_unique" ON "runtime_quota_waits" USING btree ("workspace_id","transition_key");--> statement-breakpoint
+CREATE INDEX "runtime_quota_waits_eligible_idx" ON "runtime_quota_waits" USING btree ("workspace_id","state","eligible_at","created_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_windows_workspace_id_unique" ON "runtime_quota_windows" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_windows_finite_window_unique" ON "runtime_quota_windows" USING btree ("workspace_id","policy_id","starts_at","ends_at") WHERE "runtime_quota_windows"."ends_at" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_quota_windows_open_window_unique" ON "runtime_quota_windows" USING btree ("workspace_id","policy_id","starts_at") WHERE "runtime_quota_windows"."ends_at" is null;--> statement-breakpoint
 ALTER TABLE "runtime_quota_admin_receipts" ADD CONSTRAINT "runtime_quota_admin_receipts_workspace_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_quota_claim_receipts" ADD CONSTRAINT "runtime_quota_claim_receipts_workspace_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_quota_policies" ADD CONSTRAINT "runtime_quota_policies_workspace_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
@@ -177,25 +195,7 @@ ALTER TABLE "runtime_quota_usage_reconciliation_receipts" ADD CONSTRAINT "runtim
 ALTER TABLE "runtime_quota_waits" ADD CONSTRAINT "runtime_quota_waits_run_fk" FOREIGN KEY ("workspace_id","run_id") REFERENCES "public"."workflow_runs"("workspace_id","id") ON DELETE restrict ON UPDATE no action DEFERRABLE INITIALLY DEFERRED;--> statement-breakpoint
 ALTER TABLE "runtime_quota_waits" ADD CONSTRAINT "runtime_quota_waits_principal_fk" FOREIGN KEY ("workspace_id","admitted_principal_id") REFERENCES "public"."agent_principals"("workspace_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_quota_windows" ADD CONSTRAINT "runtime_quota_windows_policy_fk" FOREIGN KEY ("workspace_id","policy_id") REFERENCES "public"."runtime_quota_policies"("workspace_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_policies_workspace_id_unique" ON "runtime_quota_policies" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_policies_active_workspace_identity_unique" ON "runtime_quota_policies" USING btree ("workspace_id","kind","boundary","dimension","unit","window","timezone","reservation_rule") WHERE "runtime_quota_policies"."status" = 'active' and "runtime_quota_policies"."principal_id" is null;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_policies_active_principal_identity_unique" ON "runtime_quota_policies" USING btree ("workspace_id","principal_id","kind","boundary","dimension","unit","window","timezone","reservation_rule") WHERE "runtime_quota_policies"."status" = 'active' and "runtime_quota_policies"."principal_id" is not null;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_policy_revisions_workspace_id_unique" ON "runtime_quota_policy_revisions" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_policy_revisions_policy_id_unique" ON "runtime_quota_policy_revisions" USING btree ("workspace_id","policy_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_policy_revisions_policy_revision_unique" ON "runtime_quota_policy_revisions" USING btree ("workspace_id","policy_id","revision");--> statement-breakpoint
 ALTER TABLE "runtime_quota_policies" ADD CONSTRAINT "runtime_quota_policies_current_revision_fk" FOREIGN KEY ("workspace_id","id","current_revision_id") REFERENCES "public"."runtime_quota_policy_revisions"("workspace_id","policy_id","id") ON DELETE restrict ON UPDATE no action DEFERRABLE INITIALLY DEFERRED;--> statement-breakpoint
-CREATE INDEX "runtime_quota_reservation_events_reservation_occurred_idx" ON "runtime_quota_reservation_events" USING btree ("workspace_id","reservation_id","occurred_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_reservations_workspace_id_unique" ON "runtime_quota_reservations" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_reservations_transition_policy_unique" ON "runtime_quota_reservations" USING btree ("workspace_id","transition_key","policy_revision_id");--> statement-breakpoint
-CREATE INDEX "runtime_quota_reservations_window_state_idx" ON "runtime_quota_reservations" USING btree ("workspace_id","window_id","state");--> statement-breakpoint
-CREATE INDEX "runtime_quota_reservations_subject_idx" ON "runtime_quota_reservations" USING btree ("workspace_id","subject_kind","subject_id");--> statement-breakpoint
-CREATE INDEX "runtime_quota_reservations_run_idx" ON "runtime_quota_reservations" USING btree ("workspace_id","run_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_waits_workspace_id_unique" ON "runtime_quota_waits" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_waits_transition_unique" ON "runtime_quota_waits" USING btree ("workspace_id","transition_key");--> statement-breakpoint
-CREATE INDEX "runtime_quota_waits_eligible_idx" ON "runtime_quota_waits" USING btree ("workspace_id","state","eligible_at","created_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_windows_workspace_id_unique" ON "runtime_quota_windows" USING btree ("workspace_id","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_windows_finite_window_unique" ON "runtime_quota_windows" USING btree ("workspace_id","policy_id","starts_at","ends_at") WHERE "runtime_quota_windows"."ends_at" is not null;--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_quota_windows_open_window_unique" ON "runtime_quota_windows" USING btree ("workspace_id","policy_id","starts_at") WHERE "runtime_quota_windows"."ends_at" is null;--> statement-breakpoint
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_lifecycle_check" CHECK ((
         "workflow_runs"."state" = 'accepted'
           and "workflow_runs"."started_at" is null

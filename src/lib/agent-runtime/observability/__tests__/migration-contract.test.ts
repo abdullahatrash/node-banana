@@ -46,7 +46,7 @@ describe("Observability migration contract", () => {
     expect(validator).toContain("jsonb_typeof(item) IS DISTINCT FROM 'string'");
     expect(validator.match(/::timestamptz IS NOT NULL/g)?.length).toBeGreaterThanOrEqual(13);
     expect(validator).toContain("EXCEPTION WHEN others THEN");
-    expect(validator).toContain("identity_pattern constant text := '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,499}$'");
+    expect(validator).toContain("identity_pattern constant text := '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,249}[A-Za-z0-9._:/-]{0,250}$'");
     expect(validator).toContain("timezone_pattern constant text := '^[A-Za-z0-9][A-Za-z0-9._+:/-]{0,127}$'");
     expect(contractEvidenceSnapshot.checkConstraints.runtime_contract_evidence_versions_projection_check.value)
       .toContain("runtime_contract_evidence_projection_is_valid");
@@ -111,7 +111,7 @@ describe("Observability migration contract", () => {
     );
     expect(backfill.match(/ordinality <= 64/g)).toHaveLength(3);
     expect(backfill).toContain("length(claim.value->>'amount') <= 81");
-    expect(backfill).toContain("wait.wait->'subject'->>'id' ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,499}$'");
+    expect(backfill).toContain("wait.wait->'subject'->>'id' ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,249}[A-Za-z0-9._:/-]{0,250}$'");
     expect(backfill.match(/item.value #>> '\{\}'\) ~ '\^\[A-Za-z0-9\]/g)).toHaveLength(2);
     expect(backfill).toContain("canonical_digest, 'LEGACY_PROJECTION_INVALID', created_at");
   });
