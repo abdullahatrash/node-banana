@@ -33,4 +33,17 @@ describe("ReplicateHttpClient", () => {
       .rejects.toThrow("REPLICATE_CREDENTIAL_UNAVAILABLE");
     expect(fetcher).not.toHaveBeenCalled();
   });
+
+  it("uses the stable owner/name identifier for an official model", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify({ id: "prediction", model: "owner/official-model", status: "starting", version: "hidden" }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    ));
+    const client = new ReplicateHttpClient(() => "test-token", fetcher, "https://replicate.invalid/v1");
+    await client.create({ endpoint: "official", model: "owner/official-model", version: "owner/official-model", input: { prompt: "brand" }, cancelAfterSeconds: 120 });
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://replicate.invalid/v1/predictions",
+      expect.objectContaining({ body: JSON.stringify({ version: "owner/official-model", input: { prompt: "brand" } }) }),
+    );
+  });
 });

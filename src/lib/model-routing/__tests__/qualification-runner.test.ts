@@ -68,6 +68,16 @@ function ledger(overrides: Partial<QualificationRunLedger> = {}): QualificationR
 }
 
 describe("executable Replicate qualification runner", () => {
+  it("carries an official stable model target through every qualification operation", async () => {
+    const source = input();
+    const plan = { ...source, attestation: { ...source.attestation, endpoint: "official" as const, version: source.attestation.model } };
+    const execution = port();
+    await executeReplicateQualification(plan, privateKey.export({ type: "pkcs8", format: "pem" }).toString(), execution, ledger(), at);
+    expect(execution.inspectSchema).toHaveBeenCalledWith(expect.objectContaining({ endpoint: "official", model: plan.attestation.model, version: plan.attestation.model }));
+    expect(execution.submit).toHaveBeenCalledWith(expect.objectContaining({ endpoint: "official", model: plan.attestation.model, version: plan.attestation.model }));
+    expect(execution.poll).toHaveBeenCalledWith(expect.objectContaining({ endpoint: "official", model: plan.attestation.model, version: plan.attestation.model }));
+  });
+
   it("executes schema, bilingual, safety, 9:16, webhook, cancellation, ingestion and reconciliation gates before signing", async () => {
     const execution = port();
     const durable = ledger();

@@ -33,6 +33,7 @@ describe("model qualification catalog", () => {
     expect(CURATED_MODELS).not.toHaveLength(0);
     expect(CURATED_MODELS.every((model) => model.qualification.status === "unqualified")).toBe(true);
     expect(CURATED_MODELS.map((model) => JSON.stringify(model)).join("\n")).not.toContain("pinned-2026");
+    expect(CURATED_MODELS.find((model) => model.model === "wan-video/wan-2.7-videoedit")?.priceUsd).toEqual({ basis: "second", amount: 0.1 });
   });
 
   it("qualifies only a trusted, immutable, unexpired signed attestation", () => {
@@ -71,7 +72,9 @@ describe("model qualification catalog", () => {
     expect(configuredCatalog(collision, trustedKeys, at)[0]?.qualification.status).toBe("unqualified");
   });
 
-  it("rejects mutable official-model endpoints even when signed", () => {
-    expect(configuredCatalog(signedQualification({ endpoint: "official_model" }), trustedKeys, at)[0]?.qualification.status).toBe("unqualified");
+  it("accepts a signed official-model endpoint only when its stable identifier matches the curated model", () => {
+    const model = CURATED_MODELS[0]!;
+    expect(configuredCatalog(signedQualification({ endpoint: "official", version: model.model }), trustedKeys, at)[0]?.qualification).toMatchObject({ status: "qualified", endpoint: "official", version: model.model });
+    expect(configuredCatalog(signedQualification({ endpoint: "official", version: "other/model" }), trustedKeys, at)[0]?.qualification.status).toBe("unqualified");
   });
 });

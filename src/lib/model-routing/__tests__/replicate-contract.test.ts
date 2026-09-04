@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ReplicatePredictionAdapter } from "../replicate-contract";
 import type { GenerationIntent } from "../types";
-import { resolveTestModel, testBrand, testOutputContract, testProviderComposition, testQualification, testRef, TEST_CREDENTIAL_REF, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
+import { QUALIFIED_TEST_MODELS, resolveTestModel, testBrand, testOutputContract, testProviderComposition, testQualification, testRef, TEST_CREDENTIAL_REF, TEST_REGION_ADMISSION, TEST_RIGHTS } from "./fixtures";
 
 const brand = testBrand("b", 1, new Date());
 const intent: GenerationIntent = {
@@ -95,5 +95,21 @@ describe("ReplicatePredictionAdapter mocked contract", () => {
     );
     expect(await adapter.submit(intent, {})).toMatchObject({ state: "outcome_unknown", predictionId: "p-version", code: "EXECUTED_VERSION_UNVERIFIED" });
     expect(effects.bindPrediction).toHaveBeenCalledWith(expect.objectContaining({ executedVersion: "different-version", credentialRef: TEST_CREDENTIAL_REF }));
+  });
+
+  it("verifies official predictions by stable model identity when Replicate hides the version", async () => {
+    const base = QUALIFIED_TEST_MODELS[5]!;
+    if (base.qualification.status !== "qualified") throw new Error("test model is not qualified");
+    const descriptor = { ...base, qualification: { ...base.qualification, endpoint: "official" as const, version: base.model } };
+    const ref = { provider: "replicate" as const, model: base.model, version: base.model, inputSchemaDigest: descriptor.qualification.inputSchemaDigest };
+    const officialIntent = { ...intent, selectedModel: ref, requestedModel: ref };
+    const effects = effectClaims();
+    const prediction = { id: "official-prediction", model: base.model, version: "hidden", status: "processing" as const };
+    const client = { create: vi.fn(async () => prediction), get: vi.fn(async () => prediction), cancel: vi.fn(async () => ({ ...prediction, status: "canceled" as const })) };
+    const adapter = new ReplicatePredictionAdapter(client, effects, { ingest: vi.fn() }, TEST_CREDENTIAL_REF, undefined, (candidate) => candidate.model === ref.model && candidate.version === ref.version ? descriptor : null);
+    expect(await adapter.submit(officialIntent, {})).toEqual({ state: "waiting_provider", predictionId: prediction.id });
+    expect(effects.bindPrediction).toHaveBeenCalledWith(expect.objectContaining({ executedVersion: base.model }));
+    expect(await adapter.poll(officialIntent, prediction.id)).toEqual({ state: "waiting_provider", predictionId: prediction.id });
+    expect(await adapter.cancel(officialIntent, prediction.id)).toEqual({ state: "cancelled", predictionId: prediction.id });
   });
 });

@@ -1,6 +1,7 @@
 export type GenerationCapability = "text_generation" | "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "video_to_video";
 export type GenerationQuality = "preview" | "standard" | "premium";
 export type ExecutionMode = "sync" | "async";
+export type ReplicateEndpoint = "versioned" | "official";
 export type GenerationFundingMode = "byok" | "managed";
 export type ContentLanguage = "ar" | "en" | "mixed";
 export type ArabicVariety = "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other";
@@ -42,7 +43,7 @@ export interface ImmutableBrandContext {
 }
 export type ModelExecutionQualification =
   | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
-  | { status: "qualified"; endpoint: "versioned"; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number | null; height: number | null; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string | null; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean } | null; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
+  | { status: "qualified"; endpoint: ReplicateEndpoint; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number | null; height: number | null; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string | null; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean } | null; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
 export interface ModelDescriptor {
   provider: ExactModelRef["provider"]; model: string; label: string;
   capabilities: readonly GenerationCapability[]; quality: GenerationQuality;

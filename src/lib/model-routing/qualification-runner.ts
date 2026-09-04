@@ -5,6 +5,7 @@ import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { CURATED_MODELS, modelQualificationAttestationSchema } from "./catalog";
 import type { QualificationProviderAccount, QualificationRunLedger, QualificationSpendAuthorization, QualificationSpendReceipt } from "./qualification-ledger";
 import { composeQualifiedProviderInput } from "./provider-input-composition";
+import type { ReplicateEndpoint } from "./types";
 
 export const MAX_QUALIFICATION_SPEND_USD = 0.4;
 
@@ -51,17 +52,19 @@ export type QualificationRunOutput = {
   envelope: { version: 1; qualifications: Array<{ attestation: z.infer<typeof modelQualificationAttestationSchema>; signature: { algorithm: "ed25519"; keyId: string; value: string } }> };
 };
 
+type QualificationExecutionTarget = { endpoint: ReplicateEndpoint; model: string; version: string };
+
 export interface QualificationExecutionPort {
   identifyAccount(): Promise<QualificationProviderAccount>;
   authorizeSpend(input: { runId: string; model: string; version: string; capability: QualificationSmokeCase["capability"]; billableQuantity: number; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendAuthorization>;
-  inspectSchema(input: { model: string; version: string }): Promise<{ inputSchemaDigest: `sha256:${string}`; inputKeys: string[] }>;
-  submit(input: { model: string; version: string; providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string; acceptedInput: Record<string, unknown> }>;
-  recoverSubmission(input: { model: string; version: string; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string } | null>;
-  awaitWebhook(input: { predictionId: string; version: string; caseId: string }): Promise<{ authentic: boolean; deliveryId: string; status: "succeeded" | "failed" | "canceled" | "aborted" }>;
-  poll(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string; output: unknown }>;
-  cancel(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "canceled" | "aborted"; version: string }>;
+  inspectSchema(input: QualificationExecutionTarget): Promise<{ inputSchemaDigest: `sha256:${string}`; inputKeys: string[] }>;
+  submit(input: QualificationExecutionTarget & { providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string; acceptedInput: Record<string, unknown> }>;
+  recoverSubmission(input: QualificationExecutionTarget & { caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string } | null>;
+  awaitWebhook(input: QualificationExecutionTarget & { predictionId: string; caseId: string }): Promise<{ authentic: boolean; deliveryId: string; status: "succeeded" | "failed" | "canceled" | "aborted" }>;
+  poll(input: QualificationExecutionTarget & { predictionId: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string; output: unknown }>;
+  cancel(input: QualificationExecutionTarget & { predictionId: string; caseId: string }): Promise<{ status: "canceled" | "aborted"; version: string }>;
   ingest(input: { predictionId: string; caseId: string; capability: QualificationSmokeCase["capability"]; output: unknown }): Promise<QualificationIngestionReceipt>;
-  reconcile(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string }>;
+  reconcile(input: QualificationExecutionTarget & { predictionId: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string }>;
   observeSpend(input: { predictionId: string; model: string; version: string; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendReceipt>;
 }
 
@@ -200,7 +203,8 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
     const claim = await ledger.claimCase({ runId: parsed.runId, caseId: cell.id, requestDigest: casePlan.requestDigest, at });
     if (claim.kind === "busy") throw new Error(`QUALIFICATION_CASE_BUSY:${cell.id}`);
     if (claim.kind === "completed") { results.push(claim.result); continue; }
-    const schema = await execution.inspectSchema({ model: base.model, version: base.version });
+    const target = { endpoint: base.endpoint, model: base.model, version: base.version };
+    const schema = await execution.inspectSchema(target);
     if (schema.inputSchemaDigest !== base.inputSchemaDigest) throw new Error(`QUALIFICATION_SCHEMA_MISMATCH:${cell.id}`);
     const requiredKeys = [base.inputContract.promptKey, base.inputContract.aspectRatioKey, base.inputContract.quantityKey, base.inputContract.imageKey, base.inputContract.safety?.parameterKey, ...Object.keys(base.inputContract.lockedParameters)].filter((value): value is string => Boolean(value));
     for (const requiredKey of requiredKeys) if (!schema.inputKeys.includes(requiredKey)) throw new Error(`QUALIFICATION_SCHEMA_KEY_MISSING:${cell.id}:${requiredKey}`);
@@ -223,9 +227,9 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
     let submitted: { predictionId: string; version: string; acceptedInput: Record<string, unknown> };
     try {
       if (claim.kind === "submit") {
-        submitted = await execution.submit({ model: base.model, version: base.version, providerInput, cancelAfterSeconds: base.cancelAfterSeconds, caseId: cell.id, submissionKey: claim.submissionKey });
+        submitted = await execution.submit({ ...target, providerInput, cancelAfterSeconds: base.cancelAfterSeconds, caseId: cell.id, submissionKey: claim.submissionKey });
       } else if (claim.kind === "recover_submission") {
-        const recovered = await execution.recoverSubmission({ model: base.model, version: base.version, caseId: cell.id, submissionKey: claim.submissionKey });
+        const recovered = await execution.recoverSubmission({ ...target, caseId: cell.id, submissionKey: claim.submissionKey });
         if (!recovered) throw new Error(`QUALIFICATION_SUBMISSION_IDENTITY_UNKNOWN:${cell.id}`);
         submitted = { ...recovered, acceptedInput: providerInput };
       } else {
@@ -243,18 +247,18 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
       let terminal: "succeeded" | "failed" | "canceled" | "aborted";
       let output: unknown = null;
       if (cell.lifecycle === "cancel") {
-        const cancelled = await execution.cancel({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
+        const cancelled = await execution.cancel({ ...target, predictionId: submitted.predictionId, caseId: cell.id });
         if (cancelled.version !== base.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${cell.id}`);
         terminal = cancelled.status;
       } else {
-        const polled = await execution.poll({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
+        const polled = await execution.poll({ ...target, predictionId: submitted.predictionId, caseId: cell.id });
         if (polled.version !== base.version || polled.status !== "succeeded") throw new Error(`QUALIFICATION_COMPLETION_FAILED:${cell.id}`);
         terminal = polled.status;
         output = polled.output;
       }
-      const webhook = await execution.awaitWebhook({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
+      const webhook = await execution.awaitWebhook({ ...target, predictionId: submitted.predictionId, caseId: cell.id });
       if (!webhook.authentic || webhook.status !== terminal) throw new Error(`QUALIFICATION_WEBHOOK_FAILED:${cell.id}`);
-      const reconciled = await execution.reconcile({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
+      const reconciled = await execution.reconcile({ ...target, predictionId: submitted.predictionId, caseId: cell.id });
       if (reconciled.version !== base.version || reconciled.status !== terminal) throw new Error(`QUALIFICATION_RECONCILIATION_FAILED:${cell.id}`);
       const receipt = await execution.observeSpend({ predictionId: submitted.predictionId, model: base.model, version: base.version, caseId: cell.id, account });
       if (receipt.schema !== "replicate-qualification-spend-receipt/v1" || receipt.source !== "replicate-account-billing" || !receipt.signingKeyId || !/^sha256:[a-f0-9]{64}$/.test(receipt.digest) || !Number.isFinite(Date.parse(receipt.observedAt)) || receipt.accountId !== account.accountId || receipt.credentialFingerprint !== account.credentialFingerprint || receipt.predictionId !== submitted.predictionId || receipt.model !== base.model || receipt.version !== base.version || receipt.currency !== "USD" || !Number.isFinite(receipt.amountUsd) || receipt.amountUsd < 0) throw new Error(`QUALIFICATION_SPEND_RECEIPT_MISMATCH:${cell.id}`);

@@ -10,6 +10,25 @@ pnpm qualify:replicate:check reviewed-plan.json
 
 The preflight validates the complete reviewed plan, exact curated capability set, bilingual and Arabic-variety cells, lifecycle coverage, source-media URLs, derivative-use evidence, runtime-compatible region/mode, per-cell quantities, the local `$0.40` ceiling, dedicated credential separation, safe harness endpoints, and both Ed25519 trust maps. It never constructs a provider client and rejects the paid-execution flag. Use `--json` for machine-readable output.
 
+## Replicate target identity
+
+Replicate has two supported target contracts and the reviewed plan must name the
+right one:
+
+- An Official Model uses `endpoint: "official"` and sets `version` to the exact
+  stable `owner/name` model identifier. Replicate may report the executed
+  version as `hidden`; the runner instead verifies the returned `model`
+  identity and re-digests the current OpenAPI input schema before every paid
+  cell.
+- A community model uses `endpoint: "versioned"` and pins the immutable version
+  identifier. The returned version must match exactly.
+
+Never copy the literal value `hidden` into a qualification. Official Model APIs
+are stable model targets, while the independently pinned schema digest and
+90-day maximum qualification window detect contract drift. See Replicate's
+[Official Models](https://replicate.com/docs/topics/models/official-models) and
+[HTTP API](https://replicate.com/docs/reference/http/) documentation.
+
 ## Safety boundary
 
 The only paid invocation is:
@@ -24,7 +43,7 @@ The literal `--execute-paid-smoke` flag is mandatory. Review the plan and its im
 ## Prerequisites
 
 1. Apply database migrations through `0103_model_qualification_account_spend`.
-2. Set a dedicated, least-privileged `REPLICATE_QUALIFICATION_API_TOKEN`. Customer BYOK credentials must never be used.
+2. Set a dedicated, least-privileged `REPLICATE_QUALIFICATION_API_TOKEN`. Customer BYOK credentials must never be used. Example-file placeholders are treated as missing.
 3. Configure the HTTPS webhook receiver, webhook observer, secure ingestion service, and spend observer with `QUALIFICATION_WEBHOOK_URL`, `QUALIFICATION_WEBHOOK_OBSERVER_URL`, `QUALIFICATION_INGESTION_URL`, and `QUALIFICATION_SPEND_OBSERVER_URL`. The ingestion receipt must use `kind: "media"` with dimensions/duration or `kind: "text"` with a positive character count; both forms require content and language-evidence digests.
 4. Configure `QUALIFICATION_HARNESS_TOKEN` for those internal services.
 5. Pin the spend observer's Ed25519 public keys in `QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON`. The observer must bind signed preflight authorizations and observed receipts to the Replicate account, credential fingerprint, immutable model version, stable run/case identity, and prediction.

@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { getDb } from "@/lib/db";
 import { modelProviderEffectClaims, modelProviderWebhookReceipts, replicatePredictionIdentities } from "./db-schema";
+import type { ExactModelRef } from "./types";
 
 type Db = ReturnType<typeof getDb>;
 const MAX_SKEW_SECONDS = 5 * 60;
@@ -19,12 +20,20 @@ export function verifyReplicateWebhook(input: { body: string; eventId: string | 
   return valid ? { ok: true, eventId: input.eventId } : { ok: false, code: "WEBHOOK_SIGNATURE_INVALID" };
 }
 
+export function matchesReplicatePredictionIdentity(input: { storedModel: ExactModelRef; executedVersion: string | null; providerModel: string | null; providerVersion: string | null }) {
+  if (input.providerModel && input.providerModel !== input.storedModel.model) return false;
+  const expectedIdentity = input.executedVersion ?? input.storedModel.version;
+  const official = expectedIdentity === input.storedModel.model;
+  if (official) return !input.providerModel || input.providerModel === expectedIdentity;
+  return !input.providerVersion || input.providerVersion === expectedIdentity;
+}
+
 /** Authenticated terminal webhooks only wake the durable poller; provider output is still fetched with the pinned credential. */
-export async function recordReplicateCompletionWebhook(input: { database: Db; eventId: string; predictionId: string; providerStatus: "succeeded" | "failed" | "canceled"; providerVersion: string | null; payload: unknown; at: Date }) {
+export async function recordReplicateCompletionWebhook(input: { database: Db; eventId: string; predictionId: string; providerStatus: "succeeded" | "failed" | "canceled"; providerModel: string | null; providerVersion: string | null; payload: unknown; at: Date }) {
   return input.database.transaction(async (tx) => {
     const [identity] = await tx.select().from(replicatePredictionIdentities).where(eq(replicatePredictionIdentities.predictionId, input.predictionId)).limit(1);
     if (!identity) return { kind: "not_found" as const };
-    if (input.providerVersion && input.providerVersion !== identity.model.version) return { kind: "version_mismatch" as const };
+    if (!matchesReplicatePredictionIdentity({ storedModel: identity.model, executedVersion: identity.executedVersion, providerModel: input.providerModel, providerVersion: input.providerVersion })) return { kind: "version_mismatch" as const };
     const payloadDigest = canonicalDigest(input.payload);
     const [existing] = await tx.select().from(modelProviderWebhookReceipts).where(and(eq(modelProviderWebhookReceipts.provider, "replicate"), eq(modelProviderWebhookReceipts.eventId, input.eventId))).for("update");
     if (existing) return existing.payloadDigest === payloadDigest && existing.predictionId === input.predictionId ? { kind: "replayed" as const } : { kind: "conflict" as const };

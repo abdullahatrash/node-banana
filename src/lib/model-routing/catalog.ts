@@ -16,7 +16,7 @@ export const CURATED_MODELS: readonly ModelDescriptor[] = [
   { provider: "replicate", model: "google/veo-3.1-lite", label: "Veo 3.1 Lite", capabilities: ["text_to_video", "image_to_video"], quality: "standard", ...shared, aspectRatios: ["9:16"], priceUsd: { basis: "second", amount: 0.05 }, lane: "final", qualification: unqualified },
   { provider: "replicate", model: "bytedance/seedance-2.0", label: "Seedance 2", capabilities: ["text_to_video", "image_to_video"], quality: "premium", ...shared, aspectRatios: ["9:16"], priceUsd: { basis: "second", amount: 0.12 }, lane: "canary", qualification: unqualified },
   { provider: "replicate", model: "kwaivgi/kling-v3-omni-video", label: "Kling v3 Omni", capabilities: ["text_to_video", "image_to_video", "video_to_video"], quality: "premium", ...shared, aspectRatios: ["9:16"], priceUsd: { basis: "second", amount: 0.14 }, lane: "canary", qualification: unqualified },
-  { provider: "replicate", model: "wan-video/wan-2.7-videoedit", label: "Wan 2.7 Video Edit", capabilities: ["video_to_video"], quality: "premium", ...shared, aspectRatios: ["9:16"], priceUsd: { basis: "second", amount: 0.09 }, lane: "canary", qualification: unqualified },
+  { provider: "replicate", model: "wan-video/wan-2.7-videoedit", label: "Wan 2.7 Video Edit", capabilities: ["video_to_video"], quality: "premium", ...shared, aspectRatios: ["9:16"], priceUsd: { basis: "second", amount: 0.10 }, lane: "canary", qualification: unqualified },
   { provider: "replicate", model: "meta/meta-llama-3-8b-instruct", label: "Llama 3 8B Copy", capabilities: ["text_generation"], quality: "standard", ...shared, aspectRatios: [], priceUsd: { basis: "run", amount: 0 }, lane: "brand", qualification: unqualified },
 ];
 
@@ -26,7 +26,7 @@ const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const url = z.string().url().refine((value) => value.startsWith("https://"), "Evidence URLs must use HTTPS");
 export const modelQualificationAttestationSchema = z.object({
   schema: z.literal("model-execution-qualification/v1"), id: z.string().min(8).max(200), revision: z.number().int().positive(), provider: z.literal("replicate"), model: z.string().min(1).max(200),
-  endpoint: z.literal("versioned"), version: z.string().min(8).max(200), inputSchemaDigest: digest,
+  endpoint: z.enum(["versioned", "official"]), version: z.string().min(3).max(200), inputSchemaDigest: digest,
   capabilities: z.array(z.enum(["text_generation","text_to_image","image_to_image","text_to_video","image_to_video","video_to_video"])).min(1), contentLanguages: z.array(z.enum(["ar","en","mixed"])).min(1), arabicVarieties: z.array(z.enum(["msa","gulf","egyptian","levantine","maghrebi","other"])), verifiedRegions: z.array(z.string().min(1)).min(1), executionModes: z.array(z.enum(["sync","async"])).min(1),
   executionPriceUsd: z.object({ basis: z.enum(["image", "second", "run"]), amount: z.number().positive().max(100) }).strict(), maxQuantity: z.number().positive().max(10_000), cancelAfterSeconds: z.number().int().min(60).max(86_400), outputShape: z.object({ width: z.number().int().positive().max(16_384).nullable(), height: z.number().int().positive().max(16_384).nullable(), fps: z.number().positive().max(240).nullable() }).strict(), inputContract: z.object({ promptKey: inputKey, aspectRatioKey: inputKey.nullable(), quantityKey: inputKey.nullable(), imageKey: inputKey.nullable(), imageMode: z.enum(["single", "array"]), safety: z.object({ parameterKey: inputKey, safeValue: parameterValue }).strict().nullable(), lockedParameters: z.record(inputKey, parameterValue) }).strict().superRefine((contract, context) => {
     const mapped = [contract.promptKey, contract.aspectRatioKey, contract.quantityKey, contract.imageKey, contract.safety?.parameterKey].filter((value): value is string => Boolean(value));
@@ -38,6 +38,7 @@ export const modelQualificationAttestationSchema = z.object({
   qualificationRun: z.object({ id: z.string().min(8).max(200), digest, completedAt: z.string().datetime({ offset: true }) }).strict(),
   issuedAt: z.string().datetime({ offset: true }), expiresAt: z.string().datetime({ offset: true }),
 }).strict().superRefine((value, context) => {
+  if (value.endpoint === "official" && value.version !== value.model) context.addIssue({ code: "custom", message: "Official model qualifications must use the stable owner/name identifier as their version." });
   const textOnly = value.capabilities.length === 1 && value.capabilities[0] === "text_generation";
   if (textOnly) {
     if (value.outputShape.width !== null || value.outputShape.height !== null || value.outputShape.fps !== null || value.inputContract.aspectRatioKey !== null || value.inputContract.imageKey !== null || value.executionPriceUsd.basis !== "run" || value.maxQuantity !== 1) context.addIssue({ code: "custom", message: "Text qualification must pin a single-run, text-only contract." });
