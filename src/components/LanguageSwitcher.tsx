@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { LanguagesIcon } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { getActiveWorkspaceId } from "@/lib/studio/client";
+import { saveInterfaceLocalePreference } from "@/lib/interface-locale/client";
 
 export function LanguageSwitcher({ className }: { className?: string }) {
   const router = useRouter();
@@ -23,16 +24,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
     setLocale(next);
     const workspaceId = getActiveWorkspaceId();
     try {
-      const response = await fetch("/api/preferences/locale", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(workspaceId ? { "x-workspace-id": workspaceId } : {}),
-        },
-        body: JSON.stringify({ locale: next }),
-        keepalive: true,
-      });
-      if (!response.ok) throw new Error("INTERFACE_LOCALE_SAVE_FAILED");
+      await saveInterfaceLocalePreference({ locale: next, workspaceId });
       if (/^\/(ar|en)(?:\/|$)/.test(pathname)) {
         router.replace(pathname.replace(/^\/(ar|en)(?=\/|$)/, `/${next}`));
       } else {

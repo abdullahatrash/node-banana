@@ -7,6 +7,7 @@ import { loadContentEditorOptions } from "@/lib/product-surfaces/content-editor-
 import { resolveActiveContentFormatDefinition, resolveContentFormatDefinitionReference } from "@/lib/product-surfaces/content-format-registry";
 import { configuredCatalog } from "@/lib/model-routing/catalog";
 import { resolveContentModelPolicy } from "@/lib/product-surfaces/content-model-policy";
+import { getWorkspaceContentLanguage } from "@/lib/product-surfaces/workspace-language-preferences";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,10 @@ export default async function ContentPage({ searchParams }: { searchParams: Prom
   const t = await getTranslations("product.content");
   if (!workspaceId) return null;
 
-  const rows = await listProductRecords({ workspaceId, kinds: ["content_piece"] });
+  const [rows, defaultContentLanguage] = await Promise.all([
+    listProductRecords({ workspaceId, kinds: ["content_piece"] }),
+    getWorkspaceContentLanguage(workspaceId),
+  ]);
   const pieces = rows.map(({ id, title, revision, payload }) => ({ id, title, revision, payload }));
   const selectedPiece = pieces.find((piece) => piece.id === query.piece) ?? null;
   const selectedPayload = selectedPiece ? contentPieceSchema.parse(selectedPiece.payload) : null;
@@ -29,5 +33,5 @@ export default async function ContentPage({ searchParams }: { searchParams: Prom
     : await resolveActiveContentFormatDefinition(selectedFormat);
   const modelPolicy = resolveContentModelPolicy(resolvedDefinition.definition, configuredCatalog());
 
-  return <main className="flex-1 px-5 py-8 sm:px-8 lg:px-10"><div className="mx-auto max-w-[1500px]"><header className="mb-7"><p className="text-xs font-semibold uppercase tracking-[.18em] text-amber-600">{t("eyebrow")}</p><h1 className="mt-2 text-3xl font-semibold sm:text-4xl">{t("title")}</h1><p className="mt-2 max-w-3xl text-muted-foreground">{t("description")}</p></header><ContentBuilder selectedFormat={selectedFormat} selectedPiece={selectedPiece} pieces={pieces} options={options} definition={resolvedDefinition.definition} definitionDigest={resolvedDefinition.reference.digest as `sha256:${string}`} allowedModels={modelPolicy?.compatibleModels ?? []} /></div></main>;
+  return <main className="flex-1 px-5 py-8 sm:px-8 lg:px-10"><div className="mx-auto max-w-[1500px]"><header className="mb-7"><p className="text-xs font-semibold uppercase tracking-[.18em] text-amber-600">{t("eyebrow")}</p><h1 className="mt-2 text-3xl font-semibold sm:text-4xl">{t("title")}</h1><p className="mt-2 max-w-3xl text-muted-foreground">{t("description")}</p></header><ContentBuilder selectedFormat={selectedFormat} selectedPiece={selectedPiece} pieces={pieces} options={options} definition={resolvedDefinition.definition} definitionDigest={resolvedDefinition.reference.digest as `sha256:${string}`} allowedModels={modelPolicy?.compatibleModels ?? []} defaultContentLanguage={defaultContentLanguage} /></div></main>;
 }

@@ -149,7 +149,7 @@ async function submitAdmittedGeneration(input: { set: StudioSet; state: SimpleSt
   const prompt = input.mode === "copy" ? `${input.prompt}\n\nTone: ${input.state.tone}. Platform: ${input.state.platform}. Output language: ${input.state.outputLanguage}.` : input.prompt;
   const contentLanguage = input.mode === "copy"
     ? input.state.outputLanguage === "both" ? "mixed" : input.state.outputLanguage
-    : undefined;
+    : input.mode === "video" ? input.state.dialogueLanguage : undefined;
   return runAdmittedStudioGeneration({ prompt, contentLanguage, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, fundingMode: input.state.fundingMode, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : [input.mode === "copy" ? "wording for the selected channel" : "composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal, confirmManagedCreditQuote: (quote) => requestManagedQuoteConfirmation(input.set, quote) });
 }
 

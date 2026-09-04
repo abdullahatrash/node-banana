@@ -74,4 +74,16 @@ describe("Inspiration trend discovery", () => {
     await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("/api/product-inspiration/performance/syncs", expect.objectContaining({ action: "enable", postId: "post-1", sourceAssetId: "asset-1", scheduleMinutes: 60, region: "GCC", contentLanguage: "ar" })));
     expect(screen.getByText(/first run is queued/)).toBeInTheDocument();
   });
+
+  it("inherits language and market defaults only when authoring new inspiration evidence", () => {
+    render(<I18nTestProvider locale="en"><InspirationClient items={[trend]} performanceSources={[performanceSource]} defaultContentLanguage="en" defaultContentMarket="AE" /></I18nTestProvider>);
+
+    expect(screen.getByLabelText("Market or region", { selector: "input[name=region]" })).toHaveValue("AE");
+    expect(screen.getByLabelText("Content language", { selector: "select[name=language]" })).toHaveValue("en");
+    expect(screen.getByLabelText("Market or region", { selector: "input[name=performanceRegion]" })).toHaveValue("AE");
+    expect(screen.getByLabelText("Content language", { selector: "select[name=performanceLanguage]" })).toHaveValue("en");
+    expect(screen.getByLabelText("Market or region", { selector: "input[name=syncRegion]" })).toHaveValue("AE");
+    expect(screen.getByLabelText("Content language", { selector: "select[name=syncLanguage]" })).toHaveValue("en");
+    expect(screen.getByText("إطلاق متجر خليجي")).toBeInTheDocument();
+  });
 });

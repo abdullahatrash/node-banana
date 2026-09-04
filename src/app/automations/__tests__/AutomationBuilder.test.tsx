@@ -38,7 +38,7 @@ describe("AutomationBuilder", () => {
 
   it("keeps a new Automation provisional until the first substantive save", async () => {
     productRequest.mockResolvedValue({ record: { id: "campaign-1", title: "Launch", state: "draft", revision: 1, payload: {} } });
-    render(<AutomationBuilder automations={[]} occurrences={[]} options={options} calendarPreferences={calendarPreferences} selectedAutomationId={null} />);
+    render(<AutomationBuilder automations={[]} occurrences={[]} options={options} calendarPreferences={calendarPreferences} defaultContentLanguage="en" selectedAutomationId={null} />);
 
     expect(screen.getByText("provisional")).toBeVisible();
     const stepButtons = screen.getAllByRole("button", { name: /steps\./ });
@@ -53,7 +53,7 @@ describe("AutomationBuilder", () => {
     await waitFor(() => expect(productRequest).toHaveBeenCalledWith("/api/product-campaigns", expect.objectContaining({
       action: "save_draft",
       title: "Launch",
-      payload: expect.objectContaining({ currentStep: 2, contentLanguage: "ar", arabicVariety: "msa", reviewMode: "request_human", cadence: expect.objectContaining({ timezone: "Africa/Cairo", weekStart: 6 }) }),
+      payload: expect.objectContaining({ currentStep: 2, contentLanguage: "en", arabicVariety: null, reviewMode: "request_human", cadence: expect.objectContaining({ timezone: "Africa/Cairo", weekStart: 6 }) }),
     })));
     expect(replace).toHaveBeenCalledWith("/automations/campaign-1/edit");
   });
@@ -67,7 +67,7 @@ describe("AutomationBuilder", () => {
       execution: { mode: "managed", modelPolicy: "workspace-default", creditCeiling: 20, budgetCents: 5000, replenishmentMode: "manual", blitzTargetCapacity: 20, blitzMaximumCreatesPerRun: 10, workflow: null },
       reviewMode: "request_human", autoPublishGrantId: null, validationErrors: [], runtime: null,
     };
-    render(<AutomationBuilder automations={[{ id: "campaign-1", title: "Launch", state: "draft", revision: 3, payload }]} occurrences={[]} options={options} calendarPreferences={calendarPreferences} selectedAutomationId="campaign-1" />);
+    render(<AutomationBuilder automations={[{ id: "campaign-1", title: "Launch", state: "draft", revision: 3, payload }]} occurrences={[]} options={options} calendarPreferences={calendarPreferences} defaultContentLanguage="en" selectedAutomationId="campaign-1" />);
 
     expect(screen.getByLabelText("fields.workflowRevisionId")).toBeInstanceOf(HTMLSelectElement);
     expect(screen.getByRole("option", { name: /Publish/ })).toHaveValue("workflow-revision-1");
