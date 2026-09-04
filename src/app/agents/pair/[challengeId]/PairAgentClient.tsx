@@ -117,7 +117,7 @@ export default function PairAgentClient({
             {format.dateTime(new Date(challenge.expiresAt), { dateStyle: "medium", timeStyle: "short" })}
           </p>
           <h3 className="mt-4 text-sm font-medium">{t("requestedAccess")}</h3>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+          <ul className="mt-2 list-disc space-y-1 ps-5 text-sm">
             {challenge.requestedAccess.map((access) => (
               <li key={access}>{access}</li>
             ))}

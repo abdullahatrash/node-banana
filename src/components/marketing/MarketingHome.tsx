@@ -320,7 +320,7 @@ function HeroPipelineMockup({ copy, ui, isArabic }: { copy: typeof arabicCopy.mo
               <div className="relative min-h-[320px] overflow-hidden rounded-[22px] bg-[#102d2a]">
                 <Image src="/sample-images/cosmetics.jpg" alt="" fill priority sizes="(max-width: 640px) 90vw, 220px" className="object-cover opacity-90" />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#102d2a] via-transparent to-black/10" />
-                <span className="absolute left-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#102d2a]">{ui.trend}</span>
+                <span className="absolute start-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#102d2a]">{ui.trend}</span>
                 <div className="absolute inset-x-0 bottom-0 p-4 text-white" dir={isArabic ? "rtl" : "ltr"}>
                   <p className="text-[10px] text-white/60">{copy.prompt}</p>
                   <p className="mt-2 text-lg font-bold">{ui.brandVersion}</p>

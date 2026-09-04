@@ -328,7 +328,7 @@ export function ObservabilityCockpit() {
             <form onSubmit={(event) => void issueGrant(event).catch((cause) => setError(String(cause)))} className="mt-4 space-y-3">
               <div className="flex gap-4 text-sm"><label><input name="trace" type="checkbox" defaultChecked /> {t("grants.trace")}</label><label><input name="support" type="checkbox" defaultChecked /> {t("grants.bundle")}</label></div>
               <input name="expiresAt" aria-label={t("grants.expiry")} type="datetime-local" required defaultValue={defaultExpiry(1)} className="rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm" />
-              <button className="ml-2 rounded-md border border-violet-700 px-3 py-2 text-sm">{t("grants.issue")}</button>
+              <button className="ms-2 rounded-md border border-violet-700 px-3 py-2 text-sm">{t("grants.issue")}</button>
             </form>
             <ul className="mt-4 space-y-2">{grants.map((grant) => <li key={text(grant.id)} className="flex items-center justify-between rounded-lg bg-neutral-950 p-3 text-xs"><span><code>{text(grant.id)}</code> · {t("grants.expires", { time: text(grant.expiresAt) })}</span><button type="button" onClick={() => void revokeGrant(String(grant.id)).catch((cause) => setError(String(cause)))} className="text-red-300">{t("grants.revoke")}</button></li>)}</ul>
           </div>

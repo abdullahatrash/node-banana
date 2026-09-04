@@ -32,6 +32,9 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      - name: Check authored localization and logical RTL layout
+        run: pnpm i18n:check
+
       - name: Run Gate A deterministic tests
         run: pnpm test:gate-a
 

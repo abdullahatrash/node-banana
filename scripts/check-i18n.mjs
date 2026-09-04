@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { parse, TYPE } from "@formatjs/icu-messageformat-parser";
 import ts from "typescript";
+import { findPhysicalDirectionalUtilities } from "./rtl-layout-check.mjs";
 
 const root = process.cwd();
 const surfaceRoots = ["src/app", "src/components"];
@@ -88,6 +89,9 @@ const visibleLiteralFiles = [];
 for (const file of files) {
   const source = await readFile(path.join(root, file), "utf8");
   if (file.endsWith(".tsx") && hasVisibleLiteral(file, source)) visibleLiteralFiles.push(file);
+  for (const utility of findPhysicalDirectionalUtilities(source)) {
+    errors.push(`physical RTL layout utility ${utility}: ${file}; use logical start/end utilities`);
+  }
 }
 visibleLiteralFiles.sort();
 const expectedVisibleLiteralFiles = [...legacyVisibleLiteralFiles].sort();
