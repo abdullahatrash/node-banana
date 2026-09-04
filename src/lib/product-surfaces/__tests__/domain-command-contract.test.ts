@@ -55,7 +55,7 @@ describe("typed product command contracts", () => {
     const source = read("src/lib/product-surfaces/domain-commands.ts");
     expect(source).toContain("isAdmittedContentArtifact");
     expect(source).toContain("validateContentExecutionInput");
-    expect(source).toContain("buildContentRenderProof");
+    expect(source).toContain("buildQualifiedContentRenderProof");
     expect(source).toContain("candidateArtifactIds: [...payload.candidateArtifactIds");
   });
 
@@ -72,7 +72,7 @@ describe("typed product command contracts", () => {
   it("turns an accepted Blitz generation into passed Render Proof evidence", () => {
     const source = read("src/lib/product-surfaces/blitz.ts");
     expect(source).toContain("validateReadyPortraitAsset");
-    expect(source).toContain("buildContentRenderProof");
+    expect(source).toContain("buildQualifiedContentRenderProof");
     expect(source).toContain('renderProofStatus: "passed"');
     expect(source).toContain("requirePassedBlitzSimilarityEvidence");
   });
