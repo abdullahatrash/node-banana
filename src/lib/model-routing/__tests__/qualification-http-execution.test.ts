@@ -64,8 +64,14 @@ describe("Replicate qualification HTTP execution", () => {
       caseId: "official-case",
       submissionKey: "official-submission",
     })).resolves.toMatchObject({ predictionId: "prediction-official", version: "prunaai/p-video" });
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://replicate.invalid/v1/models/prunaai/p-video/predictions");
     const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
-    expect(body).toMatchObject({ version: "prunaai/p-video", input: { prompt: "Arabic Brand film" } });
+    expect(body).toEqual({
+      input: { prompt: "Arabic Brand film" },
+      webhook: "https://qualification.invalid/webhook?caseId=official-case&submissionKey=official-submission",
+      webhook_events_filter: ["start", "completed"],
+    });
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).has("Idempotency-Key")).toBe(false);
   });
 
   it("fails closed when an official prediction reports another model identity", async () => {

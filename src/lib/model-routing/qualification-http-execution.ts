@@ -101,8 +101,17 @@ export class ReplicateQualificationHttpExecution implements QualificationExecuti
   }
 
   async submit(input: Target & { providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string; submissionKey: string }) {
-    const webhook = new URL(this.webhookUrl); webhook.searchParams.set("caseId", input.caseId);
-    const response = await this.replicate("predictions", { method: "POST", headers: { "Cancel-After": `${input.cancelAfterSeconds}s`, "Idempotency-Key": input.submissionKey, Prefer: "respond-async" }, body: JSON.stringify({ version: input.endpoint === "official" ? input.model : input.version, input: input.providerInput, webhook: webhook.toString(), webhook_events_filter: ["completed"] }) });
+    const webhook = new URL(this.webhookUrl);
+    webhook.searchParams.set("caseId", input.caseId);
+    webhook.searchParams.set("submissionKey", input.submissionKey);
+    const [owner, name] = input.model.split("/");
+    const path = input.endpoint === "official"
+      ? `models/${encodeURIComponent(owner!)}/${encodeURIComponent(name!)}/predictions`
+      : "predictions";
+    const body = input.endpoint === "official"
+      ? { input: input.providerInput, webhook: webhook.toString(), webhook_events_filter: ["start", "completed"] }
+      : { version: input.version, input: input.providerInput, webhook: webhook.toString(), webhook_events_filter: ["start", "completed"] };
+    const response = await this.replicate(path, { method: "POST", headers: { "Cancel-After": `${input.cancelAfterSeconds}s`, Prefer: "respond-async" }, body: JSON.stringify(body) });
     const prediction = predictionSchema.parse(await response.json());
     return { predictionId: prediction.id, version: verifiedVersion(input, prediction), acceptedInput: structuredClone(input.providerInput) };
   }
@@ -110,12 +119,15 @@ export class ReplicateQualificationHttpExecution implements QualificationExecuti
   async recoverSubmission(input: Target & { caseId: string; submissionKey: string }) {
     const url = new URL(this.observerUrl); url.searchParams.set("submissionKey", input.submissionKey); url.searchParams.set("caseId", input.caseId);
     url.searchParams.set("endpoint", input.endpoint); url.searchParams.set("model", input.model); url.searchParams.set("version", input.version);
-    const response = await this.harness(url, { method: "GET" });
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`QUALIFICATION_SUBMISSION_RECOVERY_HTTP_${response.status}`);
-    const recovered = recoveredSubmissionSchema.parse(await response.json());
-    if (recovered.version !== input.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${input.caseId}`);
-    return recovered;
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const response = await this.harness(url, { method: "GET" });
+      if (response.status === 404) { await wait(2_000); continue; }
+      if (!response.ok) throw new Error(`QUALIFICATION_SUBMISSION_RECOVERY_HTTP_${response.status}`);
+      const recovered = recoveredSubmissionSchema.parse(await response.json());
+      if (recovered.version !== input.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${input.caseId}`);
+      return recovered;
+    }
+    return null;
   }
 
   async awaitWebhook(input: Target & { predictionId: string; caseId: string }) {
