@@ -4,6 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { workspaceMembers, workspaces } from "@/lib/db/schema";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { resolveWorkspaceMemberPermissions } from "@/lib/studio/authz";
 
 export interface ProductShellWorkspace {
   id: string;
@@ -20,6 +21,7 @@ export interface ProductShellContext {
   };
   workspaces: ProductShellWorkspace[];
   initialWorkspaceId: string | null;
+  canReadBilling: boolean;
 }
 
 export async function getProductShellContext(
@@ -48,6 +50,12 @@ export async function getProductShellContext(
   )
     ? authorizedWorkspaceId ?? null
     : null;
+  const permissions = initialWorkspaceId
+    ? await resolveWorkspaceMemberPermissions({
+        workspaceId: initialWorkspaceId,
+        userId: session.user.id,
+      })
+    : [];
 
   return {
     user: {
@@ -57,5 +65,6 @@ export async function getProductShellContext(
     },
     workspaces: rows,
     initialWorkspaceId,
+    canReadBilling: permissions.includes("product:billing:read"),
   };
 }

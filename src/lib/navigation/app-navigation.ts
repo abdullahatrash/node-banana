@@ -9,6 +9,7 @@ export type PrimaryNavigationKey =
   | "library"
   | "calendar"
   | "analytics"
+  | "billing"
   | "brand"
   | "settings";
 
@@ -82,6 +83,7 @@ export const primaryNavigation = [
   },
   { key: "calendar", href: "/calendar", aliases: ["/social/calendar"] },
   { key: "analytics", href: "/analytics", aliases: ["/social/analytics"] },
+  { key: "billing", href: "/billing", aliases: [] },
   { key: "brand", href: "/brand", aliases: [] },
   { key: "settings", href: "/settings", aliases: ["/social/settings"] },
 ] as const satisfies readonly (

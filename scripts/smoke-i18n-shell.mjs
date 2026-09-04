@@ -20,6 +20,7 @@ const routes = [
   ["/library", "library"],
   ["/calendar", "calendar"],
   ["/analytics", "analytics"],
+  ["/billing", "billing"],
   ["/brand", "brand"],
   ["/settings", "settings"],
 ];
@@ -27,6 +28,15 @@ const messages = { ar: arMessages, en: enMessages };
 const cookieJar = new Map();
 let workspaceId = "";
 let originalLocale = "ar";
+
+function escapeHtmlText(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
 
 function captureCookies(response) {
   const setCookies = typeof response.headers.getSetCookie === "function"
@@ -82,7 +92,10 @@ async function verifyRoute(locale, direction, [path, key]) {
     throw new Error(`${locale} ${path} did not render the expected ${direction} document root.`);
   }
   const expectedTitle = messages[locale].shell.primary[key];
-  if (!html.includes(expectedTitle)) throw new Error(`${locale} ${path} did not render its authored shell title.`);
+  if (!html.includes(expectedTitle) && !html.includes(escapeHtmlText(expectedTitle))) {
+    const renderedTitle = html.match(/<h1\b[^>]*>(.*?)<\/h1>/is)?.[1]?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "missing";
+    throw new Error(`${locale} ${path} did not render its authored shell title (found: ${renderedTitle}).`);
+  }
   if (/MISSING_MESSAGE|IntlError|LOCALIZATION_MESSAGE_FAILURE/.test(html)) throw new Error(`${locale} ${path} exposed a localization failure marker.`);
 }
 

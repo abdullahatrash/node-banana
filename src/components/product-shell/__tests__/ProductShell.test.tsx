@@ -35,6 +35,7 @@ const context: ProductShellContext = {
     { id: "workspace-2", name: "Client Brand", slug: "client", role: "admin" },
   ],
   initialWorkspaceId: "workspace-1",
+  canReadBilling: true,
 };
 
 function renderShell(locale: "ar" | "en" = "en") {
@@ -66,6 +67,7 @@ describe("ProductShell", () => {
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/dashboard");
     expect(screen.getByRole("link", { name: "Automations" })).toHaveAttribute("href", "/automations");
     expect(screen.getByRole("link", { name: "AI Studio" })).toHaveAttribute("href", "/ai-studio");
+    expect(screen.getByRole("link", { name: "Plans & credits" })).toHaveAttribute("href", "/billing");
     expect(screen.getByRole("link", { name: "Content" })).toHaveAttribute("href", "/content");
     expect(screen.getByRole("link", { name: "Compose" })).toHaveAttribute("href", "/compose");
     expect(screen.getByRole("link", { name: "Approvals" })).toHaveAttribute("href", "/approvals");
@@ -81,6 +83,18 @@ describe("ProductShell", () => {
     expect(document.querySelector('[data-slot="sidebar-inset"]')?.tagName).toBe(
       "DIV",
     );
+  });
+
+  it("hides workspace billing navigation without billing-read authority", () => {
+    render(
+      <I18nTestProvider locale="en">
+        <ProductShell context={{ ...context, canReadBilling: false }}>
+          <p>route content</p>
+        </ProductShell>
+      </I18nTestProvider>,
+    );
+
+    expect(screen.queryByRole("link", { name: "Plans & credits" })).not.toBeInTheDocument();
   });
 
   it("marks legacy descendants active under the canonical link", () => {
@@ -160,7 +174,7 @@ describe("ProductShell", () => {
 
   it("reads commercial state for the same authorized workspace selected by the switcher", async () => {
     window.localStorage.setItem("node-banana-active-workspace-id", "workspace-2");
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       if (String(input) !== "/api/studio/billing") return new Response(null, { status: 204 });
       return new Response(JSON.stringify({ success: true, data: {
         subscription: null,

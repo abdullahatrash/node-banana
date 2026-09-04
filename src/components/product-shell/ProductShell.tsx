@@ -13,6 +13,7 @@ import {
   CheckCheckIcon,
   CircleGaugeIcon,
   CoinsIcon,
+  CreditCardIcon,
   FileCheck2Icon,
   FileTextIcon,
   FingerprintIcon,
@@ -89,6 +90,7 @@ const primaryIcons = {
   library: LibraryIcon,
   calendar: CalendarDaysIcon,
   analytics: BarChart3Icon,
+  billing: CreditCardIcon,
   brand: FingerprintIcon,
   settings: SettingsIcon,
 } satisfies Record<PrimaryNavigationKey, typeof ActivityIcon>;
@@ -223,13 +225,15 @@ export function ProductShell({
             <SidebarGroup>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {primaryNavigation.map((item) => {
+                  {primaryNavigation
+                    .filter((item) => item.key !== "billing" || context.canReadBilling)
+                    .map((item) => {
                     const Icon = primaryIcons[item.key];
                     const label = t(`primary.${item.key}`);
                     return (
                       <ShellLink key={item.key} item={item} label={label} icon={Icon} />
                     );
-                  })}
+                    })}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>

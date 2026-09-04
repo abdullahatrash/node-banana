@@ -216,7 +216,7 @@ APP_BASE_URL=http://localhost:3002 pnpm smoke:i18n-shell
 ```
 
 This no-spend smoke persists each Interface Language through the production
-preference route, renders the twelve primary product routes plus pricing in
+preference route, renders the thirteen primary product routes plus pricing in
 both directions, rejects missing localization markers, and restores the
 seeded user's original preference. It verifies server-rendered semantics and
 route reachability; the release screenshot matrix remains the authority for
