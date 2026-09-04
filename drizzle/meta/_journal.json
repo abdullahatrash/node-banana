@@ -806,6 +806,13 @@
       "when": 1788662400000,
       "tag": "0114_generation_rights_evidence_erasure",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1788666000000,
+      "tag": "0115_generation_rights_erasure_preflight",
+      "breakpoints": true
     }
   ]
 }

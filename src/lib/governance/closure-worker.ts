@@ -5,6 +5,7 @@ import type { GovernanceRetentionResourceDescriptor } from "./retention-resource
 import type {
   GovernanceAuditEvent,
   GovernanceCanonicalEffect,
+  GovernanceCommit,
   GovernanceMutation,
   GovernanceRepository,
   GovernanceResource,
@@ -27,6 +28,8 @@ export interface WorkspaceClosureEffectOutcome {
   legalHoldEvidence?: {
     holdIds: string[];
     policyRevision: number;
+    policyRevisionDigest?: string;
+    policyRevisionRecordDigest?: string;
     evidenceRef: string;
   };
 }
@@ -37,6 +40,7 @@ export interface WorkspaceHardErasureEvidence {
   surfaces: string[];
   omissions: string[];
   retainedResources: Array<{ resourceKind: string; resourceId: string; holdIds: string[] }>;
+  retryAt?: string;
   evidenceRef: string;
 }
 
@@ -46,14 +50,23 @@ function hasErasureProof(effect: WorkspaceClosureEffectOutcome): boolean {
 
 function hasLegalRetentionProof(
   effect: WorkspaceClosureEffectOutcome,
-  retainedResources: Array<{ holdIds: string[] }>,
+  retainedResources: Array<{ resourceKind: string; holdIds: string[] }>,
   activePolicyRevision: number,
 ): boolean {
   if (effect.state !== "retained" || !effect.evidenceRef?.trim()) return false;
   const evidence = effect.legalHoldEvidence;
   if (!evidence || evidence.policyRevision !== activePolicyRevision || !evidence.evidenceRef.trim() || evidence.holdIds.length === 0) return false;
-  const activeHoldIds = new Set(retainedResources.flatMap((resource) => resource.holdIds));
-  return evidence.holdIds.every((holdId) => activeHoldIds.has(holdId));
+  if (effect.reason === "GENERATION_RIGHTS_LEGALLY_RETAINED" && !/^sha256:[a-f0-9]{64}$/.test(evidence.policyRevisionDigest ?? "")) return false;
+  const expected = [...new Set(evidence.holdIds)].sort();
+  if (effect.reason !== "GENERATION_RIGHTS_LEGALLY_RETAINED") {
+    const permitted = new Set(retainedResources.flatMap((resource) => resource.holdIds));
+    return expected.every((holdId) => permitted.has(holdId));
+  }
+  return retainedResources.some((resource) => {
+    if (resource.resourceKind !== "generation_rights_evidence") return false;
+    const actual = [...new Set(resource.holdIds)].sort();
+    return actual.length === expected.length && actual.every((holdId, index) => holdId === expected[index]);
+  });
 }
 
 interface ClosureBody {
@@ -68,6 +81,8 @@ interface ClosureBody {
   completionEvidence: Record<string, unknown> | null;
   lease: ClosureLease | null;
   leaseFence?: number;
+  nextErasureAttemptAt?: string | null;
+  generationRightsHoldWait?: { holdIds: string[]; retryAt: string | null } | null;
   [key: string]: unknown;
 }
 
@@ -140,10 +155,10 @@ export class GovernanceWorkspaceClosureWorker {
     private readonly clock: { now(): Date } = { now: () => new Date() },
   ) {}
 
-  async process(input: { workspaceId: string; closureId: string }): Promise<void> {
+  async process(input: { workspaceId: string; closureId: string; revalidateNow?: boolean }): Promise<void> {
     const found = await this.repository.getResource<ClosureBody>({ workspaceId: input.workspaceId, kind: "workspace_closure", id: input.closureId });
     if (!found || ["closed", "closed_retained", "cancelled", "failed_known"].includes(found.status)) return;
-    const job = await this.claim(found);
+    const job = await this.claim(found, input.revalidateNow === true);
     if (!job) return;
     const now = this.clock.now();
     const revocationAttempt = await this.adapter.revokeAccess({
@@ -299,25 +314,6 @@ export class GovernanceWorkspaceClosureWorker {
     });
     const policy = await this.repository.getResource<{ activeRevision: number }>({ workspaceId: job.workspaceId, kind: "retention_policy", id: "active" });
     const activeRevision = Number.isInteger(policy?.body.activeRevision) ? policy!.body.activeRevision : 0;
-    const activeHolds = await this.repository.listResources<{ retentionClasses?: string[]; scopeReview?: { schema?: string; reviewedAgainstPolicyRevision?: number; generationRightsEvidence?: string } | null; expiresAt?: string | null }>({ workspaceId: job.workspaceId, kinds: ["retention_hold"], status: "active" });
-    const rightsHoldIds = activeHolds.filter((hold) => {
-      const expiry = hold.body.expiresAt;
-      if (expiry) {
-        const parsed = new Date(expiry);
-        if (!Number.isNaN(parsed.getTime()) && parsed <= now) return false;
-      }
-      const classes = Array.isArray(hold.body.retentionClasses) ? hold.body.retentionClasses : [];
-      if (classes.includes("generation_rights_evidence")) return true;
-      const review = hold.body.scopeReview;
-      return review?.schema !== "retention-hold-scope-review/v2"
-        || review.reviewedAgainstPolicyRevision !== activeRevision
-        || review.generationRightsEvidence !== "not_applicable";
-    }).map((hold) => hold.id).sort();
-    if (rightsHoldIds.length) retainedResources.push({
-      resourceKind: "generation_rights_evidence",
-      resourceId: `workspace:${job.workspaceId}`,
-      holdIds: rightsHoldIds,
-    });
     if (!job.body.lease) throw new Error("Workspace closure lease unavailable during hard erasure.");
     const hardErasureAttempt = await this.adapter.hardEraseWorkspace({
       workspaceId: job.workspaceId,
@@ -333,20 +329,76 @@ export class GovernanceWorkspaceClosureWorker {
       effects: hardErasureAttempt.effects.map((effect) => ({ ...effect, attempts: (previousHardEffects.get(effect.targetId)?.attempts ?? 0) + 1 })),
     };
     hardErasure.evidenceRef = canonicalDigest({ ...hardErasure, evidenceRef: undefined });
+    const expectedNonRights = retainedResources.filter((resource) => resource.resourceKind !== "generation_rights_evidence")
+      .map((resource) => canonicalDigest(resource)).sort();
+    const actualNonRights = hardErasure.retainedResources.filter((resource) => resource.resourceKind !== "generation_rights_evidence")
+      .map((resource) => canonicalDigest(resource)).sort();
+    const rightsDescriptors = hardErasure.retainedResources.filter((resource) => resource.resourceKind === "generation_rights_evidence");
+    const retainedRightsEffects = hardErasure.effects.filter((effect) => effect.state === "retained" && effect.reason === "GENERATION_RIGHTS_LEGALLY_RETAINED");
+    const descriptorHoldIds = rightsDescriptors.length === 1 ? [...new Set(rightsDescriptors[0]!.holdIds)].sort() : [];
+    const rightsDescriptorMatches = retainedRightsEffects.length === 0
+      ? rightsDescriptors.length === 0
+      : rightsDescriptors.length === 1 && retainedRightsEffects.every((effect) => {
+        const proofHoldIds = [...new Set(effect.legalHoldEvidence?.holdIds ?? [])].sort();
+        return proofHoldIds.length === descriptorHoldIds.length
+          && proofHoldIds.every((holdId, index) => holdId === descriptorHoldIds[index])
+          && /^sha256:[a-f0-9]{64}$/.test(effect.legalHoldEvidence?.policyRevisionDigest ?? "")
+          && /^sha256:[a-f0-9]{64}$/.test(effect.legalHoldEvidence?.policyRevisionRecordDigest ?? "");
+      });
+    const retainedResourcesValid = expectedNonRights.length === actualNonRights.length
+      && expectedNonRights.every((digest, index) => digest === actualNonRights[index])
+      && rightsDescriptorMatches
+      && rightsDescriptors.every((resource) => resource.resourceId === `workspace:${job.workspaceId}` && resource.holdIds.length > 0);
+    const effectiveRetainedResources = retainedResourcesValid ? hardErasure.retainedResources : retainedResources;
+    const rightsRetentionValidation: GovernanceCommit["generationRightsRetentionValidation"] = retainedRightsEffects.length > 0 && rightsDescriptors.length === 1 ? {
+      closureId: job.id,
+      leaseId: job.body.lease.id,
+      leaseFence: job.body.lease.fence,
+      decisionDigest: hardErasure.effects.find((effect) => effect.targetId === "inspiration_rights_evidence_and_snapshots")?.legalHoldEvidence?.evidenceRef ?? "",
+      decisionRevisionDigest: hardErasure.effects.find((effect) => effect.targetId === "inspiration_rights_evidence_and_snapshots")?.legalHoldEvidence?.policyRevisionRecordDigest ?? "",
+      activePolicyRevision: activeRevision,
+      activeRevisionDigest: hardErasure.effects.find((effect) => effect.targetId === "inspiration_rights_evidence_and_snapshots")?.legalHoldEvidence?.policyRevisionDigest ?? "",
+      activeHoldIds: [...new Set(rightsDescriptors[0]!.holdIds)].sort(),
+      evaluatedAt: now,
+    } : undefined;
     if (
+      !retainedResourcesValid ||
       hardErasure.surfaces.length === 0 ||
       hardErasure.effects.length !== hardErasure.surfaces.length ||
       new Set(hardErasure.effects.map((effect) => effect.targetId)).size !== hardErasure.surfaces.length ||
       hardErasure.effects.some((effect) => effect.kind !== "workspace_hard_erasure" || !hardErasure.surfaces.includes(effect.targetId)) ||
-      hardErasure.effects.some((effect) => !hasErasureProof(effect) && !hasLegalRetentionProof(effect, retainedResources, activeRevision))
+      hardErasure.effects.some((effect) => !hasErasureProof(effect) && !hasLegalRetentionProof(effect, effectiveRetainedResources, activeRevision))
     ) {
-      await this.release(job, "waiting_erasure", { ...job.body, accessRevocationEvidence: revocation, hardErasureEvidence: hardErasure }, now, "closure_waiting_hard_erasure");
+      const retryAt = hardErasure.retryAt ? new Date(hardErasure.retryAt) : null;
+      const nextErasureAttemptAt = retryAt && Number.isFinite(retryAt.getTime()) && retryAt > now ? retryAt.toISOString() : null;
+      await this.release(job, "waiting_erasure", { ...job.body, accessRevocationEvidence: revocation, hardErasureEvidence: hardErasure, nextErasureAttemptAt }, now, "closure_waiting_hard_erasure");
+      return;
+    }
+    if (retainedRightsEffects.length > 0) {
+      const retryAt = hardErasure.retryAt ? new Date(hardErasure.retryAt) : null;
+      const nextErasureAttemptAt = retryAt && Number.isFinite(retryAt.getTime()) && retryAt > now ? retryAt.toISOString() : null;
+      const waitCommitted = await this.release(job, "waiting_erasure", {
+        ...job.body,
+        accessRevocationEvidence: revocation,
+        hardErasureEvidence: hardErasure,
+        nextErasureAttemptAt,
+        generationRightsHoldWait: { holdIds: descriptorHoldIds, retryAt: nextErasureAttemptAt },
+      }, now, "closure_waiting_generation_rights_hold", rightsRetentionValidation);
+      if (!waitCommitted) {
+        await this.release(job, "waiting_erasure", {
+          ...job.body,
+          accessRevocationEvidence: revocation,
+          hardErasureEvidence: hardErasure,
+          nextErasureAttemptAt: null,
+          generationRightsHoldWait: null,
+        }, now, "closure_waiting_retention_revalidation");
+      }
       return;
     }
     const tombstoneId = `workspace:${job.workspaceId}`;
     const existingTombstone = await this.repository.getResource({ workspaceId: job.workspaceId, kind: "tombstone", id: tombstoneId });
     const legallyRetainedEffects = hardErasure.effects.filter((effect) => effect.state === "retained");
-    const fullyErased = retainedResources.length === 0 && legallyRetainedEffects.length === 0;
+    const fullyErased = effectiveRetainedResources.length === 0 && legallyRetainedEffects.length === 0;
     const finalStatus = fullyErased ? "closed" : "closed_retained";
     const completionEvidence = {
       schema: "workspace-closure-completion-evidence/v2",
@@ -361,7 +413,7 @@ export class GovernanceWorkspaceClosureWorker {
         holdIds: (receipt.body as { holdIds?: string[] }).holdIds ?? [],
         outcomes: (receipt.body as { outcomes?: Record<string, unknown> }).outcomes ?? {},
       })).sort((left, right) => left.id.localeCompare(right.id)),
-      holds: [...new Set(retainedResources.flatMap((resource) => resource.holdIds))].sort(),
+      holds: [...new Set(effectiveRetainedResources.flatMap((resource) => resource.holdIds))].sort(),
       legalHoldEvidence: legallyRetainedEffects.map((effect) => ({
         surface: effect.targetId,
         holdIds: [...(effect.legalHoldEvidence?.holdIds ?? [])].sort(),
@@ -375,7 +427,7 @@ export class GovernanceWorkspaceClosureWorker {
       unknowns: [],
       completedAt: now.toISOString(),
     };
-    const next = updated(job, finalStatus, { ...job.body, lease: null, completionEvidence, closedAt: now.toISOString() }, now);
+    const next = updated(job, finalStatus, { ...job.body, lease: null, nextErasureAttemptAt: null, generationRightsHoldWait: null, completionEvidence, closedAt: now.toISOString() }, now);
     const mutations: GovernanceMutation[] = [{ type: "update", expectedVersion: job.version, resource: next }];
     if (!existingTombstone) mutations.push({
       type: "create",
@@ -387,19 +439,25 @@ export class GovernanceWorkspaceClosureWorker {
       receipt: { workspaceId: job.workspaceId, capability: "workspace_closures.process@1", idempotencyKey: `closure-complete-${job.id}`, requestDigest: canonicalDigest(completionEvidence), result: { closureId: job.id, status: finalStatus, fullyErased, tombstoneId }, createdAt: now },
       mutations,
       canonicalEffects: effects,
+      generationRightsRetentionValidation: rightsRetentionValidation,
       audit: audit(job, "complete_workspace_closure", "completed", now),
     });
-    if (outcome.type === "conflict") throw new Error("Workspace closure changed while completing.");
+    if (outcome.type === "conflict") {
+      await this.release(job, "waiting_erasure", { ...job.body, accessRevocationEvidence: revocation, hardErasureEvidence: hardErasure }, now, "closure_waiting_retention_revalidation");
+    }
   }
 
-  private async claim(job: GovernanceResource<ClosureBody>): Promise<GovernanceResource<ClosureBody> | null> {
+  private async claim(job: GovernanceResource<ClosureBody>, revalidateNow = false): Promise<GovernanceResource<ClosureBody> | null> {
     const now = this.clock.now();
+    const nextAttemptAt = job.body.nextErasureAttemptAt ? new Date(job.body.nextErasureAttemptAt) : null;
+    if (!revalidateNow && nextAttemptAt && Number.isFinite(nextAttemptAt.getTime()) && nextAttemptAt > now) return null;
+    if (!revalidateNow && job.body.generationRightsHoldWait && !nextAttemptAt) return null;
     if (job.body.lease && new Date(job.body.lease.expiresAt) > now) return null;
     if (!["erasure_queued", "erasure_running", "waiting_retention_policy", "waiting_erasure", "waiting_export"].includes(job.status)) return null;
     const recordedFence = Number.isSafeInteger(job.body.leaseFence) && job.body.leaseFence! >= 0 ? job.body.leaseFence! : 0;
     const legacyLeaseFence = Number.isSafeInteger(job.body.lease?.fence) && job.body.lease!.fence >= 0 ? job.body.lease!.fence : 0;
     const lease: ClosureLease = { id: `lease_${randomUUID().replaceAll("-", "")}`, fence: Math.max(recordedFence, legacyLeaseFence) + 1, expiresAt: new Date(now.getTime() + LEASE_MS).toISOString() };
-    const next = updated(job, "erasure_running", { ...job.body, lease, leaseFence: lease.fence }, now);
+    const next = updated(job, "erasure_running", { ...job.body, lease, leaseFence: lease.fence, nextErasureAttemptAt: null, generationRightsHoldWait: null }, now);
     const outcome = await this.repository.commit({
       receipt: { workspaceId: job.workspaceId, capability: "workspace_closures.claim@1", idempotencyKey: `closure-claim-${job.id}-${job.version}-${lease.id}`, requestDigest: canonicalDigest({ closureId: job.id, version: job.version, lease }), result: { closureId: job.id, lease }, createdAt: now },
       mutations: [{ type: "update", expectedVersion: job.version, resource: next }],
@@ -408,13 +466,18 @@ export class GovernanceWorkspaceClosureWorker {
     return outcome.type === "committed" ? next : null;
   }
 
-  private async release(job: GovernanceResource<ClosureBody>, status: string, body: ClosureBody, now: Date, action: string): Promise<void> {
+  private async release(job: GovernanceResource<ClosureBody>, status: string, body: ClosureBody, now: Date, action: string, generationRightsRetentionValidation?: GovernanceCommit["generationRightsRetentionValidation"]): Promise<boolean> {
     const next = updated(job, status, { ...body, lease: null }, now);
     const outcome = await this.repository.commit({
       receipt: { workspaceId: job.workspaceId, capability: "workspace_closures.process@1", idempotencyKey: `${action}-${job.id}-${job.version}`, requestDigest: canonicalDigest({ closureId: job.id, version: job.version, status }), result: { closureId: job.id, status }, createdAt: now },
       mutations: [{ type: "update", expectedVersion: job.version, resource: next }],
+      generationRightsRetentionValidation,
       audit: audit(job, action, "accepted", now),
     });
-    if (outcome.type === "conflict") throw new Error("Workspace closure changed while releasing its lease.");
+    if (outcome.type === "conflict") {
+      if (generationRightsRetentionValidation) return false;
+      throw new Error("Workspace closure changed while releasing its lease.");
+    }
+    return true;
   }
 }

@@ -137,6 +137,18 @@ export interface GovernanceCommit {
   audit: GovernanceAuditEvent;
   canonicalEffects?: GovernanceCanonicalEffect[];
   secretDelivery?: GovernanceSecretDelivery;
+  /** Rechecked while holding the workspace-governance transaction lock. */
+  generationRightsRetentionValidation?: {
+    closureId: string;
+    leaseId: string;
+    leaseFence: number;
+    decisionDigest: string;
+    decisionRevisionDigest: string;
+    activePolicyRevision: number;
+    activeRevisionDigest: string;
+    activeHoldIds: string[];
+    evaluatedAt: Date;
+  };
 }
 
 export interface GovernanceSecretDelivery {

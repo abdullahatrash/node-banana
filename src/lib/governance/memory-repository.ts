@@ -10,6 +10,7 @@ import type {
   GovernanceReceipt,
   GovernanceSecretDelivery,
 } from "./types";
+import { generationRightsBlockingHoldIds, generationRightsRetentionReceiptKey } from "./retention-proof";
 
 function copy<T>(value: T): T {
   return structuredClone(value);
@@ -81,7 +82,13 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
         return resource.status === "queued" || (resource.status === "running" && terminalLease(resource));
       }
       if (resource.kind === "safety_appeal") return resource.status === "revalidation_queued" || (resource.status === "revalidation_running" && terminalLease(resource));
-      if (resource.kind === "workspace_closure") return ["erasure_queued", "waiting_retention_policy", "waiting_erasure", "waiting_export"].includes(resource.status) || (resource.status === "erasure_running" && terminalLease(resource));
+      if (resource.kind === "workspace_closure") {
+        const nextAttemptAt = (resource.body as { nextErasureAttemptAt?: string | null }).nextErasureAttemptAt;
+        const generationRightsHoldWait = (resource.body as { generationRightsHoldWait?: unknown }).generationRightsHoldWait;
+        if (nextAttemptAt && new Date(nextAttemptAt) > input.evaluatedAt) return false;
+        if (generationRightsHoldWait && !nextAttemptAt) return false;
+        return ["erasure_queued", "waiting_retention_policy", "waiting_erasure", "waiting_export"].includes(resource.status) || (resource.status === "erasure_running" && terminalLease(resource));
+      }
       return resource.kind === "approval_request" && ["pending", "escalated"].includes(resource.status);
     };
     const compare = (left: GovernanceResource, right: GovernanceResource) => left.updatedAt.getTime() - right.updatedAt.getTime() || left.workspaceId.localeCompare(right.workspaceId) || left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id);
@@ -136,6 +143,21 @@ export class InMemoryGovernanceRepository implements GovernanceRepository {
           (existing.authContextDigest ?? null) === (input.receipt.authContextDigest ?? null)
           ? { type: "replayed", result: copy(existing.result) }
           : { type: "conflict" };
+      }
+      if (input.generationRightsRetentionValidation) {
+        const validation = input.generationRightsRetentionValidation;
+        const policy = this.resources.get(resourceKey(input.receipt.workspaceId, "retention_policy", "active"));
+        const policyBody = policy?.body as { activeRevision?: unknown; revisions?: unknown } | undefined;
+        const revision = Array.isArray(policyBody?.revisions)
+          ? policyBody.revisions.find((candidate) => candidate && typeof candidate === "object" && (candidate as { revision?: unknown }).revision === validation.activePolicyRevision)
+          : undefined;
+        if (policy?.status !== "active" || policyBody?.activeRevision !== validation.activePolicyRevision || !revision || canonicalDigest(revision) !== validation.activeRevisionDigest) return { type: "conflict" };
+        const holds = [...this.resources.values()].filter((resource) => resource.workspaceId === input.receipt.workspaceId && resource.kind === "retention_hold");
+        const actual = generationRightsBlockingHoldIds(holds, validation.activePolicyRevision, validation.evaluatedAt);
+        if (actual.length !== validation.activeHoldIds.length || actual.some((id, index) => id !== validation.activeHoldIds[index])) return { type: "conflict" };
+        const decisionReceipt = this.receipts.get(receiptKey({ workspaceId: input.receipt.workspaceId, capability: "workspace_closures.erase_generation_rights_attempt@1", idempotencyKey: generationRightsRetentionReceiptKey(validation.closureId, validation.leaseId, validation.leaseFence) }));
+        const expectedDecision = { schema: "generation-rights-retention-decision-result/v1", closureId: validation.closureId, leaseId: validation.leaseId, leaseFence: validation.leaseFence, decisionDigest: validation.decisionDigest, blockingHoldIds: validation.activeHoldIds, retentionPolicyRevision: validation.activePolicyRevision, retentionRevisionDigest: validation.decisionRevisionDigest };
+        if (!decisionReceipt || decisionReceipt.requestDigest !== validation.decisionDigest || decisionReceipt.actorIdentity != null || decisionReceipt.authContextDigest != null || canonicalDigest(decisionReceipt.result) !== canonicalDigest(expectedDecision)) return { type: "conflict" };
       }
       for (const mutation of input.mutations) {
         const id = resourceKey(

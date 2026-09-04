@@ -461,6 +461,11 @@ describe("GovernanceService", () => {
     expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "retention_policy", id: "active" })).toMatchObject({ body: { revisions: [{ schema: "retention-policy-revision/v2", legalFloorSource: "deployment_trusted/v2", rules }] } });
     const hold = await service.execute(owner, { type: "create_retention_hold", retentionClasses: ["security_evidence"], reason: "Active legal preservation", expiresAt: null, stepUpToken: authorization.stepUpToken }, "retention-hold-key") as { holdId: string };
     expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "retention_hold", id: hold.holdId })).toMatchObject({ body: { retentionClasses: ["security_evidence", "generation_rights_evidence"], scopeReview: null } });
+    repository.resources.set(`${owner.workspaceId}\u0000workspace_closure\u0000closure-rights-wait`, {
+      id: "closure-rights-wait", workspaceId: owner.workspaceId, kind: "workspace_closure", version: 3, status: "waiting_erasure",
+      body: { generationRightsHoldWait: { holdIds: [hold.holdId], retryAt: null }, nextErasureAttemptAt: null },
+      createdByUserId: owner.userId, createdAt: new Date(NOW), updatedAt: new Date(NOW),
+    });
     const deletionAuthorization = await stepUp(service, "retention.delete", "media-1");
     const deleted = await service.execute(owner, { type: "record_deletion", resourceKind: "media", resourceId: "media-1", stepUpToken: deletionAuthorization.stepUpToken }, "deletion-record-key") as { deletionReceiptId: string; tombstoneId: string };
     expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "deletion_receipt", id: deleted.deletionReceiptId })).toMatchObject({ body: { retentionClass: "security_evidence", resourceKind: "media", systems: ["primary", "replica"], policyRevision: 1 } });
@@ -468,6 +473,8 @@ describe("GovernanceService", () => {
     const releaseAuthorization = await stepUp(service, "retention.hold.release", hold.holdId);
     await service.execute(owner, { type: "release_retention_hold", holdId: hold.holdId, reason: "Legal matter closed", stepUpToken: releaseAuthorization.stepUpToken }, "release-hold-key");
     expect((await repository.getResource({ workspaceId: owner.workspaceId, kind: "retention_hold", id: hold.holdId }))?.status).toBe("released");
+    expect(await repository.getResource({ workspaceId: owner.workspaceId, kind: "workspace_closure", id: "closure-rights-wait" })).toMatchObject({ status: "waiting_erasure", body: { generationRightsHoldWait: null, nextErasureAttemptAt: null, generationRightsHoldReleasedAt: NOW.toISOString() } });
+    expect((await repository.listClaimableGovernanceJobs({ evaluatedAt: new Date(NOW), limit: 10 })).some((item) => item.id === "closure-rights-wait")).toBe(true);
   });
 
   it("upgrades legacy retention.manage@1 payloads with a conservative generation-rights rule", async () => {

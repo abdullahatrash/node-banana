@@ -917,7 +917,12 @@ export class GovernanceService {
         const hold = await this.required("retention_hold", command.holdId, actor.workspaceId);
         if (hold.status !== "active") throw new GovernanceError("CONFLICT", "Retention hold is not active.");
         await this.requireStepUp(actor, "retention.hold.release", hold.id, command.stepUpToken);
-        mutations = [update(hold, "released", { ...hold.body, releaseReason: text(command.reason, "Release reason", 1000), releasedAt: now.toISOString(), releasedByUserId: actor.userId })];
+        const waitingClosures = (await this.repository.listResources<{ generationRightsHoldWait?: { holdIds?: string[] } | null; [key: string]: unknown }>({ workspaceId: actor.workspaceId, kinds: ["workspace_closure"], status: "waiting_erasure" }))
+          .filter((closure) => closure.body.generationRightsHoldWait?.holdIds?.includes(hold.id));
+        mutations = [
+          update(hold, "released", { ...hold.body, releaseReason: text(command.reason, "Release reason", 1000), releasedAt: now.toISOString(), releasedByUserId: actor.userId }),
+          ...waitingClosures.map((closure) => update(closure, closure.status, { ...closure.body, generationRightsHoldWait: null, nextErasureAttemptAt: null, generationRightsHoldReleasedAt: now.toISOString() })),
+        ];
         result = { holdId: hold.id, status: "released" };
         target = { kind: hold.kind, id: hold.id };
         break;

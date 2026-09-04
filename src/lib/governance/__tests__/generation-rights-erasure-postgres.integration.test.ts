@@ -41,9 +41,12 @@ describePostgres("generation-rights erasure PostgreSQL contract", () => {
         await client.query("BEGIN");
         await client.query(`SET LOCAL ROLE ${q(workerRole)}`);
         await client.query("SELECT set_config('app.generation_rights_erasure_hmac_key',$1,true), set_config('app.generation_rights_erasure_hmac_key_id',$2,true)", [signingKey, signingKeyId]);
-        const result = await client.query(`SELECT * FROM ${q(schema)}.erase_closed_workspace_generation_rights($1,$2,$3,$4)`, [workspaceId, closureId, leaseId, fence]);
+        const preflight = await client.query(`SELECT * FROM ${q(schema)}.preflight_closed_workspace_generation_rights($1,$2,$3,$4)`, [workspaceId, closureId, leaseId, fence]);
+        const result = preflight.rows[0].outcome === "eligible"
+          ? await client.query(`SELECT * FROM ${q(schema)}.erase_closed_workspace_generation_rights_v2($1,$2,$3,$4,$5)`, [workspaceId, closureId, leaseId, fence, preflight.rows[0].preflight_digest])
+          : preflight;
         await client.query("COMMIT");
-        return result.rows[0] as { outcome: string; tombstone_digest: string | null };
+        return result.rows[0] as { outcome: string; tombstone_digest: string | null; evidence_row_count: string | number; snapshot_row_count: string | number; blocking_hold_ids?: string[]; eligible_at?: string | null };
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -66,8 +69,14 @@ describePostgres("generation-rights erasure PostgreSQL contract", () => {
         CREATE FUNCTION legacy_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable'; END $$;
         CREATE TRIGGER inspiration_rights_evidence_immutable BEFORE UPDATE OR DELETE ON inspiration_rights_evidence FOR EACH ROW EXECUTE FUNCTION legacy_immutable();
       `);
-      for (const [id, options] of [["success", {}], ["lease-wait", {}], ["weak-floor", { floor: 30 }], ["oversized-policy", {}], ["multi-closure", { floor: 30 }], ["multi-lease", { floor: 30 }], ["legacy-hold", { hold: "legacy" }], ["stale-hold", { hold: "stale" }], ["rights-hold", { hold: "rights" }]] as const) await seedWorkspace(admin, id, options);
+      for (const [id, options] of [["success", {}], ["legacy-v1-success", {}], ["cutover", {}], ["guard-open", {}], ["lease-wait", {}], ["weak-floor", { floor: 30 }], ["oversized-policy", {}], ["nonfinite-created", {}], ["malformed-expiry", {}], ["special-expiry", {}], ["finite-holds", {}], ["multi-closure", { floor: 30 }], ["multi-lease", { floor: 30 }], ["legacy-hold", { hold: "legacy" }], ["stale-hold", { hold: "stale" }], ["rights-hold", { hold: "rights" }]] as const) await seedWorkspace(admin, id, options);
       await admin.query(`UPDATE ${q(schema)}.workspace_governance_resources SET body=jsonb_set(body,'{revisions,0,rules,0,durationDays}','2147483647'::jsonb) WHERE workspace_id='oversized-policy' AND kind='retention_policy'`);
+      await admin.query(`UPDATE ${q(schema)}.inspiration_rights_evidence SET created_at='-infinity'::timestamptz WHERE workspace_id='nonfinite-created'`);
+      await admin.query(`INSERT INTO ${q(schema)}.workspace_governance_resources VALUES ('malformed-expiry','retention_hold','numeric-expiry',1,'active',$1,NULL,now(),now())`, [JSON.stringify({ retentionClasses: ["security_evidence"], scopeReview: { schema: "retention-hold-scope-review/v2", reviewedAgainstPolicyRevision: 1, generationRightsEvidence: "not_applicable" }, expiresAt: 20200101 })]);
+      await admin.query(`INSERT INTO ${q(schema)}.workspace_governance_resources VALUES ('special-expiry','retention_hold','epoch-expiry',1,'active',$1,NULL,now(),now())`, [JSON.stringify({ retentionClasses: ["security_evidence"], scopeReview: { schema: "retention-hold-scope-review/v2", reviewedAgainstPolicyRevision: 1, generationRightsEvidence: "not_applicable" }, expiresAt: "epoch" })]);
+      const firstFiniteExpiry = new Date(Date.now() + 86_400_000).toISOString();
+      const lastFiniteExpiry = new Date(Date.now() + 172_800_000).toISOString();
+      await admin.query(`INSERT INTO ${q(schema)}.workspace_governance_resources VALUES ('finite-holds','retention_hold','finite-a',1,'active',$1,NULL,now(),now()), ('finite-holds','retention_hold','finite-b',1,'active',$2,NULL,now(),now())`, [JSON.stringify({ retentionClasses: ["generation_rights_evidence"], expiresAt: firstFiniteExpiry }), JSON.stringify({ retentionClasses: ["generation_rights_evidence"], expiresAt: lastFiniteExpiry })]);
       await admin.query(`INSERT INTO ${q(schema)}.workspace_governance_resources SELECT workspace_id,kind,'closure-b',version,status,body,created_by_user_id,created_at,updated_at FROM ${q(schema)}.workspace_governance_resources WHERE workspace_id='multi-closure' AND kind='workspace_closure' AND id='closure-a'`);
 
       const migration = readFileSync("drizzle/0114_generation_rights_evidence_erasure.sql", "utf8")
@@ -77,7 +86,27 @@ describePostgres("generation-rights erasure PostgreSQL contract", () => {
         .replaceAll("SCHEMA public", `SCHEMA ${q(schema)}`)
         .replaceAll("'public'", `'${schema}'`);
       await admin.query(migration);
+      const legacyClient = await pool.connect();
+      try {
+        await legacyClient.query("BEGIN");
+        await legacyClient.query(`SET LOCAL ROLE ${q(workerRole)}`);
+        await legacyClient.query("SELECT set_config('app.generation_rights_erasure_hmac_key',$1,true), set_config('app.generation_rights_erasure_hmac_key_id','integration-key-1',true)", [key]);
+        const legacyErasure = await legacyClient.query(`SELECT * FROM ${q(schema)}.erase_closed_workspace_generation_rights('legacy-v1-success','closure-a','lease_fixture',1)`);
+        expect(legacyErasure.rows[0]).toMatchObject({ outcome: "erased", evidence_row_count: "1", snapshot_row_count: "1" });
+        await legacyClient.query("COMMIT");
+      } finally {
+        await legacyClient.query("ROLLBACK").catch(() => undefined);
+        legacyClient.release();
+      }
+      const preflightMigration = readFileSync("drizzle/0115_generation_rights_erasure_preflight.sql", "utf8")
+        .replaceAll("tasmeemai_generation_rights_eraser_owner", ownerRole)
+        .replaceAll("tasmeemai_workspace_closure_worker", workerRole)
+        .replaceAll("public.", `${q(schema)}.`)
+        .replaceAll("SCHEMA public", `SCHEMA ${q(schema)}`)
+        .replaceAll("'public'", `'${schema}'`);
+      await admin.query(preflightMigration);
       await admin.query(`CREATE ROLE ${q(ordinaryRole)} NOLOGIN`);
+      await admin.query(`GRANT USAGE ON SCHEMA ${q(schema)} TO ${q(ordinaryRole)}; GRANT SELECT,INSERT,UPDATE,DELETE ON ${q(schema)}.workspace_governance_resources TO ${q(ordinaryRole)}`);
       const privileges = await admin.query(`SELECT
         has_schema_privilege($1,$2,'USAGE') AS worker_schema,
         has_schema_privilege($3,n.nspname,'USAGE') AS owner_extension_schema,
@@ -89,8 +118,15 @@ describePostgres("generation-rights erasure PostgreSQL contract", () => {
 
       await admin.query("BEGIN");
       await admin.query(`SET LOCAL ROLE ${q(ordinaryRole)}`);
-      await expect(admin.query(`SELECT * FROM ${q(schema)}.erase_closed_workspace_generation_rights('success','closure-a','lease_fixture',1)`)).rejects.toThrow(/permission denied/);
+      await expect(admin.query(`SELECT * FROM ${q(schema)}.erase_closed_workspace_generation_rights_v2('success','closure-a','lease_fixture',1,$1)`, [`sha256:${"0".repeat(64)}`])).rejects.toThrow(/permission denied/);
       await admin.query("ROLLBACK");
+
+      await admin.query("BEGIN");
+      await admin.query(`SET LOCAL ROLE ${q(ordinaryRole)}`);
+      await admin.query(`INSERT INTO ${q(schema)}.workspace_governance_resources VALUES ('guard-open','retention_hold','guard-test',1,'active',$1,NULL,now(),now())`, [JSON.stringify({ retentionClasses: ["security_evidence"], expiresAt: null })]);
+      await admin.query(`UPDATE ${q(schema)}.workspace_governance_resources SET updated_at=now() WHERE workspace_id='guard-open' AND kind='retention_hold' AND id='guard-test'`);
+      await admin.query(`DELETE FROM ${q(schema)}.workspace_governance_resources WHERE workspace_id='guard-open' AND kind='retention_hold' AND id='guard-test'`);
+      await admin.query("COMMIT");
 
       await admin.query("BEGIN");
       await admin.query(`SET LOCAL ROLE ${q(workerRole)}`);
@@ -100,6 +136,10 @@ describePostgres("generation-rights erasure PostgreSQL contract", () => {
       await expect(invoke("success", 2)).rejects.toThrow(/current fenced workspace closure lease required/);
       await expect(invoke("weak-floor")).resolves.toMatchObject({ outcome: "blocked_retention_policy" });
       await expect(invoke("oversized-policy")).resolves.toMatchObject({ outcome: "blocked_retention_policy" });
+      await expect(invoke("nonfinite-created")).resolves.toMatchObject({ outcome: "blocked_retention_policy" });
+      await expect(invoke("malformed-expiry")).resolves.toMatchObject({ outcome: "blocked_retention_hold", blocking_hold_ids: ["numeric-expiry"] });
+      await expect(invoke("special-expiry")).resolves.toMatchObject({ outcome: "blocked_retention_hold", blocking_hold_ids: ["epoch-expiry"] });
+      await expect(invoke("finite-holds")).resolves.toMatchObject({ outcome: "blocked_retention_hold", blocking_hold_ids: ["finite-a", "finite-b"], eligible_at: new Date(lastFiniteExpiry) });
       await expect(invoke("multi-closure")).resolves.toMatchObject({ outcome: "blocked_retention_policy" });
       await expect(invoke("multi-closure", 1, key, "integration-key-1", "closure-b")).resolves.toMatchObject({ outcome: "blocked_retention_policy" });
       await expect(invoke("multi-lease")).resolves.toMatchObject({ outcome: "blocked_retention_policy" });
@@ -107,8 +147,12 @@ describePostgres("generation-rights erasure PostgreSQL contract", () => {
       await expect(invoke("multi-lease", 2, key, "integration-key-1", "closure-a", "lease_second")).resolves.toMatchObject({ outcome: "blocked_retention_policy" });
       await expect(invoke("legacy-hold")).resolves.toMatchObject({ outcome: "blocked_retention_hold" });
       await expect(invoke("stale-hold")).resolves.toMatchObject({ outcome: "blocked_retention_hold" });
-      await expect(invoke("rights-hold")).resolves.toMatchObject({ outcome: "blocked_retention_hold" });
-      expect((await admin.query(`SELECT count(*)::integer AS count FROM ${q(schema)}.generation_rights_erasure_attempts`)).rows[0].count).toBe(9);
+      await expect(invoke("rights-hold")).resolves.toMatchObject({ outcome: "blocked_retention_hold", eligible_at: null });
+      expect((await invoke("rights-hold")).blocking_hold_ids).toEqual(["hold-a"]);
+      await admin.query(`UPDATE ${q(schema)}.workspace_governance_resources SET body=jsonb_set(jsonb_set(body,'{lease,id}',to_jsonb('lease_legacy_reclaimed'::text)),'{lease,fence}','2'::jsonb) WHERE workspace_id='legacy-v1-success' AND kind='workspace_closure'`);
+      const adoptedLegacy = await invoke("legacy-v1-success", 2, key, "integration-key-1", "closure-a", "lease_legacy_reclaimed");
+      expect(adoptedLegacy).toMatchObject({ outcome: "replayed", tombstone_digest: expect.stringMatching(/^sha256:/), evidence_row_count: "1", snapshot_row_count: "1" });
+      expect((await admin.query(`SELECT count(*)::integer AS count FROM ${q(schema)}.generation_rights_erasure_attempts`)).rows[0].count).toBe(13);
       expect((await admin.query(`SELECT count(*)::integer AS count FROM ${q(schema)}.workspace_governance_mutation_receipts WHERE workspace_id='multi-closure' AND capability='workspace_closures.erase_generation_rights_attempt@1'`)).rows[0].count).toBe(2);
 
       const attemptMac = (await admin.query(`SELECT attempt_mac FROM ${q(schema)}.generation_rights_erasure_attempts WHERE workspace_id='weak-floor'`)).rows[0].attempt_mac as string;
@@ -146,11 +190,34 @@ describePostgres("generation-rights erasure PostgreSQL contract", () => {
       await admin.query(`UPDATE ${q(schema)}.generation_rights_erasure_tombstones SET tombstone_mac=$1 WHERE workspace_id='success'`, [validMac]);
       await admin.query("SET session_replication_role = origin");
       await expect(invoke("success")).resolves.toMatchObject({ outcome: "replayed", tombstone_digest: erased.tombstone_digest });
+      await admin.query(`UPDATE ${q(schema)}.workspace_governance_resources SET body=jsonb_set(jsonb_set(body,'{lease,id}',to_jsonb('lease_success_reclaimed'::text)),'{lease,fence}','2'::jsonb) WHERE workspace_id='success' AND kind='workspace_closure'`);
+      await expect(invoke("success", 2, key, "integration-key-1", "closure-a", "lease_success_reclaimed")).resolves.toMatchObject({ outcome: "replayed", tombstone_digest: erased.tombstone_digest });
       await admin.query("BEGIN");
       await admin.query(`SET LOCAL ROLE ${q(workerRole)}`);
-      expect((await admin.query(`SELECT ${q(schema)}.generation_rights_erasure_signing_key_id('success','closure-a','lease_fixture',1,'') AS key_id`)).rows[0].key_id).toBe("integration-key-1");
-      expect((await admin.query(`SELECT ${q(schema)}.generation_rights_erasure_signing_key_id('weak-floor','closure-a','lease_fixture',1,'blocked_retention_policy') AS key_id`)).rows[0].key_id).toBe("integration-key-1");
+      expect((await admin.query(`SELECT ${q(schema)}.generation_rights_erasure_signing_key_id_v2('success','closure-a','lease_success_reclaimed',2,'') AS key_id`)).rows[0].key_id).toBe("integration-key-1");
+      expect((await admin.query(`SELECT ${q(schema)}.generation_rights_erasure_signing_key_id_v2('weak-floor','closure-a','lease_fixture',1,'blocked_retention_policy') AS key_id`)).rows[0].key_id).toBe("integration-key-1");
       await admin.query("ROLLBACK");
+
+      const cutoverClient = await pool.connect();
+      try {
+        await cutoverClient.query("BEGIN");
+        await cutoverClient.query(`SET LOCAL ROLE ${q(workerRole)}`);
+        await cutoverClient.query("SELECT set_config('app.generation_rights_erasure_hmac_key',$1,true),set_config('app.generation_rights_erasure_hmac_key_id','integration-key-1',true)", [key]);
+        const cutover = await cutoverClient.query(`SELECT * FROM ${q(schema)}.preflight_closed_workspace_generation_rights('cutover','closure-a','lease_fixture',1)`);
+        expect(cutover.rows[0].outcome).toBe("eligible");
+        await cutoverClient.query("COMMIT");
+        await admin.query("BEGIN");
+        await admin.query(`SET LOCAL ROLE ${q(ordinaryRole)}`);
+        await expect(admin.query(`INSERT INTO ${q(schema)}.workspace_governance_resources VALUES ('cutover','retention_hold','late-ordinary-hold',1,'active',$1,NULL,now(),now())`, [JSON.stringify({ retentionClasses: ["generation_rights_evidence"], expiresAt: null })])).rejects.toThrow(/legal cutover blocks retention mutation/);
+        await admin.query("ROLLBACK");
+        await expect(admin.query(`INSERT INTO ${q(schema)}.workspace_governance_resources VALUES ('cutover','retention_hold','late-hold',1,'active',$1,NULL,now(),now())`, [JSON.stringify({ retentionClasses: ["generation_rights_evidence"], expiresAt: null })])).rejects.toThrow(/legal cutover blocks retention mutation/);
+        await expect(admin.query(`UPDATE ${q(schema)}.workspace_governance_resources SET updated_at=now() WHERE workspace_id='cutover' AND kind='retention_policy'`)).rejects.toThrow(/legal cutover blocks retention mutation/);
+        await admin.query(`UPDATE ${q(schema)}.workspace_governance_resources SET body=jsonb_set(jsonb_set(body,'{lease,id}',to_jsonb('lease_reclaimed'::text)),'{lease,fence}','2'::jsonb) WHERE workspace_id='cutover' AND kind='workspace_closure'`);
+        await expect(invoke("cutover", 2, key, "integration-key-2", "closure-a", "lease_reclaimed")).resolves.toMatchObject({ outcome: "erased" });
+      } finally {
+        await cutoverClient.query("ROLLBACK").catch(() => undefined);
+        cutoverClient.release();
+      }
 
       const locker = await pool.connect();
       const inserter = await pool.connect();

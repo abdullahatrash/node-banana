@@ -18,6 +18,8 @@ import type {
   GovernanceResource,
   GovernanceResourceKind,
 } from "./types";
+import { generationRightsBlockingHoldIds, generationRightsRetentionReceiptKey } from "./retention-proof";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -230,7 +232,12 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
         and(eq(workspaceGovernanceResources.kind, "bulk_operation"), inArray(workspaceGovernanceResources.status, ["queued", "running", "cancelling"])),
         and(eq(workspaceGovernanceResources.kind, "deletion_receipt"), inArray(workspaceGovernanceResources.status, ["queued", "delayed", "running"])),
         and(eq(workspaceGovernanceResources.kind, "safety_appeal"), inArray(workspaceGovernanceResources.status, ["revalidation_queued", "revalidation_running"])),
-        and(eq(workspaceGovernanceResources.kind, "workspace_closure"), inArray(workspaceGovernanceResources.status, ["erasure_queued", "erasure_running", "waiting_retention_policy", "waiting_erasure", "waiting_export"])),
+        and(
+          eq(workspaceGovernanceResources.kind, "workspace_closure"),
+          inArray(workspaceGovernanceResources.status, ["erasure_queued", "erasure_running", "waiting_retention_policy", "waiting_erasure", "waiting_export"]),
+          sql`(coalesce(${workspaceGovernanceResources.body}->>'nextErasureAttemptAt', '') = '' or ${workspaceGovernanceResources.body}->>'nextErasureAttemptAt' <= ${evaluatedAt})`,
+          sql`(${workspaceGovernanceResources.body}->'generationRightsHoldWait' is null or coalesce(${workspaceGovernanceResources.body}->>'nextErasureAttemptAt', '') <> '')`,
+        ),
         and(eq(workspaceGovernanceResources.kind, "approval_request"), inArray(workspaceGovernanceResources.status, ["pending", "escalated"])),
       ),
       sql`(${workspaceGovernanceResources.status} <> 'running' and ${workspaceGovernanceResources.status} <> 'revalidation_running' and ${workspaceGovernanceResources.status} <> 'erasure_running') or coalesce(${workspaceGovernanceResources.body}->'lease'->>'expiresAt', '') <= ${evaluatedAt}`,
@@ -317,6 +324,40 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
             existing.authContextDigest === (input.receipt.authContextDigest ?? null)
             ? { type: "replayed" as const, result: structuredClone(existing.result) }
             : { type: "conflict" as const };
+        }
+        if (input.generationRightsRetentionValidation) {
+          const validation = input.generationRightsRetentionValidation;
+          const [policy] = await tx.select({ status: workspaceGovernanceResources.status, body: workspaceGovernanceResources.body })
+            .from(workspaceGovernanceResources)
+            .where(and(
+              eq(workspaceGovernanceResources.workspaceId, input.receipt.workspaceId),
+              eq(workspaceGovernanceResources.kind, "retention_policy"),
+              eq(workspaceGovernanceResources.id, "active"),
+            )).limit(1);
+          const policyBody = policy?.body as { activeRevision?: unknown; revisions?: unknown } | undefined;
+          const revision = Array.isArray(policyBody?.revisions)
+            ? policyBody.revisions.find((candidate) => candidate && typeof candidate === "object" && (candidate as { revision?: unknown }).revision === validation.activePolicyRevision)
+            : undefined;
+          if (policy?.status !== "active" || policyBody?.activeRevision !== validation.activePolicyRevision || !revision || canonicalDigest(revision) !== validation.activeRevisionDigest) throw new GovernanceCommitConflict();
+          const revisionDigestResult = await tx.execute<{ digest: string }>(sql`
+            select 'sha256:' || pg_catalog.encode(
+              pg_catalog.sha256(pg_catalog.convert_to(${JSON.stringify(revision)}::jsonb::text, 'UTF8')),
+              'hex'
+            ) as digest
+          `);
+          if (revisionDigestResult.rows[0]?.digest !== validation.decisionRevisionDigest) throw new GovernanceCommitConflict();
+          const holdRows = await tx.select({ id: workspaceGovernanceResources.id, status: workspaceGovernanceResources.status, body: workspaceGovernanceResources.body })
+            .from(workspaceGovernanceResources)
+            .where(and(eq(workspaceGovernanceResources.workspaceId, input.receipt.workspaceId), eq(workspaceGovernanceResources.kind, "retention_hold")));
+          const actual = generationRightsBlockingHoldIds(holdRows, validation.activePolicyRevision, validation.evaluatedAt);
+          if (actual.length !== validation.activeHoldIds.length || actual.some((id, index) => id !== validation.activeHoldIds[index])) throw new GovernanceCommitConflict();
+          const [decisionReceipt] = await tx.select().from(workspaceGovernanceMutationReceipts).where(and(
+            eq(workspaceGovernanceMutationReceipts.workspaceId, input.receipt.workspaceId),
+            eq(workspaceGovernanceMutationReceipts.capability, "workspace_closures.erase_generation_rights_attempt@1"),
+            eq(workspaceGovernanceMutationReceipts.idempotencyKey, generationRightsRetentionReceiptKey(validation.closureId, validation.leaseId, validation.leaseFence)),
+          )).limit(1);
+          const expectedDecision = { schema: "generation-rights-retention-decision-result/v1", closureId: validation.closureId, leaseId: validation.leaseId, leaseFence: validation.leaseFence, decisionDigest: validation.decisionDigest, blockingHoldIds: validation.activeHoldIds, retentionPolicyRevision: validation.activePolicyRevision, retentionRevisionDigest: validation.decisionRevisionDigest };
+          if (!decisionReceipt || decisionReceipt.requestDigest !== validation.decisionDigest || decisionReceipt.actorIdentity != null || decisionReceipt.authContextDigest != null || canonicalDigest(decisionReceipt.result) !== canonicalDigest(expectedDecision)) throw new GovernanceCommitConflict();
         }
 
         for (const mutation of input.mutations) {

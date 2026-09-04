@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const sql = readFileSync("drizzle/0114_generation_rights_evidence_erasure.sql", "utf8");
+const preflightSql = readFileSync("drizzle/0115_generation_rights_erasure_preflight.sql", "utf8");
 const repository = readFileSync("src/lib/governance/postgres-repository.ts", "utf8");
 const closureAdapter = readFileSync("src/lib/governance/closure-production.ts", "utf8");
 const service = readFileSync("src/lib/governance/service.ts", "utf8");
@@ -101,8 +102,8 @@ describe("generation rights evidence erasure migration", () => {
     const rights = closureAdapter.indexOf("const rightsEffect");
     const remaining = closureAdapter.indexOf("const remainingEffects");
     const assets = closureAdapter.indexOf("const assetEffects");
-    const governance = closureAdapter.indexOf("const governanceEffects");
-    const identity = closureAdapter.indexOf("const identityEffect");
+    const governance = closureAdapter.indexOf("const governanceEffects", assets);
+    const identity = closureAdapter.indexOf("const identityEffect", governance);
     expect(direct).toBeLessThan(rights);
     expect(rights).toBeLessThan(remaining);
     expect(remaining).toBeLessThan(assets);
@@ -112,5 +113,65 @@ describe("generation rights evidence erasure migration", () => {
     expect(closureAdapter).toContain("WORKSPACE_IDENTITY_MUST_USE_CANONICAL_CLOSE_REDACTION");
     expect(closureAdapter).toContain('"active workspace_closure resource"');
     expect(closureAdapter).toContain('"workspace closure completion tombstone"');
+  });
+
+  it("creates an irreversible signed preflight cutover before dependent erasure and a strict v2 SQL result", () => {
+    expect(preflightSql).toContain('CREATE TABLE "generation_rights_erasure_preflights"');
+    expect(preflightSql).toContain("preflight_closed_workspace_generation_rights");
+    expect(preflightSql).toContain("generation rights erasure legal cutover blocks retention mutation");
+    expect(preflightSql).toContain("LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $guard$");
+    expect(preflightSql).toContain("governance resource Workspace and kind are immutable");
+    expect(preflightSql).toContain("ALTER FUNCTION public.guard_generation_rights_cutover_governance_mutation() OWNER TO");
+    expect(preflightSql).toContain("generation rights eraser owner role retained an unexpected member");
+    expect(preflightSql).toContain("generation rights erasure roles must not create objects in public");
+    expect(preflightSql).toContain('BEFORE INSERT OR UPDATE OR DELETE ON "workspace_governance_resources"');
+    expect(preflightSql).toContain("generation-rights-erasure-preflight-mac/v1");
+    expect(preflightSql).toContain('"event"=v_expected_audit');
+    expect(preflightSql).toContain('"result"=v_expected_result');
+    expect(preflightSql).toContain("erase_closed_workspace_generation_rights_v2");
+    expect(preflightSql).toContain("generation-rights-erasure-result/v2");
+    expect(preflightSql).toContain('CREATE TABLE "generation_rights_erasure_v2_bindings"');
+    expect(preflightSql).toContain('CREATE TABLE "generation_rights_retention_decisions"');
+    expect(preflightSql).toContain("generation-rights-retention-decision-mac/v1");
+    expect(preflightSql).toContain("v_blocking_hold_ids");
+    expect(preflightSql).toContain("v_attempt.\"eligible_at\"");
+    expect(preflightSql).toContain("FROM (SELECT hold.\"id\"");
+    expect(preflightSql).not.toContain("array_agg(hold.\"id\" ORDER BY hold.\"id\") INTO v_blocking_hold_ids FROM public");
+    expect(preflightSql).toContain("generation rights completed preflight binding invalid");
+    expect(preflightSql).toContain("Upgrade/lost-response recovery");
+    expect(preflightSql).toContain("legacy generation rights tombstone adoption failed");
+    expect(preflightSql).toContain("generation-rights-erasure-v2-binding/v1");
+    expect(preflightSql).toContain("tasmeemai_try_canonical_timestamptz");
+    expect(preflightSql).toContain("YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"");
+    expect(preflightSql).not.toContain("tasmeemai_try_timestamptz(hold.\"body\"->>'expiresAt')");
+    expect(preflightSql).toContain("pg_catalog.max(public.tasmeemai_try_canonical_timestamptz(hold.\"body\"->>'expiresAt'))");
+    expect(preflightSql).toContain("'blocked_retention_hold',v_eligible");
+    expect(preflightSql).toContain("REVOKE EXECUTE ON FUNCTION public.erase_closed_workspace_generation_rights");
+    expect(preflightSql).toContain("generation_rights_erasure_signing_key_id_v2");
+    expect(closureAdapter.indexOf("generation-rights-preflight")).toBeLessThan(closureAdapter.indexOf("const prerequisiteEffects"));
+    expect(closureAdapter).toContain("GENERATION_RIGHTS_PREFLIGHT_BINDING_NOT_PROVEN");
+    expect(closureAdapter).toContain("rightsErasureResult");
+    expect(closureAdapter).toContain("result.evidenceRowCount === preflight.evidenceRowCount");
+    expect(closureAdapter).toContain("generation-rights-preflight:${input.closureLease.id}:${input.closureLease.fence}");
+    expect(closureAdapter).toContain("rightsBound ? `:${preflight.preflightDigest}`");
+    expect(closureAdapter).toContain('"workspace_closures.preflight_generation_rights@1 receipts"');
+    expect(closureAdapter).toContain('"workspace_closures.erase_generation_rights_attempt@1 receipts"');
+    const preflightFunction = preflightSql.slice(preflightSql.indexOf("CREATE FUNCTION public.preflight_closed_workspace_generation_rights"), preflightSql.indexOf("END; $preflight$") + 18);
+    const returnedRows = [...preflightFunction.matchAll(/RETURN QUERY SELECT ([^;]+);/g)].map((match) => {
+      let depth = 0;
+      let quoted = false;
+      let columns = 1;
+      for (let index = 0; index < match[1]!.length; index += 1) {
+        const character = match[1]![index]!;
+        if (character === "'" && match[1]![index - 1] !== "\\") quoted = !quoted;
+        if (quoted) continue;
+        if (character === "(") depth += 1;
+        else if (character === ")") depth -= 1;
+        else if (character === "," && depth === 0) columns += 1;
+      }
+      return columns;
+    });
+    expect(returnedRows.length).toBeGreaterThan(0);
+    expect(new Set(returnedRows)).toEqual(new Set([12]));
   });
 });

@@ -170,6 +170,56 @@ export const generationRightsErasureAttempts = pgTable("generation_rights_erasur
   valuesCheck: check("generation_rights_erasure_attempts_values_check", sql`${table.leaseId} ~ '^lease_[A-Za-z0-9]+$' and ${table.leaseFence} > 0 and ${table.outcomeCode} in ('blocked_access_revocation','blocked_export','blocked_deletion_receipts','blocked_retention_policy','blocked_retention_hold','blocked_retention_period','blocked_dependencies') and ${table.auditSequence} > 0 and ${table.auditEventId} ~ '^rights_erasure_attempt_[a-f0-9]{32}$' and ${table.signingKeyId} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.attemptDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.attemptMac} ~ '^hmac-sha256:[a-f0-9]{64}$'`),
 }));
 
+export const generationRightsErasurePreflights = pgTable("generation_rights_erasure_preflights", {
+  workspaceId: text("workspace_id").notNull(),
+  closureId: text("closure_id").notNull(),
+  leaseId: text("lease_id").notNull(),
+  leaseFence: integer("lease_fence").notNull(),
+  evidenceRowCount: bigint("evidence_row_count", { mode: "number" }).notNull(),
+  snapshotRowCount: bigint("snapshot_row_count", { mode: "number" }).notNull(),
+  retentionPolicyRevision: integer("retention_policy_revision").notNull(),
+  retentionRuleDigest: text("retention_rule_digest").notNull(),
+  rightsSetMac: text("rights_set_mac").notNull(),
+  signingKeyId: text("signing_key_id").notNull(),
+  auditSequence: integer("audit_sequence").notNull(),
+  auditEventId: text("audit_event_id").notNull(),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull(),
+  preflightDigest: text("preflight_digest").notNull(),
+  preflightMac: text("preflight_mac").notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "generation_rights_erasure_preflights_pk", columns: [table.workspaceId, table.closureId, table.leaseId, table.leaseFence] }),
+  valuesCheck: check("generation_rights_erasure_preflights_values_check", sql`${table.leaseId} ~ '^lease_[A-Za-z0-9]+$' and ${table.leaseFence} > 0 and ${table.evidenceRowCount} >= 0 and ${table.snapshotRowCount} >= 0 and ${table.retentionPolicyRevision} > 0 and ${table.retentionRuleDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rightsSetMac} ~ '^hmac-sha256:[a-f0-9]{64}$' and ${table.signingKeyId} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.auditSequence} > 0 and ${table.auditEventId} ~ '^rights_preflight_[a-f0-9]{32}$' and ${table.preflightDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.preflightMac} ~ '^hmac-sha256:[a-f0-9]{64}$'`),
+}));
+
+export const generationRightsErasureV2Bindings = pgTable("generation_rights_erasure_v2_bindings", {
+  workspaceId: text("workspace_id").primaryKey(),
+  closureId: text("closure_id").notNull(),
+  preflightDigest: text("preflight_digest").notNull(),
+  tombstoneDigest: text("tombstone_digest").notNull(),
+  signingKeyId: text("signing_key_id").notNull(),
+  bindingMac: text("binding_mac").notNull(),
+}, (table) => ({
+  valuesCheck: check("generation_rights_erasure_v2_bindings_values_check", sql`${table.preflightDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.tombstoneDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.signingKeyId} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.bindingMac} ~ '^hmac-sha256:[a-f0-9]{64}$'`),
+}));
+
+export const generationRightsRetentionDecisions = pgTable("generation_rights_retention_decisions", {
+  workspaceId: text("workspace_id").notNull(),
+  closureId: text("closure_id").notNull(),
+  leaseId: text("lease_id").notNull(),
+  leaseFence: integer("lease_fence").notNull(),
+  attemptDigest: text("attempt_digest").notNull(),
+  retentionPolicyRevision: integer("retention_policy_revision").notNull(),
+  retentionRevisionDigest: text("retention_revision_digest").notNull(),
+  blockingHoldIds: text("blocking_hold_ids").array().notNull(),
+  signingKeyId: text("signing_key_id").notNull(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
+  decisionDigest: text("decision_digest").notNull(),
+  decisionMac: text("decision_mac").notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "generation_rights_retention_decisions_pk", columns: [table.workspaceId, table.closureId, table.leaseId, table.leaseFence] }),
+  valuesCheck: check("generation_rights_retention_decisions_values_check", sql`${table.leaseId} ~ '^lease_[A-Za-z0-9]+$' and ${table.leaseFence} > 0 and ${table.attemptDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.retentionPolicyRevision} > 0 and ${table.retentionRevisionDigest} ~ '^sha256:[a-f0-9]{64}$' and cardinality(${table.blockingHoldIds}) > 0 and array_position(${table.blockingHoldIds}, null) is null and ${table.signingKeyId} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.decisionDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.decisionMac} ~ '^hmac-sha256:[a-f0-9]{64}$'`),
+}));
+
 export const modelGenerationBudgetReservations = pgTable("model_generation_budget_reservations", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
   intentId: text("intent_id").notNull(), policyId: text("policy_id").notNull(), policyRevisionId: text("policy_revision_id").notNull(),
