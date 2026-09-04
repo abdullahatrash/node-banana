@@ -90,7 +90,7 @@ export default async function SettingsPage({
 
   return (
     <SettingsSheet>
-      <section
+      <main
         aria-labelledby="settings-title"
         className="flex min-h-0 flex-1 flex-col bg-background"
       >
@@ -184,7 +184,7 @@ export default async function SettingsPage({
             )}
           </div>
         </div>
-      </section>
+      </main>
     </SettingsSheet>
   );
 }

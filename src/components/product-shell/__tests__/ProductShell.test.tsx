@@ -135,7 +135,10 @@ describe("ProductShell", () => {
       "aria-current",
       "page",
     );
-    expect(document.querySelector('[data-slot="sidebar"][data-side="right"]')).toBeTruthy();
+    const sidebar = document.querySelector('[data-slot="sidebar"][data-side="right"]');
+    expect(sidebar).toBeTruthy();
+    expect(sidebar?.querySelector('[data-slot="sidebar-container"]')).toHaveClass("data-[side=right]:right-0");
+    expect(document.querySelector('[data-slot="sidebar-inset"]')).toHaveClass("min-w-0");
     expect(document.querySelector('[data-slot="sidebar-wrapper"]')).toHaveAttribute("dir", "rtl");
     expect(screen.getByRole("button", { name: "فتح أو إغلاق التنقل" }).querySelector('[data-sidebar-icon-side="right"]')).toBeTruthy();
     expect(screen.getAllByText("noura@example.com")[0]).toHaveAttribute("dir", "ltr");
@@ -261,7 +264,7 @@ describe("ProductShell", () => {
     expect(
       await screen.findByRole("heading", { name: "تنقل مساحة العمل" }),
     ).toBeInTheDocument();
-    expect(document.querySelector('[data-mobile="true"][data-side="right"]')).toBeTruthy();
+    expect(document.querySelector('[data-mobile="true"][data-side="right"]')).toHaveClass("data-[side=right]:right-0");
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() =>
       expect(

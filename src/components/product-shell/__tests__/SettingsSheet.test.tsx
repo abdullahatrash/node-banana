@@ -27,7 +27,7 @@ describe("SettingsSheet", () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
   });
 
-  it("opens from the logical end and exposes RTL direction in Arabic", async () => {
+  it("opens from the mirrored physical left and exposes RTL direction in Arabic", async () => {
     render(
       <I18nTestProvider locale="ar">
         <SettingsSheet>
@@ -40,5 +40,12 @@ describe("SettingsSheet", () => {
     const dialog = await screen.findByRole("dialog", { name: "الإعدادات" });
     expect(dialog).toHaveAttribute("dir", "rtl");
     expect(dialog).toHaveAttribute("data-side", "left");
+    expect(dialog).toHaveClass(
+      "data-[side=left]:left-0",
+      "data-[side=left]:border-r",
+      "data-[side=left]:w-full",
+      "data-[side=left]:sm:max-w-none",
+      "data-[side=left]:md:w-[min(52rem,calc(100vw-3rem))]",
+    );
   });
 });

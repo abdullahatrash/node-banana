@@ -4,8 +4,8 @@ const physicalDirectionalUtility = /(?:^|:)(?:(?:m[lr]|p[lr]|scroll-m[lr])-[A-Za
  * Finds physical Tailwind spacing, border, and text-alignment utilities that should normally be
  * logical in bilingual product surfaces.
  *
- * A drawer with an explicit left/right direction is a physical-edge contract,
- * so those scoped variants remain valid regardless of document direction.
+ * A side-valued drawer, sheet, or sidebar has an explicit physical-edge contract,
+ * so its scoped left/right variants remain valid regardless of document direction.
  */
 export function findPhysicalDirectionalUtilities(source) {
   return [...new Set(
@@ -13,6 +13,7 @@ export function findPhysicalDirectionalUtilities(source) {
       .split(/[\s"'`]+/u)
       .map((token) => token.replace(/[),;]+$/u, ""))
       .filter((token) => physicalDirectionalUtility.test(token))
-      .filter((token) => !token.includes("data-[vaul-drawer-direction=")),
+      .filter((token) => !token.includes("data-[vaul-drawer-direction="))
+      .filter((token) => !/^(?:group-)?data-\[side=(?:left|right)\]:border-[lr]$/u.test(token)),
   )];
 }

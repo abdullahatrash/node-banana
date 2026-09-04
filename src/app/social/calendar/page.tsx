@@ -61,7 +61,7 @@ export default function CalendarPage() {
   // Empty state: no channels
   if (accounts.length === 0) {
     return (
-      <div className="flex flex-1 flex-col">
+      <main className="flex flex-1 flex-col">
         <CalendarFilters />
         <div className="flex flex-1 items-center justify-center">
           <div className="max-w-sm text-center">
@@ -75,12 +75,12 @@ export default function CalendarPage() {
             </Button>
           </div>
         </div>
-      </div>
+      </main>
     )
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <main className="flex flex-1 flex-col overflow-hidden">
       <CalendarFilters />
       {isLoading ? (
         <div className="flex flex-1 items-center justify-center">
@@ -95,6 +95,6 @@ export default function CalendarPage() {
       ) : (
         <CalendarListView />
       )}
-    </div>
+    </main>
   )
 }

@@ -29,5 +29,12 @@ describe("FormPageLayout", () => {
     );
     expect(screen.getByTestId("body")).toBeInTheDocument();
     expect(screen.getByTestId("panel")).toBeInTheDocument();
+    const main = screen.getByRole("main");
+    expect(main).toHaveClass("flex-col", "lg:flex-row");
+    expect(main).not.toHaveClass("flex-col-reverse");
+    expect(
+      screen.getByTestId("body").compareDocumentPosition(screen.getByTestId("panel"))
+      & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });
