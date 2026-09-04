@@ -11,6 +11,13 @@ describe("typed product command contracts", () => {
     expect(read("src/app/api/product-support/submit/route.ts")).toContain('permission: "product:support:submit"');
   });
 
+  it("keeps the generic product-record endpoint read-only", () => {
+    const source = read("src/app/api/product-records/route.ts");
+    expect(source).toContain("export const GET");
+    expect(source).not.toContain("export const POST");
+    expect(source).not.toContain("export const PATCH");
+  });
+
   it("resolves support attachment evidence inside the record transaction", () => {
     const source = read("src/lib/product-support/commands.ts");
     expect(source).toContain("getDb().transaction");

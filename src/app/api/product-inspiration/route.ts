@@ -6,7 +6,7 @@ import { ProductRecordConflictError, ProductRecordIdempotencyError } from "@/lib
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 
 const command = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("submit"), title: z.string().trim().min(1).max(240), sourceName: z.string().trim().min(1).max(200), sourceAssetId: z.string().trim().min(1).max(200), rightsSnapshotId: z.string().trim().min(1).max(200), rightsSnapshotRevision: z.number().int().positive(), region: z.string().trim().max(80), contentLanguage: z.enum(["ar", "en"]), arabicVariety: z.enum(ARABIC_VARIETIES).nullable(), format: z.enum(CONTENT_FORMATS), tags: z.array(z.string().trim().min(1).max(80)).max(30), idempotencyKey: z.string().trim().min(8).max(200) }).strict(),
+  z.object({ action: z.literal("submit"), title: z.string().trim().min(1).max(240), sourceName: z.string().trim().min(1).max(200), sourceAssetId: z.string().trim().min(1).max(200), rightsSnapshotId: z.string().trim().min(1).max(200), region: z.string().trim().max(80), contentLanguage: z.enum(["ar", "en"]), arabicVariety: z.enum(ARABIC_VARIETIES).nullable(), format: z.enum(CONTENT_FORMATS), tags: z.array(z.string().trim().min(1).max(80)).max(30), idempotencyKey: z.string().trim().min(8).max(200) }).strict(),
   z.object({ action: z.literal("queue"), inspirationItemId: z.string().trim().min(1).max(200), idempotencyKey: z.string().trim().min(8).max(200) }).strict(),
 ]);
 

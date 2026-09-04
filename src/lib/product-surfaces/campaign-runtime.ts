@@ -98,3 +98,9 @@ export async function activateCampaignCommand(input: {
   if (!active) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
   return active;
 }
+
+export async function pauseCampaignCommand(input: { workspaceId: string; userId: string; id: string; expectedRevision: number; idempotencyKey: string }) {
+  const paused = await updateProductRecord({ ...input, expectedKind: "campaign_automation", state: "paused" });
+  if (!paused) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
+  return paused;
+}

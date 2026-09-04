@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { assets, workspaceProductRecords } from "@/lib/db/schema";
 import { inspirationRightsSnapshots } from "@/lib/model-routing/db-schema";
@@ -15,13 +15,13 @@ export class InspirationAdmissionError extends Error {
 
 export async function submitInspirationCommand(input: {
   workspaceId: string; userId: string; title: string; sourceName: string; sourceAssetId: string;
-  rightsSnapshotId: string; rightsSnapshotRevision: number; region: string; contentLanguage: ContentLanguage;
+  rightsSnapshotId: string; region: string; contentLanguage: ContentLanguage;
   arabicVariety: ArabicVariety | null; format: ContentFormat; tags: string[]; idempotencyKey: string;
 }) {
   return getDb().transaction(async (tx) => {
     const [[asset], [stored]] = await Promise.all([
       tx.select({ id: assets.id, checksum: assets.checksum, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.id, input.sourceAssetId), isNull(assets.deletedAt))).limit(1),
-      tx.select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, input.workspaceId), eq(inspirationRightsSnapshots.id, input.rightsSnapshotId), eq(inspirationRightsSnapshots.revision, input.rightsSnapshotRevision))).limit(1),
+      tx.select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, input.workspaceId), eq(inspirationRightsSnapshots.id, input.rightsSnapshotId))).orderBy(desc(inspirationRightsSnapshots.revision)).limit(1),
     ]);
     if (!asset || asset.metadata?.uploadState !== "ready" || !asset.checksum) throw new InspirationAdmissionError("INSPIRATION_ASSET_NOT_READY");
     const rights = stored ? hydrateRightsSnapshot(stored.snapshot as InspirationRightsSnapshot) : null;
