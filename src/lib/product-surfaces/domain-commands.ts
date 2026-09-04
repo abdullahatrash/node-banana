@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomBytes } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { assets, workspaceProductRecords } from "@/lib/db/schema";
@@ -119,9 +120,11 @@ export async function createMediaSetCommand(input: Actor & { title: string; asse
 }
 
 export async function createAnalyticsSourceCommand(input: Actor & { kind: "website_analytics_source" | "geo_analytics_source"; title: string; payload: Record<string, unknown> }) {
+  const verificationChallenge = `tasmeemai-verification=${randomBytes(24).toString("base64url")}`;
+  const common = { enabled: false, verificationStatus: "pending" as const, verificationChallenge, verifiedAt: null, refreshStatus: "idle" as const, refreshRequestedAt: null, lastRefreshAt: null, lastRefreshError: null };
   const payload = input.kind === "website_analytics_source"
-    ? { ...input.payload, publicKey: `pending:${input.idempotencyKey}`, enabled: false, lastEventAt: null }
-    : { ...input.payload, enabled: false, lastObservationAt: null };
+    ? { ...input.payload, ...common, publicKey: randomBytes(32).toString("base64url"), lastEventAt: null }
+    : { ...input.payload, ...common, lastObservationAt: null };
   return createProductRecord({ ...input, state: "disabled", payload });
 }
 

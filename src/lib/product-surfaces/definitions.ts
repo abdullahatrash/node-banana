@@ -215,10 +215,13 @@ const personaSchema = z.object({
   reusableModelRef: text(500).nullable().default(null),
 });
 
+export const websiteAnalyticsSourceSchema = z.object({ hostname: text(253), publicKey: text(300), enabled: z.boolean(), lastEventAt: z.string().datetime().nullable(), verificationStatus: z.enum(["pending", "verified", "failed"]).default("pending"), verificationChallenge: text(300).default("legacy-unverified"), verifiedAt: z.string().datetime().nullable().default(null), refreshStatus: z.enum(["idle", "queued", "running", "succeeded", "failed"]).default("idle"), refreshRequestedAt: z.string().datetime().nullable().default(null), lastRefreshAt: z.string().datetime().nullable().default(null), lastRefreshError: text(300).nullable().default(null) })
+export const geoAnalyticsSourceSchema = z.object({ domain: text(253), topics: z.array(text(300)).min(1), enabled: z.boolean(), lastObservationAt: z.string().datetime().nullable(), verificationStatus: z.enum(["pending", "verified", "failed"]).default("pending"), verificationChallenge: text(300).default("legacy-unverified"), verifiedAt: z.string().datetime().nullable().default(null), refreshStatus: z.enum(["idle", "queued", "running", "succeeded", "failed"]).default("idle"), refreshRequestedAt: z.string().datetime().nullable().default(null), lastRefreshAt: z.string().datetime().nullable().default(null), lastRefreshError: text(300).nullable().default(null) })
+
 const simpleSchemas = {
   media_set: z.object({ assetIds: z.array(text(200)), category: optionalText(100), description: optionalText(1_000) }),
-  website_analytics_source: z.object({ hostname: text(253), publicKey: text(300), enabled: z.boolean(), lastEventAt: z.string().datetime().nullable() }),
-  geo_analytics_source: z.object({ domain: text(253), topics: z.array(text(300)).min(1), enabled: z.boolean(), lastObservationAt: z.string().datetime().nullable() }),
+  website_analytics_source: websiteAnalyticsSourceSchema,
+  geo_analytics_source: geoAnalyticsSourceSchema,
   referral: z.object({ code: text(80), destinationEmail: z.string().email().nullable(), status: z.enum(["available", "invited", "qualified", "rewarded"]), rewardCreditCents: z.number().int().nonnegative() }),
   channel_onboarding_order: z.object({ platforms: z.array(text(80)).min(1), goals: z.array(text(300)).min(1), requestedLaunchAt: z.string().datetime().nullable(), notes: optionalText(2_000), statusDetail: optionalText(1_000) }),
   feedback: z.object({ category: z.enum(["idea", "problem", "praise"]), body: text(5_000), route: optionalText(500), attachmentRefs: supportAttachmentReferencesSchema.default([]) }),
