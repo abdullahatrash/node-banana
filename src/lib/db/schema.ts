@@ -9434,6 +9434,80 @@ export const channelOnboardingCommandReceipts = pgTable("channel_onboarding_comm
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), result: jsonb("result").$type<Record<string, unknown>>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({ pk: primaryKey({ name: "channel_onboarding_command_receipts_pk", columns: [table.workspaceId, table.idempotencyKey] }), digestCheck: check("channel_onboarding_command_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
 
+/** Immutable, deploy-seeded revisions that govern every Content draft and render. */
+export const contentFormatDefinitionRevisions = pgTable("content_format_definition_revisions", {
+  definitionId: text("definition_id").notNull(),
+  revision: integer("revision").notNull(),
+  format: text("format").notNull(),
+  status: text("status").notNull(),
+  document: jsonb("document").$type<Record<string, unknown>>().notNull(),
+  documentDigest: text("document_digest").notNull(),
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "content_format_definition_revisions_pk", columns: [table.definitionId, table.revision] }),
+  formatStatusIdx: index("content_format_definition_revisions_format_status_idx").on(table.format, table.status, table.revision),
+  valuesCheck: check("content_format_definition_revisions_values_check", sql`${table.definitionId} = 'content-format:' || ${table.format} and ${table.revision} > 0 and ${table.status} in ('draft','active','retired') and ${table.documentDigest} ~ '^sha256:[a-f0-9]{64}$' and ((${table.status} = 'active' and ${table.activatedAt} is not null and ${table.retiredAt} is null) or ${table.status} <> 'active')`),
+}));
+
+/** Workspace-owned licensed themes. Revisions are immutable and drafts pin an exact revision. */
+export const contentThemes = pgTable("content_themes", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  id: text("id").notNull(),
+  title: text("title").notNull(),
+  state: text("state").notNull(),
+  activeRevision: integer("active_revision"),
+  createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+}, (table) => ({
+  pk: primaryKey({ name: "content_themes_pk", columns: [table.workspaceId, table.id] }),
+  stateIdx: index("content_themes_state_idx").on(table.workspaceId, table.state, table.updatedAt),
+  valuesCheck: check("content_themes_values_check", sql`${table.state} in ('draft','active','archived') and (${table.activeRevision} is null or ${table.activeRevision} > 0)`),
+}));
+
+export const contentThemeRevisions = pgTable("content_theme_revisions", {
+  workspaceId: text("workspace_id").notNull(),
+  themeId: text("theme_id").notNull(),
+  revision: integer("revision").notNull(),
+  document: jsonb("document").$type<Record<string, unknown>>().notNull(),
+  documentDigest: text("document_digest").notNull(),
+  licenseEvidenceIds: jsonb("license_evidence_ids").$type<string[]>().notNull(),
+  licenseExpiresAt: timestamp("license_expires_at", { withTimezone: true }),
+  authoredByUserId: text("authored_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "content_theme_revisions_pk", columns: [table.workspaceId, table.themeId, table.revision] }),
+  themeFk: foreignKey({ name: "content_theme_revisions_theme_fk", columns: [table.workspaceId, table.themeId], foreignColumns: [contentThemes.workspaceId, contentThemes.id] }).onDelete("restrict"),
+  digestUnique: uniqueIndex("content_theme_revisions_digest_unique").on(table.workspaceId, table.themeId, table.documentDigest),
+  valuesCheck: check("content_theme_revisions_values_check", sql`${table.revision} > 0 and ${table.documentDigest} ~ '^sha256:[a-f0-9]{64}$' and jsonb_array_length(${table.licenseEvidenceIds}) > 0`),
+}));
+
+/** Pinned output-similarity decisions; rows are append-only audit evidence. */
+export const blitzSimilarityEvidence = pgTable("blitz_similarity_evidence", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  id: text("id").notNull(),
+  blitzItemId: text("blitz_item_id").notNull(),
+  blitzItemRevision: integer("blitz_item_revision").notNull(),
+  sourceAssetId: text("source_asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+  candidateAssetId: text("candidate_asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+  status: text("status").notNull(),
+  evaluatorId: text("evaluator_id").notNull(),
+  evaluatorVersion: text("evaluator_version").notNull(),
+  evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull(),
+  evidenceDigest: text("evidence_digest").notNull(),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "blitz_similarity_evidence_pk", columns: [table.workspaceId, table.id] }),
+  itemFk: foreignKey({ name: "blitz_similarity_evidence_item_fk", columns: [table.workspaceId, table.blitzItemId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id] }).onDelete("restrict"),
+  candidateUnique: uniqueIndex("blitz_similarity_evidence_candidate_unique").on(table.workspaceId, table.blitzItemId, table.blitzItemRevision, table.candidateAssetId),
+  statusIdx: index("blitz_similarity_evidence_status_idx").on(table.workspaceId, table.status, table.evaluatedAt),
+  valuesCheck: check("blitz_similarity_evidence_values_check", sql`${table.blitzItemRevision} > 0 and ${table.status} in ('passed','blocked') and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+}));
+
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];
 export type AssetType = typeof assetTypeEnum.enumValues[number];
