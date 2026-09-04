@@ -10,7 +10,7 @@ import { GenerationAdmissionPanel } from "@/components/simple-studio-shell/forms
 import { ModelSelect } from "@/components/simple-studio-shell/forms/ModelSelect";
 import { runAdmittedStudioGeneration } from "@/lib/model-routing/studio-generation-client";
 import { contentExecutionPlan, contentProviderSourceIds } from "@/lib/product-surfaces/content-execution-plan";
-import { CONTENT_FORMAT_DEFINITIONS, type ContentFormatDefinition, type ContentSourceSlot } from "@/lib/product-surfaces/content-format-definition";
+import type { ContentFormatDefinition, ContentSourceSlot } from "@/lib/product-surfaces/content-format-definition";
 import type { ContentEditorOptions } from "@/lib/product-surfaces/content-editor-options";
 import { ARABIC_VARIETIES, CONTENT_FORMATS, type ContentFormat } from "@/lib/product-surfaces/definitions";
 import { requestStudioManagedCreditQuoteConfirmation, useSimpleStudioStore } from "@/store/simpleStudioStore";
@@ -25,7 +25,6 @@ function draftPayload(data: FormData, format: ContentFormat, definition: Content
   const separator = theme.lastIndexOf(":");
   return {
     format,
-    formatDefinition: { id: definition.id, revision: definition.revision, digest: `sha256:${"0".repeat(64)}` },
     contentLanguage: language,
     arabicVariety: language === "en" ? null : String(data.get("arabicVariety") || "") || null,
     prompt: String(data.get("prompt") || ""), script: String(data.get("script") || ""), speaker: String(data.get("speaker") || ""), scene: String(data.get("scene") || ""),
@@ -38,12 +37,12 @@ function draftPayload(data: FormData, format: ContentFormat, definition: Content
   };
 }
 
-export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options }: { selectedFormat: ContentFormat; selectedPiece: Piece | null; pieces: Piece[]; options: ContentEditorOptions }) {
+export function ContentBuilder({ selectedFormat, selectedPiece, pieces, options, definition }: { selectedFormat: ContentFormat; selectedPiece: Piece | null; pieces: Piece[]; options: ContentEditorOptions; definition: ContentFormatDefinition }) {
   const t = useTranslations("product.content") as Translator;
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null); const recordRef = useRef(selectedPiece); const queue = useRef<Promise<unknown>>(Promise.resolve()); const timer = useRef<ReturnType<typeof setTimeout> | null>(null); const controller = useRef<AbortController | null>(null); const retryMode = useRef<"copy" | "media" | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "conflict">("idle"); const [progress, setProgress] = useState<Progress>("idle"); const [error, setError] = useState(""); const [generationMode, setGenerationMode] = useState<"copy" | "media">("copy");
-  const definition = CONTENT_FORMAT_DEFINITIONS[selectedFormat]; const execution = contentExecutionPlan(selectedFormat); const payload = selectedPiece?.payload;
+  const execution = contentExecutionPlan(selectedFormat); const payload = selectedPiece?.payload;
   const modelId = useSimpleStudioStore((s) => s.selectedModelId); const provider = useSimpleStudioStore((s) => s.selectedModelProvider); const version = useSimpleStudioStore((s) => s.selectedModelVersion); const schemaDigest = useSimpleStudioStore((s) => s.selectedModelSchemaDigest); const fundingMode = useSimpleStudioStore((s) => s.fundingMode); const rightsBasis = useSimpleStudioStore((s) => s.rightsBasis); const permittedRemix = useSimpleStudioStore((s) => s.permittedRemix); const rightsEvidenceIds = useSimpleStudioStore((s) => s.rightsEvidenceIds); const rightsConfirmed = useSimpleStudioStore((s) => s.rightsConfirmed);
 
   useEffect(() => { recordRef.current = selectedPiece; }, [selectedPiece]);
