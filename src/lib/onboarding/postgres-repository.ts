@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { ensureWorkspaceFreePlanInTransaction } from "@/lib/commercial/free-plan";
 import type { getDb } from "@/lib/db";
 import {
   brandAnalysisRuns,
@@ -402,6 +403,7 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
           .update(user)
           .set({ name: input.workspace.ownerName, updatedAt: now })
           .where(eq(user.id, input.userId));
+        await ensureWorkspaceFreePlanInTransaction(tx, { workspaceId, now });
       }
 
       if (input.workspaceIdentityUpdate) {

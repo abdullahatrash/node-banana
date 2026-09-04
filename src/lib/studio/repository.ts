@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
+import { ensureWorkspaceFreePlan } from "@/lib/commercial/free-plan";
 import {
   assetTypeEnum,
   assets,
@@ -304,6 +305,7 @@ export async function ensureWorkspaceUser(
     userId,
     role: "owner",
   });
+  await ensureWorkspaceFreePlan(workspaceId, now);
 }
 
 function buildWorkspaceName(userName: string | null | undefined, userEmail: string | null | undefined): string {
@@ -354,6 +356,7 @@ export async function ensurePersonalWorkspaceForUser(input: {
       userId: input.userId,
       role: existingMembership.role,
     });
+    await ensureWorkspaceFreePlan(existingMembership.workspaceId);
     return {
       workspaceId: existingMembership.workspaceId,
       slug: existingMembership.slug,
@@ -423,6 +426,7 @@ export async function ensurePersonalWorkspaceForUser(input: {
       userId: input.userId,
       role: "owner",
     });
+    await ensureWorkspaceFreePlan(createdWorkspace.id, now);
 
     return {
       workspaceId: createdWorkspace.id,

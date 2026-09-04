@@ -827,6 +827,13 @@
       "when": 1788673200000,
       "tag": "0117_inspiration_trend_ingestion",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1788676800000,
+      "tag": "0118_workspace_free_plan_activation",
+      "breakpoints": true
     }
   ]
 }
