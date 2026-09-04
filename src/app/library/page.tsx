@@ -1,6 +1,29 @@
-import { redirect } from "next/navigation";
-import { compatibilityRoutes } from "@/lib/navigation/compatibility-routes";
+import Link from "next/link";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import { getLocale, getTranslations } from "next-intl/server";
+import { CalendarClock, FileText, Folder, ImageIcon, Library, MessageSquareText } from "lucide-react";
+import { getDb } from "@/lib/db";
+import { assets, savedPrompts, socialPosts } from "@/lib/db/schema";
+import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { listProductRecords } from "@/lib/product-surfaces/repository";
+import { MediaSetCreator } from "./MediaSetCreator";
 
-export default function LibraryCompatibilityPage() {
-  redirect(compatibilityRoutes["/library"]);
-}
+const tabs = ["posts", "content", "media", "prompts"] as const;
+type Tab = (typeof tabs)[number];
+export const dynamic = "force-dynamic";
+export default async function LibraryPage({ searchParams }: { searchParams: Promise<{ tab?: string; status?: string }> }) { const query = await searchParams; const tab = tabs.includes(query.tab as Tab) ? query.tab as Tab : "posts"; const { aggregate } = await requireOnboardingComplete("/library"); const workspaceId = aggregate?.session.workspaceId; const t = await getTranslations("product.library"); const locale = await getLocale(); if (!workspaceId) return null; const db = getDb();
+  const [posts, content, media, prompts, sets] = await Promise.all([
+    tab === "posts" ? db.select().from(socialPosts).where(eq(socialPosts.workspaceId, workspaceId)).orderBy(desc(socialPosts.updatedAt)).limit(100) : Promise.resolve([]),
+    tab === "content" ? listProductRecords({ workspaceId, kinds: ["content_piece"] }) : Promise.resolve([]),
+    tab === "media" ? db.select().from(assets).where(and(eq(assets.workspaceId, workspaceId), isNull(assets.deletedAt))).orderBy(desc(assets.createdAt)).limit(100) : Promise.resolve([]),
+    tab === "prompts" ? db.select().from(savedPrompts).where(and(eq(savedPrompts.workspaceId, workspaceId), isNull(savedPrompts.deletedAt))).orderBy(desc(savedPrompts.updatedAt)).limit(100) : Promise.resolve([]),
+    tab === "media" ? listProductRecords({ workspaceId, kinds: ["media_set"] }) : Promise.resolve([]),
+  ]); const date = new Intl.DateTimeFormat(locale, { dateStyle: "medium" }); const filteredPosts = query.status && query.status !== "all" ? posts.filter((post) => post.status === query.status) : posts;
+  return <main className="flex-1 px-5 py-8 sm:px-8 lg:px-12"><div className="mx-auto max-w-7xl"><header><p className="text-xs font-semibold uppercase tracking-[.18em] text-amber-600">{t("eyebrow")}</p><h1 className="mt-2 text-3xl font-semibold sm:text-4xl">{t("title")}</h1><p className="mt-2 max-w-3xl text-muted-foreground">{t("description")}</p></header><nav className="mt-7 flex gap-2 overflow-x-auto border-b" aria-label={t("tabsLabel")}>{tabs.map((key) => <Link key={key} href={`/library?tab=${key}`} className={`shrink-0 border-b-2 px-4 py-3 text-sm font-semibold ${tab === key ? "border-amber-500 text-foreground" : "border-transparent text-muted-foreground"}`}>{t(`tabs.${key}`)}</Link>)}</nav>
+    {tab === "posts" && <section className="mt-6"><div className="mb-4 flex flex-wrap gap-2">{["all", "draft", "queued", "published", "failed"].map((status) => <Link key={status} href={`/library?tab=posts&status=${status}`} className={`rounded-full border px-3 py-1.5 text-xs ${query.status === status || (!query.status && status === "all") ? "bg-stone-950 text-white" : "bg-card"}`}>{t(`status.${status}` as never)}</Link>)}</div><Grid empty={t("empty.posts")}>{filteredPosts.map((post) => <Card key={post.id} icon={CalendarClock} title={post.content || t("untitled")} meta={`${t(`status.${post.status}` as never)} · ${date.format(post.updatedAt)}`} href={`/social/posts?post=${post.id}`} action={t("openPost")} />)}</Grid></section>}
+    {tab === "content" && <section className="mt-6"><Grid empty={t("empty.content")}>{content.map((piece) => <Card key={piece.id} icon={FileText} title={piece.title} meta={`${String(piece.payload.format)} · v${piece.revision}`} href={`/content?format=${String(piece.payload.format)}&piece=${piece.id}`} action={t("editContent")} />)}</Grid></section>}
+    {tab === "media" && <section className="mt-6 space-y-6"><MediaSetCreator />{sets.length > 0 && <div><h2 className="mb-3 text-lg font-semibold">{t("sets")}</h2><Grid empty="">{sets.map((set) => <Card key={set.id} icon={Folder} title={set.title} meta={t("setItems", { count: (set.payload.assetIds as string[]).length })} href={`/library?tab=media&set=${set.id}`} action={t("openSet")} />)}</Grid></div>}<div><h2 className="mb-3 text-lg font-semibold">{t("allMedia")}</h2><Grid empty={t("empty.media")}>{media.map((asset) => <Card key={asset.id} icon={ImageIcon} title={String(asset.metadata?.name ?? asset.storageKey.split("/").at(-1) ?? asset.id)} meta={`${t(`assetTypes.${asset.type}` as never)} · ${date.format(asset.createdAt)}`} href={`/api/studio/assets/${asset.id}/download`} action={t("download")} />)}</Grid></div></section>}
+    {tab === "prompts" && <section className="mt-6"><Grid empty={t("empty.prompts")}>{prompts.map((prompt) => <Card key={prompt.id} icon={MessageSquareText} title={prompt.name} meta={`${t(`promptModes.${prompt.mode}`)} · ${date.format(prompt.updatedAt)}`} href={`/simple-studio/prompt-library?prompt=${prompt.id}`} action={t("usePrompt")} />)}</Grid></section>}
+  </div></main>; }
+function Grid({ children, empty }: { children: React.ReactNode; empty: string }) { const count = Array.isArray(children) ? children.length : children ? 1 : 0; return count ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{children}</div> : <div className="rounded-2xl border border-dashed p-10 text-center text-muted-foreground">{empty}</div>; }
+function Card({ icon: Icon, title, meta, href, action }: { icon: typeof Library; title: string; meta: string; href: string; action: string }) { return <article className="flex min-h-44 flex-col rounded-2xl border bg-card p-5"><Icon className="size-5 text-amber-600" /><h2 dir="auto" className="mt-4 line-clamp-2 font-semibold">{title}</h2><p className="mt-2 text-xs text-muted-foreground">{meta}</p><Link href={href} className="mt-auto pt-5 text-sm font-semibold text-amber-700">{action}</Link></article>; }
