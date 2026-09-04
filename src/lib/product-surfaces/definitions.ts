@@ -8,6 +8,7 @@ export const PRODUCT_RECORD_KINDS = [
   "creator_persona",
   "media_set",
   "website_analytics_source",
+  "geo_analytics_source",
   "referral",
   "channel_onboarding_order",
   "feedback",
@@ -157,6 +158,7 @@ const personaSchema = z.object({
 const simpleSchemas = {
   media_set: z.object({ assetIds: z.array(text(200)), category: optionalText(100), description: optionalText(1_000) }),
   website_analytics_source: z.object({ hostname: text(253), publicKey: text(300), enabled: z.boolean(), lastEventAt: z.string().datetime().nullable() }),
+  geo_analytics_source: z.object({ domain: text(253), topics: z.array(text(300)).min(1), enabled: z.boolean(), lastObservationAt: z.string().datetime().nullable() }),
   referral: z.object({ code: text(80), destinationEmail: z.string().email().nullable(), status: z.enum(["available", "invited", "qualified", "rewarded"]), rewardCreditCents: z.number().int().nonnegative() }),
   channel_onboarding_order: z.object({ platforms: z.array(text(80)).min(1), goals: z.array(text(300)).min(1), requestedLaunchAt: z.string().datetime().nullable(), notes: optionalText(2_000), statusDetail: optionalText(1_000) }),
   feedback: z.object({ category: z.enum(["idea", "problem", "praise"]), body: text(5_000), route: optionalText(500) }),
@@ -172,6 +174,7 @@ export const PRODUCT_STATES: Record<ProductRecordKind, readonly string[]> = {
   creator_persona: ["draft", "consent_review", "ready_to_train", "training", "review", "active", "training_failed", "suspended", "consent_expired", "deleted"],
   media_set: ["active", "archived"],
   website_analytics_source: ["active", "disabled"],
+  geo_analytics_source: ["active", "disabled"],
   referral: ["available", "invited", "qualified", "rewarded"],
   channel_onboarding_order: ["draft", "submitted", "in_review", "scheduled", "completed", "cancelled"],
   feedback: ["submitted", "reviewing", "planned", "completed", "closed"],
