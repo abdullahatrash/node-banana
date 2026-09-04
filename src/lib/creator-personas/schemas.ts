@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ARABIC_VARIETIES } from "@/lib/product-surfaces/definitions";
 
 const id = z.string().trim().min(1).max(200);
-const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/).transform((value) => value as `sha256:${string}`);
 const date = z.string().datetime();
 
 export const createPersonaSchema = z.object({
@@ -31,9 +31,10 @@ const acceptanceScope = z.object({
   provider: id,
   model: id,
   modelVersion: id,
+  inputSchemaDigest: digest,
   policyVersion: id,
   qualificationDigest: digest,
-  acceptedUses: z.array(z.enum(["training", "generation"])).min(1),
+  acceptedUses: z.array(z.enum(["training", "generation", "content_set", "channel", "blitz"])).min(1),
 });
 const disclosureScope = z.object({
   kind: z.literal("disclosure_review"),
@@ -76,7 +77,7 @@ export const attachPersonaSourcesSchema = z.object({
 export const requestPersonaTrainingSchema = z.object({
   action: z.literal("request_training"),
   expectedRevision: z.number().int().positive(),
-  provider: id,
+  provider: z.literal("replicate"),
   model: id,
   modelVersion: id,
   qualificationDigest: digest,
@@ -88,7 +89,15 @@ export const resolvePersonaTrainingSchema = z.object({
   expectedRevision: z.number().int().positive(),
   trainingJobId: id,
   outcome: z.enum(["succeeded", "failed_known", "outcome_unknown", "cancelled"]),
-  resultModelRef: id.nullable(),
+  resultModelRef: z.object({
+    schema: z.literal("creator-persona-model/v1"),
+    provider: z.literal("replicate"),
+    model: id,
+    version: id,
+    inputSchemaDigest: digest,
+    qualificationDigest: digest,
+    trainingJobId: id,
+  }).strict().nullable(),
   failureCode: z.string().trim().min(3).max(100).nullable(),
   idempotencyKey: id,
 }).superRefine((value, context) => {

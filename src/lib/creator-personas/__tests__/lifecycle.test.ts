@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { evaluatePersonaGate, type CreatorPersona, type CreatorPersonaEvidence } from "../types";
+import { acceptedUseForPurpose, evaluatePersonaGate, parsePersonaModelRef, serializePersonaModelRef, type CreatorPersona, type CreatorPersonaEvidence } from "../types";
 import { personaAttestationMessage, verifyPersonaAttestation } from "../attestation";
 import { addPersonaEvidenceSchema, createPersonaSchema, requestPersonaTrainingSchema } from "../schemas";
 
@@ -32,7 +32,14 @@ describe("Creator Persona safety gates", () => {
   });
 
   it("rejects issuer/type substitution", () => {
-    const result = addPersonaEvidenceSchema.safeParse({ action: "add_evidence", expectedRevision: 1, issuer: "workspace_consent_officer", subjectDigest: digest, evidenceDigest: digest, scope: { kind: "provider_acceptance", provider: "replicate", model: "m", modelVersion: "v", policyVersion: "p", qualificationDigest: digest, acceptedUses: ["training"] }, effectiveAt: "2026-09-01T00:00:00.000Z", expiresAt: "2026-10-01T00:00:00.000Z", issuerSignature: null, idempotencyKey: "idem-key" });
+    const result = addPersonaEvidenceSchema.safeParse({ action: "add_evidence", expectedRevision: 1, issuer: "workspace_consent_officer", subjectDigest: digest, evidenceDigest: digest, scope: { kind: "provider_acceptance", provider: "replicate", model: "m", modelVersion: "v", inputSchemaDigest: digest, policyVersion: "p", qualificationDigest: digest, acceptedUses: ["training"] }, effectiveAt: "2026-09-01T00:00:00.000Z", expiresAt: "2026-10-01T00:00:00.000Z", issuerSignature: null, idempotencyKey: "idem-key" });
     expect(result.success).toBe(false);
+  });
+
+  it("keeps reusable model identity typed and purpose acceptance exact", () => {
+    const model = { schema: "creator-persona-model/v1", provider: "replicate", model: "owner/persona", version: "immutable-version", inputSchemaDigest: digest, qualificationDigest: digest, trainingJobId: "job" } as const;
+    expect(parsePersonaModelRef(serializePersonaModelRef(model))).toEqual(model);
+    expect(parsePersonaModelRef("owner/persona:latest")).toBeNull();
+    expect(acceptedUseForPurpose("content_set")).toBe("content_set");
   });
 });

@@ -7,6 +7,36 @@ export type CreatorPersonaKind = "synthetic" | "consented_likeness";
 export type PersonaEvidenceType = "likeness_consent" | "provider_acceptance" | "disclosure_review" | "abuse_review";
 export type PersonaUsagePurpose = "generation" | "content_set" | "channel" | "blitz";
 
+export interface PersonaReusableModelRef {
+  schema: "creator-persona-model/v1";
+  provider: "replicate";
+  model: string;
+  version: string;
+  inputSchemaDigest: `sha256:${string}`;
+  qualificationDigest: `sha256:${string}`;
+  trainingJobId: string;
+}
+
+export function serializePersonaModelRef(value: PersonaReusableModelRef) {
+  return JSON.stringify(value);
+}
+
+export function parsePersonaModelRef(value: string | null): PersonaReusableModelRef | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<PersonaReusableModelRef>;
+    if (parsed.schema !== "creator-persona-model/v1" || parsed.provider !== "replicate" || !parsed.model || !parsed.version || !parsed.trainingJobId) return null;
+    if (!/^sha256:[a-f0-9]{64}$/.test(parsed.inputSchemaDigest ?? "") || !/^sha256:[a-f0-9]{64}$/.test(parsed.qualificationDigest ?? "")) return null;
+    return parsed as PersonaReusableModelRef;
+  } catch {
+    return null;
+  }
+}
+
+export function acceptedUseForPurpose(purpose: PersonaUsagePurpose) {
+  return purpose;
+}
+
 export interface CreatorPersona {
   workspaceId: string;
   id: string;
