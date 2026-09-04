@@ -388,6 +388,7 @@ describe("/api/social/posts/[postId]/publish", () => {
       dispatchAttempts: 0,
       content: "Video description",
       mediaUrls: [{ type: "video", url: "https://example.com/video.mp4" }],
+      stableMediaRefs: [{ resourceKind: "studio_asset", assetId: "asset-1", assetDigest: `sha256:${"a".repeat(64)}`, order: 0 }],
       platformSettings: { privacyStatus: "private" },
       socialAccountId: "sacct_youtube",
     });
@@ -410,6 +411,67 @@ describe("/api/social/posts/[postId]/publish", () => {
     expect(data.success).toBe(false);
     expect(data.error).toContain("Studio YouTube: YouTube title is required.");
     expect(mockUpdatePostStatus).not.toHaveBeenCalled();
+    expect(mockWorkflowStart).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before dispatch when caller media lacks an ordered digest-bound Workspace reference", async () => {
+    authorized();
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_1",
+      status: "draft",
+      dispatchAttempts: 0,
+      content: "Unbound media",
+      mediaUrls: [{ type: "image", url: "https://attacker.invalid/same-name.png" }],
+      stableMediaRefs: [],
+      socialAccountId: "sacct_1",
+    });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ success: false, error: expect.stringContaining("SHA-256 reference") });
+    expect(mockWorkflowStart).not.toHaveBeenCalled();
+  });
+
+  it("rejects a governed post when its stable bytes differ from the approved artifact", async () => {
+    authorized();
+    mockRequiresGovernedPublishingPlan.mockResolvedValue(true);
+    mockGetSocialPost.mockResolvedValue({
+      id: "spost_1",
+      status: "draft",
+      dispatchAttempts: 0,
+      content: "Approved text",
+      mediaUrls: [{ type: "image", url: "/approved-preview/artifact-1" }],
+      stableMediaRefs: [{ resourceKind: "artifact", assetId: "artifact-other", assetDigest: `sha256:${"a".repeat(64)}`, order: 0 }],
+      platformSettings: { type: "person" },
+      socialAccountId: "sacct_1",
+    });
+    mockInspectPublishingApproval.mockResolvedValue({
+      requestId: "approval-1",
+      target: {
+        targetId: "target-1",
+        content: { text: "Approved text" },
+        media: [{ artifactId: "artifact-1", digest: `sha256:${"b".repeat(64)}`, previewUrl: "/approved-preview/artifact-1" }],
+        settings: { type: "person" },
+        timing: { kind: "now", publishAt: new Date().toISOString() },
+      },
+    });
+
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(
+      createRequest("http://localhost:3000/api/social/posts/spost_1/publish", {
+        method: "POST",
+        body: JSON.stringify({ publishingApproval: { consumingPrincipalId: "user_1" }, idempotencyKey: "publish-once" }),
+      }),
+      { params: Promise.resolve({ postId: "spost_1" }) },
+    );
+
+    expect(response.status).toBe(409);
+    expect(mockConsumePublishingApproval).not.toHaveBeenCalled();
     expect(mockWorkflowStart).not.toHaveBeenCalled();
   });
 

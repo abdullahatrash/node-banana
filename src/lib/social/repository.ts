@@ -14,7 +14,11 @@ import {
   sql,
 } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import {
+  verifyAndResolveSocialMediaDelivery,
+  type OwnedSocialMediaResource,
+  type StableSocialMediaReference,
+} from "@/lib/social/media-delivery";
 import { isRecord } from "@/lib/social/utils";
 import { preserveLinkedInAuthorKind } from "@/lib/social/linkedin-author-kind";
 import {
@@ -118,7 +122,7 @@ function socialAssetDigest(asset: {
   checksum: string | null;
 }): string {
   if (asset.checksum && /^sha256:[a-f0-9]{64}$/.test(asset.checksum)) return asset.checksum;
-  return canonicalDigest({ type: asset.type, mimeType: asset.mimeType, sizeBytes: asset.sizeBytes, width: asset.width, height: asset.height, durationSeconds: asset.durationSeconds });
+  throw new SocialPostMediaBindingError("Canonical social media is missing a verified SHA-256 checksum.");
 }
 
 export function bindStableSocialMedia(input: {
@@ -131,6 +135,7 @@ export function bindStableSocialMedia(input: {
   return input.references.map((reference, order) => {
     const resource = input.resources.get(`${reference.resourceKind}:${reference.id}`);
     if (!resource) throw new SocialPostMediaBindingError(`Canonical media resource is unavailable in this Workspace: ${reference.id}.`);
+    if (!/^sha256:[a-f0-9]{64}$/.test(resource.digest)) throw new SocialPostMediaBindingError(`Canonical media resource is missing a verified SHA-256 digest: ${reference.id}.`);
     if (resource.type !== input.mediaUrls[order]?.type) throw new SocialPostMediaBindingError(`Media type does not match canonical resource ${reference.id}.`);
     if (reference.digest && reference.digest !== resource.digest) throw new SocialPostMediaBindingError(`Media digest does not match canonical resource ${reference.id}.`);
     return { resourceKind: reference.resourceKind, assetId: reference.id, assetDigest: resource.digest, order, ...(input.mediaUrls[order]?.alt ? { alt: input.mediaUrls[order].alt } : {}) };
@@ -853,6 +858,34 @@ async function resolveStableSocialMedia(input: {
       })
     : input.references;
   return bindStableSocialMedia({ mediaUrls: input.mediaUrls, references, resources });
+}
+
+export async function resolveSocialPostMediaForDelivery(
+  workspaceId: string,
+  references: StableSocialMediaReference[],
+) {
+  if (references.length === 0) return [];
+  const db = getDb();
+  const assetIds = references.filter((reference) => (reference.resourceKind ?? "studio_asset") === "studio_asset").map((reference) => reference.assetId);
+  const artifactIds = references.filter((reference) => reference.resourceKind === "artifact").map((reference) => reference.assetId);
+  const [assetRows, artifactRows] = await Promise.all([
+    assetIds.length
+      ? db.select().from(assets).where(and(eq(assets.workspaceId, workspaceId), inArray(assets.id, assetIds), isNull(assets.deletedAt)))
+      : [],
+    artifactIds.length
+      ? db.select({ artifact: artifacts, content: artifactContents }).from(artifacts).innerJoin(artifactContents, and(eq(artifactContents.workspaceId, artifacts.workspaceId), eq(artifactContents.digest, artifacts.contentDigest))).where(and(eq(artifacts.workspaceId, workspaceId), inArray(artifacts.id, artifactIds), isNull(artifacts.deletedAt)))
+      : [],
+  ]);
+  const resources = new Map<string, OwnedSocialMediaResource>();
+  for (const asset of assetRows) {
+    if (!asset.storageKey || (asset.type !== "image" && asset.type !== "video")) continue;
+    resources.set(`studio_asset:${asset.id}`, { resourceKind: "studio_asset", id: asset.id, digest: socialAssetDigest(asset), type: asset.type, storageKey: asset.storageKey });
+  }
+  for (const { artifact, content } of artifactRows) {
+    if (!content.storageKey || content.kind !== "image" || !/^sha256:[a-f0-9]{64}$/.test(content.digest)) continue;
+    resources.set(`artifact:${artifact.id}`, { resourceKind: "artifact", id: artifact.id, digest: content.digest, type: "image", storageKey: content.storageKey });
+  }
+  return verifyAndResolveSocialMediaDelivery({ references, resources });
 }
 
 export async function createSocialPost(input: {

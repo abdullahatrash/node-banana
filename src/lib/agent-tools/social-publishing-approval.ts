@@ -58,6 +58,7 @@ export interface SocialPublishingApprovalAdmissionPort {
     triggerSource: string | null | undefined;
     content: string | null | undefined;
     mediaUrls: Array<{ type: string; url: string; alt?: string }> | null | undefined;
+    stableMediaRefs: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number }> | null | undefined;
     platformSettings: Record<string, unknown> | null | undefined;
     scheduledAt: Date | string | null | undefined;
   }): Promise<boolean>;
@@ -208,6 +209,8 @@ export const PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION:
       target.targetEvidenceDigest !== marker.targetEvidenceDigest ||
       input.content?.trim() !== target.content.text ||
       canonicalDigest(input.platformSettings ?? {}) !== canonicalDigest(target.settings) ||
+      canonicalDigest((input.stableMediaRefs ?? []).map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset", assetId: reference.assetId, assetDigest: reference.assetDigest, order: reference.order }))) !==
+        canonicalDigest(target.media.map((media, order) => ({ resourceKind: "artifact", assetId: media.artifactId, assetDigest: media.digest, order }))) ||
       canonicalDigest((input.mediaUrls ?? []).map((media) => ({ type: media.type, url: media.url }))) !==
         canonicalDigest(target.media.map((media) => ({ type: "image", url: media.previewUrl })))
     ) return false;

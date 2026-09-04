@@ -38,6 +38,7 @@ async function queueApprovedDraft(input: {
       triggerSource: post.triggerSource,
       content: post.content,
       mediaUrls: post.mediaUrls,
+      stableMediaRefs: post.stableMediaRefs,
       platformSettings: post.platformSettings,
       scheduledAt: post.scheduledAt,
     });

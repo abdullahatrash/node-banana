@@ -7,7 +7,7 @@
  * - sleep() for scheduled posts (zero compute while waiting)
  * - FatalError to skip retries on non-recoverable errors
  *
- * Flow: loadPost → sleep (if scheduled) → refreshToken → processMedia → publish → finalize
+ * Flow: loadPost → sleep (if scheduled) → refreshToken → publish verified stable media → finalize
  */
 
 import { sleep, FatalError } from "workflow";
@@ -90,22 +90,16 @@ async function publishSinglePostWorkflow(
   // Step 3: Refresh token if expiring soon
   const account = await refreshTokenStep(post.socialAccountId);
 
-  // Step 4: Process media for the target platform
-  const processedMedia = await processMediaStep(
-    post.mediaUrls,
-    account.platform,
-  );
-
-  // Step 5: Publish to the provider
+  // Step 4: Publish to the provider. Media is re-read, hash-verified, and
+  // resolved from stable Workspace references inside the provider-effect step.
   const result = await publishStep(
     postId,
     post.content,
-    processedMedia,
     account,
     post.platformSettings,
   );
 
-  // Step 6: Finalize — update post with platform URL
+  // Step 5: Finalize — update post with platform URL
   await finalizeStep(
     {
       id: post.id,
@@ -232,6 +226,7 @@ interface PostData {
   workspaceId: string;
   content: string | null;
   mediaUrls: Array<{ type: string; url: string; alt?: string }> | null;
+  stableMediaRefs: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number; alt?: string }>;
   platformSettings: Record<string, unknown> | null;
   socialAccountId: string;
   scheduledAt: string | null;
@@ -258,6 +253,7 @@ async function verifyGovernedPublishing(post: PostData): Promise<void> {
     triggerSource: post.triggerSource,
     content: post.content,
     mediaUrls: post.mediaUrls,
+    stableMediaRefs: post.stableMediaRefs,
     platformSettings: post.platformSettings,
     scheduledAt: post.scheduledAt,
   });
@@ -294,6 +290,7 @@ async function loadPost(
     workspaceId,
     content: post.content,
     mediaUrls: post.mediaUrls,
+    stableMediaRefs: post.stableMediaRefs,
     platformSettings: post.platformSettings,
     socialAccountId: post.socialAccountId,
     scheduledAt: post.scheduledAt?.toISOString() ?? null,
@@ -347,6 +344,7 @@ async function reloadPostBeforePublish(
     workspaceId,
     content: post.content,
     mediaUrls: post.mediaUrls,
+    stableMediaRefs: post.stableMediaRefs,
     platformSettings: post.platformSettings,
     socialAccountId: post.socialAccountId,
     scheduledAt: post.scheduledAt?.toISOString() ?? null,
@@ -482,21 +480,15 @@ interface ProcessedMediaItem {
   alt?: string;
 }
 
-async function processMediaStep(
-  mediaUrls: Array<{ type: string; url: string; alt?: string }> | null,
+async function validateProviderMedia(
+  media: ProcessedMediaItem[],
   platform: string,
 ): Promise<ProcessedMediaItem[]> {
-  "use step";
-
-  if (!mediaUrls || mediaUrls.length === 0) {
-    return [];
-  }
-
+  if (media.length === 0) return [];
   const { validateMediaConstraints } = await import("@/lib/social/media");
   type SocialPlatform = import("@/lib/db/schema").SocialPlatform;
 
-  // Validate constraints
-  const items = mediaUrls.map((m) => ({
+  const items = media.map((m) => ({
     type: m.type as "image" | "video",
     url: m.url,
     alt: m.alt,
@@ -513,15 +505,7 @@ async function processMediaStep(
     );
   }
 
-  // For now, pass media through as-is.
-  // Full processing (resize, format convert) happens in the provider's post() method
-  // or can be expanded here when needed.
-  return items.map((m) => ({
-    type: m.type,
-    url: m.url,
-    mimeType: m.type === "video" ? "video/mp4" : "image/jpeg",
-    alt: m.alt,
-  }));
+  return media;
 }
 
 interface PublishResultData {
@@ -533,13 +517,12 @@ interface PublishResultData {
 async function publishStep(
   postId: string,
   content: string | null,
-  media: ProcessedMediaItem[],
   account: AccountData,
   platformSettings: Record<string, unknown> | null,
 ): Promise<PublishResultData> {
   "use step";
 
-  const { updatePostStatus, markRequiresReauth, claimSocialPostProviderEffect } = await import(
+  const { updatePostStatus, markRequiresReauth, claimSocialPostProviderEffect, resolveSocialPostMediaForDelivery } = await import(
     "@/lib/social/repository"
   );
   const { emitSocialEvent } = await import("@/lib/social/events");
@@ -589,6 +572,7 @@ async function publishStep(
     workspaceId: current.workspaceId,
     content: current.content,
     mediaUrls: current.mediaUrls,
+    stableMediaRefs: current.stableMediaRefs,
     platformSettings: current.platformSettings,
     socialAccountId: current.socialAccountId,
     scheduledAt: current.scheduledAt?.toISOString() ?? null,
@@ -600,6 +584,10 @@ async function publishStep(
   if (current.content !== content || JSON.stringify(current.platformSettings) !== JSON.stringify(platformSettings)) {
     throw new FatalError("The publishing target changed before the provider effect.");
   }
+  const media = await validateProviderMedia(
+    await resolveSocialPostMediaForDelivery(current.workspaceId, current.stableMediaRefs),
+    account.platform,
+  );
 
   try {
     const results = await provider.post(

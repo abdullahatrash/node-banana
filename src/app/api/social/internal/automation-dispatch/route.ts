@@ -223,6 +223,7 @@ async function handleAutomationDispatch(
             triggerSource: replay.triggerSource,
             content: replay.content,
             mediaUrls: replay.mediaUrls,
+            stableMediaRefs: replay.stableMediaRefs,
             platformSettings: replay.platformSettings,
             scheduledAt: replay.scheduledAt,
           });

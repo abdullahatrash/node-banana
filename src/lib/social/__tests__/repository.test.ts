@@ -138,6 +138,7 @@ describe("social/repository", () => {
       expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }], references: [], resources })).toThrow(SocialPostMediaBindingError);
       expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }, { type: "image", url: "two" }], references: [{ resourceKind: "studio_asset", id: "asset-a" }, { resourceKind: "studio_asset", id: "asset-a" }], resources })).toThrow(SocialPostMediaBindingError);
       expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }], references: [{ resourceKind: "studio_asset", id: "asset-a", digest: `sha256:${"c".repeat(64)}` }], resources })).toThrow(SocialPostMediaBindingError);
+      expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }], references: [{ resourceKind: "studio_asset", id: "asset-a" }], resources: new Map([["studio_asset:asset-a", { resourceKind: "studio_asset", id: "asset-a", digest: "metadata-only", type: "image" }]]) })).toThrow("verified SHA-256 digest");
     });
   });
 

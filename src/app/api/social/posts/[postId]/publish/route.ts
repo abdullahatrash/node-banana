@@ -116,6 +116,26 @@ function toPublishMediaItems(
   });
 }
 
+function hasCompleteStableMediaBinding(post: {
+  mediaUrls: Array<{ type: string; url: string; alt?: string }> | null | undefined;
+  stableMediaRefs?: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number }> | null;
+}): boolean {
+  const media = post.mediaUrls ?? [];
+  const references = post.stableMediaRefs ?? [];
+  if (media.length !== references.length) return false;
+  const identities = new Set<string>();
+  return references.every((reference, index) => {
+    const identity = `${reference.resourceKind ?? "studio_asset"}:${reference.assetId}`;
+    if (
+      reference.order !== index ||
+      !/^sha256:[a-f0-9]{64}$/.test(reference.assetDigest) ||
+      identities.has(identity)
+    ) return false;
+    identities.add(identity);
+    return true;
+  });
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ postId: string }> },
@@ -142,6 +162,12 @@ export async function POST(
     const body = await readOptionalJsonBody(request);
     const workflowContext = extractWorkflowContext(body);
     const post = await getSocialPost(workspaceId, postId);
+    if (!hasCompleteStableMediaBinding(post)) {
+      return NextResponse.json(
+        { success: false, error: "Every published media item must have one ordered Workspace-owned SHA-256 reference." },
+        { status: 409 },
+      );
+    }
     const forceNow = body.forceNow === true;
     const now = new Date();
     const isFuturePublishing =
@@ -172,9 +198,12 @@ export async function POST(
       });
       const postMedia = (post.mediaUrls ?? []).map((media) => ({ type: media.type, url: media.url }));
       const targetMedia = inspected?.target.media.map((media) => ({ type: "image", url: media.previewUrl })) ?? [];
+      const postStableMedia = (post.stableMediaRefs ?? []).map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset", assetId: reference.assetId, assetDigest: reference.assetDigest, order: reference.order }));
+      const targetStableMedia = inspected?.target.media.map((media, order) => ({ resourceKind: "artifact", assetId: media.artifactId, assetDigest: media.digest, order })) ?? [];
       if (
         !inspected || post.content?.trim() !== inspected.target.content.text ||
         canonicalDigest(post.platformSettings ?? {}) !== canonicalDigest(inspected.target.settings) ||
+        canonicalDigest(postStableMedia) !== canonicalDigest(targetStableMedia) ||
         canonicalDigest(postMedia) !== canonicalDigest(targetMedia) ||
         (forceNow && inspected.target.timing.kind !== "now")
       ) return NextResponse.json(
