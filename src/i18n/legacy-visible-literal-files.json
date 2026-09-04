@@ -1,9 +1,6 @@
 [
-  "src/app/agents/AgentsClient.tsx",
-  "src/app/agents/pair/[challengeId]/PairAgentClient.tsx",
   "src/app/studio/budgets/BudgetCockpit.tsx",
   "src/app/studio/credentials/CredentialCockpit.tsx",
-  "src/app/studio/observability/ObservabilityCockpit.tsx",
   "src/app/studio/publishing-approvals/PublishingApprovalCockpit.tsx",
   "src/app/studio/publishing-deliveries/DeliveryIndex.tsx",
   "src/app/studio/publishing-deliveries/DeliveryOperationsCockpit.tsx",
