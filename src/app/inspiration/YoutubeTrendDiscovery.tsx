@@ -65,7 +65,7 @@ export function YoutubeTrendDiscovery({ data }: { data: YoutubeTrendDiscoveryDat
   </section>;
 }
 
-function YoutubeIcon() { return <span aria-label="YouTube" role="img" className="inline-block h-[17px] w-6 shrink-0 bg-no-repeat" style={{ backgroundImage: "url(https://developers.google.com/static/youtube/images/youtube-icons-2x.png)", backgroundSize: "104px 142px", backgroundPosition: "-40px -14px" }} />; }
+function YoutubeIcon() { return <span aria-hidden="true" className="inline-block h-[17px] w-6 shrink-0 bg-no-repeat" style={{ backgroundImage: "url(https://developers.google.com/static/youtube/images/youtube-icons-2x.png)", backgroundSize: "104px 142px", backgroundPosition: "-40px -14px" }} />; }
 function Metric({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className="font-semibold tabular-nums" dir="ltr">{value}</dd></div>; }
 function formatCounter(value: string | null, locale: string) { if (value === null) return "—"; try { return new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 }).format(BigInt(value)); } catch { return "—"; } }
 function regionLabel(value: string, t: (key: string) => string) { return REGIONS.includes(value as (typeof REGIONS)[number]) ? t(`regions.${value}`) : value; }

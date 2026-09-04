@@ -41,6 +41,7 @@
     "db:set-workspace-quota": "node scripts/set-workspace-quota.mjs",
     "doctor:local": "tsx scripts/local-readiness.ts",
     "workers:local": "node scripts/run-local-content-workers.mjs",
+    "smoke:i18n-shell": "node scripts/smoke-i18n-shell.mjs",
     "smoke:licensed-trends": "node scripts/smoke-licensed-trends.mjs",
     "smoke:infra": "bash scripts/smoke-infra.sh",
     "db:push": "drizzle-kit push",

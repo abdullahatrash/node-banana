@@ -208,6 +208,20 @@ output.
 To test the rights-safe Inspiration trend loop against the real local backend,
 follow [Workspace winning-content trends](docs/operations/workspace-winning-content.md).
 
+To verify the primary authenticated shell and public pricing surface in both
+Arabic RTL and English LTR against the real local auth and Workspace backend:
+
+```bash
+APP_BASE_URL=http://localhost:3002 pnpm smoke:i18n-shell
+```
+
+This no-spend smoke persists each Interface Language through the production
+preference route, renders the twelve primary product routes plus pricing in
+both directions, rejects missing localization markers, and restores the
+seeded user's original preference. It verifies server-rendered semantics and
+route reachability; the release screenshot matrix remains the authority for
+visual overflow, focus order, and responsive composition.
+
 ### Installation
 
 ```bash
