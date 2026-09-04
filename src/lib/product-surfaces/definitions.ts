@@ -119,6 +119,7 @@ export const blitzPayloadSchema = z.object({
 
 export const contentPieceSchema = z.object({
   format: z.enum(CONTENT_FORMATS),
+  formatDefinition: z.object({ id: text(200), revision: z.number().int().positive(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
   contentLanguage: z.enum(["ar", "en", "mixed"]),
   arabicVariety: z.enum(ARABIC_VARIETIES).nullable().default(null),
   prompt: optionalText(10_000),
@@ -126,8 +127,13 @@ export const contentPieceSchema = z.object({
   aspectRatio: z.enum(["9:16", "1:1", "16:9"]).default("9:16"),
   durationSeconds: z.number().int().min(4).max(60).default(15),
   captionStyle: optionalText(100),
+  speaker: optionalText(500),
+  scene: optionalText(1_000),
   sourceAssetIds: z.array(text(200)).default([]),
   personaId: text(200).nullable().default(null),
+  mediaSetIds: z.array(text(200)).default([]),
+  themeRevisionRefs: z.array(z.object({ themeId: text(200), revision: z.number().int().positive() }).strict()).default([]),
+  validationIssues: z.array(text(200)).default([]),
   candidateArtifactIds: z.array(text(200)).default([]),
   candidates: z.array(z.object({
     assetId: text(200), intentId: text(200).nullable(), operationId: text(200).nullable(), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), createdAt: z.string().datetime(),
@@ -232,7 +238,7 @@ const simpleSchemas = {
 export const PRODUCT_STATES: Record<ProductRecordKind, readonly string[]> = {
   inspiration_item: ["active", "saved", "dismissed", "restricted"],
   blitz_item: ["queued", "accepted", "rejected", "editing"],
-  content_piece: ["active", "archived", "deleted"],
+  content_piece: ["draft", "active", "archived", "deleted"],
   campaign_automation: ["draft", "validating", "active", "paused", "archived"],
   creator_persona: ["draft", "consent_review", "ready_to_train", "training", "review", "active", "training_failed", "suspended", "consent_expired", "deleted"],
   media_set: ["active", "archived"],
