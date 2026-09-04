@@ -248,6 +248,26 @@ describe("TikTok provider", () => {
     });
   });
 
+  describe("getPostMetrics", () => {
+    it("queries owned video IDs in one bounded batch and preserves missing values", async () => {
+      mockFetch.mockResolvedValueOnce(mockFetchOk({
+        data: { videos: [{ id: "7312345678901234567", view_count: 12_000, like_count: 900, comment_count: 40 }] },
+        error: { code: "ok", message: "", log_id: "tiktok-log-1" },
+      }));
+
+      const [result] = await tikTokProvider.getPostMetrics!({ platformUserId: "open-id", accessToken: "private-token", platformPostIds: ["7312345678901234567"] });
+
+      expect(result).toMatchObject({ platformPostId: "7312345678901234567", metrics: { views: 12_000, likes: 900, comments: 40, shares: null }, providerRequestId: "tiktok-log-1" });
+      expect(result.sourceRef).not.toContain("private-token");
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body as string)).toEqual({ filters: { video_ids: ["7312345678901234567"] } });
+    });
+
+    it("fails closed for mismatched response IDs", async () => {
+      mockFetch.mockResolvedValueOnce(mockFetchOk({ data: { videos: [{ id: "different-video", view_count: 1 }] }, error: { code: "ok" } }));
+      await expect(tikTokProvider.getPostMetrics!({ platformUserId: "open-id", accessToken: "token", platformPostIds: ["7312345678901234567"] })).rejects.toThrow("SOCIAL_POST_METRICS_PROVIDER_MISMATCH");
+    });
+  });
+
   // -------------------------------------------------------------------------
   // pollTikTokPublishStatus
   // -------------------------------------------------------------------------

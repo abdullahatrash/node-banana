@@ -131,6 +131,7 @@ describe("provider-registry", () => {
         supportsImages: true,
         supportsVideo: true,
         supportsCarousel: true,
+        supportsPostMetrics: false,
         requiresPageSelection: true,
         configured: true,
       });

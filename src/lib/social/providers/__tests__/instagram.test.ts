@@ -581,6 +581,29 @@ describe("instagramProvider.getCapabilities", () => {
   });
 });
 
+describe("instagramProvider.getPostMetrics", () => {
+  it("reads views, likes, and comments without retaining the access token", async () => {
+    const request = mockFetchSequence([{ data: [
+      { name: "views", values: [{ value: 12_000 }] },
+      { name: "likes", total_value: { value: 900 } },
+      { name: "comments", values: [{ value: 40 }] },
+    ] }]);
+    const provider = await loadProvider();
+
+    const [result] = await provider.getPostMetrics!({ platformUserId: "ig-user-1", accessToken: "private-token", platformPostIds: ["media-1"] });
+
+    expect(result).toMatchObject({ platformPostId: "media-1", metrics: { views: 12_000, likes: 900, comments: 40, shares: null } });
+    expect(result.sourceRef).not.toContain("private-token");
+    expect(String(request.mock.calls[0][0])).toContain("metric=views,likes,comments");
+  });
+
+  it("rejects malformed provider counts", async () => {
+    mockFetchSequence([{ data: [{ name: "views", values: [{ value: "12k" }] }] }]);
+    const provider = await loadProvider();
+    await expect(provider.getPostMetrics!({ platformUserId: "ig-user-1", accessToken: "token", platformPostIds: ["media-1"] })).rejects.toThrow("SOCIAL_POST_METRIC_INVALID");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Provider interface conformance
 // ---------------------------------------------------------------------------
@@ -597,6 +620,7 @@ describe("instagramProvider interface conformance", () => {
     expect(typeof provider.post).toBe("function");
     expect(typeof provider.classifyError).toBe("function");
     expect(typeof provider.fetchPageInformation).toBe("function");
+    expect(typeof provider.getPostMetrics).toBe("function");
     expect(typeof provider.getCapabilities).toBe("function");
   });
 });

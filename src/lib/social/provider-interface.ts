@@ -106,6 +106,25 @@ export interface PublishStatusResult {
   errorMessage?: string;
 }
 
+export type SocialPostMetricName = "views" | "likes" | "comments" | "shares";
+
+/** A token-free, provider-verified observation for one post owned by the
+ * connected account. Missing metrics remain null; adapters must never turn an
+ * unavailable provider field into a fabricated zero. */
+export interface PostMetricsResult {
+  platformPostId: string;
+  metrics: Record<SocialPostMetricName, number | null>;
+  sourceRef: string;
+  providerRequestId: string | null;
+}
+
+export interface PostMetricsRequest {
+  platformUserId: string;
+  accessToken: string;
+  platformPostIds: string[];
+  accessTokenSecret?: string;
+}
+
 /**
  * Provider capabilities exposed to the UI (e.g., provider list endpoint).
  *
@@ -123,6 +142,7 @@ export interface ProviderCapabilities {
   supportsVideo: boolean;
   supportsCarousel: boolean;
   requiresPageSelection: boolean;
+  supportsPostMetrics?: boolean;
   configured?: boolean;
 }
 
@@ -216,6 +236,14 @@ export interface SocialProviderAdapter {
     platformPostId: string,
     options?: { accessTokenSecret?: string },
   ): Promise<PublishStatusResult>;
+
+  /** Fetch metrics only for exact platform post IDs owned by the connected
+   * account. Implementations return normalized, token-free evidence and fail
+   * closed when account ownership cannot be established. */
+  getPostMetrics?(request: PostMetricsRequest): Promise<PostMetricsResult[]>;
+
+  /** Provider API batch ceiling for getPostMetrics(). */
+  readonly maxPostMetricsBatchSize?: number;
 
   /**
    * Get the provider's capabilities for UI display.

@@ -49,6 +49,7 @@ export function listProviderCapabilities(): ProviderCapabilities[] {
   return listProviders().map((provider) => ({
     ...provider.getCapabilities(),
     configured: isPlatformConfigured(provider.identifier),
+    supportsPostMetrics: typeof provider.getPostMetrics === "function",
   }));
 }
 
