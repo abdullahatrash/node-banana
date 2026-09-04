@@ -70,6 +70,34 @@ server-owned managed token and stable key revision.
 | Workers and recovery | `pnpm workers:local -- --url http://localhost:3002` | `STUDIO_INTERNAL_API_SECRET` and Postgres | Leases, retries and idempotency converge without duplicate Assets, posts, ledger entries or Inspiration Items. | A worker never invents authority to start a new generation |
 | Governance and erasure | `/settings` governance/privacy/account sections | Postgres, object storage and configured external adapters | Export, retention, legal hold, closure and erasure show exact scope, require the correct confirmations, and retain only the allowed audit evidence. | None; external deletion adapters may have side effects |
 
+### RTL visual approval is a separate gate
+
+`smoke:i18n-shell` proves server-rendered locale and direction semantics. It does
+not approve pixel-level RTL behavior. Before calling a surface complete, inspect
+it in both Arabic and English at 390, 768, and 1440 CSS pixels. Cover at least
+`/dashboard`, `/inspiration`, `/blitz`, all three `/simple-studio/*` forms,
+`/content`, `/calendar`, `/billing`, and every `/settings` section.
+
+For each viewport and locale, verify:
+
+- the shell, drawers, breadcrumbs, steppers, popovers, and dialogs open from the
+  correct logical edge and remain keyboard reachable;
+- back/forward chevrons, swipe actions, and progress order express semantic
+  meaning rather than assuming a physical left or right;
+- grids do not overflow, truncate controls, or reverse media controls that must
+  remain spatially stable;
+- user-authored Arabic, English, and mixed text uses `dir="auto"`; URLs, handles,
+  hashes, IDs, code, timelines, and media time controls remain isolated LTR;
+- Arabic glyph shaping, line height, wrapping, numerals, dates, prices, and 9:16
+  caption safe areas are readable at 200% zoom;
+- focus order and screen-reader labels follow the same semantic order visible on
+  screen.
+
+Record the route, locale, viewport, screenshot, and defect for every failure.
+The RTL source gate and component tests prevent common regressions, but visual
+approval remains mandatory because CSS geometry and font shaping require a real
+browser.
+
 To inspect the licensed trend-to-Blitz path manually, retain one synthetic,
 rights-safe Arabic fixture instead of relying on an empty Workspace feed:
 
