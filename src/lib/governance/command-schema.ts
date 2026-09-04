@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { GovernanceCommand } from "./service";
 import { BUILT_IN_WORKSPACE_ROLES, GOVERNANCE_CAPABILITIES, RETENTION_CLASSES } from "./types";
+import { MAX_RETENTION_DURATION_DAYS } from "./retention-policy";
 
 const id = z.string().trim().min(1).max(200);
 const text = z.string().trim().min(1).max(2_000);
@@ -52,7 +53,7 @@ export const governanceCommandSchema: z.ZodType<GovernanceCommand> = z.discrimin
   z.object({ type: z.literal("verify_step_up"), challengeId: id, code: z.string().regex(/^\d{6}$/) }).strict(),
   z.object({ type: z.literal("request_audit_export"), from: timestamp.nullable(), to: timestamp.nullable(), stepUpToken: id }).strict(),
   z.object({ type: z.literal("set_region_policy"), region: id, verificationEvidence: regionEvidence, expectedVersion: z.number().int().positive().optional(), stepUpToken: id }).strict(),
-  z.object({ type: z.literal("publish_retention_policy"), rules: z.array(z.object({ retentionClass: z.enum(RETENTION_CLASSES), durationDays: z.number().int().nonnegative(), recoverableDays: z.number().int().nonnegative(), legalFloorDays: z.number().int().nonnegative() }).strict()), expectedVersion: z.number().int().positive().optional(), stepUpToken: id }).strict(),
+  z.object({ type: z.literal("publish_retention_policy"), rules: z.array(z.object({ retentionClass: z.enum(RETENTION_CLASSES), durationDays: z.number().int().nonnegative().max(MAX_RETENTION_DURATION_DAYS), recoverableDays: z.number().int().nonnegative().max(MAX_RETENTION_DURATION_DAYS), legalFloorDays: z.number().int().nonnegative().max(MAX_RETENTION_DURATION_DAYS) }).strict()), expectedVersion: z.number().int().positive().optional(), stepUpToken: id }).strict(),
   z.object({ type: z.literal("create_retention_hold"), retentionClasses: z.array(z.enum(RETENTION_CLASSES)).min(1), reason: text.max(1_000), expiresAt: timestamp.nullable(), stepUpToken: id }).strict(),
   z.object({ type: z.literal("release_retention_hold"), holdId: id, reason: text.max(1_000), stepUpToken: id }).strict(),
   z.object({ type: z.literal("record_deletion"), resourceKind: id, resourceId: id, stepUpToken: id }).strict(),

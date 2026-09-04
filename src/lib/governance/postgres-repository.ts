@@ -297,6 +297,7 @@ export class DrizzleGovernanceRepository implements GovernanceRepository {
     }
     try {
       return await this.database().transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`workspace-governance:${input.receipt.workspaceId}`}, 0))`);
         const receiptLock = `${input.receipt.workspaceId}\u0000${input.receipt.capability}\u0000${input.receipt.idempotencyKey}`;
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${receiptLock}, 0))`);
         const [existing] = await tx

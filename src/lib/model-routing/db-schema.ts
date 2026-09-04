@@ -130,6 +130,46 @@ export const inspirationRightsEvidence = pgTable("inspiration_rights_evidence", 
   valuesCheck: check("inspiration_rights_evidence_values_check", sql`${table.sourceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.digest} ~ '^sha256:[a-f0-9]{64}$' and ${table.basis} in ('owned','licensed','public_domain','consented') and ${table.permittedRemix} in ('reference_only','transform','derivative') and ${table.issuerType} in ('workspace_asset_owner','license_authority','rights_holder','public_registry') and ${table.verifiedAt} >= ${table.issuedAt} and (${table.expiresAt} is null or ${table.expiresAt} > ${table.verifiedAt})`),
 }));
 
+/** Non-content closure proof. The database erasure function is the sole writer;
+ * it retains counts and signed aggregate commitments, never rights documents,
+ * source identities, issuer identities, URLs, or per-record commitments. */
+export const generationRightsErasureTombstones = pgTable("generation_rights_erasure_tombstones", {
+  workspaceId: text("workspace_id").primaryKey(),
+  closureId: text("closure_id").notNull(),
+  schemaVersion: text("schema_version").notNull(),
+  evidenceRowCount: bigint("evidence_row_count", { mode: "number" }).notNull(),
+  snapshotRowCount: bigint("snapshot_row_count", { mode: "number" }).notNull(),
+  retentionPolicyRevision: integer("retention_policy_revision").notNull(),
+  retentionRuleDigest: text("retention_rule_digest").notNull(),
+  erasureManifestMac: text("erasure_manifest_mac").notNull(),
+  auditSequence: integer("audit_sequence").notNull(),
+  auditEventId: text("audit_event_id").notNull(),
+  signingKeyId: text("signing_key_id").notNull(),
+  erasedAt: timestamp("erased_at", { withTimezone: true }).notNull(),
+  tombstoneDigest: text("tombstone_digest").notNull(),
+  tombstoneMac: text("tombstone_mac").notNull(),
+}, (table) => ({
+  valuesCheck: check("generation_rights_erasure_tombstones_values_check", sql`${table.schemaVersion} = 'generation-rights-erasure-tombstone/v1' and ${table.closureId} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.evidenceRowCount} >= 0 and ${table.snapshotRowCount} >= 0 and ${table.retentionPolicyRevision} > 0 and ${table.retentionRuleDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.erasureManifestMac} ~ '^hmac-sha256:[a-f0-9]{64}$' and ${table.auditSequence} > 0 and ${table.auditEventId} ~ '^rights_erasure_[a-f0-9]{32}$' and ${table.signingKeyId} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.tombstoneDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.tombstoneMac} ~ '^hmac-sha256:[a-f0-9]{64}$'`),
+}));
+
+export const generationRightsErasureAttempts = pgTable("generation_rights_erasure_attempts", {
+  workspaceId: text("workspace_id").notNull(),
+  closureId: text("closure_id").notNull(),
+  leaseId: text("lease_id").notNull(),
+  leaseFence: integer("lease_fence").notNull(),
+  outcomeCode: text("outcome_code").notNull(),
+  eligibleAt: timestamp("eligible_at", { withTimezone: true }),
+  auditSequence: integer("audit_sequence").notNull(),
+  auditEventId: text("audit_event_id").notNull(),
+  signingKeyId: text("signing_key_id").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  attemptDigest: text("attempt_digest").notNull(),
+  attemptMac: text("attempt_mac").notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "generation_rights_erasure_attempts_pk", columns: [table.workspaceId, table.closureId, table.leaseId, table.leaseFence, table.outcomeCode] }),
+  valuesCheck: check("generation_rights_erasure_attempts_values_check", sql`${table.leaseId} ~ '^lease_[A-Za-z0-9]+$' and ${table.leaseFence} > 0 and ${table.outcomeCode} in ('blocked_access_revocation','blocked_export','blocked_deletion_receipts','blocked_retention_policy','blocked_retention_hold','blocked_retention_period','blocked_dependencies') and ${table.auditSequence} > 0 and ${table.auditEventId} ~ '^rights_erasure_attempt_[a-f0-9]{32}$' and ${table.signingKeyId} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.attemptDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.attemptMac} ~ '^hmac-sha256:[a-f0-9]{64}$'`),
+}));
+
 export const modelGenerationBudgetReservations = pgTable("model_generation_budget_reservations", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
   intentId: text("intent_id").notNull(), policyId: text("policy_id").notNull(), policyRevisionId: text("policy_revision_id").notNull(),

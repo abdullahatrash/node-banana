@@ -14,7 +14,7 @@ function resource(kind: GovernanceResource["kind"], id: string, status: string, 
 async function seed(repository: InMemoryGovernanceRepository, withPolicy = true) {
   const rules: RetentionRule[] = RETENTION_CLASSES.map((retentionClass) => ({ retentionClass, durationDays: TRUSTED_RETENTION_LEGAL_FLOORS[retentionClass], recoverableDays: 0, legalFloorDays: TRUSTED_RETENTION_LEGAL_FLOORS[retentionClass] }));
   const mutations = [
-    { type: "create" as const, expectedVersion: null, resource: resource("workspace_closure", "closure-a", "erasure_queued", { requestedByUserId: "owner-a", executeAfter: now.toISOString(), executedAt: now.toISOString(), exportId: "export-a", erasureCursor: null, erasureScheduled: false, accessRevocationEvidence: null, completionEvidence: null, lease: null }) },
+    { type: "create" as const, expectedVersion: null, resource: resource("workspace_closure", "closure-a", "erasure_queued", { requestedByUserId: "owner-a", executeAfter: now.toISOString(), executedAt: now.toISOString(), exportId: "export-a", erasureCursor: null, erasureScheduled: false, accessRevocationEvidence: null, completionEvidence: null, lease: null, leaseFence: 0 }) },
     { type: "create" as const, expectedVersion: null, resource: resource("workspace_export", "export-a", "succeeded", { manifest: { digest: "export-digest" } }) },
   ];
   if (withPolicy) mutations.push({ type: "create", expectedVersion: null, resource: resource("retention_policy", "active", "active", { revisions: [{ revision: 1, rules }], activeRevision: 1 }) });
@@ -84,6 +84,18 @@ describe("GovernanceWorkspaceClosureWorker", () => {
     expect(repository.canonicalEffects).toHaveLength(0);
   });
 
+  it("persists and increments the lease fence across release and reclaim", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    await seed(repository);
+    const unknownRevocation = { ...revocation(), externalEffects: [{ kind: "provider_credential_revoke" as const, targetId: "credential-a", idempotencyKey: "closure:credential-a", attempts: 1, attemptedAt: now.toISOString(), state: "outcome_unknown" as const, reason: "timeout" }] };
+    const adapter = { revokeAccess: vi.fn(async () => unknownRevocation), listRetentionResources: vi.fn(), hardEraseWorkspace: vi.fn() };
+    const worker = new GovernanceWorkspaceClosureWorker(repository, adapter, { now: () => now });
+    await worker.process({ workspaceId: "workspace-a", closureId: "closure-a" });
+    expect(await repository.getResource({ workspaceId: "workspace-a", kind: "workspace_closure", id: "closure-a" })).toMatchObject({ status: "waiting_erasure", body: { lease: null, leaseFence: 1 } });
+    await worker.process({ workspaceId: "workspace-a", closureId: "closure-a" });
+    expect(await repository.getResource({ workspaceId: "workspace-a", kind: "workspace_closure", id: "closure-a" })).toMatchObject({ status: "waiting_erasure", body: { lease: null, leaseFence: 2 } });
+  });
+
   it("does not accept retained as proof that an access-bearing grant was revoked", async () => {
     const repository = new InMemoryGovernanceRepository();
     await seed(repository);
@@ -141,5 +153,53 @@ describe("GovernanceWorkspaceClosureWorker", () => {
     const closure = await repository.getResource({ workspaceId: "workspace-a", kind: "workspace_closure", id: "closure-a" });
     expect(closure).toMatchObject({ status: "closed_retained", body: { completionEvidence: { fullyErased: false, holds: ["hold-a"], legalHoldEvidence: [{ surface: "media", holdIds: ["hold-a"], policyRevision: 1, evidenceRef: "legal-hold:hold-a" }] } } });
     expect(await repository.getResource({ workspaceId: "workspace-a", kind: "tombstone", id: "workspace:workspace-a" })).toMatchObject({ body: { completionEvidence: { fullyErased: false } } });
+  });
+
+  it("refuses retained surface proof bound to a stale retention policy revision", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    await seed(repository);
+    await repository.commit({
+      receipt: { workspaceId: "workspace-a", capability: "test.seed_hold@1", idempotencyKey: "seed-stale-proof-hold", requestDigest: canonicalDigest({ holdId: "hold-a" }), result: {}, createdAt: now },
+      mutations: [{ type: "create", expectedVersion: null, resource: resource("retention_hold", "hold-a", "active", { retentionClasses: ["workspace_media"], expiresAt: null }) }],
+      audit: { schema: "workspace-audit-event/v1", id: "audit-stale-proof-hold", workspaceId: "workspace-a", actor: { kind: "system", id: null }, capability: "test.seed_hold@1", action: "seed_hold", resource: { kind: "retention_hold", id: "hold-a" }, outcome: "completed", redactedDetails: {}, occurredAt: now },
+    });
+    const adapter = {
+      revokeAccess: vi.fn(async () => revocation()),
+      listRetentionResources: vi.fn(async () => ({ items: [{ cursor: "asset:asset-a", descriptor: { resourceKind: "media", resourceId: "asset-a", retentionClass: "workspace_media" as const, createdAt: now, authoritativeSystems: ["primary"] } }], nextCursor: null })),
+      hardEraseWorkspace: vi.fn(async () => ({
+        ...hardErasure(),
+        effects: [{ kind: "workspace_hard_erasure" as const, targetId: "media", idempotencyKey: "closure:media", attempts: 1, attemptedAt: now.toISOString(), state: "retained" as const, evidenceRef: "primary:held:media", legalHoldEvidence: { holdIds: ["hold-a"], policyRevision: 2, evidenceRef: "legal-hold:stale" } }],
+        retainedResources: [{ resourceKind: "media", resourceId: "asset-a", holdIds: ["hold-a"] }],
+      })),
+    };
+    const worker = new GovernanceWorkspaceClosureWorker(repository, adapter, { now: () => now });
+    await worker.process({ workspaceId: "workspace-a", closureId: "closure-a" });
+    await worker.process({ workspaceId: "workspace-a", closureId: "closure-a" });
+    expect((await repository.getResource({ workspaceId: "workspace-a", kind: "workspace_closure", id: "closure-a" }))?.status).toBe("waiting_erasure");
+    expect(await repository.getResource({ workspaceId: "workspace-a", kind: "tombstone", id: "workspace:workspace-a" })).toBeNull();
+  });
+
+  it("closes retained when an active rights hold exists even if its original class has no enumerated rows", async () => {
+    const repository = new InMemoryGovernanceRepository();
+    await seed(repository);
+    await repository.commit({
+      receipt: { workspaceId: "workspace-a", capability: "test.seed_hold@1", idempotencyKey: "seed-rights-only-hold", requestDigest: canonicalDigest({ holdId: "hold-rights" }), result: {}, createdAt: now },
+      mutations: [{ type: "create", expectedVersion: null, resource: resource("retention_hold", "hold-rights", "active", { retentionClasses: ["security_evidence", "generation_rights_evidence"], expiresAt: null }) }],
+      audit: { schema: "workspace-audit-event/v1", id: "audit-seed-rights-hold", workspaceId: "workspace-a", actor: { kind: "system", id: null }, capability: "test.seed_hold@1", action: "seed_hold", resource: { kind: "retention_hold", id: "hold-rights" }, outcome: "completed", redactedDetails: {}, occurredAt: now },
+    });
+    const adapter = {
+      revokeAccess: vi.fn(async () => revocation()),
+      listRetentionResources: vi.fn(async () => ({ items: [], nextCursor: null })),
+      hardEraseWorkspace: vi.fn(async (input: { retainedResources: Array<{ resourceKind: string; resourceId: string; holdIds: string[] }> }) => ({
+        schema: "workspace-hard-erasure-evidence/v1" as const,
+        effects: [{ kind: "workspace_hard_erasure" as const, targetId: "inspiration_rights_evidence_and_snapshots", idempotencyKey: "closure:rights", attempts: 1, attemptedAt: now.toISOString(), state: "retained" as const, evidenceRef: "rights:held", legalHoldEvidence: { holdIds: ["hold-rights"], policyRevision: 1, evidenceRef: "legal:hold-rights" } }],
+        surfaces: ["inspiration_rights_evidence_and_snapshots"], omissions: [], retainedResources: input.retainedResources, evidenceRef: "sha256:rights-held",
+      })),
+    };
+    const worker = new GovernanceWorkspaceClosureWorker(repository, adapter, { now: () => now });
+    await worker.process({ workspaceId: "workspace-a", closureId: "closure-a" });
+    await worker.process({ workspaceId: "workspace-a", closureId: "closure-a" });
+    expect(adapter.hardEraseWorkspace).toHaveBeenCalledWith(expect.objectContaining({ retainedResources: [{ resourceKind: "generation_rights_evidence", resourceId: "workspace:workspace-a", holdIds: ["hold-rights"] }] }));
+    expect(await repository.getResource({ workspaceId: "workspace-a", kind: "workspace_closure", id: "closure-a" })).toMatchObject({ status: "closed_retained", body: { completionEvidence: { holds: ["hold-rights"], fullyErased: false } } });
   });
 });

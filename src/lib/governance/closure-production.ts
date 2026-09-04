@@ -42,24 +42,60 @@ const SOURCE_ORDER = [
  * the final authoritative purge rather than a collection of ordinary delete
  * endpoints with incompatible state machines. */
 export const CLOSURE_CANONICAL_SURFACES = [
-  "workspace_identity",
-  "memberships_invitations_and_role_assignments",
-  "portfolios_and_cross_workspace_assignments",
-  "review_guests_and_approval_records",
-  "audit_exports_imports_and_governance_receipts",
-  "region_retention_safety_and_bulk_records",
-  "projects_assets_and_generated_artifacts",
   "content_workflows_revisions_and_runs",
+  "model_routes_intents_predictions_effects_and_ingestion_receipts",
+  "inspiration_rights_evidence_and_snapshots",
   "brand_profiles_sources_and_saved_prompts",
   "calendar_posts_captions_and_platform_observations",
   "social_accounts_tokens_automation_and_publish_receipts",
   "credential_profiles_versions_tokens_agents_and_keys",
-  "model_routes_intents_predictions_effects_and_ingestion_receipts",
-  "inspiration_rights_evidence_and_snapshots",
   "budgets_quotas_reservations_usage_and_settlements",
   "diagnostics_support_bundles_telemetry_and_experiments",
   "release_attestations_manifests_flags_and_audit_lineage",
+  "projects_assets_and_generated_artifacts",
+  "portfolios_and_cross_workspace_assignments",
+  "review_guests_and_approval_records",
+  "region_retention_safety_and_bulk_records",
+  "memberships_invitations_and_role_assignments",
+  "audit_exports_imports_and_governance_receipts",
+  "workspace_identity",
 ] as const;
+
+const GENERATION_RIGHTS_SURFACE = "inspiration_rights_evidence_and_snapshots" as const;
+const DIRECT_RIGHTS_DEPENDENCIES = [
+  "content_workflows_revisions_and_runs",
+  "model_routes_intents_predictions_effects_and_ingestion_receipts",
+] as const;
+const RIGHTS_ASSET_DEPENDENCIES = ["projects_assets_and_generated_artifacts"] as const;
+const GOVERNANCE_FINALIZATION_SURFACES = [
+  "memberships_invitations_and_role_assignments",
+  "audit_exports_imports_and_governance_receipts",
+] as const;
+const WORKSPACE_IDENTITY_SURFACE = "workspace_identity" as const;
+const PRESERVED_RIGHTS_ERASURE_RECORDS = [
+  "generation_rights_erasure_tombstones",
+  "generation_rights_erasure_attempts",
+  "workspace_closures.erase_generation_rights@1 receipts",
+  "workspace_closures.erase_generation_rights@1 audit events",
+  "active workspace_closure resource",
+  "workspace closure completion tombstone",
+  "workspace_closures.process@1 completion receipt",
+  "complete_workspace_closure audit event",
+  "active retention_hold resources",
+  "completed_hold deletion receipts",
+  "retained resource tombstones",
+  "closed_retained completion legal-hold proof",
+] as const;
+
+function isTerminalClosureEffect(effect: WorkspaceClosureEffectOutcome): boolean {
+  if (!effect.evidenceRef?.trim()) return false;
+  if (effect.state === "deleted" || effect.state === "not_found") return true;
+  return effect.state === "retained" && Boolean(effect.legalHoldEvidence);
+}
+
+function isErasedClosureEffect(effect: WorkspaceClosureEffectOutcome): boolean {
+  return (effect.state === "deleted" || effect.state === "not_found") && Boolean(effect.evidenceRef?.trim());
+}
 
 const externalEffectOutcome = z.object({
   state: z.enum(["deleted", "not_found", "retained", "failed_known", "outcome_unknown"]),
@@ -70,6 +106,8 @@ const externalEffectOutcome = z.object({
     policyRevision: z.number().int().positive(),
     evidenceRef: z.string().min(1).max(500),
   }).strict().optional(),
+  preservedRecords: z.array(z.string()).optional(),
+  deletionMode: z.enum(["hard_delete", "canonical_close_redaction"]).optional(),
 }).strict();
 
 async function runClosureEffect(input: {
@@ -171,18 +209,100 @@ export class DrizzleGovernanceWorkspaceClosureAdapter implements GovernanceWorks
     };
   }
 
-  async hardEraseWorkspace(input: { workspaceId: string; closureId: string; idempotencyKey: string; evaluatedAt: Date; retainedResources: Array<{ resourceKind: string; resourceId: string; holdIds: string[] }> }): Promise<WorkspaceHardErasureEvidence> {
-    const effects: WorkspaceClosureEffectOutcome[] = await Promise.all(CLOSURE_CANONICAL_SURFACES.map(async (surface) => ({
-      kind: "workspace_hard_erasure" as const,
+  async hardEraseWorkspace(input: { workspaceId: string; closureId: string; closureLease: { id: string; fence: number; expiresAt: string }; idempotencyKey: string; evaluatedAt: Date; retainedResources: Array<{ resourceKind: string; resourceId: string; holdIds: string[] }> }): Promise<WorkspaceHardErasureEvidence> {
+    const blocked = (surface: (typeof CLOSURE_CANONICAL_SURFACES)[number], reason: string): WorkspaceClosureEffectOutcome => ({
+      kind: "workspace_hard_erasure",
       targetId: surface,
       idempotencyKey: `${input.idempotencyKey}:${surface}`,
       attempts: 1,
       attemptedAt: input.evaluatedAt.toISOString(),
-      ...await runClosureEffect({
+      state: "failed_known",
+      reason,
+    });
+    const propagateRetention = (surface: (typeof CLOSURE_CANONICAL_SURFACES)[number], dependencies: WorkspaceClosureEffectOutcome[]): WorkspaceClosureEffectOutcome | null => {
+      if (!dependencies.every(isTerminalClosureEffect)) return null;
+      const retained = dependencies.filter((effect) => effect.state === "retained" && effect.legalHoldEvidence);
+      if (!retained.length) return null;
+      const policyRevisions = new Set(retained.map((effect) => effect.legalHoldEvidence!.policyRevision));
+      if (policyRevisions.size !== 1) return null;
+      const proof = canonicalDigest({
+        schema: "workspace-closure-propagated-retention/v1",
+        workspaceId: input.workspaceId,
+        closureId: input.closureId,
+        surface,
+        dependencies: retained.map((effect) => ({ targetId: effect.targetId, evidenceRef: effect.evidenceRef, legalHoldEvidence: effect.legalHoldEvidence })),
+      });
+      return {
+        kind: "workspace_hard_erasure",
+        targetId: surface,
+        idempotencyKey: `${input.idempotencyKey}:${surface}`,
+        attempts: 1,
+        attemptedAt: input.evaluatedAt.toISOString(),
+        state: "retained",
+        reason: "DEPENDENCY_LEGALLY_RETAINED",
+        evidenceRef: proof,
+        legalHoldEvidence: {
+          holdIds: [...new Set(retained.flatMap((effect) => effect.legalHoldEvidence!.holdIds))].sort(),
+          policyRevision: retained[0]!.legalHoldEvidence!.policyRevision,
+          evidenceRef: proof,
+        },
+      };
+    };
+    const erase = async (surface: (typeof CLOSURE_CANONICAL_SURFACES)[number]): Promise<WorkspaceClosureEffectOutcome> => {
+      const outcome = await runClosureEffect({
         path: "/v1/workspaces/hard-erase",
-        body: { schema: "workspace-closure-hard-erasure/v1", workspaceId: input.workspaceId, closureId: input.closureId, surface, retainedResources: input.retainedResources, idempotencyKey: `${input.idempotencyKey}:${surface}`, evaluatedAt: input.evaluatedAt.toISOString() },
-      }),
-    })));
+        body: { schema: "workspace-closure-hard-erasure/v2", workspaceId: input.workspaceId, closureId: input.closureId, closureLease: input.closureLease, surface, retainedResources: input.retainedResources, preserveRecords: PRESERVED_RIGHTS_ERASURE_RECORDS, idempotencyKey: `${input.idempotencyKey}:${surface}`, evaluatedAt: input.evaluatedAt.toISOString() },
+      });
+      const preserved = new Set(outcome.preservedRecords ?? []);
+      const preservationProven = PRESERVED_RIGHTS_ERASURE_RECORDS.every((record) => preserved.has(record));
+      const requiresPreservationProof = GOVERNANCE_FINALIZATION_SURFACES.includes(surface as (typeof GOVERNANCE_FINALIZATION_SURFACES)[number]) || surface === WORKSPACE_IDENTITY_SURFACE;
+      const contractFailure = requiresPreservationProof && !preservationProven
+        ? "CLOSURE_PROOF_PRESERVATION_NOT_PROVEN"
+        : surface === WORKSPACE_IDENTITY_SURFACE && outcome.deletionMode !== "canonical_close_redaction"
+          ? "WORKSPACE_IDENTITY_MUST_USE_CANONICAL_CLOSE_REDACTION"
+          : null;
+      return {
+        kind: "workspace_hard_erasure" as const,
+        targetId: surface,
+        idempotencyKey: `${input.idempotencyKey}:${surface}`,
+        attempts: 1,
+        attemptedAt: input.evaluatedAt.toISOString(),
+        ...(contractFailure ? { state: "failed_known" as const, reason: contractFailure } : outcome),
+      };
+    };
+    const prerequisiteEffects: WorkspaceClosureEffectOutcome[] = [];
+    for (const surface of DIRECT_RIGHTS_DEPENDENCIES) {
+      prerequisiteEffects.push(prerequisiteEffects.every(isErasedClosureEffect)
+        ? await erase(surface)
+        : propagateRetention(surface, prerequisiteEffects) ?? blocked(surface, "PRIOR_RIGHTS_DEPENDENCY_NOT_ERASED"));
+    }
+    const prerequisitesErased = prerequisiteEffects.every((effect) =>
+      (effect.state === "deleted" || effect.state === "not_found") && Boolean(effect.evidenceRef?.trim()),
+    );
+    const rightsEffect = prerequisitesErased
+      ? await erase(GENERATION_RIGHTS_SURFACE)
+      : propagateRetention(GENERATION_RIGHTS_SURFACE, prerequisiteEffects) ?? blocked(GENERATION_RIGHTS_SURFACE, "DEPENDENCY_SURFACES_NOT_ERASED");
+    const completed = new Set<string>([
+      ...DIRECT_RIGHTS_DEPENDENCIES,
+      GENERATION_RIGHTS_SURFACE,
+      ...RIGHTS_ASSET_DEPENDENCIES,
+      ...GOVERNANCE_FINALIZATION_SURFACES,
+      WORKSPACE_IDENTITY_SURFACE,
+    ]);
+    const remainingSurfaces = CLOSURE_CANONICAL_SURFACES.filter((surface) => !completed.has(surface));
+    const remainingEffects = await Promise.all(remainingSurfaces.map(erase));
+    const preAssetEffects = [...prerequisiteEffects, rightsEffect, ...remainingEffects];
+    const assetEffects = preAssetEffects.every(isErasedClosureEffect)
+      ? await Promise.all(RIGHTS_ASSET_DEPENDENCIES.map(erase))
+      : RIGHTS_ASSET_DEPENDENCIES.map((surface) => propagateRetention(surface, preAssetEffects) ?? blocked(surface, "ASSET_REFERENCING_SURFACES_NOT_TERMINAL"));
+    const preGovernanceEffects = [...preAssetEffects, ...assetEffects];
+    const governanceEffects = preGovernanceEffects.every(isTerminalClosureEffect)
+      ? await Promise.all(GOVERNANCE_FINALIZATION_SURFACES.map(erase))
+      : GOVERNANCE_FINALIZATION_SURFACES.map((surface) => blocked(surface, "PRIOR_ERASURE_PHASE_NOT_TERMINAL"));
+    const identityEffect = governanceEffects.every(isTerminalClosureEffect)
+      ? await erase(WORKSPACE_IDENTITY_SURFACE)
+      : blocked(WORKSPACE_IDENTITY_SURFACE, "GOVERNANCE_ERASURE_NOT_TERMINAL");
+    const effects = [...prerequisiteEffects, rightsEffect, ...remainingEffects, ...assetEffects, ...governanceEffects, identityEffect];
     return {
       schema: "workspace-hard-erasure-evidence/v1",
       effects,

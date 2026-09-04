@@ -47,10 +47,11 @@ function hasErasureProof(effect: WorkspaceClosureEffectOutcome): boolean {
 function hasLegalRetentionProof(
   effect: WorkspaceClosureEffectOutcome,
   retainedResources: Array<{ holdIds: string[] }>,
+  activePolicyRevision: number,
 ): boolean {
   if (effect.state !== "retained" || !effect.evidenceRef?.trim()) return false;
   const evidence = effect.legalHoldEvidence;
-  if (!evidence || evidence.policyRevision < 1 || !evidence.evidenceRef.trim() || evidence.holdIds.length === 0) return false;
+  if (!evidence || evidence.policyRevision !== activePolicyRevision || !evidence.evidenceRef.trim() || evidence.holdIds.length === 0) return false;
   const activeHoldIds = new Set(retainedResources.flatMap((resource) => resource.holdIds));
   return evidence.holdIds.every((holdId) => activeHoldIds.has(holdId));
 }
@@ -66,6 +67,7 @@ interface ClosureBody {
   hardErasureEvidence?: WorkspaceHardErasureEvidence | null;
   completionEvidence: Record<string, unknown> | null;
   lease: ClosureLease | null;
+  leaseFence?: number;
   [key: string]: unknown;
 }
 
@@ -100,6 +102,7 @@ export interface GovernanceWorkspaceClosureAdapter {
   hardEraseWorkspace(input: {
     workspaceId: string;
     closureId: string;
+    closureLease: ClosureLease;
     idempotencyKey: string;
     evaluatedAt: Date;
     retainedResources: Array<{ resourceKind: string; resourceId: string; holdIds: string[] }>;
@@ -172,7 +175,16 @@ export class GovernanceWorkspaceClosureWorker {
     if (job.body.erasureScheduled) return false;
     const policy = await this.repository.getResource<{ revisions: Array<{ revision: number; rules: RetentionRule[] }>; activeRevision: number }>({ workspaceId: job.workspaceId, kind: "retention_policy", id: "active" });
     const revision = policy?.body.revisions.find((candidate) => candidate.revision === policy.body.activeRevision);
-    if (!policy || policy.status !== "active" || !revision || revision.rules.some((rule) => TRUSTED_RETENTION_LEGAL_FLOORS[rule.retentionClass] !== rule.legalFloorDays)) {
+    if (
+      !policy ||
+      policy.status !== "active" ||
+      !revision ||
+      revision.rules.length !== Object.keys(TRUSTED_RETENTION_LEGAL_FLOORS).length ||
+      Object.entries(TRUSTED_RETENTION_LEGAL_FLOORS).some(([retentionClass, legalFloorDays]) => {
+        const rules = revision.rules.filter((rule) => rule.retentionClass === retentionClass);
+        return rules.length !== 1 || rules[0]!.legalFloorDays !== legalFloorDays;
+      })
+    ) {
       await this.release(job, "waiting_retention_policy", { ...job.body, accessRevocationEvidence: revocation }, now, "closure_waiting_retention_policy");
       return true;
     }
@@ -285,9 +297,32 @@ export class GovernanceWorkspaceClosureWorker {
         ? [{ resourceKind: body.resourceKind, resourceId: body.resourceId, holdIds: [...(body.holdIds ?? [])].sort() }]
         : [];
     });
+    const policy = await this.repository.getResource<{ activeRevision: number }>({ workspaceId: job.workspaceId, kind: "retention_policy", id: "active" });
+    const activeRevision = Number.isInteger(policy?.body.activeRevision) ? policy!.body.activeRevision : 0;
+    const activeHolds = await this.repository.listResources<{ retentionClasses?: string[]; scopeReview?: { schema?: string; reviewedAgainstPolicyRevision?: number; generationRightsEvidence?: string } | null; expiresAt?: string | null }>({ workspaceId: job.workspaceId, kinds: ["retention_hold"], status: "active" });
+    const rightsHoldIds = activeHolds.filter((hold) => {
+      const expiry = hold.body.expiresAt;
+      if (expiry) {
+        const parsed = new Date(expiry);
+        if (!Number.isNaN(parsed.getTime()) && parsed <= now) return false;
+      }
+      const classes = Array.isArray(hold.body.retentionClasses) ? hold.body.retentionClasses : [];
+      if (classes.includes("generation_rights_evidence")) return true;
+      const review = hold.body.scopeReview;
+      return review?.schema !== "retention-hold-scope-review/v2"
+        || review.reviewedAgainstPolicyRevision !== activeRevision
+        || review.generationRightsEvidence !== "not_applicable";
+    }).map((hold) => hold.id).sort();
+    if (rightsHoldIds.length) retainedResources.push({
+      resourceKind: "generation_rights_evidence",
+      resourceId: `workspace:${job.workspaceId}`,
+      holdIds: rightsHoldIds,
+    });
+    if (!job.body.lease) throw new Error("Workspace closure lease unavailable during hard erasure.");
     const hardErasureAttempt = await this.adapter.hardEraseWorkspace({
       workspaceId: job.workspaceId,
       closureId: job.id,
+      closureLease: job.body.lease,
       idempotencyKey: `workspace-closure:${job.id}:hard-erasure`,
       evaluatedAt: now,
       retainedResources,
@@ -303,7 +338,7 @@ export class GovernanceWorkspaceClosureWorker {
       hardErasure.effects.length !== hardErasure.surfaces.length ||
       new Set(hardErasure.effects.map((effect) => effect.targetId)).size !== hardErasure.surfaces.length ||
       hardErasure.effects.some((effect) => effect.kind !== "workspace_hard_erasure" || !hardErasure.surfaces.includes(effect.targetId)) ||
-      hardErasure.effects.some((effect) => !hasErasureProof(effect) && !hasLegalRetentionProof(effect, retainedResources))
+      hardErasure.effects.some((effect) => !hasErasureProof(effect) && !hasLegalRetentionProof(effect, retainedResources, activeRevision))
     ) {
       await this.release(job, "waiting_erasure", { ...job.body, accessRevocationEvidence: revocation, hardErasureEvidence: hardErasure }, now, "closure_waiting_hard_erasure");
       return;
@@ -326,7 +361,7 @@ export class GovernanceWorkspaceClosureWorker {
         holdIds: (receipt.body as { holdIds?: string[] }).holdIds ?? [],
         outcomes: (receipt.body as { outcomes?: Record<string, unknown> }).outcomes ?? {},
       })).sort((left, right) => left.id.localeCompare(right.id)),
-      holds: deletions.flatMap((receipt) => (receipt.body as { holdIds?: string[] }).holdIds ?? []).sort(),
+      holds: [...new Set(retainedResources.flatMap((resource) => resource.holdIds))].sort(),
       legalHoldEvidence: legallyRetainedEffects.map((effect) => ({
         surface: effect.targetId,
         holdIds: [...(effect.legalHoldEvidence?.holdIds ?? [])].sort(),
@@ -361,8 +396,10 @@ export class GovernanceWorkspaceClosureWorker {
     const now = this.clock.now();
     if (job.body.lease && new Date(job.body.lease.expiresAt) > now) return null;
     if (!["erasure_queued", "erasure_running", "waiting_retention_policy", "waiting_erasure", "waiting_export"].includes(job.status)) return null;
-    const lease: ClosureLease = { id: `lease_${randomUUID().replaceAll("-", "")}`, fence: (job.body.lease?.fence ?? 0) + 1, expiresAt: new Date(now.getTime() + LEASE_MS).toISOString() };
-    const next = updated(job, "erasure_running", { ...job.body, lease }, now);
+    const recordedFence = Number.isSafeInteger(job.body.leaseFence) && job.body.leaseFence! >= 0 ? job.body.leaseFence! : 0;
+    const legacyLeaseFence = Number.isSafeInteger(job.body.lease?.fence) && job.body.lease!.fence >= 0 ? job.body.lease!.fence : 0;
+    const lease: ClosureLease = { id: `lease_${randomUUID().replaceAll("-", "")}`, fence: Math.max(recordedFence, legacyLeaseFence) + 1, expiresAt: new Date(now.getTime() + LEASE_MS).toISOString() };
+    const next = updated(job, "erasure_running", { ...job.body, lease, leaseFence: lease.fence }, now);
     const outcome = await this.repository.commit({
       receipt: { workspaceId: job.workspaceId, capability: "workspace_closures.claim@1", idempotencyKey: `closure-claim-${job.id}-${job.version}-${lease.id}`, requestDigest: canonicalDigest({ closureId: job.id, version: job.version, lease }), result: { closureId: job.id, lease }, createdAt: now },
       mutations: [{ type: "update", expectedVersion: job.version, resource: next }],

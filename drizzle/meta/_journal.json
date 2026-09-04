@@ -799,6 +799,13 @@
       "when": 1788658800000,
       "tag": "0113_workflow_run_studio_asset_snapshot",
       "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1788662400000,
+      "tag": "0114_generation_rights_evidence_erasure",
+      "breakpoints": true
     }
   ]
 }

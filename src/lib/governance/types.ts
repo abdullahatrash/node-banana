@@ -284,6 +284,7 @@ export const RETENTION_CLASSES = [
   "workspace_media",
   "published_lineage",
   "consent_evidence",
+  "generation_rights_evidence",
   "security_evidence",
   "billing_tax_evidence",
   "provider_diagnostic",

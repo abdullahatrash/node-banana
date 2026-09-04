@@ -43,7 +43,7 @@ import {
   projectGovernanceAuditEvent,
   projectGovernanceResource,
 } from "./projection";
-import { TRUSTED_RETENTION_LEGAL_FLOORS, trustedRetentionRule } from "./retention-policy";
+import { MAX_RETENTION_DURATION_DAYS, normalizeRetentionPolicyRules, TRUSTED_RETENTION_LEGAL_FLOORS, trustedRetentionRule } from "./retention-policy";
 import { EMPTY_GOVERNANCE_AUDIT_FEDERATION, type GovernanceAuditFederationPort } from "./audit-federation";
 import { UNCONFIGURED_GOVERNANCE_RETENTION_RESOURCE_PORT, type GovernanceRetentionResourcePort } from "./retention-resource";
 
@@ -713,6 +713,7 @@ export class GovernanceService {
             accessRevocationEvidence: null,
             completionEvidence: null,
             lease: null,
+            leaseFence: 0,
           }),
           create("workspace_export", exportId, "queued", {
             ...await this.exportJobBody(actor, "workspace", null, null, now, { includeKinds, closureId: closure.id }),
@@ -886,12 +887,13 @@ export class GovernanceService {
       }
       case "publish_retention_policy": {
         await this.requireStepUp(actor, "retention.manage", null, command.stepUpToken);
-        this.validateRetention(command.rules);
-        const trustedRules = command.rules.map(trustedRetentionRule);
+        const compatibleRules = normalizeRetentionPolicyRules(command.rules);
+        this.validateRetention(compatibleRules);
+        const trustedRules = compatibleRules.map(trustedRetentionRule);
         const id = "active";
         const current = await this.repository.getResource<{ revisions: unknown[] }>({ workspaceId: actor.workspaceId, kind: "retention_policy", id });
         if (current && command.expectedVersion !== current.version) throw new GovernanceError("CONFLICT", "Retention Policy changed.");
-        const revision = { schema: "retention-policy-revision/v1", revision: (current?.body.revisions.length ?? 0) + 1, rules: trustedRules, legalFloorSource: "deployment_trusted/v1", createdByUserId: actor.userId, createdAt: now.toISOString() };
+        const revision = { schema: "retention-policy-revision/v2", revision: (current?.body.revisions.length ?? 0) + 1, rules: trustedRules, legalFloorSource: "deployment_trusted/v2", createdByUserId: actor.userId, createdAt: now.toISOString() };
         const body = { revisions: [...(current?.body.revisions ?? []), revision], activeRevision: revision.revision };
         mutations = [current ? update(current, "active", body) : create("retention_policy", id, "active", body)];
         result = { policyId: id, revision };
@@ -900,10 +902,13 @@ export class GovernanceService {
       }
       case "create_retention_hold": {
         await this.requireStepUp(actor, "retention.manage", null, command.stepUpToken);
-        const classes = unique(command.retentionClasses);
+        // @1 has no explicit, revision-bound way to declare the new rights
+        // class inapplicable. Conservatively include it; a future @2 command
+        // may carry a reviewed scope decision instead of guessing from omission.
+        const classes = unique([...command.retentionClasses, "generation_rights_evidence" as const]);
         if (!classes.length || classes.some((item) => !(RETENTION_CLASSES as readonly string[]).includes(item))) throw new GovernanceError("INVALID_INPUT", "Retention hold classes are invalid.");
         const id = newId("hold");
-        mutations = [create("retention_hold", id, "active", { retentionClasses: classes, reason: text(command.reason, "Hold reason", 500), expiresAt: command.expiresAt ? exactDate(command.expiresAt, "Hold expiry").toISOString() : null, releasedAt: null })];
+        mutations = [create("retention_hold", id, "active", { retentionClasses: classes, scopeReview: null, reason: text(command.reason, "Hold reason", 500), expiresAt: command.expiresAt ? exactDate(command.expiresAt, "Hold expiry").toISOString() : null, releasedAt: null })];
         result = { holdId: id, status: "active" };
         target = { kind: "retention_hold", id };
         break;
@@ -1331,7 +1336,7 @@ export class GovernanceService {
     if (rules.length !== RETENTION_CLASSES.length || unique(rules.map((rule) => rule.retentionClass)).length !== RETENTION_CLASSES.length) throw new GovernanceError("INVALID_INPUT", "Every Retention Class requires exactly one rule.");
     for (const rule of rules) {
       const trustedFloor = TRUSTED_RETENTION_LEGAL_FLOORS[rule.retentionClass];
-      if (!RETENTION_CLASSES.includes(rule.retentionClass) || rule.legalFloorDays !== trustedFloor || !Number.isInteger(rule.durationDays) || rule.durationDays < trustedFloor || rule.recoverableDays < 0 || rule.recoverableDays > rule.durationDays) throw new GovernanceError("INVALID_INPUT", "Retention rule violates the deployment-trusted legal floor or bounds.");
+      if (!RETENTION_CLASSES.includes(rule.retentionClass) || rule.legalFloorDays !== trustedFloor || !Number.isInteger(rule.durationDays) || rule.durationDays < trustedFloor || rule.durationDays > MAX_RETENTION_DURATION_DAYS || !Number.isInteger(rule.recoverableDays) || rule.recoverableDays < 0 || rule.recoverableDays > rule.durationDays) throw new GovernanceError("INVALID_INPUT", "Retention rule violates the deployment-trusted legal floor or bounds.");
     }
   }
 
