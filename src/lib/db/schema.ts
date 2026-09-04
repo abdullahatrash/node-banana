@@ -1084,8 +1084,11 @@ export const agentGrantSets = pgTable(
     activeRevision: integer("active_revision"),
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
     createdByUserId: text("created_by_user_id")
-      .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
+    createdBySystemActorId: text("created_by_system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -1103,6 +1106,12 @@ export const agentGrantSets = pgTable(
     principalUnique: uniqueIndex("agent_grant_sets_principal_unique").on(
       table.principalId,
     ),
+    workspacePrincipalIdUnique: uniqueIndex("agent_grant_sets_workspace_principal_id_unique").on(table.workspaceId, table.principalId, table.id),
+    actorCheck: check(
+      "agent_grant_sets_actor_check",
+      sql`(${table.createdByUserId} is not null and ${table.createdBySystemActorId} is null and ${table.initiatingUserId} is null)
+        or (${table.createdByUserId} is null and ${table.createdBySystemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -1116,8 +1125,11 @@ export const agentGrantRevisions = pgTable(
     revision: integer("revision").notNull(),
     grants: jsonb("grants").$type<StoredAgentCapabilityGrant[]>().notNull(),
     createdByUserId: text("created_by_user_id")
-      .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
+    createdBySystemActorId: text("created_by_system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -1128,6 +1140,12 @@ export const agentGrantRevisions = pgTable(
       table.revision,
     ),
     setIdx: index("agent_grant_revisions_set_idx").on(table.grantSetId),
+    setIdUnique: uniqueIndex("agent_grant_revisions_set_id_unique").on(table.grantSetId, table.id),
+    actorCheck: check(
+      "agent_grant_revisions_actor_check",
+      sql`(${table.createdByUserId} is not null and ${table.createdBySystemActorId} is null and ${table.initiatingUserId} is null)
+        or (${table.createdByUserId} is null and ${table.createdBySystemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -1142,8 +1160,11 @@ export const workspaceAgentPolicyRevisions = pgTable(
     enabled: boolean("enabled").notNull(),
     grants: jsonb("grants").$type<StoredAgentCapabilityGrant[]>().notNull(),
     createdByUserId: text("created_by_user_id")
-      .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
+    createdBySystemActorId: text("created_by_system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -1155,6 +1176,11 @@ export const workspaceAgentPolicyRevisions = pgTable(
     workspaceIdUnique: uniqueIndex(
       "workspace_agent_policy_revisions_workspace_id_unique",
     ).on(table.workspaceId, table.id),
+    actorCheck: check(
+      "workspace_agent_policy_revisions_actor_check",
+      sql`(${table.createdByUserId} is not null and ${table.createdBySystemActorId} is null and ${table.initiatingUserId} is null)
+        or (${table.createdByUserId} is null and ${table.createdBySystemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -1169,8 +1195,11 @@ export const workspaceAgentPolicies = pgTable(
     enabled: boolean("enabled").default(false).notNull(),
     grants: jsonb("grants").$type<StoredAgentCapabilityGrant[]>().notNull(),
     updatedByUserId: text("updated_by_user_id")
-      .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
+    updatedBySystemActorId: text("updated_by_system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -1184,6 +1213,11 @@ export const workspaceAgentPolicies = pgTable(
       ],
       name: "workspace_agent_policies_active_revision_workspace_fk",
     }).onDelete("restrict"),
+    actorCheck: check(
+      "workspace_agent_policies_actor_check",
+      sql`(${table.updatedByUserId} is not null and ${table.updatedBySystemActorId} is null and ${table.initiatingUserId} is null)
+        or (${table.updatedByUserId} is null and ${table.updatedBySystemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -6212,6 +6246,10 @@ export const agentSecurityEvents = pgTable(
     actorUserId: text("actor_user_id").references(() => user.id, {
       onDelete: "restrict",
     }),
+    systemActorId: text("system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     eventType: text("event_type").notNull(),
     capabilityName: text("capability_name").notNull(),
     capabilityVersion: integer("capability_version").notNull(),
@@ -6231,6 +6269,10 @@ export const agentSecurityEvents = pgTable(
     principalCreatedIdx: index(
       "agent_security_events_principal_created_idx",
     ).on(table.principalId, table.createdAt),
+    systemActorCheck: check(
+      "agent_security_events_system_actor_check",
+      sql`${table.systemActorId} is null or (${table.actorUserId} is null and ${table.systemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -6270,6 +6312,66 @@ export const agentAuthorityProvisioningReceipts = pgTable(
     requestUnique: uniqueIndex(
       "agent_authority_provisioning_receipts_request_unique",
     ).on(table.workspaceId, table.actorUserId, table.requestId),
+  }),
+);
+
+export const builtInAgentAuthorityProvisioningReceipts = pgTable(
+  "built_in_agent_authority_provisioning_receipts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    purpose: text("purpose").notNull(),
+    systemActorId: text("system_actor_id").notNull(),
+    initiatingUserId: text("initiating_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    sponsorUserId: text("sponsor_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    keyId: text("key_id").notNull().references(() => agentKeys.id, { onDelete: "restrict" }),
+    grantSetId: text("grant_set_id").notNull().references(() => agentGrantSets.id, { onDelete: "restrict" }),
+    grantRevisionId: text("grant_revision_id").notNull().references(() => agentGrantRevisions.id, { onDelete: "restrict" }),
+    grantRevision: integer("grant_revision").notNull(),
+    policyRevisionId: text("policy_revision_id").notNull().references(() => workspaceAgentPolicyRevisions.id, { onDelete: "restrict" }),
+    policyRevision: integer("policy_revision").notNull(),
+    capability: text("capability").notNull(),
+    authorizationContractDigest: text("authorization_contract_digest").notNull(),
+    resources: jsonb("resources").$type<StoredAgentResourceConstraints>().notNull(),
+    requestId: text("request_id").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    principalFk: foreignKey({
+      name: "built_in_agent_authority_receipts_principal_fk",
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+    }).onDelete("restrict"),
+    keyFk: foreignKey({
+      name: "built_in_agent_authority_receipts_key_fk",
+      columns: [table.principalId, table.keyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+    }).onDelete("restrict"),
+    grantSetFk: foreignKey({
+      name: "built_in_agent_authority_receipts_grant_set_fk",
+      columns: [table.workspaceId, table.principalId, table.grantSetId],
+      foreignColumns: [agentGrantSets.workspaceId, agentGrantSets.principalId, agentGrantSets.id],
+    }).onDelete("restrict"),
+    grantRevisionFk: foreignKey({
+      name: "built_in_agent_authority_receipts_grant_revision_fk",
+      columns: [table.grantSetId, table.grantRevisionId],
+      foreignColumns: [agentGrantRevisions.grantSetId, agentGrantRevisions.id],
+    }).onDelete("restrict"),
+    policyRevisionFk: foreignKey({
+      name: "built_in_agent_authority_receipts_policy_revision_fk",
+      columns: [table.workspaceId, table.policyRevisionId],
+      foreignColumns: [workspaceAgentPolicyRevisions.workspaceId, workspaceAgentPolicyRevisions.id],
+    }).onDelete("restrict"),
+    requestUnique: uniqueIndex("built_in_agent_authority_receipts_request_unique").on(table.workspaceId, table.purpose, table.requestId),
+    keyUnique: uniqueIndex("built_in_agent_authority_receipts_key_unique").on(table.keyId),
+    initiatorIdx: index("built_in_agent_authority_receipts_initiator_idx").on(table.workspaceId, table.initiatingUserId, table.createdAt),
+    purposeCheck: check("built_in_agent_authority_receipts_purpose_check", sql`(${table.purpose} = 'content_workflow' and ${table.capability} = 'workflow_runs.start@2') or (${table.purpose} = 'calendar_reschedule' and ${table.capability} = 'publishing_plan_revisions.create@1')`),
+    actorCheck: check("built_in_agent_authority_receipts_actor_check", sql`${table.systemActorId} = 'tasmeemai:builtin-service-authority@1'`),
+    digestCheck: check("built_in_agent_authority_receipts_digest_check", sql`${table.authorizationContractDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`),
+    revisionCheck: check("built_in_agent_authority_receipts_revision_check", sql`${table.grantRevision} > 0 and ${table.policyRevision} > 0`),
+    resourcesCheck: check("built_in_agent_authority_receipts_resources_check", sql`jsonb_typeof(${table.resources}) = 'object' and ${table.resources} ?& array['channelIds','credentialProfileIds','workflowIds','automationIds','artifactIds'] and (${table.resources} - array['channelIds','credentialProfileIds','workflowIds','automationIds','artifactIds']) = '{}'::jsonb and jsonb_typeof(${table.resources}->'channelIds') = 'array' and jsonb_typeof(${table.resources}->'credentialProfileIds') = 'array' and jsonb_typeof(${table.resources}->'workflowIds') = 'array' and jsonb_typeof(${table.resources}->'automationIds') = 'array' and jsonb_typeof(${table.resources}->'artifactIds') = 'array' and ((${table.purpose} = 'content_workflow' and ${table.resources}->'channelIds' = '[]'::jsonb and ${table.resources}->'credentialProfileIds' = '[]'::jsonb and ${table.resources}->'automationIds' = '[]'::jsonb) or (${table.purpose} = 'calendar_reschedule' and ${table.resources}->'credentialProfileIds' = '[]'::jsonb and ${table.resources}->'workflowIds' = '[]'::jsonb and ${table.resources}->'automationIds' = '[]'::jsonb))`),
   }),
 );
 

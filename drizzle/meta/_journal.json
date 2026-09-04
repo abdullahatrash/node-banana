@@ -771,6 +771,13 @@
       "when": 1788644400000,
       "tag": "0109_content_model_policy_supersession",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1788648000000,
+      "tag": "0110_builtin_service_agent_authority",
+      "breakpoints": true
     }
   ]
 }

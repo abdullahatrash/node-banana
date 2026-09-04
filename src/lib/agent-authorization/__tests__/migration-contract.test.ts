@@ -117,6 +117,19 @@ describe("Agent authorization migration contracts", () => {
     expect(sql).not.toContain("secret_hash");
   });
 
+  it("records built-in service authority as system action with separate human initiation", () => {
+    const sql = migration("0110_builtin_service_agent_authority.sql");
+    expect(sql).toContain('CREATE TABLE "built_in_agent_authority_provisioning_receipts"');
+    expect(sql).toContain('"system_actor_id" text NOT NULL');
+    expect(sql).toContain('"initiating_user_id" text NOT NULL');
+    expect(sql).toContain('ALTER TABLE "agent_security_events" ADD COLUMN "system_actor_id"');
+    expect(sql).toContain("agent_security_events_system_actor_check");
+    expect(sql).toContain("tasmeemai:builtin-service-authority@1");
+    expect(sql).toContain("built_in_agent_authority_receipts_immutable");
+    expect(sql).not.toContain("plaintext");
+    expect(sql).not.toContain("secret_hash");
+  });
+
   it("locks the Workspace before reading absent policy state", () => {
     const source = readFileSync(
       resolve(

@@ -546,6 +546,9 @@ export class InMemoryAgentAuthorizationRepository
     grantSet: AgentGrantSetRecord;
     revision: AgentGrantRevisionRecord;
   }): Promise<void> {
+    if (!input.grantSet.createdByUserId || !input.revision.createdByUserId) {
+      throw new Error("Workspace owner or admin authority is required.");
+    }
     if (
       !this.administrators.has(
         `${input.grantSet.workspaceId}:${input.grantSet.createdByUserId}`,
@@ -580,6 +583,7 @@ export class InMemoryAgentAuthorizationRepository
     revision: AgentGrantRevisionRecord;
     activatedAt: Date;
   }): Promise<boolean> {
+    if (!input.revision.createdByUserId) return false;
     const grantSet = this.grantSets.get(input.grantSetId);
     if (
       !grantSet ||
@@ -604,6 +608,9 @@ export class InMemoryAgentAuthorizationRepository
   async putWorkspacePolicy(
     policy: WorkspaceAgentPolicyRecord,
   ): Promise<WorkspaceAgentPolicyRecord> {
+    if (!policy.updatedByUserId) {
+      throw new Error("Workspace owner or admin authority is required.");
+    }
     if (
       !this.administrators.has(
         `${policy.workspaceId}:${policy.updatedByUserId}`,

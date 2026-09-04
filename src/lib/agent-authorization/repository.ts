@@ -822,6 +822,8 @@ export class DrizzleAgentAuthorizationRepository
             enabled: true,
             grants: input.policyGrants,
             updatedByUserId: input.actorUserId,
+            updatedBySystemActorId: null,
+            initiatingUserId: null,
             updatedAt: input.now,
           },
         });
@@ -948,6 +950,10 @@ export class DrizzleAgentAuthorizationRepository
     grantSet: AgentGrantSetRecord;
     revision: AgentGrantRevisionRecord;
   }): Promise<void> {
+    if (!input.grantSet.createdByUserId || !input.revision.createdByUserId) {
+      throw new Error("Workspace owner or admin authority is required.");
+    }
+    const actorUserId = input.grantSet.createdByUserId;
     await this.getDatabase().transaction(async (tx) => {
       const allowed = await tx
         .select({ role: workspaceMembers.role })
@@ -957,7 +963,7 @@ export class DrizzleAgentAuthorizationRepository
             eq(workspaceMembers.workspaceId, input.grantSet.workspaceId),
             eq(
               workspaceMembers.userId,
-              input.grantSet.createdByUserId,
+              actorUserId,
             ),
           ),
         )
@@ -1008,6 +1014,8 @@ export class DrizzleAgentAuthorizationRepository
     revision: AgentGrantRevisionRecord;
     activatedAt: Date;
   }): Promise<boolean> {
+    if (!input.revision.createdByUserId) return false;
+    const actorUserId = input.revision.createdByUserId;
     return this.getDatabase().transaction(async (tx) => {
       const allowed = await tx
         .select({ role: workspaceMembers.role })
@@ -1015,7 +1023,7 @@ export class DrizzleAgentAuthorizationRepository
         .where(
           and(
             eq(workspaceMembers.workspaceId, input.workspaceId),
-            eq(workspaceMembers.userId, input.revision.createdByUserId),
+            eq(workspaceMembers.userId, actorUserId),
           ),
         )
         .limit(1)
@@ -1069,6 +1077,10 @@ export class DrizzleAgentAuthorizationRepository
   async putWorkspacePolicy(
     policy: WorkspaceAgentPolicyRecord,
   ): Promise<WorkspaceAgentPolicyRecord> {
+    if (!policy.updatedByUserId) {
+      throw new Error("Workspace owner or admin authority is required.");
+    }
+    const actorUserId = policy.updatedByUserId;
     return this.getDatabase().transaction(async (tx) => {
       const allowed = await tx
         .select({ role: workspaceMembers.role })
@@ -1076,7 +1088,7 @@ export class DrizzleAgentAuthorizationRepository
         .where(
           and(
             eq(workspaceMembers.workspaceId, policy.workspaceId),
-            eq(workspaceMembers.userId, policy.updatedByUserId),
+            eq(workspaceMembers.userId, actorUserId),
           ),
         )
         .limit(1)
@@ -1114,6 +1126,8 @@ export class DrizzleAgentAuthorizationRepository
             enabled: stored.enabled,
             grants: stored.grants,
             updatedByUserId: stored.updatedByUserId,
+            updatedBySystemActorId: null,
+            initiatingUserId: null,
             updatedAt: stored.updatedAt,
           },
         });

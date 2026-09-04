@@ -8,15 +8,23 @@ import {
   agentGrantSets,
   agentKeys,
   agentPrincipals,
+  agentSecurityEvents,
+  artifacts,
+  builtInAgentAuthorityProvisioningReceipts,
+  contentWorkflows,
+  socialAccounts,
   workspaceAgentPolicies,
   workspaceMembers,
+  workspaceAgentPolicyRevisions,
+  workspaces,
 } from "@/lib/db/schema";
 import type {
   AgentCapabilityGrant,
   AgentKeyAuthorizationScope,
   AgentResourceConstraints,
 } from "@/types/agentAuthorization";
-import { AGENT_AUTH_SERVICE, AgentAuthError } from "./service";
+import { deriveOpaqueCredential, hashCredentialSecret } from "./crypto";
+import { loadAgentKeyPepperConfig } from "./service";
 
 export type WorkspaceServiceAgentPurpose =
   | "content_workflow"
@@ -42,6 +50,7 @@ export interface WorkspaceServiceAgentCandidate extends WorkspaceServiceAgentAct
   keyCreatedAt: Date;
   requestedAccess: string[];
   authorizationScopes: AgentKeyAuthorizationScope[];
+  workspacePolicyEnabled: boolean;
 }
 
 export interface WorkspaceServiceAgentRepository {
@@ -54,7 +63,7 @@ export interface WorkspaceServiceAgentRepository {
     workspaceId: string;
     purpose: WorkspaceServiceAgentPurpose;
     authority: WorkspaceServiceAgentAuthority;
-    actorUserId: string;
+    initiatingUserId: string;
     now: Date;
   }): Promise<void>;
 }
@@ -72,6 +81,19 @@ const PURPOSE = {
   WorkspaceServiceAgentPurpose,
   { marker: string; capability: string }
 >;
+
+export const BUILT_IN_SERVICE_AUTHORITY_ACTOR_ID = "tasmeemai:builtin-service-authority@1";
+
+export function builtInServiceAuthorityAuditActor(initiatingUserId: string) {
+  if (!initiatingUserId.trim() || initiatingUserId.length > 200) {
+    throw new WorkspaceServiceAgentUnavailableError("content_workflow");
+  }
+  return {
+    actorKind: "built_in_system" as const,
+    systemActorId: BUILT_IN_SERVICE_AUTHORITY_ACTOR_ID,
+    initiatingUserId,
+  };
+}
 
 export function workspaceServiceAgentProvisioningProfile(
   purpose: WorkspaceServiceAgentPurpose,
@@ -94,6 +116,32 @@ function normalizedResources(resources: AgentResourceConstraints): AgentResource
   return Object.fromEntries(
     RESOURCE_KEYS.map((key) => [key, [...new Set(resources[key] ?? [])].sort()]),
   ) as unknown as AgentResourceConstraints;
+}
+
+export function validateWorkspaceServiceAgentAuthority(
+  purpose: WorkspaceServiceAgentPurpose,
+  authority: WorkspaceServiceAgentAuthority,
+): WorkspaceServiceAgentAuthority {
+  const profile = workspaceServiceAgentProvisioningProfile(purpose);
+  const resources = normalizedResources(authority.resources);
+  const forbidden = purpose === "content_workflow"
+    ? [...resources.channelIds, ...resources.credentialProfileIds, ...resources.automationIds]
+    : [...resources.credentialProfileIds, ...resources.workflowIds, ...resources.automationIds];
+  if (
+    authority.capability !== profile.capabilities[0] ||
+    !/^sha256:[a-f0-9]{64}$/.test(authority.authorizationContractDigest) ||
+    forbidden.length > 0
+  ) {
+    throw new WorkspaceServiceAgentUnavailableError(purpose);
+  }
+  return { ...authority, resources };
+}
+
+export function workspaceServiceAgentPrincipalId(
+  workspaceId: string,
+  purpose: WorkspaceServiceAgentPurpose,
+): string {
+  return `service_${canonicalDigest({ schema: "workspace-service-agent-principal/v1", workspaceId, purpose }).slice(7, 39)}`;
 }
 
 function resourcesCover(available: AgentResourceConstraints, required: AgentResourceConstraints): boolean {
@@ -174,22 +222,21 @@ export class WorkspaceServiceAgentResolver {
     provisioningActorUserId: string;
   }): Promise<WorkspaceServiceAgentActor> {
     const profile = workspaceServiceAgentProvisioningProfile(input.purpose);
-    if (input.authority.capability !== profile.capabilities[0]) {
-      throw new WorkspaceServiceAgentUnavailableError(input.purpose);
-    }
+    const authority = validateWorkspaceServiceAgentAuthority(input.purpose, input.authority);
     const now = this.now();
     let candidates = await this.repository.listCandidates({ ...input, now });
-    let eligible = this.eligible(candidates, input, now);
+    let eligible = this.eligible(candidates, { ...input, authority }, now);
     if (!eligible[0]) {
       const marked = candidates.filter((candidate) =>
         candidate.workspaceId === input.workspaceId &&
-        profile.requestedAccess.every((marker) => candidate.requestedAccess.includes(marker)),
+        canonicalDigest(candidate.requestedAccess) === canonicalDigest([...profile.requestedAccess]),
       );
       const bootstrapEligibleActor = marked.some((candidate) =>
         candidate.principalStatus === "active" &&
         !candidate.principalRevokedAt &&
         !candidate.keyRevokedAt &&
-        (!candidate.keyExpiresAt || candidate.keyExpiresAt > now),
+        (!candidate.keyExpiresAt || candidate.keyExpiresAt > now) &&
+        candidate.workspacePolicyEnabled,
       );
       if (marked.length > 0 && !bootstrapEligibleActor) {
         throw new WorkspaceServiceAgentUnavailableError(input.purpose);
@@ -197,13 +244,13 @@ export class WorkspaceServiceAgentResolver {
       await this.repository.provision({
         workspaceId: input.workspaceId,
         purpose: input.purpose,
-        authority: input.authority,
-        actorUserId: input.provisioningActorUserId,
+        authority,
+        initiatingUserId: input.provisioningActorUserId,
         now,
       });
       const refreshedAt = this.now();
       candidates = await this.repository.listCandidates({ ...input, now: refreshedAt });
-      eligible = this.eligible(candidates, input, refreshedAt);
+      eligible = this.eligible(candidates, { ...input, authority }, refreshedAt);
     }
     if (!eligible[0]) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
     eligible.sort((left, right) =>
@@ -221,11 +268,13 @@ export class WorkspaceServiceAgentResolver {
     const profile = workspaceServiceAgentProvisioningProfile(input.purpose);
     return candidates.filter((candidate) =>
       candidate.workspaceId === input.workspaceId &&
+      candidate.principalId === workspaceServiceAgentPrincipalId(input.workspaceId, input.purpose) &&
       candidate.principalStatus === "active" &&
       !candidate.principalRevokedAt &&
       !candidate.keyRevokedAt &&
       (!candidate.keyExpiresAt || candidate.keyExpiresAt > now) &&
-      profile.requestedAccess.every((marker) => candidate.requestedAccess.includes(marker)) &&
+      candidate.workspacePolicyEnabled &&
+      canonicalDigest(candidate.requestedAccess) === canonicalDigest([...profile.requestedAccess]) &&
       candidate.authorizationScopes.some((scope) => scopeCovers(scope, input.authority)),
     );
   }
@@ -233,11 +282,17 @@ export class WorkspaceServiceAgentResolver {
 
 class DrizzleWorkspaceServiceAgentRepository implements WorkspaceServiceAgentRepository {
   async listCandidates(input: { workspaceId: string; purpose: WorkspaceServiceAgentPurpose; now: Date }): Promise<WorkspaceServiceAgentCandidate[]> {
-    const rows = await getDb().select({ principal: agentPrincipals, key: agentKeys })
-      .from(agentPrincipals)
-      .innerJoin(agentKeys, eq(agentKeys.principalId, agentPrincipals.id))
-      .where(eq(agentPrincipals.workspaceId, input.workspaceId))
-      .orderBy(desc(agentKeys.createdAt), desc(agentKeys.id));
+    const [rows, policies] = await Promise.all([
+      getDb().select({ principal: agentPrincipals, key: agentKeys })
+        .from(agentPrincipals)
+        .innerJoin(agentKeys, eq(agentKeys.principalId, agentPrincipals.id))
+        .where(eq(agentPrincipals.workspaceId, input.workspaceId))
+        .orderBy(desc(agentKeys.createdAt), desc(agentKeys.id)),
+      getDb().select({ enabled: workspaceAgentPolicies.enabled })
+        .from(workspaceAgentPolicies)
+        .where(eq(workspaceAgentPolicies.workspaceId, input.workspaceId))
+        .limit(1),
+    ]);
     return rows.map(({ principal, key }) => ({
       workspaceId: principal.workspaceId,
       principalId: principal.id,
@@ -252,88 +307,161 @@ class DrizzleWorkspaceServiceAgentRepository implements WorkspaceServiceAgentRep
         ...scope,
         resources: { ...scope.resources, artifactIds: scope.resources.artifactIds ?? [] },
       })),
+      workspacePolicyEnabled: policies[0]?.enabled === true,
     }));
   }
 
-  async provision(input: { workspaceId: string; purpose: WorkspaceServiceAgentPurpose; authority: WorkspaceServiceAgentAuthority; actorUserId: string; now: Date }): Promise<void> {
+  async provision(input: { workspaceId: string; purpose: WorkspaceServiceAgentPurpose; authority: WorkspaceServiceAgentAuthority; initiatingUserId: string; now: Date }): Promise<void> {
     const profile = workspaceServiceAgentProvisioningProfile(input.purpose);
-    const principalId = `service_${canonicalDigest({ schema: "workspace-service-agent-principal/v1", workspaceId: input.workspaceId, purpose: input.purpose }).slice(7, 39)}`;
-    const principal = await getDb().transaction(async (tx) => {
+    const authority = validateWorkspaceServiceAgentAuthority(input.purpose, input.authority);
+    const auditActor = builtInServiceAuthorityAuditActor(input.initiatingUserId);
+    const principalId = workspaceServiceAgentPrincipalId(input.workspaceId, input.purpose);
+    const requestFingerprint = canonicalDigest({
+      schema: "built-in-agent-authority-provisioning/v1",
+      systemActorId: auditActor.systemActorId,
+      workspaceId: input.workspaceId,
+      purpose: input.purpose,
+      principalId,
+      authority,
+    });
+    const requestId = `built-in:${input.purpose}:${requestFingerprint.slice(7)}`;
+    const pepper = loadAgentKeyPepperConfig();
+    await getDb().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`workspace-service-agent:${input.workspaceId}:${input.purpose}`}, 0))`);
-      const [administrator] = await tx.select({ userId: workspaceMembers.userId })
+      const [workspace] = await tx.select({ id: workspaces.id, ownerUserId: workspaces.ownerUserId })
+        .from(workspaces)
+        .where(and(eq(workspaces.id, input.workspaceId), isNull(workspaces.deletedAt)))
+        .limit(1)
+        .for("update");
+      const [initiator] = await tx.select({ userId: workspaceMembers.userId })
         .from(workspaceMembers)
         .where(and(
           eq(workspaceMembers.workspaceId, input.workspaceId),
-          eq(workspaceMembers.userId, input.actorUserId),
-          inArray(workspaceMembers.role, ["owner", "admin"]),
+          eq(workspaceMembers.userId, input.initiatingUserId),
         ))
         .limit(1);
-      if (!administrator) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
-      await tx.insert(agentPrincipals).values({
-        id: principalId,
-        workspaceId: input.workspaceId,
-        sponsorUserId: administrator.userId,
-        name: input.purpose === "content_workflow" ? "Content Workflow service" : "Calendar Reschedule service",
-        requestedAccess: [...profile.requestedAccess],
-        status: "active",
-        suspendedAt: null,
-        revokedAt: null,
-        createdAt: input.now,
-        updatedAt: input.now,
-      }).onConflictDoNothing();
-      const [stored] = await tx.select().from(agentPrincipals)
-        .where(and(eq(agentPrincipals.id, principalId), eq(agentPrincipals.workspaceId, input.workspaceId))).limit(1);
-      if (!stored || stored.status !== "active" || stored.revokedAt ||
-        !profile.requestedAccess.every((marker) => (stored.requestedAccess ?? []).includes(marker))) {
-        throw new WorkspaceServiceAgentUnavailableError(input.purpose);
-      }
-      return { principalId: stored.id, actorUserId: administrator.userId };
-    });
+      if (!workspace || !initiator) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const [policyRows, grantRows] = await Promise.all([
-        getDb().select().from(workspaceAgentPolicies)
-          .where(eq(workspaceAgentPolicies.workspaceId, input.workspaceId)).limit(1),
-        getDb().select({ set: agentGrantSets, revision: agentGrantRevisions })
-          .from(agentGrantSets)
-          .leftJoin(agentGrantRevisions, and(
-            eq(agentGrantRevisions.grantSetId, agentGrantSets.id),
-            eq(agentGrantRevisions.revision, agentGrantSets.activeRevision),
-          ))
-          .where(and(
-            eq(agentGrantSets.workspaceId, input.workspaceId),
-            eq(agentGrantSets.principalId, principal.principalId),
-            isNull(agentGrantSets.disabledAt),
-          )).limit(1),
-      ]);
-      if (policyRows[0] && !policyRows[0].enabled) {
+      const [receipt] = await tx.select().from(builtInAgentAuthorityProvisioningReceipts)
+        .where(and(
+          eq(builtInAgentAuthorityProvisioningReceipts.workspaceId, input.workspaceId),
+          eq(builtInAgentAuthorityProvisioningReceipts.purpose, input.purpose),
+          eq(builtInAgentAuthorityProvisioningReceipts.requestId, requestId),
+        )).limit(1).for("update");
+      if (receipt) {
+        const [live] = await tx.select({ principal: agentPrincipals, key: agentKeys, set: agentGrantSets, policy: workspaceAgentPolicies })
+          .from(agentPrincipals)
+          .innerJoin(agentKeys, eq(agentKeys.id, receipt.keyId))
+          .innerJoin(agentGrantSets, eq(agentGrantSets.id, receipt.grantSetId))
+          .innerJoin(workspaceAgentPolicies, eq(workspaceAgentPolicies.workspaceId, receipt.workspaceId))
+          .where(and(eq(agentPrincipals.id, receipt.principalId), eq(agentPrincipals.workspaceId, input.workspaceId)))
+          .limit(1);
+        if (
+          receipt.requestFingerprint !== requestFingerprint ||
+          receipt.systemActorId !== auditActor.systemActorId ||
+          !live || live.principal.status !== "active" || live.principal.revokedAt ||
+          live.key.revokedAt || (live.key.expiresAt && live.key.expiresAt <= input.now) ||
+          live.set.disabledAt || !live.policy.enabled
+        ) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
+        return;
+      }
+
+      const [stored] = await tx.select().from(agentPrincipals)
+        .where(eq(agentPrincipals.id, principalId)).limit(1).for("update");
+      let sponsorUserId: string;
+      if (stored) {
+        const [sponsor] = stored.sponsorUserId ? await tx.select({ role: workspaceMembers.role })
+          .from(workspaceMembers)
+          .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, stored.sponsorUserId)))
+          .limit(1) : [];
+        if (
+          stored.workspaceId !== input.workspaceId || stored.status !== "active" || stored.revokedAt ||
+          canonicalDigest(stored.requestedAccess ?? []) !== canonicalDigest([...profile.requestedAccess]) ||
+          !sponsor || !["owner", "admin"].includes(sponsor.role)
+        ) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
+        sponsorUserId = stored.sponsorUserId!;
+      } else {
+        const [owner] = await tx.select({ userId: workspaceMembers.userId })
+          .from(workspaceMembers)
+          .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, workspace.ownerUserId), eq(workspaceMembers.role, "owner")))
+          .limit(1);
+        if (!owner) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
+        sponsorUserId = owner.userId;
+        await tx.insert(agentPrincipals).values({
+          id: principalId,
+          workspaceId: input.workspaceId,
+          sponsorUserId,
+          name: input.purpose === "content_workflow" ? "Content Workflow service" : "Calendar Reschedule service",
+          requestedAccess: [...profile.requestedAccess],
+          status: "active",
+          suspendedAt: null,
+          revokedAt: null,
+          createdAt: input.now,
+          updatedAt: input.now,
+        });
+      }
+
+      const [policyRow] = await tx.select().from(workspaceAgentPolicies)
+        .where(eq(workspaceAgentPolicies.workspaceId, input.workspaceId)).limit(1).for("update");
+      if (policyRow && !policyRow.enabled) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
+      const [setRow] = await tx.select().from(agentGrantSets)
+        .where(and(eq(agentGrantSets.workspaceId, input.workspaceId), eq(agentGrantSets.principalId, principalId)))
+        .limit(1).for("update");
+      if (setRow?.disabledAt) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
+
+      const activeResourceIds = async () => {
+        const [channels, workflows, selectedArtifacts] = await Promise.all([
+          authority.resources.channelIds.length ? tx.select({ id: socialAccounts.id }).from(socialAccounts).where(and(eq(socialAccounts.workspaceId, input.workspaceId), inArray(socialAccounts.id, authority.resources.channelIds), eq(socialAccounts.disabled, false), eq(socialAccounts.requiresReauth, false))).for("share") : [],
+          authority.resources.workflowIds.length ? tx.select({ id: contentWorkflows.id }).from(contentWorkflows).where(and(eq(contentWorkflows.workspaceId, input.workspaceId), inArray(contentWorkflows.id, authority.resources.workflowIds))).for("share") : [],
+          (authority.resources.artifactIds ?? []).length ? tx.select({ id: artifacts.id }).from(artifacts).where(and(eq(artifacts.workspaceId, input.workspaceId), inArray(artifacts.id, authority.resources.artifactIds ?? []), isNull(artifacts.deletedAt))).for("share") : [],
+        ]);
+        return {
+          channelIds: channels.map(({ id }) => id),
+          workflowIds: workflows.map(({ id }) => id),
+          artifactIds: selectedArtifacts.map(({ id }) => id),
+        };
+      };
+      const active = await activeResourceIds();
+      if (
+        authority.resources.channelIds.some((id) => !active.channelIds.includes(id)) ||
+        authority.resources.workflowIds.some((id) => !active.workflowIds.includes(id)) ||
+        (authority.resources.artifactIds ?? []).some((id) => !active.artifactIds.includes(id))
+      ) {
         throw new WorkspaceServiceAgentUnavailableError(input.purpose);
       }
-      const grants = mergeGrant((grantRows[0]?.revision?.grants ?? []) as AgentCapabilityGrant[], input.authority);
-      const policyGrants = mergeGrant((policyRows[0]?.grants ?? []) as AgentCapabilityGrant[], input.authority);
-      const scope = grants.find((candidate) =>
-        candidate.capability === input.authority.capability &&
-        candidate.authorizationContractDigest === input.authority.authorizationContractDigest,
-      )!;
-      try {
-        await AGENT_AUTH_SERVICE.provisionAuthority({
-          workspaceId: input.workspaceId,
-          principalId: principal.principalId,
-          actorUserId: principal.actorUserId,
-          requestId: `service-authority:${input.purpose}:${canonicalDigest(scope).slice(7)}`,
-          grantSetId: grantRows[0]?.set.id,
-          grantSetName: `Built-in ${input.purpose} authority`,
-          expectedGrantRevision: grantRows[0]?.set.activeRevision ?? undefined,
-          expectedPolicyRevision: policyRows[0]?.revision ?? 0,
-          grants,
-          policyGrants,
-          key: { name: `Built-in ${input.purpose} key`, authorizationScopes: [scope] },
-        });
-        return;
-      } catch (error) {
-        if (!(error instanceof AgentAuthError) || error.code !== "AGENT_AUTHORITY_CONFLICT" || attempt === 2) throw error;
+
+      const [activeGrantRevision] = setRow?.activeRevision ? await tx.select().from(agentGrantRevisions)
+        .where(and(eq(agentGrantRevisions.grantSetId, setRow.id), eq(agentGrantRevisions.revision, setRow.activeRevision)))
+        .limit(1).for("share") : [];
+      if (setRow?.activeRevision && !activeGrantRevision) throw new WorkspaceServiceAgentUnavailableError(input.purpose);
+      const grants = mergeGrant((activeGrantRevision?.grants ?? []) as AgentCapabilityGrant[], authority);
+      const policyGrants = mergeGrant((policyRow?.grants ?? []) as AgentCapabilityGrant[], authority);
+      const scope = grants.find((candidate) => candidate.capability === authority.capability && candidate.authorizationContractDigest === authority.authorizationContractDigest)!;
+      const grantSetId = setRow?.id ?? `service_grants_${canonicalDigest({ workspaceId: input.workspaceId, purpose: input.purpose }).slice(7, 39)}`;
+      const grantRevision = (setRow?.activeRevision ?? 0) + 1;
+      const grantRevisionId = `service_grant_revision_${canonicalDigest({ grantSetId, grantRevision, grants }).slice(7, 39)}`;
+      const policyRevision = (policyRow?.revision ?? 0) + 1;
+      const policyRevisionId = `service_policy_revision_${canonicalDigest({ workspaceId: input.workspaceId, policyRevision, policyGrants }).slice(7, 39)}`;
+      const keyId = `service_key_${requestFingerprint.slice(7, 39)}`;
+      const credential = deriveOpaqueCredential("key", `${BUILT_IN_SERVICE_AUTHORITY_ACTOR_ID}:${input.workspaceId}:${input.purpose}:${requestFingerprint}`, pepper.peppers[pepper.activeVersion]!);
+
+      if (setRow) {
+        await tx.update(agentGrantSets).set({ name: `Built-in ${input.purpose} authority`, activeRevision: grantRevision, updatedAt: input.now }).where(eq(agentGrantSets.id, setRow.id));
+      } else {
+        await tx.insert(agentGrantSets).values({ id: grantSetId, workspaceId: input.workspaceId, principalId, name: `Built-in ${input.purpose} authority`, activeRevision: grantRevision, disabledAt: null, createdByUserId: null, createdBySystemActorId: auditActor.systemActorId, initiatingUserId: auditActor.initiatingUserId, createdAt: input.now, updatedAt: input.now });
       }
-    }
+      await tx.insert(agentGrantRevisions).values({ id: grantRevisionId, grantSetId, revision: grantRevision, grants, createdByUserId: null, createdBySystemActorId: auditActor.systemActorId, initiatingUserId: auditActor.initiatingUserId, createdAt: input.now });
+      await tx.insert(workspaceAgentPolicyRevisions).values({ id: policyRevisionId, workspaceId: input.workspaceId, revision: policyRevision, enabled: true, grants: policyGrants, createdByUserId: null, createdBySystemActorId: auditActor.systemActorId, initiatingUserId: auditActor.initiatingUserId, createdAt: input.now });
+      await tx.insert(workspaceAgentPolicies).values({ workspaceId: input.workspaceId, activeRevisionId: policyRevisionId, revision: policyRevision, enabled: true, grants: policyGrants, updatedByUserId: null, updatedBySystemActorId: auditActor.systemActorId, initiatingUserId: auditActor.initiatingUserId, updatedAt: input.now }).onConflictDoUpdate({ target: workspaceAgentPolicies.workspaceId, set: { activeRevisionId: policyRevisionId, revision: policyRevision, enabled: true, grants: policyGrants, updatedByUserId: null, updatedBySystemActorId: auditActor.systemActorId, initiatingUserId: auditActor.initiatingUserId, updatedAt: input.now } });
+      await tx.insert(agentKeys).values({ id: keyId, principalId, name: `Built-in ${input.purpose} key`, lookupPrefix: credential.lookupPrefix, secretHash: hashCredentialSecret(credential.secret, pepper.peppers[pepper.activeVersion]!), pepperVersion: pepper.activeVersion, authorizationScopes: [scope], expiresAt: null, revokedAt: null, lastUsedAt: null, createdAt: input.now });
+      const securityEvents: Array<typeof agentSecurityEvents.$inferInsert> = [
+        { id: crypto.randomUUID(), workspaceId: input.workspaceId, principalId, keyId: null, actorUserId: null, systemActorId: auditActor.systemActorId, initiatingUserId: auditActor.initiatingUserId, eventType: "grant.revised", capabilityName: "agents.authority.provision", capabilityVersion: 1, reason: "allowed", resourceKinds: [], changeRef: grantRevisionId, revision: grantRevision, principalStatus: null, createdAt: input.now },
+        { id: crypto.randomUUID(), workspaceId: input.workspaceId, principalId: null, keyId: null, actorUserId: null, systemActorId: auditActor.systemActorId, initiatingUserId: auditActor.initiatingUserId, eventType: "policy.revised", capabilityName: "agents.authority.provision", capabilityVersion: 1, reason: "allowed", resourceKinds: [], changeRef: policyRevisionId, revision: policyRevision, principalStatus: null, createdAt: input.now },
+        { id: crypto.randomUUID(), workspaceId: input.workspaceId, principalId, keyId, actorUserId: null, systemActorId: auditActor.systemActorId, initiatingUserId: auditActor.initiatingUserId, eventType: "key.issued", capabilityName: "agents.authority.provision", capabilityVersion: 1, reason: "allowed", resourceKinds: [], changeRef: keyId, revision: null, principalStatus: null, createdAt: input.now },
+      ];
+      await tx.insert(agentSecurityEvents).values(securityEvents);
+      await tx.insert(builtInAgentAuthorityProvisioningReceipts).values({ id: `service_authority_${canonicalDigest({ workspaceId: input.workspaceId, purpose: input.purpose, requestId }).slice(7, 39)}`, workspaceId: input.workspaceId, purpose: input.purpose, systemActorId: auditActor.systemActorId, initiatingUserId: auditActor.initiatingUserId, sponsorUserId, principalId, keyId, grantSetId, grantRevisionId, grantRevision, policyRevisionId, policyRevision, capability: authority.capability, authorizationContractDigest: authority.authorizationContractDigest, resources: authority.resources, requestId, requestFingerprint, createdAt: input.now });
+    });
   }
 }
 

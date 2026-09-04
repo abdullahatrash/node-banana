@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  BUILT_IN_SERVICE_AUTHORITY_ACTOR_ID,
   WorkspaceServiceAgentResolver,
   WorkspaceServiceAgentUnavailableError,
+  builtInServiceAuthorityAuditActor,
+  validateWorkspaceServiceAgentAuthority,
+  workspaceServiceAgentPrincipalId,
   workspaceServiceAgentProvisioningProfile,
   type WorkspaceServiceAgentAuthority,
   type WorkspaceServiceAgentCandidate,
@@ -40,6 +44,7 @@ function candidate(
     keyCreatedAt: new Date(createdAt),
     requestedAccess: ["service:content-workflow"],
     authorizationScopes: [{ ...authority, resources: { ...authority.resources } }],
+    workspacePolicyEnabled: true,
     ...overrides,
   };
 }
@@ -49,7 +54,7 @@ function mutableRepository() {
   const provision = vi.fn(async (input: Parameters<WorkspaceServiceAgentRepository["provision"]>[0]) => {
     rows.push(candidate(
       input.workspaceId,
-      `principal_${input.workspaceId}`,
+      workspaceServiceAgentPrincipalId(input.workspaceId, input.purpose),
       `key_${input.workspaceId}`,
       input.now.toISOString(),
       { authorizationScopes: [{ ...input.authority, resources: { ...input.authority.resources } }] },
@@ -67,19 +72,19 @@ describe("WorkspaceServiceAgentResolver", () => {
     const setup = mutableRepository();
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
 
-    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "owner_a" })).resolves.toEqual({
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "member_a" })).resolves.toEqual({
       workspaceId: "workspace_a",
-      principalId: "principal_workspace_a",
+      principalId: workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"),
       keyId: "key_workspace_a",
     });
     await expect(resolver.resolve({ workspaceId: "workspace_b", purpose: "content_workflow", authority, provisioningActorUserId: "owner_b" })).resolves.toEqual({
       workspaceId: "workspace_b",
-      principalId: "principal_workspace_b",
+      principalId: workspaceServiceAgentPrincipalId("workspace_b", "content_workflow"),
       keyId: "key_workspace_b",
     });
     expect(setup.provision).toHaveBeenCalledTimes(2);
-    expect(setup.provision).toHaveBeenNthCalledWith(1, expect.objectContaining({ actorUserId: "owner_a" }));
-    expect(setup.provision).toHaveBeenNthCalledWith(2, expect.objectContaining({ actorUserId: "owner_b" }));
+    expect(setup.provision).toHaveBeenNthCalledWith(1, expect.objectContaining({ initiatingUserId: "member_a" }));
+    expect(setup.provision).toHaveBeenNthCalledWith(2, expect.objectContaining({ initiatingUserId: "owner_b" }));
   });
 
   it("coalesces concurrent bootstrap idempotently per Workspace and purpose", async () => {
@@ -96,38 +101,53 @@ describe("WorkspaceServiceAgentResolver", () => {
 
   it("reconciles an active actor when a newly required resource is outside its current scope", async () => {
     const setup = mutableRepository();
-    setup.rows.push(candidate("workspace_a", "principal_a", "key_old", "2026-09-01T00:00:00.000Z", {
+    setup.rows.push(candidate("workspace_a", workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"), "key_old", "2026-09-01T00:00:00.000Z", {
       authorizationScopes: [{ ...authority, resources: { ...EMPTY, workflowIds: ["workflow_old"] } }],
     }));
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
 
-    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "owner_a" }))
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "member_a" }))
       .resolves.toMatchObject({ workspaceId: "workspace_a" });
     expect(setup.provision).toHaveBeenCalledOnce();
+    expect(setup.provision).toHaveBeenCalledWith(expect.objectContaining({ initiatingUserId: "member_a" }));
   });
 
-  it("selects the newest eligible actor during zero-downtime overlapping-Principal rotation", async () => {
+  it("upgrades an existing tenant's active legacy service Principal for an ordinary member", async () => {
+    const setup = mutableRepository();
+    setup.rows.push(candidate("workspace_a", "legacy_random_principal", "legacy_key", "2026-09-01T00:00:00.000Z"));
+    const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
+
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "member_a" }))
+      .resolves.toEqual({
+        workspaceId: "workspace_a",
+        principalId: workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"),
+        keyId: "key_workspace_a",
+      });
+    expect(setup.provision).toHaveBeenCalledWith(expect.objectContaining({ initiatingUserId: "member_a" }));
+  });
+
+  it("selects the newest eligible key during zero-downtime rotation", async () => {
     const setup = mutableRepository();
     setup.rows.push(
-      candidate("workspace_a", "principal_old", "key_old", "2026-09-01T00:00:00.000Z"),
-      candidate("workspace_a", "principal_new", "key_new", "2026-09-03T00:00:00.000Z"),
+      candidate("workspace_a", workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"), "key_old", "2026-09-01T00:00:00.000Z"),
+      candidate("workspace_a", workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"), "key_new", "2026-09-03T00:00:00.000Z"),
     );
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
 
     await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "owner_a" }))
-      .resolves.toMatchObject({ principalId: "principal_new", keyId: "key_new" });
+      .resolves.toMatchObject({ principalId: workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"), keyId: "key_new" });
     expect(setup.provision).not.toHaveBeenCalled();
   });
 
   it("observes key rotation and revocation on the next request without a stale cache", async () => {
     const setup = mutableRepository();
-    setup.rows.push(candidate("workspace_a", "principal_a", "key_old", "2026-09-01T00:00:00.000Z"));
+    setup.rows.push(candidate("workspace_a", workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"), "key_old", "2026-09-01T00:00:00.000Z"));
     const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
     const request = { workspaceId: "workspace_a", purpose: "content_workflow" as const, authority, provisioningActorUserId: "owner_a" };
 
     await expect(resolver.resolve(request)).resolves.toMatchObject({ keyId: "key_old" });
     setup.rows[0].keyRevokedAt = NOW;
-    setup.rows.push(candidate("workspace_a", "principal_a", "key_new", "2026-09-03T00:00:00.000Z"));
+    setup.rows.push(candidate("workspace_a", workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"), "key_new", "2026-09-03T00:00:00.000Z"));
     await expect(resolver.resolve(request)).resolves.toMatchObject({ keyId: "key_new" });
     setup.rows[1].keyRevokedAt = NOW;
     await expect(resolver.resolve(request)).rejects.toBeInstanceOf(WorkspaceServiceAgentUnavailableError);
@@ -137,7 +157,7 @@ describe("WorkspaceServiceAgentResolver", () => {
   it("does not combine an active Principal with a usable key owned by a revoked Principal", async () => {
     const setup = mutableRepository();
     setup.rows.push(
-      candidate("workspace_a", "principal_active", "key_revoked", "2026-09-03T00:00:00.000Z", {
+      candidate("workspace_a", workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"), "key_revoked", "2026-09-03T00:00:00.000Z", {
         keyRevokedAt: NOW,
       }),
       candidate("workspace_a", "principal_revoked", "key_unrevoked", "2026-09-02T00:00:00.000Z", {
@@ -152,11 +172,24 @@ describe("WorkspaceServiceAgentResolver", () => {
     expect(setup.provision).not.toHaveBeenCalled();
   });
 
+  it("does not replace a revoked legacy service Principal with the deterministic built-in Principal", async () => {
+    const setup = mutableRepository();
+    setup.rows.push(candidate("workspace_a", "legacy_random_principal", "legacy_key", "2026-09-01T00:00:00.000Z", {
+      principalStatus: "revoked",
+      principalRevokedAt: NOW,
+    }));
+    const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
+
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "member_a" }))
+      .rejects.toBeInstanceOf(WorkspaceServiceAgentUnavailableError);
+    expect(setup.provision).not.toHaveBeenCalled();
+  });
+
   it("rejects wrong-Workspace and wrong-purpose actors", async () => {
     const setup = mutableRepository();
     setup.rows.push(
-      candidate("workspace_b", "principal_b", "key_b", "2026-09-01T00:00:00.000Z"),
-      candidate("workspace_a", "principal_calendar", "key_calendar", "2026-09-02T00:00:00.000Z", {
+      candidate("workspace_b", workspaceServiceAgentPrincipalId("workspace_b", "content_workflow"), "key_b", "2026-09-01T00:00:00.000Z"),
+      candidate("workspace_a", workspaceServiceAgentPrincipalId("workspace_a", "calendar_reschedule"), "key_calendar", "2026-09-02T00:00:00.000Z", {
         requestedAccess: ["service:calendar-reschedule"],
       }),
     );
@@ -168,6 +201,40 @@ describe("WorkspaceServiceAgentResolver", () => {
 
     await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "owner_a" }))
       .rejects.toBeInstanceOf(WorkspaceServiceAgentUnavailableError);
+  });
+
+  it("does not repair a disabled Workspace Agent policy on first use", async () => {
+    const setup = mutableRepository();
+    setup.rows.push(candidate("workspace_a", workspaceServiceAgentPrincipalId("workspace_a", "content_workflow"), "key_a", "2026-09-01T00:00:00.000Z", {
+      workspacePolicyEnabled: false,
+    }));
+    const resolver = new WorkspaceServiceAgentResolver(setup.repository, () => NOW);
+
+    await expect(resolver.resolve({ workspaceId: "workspace_a", purpose: "content_workflow", authority, provisioningActorUserId: "member_a" }))
+      .rejects.toBeInstanceOf(WorkspaceServiceAgentUnavailableError);
+    expect(setup.provision).not.toHaveBeenCalled();
+  });
+
+  it("binds audit actor to built-in system identity while preserving the human initiator", () => {
+    expect(builtInServiceAuthorityAuditActor("member_a")).toEqual({
+      actorKind: "built_in_system",
+      systemActorId: BUILT_IN_SERVICE_AUTHORITY_ACTOR_ID,
+      initiatingUserId: "member_a",
+    });
+  });
+
+  it("rejects capabilities and resources belonging to another built-in purpose", () => {
+    expect(() => validateWorkspaceServiceAgentAuthority("content_workflow", {
+      ...authority,
+      resources: { ...EMPTY, channelIds: ["channel_1"] },
+    })).toThrow(WorkspaceServiceAgentUnavailableError);
+    expect(() => validateWorkspaceServiceAgentAuthority("calendar_reschedule", authority))
+      .toThrow(WorkspaceServiceAgentUnavailableError);
+    expect(() => validateWorkspaceServiceAgentAuthority("calendar_reschedule", {
+      capability: "publishing_plan_revisions.create@1",
+      authorizationContractDigest: authority.authorizationContractDigest,
+      resources: { ...EMPTY, workflowIds: ["workflow_1"] },
+    })).toThrow(WorkspaceServiceAgentUnavailableError);
   });
 
   it("publishes exact existing-Agent provisioning profiles for both purposes", () => {
