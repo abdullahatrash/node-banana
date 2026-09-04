@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { CURATED_MODELS, modelQualificationAttestationSchema } from "./catalog";
-import type { QualificationRunLedger } from "./qualification-ledger";
+import type { QualificationProviderAccount, QualificationRunLedger, QualificationSpendAuthorization, QualificationSpendReceipt } from "./qualification-ledger";
 import { composeQualifiedProviderInput } from "./provider-input-composition";
 
 export const MAX_QUALIFICATION_SPEND_USD = 0.4;
@@ -16,7 +16,7 @@ const smokeCaseSchema = z.object({
   prompt: z.string().min(1).max(5_000),
   input: z.record(z.string(), z.unknown()),
   billableQuantity: z.number().positive().max(600),
-  maximumSpendUsd: z.number().positive().max(0.39),
+  brandReference: z.object({ assetId: z.string().min(1).max(200), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/), url: z.string().url().refine((value) => new URL(value).protocol === "https:") }).strict(),
   lifecycle: z.enum(["complete", "cancel"]),
 }).strict();
 
@@ -30,11 +30,13 @@ const inputSchema = z.object({
 export type QualificationRunnerInput = z.input<typeof inputSchema>;
 export type QualificationSmokeCase = z.infer<typeof smokeCaseSchema>;
 export type QualificationRunOutput = {
-  report: { schema: string; runId: string; model: string; version: string; hardCapUsd: number; maximumSpendUsd: number; cases: Array<Record<string, unknown>>; completedAt: string };
+  report: { schema: string; matrixId: string; providerAccountId: string; runId: string; model: string; version: string; hardCapUsd: number; maximumSpendUsd: number; observedSpendUsd: number; cases: Array<Record<string, unknown>>; completedAt: string };
   envelope: { version: 1; qualifications: Array<{ attestation: z.infer<typeof modelQualificationAttestationSchema>; signature: { algorithm: "ed25519"; keyId: string; value: string } }> };
 };
 
 export interface QualificationExecutionPort {
+  identifyAccount(): Promise<QualificationProviderAccount>;
+  authorizeSpend(input: { model: string; version: string; capability: QualificationSmokeCase["capability"]; billableQuantity: number; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendAuthorization>;
   inspectSchema(input: { model: string; version: string }): Promise<{ inputSchemaDigest: `sha256:${string}`; inputKeys: string[] }>;
   submit(input: { model: string; version: string; providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string; acceptedInput: Record<string, unknown> }>;
   recoverSubmission(input: { model: string; version: string; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string } | null>;
@@ -43,7 +45,10 @@ export interface QualificationExecutionPort {
   cancel(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "canceled" | "aborted"; version: string }>;
   ingest(input: { predictionId: string; caseId: string; capability: QualificationSmokeCase["capability"]; output: unknown }): Promise<{ receiptId: string; contentDigest: `sha256:${string}`; width: number; height: number; durationSeconds: number | null; observedLanguages: Array<"ar" | "en">; languageEvidenceDigest: `sha256:${string}` }>;
   reconcile(input: { predictionId: string; version: string; caseId: string }): Promise<{ status: "succeeded" | "failed" | "canceled" | "aborted"; version: string }>;
+  observeSpend(input: { predictionId: string; model: string; version: string; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendReceipt>;
 }
+
+export const QUALIFICATION_MATRIX_ID = "replicate-production-qualification/v1";
 
 function requireMatrixCoverage(cases: QualificationSmokeCase[]) {
   if (!cases.some((item) => item.contentLanguage === "ar" && item.arabicVariety)) throw new Error("QUALIFICATION_ARABIC_CELL_REQUIRED");
@@ -64,7 +69,7 @@ function qualificationBrand(cell: QualificationSmokeCase) {
     benefits: ["Deterministic evidence"], differentiators: ["Arabic-first"], positioning: "Safe qualification",
     voice: { descriptors: ["clear"], do: ["preserve the prompt"], doNot: ["invent claims"] }, palette: ["#000000"],
     constraints: { prohibitedClaims: ["guaranteed results"], prohibitedTopics: [] }, contentAngles: ["verification"],
-    referenceAssets: [],
+    referenceAssets: [{ assetId: cell.brandReference.assetId, digest: cell.brandReference.digest as `sha256:${string}`, kind: "logo" as const }],
   };
   return { ...value, digest: canonicalDigest(value) as `sha256:${string}` };
 }
@@ -87,23 +92,34 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
   if (new Date(base.issuedAt) > at || new Date(base.expiresAt) <= at) throw new Error("QUALIFICATION_WINDOW_INVALID");
   requireMatrixCoverage(parsed.cases);
   for (const capability of base.capabilities) if (!parsed.cases.some((item) => item.capability === capability)) throw new Error(`QUALIFICATION_CAPABILITY_CELL_REQUIRED:${capability}`);
-  const declaredSpend = parsed.cases.reduce((sum, item) => sum + item.maximumSpendUsd, 0);
-  if (!Number.isFinite(declaredSpend) || declaredSpend >= MAX_QUALIFICATION_SPEND_USD) throw new Error("QUALIFICATION_BUDGET_CAP_EXCEEDED");
+  if (base.inputContract.imageKey && base.capabilities.some((capability) => capability === "text_to_image" || capability === "text_to_video") && !parsed.cases.some((cell) => (cell.capability === "text_to_image" || cell.capability === "text_to_video") && qualificationSourceUrls(cell, base.inputContract.imageKey).length === 0)) throw new Error("QUALIFICATION_BRAND_ONLY_MEDIA_CELL_REQUIRED");
   const privateKey = createPrivateKey(privateKeyPem);
   if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("QUALIFICATION_SIGNING_KEY_INVALID");
 
   const requestDigest = canonicalDigest(parsed) as `sha256:${string}`;
-  const casePlans = parsed.cases.map((cell) => ({ caseId: cell.id, requestDigest: canonicalDigest(cell) as `sha256:${string}`, maximumSpendUsd: cell.maximumSpendUsd }));
-  const begun = await ledger.begin({ runId: parsed.runId, requestDigest, provider: "replicate", model: base.model, modelVersion: base.version, signingKeyId: parsed.signingKeyId, hardCapUsd: MAX_QUALIFICATION_SPEND_USD, reservedSpendUsd: declaredSpend, cases: casePlans, at });
+  const account = await execution.identifyAccount();
+  if (account.provider !== "replicate" || !account.accountId.trim() || !/^sha256:[a-f0-9]{64}$/.test(account.credentialFingerprint)) throw new Error("QUALIFICATION_ACCOUNT_IDENTITY_INVALID");
+  const spendAuthorizations = await Promise.all(parsed.cases.map((cell) => execution.authorizeSpend({ model: base.model, version: base.version, capability: cell.capability, billableQuantity: cell.billableQuantity, caseId: cell.id, account })));
+  const authoritativeMaximums = spendAuthorizations.map((authorization, index) => {
+    const cell = parsed.cases[index]!;
+    if (authorization.schema !== "replicate-qualification-spend-authorization/v1" || authorization.source !== "replicate-account-billing" || !authorization.signingKeyId || !/^sha256:[a-f0-9]{64}$/.test(authorization.digest) || authorization.accountId !== account.accountId || authorization.credentialFingerprint !== account.credentialFingerprint || authorization.model !== base.model || authorization.version !== base.version || authorization.capability !== cell.capability || authorization.billableQuantity !== cell.billableQuantity || !Number.isFinite(authorization.maximumAmountUsd) || authorization.maximumAmountUsd <= 0 || new Date(authorization.expiresAt) <= at) throw new Error(`QUALIFICATION_SPEND_AUTHORIZATION_MISMATCH:${cell.id}`);
+    const attestedMaximum = base.executionPriceUsd.amount * cell.billableQuantity;
+    if (Math.abs(attestedMaximum - authorization.maximumAmountUsd) > Number.EPSILON) throw new Error(`QUALIFICATION_PRICING_PARITY_MISMATCH:${cell.id}`);
+    return authorization.maximumAmountUsd;
+  });
+  const authoritativeMaximumSpend = authoritativeMaximums.reduce((sum, amount) => sum + amount, 0);
+  if (!Number.isFinite(authoritativeMaximumSpend) || authoritativeMaximumSpend <= 0 || authoritativeMaximumSpend >= MAX_QUALIFICATION_SPEND_USD) throw new Error("QUALIFICATION_BUDGET_CAP_EXCEEDED");
+  const casePlans = parsed.cases.map((cell, index) => ({ caseId: cell.id, requestDigest: canonicalDigest(cell) as `sha256:${string}`, maximumSpendUsd: authoritativeMaximums[index]!, spendAuthorizationId: spendAuthorizations[index]!.authorizationId, spendAuthorizationDigest: spendAuthorizations[index]!.digest }));
+  const begun = await ledger.begin({ matrixId: QUALIFICATION_MATRIX_ID, account, runId: parsed.runId, requestDigest, provider: "replicate", model: base.model, modelVersion: base.version, signingKeyId: parsed.signingKeyId, hardCapUsd: MAX_QUALIFICATION_SPEND_USD, reservedSpendUsd: authoritativeMaximumSpend, cases: casePlans, at });
   if (begun.kind === "completed") return begun.result as QualificationRunOutput;
 
   let reservedSpend = 0;
+  let observedSpend = 0;
   const results: Array<Record<string, unknown>> = [];
   for (const [index, cell] of parsed.cases.entries()) {
     if (!base.capabilities.includes(cell.capability)) throw new Error(`QUALIFICATION_CASE_CAPABILITY_MISMATCH:${cell.id}`);
-    const authoritativeMaximum = base.executionPriceUsd.amount * cell.billableQuantity;
-    if (!Number.isFinite(authoritativeMaximum) || cell.maximumSpendUsd + Number.EPSILON < authoritativeMaximum) throw new Error(`QUALIFICATION_CASE_PRICE_UNDERSTATED:${cell.id}`);
-    const nextSpend = reservedSpend + cell.maximumSpendUsd;
+    const authoritativeMaximum = authoritativeMaximums[index]!;
+    const nextSpend = reservedSpend + authoritativeMaximum;
     if (nextSpend >= MAX_QUALIFICATION_SPEND_USD) throw new Error("QUALIFICATION_BUDGET_CAP_EXCEEDED");
     reservedSpend = nextSpend;
     const casePlan = casePlans[index]!;
@@ -121,7 +137,7 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
       brand: qualificationBrand(cell),
       sourceAssetIds: sourceUrls.map((_, sourceIndex) => `qualification:${cell.id}:source:${sourceIndex}`),
       sourceUrls,
-      brandReferenceUrls: [],
+      brandReferenceUrls: [{ assetId: cell.brandReference.assetId, url: cell.brandReference.url }],
       model: { provider: base.provider, model: base.model, version: base.version, inputSchemaDigest: base.inputSchemaDigest },
       capability: cell.capability,
       contract: base.inputContract,
@@ -151,7 +167,7 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
     if (base.inputContract.safety && submitted.acceptedInput[base.inputContract.safety.parameterKey] !== base.inputContract.safety.safeValue) throw new Error(`QUALIFICATION_SAFETY_MISMATCH:${cell.id}`);
     try {
       let terminal: "succeeded" | "failed" | "canceled" | "aborted";
-      let ingestion: Awaited<ReturnType<QualificationExecutionPort["ingest"]>> | null = null;
+      let output: unknown = null;
       if (cell.lifecycle === "cancel") {
         const cancelled = await execution.cancel({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
         if (cancelled.version !== base.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${cell.id}`);
@@ -160,15 +176,23 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
         const polled = await execution.poll({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
         if (polled.version !== base.version || polled.status !== "succeeded") throw new Error(`QUALIFICATION_COMPLETION_FAILED:${cell.id}`);
         terminal = polled.status;
-        ingestion = await execution.ingest({ predictionId: submitted.predictionId, caseId: cell.id, capability: cell.capability, output: polled.output });
-        if (ingestion.width * 16 !== ingestion.height * 9) throw new Error(`QUALIFICATION_OUTPUT_NOT_9_16:${cell.id}`);
-        if (!ingestion.observedLanguages.includes(cell.contentLanguage)) throw new Error(`QUALIFICATION_LANGUAGE_EVIDENCE_MISSING:${cell.id}`);
+        output = polled.output;
       }
       const webhook = await execution.awaitWebhook({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
       if (!webhook.authentic || webhook.status !== terminal) throw new Error(`QUALIFICATION_WEBHOOK_FAILED:${cell.id}`);
       const reconciled = await execution.reconcile({ predictionId: submitted.predictionId, version: base.version, caseId: cell.id });
       if (reconciled.version !== base.version || reconciled.status !== terminal) throw new Error(`QUALIFICATION_RECONCILIATION_FAILED:${cell.id}`);
-      const result = { id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: cell.maximumSpendUsd, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, providerCompositionDigest: composed.evidence.digest, composedPromptDigest: composed.evidence.composedPromptDigest, providerInputDigest: composed.providerInputDigest, safetyVerified: Boolean(base.inputContract.safety), webhookDeliveryId: webhook.deliveryId, ingestion };
+      const receipt = await execution.observeSpend({ predictionId: submitted.predictionId, model: base.model, version: base.version, caseId: cell.id, account });
+      if (receipt.schema !== "replicate-qualification-spend-receipt/v1" || receipt.source !== "replicate-account-billing" || !receipt.signingKeyId || !/^sha256:[a-f0-9]{64}$/.test(receipt.digest) || !Number.isFinite(Date.parse(receipt.observedAt)) || receipt.accountId !== account.accountId || receipt.credentialFingerprint !== account.credentialFingerprint || receipt.predictionId !== submitted.predictionId || receipt.model !== base.model || receipt.version !== base.version || receipt.currency !== "USD" || !Number.isFinite(receipt.amountUsd) || receipt.amountUsd < 0) throw new Error(`QUALIFICATION_SPEND_RECEIPT_MISMATCH:${cell.id}`);
+      const spend = await ledger.recordSpendReceipt({ runId: parsed.runId, caseId: cell.id, claimToken: claim.claimToken, receipt, at });
+      if (spend.matrixObservedSpendUsd >= MAX_QUALIFICATION_SPEND_USD || receipt.amountUsd > authoritativeMaximum + Number.EPSILON) throw new Error(`QUALIFICATION_OBSERVED_SPEND_CAP_EXCEEDED:${cell.id}`);
+      let ingestion: Awaited<ReturnType<QualificationExecutionPort["ingest"]>> | null = null;
+      if (cell.lifecycle === "complete") {
+        ingestion = await execution.ingest({ predictionId: submitted.predictionId, caseId: cell.id, capability: cell.capability, output });
+        if (ingestion.width * 16 !== ingestion.height * 9) throw new Error(`QUALIFICATION_OUTPUT_NOT_9_16:${cell.id}`);
+        if (!ingestion.observedLanguages.includes(cell.contentLanguage)) throw new Error(`QUALIFICATION_LANGUAGE_EVIDENCE_MISSING:${cell.id}`);
+      }
+      const result = { id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: authoritativeMaximum, spendAuthorizationId: spendAuthorizations[index]!.authorizationId, spendAuthorizationDigest: spendAuthorizations[index]!.digest, observedSpendUsd: receipt.amountUsd, spendReceiptId: receipt.receiptId, spendReceiptDigest: receipt.digest, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, providerCompositionDigest: composed.evidence.digest, composedPromptDigest: composed.evidence.composedPromptDigest, providerInputDigest: composed.providerInputDigest, safetyVerified: Boolean(base.inputContract.safety), webhookDeliveryId: webhook.deliveryId, ingestion };
       await ledger.completeCase({ runId: parsed.runId, caseId: cell.id, claimToken: claim.claimToken, predictionId: submitted.predictionId, executedVersion: submitted.version, terminalStatus: terminal, result, at });
       results.push(result);
     } catch (error) {
@@ -178,7 +202,11 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
   }
 
   const completedAt = at;
-  const report = { schema: "replicate-qualification-smoke-report/v1", runId: parsed.runId, model: base.model, version: base.version, hardCapUsd: MAX_QUALIFICATION_SPEND_USD, maximumSpendUsd: reservedSpend, cases: results, completedAt: completedAt.toISOString() };
+  observedSpend = results.reduce((sum, item) => {
+    if (typeof item.observedSpendUsd !== "number" || !Number.isFinite(item.observedSpendUsd)) throw new Error("QUALIFICATION_OBSERVED_SPEND_EVIDENCE_MISSING");
+    return sum + item.observedSpendUsd;
+  }, 0);
+  const report = { schema: "replicate-qualification-smoke-report/v1", matrixId: QUALIFICATION_MATRIX_ID, providerAccountId: account.accountId, runId: parsed.runId, model: base.model, version: base.version, hardCapUsd: MAX_QUALIFICATION_SPEND_USD, maximumSpendUsd: reservedSpend, observedSpendUsd: observedSpend, cases: results, completedAt: completedAt.toISOString() };
   const attestation = modelQualificationAttestationSchema.parse({ ...base, qualificationRun: { id: parsed.runId, digest: canonicalDigest(report), completedAt: completedAt.toISOString() } });
   const result = {
     report,

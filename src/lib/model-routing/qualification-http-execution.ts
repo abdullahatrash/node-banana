@@ -2,12 +2,14 @@ import { z } from "zod";
 
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { QualificationExecutionPort } from "./qualification-runner";
+import { verifyQualificationSpendAuthorization, verifyQualificationSpendReceipt } from "./qualification-spend-receipt";
 
 const terminal = z.enum(["succeeded", "failed", "canceled", "aborted"]);
 const predictionSchema = z.object({ id: z.string().min(1), status: z.enum(["starting", "processing", "succeeded", "failed", "canceled", "aborted"]), version: z.string().min(1), output: z.unknown().optional() }).passthrough();
 const observerSchema = z.object({ authentic: z.literal(true), deliveryId: z.string().min(1), predictionId: z.string().min(1), version: z.string().min(1), status: terminal }).strict();
 const recoveredSubmissionSchema = z.object({ predictionId: z.string().min(1), version: z.string().min(1) }).strict();
 const ingestionSchema = z.object({ receiptId: z.string().min(1), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().nonnegative().nullable(), observedLanguages: z.array(z.enum(["ar", "en"])).min(1), languageEvidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
+const accountSchema = z.object({ username: z.string().min(1).max(200) }).passthrough();
 
 type QualificationEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -33,6 +35,8 @@ export class ReplicateQualificationHttpExecution implements QualificationExecuti
   private readonly webhookUrl: URL;
   private readonly observerUrl: URL;
   private readonly ingestionUrl: URL;
+  private readonly spendObserverUrl: URL;
+  private readonly spendReceiptKeys: Readonly<Record<string, string>>;
 
   constructor(private readonly environment: QualificationEnvironment = process.env, private readonly fetcher: typeof fetch = fetch) {
     this.apiToken = required(environment, "REPLICATE_QUALIFICATION_API_TOKEN");
@@ -41,6 +45,22 @@ export class ReplicateQualificationHttpExecution implements QualificationExecuti
     this.webhookUrl = endpoint(required(environment, "QUALIFICATION_WEBHOOK_URL"), "QUALIFICATION_WEBHOOK_URL");
     this.observerUrl = endpoint(required(environment, "QUALIFICATION_WEBHOOK_OBSERVER_URL"), "QUALIFICATION_WEBHOOK_OBSERVER_URL");
     this.ingestionUrl = endpoint(required(environment, "QUALIFICATION_INGESTION_URL"), "QUALIFICATION_INGESTION_URL");
+    this.spendObserverUrl = endpoint(required(environment, "QUALIFICATION_SPEND_OBSERVER_URL"), "QUALIFICATION_SPEND_OBSERVER_URL");
+    const parsedKeys = z.record(z.string().min(1), z.string().min(1)).parse(JSON.parse(required(environment, "QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON")));
+    if (Object.keys(parsedKeys).length === 0) throw new Error("QUALIFICATION_CONFIGURATION_REQUIRED:QUALIFICATION_SPEND_RECEIPT_PUBLIC_KEYS_JSON");
+    this.spendReceiptKeys = parsedKeys;
+  }
+
+  async identifyAccount() {
+    const response = await this.replicate("account", { method: "GET" });
+    const account = accountSchema.parse(await response.json());
+    return { provider: "replicate" as const, accountId: account.username, credentialFingerprint: canonicalDigest(this.apiToken) as `sha256:${string}` };
+  }
+
+  async authorizeSpend(input: Parameters<QualificationExecutionPort["authorizeSpend"]>[0]) {
+    const response = await this.harness(this.spendObserverUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "authorize_qualification_spend", model: input.model, version: input.version, capability: input.capability, billableQuantity: input.billableQuantity, caseId: input.caseId, accountId: input.account.accountId, credentialFingerprint: input.account.credentialFingerprint }) });
+    if (!response.ok) throw new Error(`QUALIFICATION_SPEND_AUTHORIZATION_HTTP_${response.status}`);
+    return verifyQualificationSpendAuthorization(await response.json(), this.spendReceiptKeys, input);
   }
 
   async inspectSchema(input: { model: string; version: string }) {
@@ -111,6 +131,19 @@ export class ReplicateQualificationHttpExecution implements QualificationExecuti
     const prediction = predictionSchema.parse(await response.json());
     if (prediction.status === "starting" || prediction.status === "processing") throw new Error(`QUALIFICATION_RECONCILIATION_NOT_TERMINAL:${input.caseId}`);
     return { status: prediction.status, version: prediction.version };
+  }
+
+  async observeSpend(input: Parameters<QualificationExecutionPort["observeSpend"]>[0]) {
+    const url = new URL(this.spendObserverUrl);
+    url.searchParams.set("predictionId", input.predictionId);
+    url.searchParams.set("caseId", input.caseId);
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const response = await this.harness(url, { method: "GET" });
+      if (response.status === 404) { await wait(2_000); continue; }
+      if (!response.ok) throw new Error(`QUALIFICATION_SPEND_OBSERVER_HTTP_${response.status}`);
+      return verifyQualificationSpendReceipt(await response.json(), this.spendReceiptKeys, input);
+    }
+    throw new Error(`QUALIFICATION_SPEND_RECEIPT_TIMEOUT:${input.caseId}`);
   }
 
   private async replicate(path: string, init: RequestInit) {
