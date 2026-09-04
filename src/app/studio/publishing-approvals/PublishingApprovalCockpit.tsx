@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import Image from "next/image";
 import {
   type FormEvent,
@@ -180,6 +181,7 @@ function TargetCard({
   target: PublishingApprovalPresentationTarget;
   covered: boolean;
 }) {
+  const t = useTranslations("runtimeUi.publishingApprovals");
   return (
     <article className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -188,14 +190,14 @@ function TargetCard({
             {target.channel.displayName ?? "Historical LinkedIn Channel"}
           </h3>
           <p className="mt-1 text-xs text-neutral-400">
-            LinkedIn {target.channel.authorKind} · Channel <code>{target.channel.id}</code>
+            {t("copy.linkedin")} {target.channel.authorKind} {t("copy.channel")} <code>{target.channel.id}</code>
           </p>
           <p className="mt-1 text-xs text-neutral-400">
-            Exact target <code>{target.targetId}</code>
+            {t("copy.exactTarget")} <code>{target.targetId}</code>
           </p>
           {target.channel.historical ? (
             <p className="mt-1 text-xs text-amber-300">
-              Live Channel record unavailable; identity shown from immutable validation evidence.
+              {t("copy.liveChannelRecordUnavailableIdentityShownFrom")}
             </p>
           ) : null}
         </div>
@@ -212,7 +214,7 @@ function TargetCard({
 
       <section className="mt-5">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-          Exact content
+          {t("copy.exactContent")}
         </h4>
         <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-neutral-950 p-4 font-sans text-sm text-neutral-100">
           {target.content.text}
@@ -225,7 +227,7 @@ function TargetCard({
       {target.media.length ? (
         <section className="mt-5">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            Exact media
+            {t("copy.exactMedia")}
           </h4>
           <div className="mt-2 grid gap-3 sm:grid-cols-2">
             {target.media.map((media) => (
@@ -241,37 +243,37 @@ function TargetCard({
 
       <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <dt className="text-xs text-neutral-500">Publishing setting</dt>
-          <dd>Author type: {target.settings.type}</dd>
+          <dt className="text-xs text-neutral-500">{t("copy.publishingSetting")}</dt>
+          <dd>{t("copy.authorType")} {target.settings.type}</dd>
         </div>
         <div>
-          <dt className="text-xs text-neutral-500">Timing</dt>
+          <dt className="text-xs text-neutral-500">{t("copy.timing")}</dt>
           <dd>
             {target.timing.kind === "now" ? "Publish now" : "Scheduled"} ·{" "}
             <time dateTime={target.timing.publishAt}>{formatDate(target.timing.publishAt)}</time>
           </dd>
         </div>
         <div>
-          <dt className="text-xs text-neutral-500">Validation evidence</dt>
+          <dt className="text-xs text-neutral-500">{t("copy.validationEvidence")}</dt>
           <dd className="font-mono" title={target.targetEvidenceDigest}>
             {shortDigest(target.targetEvidenceDigest)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs text-neutral-500">Relevant cost context</dt>
+          <dt className="text-xs text-neutral-500">{t("copy.relevantCostContext")}</dt>
           <dd>
             {target.costContext ? (
               <>
                 {target.costContext.estimatedAmount} {target.costContext.currency}
                 <span className="block text-xs text-neutral-500">
-                  Non-authoritative estimate · computed {formatDate(target.costContext.computedAt)}
+                  {t("copy.nonAuthoritativeEstimateComputed")} {formatDate(target.costContext.computedAt)}
                 </span>
                 <span className="block break-all font-mono text-xs text-neutral-500">
-                  Pricing: {target.costContext.pricingSnapshotIds.join(", ") || "no priced snapshot"}
+                  {t("copy.pricing")} {target.costContext.pricingSnapshotIds.join(", ") || "no priced snapshot"}
                 </span>
               </>
             ) : (
-              <span className="text-neutral-400">No bound cost estimate; not zero.</span>
+              <span className="text-neutral-400">{t("copy.noBoundCostEstimateNotZero")}</span>
             )}
           </dd>
         </div>
@@ -279,41 +281,41 @@ function TargetCard({
 
       <section className="mt-5 rounded-lg border border-neutral-800 bg-neutral-950 p-4">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-          Exact successful validation facts
+          {t("copy.exactSuccessfulValidationFacts")}
         </h4>
         <dl className="mt-3 grid gap-4 text-sm md:grid-cols-2 xl:grid-cols-3">
           <div>
-            <dt className="text-xs text-neutral-500">Validation window</dt>
+            <dt className="text-xs text-neutral-500">{t("copy.validationWindow")}</dt>
             <dd>
-              Evaluated <time dateTime={target.validation.evaluatedAt}>{formatDate(target.validation.evaluatedAt)}</time>
+              {t("copy.evaluated")} <time dateTime={target.validation.evaluatedAt}>{formatDate(target.validation.evaluatedAt)}</time>
               <span className="block text-xs text-neutral-500">
-                Expires <time dateTime={target.validation.expiresAt}>{formatDate(target.validation.expiresAt)}</time>
+                {t("copy.expires")} <time dateTime={target.validation.expiresAt}>{formatDate(target.validation.expiresAt)}</time>
               </span>
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-neutral-500">Trusted Channel snapshot</dt>
+            <dt className="text-xs text-neutral-500">{t("copy.trustedChannelSnapshot")}</dt>
             <dd>
               <code>{target.validation.channelSnapshot.id}</code> · {target.validation.channelSnapshot.platform} {target.validation.channelSnapshot.authorKind}
               <span className="block break-all font-mono text-xs text-neutral-500">
-                Snapshot: {target.validation.channelSnapshot.snapshotDigest}
+                {t("copy.snapshot")} {target.validation.channelSnapshot.snapshotDigest}
               </span>
               <span className="block break-all font-mono text-xs text-neutral-500">
-                Capability: {target.validation.channelSnapshot.capabilityVersion}
+                {t("copy.capability")} {target.validation.channelSnapshot.capabilityVersion}
               </span>
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-neutral-500">Settings binding</dt>
+            <dt className="text-xs text-neutral-500">{t("copy.settingsBinding")}</dt>
             <dd className="break-all font-mono">
               {target.validation.settingsDigest}
               <span className="block font-sans text-xs text-neutral-500">
-                Publish at {formatDate(target.validation.publishAt)}
+                {t("copy.publishAt")} {formatDate(target.validation.publishAt)}
               </span>
             </dd>
           </div>
           <div className="md:col-span-2 xl:col-span-3">
-            <dt className="text-xs text-neutral-500">Exact Artifact snapshot bindings</dt>
+            <dt className="text-xs text-neutral-500">{t("copy.exactArtifactSnapshotBindings")}</dt>
             <dd>
               <ul className="mt-1 space-y-2">
                 {[
@@ -321,12 +323,12 @@ function TargetCard({
                   ...target.validation.artifacts.media,
                 ].map((artifact) => (
                   <li key={artifact.id} className="rounded border border-neutral-800 p-2">
-                    <code>{artifact.id}</code> · {artifact.kind} · {artifact.mediaType} · {artifact.sizeBytes} bytes
+                    <code>{artifact.id}</code> · {artifact.kind} · {artifact.mediaType} · {artifact.sizeBytes} {t("copy.bytes")}
                     <span className="block break-all font-mono text-xs text-neutral-500">
-                      Content: {artifact.digest}
+                      {t("copy.content")} {artifact.digest}
                     </span>
                     <span className="block break-all font-mono text-xs text-neutral-500">
-                      Snapshot: {artifact.snapshotDigest}
+                      {t("copy.snapshot")} {artifact.snapshotDigest}
                     </span>
                   </li>
                 ))}
@@ -334,17 +336,17 @@ function TargetCard({
             </dd>
           </div>
           <div className="md:col-span-2 xl:col-span-3">
-            <dt className="text-xs text-neutral-500">Runtime policy decision</dt>
+            <dt className="text-xs text-neutral-500">{t("copy.runtimePolicyDecision")}</dt>
             <dd>
-              Outcome: <strong>{target.validation.policy.outcome}</strong> · blockers: {target.validation.policy.blockerCodes.length ? target.validation.policy.blockerCodes.join(", ") : "none"}
+              {t("copy.outcome")} <strong>{target.validation.policy.outcome}</strong> {t("copy.blockers")} {target.validation.policy.blockerCodes.length ? target.validation.policy.blockerCodes.join(", ") : "none"}
               <span className="block break-all font-mono text-xs text-neutral-500">
-                Policy: {target.validation.policy.identity} · contract {target.validation.policy.contractDigest}
+                {t("copy.policy")} {target.validation.policy.identity} {t("copy.contract")} {target.validation.policy.contractDigest}
               </span>
               <span className="block break-all font-mono text-xs text-neutral-500">
-                Evidence: {target.validation.policy.evidenceDigest}
+                {t("copy.evidence")} {target.validation.policy.evidenceDigest}
               </span>
               <span className="block break-all font-mono text-xs text-neutral-500">
-                State: {target.validation.policy.stateDigest}
+                {t("copy.state")} {target.validation.policy.stateDigest}
               </span>
             </dd>
           </div>
@@ -355,6 +357,7 @@ function TargetCard({
 }
 
 export function PublishingApprovalCockpit() {
+  const t = useTranslations("runtimeUi.publishingApprovals");
   const [items, setItems] = useState<PublishingApprovalDto[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [presentation, setPresentation] =
@@ -545,11 +548,11 @@ export function PublishingApprovalCockpit() {
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-400">
-              Human-only decision lane
+              {t("copy.humanOnlyDecisionLane")}
             </p>
-            <h1 className="mt-2 text-3xl font-semibold">Publishing Approval Cockpit</h1>
+            <h1 className="mt-2 text-3xl font-semibold">{t("copy.publishingApprovalCockpit")}</h1>
             <p className="mt-2 max-w-3xl text-sm text-neutral-400">
-              Inspect the exact immutable Plan Revision and every target before making a durable decision. Approval never replaces publish authorization.
+              {t("copy.inspectTheExactImmutablePlanRevisionAnd")}
             </p>
           </div>
           <button
@@ -558,7 +561,7 @@ export function PublishingApprovalCockpit() {
             onClick={() => void refresh().catch((cause) => setError(String(cause)))}
             className="rounded-md border border-neutral-700 px-4 py-2 text-sm disabled:opacity-50"
           >
-            Refresh current evidence
+            {t("copy.refreshCurrentEvidence")}
           </button>
         </header>
 
@@ -574,9 +577,9 @@ export function PublishingApprovalCockpit() {
         ) : null}
 
         <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
-          <h2 className="text-lg font-medium">Approval Authority administration</h2>
+          <h2 className="text-lg font-medium">{t("copy.approvalAuthorityAdministration")}</h2>
           <p className="mt-1 text-sm text-neutral-400">
-            Owners and admins may administer explicit per-Human, per-LinkedIn-Channel publish grants. Their Workspace role alone never authorizes a decision.
+            {t("copy.ownersAndAdminsMayAdministerExplicitPer")}
           </p>
           <form
             onSubmit={(event) =>
@@ -585,25 +588,25 @@ export function PublishingApprovalCockpit() {
             className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4"
           >
             <label className="text-xs text-neutral-300">
-              Human User ID
+              {t("copy.humanUserID")}
               <input
                 name="userId"
                 required
-                placeholder="Exact owner/admin User ID"
+                placeholder={t("copy.exactOwnerAdminUserID")}
                 className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
               />
             </label>
             <label className="text-xs text-neutral-300">
-              LinkedIn Channel ID
+              {t("copy.linkedinChannelID")}
               <input
                 name="channelId"
                 required
-                placeholder="Exact Channel ID"
+                placeholder={t("copy.exactChannelID")}
                 className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
               />
             </label>
             <label className="text-xs text-neutral-300">
-              Expiry (optional)
+              {t("copy.expiryOptional")}
               <input
                 name="expiresAt"
                 type="datetime-local"
@@ -614,20 +617,20 @@ export function PublishingApprovalCockpit() {
               disabled={busy}
               className="self-end rounded-md border border-amber-700 px-4 py-2 text-sm text-amber-200 disabled:opacity-40"
             >
-              Issue explicit grant
+              {t("copy.issueExplicitGrant")}
             </button>
           </form>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[48rem] text-left text-xs">
-              <caption className="sr-only">Publishing Approval Authority grants</caption>
+              <caption className="sr-only">{t("copy.publishingApprovalAuthorityGrants")}</caption>
               <thead className="text-neutral-500">
                 <tr>
-                  <th className="px-2 py-2 font-medium">Human</th>
-                  <th className="px-2 py-2 font-medium">Channel</th>
-                  <th className="px-2 py-2 font-medium">Scope</th>
-                  <th className="px-2 py-2 font-medium">Issued / expires</th>
-                  <th className="px-2 py-2 font-medium">State</th>
-                  <th className="px-2 py-2 font-medium"><span className="sr-only">Actions</span></th>
+                  <th className="px-2 py-2 font-medium">{t("copy.human")}</th>
+                  <th className="px-2 py-2 font-medium">{t("copy.channel2")}</th>
+                  <th className="px-2 py-2 font-medium">{t("copy.scope")}</th>
+                  <th className="px-2 py-2 font-medium">{t("copy.issuedExpires")}</th>
+                  <th className="px-2 py-2 font-medium">{t("copy.state2")}</th>
+                  <th className="px-2 py-2 font-medium"><span className="sr-only">{t("copy.actions")}</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -644,7 +647,7 @@ export function PublishingApprovalCockpit() {
                     <tr key={grant.id} className="border-t border-neutral-800">
                       <td className="px-2 py-3"><code>{grant.userId}</code><span className="block text-neutral-500">{grant.subjectRoleAtIssue}</span></td>
                       <td className="px-2 py-3"><code>{grant.channelId}</code></td>
-                      <td className="px-2 py-3">LinkedIn · {grant.action}</td>
+                      <td className="px-2 py-3">{t("copy.linkedin2")} {grant.action}</td>
                       <td className="px-2 py-3">{formatDate(grant.issuedAt)}<span className="block text-neutral-500">{grant.expiresAt ? formatDate(grant.expiresAt) : "no expiry"}</span></td>
                       <td className="px-2 py-3">{state}</td>
                       <td className="px-2 py-3 text-right">
@@ -658,7 +661,7 @@ export function PublishingApprovalCockpit() {
                           }
                           className="rounded border border-red-800 px-2 py-1 text-red-300 disabled:opacity-40"
                         >
-                          Revoke
+                          {t("copy.revoke")}
                         </button>
                       </td>
                     </tr>
@@ -667,15 +670,15 @@ export function PublishingApprovalCockpit() {
               </tbody>
             </table>
             {!grants.length ? (
-              <p className="py-4 text-sm text-neutral-500">No explicit Approval Authority grants.</p>
+              <p className="py-4 text-sm text-neutral-500">{t("copy.noExplicitApprovalAuthorityGrants")}</p>
             ) : null}
           </div>
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[20rem_1fr]">
-          <aside className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" aria-label="Approval requests">
-            <h2 className="font-medium">Requests</h2>
-            <p className="mt-1 text-xs text-neutral-500">Pending requests appear first.</p>
+          <aside className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" aria-label={t("copy.approvalRequests")}>
+            <h2 className="font-medium">{t("copy.requests")}</h2>
+            <p className="mt-1 text-xs text-neutral-500">{t("copy.pendingRequestsAppearFirst")}</p>
             <ol className="mt-4 space-y-2">
               {[...items]
                 .sort((left, right) => Number(right.status === "pending") - Number(left.status === "pending"))
@@ -692,20 +695,20 @@ export function PublishingApprovalCockpit() {
                       className="w-full rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-left hover:border-neutral-600 disabled:opacity-60 aria-[current=true]:border-amber-600"
                     >
                       <span className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium">Plan revision {item.planRevision}</span>
+                        <span className="text-sm font-medium">{t("copy.planRevision")} {item.planRevision}</span>
                         <span className={`rounded-full border px-2 py-0.5 text-[11px] ${badge(item.status)}`}>
                           {item.status}
                         </span>
                       </span>
                       <span className="mt-2 block text-xs text-neutral-500">
-                        {item.targetIds.length} target{item.targetIds.length === 1 ? "" : "s"} · expires {formatDate(item.decisionPolicy.expiresAt)}
+                        {item.targetIds.length} {t("copy.target")}{item.targetIds.length === 1 ? "" : "s"} {t("copy.expires2")} {formatDate(item.decisionPolicy.expiresAt)}
                       </span>
                     </button>
                   </li>
                 ))}
             </ol>
             {!items.length && !busy ? (
-              <p className="mt-4 text-sm text-neutral-400">No Approval requests in this Workspace.</p>
+              <p className="mt-4 text-sm text-neutral-400">{t("copy.noApprovalRequestsInThisWorkspace")}</p>
             ) : null}
           </aside>
 
@@ -715,9 +718,9 @@ export function PublishingApprovalCockpit() {
                 <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h2 className="text-xl font-semibold">Exact publish action</h2>
+                      <h2 className="text-xl font-semibold">{t("copy.exactPublishAction")}</h2>
                       <p className="mt-1 text-sm text-neutral-400">
-                        Plan <code>{approval.planId}</code> · revision {approval.planRevision} · {approval.targetIds.length} exact target{approval.targetIds.length === 1 ? "" : "s"}
+                        {t("copy.plan")} <code>{approval.planId}</code> {t("copy.revision")} {approval.planRevision} · {approval.targetIds.length} {t("copy.exactTarget2")}{approval.targetIds.length === 1 ? "" : "s"}
                       </p>
                     </div>
                     <span className={`rounded-full border px-3 py-1 text-xs ${badge(approval.status)}`}>
@@ -725,18 +728,18 @@ export function PublishingApprovalCockpit() {
                     </span>
                   </div>
                   <dl className="mt-5 grid gap-4 text-sm md:grid-cols-2 xl:grid-cols-3">
-                    <div><dt className="text-xs text-neutral-500">Revision digest</dt><dd className="break-all font-mono">{approval.planRevisionDigest}</dd></div>
-                    <div><dt className="text-xs text-neutral-500">Requested by Agent Principal</dt><dd><code>{approval.requestingPrincipalId}</code></dd></div>
-                    <div><dt className="text-xs text-neutral-500">Decision expires</dt><dd><time dateTime={approval.decisionPolicy.expiresAt}>{formatDate(approval.decisionPolicy.expiresAt)}</time></dd></div>
-                    <div><dt className="text-xs text-neutral-500">Validation evaluated</dt><dd><time dateTime={approval.validation.evaluatedAt}>{formatDate(approval.validation.evaluatedAt)}</time></dd></div>
-                    <div><dt className="text-xs text-neutral-500">Validation evidence</dt><dd className="break-all font-mono">{approval.validation.evidenceDigest}</dd></div>
-                    <div><dt className="text-xs text-neutral-500">Current-state digest</dt><dd className="break-all font-mono">{approval.validation.currentStateDigest}</dd></div>
-                    <div><dt className="text-xs text-neutral-500">Validation context</dt><dd><code>{approval.validation.contextId}</code><span className="block break-all font-mono text-xs text-neutral-500">{approval.validation.contextDigest}</span></dd></div>
-                    <div><dt className="text-xs text-neutral-500">Runtime policy</dt><dd>{approval.validation.runtimePolicyIdentity}<span className="block break-all font-mono text-xs text-neutral-500">{approval.validation.runtimePolicyContractDigest}</span></dd></div>
-                    <div><dt className="text-xs text-neutral-500">Request authorization</dt><dd>{approval.requestAuthorization.capability}<span className="block break-all font-mono text-xs text-neutral-500">{approval.requestAuthorization.evidenceRef}</span></dd></div>
+                    <div><dt className="text-xs text-neutral-500">{t("copy.revisionDigest")}</dt><dd className="break-all font-mono">{approval.planRevisionDigest}</dd></div>
+                    <div><dt className="text-xs text-neutral-500">{t("copy.requestedByAgentPrincipal")}</dt><dd><code>{approval.requestingPrincipalId}</code></dd></div>
+                    <div><dt className="text-xs text-neutral-500">{t("copy.decisionExpires")}</dt><dd><time dateTime={approval.decisionPolicy.expiresAt}>{formatDate(approval.decisionPolicy.expiresAt)}</time></dd></div>
+                    <div><dt className="text-xs text-neutral-500">{t("copy.validationEvaluated")}</dt><dd><time dateTime={approval.validation.evaluatedAt}>{formatDate(approval.validation.evaluatedAt)}</time></dd></div>
+                    <div><dt className="text-xs text-neutral-500">{t("copy.validationEvidence")}</dt><dd className="break-all font-mono">{approval.validation.evidenceDigest}</dd></div>
+                    <div><dt className="text-xs text-neutral-500">{t("copy.currentStateDigest")}</dt><dd className="break-all font-mono">{approval.validation.currentStateDigest}</dd></div>
+                    <div><dt className="text-xs text-neutral-500">{t("copy.validationContext")}</dt><dd><code>{approval.validation.contextId}</code><span className="block break-all font-mono text-xs text-neutral-500">{approval.validation.contextDigest}</span></dd></div>
+                    <div><dt className="text-xs text-neutral-500">{t("copy.runtimePolicy")}</dt><dd>{approval.validation.runtimePolicyIdentity}<span className="block break-all font-mono text-xs text-neutral-500">{approval.validation.runtimePolicyContractDigest}</span></dd></div>
+                    <div><dt className="text-xs text-neutral-500">{t("copy.requestAuthorization")}</dt><dd>{approval.requestAuthorization.capability}<span className="block break-all font-mono text-xs text-neutral-500">{approval.requestAuthorization.evidenceRef}</span></dd></div>
                   </dl>
                   <p className="mt-4 rounded-md border border-sky-900 bg-sky-950/40 p-3 text-xs text-sky-200">
-                    This record has <code>authorizesExecution: false</code>. A later publish attempt still needs independent, current authorization.
+                    {t("copy.thisRecordHas")} <code>{t("copy.authorizesexecutionFalse")}</code>{t("copy.aLaterPublishAttemptStillNeedsIndependent")}
                   </p>
                 </section>
 
@@ -754,7 +757,7 @@ export function PublishingApprovalCockpit() {
                 ))}
 
                 <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
-                  <h2 className="text-lg font-medium">Human decision</h2>
+                  <h2 className="text-lg font-medium">{t("copy.humanDecision")}</h2>
                   {approval.status === "pending" ? (
                     <>
                       {!presentation.decisionEligibility.eligible ? (
@@ -776,7 +779,7 @@ export function PublishingApprovalCockpit() {
                           onChange={(event) => setReviewed(event.target.checked)}
                           className="mt-1"
                         />
-                        <span>I reviewed the exact content, media, Channels, settings, timing, validation evidence, and cost context shown above.</span>
+                        <span>{t("copy.iReviewedTheExactContentMediaChannels")}</span>
                       </label>
                       <div className="mt-4 flex flex-wrap gap-3">
                         <button
@@ -785,7 +788,7 @@ export function PublishingApprovalCockpit() {
                           onClick={() => void decide("approved").catch((cause) => setError(String(cause)))}
                           className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-neutral-950 disabled:opacity-40"
                         >
-                          Approve this exact action
+                          {t("copy.approveThisExactAction")}
                         </button>
                         <button
                           type="button"
@@ -793,13 +796,13 @@ export function PublishingApprovalCockpit() {
                           onClick={() => void decide("denied").catch((cause) => setError(String(cause)))}
                           className="rounded-md border border-red-700 px-4 py-2 text-sm text-red-200 disabled:opacity-40"
                         >
-                          Deny permanently
+                          {t("copy.denyPermanently")}
                         </button>
                       </div>
                     </>
                   ) : (
                     <p className="mt-3 text-sm text-neutral-300">
-                      This request is final with status <strong>{approval.status}</strong>. It cannot be decided again or retargeted.
+                      {t("copy.thisRequestIsFinalWithStatus")} <strong>{approval.status}</strong>{t("copy.itCannotBeDecidedAgainOrRetargeted")}
                     </p>
                   )}
                 </section>
