@@ -764,6 +764,13 @@
       "when": 1788640800000,
       "tag": "0108_content_resource_bindings",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1788644400000,
+      "tag": "0109_content_model_policy_supersession",
+      "breakpoints": true
     }
   ]
 }

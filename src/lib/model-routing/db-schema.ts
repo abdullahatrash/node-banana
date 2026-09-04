@@ -41,7 +41,44 @@ export const contentWorkflowGenerationRuns = pgTable("content_workflow_generatio
 
 export const contentModelPolicyRevisions = pgTable("content_model_policy_revisions", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), revision: integer("revision").notNull(), format: text("format").notNull(), status: text("status").notNull(), policy: jsonb("policy").$type<ContentModelPolicy>().notNull(), policyDigest: text("policy_digest").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-}, (table) => ({ pk: primaryKey({ name: "content_model_policy_revisions_pk", columns: [table.workspaceId, table.id, table.revision] }), activeUnique: uniqueIndex("content_model_policy_revisions_active_unique").on(table.workspaceId, table.format).where(sql`${table.status} = 'active'`), valuesCheck: check("content_model_policy_revisions_values_check", sql`${table.revision} > 0 and ${table.status} in ('active','retired') and ${table.policyDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+}, (table) => ({
+  pk: primaryKey({ name: "content_model_policy_revisions_pk", columns: [table.workspaceId, table.id, table.revision] }),
+  exactIdentityUnique: uniqueIndex("content_model_policy_revisions_exact_identity_unique").on(table.workspaceId, table.id, table.revision, table.format, table.policyDigest),
+  statusIdx: index("content_model_policy_revisions_status_idx").on(table.workspaceId, table.format, table.status, table.revision),
+  valuesCheck: check("content_model_policy_revisions_values_check", sql`${table.revision} > 0 and ${table.status} in ('active','retired') and ${table.policyDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  documentBindingCheck: check("content_model_policy_revisions_document_binding_check", sql`${table.policy}->>'id' = ${table.id} and (${table.policy}->>'revision')::integer = ${table.revision} and ${table.policy}->>'format' = ${table.format} and ${table.policy}->>'digest' = ${table.policyDigest}`),
+}));
+
+export const contentModelPolicyCurrents = pgTable("content_model_policy_currents", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  format: text("format").notNull(),
+  policyId: text("policy_id").notNull(),
+  policyRevision: integer("policy_revision").notNull(),
+  policyDigest: text("policy_digest").notNull(),
+  promotedAt: timestamp("promoted_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "content_model_policy_currents_pk", columns: [table.workspaceId, table.format] }),
+  policyFk: foreignKey({ name: "content_model_policy_currents_policy_fk", columns: [table.workspaceId, table.policyId, table.policyRevision, table.format, table.policyDigest], foreignColumns: [contentModelPolicyRevisions.workspaceId, contentModelPolicyRevisions.id, contentModelPolicyRevisions.revision, contentModelPolicyRevisions.format, contentModelPolicyRevisions.policyDigest] }).onDelete("restrict"),
+  revisionCheck: check("content_model_policy_currents_revision_check", sql`${table.policyRevision} > 0 and ${table.policyDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+}));
+
+export const contentModelPolicySupersessions = pgTable("content_model_policy_supersessions", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  format: text("format").notNull(),
+  predecessorPolicyId: text("predecessor_policy_id").notNull(),
+  predecessorPolicyRevision: integer("predecessor_policy_revision").notNull(),
+  predecessorPolicyDigest: text("predecessor_policy_digest").notNull(),
+  successorPolicyId: text("successor_policy_id").notNull(),
+  successorPolicyRevision: integer("successor_policy_revision").notNull(),
+  successorPolicyDigest: text("successor_policy_digest").notNull(),
+  supersededAt: timestamp("superseded_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "content_model_policy_supersessions_pk", columns: [table.workspaceId, table.format, table.successorPolicyId, table.successorPolicyRevision] }),
+  predecessorUnique: uniqueIndex("content_model_policy_supersessions_predecessor_unique").on(table.workspaceId, table.format, table.predecessorPolicyId, table.predecessorPolicyRevision),
+  predecessorFk: foreignKey({ name: "content_model_policy_supersessions_predecessor_fk", columns: [table.workspaceId, table.predecessorPolicyId, table.predecessorPolicyRevision, table.format, table.predecessorPolicyDigest], foreignColumns: [contentModelPolicyRevisions.workspaceId, contentModelPolicyRevisions.id, contentModelPolicyRevisions.revision, contentModelPolicyRevisions.format, contentModelPolicyRevisions.policyDigest] }).onDelete("restrict"),
+  successorFk: foreignKey({ name: "content_model_policy_supersessions_successor_fk", columns: [table.workspaceId, table.successorPolicyId, table.successorPolicyRevision, table.format, table.successorPolicyDigest], foreignColumns: [contentModelPolicyRevisions.workspaceId, contentModelPolicyRevisions.id, contentModelPolicyRevisions.revision, contentModelPolicyRevisions.format, contentModelPolicyRevisions.policyDigest] }).onDelete("restrict"),
+  revisionCheck: check("content_model_policy_supersessions_revision_check", sql`${table.successorPolicyRevision} > ${table.predecessorPolicyRevision} and ${table.predecessorPolicyDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.successorPolicyDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+}));
 
 export const modelRoutingMutationReceipts = pgTable("model_routing_mutation_receipts", {
   workspaceId: text("workspace_id").notNull(), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), resourceKind: text("resource_kind").notNull(), resourceId: text("resource_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),

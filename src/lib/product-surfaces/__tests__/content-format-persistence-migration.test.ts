@@ -8,6 +8,7 @@ const migration = readFileSync("drizzle/0100_content_format_definitions_and_simi
 const v2 = readFileSync("drizzle/0106_content_format_workflow_v2.sql", "utf8");
 const v3 = readFileSync("drizzle/0107_content_format_typed_workflows.sql", "utf8");
 const v4 = readFileSync("drizzle/0108_content_resource_bindings.sql", "utf8");
+const policySupersession = readFileSync("drizzle/0109_content_model_policy_supersession.sql", "utf8");
 
 describe("Content format persistence migration", () => {
   it("seeds every observed format as an exact active revision", () => {
@@ -41,6 +42,14 @@ describe("Content format persistence migration", () => {
     expect(v4).not.toContain('"mediaSetIds"');
     expect(v4).not.toContain('"themeRevisionRefs"');
     for (const format of CONTENT_FORMATS) expect(v4).toContain(canonicalDigest(contentFormatDefinition(format)));
+  });
+
+  it("separates immutable policy evidence from its monotonic current pointer", () => {
+    expect(policySupersession).toContain('DROP INDEX "content_model_policy_revisions_active_unique"');
+    expect(policySupersession).toContain('CREATE TABLE "content_model_policy_currents"');
+    expect(policySupersession).toContain('CREATE TABLE "content_model_policy_supersessions"');
+    expect(policySupersession).toContain("content model policy supersession must advance monotonically");
+    expect(policySupersession).toContain("content_model_policy_supersessions_immutable");
   });
 
   it("persists immutable licensed theme and Blitz similarity evidence", () => {

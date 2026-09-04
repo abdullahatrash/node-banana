@@ -6,7 +6,7 @@ import { getDb } from "@/lib/db";
 import { assets, brandProfiles, workspaceProductRecords } from "@/lib/db/schema";
 import { canUseS3Storage } from "@/lib/storage";
 import { configuredCatalog, findCuratedModel } from "./catalog";
-import { contentModelPolicyRevisions, inspirationRightsSnapshots } from "./db-schema";
+import { inspirationRightsSnapshots } from "./db-schema";
 import { PRODUCTION_MODEL_ROUTING } from "./production";
 import { createImmutableRightsEvidence, loadRightsEvidence } from "./rights-evidence-repository";
 import { hydrateRightsSnapshot, validateRightsEvidence } from "./rights-evidence";
@@ -26,6 +26,7 @@ import { assertContentGenerationRequest, buildContentGenerationRecipe, contentPr
 import { assertContentModelPolicy, ContentWorkflowRuntimeError } from "@/lib/product-surfaces/content-workflow-runtime";
 import { contentModelAllowed, resolveContentModelPolicy } from "@/lib/product-surfaces/content-model-policy";
 import { loadContentExecutionResources } from "@/lib/product-surfaces/content-execution-resources-repository";
+import { persistCurrentContentModelPolicy } from "./content-model-policy-repository";
 
 export interface AdmittedGenerationInput {
   prompt: string; model: ExactModelRef & { provider: "replicate" }; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
@@ -105,9 +106,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   const providerSourceIds = contentExecution?.providerInputArtifactIds ?? sourceAssetIds;
   if (contentExecution) {
     const policy = { schema: "content-model-policy/v1" as const, id: contentExecution.modelPolicy.id, revision: contentExecution.modelPolicy.revision, format: contentExecution.workflowInputs.format as import("@/lib/product-surfaces/definitions").ContentFormat, region: contentExecution.modelPolicy.region as "replicate-us", defaultModel: contentExecution.modelPolicy.defaultModel as import("@/lib/product-surfaces/content-model-policy").ContentModelPolicy["defaultModel"], compatibleModels: contentExecution.modelPolicy.compatibleModels as import("@/lib/product-surfaces/content-model-policy").ContentModelPolicy["compatibleModels"], overrides: { mode: contentExecution.modelPolicy.overrideMode, allowedFields: ["model"] as const, requireRequote: true as const }, digest: contentExecution.modelPolicy.digest };
-    await getDb().insert(contentModelPolicyRevisions).values({ workspaceId: context.workspaceId, id: policy.id, revision: policy.revision, format: policy.format, status: "active", policy, policyDigest: policy.digest, createdAt: new Date() }).onConflictDoNothing();
-    const [storedPolicy] = await getDb().select({ digest: contentModelPolicyRevisions.policyDigest }).from(contentModelPolicyRevisions).where(and(eq(contentModelPolicyRevisions.workspaceId, context.workspaceId), eq(contentModelPolicyRevisions.id, policy.id), eq(contentModelPolicyRevisions.revision, policy.revision), eq(contentModelPolicyRevisions.status, "active"))).limit(1);
-    if (storedPolicy?.digest !== policy.digest) return fail(409, "CONTENT_MODEL_POLICY_CONFLICT");
+    if (!await persistCurrentContentModelPolicy(getDb(), context.workspaceId, policy)) return fail(409, "CONTENT_MODEL_POLICY_CONFLICT");
   }
   const providerSourceSet = new Set(providerSourceIds);
   const providerRows = sourceRows.filter((row) => providerSourceSet.has(row.id));
