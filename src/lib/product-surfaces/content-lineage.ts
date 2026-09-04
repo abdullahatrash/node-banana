@@ -54,21 +54,3 @@ export function isAdmittedContentArtifact(input: {
     && Array.isArray(operation.artifactIds)
     && operation.artifactIds.includes(generation.assetId);
 }
-
-export function buildContentRenderProof(input: {
-  sourceAssets: ContentAssetEvidence[];
-  artifact: ContentAssetEvidence;
-  intentId: string | null;
-  operationId: string | null;
-  verifiedAt: Date;
-}) {
-  return {
-    schema: "content-render-proof/v1" as const,
-    status: "passed" as const,
-    inputAssets: input.sourceAssets.map((asset) => ({ assetId: asset.id, type: asset.type as "image" | "video", contentDigest: asset.checksum!, width: asset.width!, height: asset.height!, durationSeconds: asset.durationSeconds })),
-    output: { assetId: input.artifact.id, contentDigest: input.artifact.checksum!, width: input.artifact.width!, height: input.artifact.height!, durationSeconds: input.artifact.durationSeconds },
-    intentId: input.intentId,
-    operationId: input.operationId,
-    verifiedAt: input.verifiedAt.toISOString(),
-  };
-}

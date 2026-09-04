@@ -117,6 +117,30 @@ export const blitzPayloadSchema = z.object({
   rejectionReasons: z.array(z.union([blitzRejectionReasonSchema, legacyBlitzRejectionReasonSchema])).max(12).default([]),
 });
 
+const renderProofDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const legacyContentRenderProofSchema = z.object({
+  schema: z.literal("content-render-proof/v1"), status: z.literal("passed"),
+  inputAssets: z.array(z.object({ assetId: text(200), type: z.enum(["image", "video"]), contentDigest: renderProofDigest, width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().int().positive().nullable() })),
+  output: z.object({ assetId: text(200), contentDigest: renderProofDigest, width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().int().positive().nullable() }),
+  intentId: text(200).nullable(), operationId: text(200).nullable(), verifiedAt: z.string().datetime(), digest: renderProofDigest,
+});
+const qualifiedContentRenderProofSchema = z.object({
+  schema: z.literal("content-render-proof/v2"), status: z.literal("passed"),
+  formatDefinition: z.object({ id: text(200), revision: z.number().int().positive(), digest: renderProofDigest }),
+  inputAssets: z.array(z.object({ assetId: text(200), type: z.enum(["image", "video"]), contentDigest: renderProofDigest })),
+  output: z.object({ assetId: text(200), contentDigest: renderProofDigest, width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().positive() }),
+  checks: z.object({
+    fonts: z.object({ status: z.literal("passed"), fontManifestDigest: renderProofDigest, missingGlyphCount: z.literal(0) }),
+    bidi: z.object({ status: z.literal("passed"), paragraphCount: z.number().int().nonnegative(), visualOrderDigest: renderProofDigest }),
+    captions: z.discriminatedUnion("status", [z.object({ status: z.literal("passed"), cueCount: z.number().int().positive(), overflowCount: z.literal(0), cueLayoutDigest: renderProofDigest }), z.object({ status: z.literal("not_applicable"), cueCount: z.literal(0), overflowCount: z.literal(0), cueLayoutDigest: z.null() })]),
+    timing: z.object({ status: z.literal("passed"), firstFrameMs: z.number().int().nonnegative(), lastFrameMs: z.number().int().positive(), audioSyncMaxDriftMs: z.number().int().nonnegative().max(100), timelineDigest: renderProofDigest }),
+    safeAreas: z.object({ status: z.literal("passed"), violationCount: z.literal(0), layoutDigest: renderProofDigest, preset: z.literal("short-form-v1") }),
+  }),
+  intentId: text(200).nullable(), operationId: text(200).nullable(),
+  verifier: z.object({ kind: z.literal("qualified_internal"), adapterId: text(200), adapterVersion: text(200), qualificationDigest: renderProofDigest }),
+  reportDigest: renderProofDigest, verifiedAt: z.string().datetime(), digest: renderProofDigest,
+});
+
 export const contentPieceSchema = z.object({
   format: z.enum(CONTENT_FORMATS),
   formatDefinition: z.object({ id: text(200), revision: z.number().int().positive(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
@@ -137,12 +161,7 @@ export const contentPieceSchema = z.object({
   candidateArtifactIds: z.array(text(200)).default([]),
   candidates: z.array(z.object({
     assetId: text(200), intentId: text(200).nullable(), operationId: text(200).nullable(), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), createdAt: z.string().datetime(),
-    renderProof: z.object({
-      schema: z.literal("content-render-proof/v1"), status: z.literal("passed"),
-      inputAssets: z.array(z.object({ assetId: text(200), type: z.enum(["image", "video"]), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().int().positive().nullable() })),
-      output: z.object({ assetId: text(200), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().int().positive().nullable() }),
-      intentId: text(200).nullable(), operationId: text(200).nullable(), verifiedAt: z.string().datetime(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    }),
+    renderProof: z.union([legacyContentRenderProofSchema, qualifiedContentRenderProofSchema]),
   })).default([]),
   renderProofStatus: z.enum(["not_requested", "pending", "passed", "failed"]).default("not_requested"),
   generatedText: z.object({

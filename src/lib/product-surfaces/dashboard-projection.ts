@@ -38,14 +38,14 @@ export interface DashboardContentPiece {
   title: string
   revision: number
   format: ContentFormat
-  contentLanguage: "ar" | "en"
+  contentLanguage: "ar" | "en" | "mixed"
   renderProofStatus: "not_requested" | "pending" | "passed" | "failed"
   updatedAt: Date
 }
 
 export function isAcceptedDashboardContent(payload: unknown): boolean {
   const parsed = contentPieceSchema.safeParse(payload)
-  return parsed.success && parsed.data.renderProofStatus === "passed" && parsed.data.candidates.length > 0
+  return parsed.success && parsed.data.renderProofStatus === "passed" && parsed.data.candidates.some((candidate) => candidate.renderProof.schema === "content-render-proof/v2" && candidate.renderProof.status === "passed")
 }
 
 export function projectDashboardContentPiece(row: {
@@ -57,9 +57,10 @@ export function projectDashboardContentPiece(row: {
 }): DashboardContentPiece | null {
   const { format, contentLanguage, renderProofStatus } = row.payload
   if (typeof format !== "string" || !CONTENT_FORMATS.includes(format as ContentFormat)) return null
-  if (contentLanguage !== "ar" && contentLanguage !== "en") return null
+  if (contentLanguage !== "ar" && contentLanguage !== "en" && contentLanguage !== "mixed") return null
   if (renderProofStatus !== "not_requested" && renderProofStatus !== "pending" && renderProofStatus !== "passed" && renderProofStatus !== "failed") return null
-  return { ...row, format: format as ContentFormat, contentLanguage, renderProofStatus }
+  const qualified = isAcceptedDashboardContent(row.payload)
+  return { ...row, format: format as ContentFormat, contentLanguage, renderProofStatus: renderProofStatus === "passed" && !qualified ? "failed" : renderProofStatus }
 }
 
 export function dashboardReviewHref(kind: DashboardReviewKind, id: string): string {

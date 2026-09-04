@@ -9,10 +9,12 @@ import { runtimeOperations } from "@/lib/agent-runtime/operation-status/db-schem
 import { generationIntents, modelArtifactIngestionReceipts } from "@/lib/model-routing/db-schema";
 import { isAdmittedBlitzArtifact } from "./blitz-lineage";
 import { blitzPayloadSchema, parseProductPayload } from "./definitions";
-import { buildContentRenderProof, validateReadyPortraitAsset, type ContentAssetEvidence } from "./content-lineage";
+import { validateReadyPortraitAsset, type ContentAssetEvidence } from "./content-lineage";
 import { ProductRecordConflictError, ProductRecordIdempotencyError } from "./repository";
 import { requirePassedBlitzSimilarityEvidence } from "./blitz-similarity-service";
 import { resolveActiveContentFormatDefinition } from "./content-format-registry";
+import { buildQualifiedContentRenderProof, productionContentRenderProofVerifier } from "./content-render-proof";
+import { createPresignedDownload } from "@/lib/storage";
 
 export async function decideBlitzItem(input: { workspaceId: string; userId: string; itemId: string; expectedRevision: number; decision: "accepted" | "rejected"; reasons: Array<{ code: "not_relevant" | "brand_mismatch" | "stale_source" | "rights_unclear" | "too_similar" | "wrong_format" | "other"; note: string }>; generation: { assetId: string; intentId: string; operationId: string } | null; similarityEvidenceId: string | null; idempotencyKey: string; now?: Date }) {
   const now = input.now ?? new Date();
@@ -40,10 +42,13 @@ export async function decideBlitzItem(input: { workspaceId: string; userId: stri
       const operationMetadata = operation?.metadata && typeof operation.metadata === "object" && !Array.isArray(operation.metadata) ? operation.metadata : {};
       if (!artifact || !sourceAsset || validateReadyPortraitAsset(evidence(sourceAsset), payload.sourceMediaType) || validateReadyPortraitAsset(evidence(artifact), "video") || !isAdmittedBlitzArtifact({ sourceAssetId: payload.sourceAssetId, rightsDigest: payload.rightsSnapshot.digest, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifactExists: true })) throw new Error("BLITZ_GENERATION_LINEAGE_INVALID");
       await requirePassedBlitzSimilarityEvidence(tx, { workspaceId: input.workspaceId, evidenceId: input.similarityEvidenceId, itemId: input.itemId, itemRevision: input.expectedRevision, sourceAssetId: sourceAsset.id, sourceDigest: sourceAsset.checksum!, sourceMediaType: payload.sourceMediaType, candidateAssetId: artifact.id, candidateDigest: artifact.checksum!, candidateMediaType: "video" });
-      const formatDefinition = (await resolveActiveContentFormatDefinition(payload.format)).reference;
+      const resolvedFormatDefinition = await resolveActiveContentFormatDefinition(payload.format);
+      const formatDefinition = resolvedFormatDefinition.reference;
       contentPieceId = randomUUID();
-      const proofFacts = buildContentRenderProof({ sourceAssets: [evidence(sourceAsset)], artifact: evidence(artifact), intentId: input.generation.intentId, operationId: input.generation.operationId, verifiedAt: now });
-      const renderProof = { ...proofFacts, digest: canonicalDigest(proofFacts) };
+      if (artifact.storageProvider !== "s3" || !artifact.storageKey) throw new Error("CONTENT_RENDER_PROOF_UNAVAILABLE");
+      const download = await createPresignedDownload({ key: artifact.storageKey, expiresInSeconds: 300 });
+      const inspection = await productionContentRenderProofVerifier().inspect({ assetId: artifact.id, contentDigest: receipt.contentDigest as `sha256:${string}`, downloadUrl: download.downloadUrl, requirements: { aspectRatio: "9:16", minimumDurationSeconds: resolvedFormatDefinition.definition.duration.minimumSeconds, maximumDurationSeconds: resolvedFormatDefinition.definition.duration.maximumSeconds, captionsRequired: resolvedFormatDefinition.definition.captions.required, bidiRequired: resolvedFormatDefinition.definition.captions.bidiProofRequired, safeAreaPreset: resolvedFormatDefinition.definition.layout.safeAreaPreset } });
+      const renderProof = buildQualifiedContentRenderProof({ definition: resolvedFormatDefinition.definition, definitionDigest: formatDefinition.digest as `sha256:${string}`, inputAssets: [{ assetId: sourceAsset.id, type: sourceAsset.type as "image" | "video", contentDigest: sourceAsset.checksum as `sha256:${string}` }], output: { assetId: artifact.id, contentDigest: receipt.contentDigest as `sha256:${string}` }, intentId: input.generation.intentId, operationId: input.generation.operationId, contentLanguage: payload.contentLanguage, report: inspection.report, verifier: inspection.verifier, verifiedAt: now });
       const candidate = { assetId: input.generation.assetId, intentId: input.generation.intentId, operationId: input.generation.operationId, contentDigest: receipt.contentDigest, createdAt: now.toISOString(), renderProof };
       const contentPayload = parseProductPayload("content_piece", { format: payload.format, formatDefinition, contentLanguage: payload.contentLanguage, arabicVariety: payload.arabicVariety, prompt: payload.rationale, script: "", aspectRatio: "9:16", durationSeconds: Math.max(4, Math.min(60, Math.round(intentRow.intent.outputContract.durationSeconds ?? 15))), captionStyle: "brand", sourceAssetIds: [payload.sourceAssetId], personaId: null, candidateArtifactIds: [input.generation.assetId], candidates: [candidate], renderProofStatus: "passed", generatedText: null, generatedMedia: { assetId: input.generation.assetId, intentId: input.generation.intentId, operationId: input.generation.operationId, contentDigest: receipt.contentDigest } });
       await tx.insert(workspaceProductRecords).values({ workspaceId: input.workspaceId, id: contentPieceId, kind: "content_piece", title: item.title, state: "active", revision: 1, payload: contentPayload, createdByUserId: input.userId, updatedByUserId: input.userId, createdAt: now, updatedAt: now });

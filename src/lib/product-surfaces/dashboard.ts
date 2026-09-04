@@ -57,7 +57,7 @@ export async function getDashboardReadModel(workspaceId: string): Promise<Dashbo
       eq(workspaceProductRecords.state, "active"),
       isNull(workspaceProductRecords.archivedAt),
       sql`${workspaceProductRecords.payload}->>'renderProofStatus' = 'passed'`,
-      sql`case when jsonb_typeof(${workspaceProductRecords.payload}->'candidates') = 'array' then jsonb_array_length(${workspaceProductRecords.payload}->'candidates') else 0 end > 0`,
+      sql`jsonb_path_exists(${workspaceProductRecords.payload}->'candidates', '$[*] ? (@.renderProof.schema == "content-render-proof/v2" && @.renderProof.status == "passed")')`,
     )),
     db.select({ value: count() }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, workspaceId), eq(workspaceProductRecords.kind, "blitz_item"), eq(workspaceProductRecords.state, "queued"), isNull(workspaceProductRecords.archivedAt))),
     db.select({ status: socialPosts.status, value: count() }).from(socialPosts).where(eq(socialPosts.workspaceId, workspaceId)).groupBy(socialPosts.status),

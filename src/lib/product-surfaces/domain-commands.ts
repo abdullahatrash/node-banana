@@ -8,14 +8,15 @@ import { generationIntents, modelTextOutputReceipts } from "@/lib/model-routing/
 import { runtimeOperations } from "@/lib/agent-runtime/operation-status/db-schema";
 import { generationOperationId } from "@/lib/model-routing/generation-operation";
 import { modelArtifactIngestionReceipts } from "@/lib/model-routing/db-schema";
-import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { createPresignedDownload } from "@/lib/storage";
 import { createProductRecord, createProductRecordInTransaction, updateProductRecord, updateProductRecordInTransaction, type ProductRecord } from "./repository";
 import { contentPieceSchema, parseProductPayload } from "./definitions";
-import { buildContentRenderProof, isAdmittedContentArtifact, validateReadyPortraitAsset, type ContentAssetEvidence, type ContentGenerationReference } from "./content-lineage";
+import { isAdmittedContentArtifact, validateReadyPortraitAsset, type ContentAssetEvidence, type ContentGenerationReference } from "./content-lineage";
 import { contentExecutionPlan, validateContentExecutionInput } from "./content-execution-plan";
 import { validateContentDraft } from "./content-draft-policy";
 import { ContentFormatRegistryError, resolveActiveContentFormatDefinition, resolveContentFormatDefinitionReference } from "./content-format-registry";
 import type { ContentFormatDefinition } from "./content-format-definition";
+import { buildQualifiedContentRenderProof, productionContentRenderProofVerifier } from "./content-render-proof";
 import { evaluatePersonaGate, type CreatorPersona, type CreatorPersonaEvidence } from "@/lib/creator-personas/types";
 
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
@@ -100,12 +101,14 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
     if (!inputValidation.ok) throw new Error(inputValidation.code);
     const plan = contentExecutionPlan(payload.format, definition);
     let artifact: ContentAssetEvidence;
+    let proofAssetRow: typeof assets.$inferSelect;
     let contentDigest: string;
     let intentId: string | null = null;
     let operationId: string | null = null;
     if (plan.strategy === "canonical_upload") {
       if (input.generation || sourceAssets.length !== 1 || validateReadyPortraitAsset(sourceAssets[0]!, "video")) throw new Error("CONTENT_UPLOAD_RENDER_PROOF_INVALID");
       artifact = sourceAssets[0]!;
+      proofAssetRow = sourceRows[0]!;
       contentDigest = artifact.checksum!;
     } else {
       if (!input.generation) throw new Error("CONTENT_GENERATION_REQUIRED");
@@ -118,13 +121,32 @@ export async function bindContentMediaOutputCommand(input: Actor & { id: string;
       const operationMetadata = operation?.metadata && typeof operation.metadata === "object" && !Array.isArray(operation.metadata) ? operation.metadata : {};
       if (!artifactRow) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
       artifact = assetEvidence(artifactRow);
+      proofAssetRow = artifactRow;
       if (!isAdmittedContentArtifact({ format: payload.format, definition, sourceAssets, personaState, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest, width: receipt.width, height: receipt.height, durationSeconds: receipt.durationSeconds } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifact })) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
       contentDigest = receipt!.contentDigest!;
       intentId = input.generation.intentId;
       operationId = input.generation.operationId;
     }
-    const proofFacts = buildContentRenderProof({ sourceAssets, artifact, intentId, operationId, verifiedAt: now });
-    const renderProof = { ...proofFacts, digest: canonicalDigest(proofFacts) };
+    if (proofAssetRow.storageProvider !== "s3" || !proofAssetRow.storageKey || !payload.formatDefinition) throw new Error("CONTENT_RENDER_PROOF_UNAVAILABLE");
+    const download = await createPresignedDownload({ key: proofAssetRow.storageKey, expiresInSeconds: 300 });
+    const inspection = await productionContentRenderProofVerifier().inspect({
+      assetId: artifact.id,
+      contentDigest: contentDigest as `sha256:${string}`,
+      downloadUrl: download.downloadUrl,
+      requirements: { aspectRatio: "9:16", minimumDurationSeconds: definition.duration.minimumSeconds, maximumDurationSeconds: definition.duration.maximumSeconds, captionsRequired: definition.captions.required, bidiRequired: definition.captions.bidiProofRequired, safeAreaPreset: definition.layout.safeAreaPreset },
+    });
+    const renderProof = buildQualifiedContentRenderProof({
+      definition,
+      definitionDigest: payload.formatDefinition.digest as `sha256:${string}`,
+      inputAssets: sourceAssets.map((asset) => ({ assetId: asset.id, type: asset.type as "image" | "video", contentDigest: asset.checksum as `sha256:${string}` })),
+      output: { assetId: artifact.id, contentDigest: contentDigest as `sha256:${string}` },
+      intentId,
+      operationId,
+      contentLanguage: payload.contentLanguage,
+      report: inspection.report,
+      verifier: inspection.verifier,
+      verifiedAt: now,
+    });
     const existing = payload.candidates.find((candidate) => candidate.assetId === artifact.id && candidate.contentDigest === contentDigest);
     if (existing) return record;
     const candidate = { assetId: artifact.id, intentId, operationId, contentDigest, createdAt: now.toISOString(), renderProof };
