@@ -29,6 +29,8 @@
     "typecheck": "tsc --noEmit",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
+    "infra:up": "docker compose up -d postgres minio minio-init",
+    "infra:down": "docker compose down",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:backfill:org": "node scripts/db-backfill-workspace-organizations.mjs",

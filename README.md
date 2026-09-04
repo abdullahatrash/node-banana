@@ -133,6 +133,40 @@ Stop local Postgres:
 pnpm db:down
 ```
 
+### Local PostgreSQL + canonical media storage
+
+Real image and video generation must copy provider output into Workspace-owned
+S3-compatible storage before an operation can succeed. Start PostgreSQL and the
+included MinIO service together:
+
+```bash
+pnpm infra:up
+```
+
+Use this local-only profile in `.env.local`:
+
+```env
+STORAGE_BACKEND=s3
+S3_BUCKET_NAME=node-banana
+S3_REGION=us-east-1
+S3_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY_ID=node-banana-local
+S3_SECRET_ACCESS_KEY=node-banana-local-secret
+S3_FORCE_PATH_STYLE=true
+```
+
+MinIO serves the S3 API at `http://localhost:9000` and its local console at
+`http://localhost:9001`. The initializer creates the bucket idempotently and
+allows browser uploads from the documented local app origins only. These
+development credentials must never be reused outside the local Docker stack.
+
+Validate the complete auth, Workspace, presigned upload, finalize, list, and
+delete lifecycle after the app is running:
+
+```bash
+APP_BASE_URL=http://localhost:3002 SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
+```
+
 ### Installation
 
 ```bash
