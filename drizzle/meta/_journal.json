@@ -603,6 +603,13 @@
       "when": 1788554400000,
       "tag": "0085_operation_projection_checkpoints",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1788558000000,
+      "tag": "0086_workspace_product_surfaces",
+      "breakpoints": true
     }
   ]
 }
