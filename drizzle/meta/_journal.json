@@ -659,6 +659,13 @@
       "when": 1788583200000,
       "tag": "0093_merchant_checkout_effects",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1788586800000,
+      "tag": "0094_campaign_scheduling_blitz_replenishment",
+      "breakpoints": true
     }
   ]
 }

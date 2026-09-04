@@ -8925,6 +8925,90 @@ export const workspaceProductRecordRevisions = pgTable(
   }),
 );
 
+export const productCampaignOccurrences = pgTable(
+  "product_campaign_occurrences",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    campaignRevision: integer("campaign_revision").notNull(),
+    campaignDigest: text("campaign_digest").notNull(),
+    occurrenceKey: text("occurrence_key").notNull(),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    format: text("format").notNull(),
+    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    state: text("state").notNull(),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    leaseGeneration: integer("lease_generation").default(0).notNull(),
+    workflowRunId: text("workflow_run_id"),
+    startSnapshotDigest: text("start_snapshot_digest"),
+    quoteId: text("quote_id"),
+    quotedAmount: text("quoted_amount"),
+    currency: text("currency"),
+    failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_campaign_occurrences_pk", columns: [table.workspaceId, table.id] }),
+    keyUnique: uniqueIndex("product_campaign_occurrences_key_unique").on(table.workspaceId, table.campaignId, table.occurrenceKey),
+    campaignFk: foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "product_campaign_occurrences_campaign_fk" }).onDelete("restrict"),
+    runFk: foreignKey({ columns: [table.workspaceId, table.workflowRunId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "product_campaign_occurrences_run_fk" }).onDelete("restrict"),
+    dueIdx: index("product_campaign_occurrences_due_idx").on(table.state, table.scheduledAt, table.id),
+    campaignIdx: index("product_campaign_occurrences_campaign_idx").on(table.workspaceId, table.campaignId, table.scheduledAt, table.id),
+    digestCheck: check("product_campaign_occurrences_digest_check", sql`${table.campaignRevision} > 0 and ${table.campaignDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    stateCheck: check("product_campaign_occurrences_state_check", sql`${table.state} in ('scheduled','claimed','submitting','running','succeeded','failed_known','outcome_unknown','cancelled')`),
+    leaseCheck: check("product_campaign_occurrences_lease_check", sql`(${table.state} = 'claimed' and ${table.leaseToken} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseToken} is null and ${table.leaseExpiresAt} is null)`),
+    runCheck: check("product_campaign_occurrences_run_check", sql`(${table.workflowRunId} is null and ${table.startSnapshotDigest} is null) or (${table.workflowRunId} is not null and ${table.startSnapshotDigest} ~ '^sha256:[a-f0-9]{64}$')`),
+  }),
+);
+
+export const productRuntimeScanCheckpoints = pgTable(
+  "product_runtime_scan_checkpoints",
+  {
+    scanKey: text("scan_key").primaryKey(),
+    cursorAt: timestamp("cursor_at", { withTimezone: true }),
+    cursorId: text("cursor_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({ cursorCheck: check("product_runtime_scan_checkpoints_cursor_check", sql`(${table.cursorAt} is null and ${table.cursorId} is null) or (${table.cursorAt} is not null and ${table.cursorId} is not null)`) }),
+);
+
+export const productBlitzReplenishmentRuns = pgTable(
+  "product_blitz_replenishment_runs",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(), campaignId: text("campaign_id").notNull(), sourceKey: text("source_key").notNull(), invocation: text("invocation").notNull(), actorUserId: text("actor_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), state: text("state").notNull(),
+    leaseToken: text("lease_token"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), leaseGeneration: integer("lease_generation").default(0).notNull(), policySnapshot: jsonb("policy_snapshot").$type<Record<string, unknown>>().notNull(), createdCount: integer("created_count").default(0).notNull(), stopReason: text("stop_reason"), failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(), completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_blitz_replenishment_runs_pk", columns: [table.workspaceId, table.id] }),
+    sourceUnique: uniqueIndex("product_blitz_replenishment_runs_source_unique").on(table.workspaceId, table.campaignId, table.sourceKey),
+    campaignFk: foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "product_blitz_replenishment_runs_campaign_fk" }).onDelete("restrict"),
+    leaseIdx: index("product_blitz_replenishment_runs_lease_idx").on(table.state, table.leaseExpiresAt, table.id),
+    lifecycleCheck: check("product_blitz_replenishment_runs_lifecycle_check", sql`${table.invocation} in ('daily','manual') and ${table.state} in ('claimed','succeeded','failed_known') and ${table.createdCount} >= 0`),
+  }),
+);
+
+export const productBlitzReplenishmentItems = pgTable(
+  "product_blitz_replenishment_items",
+  {
+    workspaceId: text("workspace_id").notNull(), runId: text("run_id").notNull(), position: integer("position").notNull(), sourceRecordId: text("source_record_id").notNull(), blitzItemId: text("blitz_item_id").notNull(), rationaleDigest: text("rationale_digest").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_blitz_replenishment_items_pk", columns: [table.workspaceId, table.runId, table.position] }),
+    sourceUnique: uniqueIndex("product_blitz_replenishment_items_source_unique").on(table.workspaceId, table.runId, table.sourceRecordId),
+    blitzUnique: uniqueIndex("product_blitz_replenishment_items_blitz_unique").on(table.workspaceId, table.blitzItemId),
+    runFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [productBlitzReplenishmentRuns.workspaceId, productBlitzReplenishmentRuns.id], name: "product_blitz_replenishment_items_run_fk" }).onDelete("restrict"),
+    sourceFk: foreignKey({ columns: [table.workspaceId, table.sourceRecordId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "product_blitz_replenishment_items_source_fk" }).onDelete("restrict"),
+    blitzFk: foreignKey({ columns: [table.workspaceId, table.blitzItemId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "product_blitz_replenishment_items_blitz_fk" }).onDelete("restrict"),
+    positionCheck: check("product_blitz_replenishment_items_position_check", sql`${table.position} >= 0 and ${table.rationaleDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
 /**
  * Persistent Creator Personas are a separate safety-critical aggregate rather
  * than an untyped product-record payload. Evidence and usage rows are

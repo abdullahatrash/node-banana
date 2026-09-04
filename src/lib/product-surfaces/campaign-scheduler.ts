@@ -30,6 +30,7 @@ export interface CampaignSchedulerRepository {
   schedule(workspaceId: string, plans: ScheduledCampaignSnapshot[]): Promise<{ inserted: number; replayed: number }>;
   cancelFuture(workspaceId: string, campaignId: string, after: Date): Promise<number>;
   claimDue(input: { workerId: string; now: Date; leaseUntil: Date; limit: number }): Promise<ClaimedCampaignOccurrence[]>;
+  markSubmitting(input: { occurrence: ClaimedCampaignOccurrence; now: Date }): Promise<boolean>;
   bindRun(input: { occurrence: ClaimedCampaignOccurrence; runId: string; startSnapshotDigest: string; quoteId: string; quotedAmount: string; currency: string; acceptedAt: Date }): Promise<void>;
   fail(input: { occurrence: ClaimedCampaignOccurrence; code: string; outcomeUnknown: boolean; now: Date }): Promise<void>;
 }
@@ -70,11 +71,18 @@ export class CampaignOccurrenceScheduler {
         const amountCents = Math.ceil(Number(preview.ceiling.amount ?? Number.POSITIVE_INFINITY) * 100);
         if (!preview.admissible || !Number.isSafeInteger(amountCents) || amountCents > occurrence.budgetCeilingCents) { await this.repository.fail({ occurrence, code: "CAMPAIGN_OCCURRENCE_BUDGET_DENIED", outcomeUnknown: false, now: this.clock() }); summary.denied++; continue; }
         const acceptedQuote = issueCampaignAcceptedQuote({ preview, binding: occurrence.workflow, workspaceId: occurrence.workspaceId, userId: occurrence.actor.principalId, keyId: occurrence.actor.keyId, campaignId: occurrence.campaignId, campaignRevision: occurrence.campaignRevision, now, codec: this.codec });
+        const submitting = await this.repository.markSubmitting({ occurrence, now: this.clock() });
+        if (!submitting) continue;
+        try {
         const accepted = await this.runtime.start({ workspaceId: occurrence.workspaceId, workflowId: occurrence.workflow.workflowId, revisionId: occurrence.workflow.workflowRevisionId, inputs: runtimeInputs, principalId: occurrence.actor.principalId, keyId: occurrence.actor.keyId, authorizationEvidenceRef: occurrence.actor.authorizationEvidenceRef, idempotencyKey: occurrence.occurrenceKey, inputArtifactIds: occurrence.workflow.inputArtifactIds, capability: "workflow_runs.start@2", acceptedSpendQuoteRef: acceptedQuote.ref });
         await this.repository.bindRun({ occurrence, runId: accepted.run.id, startSnapshotDigest: accepted.run.startSnapshotDigest, quoteId: acceptedQuote.quote.quoteId, quotedAmount: acceptedQuote.quote.amount, currency: acceptedQuote.quote.currency, acceptedAt: new Date(accepted.run.acceptedAt) }); summary.started++;
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "CAMPAIGN_OCCURRENCE_START_UNKNOWN";
+          await this.repository.fail({ occurrence, code, outcomeUnknown: true, now: this.clock() }); summary.outcomeUnknown++;
+        }
       } catch (error) {
-        const code = error instanceof Error ? error.message : "CAMPAIGN_OCCURRENCE_START_UNKNOWN";
-        await this.repository.fail({ occurrence, code, outcomeUnknown: true, now: this.clock() }); summary.outcomeUnknown++;
+        const code = error instanceof Error ? error.message : "CAMPAIGN_OCCURRENCE_ADMISSION_FAILED";
+        await this.repository.fail({ occurrence, code, outcomeUnknown: false, now: this.clock() }); summary.denied++;
       }
     }
     return summary;

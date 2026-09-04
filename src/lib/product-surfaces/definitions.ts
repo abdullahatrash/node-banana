@@ -104,6 +104,8 @@ export const inspirationPayloadSchema = z.object({
 });
 
 export const blitzPayloadSchema = z.object({
+  campaignId: text(200).nullable().default(null),
+  replenishmentRunId: text(200).nullable().default(null),
   inspirationItemId: text(200).nullable().default(null),
   contentPieceId: text(200).nullable().default(null),
   sourceAttribution: text(500),
@@ -118,6 +120,9 @@ export const blitzPayloadSchema = z.object({
   format: z.enum(CONTENT_FORMATS).nullable().default(null),
   remixBrief: z.object({ influences: z.array(text(200)).min(1), protectedExpressionExcluded: z.boolean() }),
   rationale: text(1_000),
+  sourceComparison: z.object({ views: z.number().int().nonnegative(), likes: z.number().int().nonnegative(), observedAt: z.string().datetime(), selectionDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
+  executionMode: z.enum(["byok", "managed"]).nullable().default(null),
+  generationCeilingCents: z.number().int().nonnegative().default(0),
   rejectionReasons: z.array(text(300)).default([]),
 });
 
@@ -175,6 +180,9 @@ export const campaignPayloadSchema = z.object({
     modelPolicy: text(200),
     creditCeiling: z.number().int().nonnegative(),
     budgetCents: z.number().int().nonnegative(),
+    replenishmentMode: z.enum(["daily", "manual"]).default("manual"),
+    blitzTargetCapacity: z.number().int().min(1).max(100).default(20),
+    blitzMaximumCreatesPerRun: z.number().int().min(1).max(50).default(10),
     workflow: z.object({
       workflowId: text(200),
       workflowRevisionId: text(200),
