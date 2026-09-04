@@ -5,6 +5,7 @@
  */
 
 import { getActiveWorkspaceId, StudioApiError } from "@/lib/studio/client";
+import { executeGovernanceCommand } from "@/lib/governance/client";
 import type { ByokProvider } from "./providers";
 
 export interface ProviderKeySummaryView {
@@ -14,6 +15,15 @@ export interface ProviderKeySummaryView {
   lastValidatedAt: string | null;
   updatedAt: string;
 }
+
+export interface ProviderKeyStepUpChallenge {
+  challengeId: string;
+  expiresAt: string;
+}
+
+export type ProviderKeyStepUpVerification =
+  | { verified: true; stepUpToken: string; expiresAt: string }
+  | { verified: false; attemptsRemaining: number };
 
 type JsonRecord = Record<string, unknown>;
 
@@ -75,13 +85,40 @@ export async function listProviderKeysRequest(): Promise<
 export async function saveProviderKeyRequest(
   provider: ByokProvider,
   apiKey: string,
+  stepUpToken: string,
 ): Promise<ProviderKeySummaryView> {
   const record = await keysFetch("/api/keys", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-step-up-token": stepUpToken,
+    },
     body: JSON.stringify({ provider, apiKey }),
   });
   return record.key as ProviderKeySummaryView;
+}
+
+/** Begin a short-lived governance challenge scoped to this exact provider. */
+export function beginProviderKeyStepUpRequest(
+  provider: ByokProvider,
+): Promise<ProviderKeyStepUpChallenge> {
+  return executeGovernanceCommand<ProviderKeyStepUpChallenge>({
+    type: "begin_step_up",
+    purpose: "credential.replace",
+    resourceId: provider,
+  });
+}
+
+/** Verify the challenge and receive the opaque token required by POST /api/keys. */
+export function verifyProviderKeyStepUpRequest(
+  challengeId: string,
+  code: string,
+): Promise<ProviderKeyStepUpVerification> {
+  return executeGovernanceCommand<ProviderKeyStepUpVerification>({
+    type: "verify_step_up",
+    challengeId,
+    code,
+  });
 }
 
 export async function deleteProviderKeyRequest(

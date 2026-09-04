@@ -3,10 +3,15 @@ import { render as testingRender, screen, fireEvent, waitFor } from "@testing-li
 import type { ReactElement } from "react";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "@/i18n/messages/en.json";
+import arMessages from "@/i18n/messages/ar.json";
 
-function render(ui: ReactElement) {
+function render(ui: ReactElement, locale: "en" | "ar" = "en") {
   return testingRender(
-    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+    <NextIntlClientProvider
+      locale={locale}
+      messages={locale === "ar" ? arMessages : messages}
+      timeZone="UTC"
+    >
       {ui}
     </NextIntlClientProvider>,
   );
@@ -16,6 +21,8 @@ const mockShowToast = vi.fn();
 const mockListProviderKeysRequest = vi.fn();
 const mockSaveProviderKeyRequest = vi.fn();
 const mockDeleteProviderKeyRequest = vi.fn();
+const mockBeginProviderKeyStepUpRequest = vi.fn();
+const mockVerifyProviderKeyStepUpRequest = vi.fn();
 
 vi.mock("@/components/Toast", () => ({
   useToast: () => ({ show: mockShowToast }),
@@ -28,6 +35,10 @@ vi.mock("@/lib/byok/client", () => ({
     mockSaveProviderKeyRequest(...args),
   deleteProviderKeyRequest: (...args: unknown[]) =>
     mockDeleteProviderKeyRequest(...args),
+  beginProviderKeyStepUpRequest: (...args: unknown[]) =>
+    mockBeginProviderKeyStepUpRequest(...args),
+  verifyProviderKeyStepUpRequest: (...args: unknown[]) =>
+    mockVerifyProviderKeyStepUpRequest(...args),
 }));
 
 import { ProviderKeysSettings } from "@/components/social/ProviderKeysSettings";
@@ -36,7 +47,28 @@ describe("ProviderKeysSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockListProviderKeysRequest.mockResolvedValue([]);
+    mockBeginProviderKeyStepUpRequest.mockResolvedValue({
+      challengeId: "stepup_challenge_1",
+      expiresAt: "2026-07-10T00:10:00.000Z",
+    });
+    mockVerifyProviderKeyStepUpRequest.mockResolvedValue({
+      verified: true,
+      stepUpToken: "step_up_token_1",
+      expiresAt: "2026-07-10T00:10:00.000Z",
+    });
   });
+
+  async function completeStepUp() {
+    fireEvent.click(screen.getByRole("button", { name: /send verification code/i }));
+    await waitFor(() =>
+      expect(mockBeginProviderKeyStepUpRequest).toHaveBeenCalled(),
+    );
+    fireEvent.change(screen.getByLabelText(/six-digit verification code/i), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /verify code/i }));
+    await screen.findByRole("status");
+  }
 
   it("loads and displays stored provider keys with masked hints", async () => {
     mockListProviderKeysRequest.mockResolvedValue([
@@ -61,7 +93,16 @@ describe("ProviderKeysSettings", () => {
     expect(await screen.findByText(/no provider keys yet/i)).toBeInTheDocument();
   });
 
-  it("saves a new key and shows a success toast", async () => {
+  it("exposes the secure confirmation controls with Arabic accessible names", async () => {
+    render(<ProviderKeysSettings />, "ar");
+
+    expect(await screen.findByLabelText("المزود")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "إرسال رمز التحقق" }),
+    ).toBeInTheDocument();
+  });
+
+  it("requires an exact-provider challenge, verifies it, and forwards the token when saving", async () => {
     mockSaveProviderKeyRequest.mockResolvedValue({
       provider: "openai",
       hint: "sk-…new4",
@@ -78,12 +119,22 @@ describe("ProviderKeysSettings", () => {
     fireEvent.change(screen.getByLabelText(/api key/i), {
       target: { value: "sk-realsecretvalue1234" },
     });
+    expect(screen.getByRole("button", { name: /save key/i })).toBeDisabled();
+
+    await completeStepUp();
+
+    expect(mockBeginProviderKeyStepUpRequest).toHaveBeenCalledWith("openai");
+    expect(mockVerifyProviderKeyStepUpRequest).toHaveBeenCalledWith(
+      "stepup_challenge_1",
+      "123456",
+    );
     fireEvent.click(screen.getByRole("button", { name: /save key/i }));
 
     await waitFor(() =>
       expect(mockSaveProviderKeyRequest).toHaveBeenCalledWith(
         "openai",
         "sk-realsecretvalue1234",
+        "step_up_token_1",
       ),
     );
     await waitFor(() =>
@@ -105,6 +156,7 @@ describe("ProviderKeysSettings", () => {
     fireEvent.change(screen.getByLabelText(/api key/i), {
       target: { value: "sk-bad" },
     });
+    await completeStepUp();
     fireEvent.click(screen.getByRole("button", { name: /save key/i }));
 
     await waitFor(() =>
@@ -113,6 +165,60 @@ describe("ProviderKeysSettings", () => {
         "error",
       ),
     );
+    expect(screen.getByRole("button", { name: /save key/i })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /send verification code/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("announces challenge request errors without attempting a save", async () => {
+    mockBeginProviderKeyStepUpRequest.mockRejectedValue(new Error("offline"));
+
+    render(<ProviderKeysSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: /send verification code/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /could not send a verification code/i,
+    );
+    expect(mockVerifyProviderKeyStepUpRequest).not.toHaveBeenCalled();
+    expect(mockSaveProviderKeyRequest).not.toHaveBeenCalled();
+  });
+
+  it("announces rejected verification and keeps save disabled", async () => {
+    mockVerifyProviderKeyStepUpRequest.mockResolvedValue({
+      verified: false,
+      attemptsRemaining: 2,
+    });
+
+    render(<ProviderKeysSettings />);
+    fireEvent.change(await screen.findByLabelText(/api key/i), {
+      target: { value: "sk-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send verification code/i }));
+    fireEvent.change(await screen.findByLabelText(/six-digit verification code/i), {
+      target: { value: "000000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /verify code/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/2 attempts remain/i);
+    expect(screen.getByRole("button", { name: /save key/i })).toBeDisabled();
+    expect(mockSaveProviderKeyRequest).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a verified token when the provider changes", async () => {
+    render(<ProviderKeysSettings />);
+    fireEvent.change(await screen.findByLabelText(/api key/i), {
+      target: { value: "secret" },
+    });
+    await completeStepUp();
+    expect(screen.getByRole("button", { name: /save key/i })).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText(/provider/i), {
+      target: { value: "anthropic" },
+    });
+
+    expect(screen.getByRole("button", { name: /save key/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /send verification code/i })).toBeInTheDocument();
   });
 
   it("deletes a key after confirmation", async () => {
