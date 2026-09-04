@@ -1,4 +1,3 @@
-import "server-only";
 import { and, eq } from "drizzle-orm";
 import { creatorPersonas, creatorPersonaTrainingJobs } from "@/lib/db/schema";
 import type { getDb } from "@/lib/db";
