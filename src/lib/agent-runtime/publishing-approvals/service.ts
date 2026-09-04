@@ -48,8 +48,10 @@ function date(value: string, label: string): Date {
 export function publishingApprovalStatus(
   request: PublishingApprovalRequestRecord,
   at: Date,
+  revisionIsCurrent = true,
 ): PublishingApprovalStatus {
   if (request.consumption) return "consumed";
+  if (!revisionIsCurrent) return "superseded";
   if (request.decision) return request.decision.decision;
   return request.decisionPolicy.expiresAt.getTime() <= at.getTime()
     ? "expired"
@@ -59,10 +61,11 @@ export function publishingApprovalStatus(
 export function publishingApprovalDto(
   request: PublishingApprovalRequestRecord,
   at: Date,
+  revisionIsCurrent = true,
 ): PublishingApprovalDto {
   return {
     ...structuredClone(request),
-    status: publishingApprovalStatus(request, at),
+    status: publishingApprovalStatus(request, at, revisionIsCurrent),
     inspectionDigest: publishingApprovalInspectionDigest(request),
     decisionPolicy: {
       mode: "expires_at",
@@ -336,7 +339,8 @@ export class PublishingApprovalService {
     if (prior.kind === "replayed") {
       const replay = await this.repository.getRequest({ workspaceId: input.workspaceId, approvalRequestId: prior.approvalRequestId, requestingPrincipalId: principalId });
       if (!replay) failResult("unavailable");
-      return publishingApprovalDto(replay, now);
+      const current = replay.consumption ? true : Boolean(await this.revisions.getCurrentRevision({ workspaceId: input.workspaceId, revisionId: replay.planRevisionId }));
+      return publishingApprovalDto(replay, now, current);
     }
     if (
       expiresAt.getTime() <= now.getTime() ||
@@ -472,7 +476,8 @@ export class PublishingApprovalService {
     if (prior.kind === "replayed") {
       const replay = await this.repository.getRequest({ workspaceId: input.workspaceId, approvalRequestId: prior.approvalRequestId });
       if (!replay) failResult("unavailable");
-      return publishingApprovalDto(replay, now);
+      const current = replay.consumption ? true : Boolean(await this.revisions.getCurrentRevision({ workspaceId: input.workspaceId, revisionId: replay.planRevisionId }));
+      return publishingApprovalDto(replay, now, current);
     }
     const request = await this.repository.getRequest({ workspaceId: input.workspaceId, approvalRequestId });
     if (!request) {
@@ -583,7 +588,11 @@ export class PublishingApprovalService {
         throw new PublishingApprovalServiceError("PUBLISHING_APPROVAL_NOT_FOUND", "The Approval request is unavailable.");
       }
     }
-    return publishingApprovalDto(request, this.clock.now());
+    const current = request.consumption ? true : Boolean(await this.revisions.getCurrentRevision({
+      workspaceId: input.workspaceId,
+      revisionId: request.planRevisionId,
+    }));
+    return publishingApprovalDto(request, this.clock.now(), current);
   }
 
   async getAgent(input: {
@@ -617,13 +626,21 @@ export class PublishingApprovalService {
           }
         : {}),
     };
-    return (await this.repository.listRequests({
+    const requests = await this.repository.listRequests({
       workspaceId: input.workspaceId,
-      filters,
+      filters: filters.status === "superseded" ? { ...filters, status: undefined } : filters,
       before: input.before,
       limit: input.limit,
       evaluatedAt: at,
-    })).map((request) => publishingApprovalDto(request, at));
+    });
+    const items = await Promise.all(requests.map(async (request) => {
+      const current = request.consumption ? true : Boolean(await this.revisions.getCurrentRevision({
+        workspaceId: input.workspaceId,
+        revisionId: request.planRevisionId,
+      }));
+      return publishingApprovalDto(request, at, current);
+    }));
+    return input.filters.status ? items.filter((item) => item.status === input.filters.status) : items;
   }
 
   async listAgent(input: {
@@ -670,7 +687,7 @@ export class PublishingApprovalService {
     if (!authority || !validAuthoritySession({ session: authority, workspaceId: input.workspaceId, userId: humanUserId, action: request.action, channelIds: request.channelIds, now })) blockerCodes.push("AUTHORITY_MISSING");
     return {
       schema: "publishing-approval-presentation/v1",
-      approval: publishingApprovalDto(request, now),
+      approval: publishingApprovalDto(request, now, Boolean(currentRevision)),
       targets: await this.presentation.present({ approval: request, revision, actorUserId: input.userId, presentedAt: now }),
       decisionEligibility: { eligible: blockerCodes.length === 0, blockerCodes },
       authorityCoverage: request.targetIds.map((targetId) => {

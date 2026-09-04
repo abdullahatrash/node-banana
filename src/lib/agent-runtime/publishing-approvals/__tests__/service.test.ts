@@ -149,7 +149,7 @@ describe("PublishingApprovalService", () => {
     setup.setNow("2026-08-08T14:00:00.000Z");
     const replay = await setup.service.request(setup.requestInput());
     expect(replay.id).toBe(first.id);
-    expect(replay.status).toBe("expired");
+    expect(replay.status).toBe("superseded");
   });
 
   it("requester-scopes Agent observation and resource manifests", async () => {
@@ -165,8 +165,20 @@ describe("PublishingApprovalService", () => {
     const head = setup.plans.repository.plans.get("workspace_1\u0000plan_1")!;
     setup.plans.repository.plans.set("workspace_1\u0000plan_1", { ...structuredClone(head), currentRevision: 2 });
     const presentation = await setup.service.inspectForHuman({ workspaceId: "workspace_1", userId: "owner_1", approvalRequestId: approval.id });
+    expect(presentation.approval.status).toBe("superseded");
     expect(presentation.targets[0]).toMatchObject({ targetId: "target_1", content: { text: "Launch copy" } });
     expect(presentation.decisionEligibility).toEqual({ eligible: false, blockerCodes: expect.arrayContaining(["REVISION_SUPERSEDED", "VALIDATION_STALE"]) });
+  });
+
+  it("projects superseded status in direct and filtered list reads", async () => {
+    const setup = await setupPublishingApprovals();
+    const approval = await setup.service.request(setup.requestInput());
+    const head = setup.plans.repository.plans.get("workspace_1\u0000plan_1")!;
+    setup.plans.repository.plans.set("workspace_1\u0000plan_1", { ...structuredClone(head), currentRevision: 2 });
+
+    await expect(setup.service.get({ workspaceId: "workspace_1", approvalRequestId: approval.id, viewer: { kind: "human", userId: "owner_1" } })).resolves.toMatchObject({ status: "superseded" });
+    await expect(setup.service.list({ workspaceId: "workspace_1", filters: { status: "superseded" }, limit: 10, viewer: { kind: "human", userId: "owner_1" } })).resolves.toEqual([expect.objectContaining({ id: approval.id, status: "superseded" })]);
+    await expect(setup.service.list({ workspaceId: "workspace_1", filters: { status: "pending" }, limit: 10, viewer: { kind: "human", userId: "owner_1" } })).resolves.toEqual([]);
   });
 
   it("accepts canonical punctuated Artifact IDs and binds the full evidence document", () => {

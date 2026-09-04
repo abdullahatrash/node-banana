@@ -8,7 +8,8 @@ export type PublishingApprovalStatus =
   | "approved"
   | "denied"
   | "consumed"
-  | "expired";
+  | "expired"
+  | "superseded";
 
 export interface PublishingApprovalValidationBinding {
   evidenceDigest: string;

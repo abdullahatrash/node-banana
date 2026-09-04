@@ -115,7 +115,7 @@ const approval = z.object({
   decision: decision.nullable(),
   consumption: consumption.nullable(),
   authorizesExecution: z.literal(false),
-  status: z.enum(["pending", "approved", "denied", "consumed", "expired"]),
+  status: z.enum(["pending", "approved", "denied", "consumed", "expired", "superseded"]),
   inspectionDigest: digest,
 }).strict();
 const agentDecision = z.object({ approvalRef: id, decision: z.enum(["approved", "denied"]), decidedAt: iso, authorizesExecution: z.literal(false) }).strict();
@@ -124,7 +124,7 @@ const agentApproval = z.object({
   action: z.literal("publish"), targetIds: z.array(id).min(1).max(50), channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200),
   retrySource: z.object({ deliveryId: id, evidenceDigest: digest }).strict().nullable(),
   validation, governancePolicy: governancePolicy.nullable(), decisionPolicy: z.object({ mode: z.literal("expires_at"), expiresAt: iso }).strict(),
-  status: z.enum(["pending", "approved", "denied", "consumed", "expired"]), decision: agentDecision.nullable(),
+  status: z.enum(["pending", "approved", "denied", "consumed", "expired", "superseded"]), decision: agentDecision.nullable(),
   consumption: z.object({ consumed: z.literal(true), consumedAt: iso }).strict().nullable(), createdAt: iso, authorizesExecution: z.literal(false),
 }).strict();
 const sharedApproval = z.discriminatedUnion("projection", [
@@ -293,7 +293,7 @@ export function createPublishingApprovalRegistrations(
     defineCapability({
       identity: PUBLISHING_APPROVAL_CAPABILITY_IDENTITIES.list,
       audience: "agent", summary: "List requester-scoped redacted Publishing Approval requests using a sealed actor-bound cursor.", lifecycle,
-      input: z.object({ channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200), status: z.enum(["pending", "approved", "denied", "consumed", "expired"]).optional(), planRevisionId: id.optional(), limit: z.number().int().min(1).max(100).default(50), cursor: z.string().min(1).max(2048).optional() }).strict(),
+      input: z.object({ channelIds: z.array(id).min(1).max(50), artifactIds: z.array(artifactId).min(1).max(200), status: z.enum(["pending", "approved", "denied", "consumed", "expired", "superseded"]).optional(), planRevisionId: id.optional(), limit: z.number().int().min(1).max(100).default(50), cursor: z.string().min(1).max(2048).optional() }).strict(),
       outputSchema: schema(page), effect: QUERY_EFFECT, approval: { mode: "none" }, idempotency: { mode: "retry-safe" }, authorization: PUBLISHING_APPROVAL_REQUEST_AUTHORIZATION,
       errors: [...COMMON_DISCOVERY_ERRORS, ...PUBLISHING_APPROVAL_ERROR_CONTRACTS],
       handler: async (input, context) => {
