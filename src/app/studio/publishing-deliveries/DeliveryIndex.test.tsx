@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { renderWithIntl as render } from "@/test/renderWithIntl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DeliveryIndex } from "./DeliveryIndex";
 
@@ -44,7 +45,7 @@ describe("DeliveryIndex", () => {
     }));
     render(<DeliveryIndex />);
     expect(await screen.findByRole("link", { name: /delivery_1/ })).toHaveAttribute("href", "/studio/publishing-deliveries/delivery_1");
-    const more = screen.getByRole("button", { name: "Load more Deliveries" });
+    const more = screen.getByRole("button", { name: "Load more deliveries" });
     fireEvent.click(more);
     fireEvent.click(more);
     expect(await screen.findByRole("link", { name: /delivery_2/ })).toBeInTheDocument();
@@ -64,7 +65,7 @@ describe("DeliveryIndex", () => {
       return response({ schema: "publishing-delivery-page/v1", items: [], nextCursor: null });
     }));
     render(<DeliveryIndex />);
-    await screen.findByText("No Publishing Deliveries match this canonical filter.");
+    await screen.findByText("No publishing deliveries match this canonical filter.");
     fireEvent.change(screen.getByLabelText("Current state"), { target: { value: "blocked" } });
     await waitFor(() => expect(calls.some((call) => call.input.state === "blocked")).toBe(true));
   });
@@ -80,7 +81,7 @@ describe("DeliveryIndex", () => {
         : response({ success: false, error: "Membership was revoked." }, 403);
     }));
     render(<DeliveryIndex />);
-    fireEvent.click(await screen.findByRole("button", { name: "Load more Deliveries" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Load more deliveries" }));
     expect(await screen.findByText("Authorization was lost", { exact: false })).toBeInTheDocument();
     expect(screen.queryByText("delivery_1")).not.toBeInTheDocument();
   });
@@ -100,10 +101,10 @@ describe("DeliveryIndex", () => {
       throw new Error(`Unhandled ${body.capability}`);
     }));
     render(<DeliveryIndex />);
-    expect(await screen.findByText("No Publishing Deliveries match this canonical filter.")).toBeInTheDocument();
-    const control = screen.getByRole("region", { name: "Workspace Emergency Spend Suspension" });
+    expect(await screen.findByText("No publishing deliveries match this canonical filter.")).toBeInTheDocument();
+    const control = screen.getByRole("region", { name: "Workspace emergency spend suspension" });
     fireEvent.change(within(control).getByLabelText("Workspace policy reason"), { target: { value: "Incident containment" } });
-    fireEvent.click(within(control).getByRole("button", { name: "Enable Emergency Spend Suspension" }));
+    fireEvent.click(within(control).getByRole("button", { name: "Enable emergency spend suspension" }));
     expect(await within(control).findByText("Suspended")).toBeInTheDocument();
     expect(within(control).getByText("spend_event_2", { exact: false })).toBeInTheDocument();
     fireEvent.click(within(control).getByRole("button", { name: "Reload spend control" }));
@@ -122,9 +123,9 @@ describe("DeliveryIndex", () => {
       throw new Error(`Unhandled ${body.capability}`);
     }));
     render(<DeliveryIndex />);
-    const control = await screen.findByRole("region", { name: "Workspace Emergency Spend Suspension" });
+    const control = await screen.findByRole("region", { name: "Workspace emergency spend suspension" });
     fireEvent.change(within(control).getByLabelText("Workspace policy reason"), { target: { value: "Incident" } });
-    fireEvent.click(within(control).getByRole("button", { name: "Enable Emergency Spend Suspension" }));
+    fireEvent.click(within(control).getByRole("button", { name: "Enable emergency spend suspension" }));
     expect(await within(control).findByRole("alert")).toHaveTextContent("Emergency spend authority denied");
     expect(within(control).getByText("Not suspended")).toBeInTheDocument();
     expect(calls.filter((capability) => capability === "publishing_deliveries.list@2").length).toBeGreaterThanOrEqual(2);
@@ -141,9 +142,9 @@ describe("DeliveryIndex", () => {
       throw new Error(`Unhandled ${body.capability}`);
     }));
     render(<DeliveryIndex />);
-    const control = await screen.findByRole("region", { name: "Workspace Emergency Spend Suspension" });
+    const control = await screen.findByRole("region", { name: "Workspace emergency spend suspension" });
     fireEvent.change(within(control).getByLabelText("Workspace policy reason"), { target: { value: "Incident" } });
-    fireEvent.click(within(control).getByRole("button", { name: "Enable Emergency Spend Suspension" }));
+    fireEvent.click(within(control).getByRole("button", { name: "Enable emergency spend suspension" }));
     expect(await within(control).findByRole("alert")).toHaveTextContent("Spend-control persistence unavailable");
     expect(calls.filter((capability) => capability === "publishing_deliveries.list@2")).toHaveLength(1);
     expect(calls.filter((capability) => capability === "spend_controls.get@2").length).toBeGreaterThanOrEqual(2);
@@ -164,9 +165,9 @@ describe("DeliveryIndex", () => {
       throw new Error(`Unhandled ${body.capability}`);
     }));
     render(<DeliveryIndex />);
-    const control = await screen.findByRole("region", { name: "Workspace Emergency Spend Suspension" });
+    const control = await screen.findByRole("region", { name: "Workspace emergency spend suspension" });
     fireEvent.change(within(control).getByLabelText("Workspace policy reason"), { target: { value: "Incident" } });
-    fireEvent.click(within(control).getByRole("button", { name: "Enable Emergency Spend Suspension" }));
+    fireEvent.click(within(control).getByRole("button", { name: "Enable emergency spend suspension" }));
     const alert = await within(control).findByRole("alert");
     expect(alert).toHaveTextContent("Emergency spend authority denied");
     expect(alert).toHaveTextContent("Core membership evidence is unavailable");
@@ -179,9 +180,9 @@ describe("DeliveryIndex", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     render(<DeliveryIndex />);
-    expect(await screen.findByText("Select a Workspace before inspecting Publishing Deliveries.")).toBeInTheDocument();
+    expect(await screen.findByText("Select a Workspace before inspecting publishing deliveries.")).toBeInTheDocument();
     expect(screen.queryByText("Authorization was lost", { exact: false })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Workspace Emergency Spend Suspension" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Workspace emergency spend suspension" })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

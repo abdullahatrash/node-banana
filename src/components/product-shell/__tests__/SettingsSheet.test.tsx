@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { renderWithIntl as render } from "@/test/renderWithIntl";
 import { SettingsSheet } from "../SettingsSheet";
 
 const replace = vi.fn();

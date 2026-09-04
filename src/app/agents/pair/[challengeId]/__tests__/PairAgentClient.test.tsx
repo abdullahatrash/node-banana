@@ -1,5 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderWithIntl as render } from "@/test/renderWithIntl";
 import PairAgentClient from "../PairAgentClient";
 
 describe("PairAgentClient", () => {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import { renderWithIntl as render } from "@/test/renderWithIntl";
 import { UsageCockpit } from "./UsageCockpit";
 
 describe("UsageCockpit", () => {
@@ -31,7 +32,10 @@ describe("UsageCockpit", () => {
     render(<UsageCockpit />);
     expect(await screen.findByText("Contains unknowns")).toBeInTheDocument();
     expect(screen.getByText("1 unknown valuations")).toBeInTheDocument();
-    expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0);
+    expect(screen.getByText((_, element) =>
+      element?.tagName === "P"
+      && element.textContent === "Run run_1 · unknown · Artifact —"
+    )).toBeInTheDocument();
     expect(screen.getByText("Local workflow estimates are not billing evidence.", { exact: false })).toBeInTheDocument();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
   });

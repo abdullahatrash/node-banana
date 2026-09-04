@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithIntl as render } from "@/test/renderWithIntl";
 import { QuotaCockpit } from "./QuotaCockpit";
 
 function resultFor(capability: string) {
@@ -97,9 +98,9 @@ describe("QuotaCockpit", () => {
     expect(await screen.findByText("Provider effects enabled")).toBeInTheDocument();
     expect(screen.getByText(/Run run_1/)).toBeInTheDocument();
     expect(screen.getByText(/Run run_2/)).toBeInTheDocument();
-    expect(screen.getByText(/Resumed: capacity_available by system/)).toBeInTheDocument();
+    expect(screen.getByText(/Resumed: capacity_available by System/)).toBeInTheDocument();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
-    fireEvent.change(screen.getByLabelText("Capacity Principal ID"), {
+    fireEvent.change(screen.getByLabelText("Capacity principal ID"), {
       target: { value: "principal_1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Load" }));
