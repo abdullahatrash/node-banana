@@ -167,6 +167,19 @@ delete lifecycle after the app is running:
 APP_BASE_URL=http://localhost:3002 SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
 ```
 
+Inspect the remaining real-generation prerequisites for the seeded Workspace
+without starting a provider run or spending credits:
+
+```bash
+pnpm doctor:local -- --workspace seed_ws_alice
+```
+
+The report checks the database, canonical storage, BYOK encryption and
+step-up delivery, accepted Brand and region evidence, executable model
+qualification, Workspace Replicate credentials, plan/pack catalog, credits,
+and the optional Merchant-of-Record adapter. Use `--json` for machine-readable
+output.
+
 ### Installation
 
 ```bash
