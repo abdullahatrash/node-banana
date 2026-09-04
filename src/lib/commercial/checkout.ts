@@ -19,6 +19,10 @@ type Snapshot =
 
 export class MerchantCheckoutError extends Error { constructor(readonly code: string) { super(code); this.name = "MerchantCheckoutError"; } }
 const purposeKey = (purpose: Purpose, idempotencyKey: string) => `${purpose.kind}:${"planId" in purpose ? `${purpose.planId}:${purpose.planVersion}` : "packId" in purpose ? `${purpose.packId}:${purpose.packVersion}` : purpose.orderId}:${idempotencyKey}`;
+export function checkoutRecoveryDelayMs(attempt: number, status: "pending" | "unavailable" | "error") {
+  const base = status === "pending" ? 15_000 : 60_000;
+  return Math.min(15 * 60_000, base * 2 ** Math.min(Math.max(attempt, 0), 6));
+}
 
 export class MerchantCheckoutService {
   constructor(private readonly database: Db, private readonly merchant: MerchantOfRecordAdapter, private readonly commercial: CommercialRepository, private readonly onboarding: ChannelOnboardingRepository, private readonly now = () => new Date()) {}
@@ -39,10 +43,12 @@ export class MerchantCheckoutService {
       const result = await this.merchant.createCheckout({ checkoutId: session.id, workspaceId: input.workspaceId, purposeKind: session.purposeKind as MerchantCheckoutPurpose, purposeRef: session.purposeRef, amountMinor: session.amountMinor, taxMinor: session.taxMinor, currency: session.currency, termsDigest: session.termsDigest, commercialSnapshot: session.commercialSnapshot, successPath: input.successPath, cancelPath: input.cancelPath });
       if (result.kind === "unavailable") { await this.database.update(merchantCheckoutSessions).set({ state: "failed_known", updatedAt: this.now() }).where(and(eq(merchantCheckoutSessions.workspaceId, input.workspaceId), eq(merchantCheckoutSessions.id, session.id), inArray(merchantCheckoutSessions.state, ["creating", "outcome_unknown"]))); throw new MerchantCheckoutError("MERCHANT_OF_RECORD_UNAVAILABLE"); }
       if (result.expiresAt <= this.now() || result.expiresAt.getTime() - this.now().getTime() > 86_400_000) throw new MerchantCheckoutError("CHECKOUT_EXPIRY_INVALID");
-      await this.database.update(merchantCheckoutSessions).set({ state: "ready", merchantCheckoutRef: result.merchantCheckoutRef, expiresAt: result.expiresAt, updatedAt: this.now() }).where(and(eq(merchantCheckoutSessions.workspaceId, input.workspaceId), eq(merchantCheckoutSessions.id, session.id), inArray(merchantCheckoutSessions.state, ["creating", "outcome_unknown"])));
+      const readyAt = this.now();
+      await this.database.update(merchantCheckoutSessions).set({ state: "ready", merchantCheckoutRef: result.merchantCheckoutRef, expiresAt: result.expiresAt, recoveryAttempts: 0, nextRecoveryAt: new Date(readyAt.getTime() + 15_000), lastRecoveryStatus: "created", updatedAt: readyAt }).where(and(eq(merchantCheckoutSessions.workspaceId, input.workspaceId), eq(merchantCheckoutSessions.id, session.id), inArray(merchantCheckoutSessions.state, ["creating", "outcome_unknown"])));
       return { checkoutId: session.id, state: "ready", url: result.url, expiresAt: result.expiresAt.toISOString() };
     } catch (error) {
-      await this.database.update(merchantCheckoutSessions).set({ state: "outcome_unknown", updatedAt: this.now() }).where(and(eq(merchantCheckoutSessions.workspaceId, input.workspaceId), eq(merchantCheckoutSessions.id, session.id), inArray(merchantCheckoutSessions.state, ["creating", "outcome_unknown"])));
+      const failedAt = this.now();
+      await this.database.update(merchantCheckoutSessions).set({ state: "outcome_unknown", nextRecoveryAt: new Date(failedAt.getTime() + 60_000), lastRecoveryStatus: "create_transport_lost", updatedAt: failedAt }).where(and(eq(merchantCheckoutSessions.workspaceId, input.workspaceId), eq(merchantCheckoutSessions.id, session.id), inArray(merchantCheckoutSessions.state, ["creating", "outcome_unknown"])));
       throw error;
     }
   }
@@ -59,21 +65,42 @@ export class MerchantCheckoutService {
     const state = event.eventType === "checkout.failed" ? "failed_known" : event.eventType === "checkout.expired" ? "expired" : event.eventType === "checkout.cancelled" ? "cancelled" : "completed";
     try {
       if (state === "completed") await this.applyCompletion(checkout.workspaceId, checkout.commercialSnapshot as Snapshot, event);
-      await this.database.update(merchantCheckoutSessions).set({ state, merchantCheckoutRef: event.merchantCheckoutRef, merchantEffectRef: event.merchantEffectRef, merchantCustomerRef: event.merchantCustomerRef, completedAt: state === "completed" ? now : null, updatedAt: now }).where(and(eq(merchantCheckoutSessions.workspaceId, checkout.workspaceId), eq(merchantCheckoutSessions.id, checkout.id), inArray(merchantCheckoutSessions.state, ["creating", "ready", "outcome_unknown"])));
+      await this.database.update(merchantCheckoutSessions).set({ state, merchantCheckoutRef: event.merchantCheckoutRef, merchantEffectRef: event.merchantEffectRef, merchantCustomerRef: event.merchantCustomerRef, recoveryLeaseOwner: null, recoveryLeaseExpiresAt: null, lastRecoveryStatus: `terminal:${state}`, completedAt: state === "completed" ? now : null, updatedAt: now }).where(and(eq(merchantCheckoutSessions.workspaceId, checkout.workspaceId), eq(merchantCheckoutSessions.id, checkout.id), inArray(merchantCheckoutSessions.state, ["creating", "ready", "outcome_unknown"])));
       await this.database.update(merchantWebhookReceipts).set({ state: "applied", processedAt: now }).where(and(eq(merchantWebhookReceipts.provider, event.provider), eq(merchantWebhookReceipts.eventId, event.eventId)));
       return { state: "applied" };
     } catch (error) {
-      await this.database.update(merchantCheckoutSessions).set({ state: "outcome_unknown", updatedAt: now }).where(and(eq(merchantCheckoutSessions.workspaceId, checkout.workspaceId), eq(merchantCheckoutSessions.id, checkout.id)));
+      await this.database.update(merchantCheckoutSessions).set({ state: "outcome_unknown", recoveryLeaseOwner: null, recoveryLeaseExpiresAt: null, nextRecoveryAt: new Date(now.getTime() + 60_000), lastRecoveryStatus: "event_application_failed", updatedAt: now }).where(and(eq(merchantCheckoutSessions.workspaceId, checkout.workspaceId), eq(merchantCheckoutSessions.id, checkout.id)));
       await this.database.update(merchantWebhookReceipts).set({ state: "outcome_unknown", failureCode: error instanceof Error ? error.message.slice(0, 200) : "UNKNOWN", processedAt: now }).where(and(eq(merchantWebhookReceipts.provider, event.provider), eq(merchantWebhookReceipts.eventId, event.eventId)));
       throw error;
     }
   }
 
   async reconcile(limit = 20) {
-    const sessions = await this.database.select().from(merchantCheckoutSessions).where(inArray(merchantCheckoutSessions.state, ["creating", "ready", "outcome_unknown"])).orderBy(asc(merchantCheckoutSessions.updatedAt)).limit(Math.min(Math.max(limit, 1), 20));
-    let applied = 0;
-    for (const session of sessions) { const result = await this.merchant.recoverCheckout({ checkoutId: session.id, merchantCheckoutRef: session.merchantCheckoutRef }); if (result.kind === "terminal") { if (result.event.checkoutId !== session.id || (session.merchantCheckoutRef && result.event.merchantCheckoutRef !== session.merchantCheckoutRef)) throw new MerchantCheckoutError("CHECKOUT_EVENT_MISMATCH"); await this.applyVerifiedEvent(result.event); applied += 1; } }
-    return { inspected: sessions.length, applied };
+    const at = this.now(), owner = randomUUID(), leaseExpiresAt = new Date(at.getTime() + 50_000), boundedLimit = Math.min(Math.max(limit, 1), 20);
+    const sessions = await this.database.transaction(async (tx) => {
+      const rows = await tx.select().from(merchantCheckoutSessions).where(and(inArray(merchantCheckoutSessions.state, ["creating", "ready", "outcome_unknown"]), lte(merchantCheckoutSessions.nextRecoveryAt, at), or(isNull(merchantCheckoutSessions.recoveryLeaseExpiresAt), lte(merchantCheckoutSessions.recoveryLeaseExpiresAt, at)))).orderBy(asc(merchantCheckoutSessions.nextRecoveryAt), asc(merchantCheckoutSessions.id)).limit(boundedLimit).for("update", { skipLocked: true });
+      for (const row of rows) await tx.update(merchantCheckoutSessions).set({ recoveryLeaseOwner: owner, recoveryLeaseExpiresAt: leaseExpiresAt, updatedAt: at }).where(and(eq(merchantCheckoutSessions.workspaceId, row.workspaceId), eq(merchantCheckoutSessions.id, row.id)));
+      return rows;
+    });
+    const summary = { inspected: sessions.length, applied: 0, pending: 0, unavailable: 0, failed: 0 };
+    for (const session of sessions) {
+      try {
+        const result = await this.merchant.recoverCheckout({ checkoutId: session.id, merchantCheckoutRef: session.merchantCheckoutRef });
+        if (result.kind === "terminal") {
+          if (result.event.checkoutId !== session.id || (session.merchantCheckoutRef && result.event.merchantCheckoutRef !== session.merchantCheckoutRef)) throw new MerchantCheckoutError("CHECKOUT_EVENT_MISMATCH");
+          await this.applyVerifiedEvent(result.event); summary.applied += 1; continue;
+        }
+        const status = result.kind;
+        summary[status] += 1;
+        const attempt = session.recoveryAttempts + 1;
+        await this.database.update(merchantCheckoutSessions).set({ recoveryAttempts: attempt, nextRecoveryAt: new Date(at.getTime() + checkoutRecoveryDelayMs(attempt, status)), recoveryLeaseOwner: null, recoveryLeaseExpiresAt: null, lastRecoveryStatus: status, updatedAt: at }).where(and(eq(merchantCheckoutSessions.workspaceId, session.workspaceId), eq(merchantCheckoutSessions.id, session.id), eq(merchantCheckoutSessions.recoveryLeaseOwner, owner)));
+      } catch {
+        summary.failed += 1;
+        const attempt = session.recoveryAttempts + 1;
+        await this.database.update(merchantCheckoutSessions).set({ state: "outcome_unknown", recoveryAttempts: attempt, nextRecoveryAt: new Date(at.getTime() + checkoutRecoveryDelayMs(attempt, "error")), recoveryLeaseOwner: null, recoveryLeaseExpiresAt: null, lastRecoveryStatus: "recovery_error", updatedAt: at }).where(and(eq(merchantCheckoutSessions.workspaceId, session.workspaceId), eq(merchantCheckoutSessions.id, session.id), eq(merchantCheckoutSessions.recoveryLeaseOwner, owner)));
+      }
+    }
+    return summary;
   }
 
   private async resolveCommercial(workspaceId: string, purpose: Purpose, now: Date) {

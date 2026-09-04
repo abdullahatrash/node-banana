@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ensureInternalStudioOrCronAuth } from "@/lib/studio/internal-auth";
 import { createProductionPersonaTrainingDispatcher } from "@/lib/creator-personas/training-production";
 
-export async function POST(request: NextRequest) {
+async function handle(request: NextRequest) {
   const denied = ensureInternalStudioOrCronAuth(request); if (denied) return denied;
   try {
     return NextResponse.json({ success: true, result: await createProductionPersonaTrainingDispatcher().dispatchOne() });
@@ -12,3 +12,5 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 }
+export const GET = handle;
+export const POST = handle;

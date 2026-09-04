@@ -53,6 +53,12 @@
     },
     "src/app/api/studio/internal/product-campaign-runtime/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/studio/internal/reconcile-checkouts/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/persona-training/dispatch/route.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -86,6 +92,14 @@
     },
     {
       "path": "/api/studio/internal/product-campaign-runtime",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/reconcile-checkouts?limit=20",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/persona-training/dispatch",
       "schedule": "* * * * *"
     },
     {
