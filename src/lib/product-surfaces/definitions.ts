@@ -72,6 +72,26 @@ const legacyBlitzRejectionReasonSchema = text(300).transform((note) => ({
   note,
 }));
 
+const sha256Digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const trendRankingSignalsSchema = z.object({
+  freshness: z.number().int().min(0).max(100), recency: z.number().int().min(0).max(100), performance: z.number().int().min(0).max(100),
+  brandFit: z.number().int().min(0).max(100), region: z.number().int().min(0).max(100), language: z.number().int().min(0).max(100),
+  arabicVariety: z.number().int().min(0).max(100), format: z.number().int().min(0).max(100), rights: z.number().int().min(0).max(100), preference: z.number().int().min(0).max(100),
+}).strict();
+const trendEvidenceSchema = z.object({
+  schema: z.literal("inspiration-trend-evidence/v1"),
+  source: z.object({
+    sourceId: text(200), sourceKind: z.enum(["official_api", "licensed_dataset", "public_metadata", "embeddable_feed"]), adapterKey: text(200),
+    externalItemId: text(200), sourceContentDigest: sha256Digest, capturedAt: z.string().datetime(), publishedAt: z.string().datetime(), observationDigest: sha256Digest,
+  }).strict(),
+  rights: z.object({ status: z.enum(["licensed", "user_submitted", "embeddable", "metadata_only", "restricted"]), evidenceRef: text(500), evidenceDigest: sha256Digest, observedAt: z.string().datetime(), expiresAt: z.string().datetime().nullable() }).strict(),
+  ranking: z.object({
+    schema: z.literal("inspiration-trend-ranking/v1"), score: z.number().int().min(0).max(10_000), signals: trendRankingSignalsSchema,
+    reasonCodes: z.array(text(120)).min(1).max(20), brandProfile: z.object({ id: text(200), revision: z.number().int().positive(), digest: sha256Digest }).strict().nullable(),
+    eligibleForDiscovery: z.boolean(), eligibleForBlitz: z.boolean(), evaluatedAt: z.string().datetime(), digest: sha256Digest,
+  }).strict(),
+}).strict();
+
 export const inspirationPayloadSchema = z.object({
   sourceUrl: z.union([
     z.string().url(),
@@ -92,6 +112,7 @@ export const inspirationPayloadSchema = z.object({
   permittedInfluence: z.array(z.enum(["topic", "hook", "pacing", "structure"])).min(1),
   whyThisAppears: z.array(text(300)).min(1),
   tags: z.array(text(80)).default([]),
+  trendEvidence: trendEvidenceSchema.nullable().default(null),
 });
 
 export const blitzPayloadSchema = z.object({
@@ -117,7 +138,7 @@ export const blitzPayloadSchema = z.object({
   rejectionReasons: z.array(z.union([blitzRejectionReasonSchema, legacyBlitzRejectionReasonSchema])).max(12).default([]),
 });
 
-const renderProofDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const renderProofDigest = sha256Digest;
 const legacyContentRenderProofSchema = z.object({
   schema: z.literal("content-render-proof/v1"), status: z.literal("passed"),
   inputAssets: z.array(z.object({ assetId: text(200), type: z.enum(["image", "video"]), contentDigest: renderProofDigest, width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().int().positive().nullable() })),

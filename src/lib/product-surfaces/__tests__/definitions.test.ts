@@ -55,6 +55,24 @@ describe("product surface definitions", () => {
     })).toThrow();
   });
 
+  it("preserves immutable provider provenance, rights, and ranking evidence on ingested trends", () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const parsed = parseProductPayload("inspiration_item", {
+      sourceUrl: "https://example.com/video/1", sourceName: "Official feed", capturedAt: "2026-09-04T10:00:00.000Z",
+      metricsObservedAt: "2026-09-04T10:00:00.000Z", metrics: { views: 1200, likes: 70 }, region: "GCC",
+      contentLanguage: "ar", arabicVariety: "gulf", format: "video_hook_demo", rightsStatus: "metadata_only",
+      permittedInfluence: ["topic"], whyThisAppears: ["fresh_metrics"], tags: ["commerce"],
+      trendEvidence: {
+        schema: "inspiration-trend-evidence/v1",
+        source: { sourceId: "source-1", sourceKind: "official_api", adapterKey: "official", externalItemId: "external-1", sourceContentDigest: digest, capturedAt: "2026-09-04T10:00:00.000Z", publishedAt: "2026-09-04T09:00:00.000Z", observationDigest: digest },
+        rights: { status: "metadata_only", evidenceRef: "official:terms", evidenceDigest: digest, observedAt: "2026-09-04T10:00:00.000Z", expiresAt: null },
+        ranking: { schema: "inspiration-trend-ranking/v1", score: 7000, signals: { freshness: 100, recency: 100, performance: 50, brandFit: 50, region: 100, language: 100, arabicVariety: 100, format: 50, rights: 45, preference: 50 }, reasonCodes: ["fresh_metrics"], brandProfile: null, eligibleForDiscovery: true, eligibleForBlitz: false, evaluatedAt: "2026-09-04T10:00:00.000Z", digest },
+      },
+    });
+
+    expect(parsed.trendEvidence).toMatchObject({ source: { adapterKey: "official", externalItemId: "external-1" }, ranking: { score: 7000, eligibleForBlitz: false } });
+  });
+
   it("rejects a state that does not belong to its resource lifecycle", () => {
     const result = productCreateSchema.safeParse({
       kind: "creator_persona",
