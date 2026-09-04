@@ -19,6 +19,55 @@
     "infoPanel": { "aspectRatio": "Aspect ratio", "batchCount": "Batch count", "estimatedCost": "Estimated cost", "outputExample": "Output example" }
   },
   "social": {
+    "sidebar": {
+      "navigation": "Navigation",
+      "calendar": "Calendar",
+      "compose": "Compose",
+      "posts": "Posts",
+      "channels": "Channels",
+      "noChannels": "No channels connected",
+      "addChannel": "Add channel"
+    },
+    "channels": {
+      "connect": {
+        "title": "Connect a channel",
+        "description": "Select the platform you want to link",
+        "action": "Connect",
+        "connecting": "Connecting…",
+        "connected": "Channel connected successfully!",
+        "notConfigured": "Not configured",
+        "notConfiguredHelp": "{platform} is not configured on this server. Contact your administrator to enable it.",
+        "errors": {
+          "connect": "Failed to connect",
+          "complete": "Failed to complete connection",
+          "loadProviders": "Failed to load providers"
+        },
+        "bluesky": {
+          "title": "Connect Bluesky",
+          "descriptionPrefix": "Enter your Bluesky handle and an",
+          "appPasswordLink": "App Password",
+          "handle": "Handle",
+          "appPassword": "App password",
+          "handlePlaceholder": "alice.bsky.social",
+          "passwordPlaceholder": "xxxx-xxxx-xxxx-xxxx",
+          "required": "Handle and app password are required.",
+          "connected": "Bluesky channel connected!",
+          "errors": {
+            "connect": "Failed to connect Bluesky account"
+          }
+        },
+        "mastodon": {
+          "title": "Connect Mastodon",
+          "description": "Enter your Mastodon instance or pick one below",
+          "instancePlaceholder": "mastodon.social",
+          "required": "Instance URL is required.",
+          "connected": "Mastodon channel connected!",
+          "errors": {
+            "start": "Failed to start Mastodon connection"
+          }
+        }
+      }
+    },
     "platforms": { "linkedin": "LinkedIn", "x": "X", "instagram": "Instagram", "tiktok": "TikTok", "youtube": "YouTube", "facebook": "Facebook", "threads": "Threads", "bluesky": "Bluesky", "pinterest": "Pinterest", "reddit": "Reddit", "mastodon": "Mastodon" },
     "preview": { "reply": "Reply", "repost": "Repost", "like": "Like", "more": "More", "comment": "Comment", "share": "Share", "send": "Send", "boost": "Boost", "favourite": "Favourite", "bookmark": "Bookmark", "views": "Views", "viewCount": "{count, plural, =0 {No views} one {# view} other {# views}}", "now": "now", "justNow": "Just now", "untitledVideo": "Untitled video", "linkedin": "LinkedIn" },
     "posts": { "noContent": "No content", "mediaAttached": "{count, plural, one {# media item attached} other {# media items attached}}", "scheduled": "Scheduled", "confirmDelete": "Delete this post?", "showError": "Show error", "hideError": "Hide error", "actions": { "edit": "Edit post", "retry": "Retry post", "openPublished": "Open published post", "delete": "Delete post", "duplicate": "Duplicate post" }, "toast": { "requeued": "Post re-queued", "deleted": "Post deleted", "duplicated": "Post duplicated as a draft" }, "errors": { "retry": "Retry failed", "delete": "Delete failed", "duplicate": "Duplicate failed" } },

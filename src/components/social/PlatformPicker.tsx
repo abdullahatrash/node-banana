@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useTranslations } from "next-intl"
 import type { ProviderCapabilities } from "@/lib/social/provider-interface"
 import {
   connectSocialAccount,
@@ -44,6 +45,7 @@ interface PlatformPickerProps {
 }
 
 export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
+  const t = useTranslations("social.channels.connect")
   const [providers, setProviders] = useState<ProviderCapabilities[]>(
     providerCache ?? [],
   )
@@ -73,11 +75,11 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
       setConnectingPlatform(null)
 
       if (data.success) {
-        showToast(data.message || "Channel connected successfully!", "success")
+        showToast(data.message || t("connected"), "success")
         fetchAccounts()
         onOpenChange(false)
       } else {
-        showToast(data.message || "Failed to complete connection", "error")
+        showToast(data.message || t("errors.complete"), "error")
       }
     }
 
@@ -86,7 +88,7 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
       window.removeEventListener("message", handleOAuthMessage)
       cleanupPopup()
     }
-  }, [cleanupPopup, fetchAccounts, onOpenChange, showToast])
+  }, [cleanupPopup, fetchAccounts, onOpenChange, showToast, t])
 
   useEffect(() => {
     if (!open || providers.length > 0 || providerCache) return
@@ -97,13 +99,13 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
         if (!cancelled) setProviders(data)
       })
       .catch(() => {
-        if (!cancelled) showToast("Failed to load providers", "error")
+        if (!cancelled) showToast(t("errors.loadProviders"), "error")
       })
 
     return () => {
       cancelled = true
     }
-  }, [open, providers.length, showToast])
+  }, [open, providers.length, showToast, t])
 
   async function handleConnect(platform: string, configured: boolean) {
     if (!configured) return
@@ -147,7 +149,7 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
       popup?.close()
       cleanupPopup()
       showToast(
-        error instanceof Error ? error.message : "Failed to connect",
+        error instanceof Error ? error.message : t("errors.connect"),
         "error",
       )
       setConnectingPlatform(null)
@@ -175,9 +177,9 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Connect a channel</DialogTitle>
+          <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>
-            Select the platform you want to link
+            {t("description")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-3 gap-2 pt-2">
@@ -191,7 +193,7 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
                 title={
                   platform.configured
                     ? undefined
-                    : `${platform.name} is not configured on this server. Contact your administrator to enable it.`
+                    : t("notConfiguredHelp", { platform: platform.name })
                 }
                 className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -199,11 +201,11 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
                   <PlatformIcon platform={platform.identifier} size={20} />
                 </div>
                 <span className="text-xs font-medium">
-                  {isConnecting ? "Connecting..." : platform.name}
+                  {isConnecting ? t("connecting") : platform.name}
                 </span>
                 {!platform.configured && (
                   <span className="text-[10px] leading-none text-muted-foreground">
-                    Not configured
+                    {t("notConfigured")}
                   </span>
                 )}
               </button>

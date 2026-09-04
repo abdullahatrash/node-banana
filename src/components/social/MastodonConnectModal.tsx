@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useTranslations } from "next-intl"
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,7 @@ export function MastodonConnectModal({
   open,
   onOpenChange,
 }: MastodonConnectModalProps) {
+  const t = useTranslations("social.channels.connect")
   const [instanceUrl, setInstanceUrl] = useState("")
   const [isConnecting, setIsConnecting] = useState(false)
   const popupRef = useRef<Window | null>(null)
@@ -49,7 +51,7 @@ export function MastodonConnectModal({
 
       if (event.data.success) {
         showToast(
-          event.data.message || "Mastodon channel connected!",
+          event.data.message || t("mastodon.connected"),
           "success",
         )
         fetchAccounts()
@@ -57,7 +59,7 @@ export function MastodonConnectModal({
         setInstanceUrl("")
       } else {
         showToast(
-          event.data.message || "Failed to complete connection",
+          event.data.message || t("errors.complete"),
           "error",
         )
       }
@@ -68,12 +70,12 @@ export function MastodonConnectModal({
       window.removeEventListener("message", handleOAuthMessage)
       cleanupPopup()
     }
-  }, [cleanupPopup, fetchAccounts, onOpenChange, showToast])
+  }, [cleanupPopup, fetchAccounts, onOpenChange, showToast, t])
 
   async function handleSubmit(url: string) {
     const instance = url.trim()
     if (!instance) {
-      showToast("Instance URL is required.", "error")
+      showToast(t("mastodon.required"), "error")
       return
     }
 
@@ -99,7 +101,7 @@ export function MastodonConnectModal({
       const data = await response.json()
 
       if (!response.ok || !data.success || !data.authUrl) {
-        throw new Error(data.error || "Failed to start Mastodon connection")
+        throw new Error(data.error || t("mastodon.errors.start"))
       }
 
       if (!popup || popup.closed) {
@@ -118,7 +120,7 @@ export function MastodonConnectModal({
       popup?.close()
       cleanupPopup()
       showToast(
-        error instanceof Error ? error.message : "Failed to connect",
+        error instanceof Error ? error.message : t("errors.connect"),
         "error",
       )
       setIsConnecting(false)
@@ -129,9 +131,9 @@ export function MastodonConnectModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Connect Mastodon</DialogTitle>
+          <DialogTitle>{t("mastodon.title")}</DialogTitle>
           <DialogDescription>
-            Enter your Mastodon instance or pick one below
+            {t("mastodon.description")}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4 pt-2">
@@ -145,7 +147,7 @@ export function MastodonConnectModal({
                 onClick={() => handleSubmit(instance)}
                 className="text-xs"
               >
-                {instance}
+                <bdi>{instance}</bdi>
               </Button>
             ))}
           </div>
@@ -157,13 +159,14 @@ export function MastodonConnectModal({
             className="flex gap-2"
           >
             <Input
-              placeholder="mastodon.social"
+              dir="ltr"
+              placeholder={t("mastodon.instancePlaceholder")}
               value={instanceUrl}
               onChange={(e) => setInstanceUrl(e.target.value)}
               disabled={isConnecting}
             />
             <Button type="submit" disabled={isConnecting} className="shrink-0">
-              {isConnecting ? "Connecting..." : "Connect"}
+              {isConnecting ? t("connecting") : t("action")}
             </Button>
           </form>
         </div>

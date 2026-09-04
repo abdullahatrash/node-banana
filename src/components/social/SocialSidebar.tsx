@@ -7,15 +7,17 @@ import { ChannelAvatar } from "./shared/ChannelAvatar";
 import { StatusDot } from "./shared/StatusDot";
 import { CalendarIcon, ComposeIcon, PostsIcon, ChannelsIcon, PlusIcon } from "./icons";
 import type { SocialPlatform } from "@/lib/db/schema";
+import { useTranslations } from "next-intl";
 
 const NAV_ITEMS = [
-  { href: "/social/calendar", label: "Calendar", Icon: CalendarIcon },
-  { href: "/social/compose", label: "Compose", Icon: ComposeIcon },
-  { href: "/social/posts", label: "Posts", Icon: PostsIcon },
-  { href: "/social/channels", label: "Channels", Icon: ChannelsIcon },
+  { href: "/social/calendar", labelKey: "calendar", Icon: CalendarIcon },
+  { href: "/social/compose", labelKey: "compose", Icon: ComposeIcon },
+  { href: "/social/posts", labelKey: "posts", Icon: PostsIcon },
+  { href: "/social/channels", labelKey: "channels", Icon: ChannelsIcon },
 ];
 
 export function SocialSidebar() {
+  const t = useTranslations("social.sidebar");
   const pathname = usePathname();
   const { accounts, selectedChannelFilter, setChannelFilter } =
     useSocialAccountsStore();
@@ -25,7 +27,7 @@ export function SocialSidebar() {
       {/* Navigation */}
       <nav className="flex flex-col gap-0.5 p-3">
         <div className="mb-1 px-2 text-[9px] font-semibold uppercase tracking-[0.08em] text-neutral-600">
-          Navigation
+          {t("navigation")}
         </div>
         {NAV_ITEMS.map((item) => {
           const isActive =
@@ -41,7 +43,7 @@ export function SocialSidebar() {
               }`}
             >
               <item.Icon size={14} className={isActive ? "opacity-100" : "opacity-60"} />
-              <span>{item.label}</span>
+              <span>{t(item.labelKey)}</span>
             </Link>
           );
         })}
@@ -53,11 +55,11 @@ export function SocialSidebar() {
       {/* Channels */}
       <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3">
         <div className="mb-1 px-2 text-[9px] font-semibold uppercase tracking-[0.08em] text-neutral-600">
-          Channels
+          {t("channels")}
         </div>
         {accounts.length === 0 ? (
           <div className="px-2 py-1 text-[11px] text-neutral-700">
-            No channels connected
+            {t("noChannels")}
           </div>
         ) : (
           accounts.map((account) => {
@@ -104,7 +106,7 @@ export function SocialSidebar() {
           className="mt-2 flex items-center gap-1.5 rounded-[5px] border border-dashed border-neutral-800 px-2 py-1.5 text-[11px] text-neutral-600 transition-all duration-150 hover:border-neutral-700 hover:bg-[#0f0f0f] hover:text-neutral-500"
         >
           <PlusIcon size={12} />
-          <span>Add channel</span>
+          <span>{t("addChannel")}</span>
         </Link>
       </div>
     </aside>

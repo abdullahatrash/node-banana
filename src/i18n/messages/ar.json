@@ -19,6 +19,55 @@
     "infoPanel": { "aspectRatio": "نسبة العرض إلى الارتفاع", "batchCount": "عدد النتائج", "estimatedCost": "التكلفة التقديرية", "outputExample": "مثال للنتيجة" }
   },
   "social": {
+    "sidebar": {
+      "navigation": "التنقل",
+      "calendar": "التقويم",
+      "compose": "إنشاء منشور",
+      "posts": "المنشورات",
+      "channels": "القنوات",
+      "noChannels": "لا توجد قنوات متصلة",
+      "addChannel": "إضافة قناة"
+    },
+    "channels": {
+      "connect": {
+        "title": "ربط قناة",
+        "description": "اختر المنصة التي تريد ربطها",
+        "action": "ربط",
+        "connecting": "جارٍ الربط…",
+        "connected": "تم ربط القناة بنجاح!",
+        "notConfigured": "غير مهيأة",
+        "notConfiguredHelp": "منصة {platform} غير مهيأة على هذا الخادم. تواصل مع المسؤول لتفعيلها.",
+        "errors": {
+          "connect": "تعذر إتمام الربط",
+          "complete": "تعذر إكمال عملية الربط",
+          "loadProviders": "تعذر تحميل مزودي الخدمة"
+        },
+        "bluesky": {
+          "title": "ربط Bluesky",
+          "descriptionPrefix": "أدخل معرّف Bluesky وكلمة",
+          "appPasswordLink": "مرور التطبيق",
+          "handle": "المعرّف",
+          "appPassword": "كلمة مرور التطبيق",
+          "handlePlaceholder": "مثال: alice.bsky.social",
+          "passwordPlaceholder": "مثال: xxxx-xxxx-xxxx-xxxx",
+          "required": "المعرّف وكلمة مرور التطبيق مطلوبان.",
+          "connected": "تم ربط قناة Bluesky!",
+          "errors": {
+            "connect": "تعذر ربط حساب Bluesky"
+          }
+        },
+        "mastodon": {
+          "title": "ربط Mastodon",
+          "description": "أدخل خادم Mastodon أو اختر أحد الخوادم أدناه",
+          "instancePlaceholder": "مثال: mastodon.social",
+          "required": "عنوان الخادم مطلوب.",
+          "connected": "تم ربط قناة Mastodon!",
+          "errors": {
+            "start": "تعذر بدء ربط Mastodon"
+          }
+        }
+      }
+    },
     "platforms": { "linkedin": "لينكدإن", "x": "إكس", "instagram": "إنستغرام", "tiktok": "تيك توك", "youtube": "يوتيوب", "facebook": "فيسبوك", "threads": "ثريدز", "bluesky": "بلوسكاي", "pinterest": "بنترست", "reddit": "ريديت", "mastodon": "ماستودون" },
     "preview": { "reply": "رد", "repost": "إعادة نشر", "like": "إعجاب", "more": "المزيد", "comment": "تعليق", "share": "مشاركة", "send": "إرسال", "boost": "تعزيز", "favourite": "مفضلة", "bookmark": "حفظ", "views": "المشاهدات", "viewCount": "{count, plural, =0 {لا مشاهدات} one {مشاهدة واحدة} two {مشاهدتان} few {# مشاهدات} many {# مشاهدة} other {# مشاهدة}}", "now": "الآن", "justNow": "الآن", "untitledVideo": "فيديو بلا عنوان", "linkedin": "لينكدإن" },
     "posts": { "noContent": "لا يوجد محتوى", "mediaAttached": "{count, plural, one {مرفق وسائط واحد} two {مرفقان} few {# مرفقات} many {# مرفقًا} other {# مرفق}}", "scheduled": "مجدول", "confirmDelete": "حذف هذا المنشور؟", "showError": "عرض الخطأ", "hideError": "إخفاء الخطأ", "actions": { "edit": "تعديل المنشور", "retry": "إعادة محاولة المنشور", "openPublished": "فتح المنشور المنشور", "delete": "حذف المنشور", "duplicate": "تكرار المنشور" }, "toast": { "requeued": "أُعيد المنشور إلى قائمة الانتظار", "deleted": "حُذف المنشور", "duplicated": "نُسخ المنشور كمسودة" }, "errors": { "retry": "فشلت إعادة المحاولة", "delete": "فشل الحذف", "duplicate": "فشل التكرار" } },
