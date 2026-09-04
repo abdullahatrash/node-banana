@@ -13,6 +13,7 @@ import {
   organization,
   user,
   userPreferences,
+  workspaceInterfaceLocalePreferences,
   workspaceMembers,
   workspaceSettings,
   workspaceStorageLimits,
@@ -166,14 +167,20 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
     const session = sessionRecord(sessionRow);
     const workspaceId = session.workspaceId;
     const [preferenceRows, settingRows, runRows, profileRows] = await Promise.all([
-      this.db
+      workspaceId
+        ? this.db
+            .select({ interfaceLocale: workspaceInterfaceLocalePreferences.interfaceLocale })
+            .from(workspaceInterfaceLocalePreferences)
+            .where(and(eq(workspaceInterfaceLocalePreferences.workspaceId, workspaceId), eq(workspaceInterfaceLocalePreferences.userId, userId)))
+            .limit(1)
+        : this.db
         .select({ interfaceLocale: userPreferences.interfaceLocale })
         .from(userPreferences)
         .where(eq(userPreferences.userId, userId))
         .limit(1),
       workspaceId
         ? this.db
-            .select({ contentLanguage: workspaceSettings.defaultContentLanguage })
+            .select({ contentLanguage: workspaceSettings.defaultContentLanguage, interfaceLocale: workspaceSettings.defaultInterfaceLocale })
             .from(workspaceSettings)
             .where(eq(workspaceSettings.workspaceId, workspaceId))
             .limit(1)
@@ -218,7 +225,7 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
     return {
       session,
       interfaceLocale: interfaceLocaleSchema.parse(
-        preferenceRows[0]?.interfaceLocale ?? "ar",
+        preferenceRows[0]?.interfaceLocale ?? settingRows[0]?.interfaceLocale ?? "ar",
       ),
       contentLanguage: contentLanguageSchema.parse(
         settingRows[0]?.contentLanguage ?? session.contentLanguage,
@@ -330,6 +337,7 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
             organizationId: input.workspace.organizationId,
             planTier: "free",
             defaultContentLanguage: input.workspace.contentLanguage,
+            defaultInterfaceLocale: input.workspace.interfaceLocale,
             createdAt: now,
             updatedAt: now,
           })
@@ -362,6 +370,19 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
             updatedAt: now,
           })
           .onConflictDoNothing();
+        await tx
+          .insert(workspaceInterfaceLocalePreferences)
+          .values({
+            workspaceId,
+            userId: input.userId,
+            interfaceLocale: input.workspace.interfaceLocale,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [workspaceInterfaceLocalePreferences.workspaceId, workspaceInterfaceLocalePreferences.userId],
+            set: { interfaceLocale: input.workspace.interfaceLocale, updatedAt: now },
+          });
         await tx
           .insert(userPreferences)
           .values({
@@ -401,9 +422,23 @@ export class PostgresOnboardingRepository implements OnboardingRepository {
           .update(workspaceSettings)
           .set({
             defaultContentLanguage: input.workspaceIdentityUpdate.contentLanguage,
+            defaultInterfaceLocale: input.workspaceIdentityUpdate.interfaceLocale,
             updatedAt: now,
           })
           .where(eq(workspaceSettings.workspaceId, workspaceId));
+        await tx
+          .insert(workspaceInterfaceLocalePreferences)
+          .values({
+            workspaceId,
+            userId: input.userId,
+            interfaceLocale: input.workspaceIdentityUpdate.interfaceLocale,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [workspaceInterfaceLocalePreferences.workspaceId, workspaceInterfaceLocalePreferences.userId],
+            set: { interfaceLocale: input.workspaceIdentityUpdate.interfaceLocale, updatedAt: now },
+          });
         await tx
           .update(userPreferences)
           .set({

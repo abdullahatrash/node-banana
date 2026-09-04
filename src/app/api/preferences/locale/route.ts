@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { isAppLocale, localeCookieName, type AppLocale } from "@/i18n/config";
+import { activeWorkspaceCookieName, isAppLocale, localeCookieName, type AppLocale } from "@/i18n/config";
 import { getAuthenticatedUserFromHeaders } from "@/lib/auth/session";
-import { getDb, isDatabaseConfigured } from "@/lib/db";
-import { userPreferences } from "@/lib/db/schema";
+import { isDatabaseConfigured } from "@/lib/db";
+import { saveWorkspaceLocalePreference } from "@/lib/interface-locale/repository";
 
 export async function POST(request: Request) {
   const origin = request.headers.get("origin");
@@ -18,21 +18,24 @@ export async function POST(request: Request) {
   }
 
   const user = await getAuthenticatedUserFromHeaders(request.headers);
-  if (!user || !isDatabaseConfigured()) {
-    return localeResponse(body.locale, 204);
+  const workspaceId = request.headers.get("x-workspace-id")?.trim();
+  if (!user || !isDatabaseConfigured() || !workspaceId) {
+    return localeResponse(body.locale, 204, null);
   }
 
-  const db = getDb();
-  await db
-    .insert(userPreferences)
-    .values({ userId: user.id, interfaceLocale: body.locale })
-    .onConflictDoUpdate({
-      target: userPreferences.userId,
-      set: { interfaceLocale: body.locale, updatedAt: new Date() },
-    });
+  const outcome = await saveWorkspaceLocalePreference({
+    userId: user.id,
+    workspaceId,
+    locale: body.locale,
+  });
+  if (outcome === "not_member") {
+    return NextResponse.json(
+      { success: false, code: "WORKSPACE_ACCESS_DENIED" },
+      { status: 403, headers: { "cache-control": "no-store" } },
+    );
+  }
 
-  const response = localeResponse(body.locale, 200);
-  return response;
+  return localeResponse(body.locale, 200, workspaceId);
 }
 
 function isSameOrigin(origin: string | null, requestUrl: string) {
@@ -44,12 +47,17 @@ function isSameOrigin(origin: string | null, requestUrl: string) {
   }
 }
 
-function localeResponse(locale: AppLocale, status: 200 | 204) {
+function localeResponse(locale: AppLocale, status: 200 | 204, workspaceId: string | null) {
   const response = status === 204
     ? new NextResponse(null, { status })
     : NextResponse.json({ success: true, locale }, { status });
   response.headers.set("cache-control", "no-store");
   response.cookies.set(localeCookieName, locale, {
+    path: "/",
+    sameSite: "lax",
+  });
+  if (workspaceId) response.cookies.set(activeWorkspaceCookieName, workspaceId, {
+    httpOnly: true,
     maxAge: 60 * 60 * 24 * 365,
     path: "/",
     sameSite: "lax",

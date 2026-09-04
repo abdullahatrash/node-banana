@@ -1,8 +1,8 @@
 import { cache } from "react";
-import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { headers } from "next/headers";
 import {
+  activeWorkspaceCookieName,
   defaultLocale,
   getDirection,
   isAppLocale,
@@ -10,25 +10,21 @@ import {
   type AppDirection,
   type AppLocale,
 } from "@/i18n/config";
-import { getAuthenticatedUserFromHeaders } from "@/lib/auth/session";
-import { getDb, isDatabaseConfigured } from "@/lib/db";
-import { userPreferences } from "@/lib/db/schema";
+import { readWorkspaceLocaleContext } from "@/lib/interface-locale/repository";
 
-type LocaleResolutionInput = {
+export type LocaleResolutionInput = {
   sessionLocale?: string;
   preferenceLocale?: string;
   workspaceLocale?: string;
-  cookieLocale?: string;
   acceptLanguage?: string;
 };
 
 export function resolveLocale(input: LocaleResolutionInput | string = {}): AppLocale {
-  const candidates = typeof input === "string" ? { cookieLocale: input } : input;
+  const candidates = typeof input === "string" ? { sessionLocale: input } : input;
   for (const candidate of [
     candidates.sessionLocale,
     candidates.preferenceLocale,
     candidates.workspaceLocale,
-    candidates.cookieLocale,
   ]) {
     if (isAppLocale(candidate)) return candidate;
   }
@@ -51,26 +47,6 @@ export function resolveLocale(input: LocaleResolutionInput | string = {}): AppLo
   return defaultLocale;
 }
 
-async function readDurablePreference(requestHeaders: Headers): Promise<string | undefined> {
-  if (!isDatabaseConfigured()) return undefined;
-  try {
-    const user = await getAuthenticatedUserFromHeaders(requestHeaders);
-    if (!user) return undefined;
-    const [preference] = await getDb()
-      .select({ locale: userPreferences.interfaceLocale })
-      .from(userPreferences)
-      .where(eq(userPreferences.userId, user.id))
-      .limit(1);
-    return preference?.locale;
-  } catch (error) {
-    console.error("[locale-preference]", {
-      code: "INTERFACE_LOCALE_PREFERENCE_READ_FAILED",
-      error: error instanceof Error ? error.name : "UnknownError",
-    });
-    return undefined;
-  }
-}
-
 export const getLocaleFromCookies = cache(async (): Promise<{
   locale: AppLocale;
   direction: AppDirection;
@@ -79,12 +55,24 @@ export const getLocaleFromCookies = cache(async (): Promise<{
   const [cookieStore, headerStore] = await Promise.all([cookies(), headers()]);
   const explicitLocale =
     headerStore.get("x-interface-locale") ?? cookieStore.get(localeCookieName)?.value;
-  const preferenceLocale = isAppLocale(explicitLocale)
-    ? undefined
-    : await readDurablePreference(new Headers(headerStore));
+  let durableContext: Awaited<ReturnType<typeof readWorkspaceLocaleContext>> = null;
+  if (!isAppLocale(explicitLocale)) {
+    try {
+      durableContext = await readWorkspaceLocaleContext({
+        requestHeaders: new Headers(headerStore),
+        selectedWorkspaceId: headerStore.get("x-workspace-id") ?? cookieStore.get(activeWorkspaceCookieName)?.value,
+      });
+    } catch (error) {
+      console.error("[locale-preference]", {
+        code: "INTERFACE_LOCALE_PREFERENCE_READ_FAILED",
+        error: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
   const locale = resolveLocale({
     sessionLocale: explicitLocale,
-    preferenceLocale,
+    preferenceLocale: durableContext?.preferenceLocale ?? undefined,
+    workspaceLocale: durableContext?.workspaceLocale,
     acceptLanguage: headerStore.get("accept-language") ?? undefined,
   });
   return {

@@ -25,6 +25,7 @@ import { useDirectionStore } from "@/store/directionStore"
 import { useRouter } from "next/navigation"
 import { useLocale, useTranslations } from "next-intl"
 import { authClient } from "@/lib/auth/client"
+import { getActiveWorkspaceId } from "@/lib/studio/client"
 
 export function NavUser({
   user,
@@ -49,11 +50,13 @@ export function NavUser({
     .toLocaleUpperCase() || "—"
 
   function toggleLanguage() {
-    setLocale(locale === "en" ? "ar" : "en")
+    const next = locale === "en" ? "ar" : "en"
+    const workspaceId = getActiveWorkspaceId()
+    setLocale(next)
     void fetch("/api/preferences/locale", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ locale: locale === "en" ? "ar" : "en" }),
+      headers: { "content-type": "application/json", ...(workspaceId ? { "x-workspace-id": workspaceId } : {}) },
+      body: JSON.stringify({ locale: next }),
       keepalive: true,
     })
     router.refresh()

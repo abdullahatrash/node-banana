@@ -33,15 +33,17 @@ export function WorkspaceSwitcher({
       : initialWorkspaceId;
     setActiveId(next);
     setActiveWorkspaceId(next);
+    if (next) void persistServerWorkspace(next);
   }, [initialWorkspaceId, workspaces]);
 
   const activeWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
 
-  function selectWorkspace(workspaceId: string) {
+  async function selectWorkspace(workspaceId: string) {
     if (workspaceId === activeWorkspaceId) return;
     setActiveWorkspaceId(workspaceId);
     setActiveId(workspaceId);
+    await persistServerWorkspace(workspaceId);
     window.location.reload();
   }
 
@@ -90,7 +92,7 @@ export function WorkspaceSwitcher({
             {workspaces.map((workspace) => (
               <DropdownMenuItem
                 key={workspace.id}
-                onSelect={() => selectWorkspace(workspace.id)}
+                onSelect={() => void selectWorkspace(workspace.id)}
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{workspace.name}</span>
@@ -108,4 +110,12 @@ export function WorkspaceSwitcher({
       </SidebarMenuItem>
     </SidebarMenu>
   );
+}
+
+async function persistServerWorkspace(workspaceId: string) {
+  await fetch("/api/preferences/workspace", {
+    method: "POST",
+    headers: { "x-workspace-id": workspaceId },
+    keepalive: true,
+  }).catch(() => null);
 }

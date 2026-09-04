@@ -43,6 +43,7 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
   readonly dispatchIntents = new Map<string, AnalysisDispatchIntentRecord>();
   readonly receipts = new Map<string, MemoryReceipt>();
   readonly userLocales = new Map<string, "ar" | "en">();
+  readonly workspaceUserLocales = new Map<string, "ar" | "en">();
   readonly workspaceLanguages = new Map<string, string>();
   readonly logoAssets = new Map<string, string>();
   private mutationTail: Promise<void> = Promise.resolve();
@@ -115,7 +116,7 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
       : null;
     return {
       session,
-      interfaceLocale: this.userLocales.get(userId) ?? "ar",
+      interfaceLocale: (workspaceId ? this.workspaceUserLocales.get(key(workspaceId, userId)) : null) ?? this.userLocales.get(userId) ?? "ar",
       contentLanguage: workspaceId
         ? this.workspaceLanguages.get(workspaceId) ?? "ar"
         : "ar",
@@ -160,6 +161,7 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
         current.workspaceId = input.workspace.id;
         current.contentLanguage = input.workspace.contentLanguage;
         this.userLocales.set(input.userId, input.workspace.interfaceLocale);
+        this.workspaceUserLocales.set(key(input.workspace.id, input.userId), input.workspace.interfaceLocale);
         this.workspaceLanguages.set(input.workspace.id, input.workspace.contentLanguage);
       }
       if (input.workspaceIdentityUpdate) {
@@ -168,6 +170,7 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
         }
         current.contentLanguage = input.workspaceIdentityUpdate.contentLanguage;
         this.userLocales.set(input.userId, input.workspaceIdentityUpdate.interfaceLocale);
+        this.workspaceUserLocales.set(key(input.workspaceIdentityUpdate.workspaceId, input.userId), input.workspaceIdentityUpdate.interfaceLocale);
         this.workspaceLanguages.set(
           input.workspaceIdentityUpdate.workspaceId,
           input.workspaceIdentityUpdate.contentLanguage,

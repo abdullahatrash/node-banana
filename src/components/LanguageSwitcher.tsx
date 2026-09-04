@@ -5,6 +5,7 @@ import { useDirectionStore } from "@/store/directionStore";
 import { Button } from "@/components/ui/button";
 import { LanguagesIcon } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
+import { getActiveWorkspaceId } from "@/lib/studio/client";
 
 export function LanguageSwitcher({ className }: { className?: string }) {
   const router = useRouter();
@@ -16,9 +17,13 @@ export function LanguageSwitcher({ className }: { className?: string }) {
   function toggle() {
     const next = locale === "en" ? "ar" : "en";
     setLocale(next);
+    const workspaceId = getActiveWorkspaceId();
     void fetch("/api/preferences/locale", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(workspaceId ? { "x-workspace-id": workspaceId } : {}),
+      },
       body: JSON.stringify({ locale: next }),
       keepalive: true,
     });

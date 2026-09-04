@@ -400,6 +400,7 @@ export const workspaceSettings = pgTable(
     defaultContentLanguage: text("default_content_language")
       .default("ar")
       .notNull(),
+    defaultInterfaceLocale: text("default_interface_locale").default("ar").notNull(),
     schedulingTimezone: text("scheduling_timezone").default("UTC").notNull(),
     schedulingWeekStart: integer("scheduling_week_start").default(1).notNull(),
     brandKit: jsonb("brand_kit").$type<Record<string, unknown>>(),
@@ -422,6 +423,10 @@ export const workspaceSettings = pgTable(
       "workspace_settings_scheduling_preferences_check",
       sql`length(${table.schedulingTimezone}) between 1 and 100
         and ${table.schedulingWeekStart} between 0 and 6`,
+    ),
+    interfaceLocaleCheck: check(
+      "workspace_settings_default_interface_locale_check",
+      sql`${table.defaultInterfaceLocale} in ('ar', 'en')`,
     ),
   }),
 );
@@ -465,7 +470,7 @@ export const workspaceMembers = pgTable(
   }),
 );
 
-/** User-scoped preferences remain independent from Workspace content defaults. */
+/** Legacy pre-Workspace locale compatibility; authenticated product reads use the scoped table below. */
 export const userPreferences = pgTable("user_preferences", {
   userId: text("user_id")
     .primaryKey()
@@ -483,6 +488,34 @@ export const userPreferences = pgTable("user_preferences", {
     sql`${table.interfaceLocale} in ('ar', 'en')`,
   ),
 }));
+
+/** A person's Interface Locale is scoped to a Workspace, never global content semantics. */
+export const workspaceInterfaceLocalePreferences = pgTable(
+  "workspace_interface_locale_preferences",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    interfaceLocale: text("interface_locale").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_interface_locale_preferences_pk",
+      columns: [table.workspaceId, table.userId],
+    }),
+    membershipFk: foreignKey({
+      columns: [table.workspaceId, table.userId],
+      foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId],
+      name: "workspace_interface_locale_preferences_membership_fk",
+    }).onDelete("cascade"),
+    userIdx: index("workspace_interface_locale_preferences_user_idx").on(table.userId, table.workspaceId),
+    localeCheck: check(
+      "workspace_interface_locale_preferences_locale_check",
+      sql`${table.interfaceLocale} in ('ar', 'en')`,
+    ),
+  }),
+);
 
 /** Resumable, user-owned onboarding state. JSONB is parsed at repository edges. */
 export const onboardingSessions = pgTable(

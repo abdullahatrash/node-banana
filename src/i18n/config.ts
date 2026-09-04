@@ -5,6 +5,7 @@ export type AppDirection = "rtl" | "ltr";
 
 export const defaultLocale: AppLocale = "ar";
 export const localeCookieName = "NEXT_LOCALE";
+export const activeWorkspaceCookieName = "TASMEEMAI_ACTIVE_WORKSPACE";
 
 export function isAppLocale(value: unknown): value is AppLocale {
   return typeof value === "string" && locales.includes(value as AppLocale);

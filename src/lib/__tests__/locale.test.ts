@@ -17,8 +17,8 @@ describe("resolveLocale", () => {
   it("uses the committed locale precedence", () => {
     expect(resolveLocale({ sessionLocale: "en", preferenceLocale: "ar" })).toBe("en");
     expect(resolveLocale({ preferenceLocale: "en", workspaceLocale: "ar" })).toBe("en");
-    expect(resolveLocale({ workspaceLocale: "en", cookieLocale: "ar" })).toBe("en");
-    expect(resolveLocale({ cookieLocale: "en", acceptLanguage: "ar-SA" })).toBe("en");
+    expect(resolveLocale({ workspaceLocale: "en", acceptLanguage: "ar-SA" })).toBe("en");
+    expect(resolveLocale({ sessionLocale: "en", acceptLanguage: "ar-SA" })).toBe("en");
   });
 
   it("uses supported browser language before the Arabic fallback", () => {

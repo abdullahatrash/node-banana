@@ -21,7 +21,17 @@ describe("LanguageSwitcher", () => {
     useDirectionStore.setState({ locale: "en", direction: "ltr" });
     document.documentElement.lang = "en";
     document.documentElement.dir = "ltr";
+    window.localStorage.clear();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+  });
+
+  it("binds an authenticated product preference to the selected Workspace", async () => {
+    window.localStorage.setItem("node-banana-active-workspace-id", "workspace-a");
+    render(<I18nTestProvider locale="en"><LanguageSwitcher /></I18nTestProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "العربية" }));
+    expect(fetch).toHaveBeenCalledWith("/api/preferences/locale", expect.objectContaining({
+      headers: expect.objectContaining({ "x-workspace-id": "workspace-a" }),
+    }));
   });
 
   it("has a localized accessible name and switches public route, document, and preference", async () => {

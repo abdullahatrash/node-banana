@@ -37,7 +37,6 @@ export async function proxy(request: NextRequest) {
       request: { headers: requestHeaders },
     });
     localizedResponse.cookies.set(localeCookieName, publicLocale, {
-      maxAge: 60 * 60 * 24 * 365,
       path: "/",
       sameSite: "lax",
     });
