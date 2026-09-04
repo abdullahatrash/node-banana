@@ -308,7 +308,7 @@ export function ProductShell({
       </Sidebar>
       <SidebarInset>
         <header className="flex h-(--header-height) shrink-0 items-center gap-2 border-b px-4 lg:px-6">
-          <SidebarTrigger label={t("sidebar.toggle")} className="-ms-1" />
+          <SidebarTrigger label={t("sidebar.toggle")} side={side} className="-ms-1" />
           <span className="h-4 w-px bg-border" aria-hidden="true" />
           <h1 className="min-w-0 truncate text-base font-semibold">{title}</h1>
           <div className="ms-auto flex min-w-0 shrink-0 items-center gap-2">{headerActions}</div>

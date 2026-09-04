@@ -45,7 +45,7 @@ export function CommercialStatus({ workspaceId, authorizedWorkspaces }: { worksp
           <p className="truncate text-[11px] text-muted-foreground">{t("credits", { count: summary.credit.availableUnits })}</p>
         </div>
       </div>
-      <Link href="/settings?section=billing" className="mt-2 flex min-h-8 items-center justify-center gap-1 rounded-md bg-primary px-2 text-xs font-semibold text-primary-foreground group-data-[collapsible=icon]:sr-only">
+      <Link href="/billing" className="mt-2 flex min-h-8 items-center justify-center gap-1 rounded-md bg-primary px-2 text-xs font-semibold text-primary-foreground group-data-[collapsible=icon]:sr-only">
         {t("upgrade")}<UpgradeIcon className="size-3" aria-hidden="true" />
       </Link>
     </div>

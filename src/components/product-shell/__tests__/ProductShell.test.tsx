@@ -136,6 +136,7 @@ describe("ProductShell", () => {
     );
     expect(document.querySelector('[data-slot="sidebar"][data-side="right"]')).toBeTruthy();
     expect(document.querySelector('[data-slot="sidebar-wrapper"]')).toHaveAttribute("dir", "rtl");
+    expect(screen.getByRole("button", { name: "فتح أو إغلاق التنقل" }).querySelector('[data-sidebar-icon-side="right"]')).toBeTruthy();
     expect(screen.getAllByText("noura@example.com")[0]).toHaveAttribute("dir", "ltr");
   });
 
@@ -153,7 +154,7 @@ describe("ProductShell", () => {
     renderShell();
     expect(await screen.findByText("Starter trial · 3d left")).toBeInTheDocument();
     expect(screen.getByText("21 credits available")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Upgrade" })).toHaveAttribute("href", "/settings?section=billing");
+    expect(screen.getByRole("link", { name: "Upgrade" })).toHaveAttribute("href", "/billing");
   });
 
   it("localizes authoritative Free and credit state in Arabic", async () => {
@@ -230,6 +231,7 @@ describe("ProductShell", () => {
 
   it("supports the desktop keyboard shortcut", () => {
     renderShell();
+    expect(screen.getByRole("button", { name: "Toggle navigation" }).querySelector('[data-sidebar-icon-side="left"]')).toBeTruthy();
     const desktopSidebar = document.querySelector('[data-slot="sidebar"][data-state]');
     expect(desktopSidebar).toHaveAttribute("data-state", "expanded");
     fireEvent.keyDown(window, { key: "b", ctrlKey: true });
