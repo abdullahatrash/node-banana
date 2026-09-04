@@ -64,6 +64,7 @@ describe("POST /api/studio/calendar/reschedule", () => {
     }));
     expect(productionCalendarRescheduleService).toHaveBeenCalledWith({
       workspaceId: "workspace_1",
+      source: { planId: "plan_1", revisionId: "revision_4" },
       userId: "user_1",
       role: "member",
       authContextId: "session_1",

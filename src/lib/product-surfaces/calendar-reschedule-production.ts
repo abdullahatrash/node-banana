@@ -13,6 +13,7 @@ import { CalendarRescheduleService, type CalendarReschedulePorts } from "./calen
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { CalendarRescheduleCommandRepository } from "./calendar-reschedule-repository";
 import { WORKSPACE_SERVICE_AGENT_RESOLVER } from "@/lib/agent-auth/workspace-service-agent";
+import { publishingPlanAuthorizationContractDigest } from "@/lib/agent-runtime/publishing-plans/authorization-contract";
 
 function capabilityResult<T>(response: Awaited<ReturnType<typeof dispatchCapability>>): T {
   if (response.type === "capability_error") {
@@ -25,13 +26,27 @@ function capabilityResult<T>(response: Awaited<ReturnType<typeof dispatchCapabil
 
 export async function productionCalendarRescheduleService(input: {
   workspaceId: string;
+  source: { planId: string; revisionId: string };
   userId: string;
   role: "owner" | "admin" | "member";
   authContextId: string;
 }): Promise<CalendarRescheduleService> {
+  const sourceRevision = await PRODUCTION_PUBLISHING_PLAN_SERVICE.getRevision(input.workspaceId, input.source.revisionId);
+  if (sourceRevision.planId !== input.source.planId) throw new Error("CALENDAR_RESCHEDULE_SERVICE_ACTOR_UNAVAILABLE");
   const actor = await WORKSPACE_SERVICE_AGENT_RESOLVER.resolve({
     workspaceId: input.workspaceId,
     purpose: "calendar_reschedule",
+    authority: {
+      capability: "publishing_plan_revisions.create@1",
+      authorizationContractDigest: publishingPlanAuthorizationContractDigest("publishing_plan_revisions.create@1"),
+      resources: {
+        channelIds: [...sourceRevision.definition.channelIds],
+        credentialProfileIds: [],
+        workflowIds: [],
+        automationIds: [],
+        artifactIds: [...sourceRevision.definition.artifactIds],
+      },
+    },
   });
   const servicePrincipalId = actor.principalId;
   const serviceKeyId = actor.keyId;
