@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const authorizeStudioRequest = vi.fn();
 const reschedule = vi.fn();
-const productionCalendarRescheduleService = vi.fn(async () => ({
+const productionCalendarRescheduleService = vi.fn(async (_input: unknown) => ({
   reschedule: (...args: unknown[]) => reschedule(...args),
 }));
 
