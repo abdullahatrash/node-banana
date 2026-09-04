@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { getActiveWorkspaceId } from "@/lib/studio/client";
 import { useTranslations } from "next-intl";
+import type { GenerationCapability } from "@/lib/model-routing/types";
 
 interface ProviderModel {
   model: string;
@@ -16,9 +17,10 @@ interface ProviderModel {
 interface ModelSelectProps {
   mode: "photo" | "video" | "copy";
   id: string;
+  requiredCapability?: GenerationCapability;
 }
 
-export function ModelSelect({ mode, id }: ModelSelectProps) {
+export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) {
   const t = useTranslations("simpleStudio.modelSelect"); const locale = typeof document === "undefined" ? undefined : document.documentElement.lang || undefined;
   const selectedModelId = useSimpleStudioStore((s) => s.selectedModelId);
   const setSelectedModel = useSimpleStudioStore((s) => s.setSelectedModel);
@@ -46,10 +48,10 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
         if (data.success) {
           const seen = new Set<string>();
           const unique = (data.items || []).filter((m: ProviderModel) => {
-            const requiredCapability = mode === "copy" ? "text_generation" : mode === "video"
+            const capability = requiredCapability ?? (mode === "copy" ? "text_generation" : mode === "video"
               ? sourceMediaType === "video" ? "video_to_video" : sourceMediaType === "image" ? "image_to_video" : "text_to_video"
-              : referenceImageCount > 0 ? "image_to_image" : "text_to_image";
-            const supported = m.capabilities?.includes(requiredCapability);
+              : referenceImageCount > 0 ? "image_to_image" : "text_to_image");
+            const supported = m.capabilities?.includes(capability);
             if (m.provider !== "replicate" || m.qualification.status !== "qualified" || !supported || seen.has(m.model)) return false;
             seen.add(m.model);
             return true;
@@ -78,7 +80,7 @@ export function ModelSelect({ mode, id }: ModelSelectProps) {
       });
 
     return () => controller.abort();
-  }, [mode, referenceImageCount, selectedModelId, setSelectedModel, sourceMediaType]);
+  }, [mode, referenceImageCount, requiredCapability, selectedModelId, setSelectedModel, sourceMediaType]);
 
   const sorted = [...models].sort((a, b) => a.label.localeCompare(b.label));
 

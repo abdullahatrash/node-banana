@@ -54,7 +54,7 @@ export const CONTENT_FORMAT_DEFINITIONS: Record<ContentFormat, {
   green_screen_mobile_app: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "app_capture"], supportsArabic: true, renderProofRequired: true },
   claymation: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["script", "images"], supportsArabic: true, renderProofRequired: true },
   character_swap: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["video", "persona"], supportsArabic: true, renderProofRequired: true },
-  custom_upload: { aspectRatio: "1:1", duration: [4, 60], requiredInputs: ["video"], supportsArabic: true, renderProofRequired: true },
+  custom_upload: { aspectRatio: "9:16", duration: [4, 60], requiredInputs: ["video"], supportsArabic: true, renderProofRequired: true },
 };
 
 export const AUTOMATION_STEPS = [
@@ -121,7 +121,7 @@ export const blitzPayloadSchema = z.object({
   rejectionReasons: z.array(text(300)).default([]),
 });
 
-const contentPieceSchema = z.object({
+export const contentPieceSchema = z.object({
   format: z.enum(CONTENT_FORMATS),
   contentLanguage: z.enum(["ar", "en", "mixed"]),
   arabicVariety: z.enum(ARABIC_VARIETIES).nullable().default(null),
@@ -131,7 +131,17 @@ const contentPieceSchema = z.object({
   durationSeconds: z.number().int().min(4).max(60).default(15),
   captionStyle: optionalText(100),
   sourceAssetIds: z.array(text(200)).default([]),
+  personaId: text(200).nullable().default(null),
   candidateArtifactIds: z.array(text(200)).default([]),
+  candidates: z.array(z.object({
+    assetId: text(200), intentId: text(200).nullable(), operationId: text(200).nullable(), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), createdAt: z.string().datetime(),
+    renderProof: z.object({
+      schema: z.literal("content-render-proof/v1"), status: z.literal("passed"),
+      inputAssets: z.array(z.object({ assetId: text(200), type: z.enum(["image", "video"]), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().int().positive().nullable() })),
+      output: z.object({ assetId: text(200), contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), width: z.number().int().positive(), height: z.number().int().positive(), durationSeconds: z.number().int().positive().nullable() }),
+      intentId: text(200).nullable(), operationId: text(200).nullable(), verifiedAt: z.string().datetime(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    }),
+  })).default([]),
   renderProofStatus: z.enum(["not_requested", "pending", "passed", "failed"]).default("not_requested"),
   generatedText: z.object({
     textOutputId: text(200),

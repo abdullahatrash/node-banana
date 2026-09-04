@@ -6,20 +6,84 @@ import { assets, workspaceProductRecords } from "@/lib/db/schema";
 import { generationIntents, modelTextOutputReceipts } from "@/lib/model-routing/db-schema";
 import { runtimeOperations } from "@/lib/agent-runtime/operation-status/db-schema";
 import { generationOperationId } from "@/lib/model-routing/generation-operation";
+import { modelArtifactIngestionReceipts } from "@/lib/model-routing/db-schema";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { createProductRecord, createProductRecordInTransaction, updateProductRecord, updateProductRecordInTransaction, type ProductRecord } from "./repository";
-import { parseProductPayload } from "./definitions";
+import { contentPieceSchema, parseProductPayload } from "./definitions";
+import { buildContentRenderProof, isAdmittedContentArtifact, validateReadyPortraitAsset, type ContentAssetEvidence, type ContentGenerationReference } from "./content-lineage";
+import { contentExecutionPlan, validateContentExecutionInput } from "./content-execution-plan";
 
 type Actor = { workspaceId: string; userId: string; idempotencyKey: string };
 
 export async function saveContentCommand(input: Actor & { id?: string; expectedRevision?: number; title: string; payload: Record<string, unknown> }) {
-  const requested = parseProductPayload("content_piece", { ...input.payload, candidateArtifactIds: [], renderProofStatus: "not_requested", generatedText: null, generatedMedia: null });
+  const requested = contentPieceSchema.parse({ ...input.payload, candidateArtifactIds: [], candidates: [], renderProofStatus: "not_requested", generatedText: null, generatedMedia: null });
   if (!input.id) return createProductRecord({ ...input, kind: "content_piece", state: "active", payload: requested });
   if (!input.expectedRevision) throw new Error("CONTENT_EXPECTED_REVISION_REQUIRED");
   const id = input.id;
   const [current] = await getDb().select({ payload: workspaceProductRecords.payload }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1);
   if (!current) return null;
-  const authoritative = parseProductPayload("content_piece", current.payload);
-  return updateProductRecord({ ...input, id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, payload: { ...requested, candidateArtifactIds: authoritative.candidateArtifactIds, renderProofStatus: authoritative.renderProofStatus, generatedText: authoritative.generatedText, generatedMedia: authoritative.generatedMedia } });
+  const authoritative = contentPieceSchema.parse(current.payload);
+  return updateProductRecord({ ...input, id, expectedKind: "content_piece", expectedRevision: input.expectedRevision, payload: { ...requested, candidateArtifactIds: authoritative.candidateArtifactIds, candidates: authoritative.candidates, renderProofStatus: authoritative.renderProofStatus, generatedText: authoritative.generatedText, generatedMedia: authoritative.generatedMedia } });
+}
+
+function assetEvidence(row: typeof assets.$inferSelect): ContentAssetEvidence {
+  const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {};
+  return { id: row.id, type: row.type, checksum: row.checksum, width: row.width, height: row.height, durationSeconds: row.durationSeconds, uploadState: metadata.uploadState };
+}
+
+export async function bindContentMediaOutputCommand(input: Actor & { id: string; expectedRevision: number; generation: ContentGenerationReference | null }) {
+  const now = new Date();
+  return getDb().transaction(async (tx) => {
+    const [record] = await tx.select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1);
+    if (!record) return null;
+    const payload = contentPieceSchema.parse(record.payload);
+    const sourceRowsUnordered = payload.sourceAssetIds.length ? await tx.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), inArray(assets.id, payload.sourceAssetIds), isNull(assets.deletedAt))) : [];
+    const sourceById = new Map(sourceRowsUnordered.map((row) => [row.id, row]));
+    const sourceRows = payload.sourceAssetIds.map((id) => sourceById.get(id)).filter((row): row is typeof assets.$inferSelect => Boolean(row));
+    const sourceAssets = sourceRows.map(assetEvidence);
+    let personaState: string | null = null;
+    if (payload.personaId) {
+      const [persona] = await tx.select({ state: workspaceProductRecords.state }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, payload.personaId), eq(workspaceProductRecords.kind, "creator_persona"), isNull(workspaceProductRecords.archivedAt))).limit(1);
+      personaState = persona?.state ?? null;
+    }
+    const inputValidation = validateContentExecutionInput({ format: payload.format, sources: sourceAssets, personaState });
+    if (!inputValidation.ok) throw new Error(inputValidation.code);
+    const plan = contentExecutionPlan(payload.format);
+    let artifact: ContentAssetEvidence;
+    let contentDigest: string;
+    let intentId: string | null = null;
+    let operationId: string | null = null;
+    if (plan.strategy === "canonical_upload") {
+      if (input.generation || sourceAssets.length !== 1 || validateReadyPortraitAsset(sourceAssets[0]!, "video")) throw new Error("CONTENT_UPLOAD_RENDER_PROOF_INVALID");
+      artifact = sourceAssets[0]!;
+      contentDigest = artifact.checksum!;
+    } else {
+      if (!input.generation) throw new Error("CONTENT_GENERATION_REQUIRED");
+      const [[receipt], [intentRow], [operation], [artifactRow]] = await Promise.all([
+        tx.select().from(modelArtifactIngestionReceipts).where(and(eq(modelArtifactIngestionReceipts.workspaceId, input.workspaceId), eq(modelArtifactIngestionReceipts.assetId, input.generation.assetId), eq(modelArtifactIngestionReceipts.intentId, input.generation.intentId), eq(modelArtifactIngestionReceipts.status, "ready"))).limit(1),
+        tx.select({ intent: generationIntents.intent }).from(generationIntents).where(and(eq(generationIntents.workspaceId, input.workspaceId), eq(generationIntents.id, input.generation.intentId))).limit(1),
+        tx.select({ state: runtimeOperations.state, metadata: runtimeOperations.metadata }).from(runtimeOperations).where(and(eq(runtimeOperations.workspaceId, input.workspaceId), eq(runtimeOperations.id, input.generation.operationId), eq(runtimeOperations.resourceId, input.generation.intentId))).limit(1),
+        tx.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.id, input.generation.assetId), isNull(assets.deletedAt))).limit(1),
+      ]);
+      const operationMetadata = operation?.metadata && typeof operation.metadata === "object" && !Array.isArray(operation.metadata) ? operation.metadata : {};
+      if (!artifactRow) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
+      artifact = assetEvidence(artifactRow);
+      if (!isAdmittedContentArtifact({ format: payload.format, sourceAssets, personaState, generation: input.generation, receipt: receipt ? { assetId: receipt.assetId, intentId: receipt.intentId, status: receipt.status, contentDigest: receipt.contentDigest, width: receipt.width, height: receipt.height, durationSeconds: receipt.durationSeconds } : null, intent: intentRow?.intent ?? null, operation: operation ? { state: operation.state, artifactIds: operationMetadata.artifactIds } : null, artifact })) throw new Error("CONTENT_GENERATION_LINEAGE_INVALID");
+      contentDigest = receipt!.contentDigest!;
+      intentId = input.generation.intentId;
+      operationId = input.generation.operationId;
+    }
+    const proofFacts = buildContentRenderProof({ sourceAssets, artifact, intentId, operationId, verifiedAt: now });
+    const renderProof = { ...proofFacts, digest: canonicalDigest(proofFacts) };
+    const existing = payload.candidates.find((candidate) => candidate.assetId === artifact.id && candidate.contentDigest === contentDigest);
+    if (existing) return record;
+    const candidate = { assetId: artifact.id, intentId, operationId, contentDigest, createdAt: now.toISOString(), renderProof };
+    return updateProductRecordInTransaction(tx, {
+      workspaceId: input.workspaceId, userId: input.userId, id: record.id, expectedKind: "content_piece", expectedRevision: input.expectedRevision,
+      payload: { ...payload, candidateArtifactIds: [...payload.candidateArtifactIds, artifact.id], candidates: [...payload.candidates, candidate], renderProofStatus: "passed", generatedMedia: intentId && operationId ? { assetId: artifact.id, intentId, operationId, contentDigest } : payload.generatedMedia },
+      idempotencyKey: input.idempotencyKey,
+    });
+  });
 }
 
 export async function bindContentTextOutputCommand(input: Actor & { id: string; expectedRevision: number; textOutputId: string }) {
