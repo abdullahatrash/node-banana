@@ -151,7 +151,7 @@ describe("ProductShell", () => {
       return new Response(JSON.stringify({ success: true, data: {
         subscription: { state: "trialing", planId: "starter", planVersion: 1, currentPeriodEndsAt: trialEndsAt, graceEndsAt: null, merchantCustomerRef: null },
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }, { planId: "starter", version: 1, authoredName: { ar: "البداية", en: "Starter" } }],
-        credit: { availableUnits: 21 },
+        credit: { availableUnits: 21, liabilityUnits: 0 },
         financials: { transactions: [], adjustments: [] },
       } }), { status: 200, headers: { "content-type": "application/json" } });
     });
@@ -172,7 +172,7 @@ describe("ProductShell", () => {
       return new Response(JSON.stringify({ success: true, data: {
         subscription: null,
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }],
-        credit: { availableUnits: 10 },
+        credit: { availableUnits: 10, liabilityUnits: 0 },
         financials: { transactions: [], adjustments: [] },
       } }), { status: 200, headers: { "content-type": "application/json" } });
     }));
@@ -191,7 +191,7 @@ describe("ProductShell", () => {
       return new Response(JSON.stringify({ success: true, data: {
         subscription: null,
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }],
-        credit: { availableUnits: 7 },
+        credit: { availableUnits: 7, liabilityUnits: 0 },
         financials: { transactions: [], adjustments: [] },
       } }), { status: 200, headers: { "content-type": "application/json" } });
     });

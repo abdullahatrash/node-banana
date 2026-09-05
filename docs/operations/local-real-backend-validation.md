@@ -117,6 +117,15 @@ Exercise chargeback and reversal fixtures the same way; the transaction should
 move through disputed and chargeback-reversed states without changing the
 original paid amount or merchant receipt reference.
 
+For a Generation Credit pack, an approved partial refund removes the same
+proportion of credits using integer minor-unit arithmetic; a full refund or open
+chargeback targets the full pack. Unspent units are clawed back immediately. If
+some units were already consumed, Billing shows the exact outstanding liability
+and new managed execution is denied. Credits released later from an in-flight
+reservation are applied to that liability before becoming available. A signed
+refund or chargeback reversal restores only the previously applied clawback and
+records a separate `clawback_reverse` ledger entry.
+
 ### RTL visual approval is a separate gate
 
 `smoke:i18n-shell` proves server-rendered locale and direction semantics. It does

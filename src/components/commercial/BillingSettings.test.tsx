@@ -12,7 +12,7 @@ const summary = {
   ],
   creditPacks: [],
   quotes: [],
-  credit: { availableUnits: 10, buckets: [], heldReservations: [], recentEntries: [] },
+  credit: { availableUnits: 10, liabilityUnits: 0, buckets: [], heldReservations: [], recentEntries: [] },
   financials: { transactions: [], adjustments: [] },
   referrals: { codes: [], rewards: [], payoutEntries: [] },
 };
@@ -101,5 +101,13 @@ describe("BillingSettings default plan", () => {
       method: "POST",
       headers: expect.objectContaining({ "x-workspace-id": "workspace-server" }),
     }));
+  });
+
+  it("shows an outstanding refund clawback and does not present it as available credit", async () => {
+    const evidence = { ...summary, credit: { ...summary.credit, availableUnits: 4, liabilityUnits: 6 } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: true, data: evidence }), { status: 200, headers: { "content-type": "application/json" } })));
+    render(<I18nTestProvider locale="en"><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("6 refunded or disputed credits were already consumed");
+    expect(screen.getByText("4")).toBeInTheDocument();
   });
 });
