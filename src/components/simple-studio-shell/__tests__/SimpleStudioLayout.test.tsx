@@ -15,6 +15,7 @@ const shellContext = {
   workspaces: [{ id: "workspace-1", name: "Studio", slug: "studio", role: "owner" as const }],
   initialWorkspaceId: "workspace-1",
   canReadBilling: true,
+  initialCommercialStatus: null,
 };
 
 describe("SimpleStudioLayout", () => {

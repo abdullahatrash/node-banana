@@ -183,6 +183,7 @@ export function ProductShell({
     workspaceId: context.initialWorkspaceId,
     authorizedWorkspaces: context.workspaces,
     enabled: context.canReadBilling,
+    initialSummary: context.initialCommercialStatus,
   });
 
   return (

@@ -37,6 +37,7 @@ const context: ProductShellContext = {
   ],
   initialWorkspaceId: "workspace-1",
   canReadBilling: true,
+  initialCommercialStatus: null,
 };
 
 function renderShell(locale: "ar" | "en" = "en") {
@@ -111,6 +112,32 @@ describe("ProductShell", () => {
     expect(screen.getByTestId("shell-commercial-status-compact-pending")).toHaveAttribute("href", "/billing");
     expect(screen.getAllByRole("link", { name: "Open plans and credits" })).toHaveLength(2);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  });
+
+  it("shows the server-projected plan and credits before the client refresh completes", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    const trialEndsAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
+
+    render(
+      <I18nTestProvider locale="en">
+        <ProductShell
+          context={{
+            ...context,
+            initialCommercialStatus: {
+              subscription: { state: "trialing", planId: "starter", currentPeriodEndsAt: trialEndsAt },
+              plans: [{ planId: "starter", authoredName: { ar: "البداية", en: "Starter" } }],
+              credit: { availableUnits: 25 },
+            },
+          }}
+        >
+          <p>route content</p>
+        </ProductShell>
+      </I18nTestProvider>,
+    );
+
+    expect(screen.getAllByText("Starter trial · 3d left")).toHaveLength(2);
+    expect(screen.getByText("25 credits available")).toBeInTheDocument();
+    expect(screen.getByText("25 credits")).toBeInTheDocument();
   });
 
   it("marks legacy descendants active under the canonical link", () => {

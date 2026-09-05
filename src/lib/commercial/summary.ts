@@ -8,6 +8,24 @@ export type CommercialSummary = {
   referrals: { codes: Array<{ id: string; code: string; rewardMode: string; status: string }>; rewards: Array<{ id: string; mode: string; state: string; creditUnits: number | null; cashMinor: number | null; currency: string | null }>; payoutEntries: Array<{ id: string; entryType: string; amountMinor: number; currency: string }> };
 };
 
+export type CommercialStatusSummary = {
+  subscription: null | { state: string; planId: string; currentPeriodEndsAt: string };
+  plans: Array<{ planId: string; authoredName: { ar: string; en: string } }>;
+  credit: { availableUnits: number };
+};
+
+export function projectCommercialStatusSummary(summary: CommercialSummary): CommercialStatusSummary {
+  return {
+    subscription: summary.subscription ? {
+      state: summary.subscription.state,
+      planId: summary.subscription.planId,
+      currentPeriodEndsAt: summary.subscription.currentPeriodEndsAt,
+    } : null,
+    plans: summary.plans.map((plan) => ({ planId: plan.planId, authoredName: plan.authoredName })),
+    credit: { availableUnits: summary.credit.availableUnits },
+  };
+}
+
 export function readCommercialSummary(value: unknown): CommercialSummary | null {
   if (!value || typeof value !== "object") return null;
   const summary = value as Partial<CommercialSummary>;

@@ -5,6 +5,8 @@ import { getDb } from "@/lib/db";
 import { workspaceMembers, workspaces } from "@/lib/db/schema";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
 import { resolveWorkspaceMemberPermissions } from "@/lib/studio/authz";
+import { COMMERCIAL } from "@/lib/commercial/production";
+import type { CommercialStatusSummary } from "@/lib/commercial/summary";
 
 export interface ProductShellWorkspace {
   id: string;
@@ -22,6 +24,7 @@ export interface ProductShellContext {
   workspaces: ProductShellWorkspace[];
   initialWorkspaceId: string | null;
   canReadBilling: boolean;
+  initialCommercialStatus: CommercialStatusSummary | null;
 }
 
 export async function getProductShellContext(
@@ -57,6 +60,11 @@ export async function getProductShellContext(
       })
     : [];
 
+  const canReadBilling = permissions.includes("product:billing:read");
+  const initialCommercialStatus = canReadBilling && initialWorkspaceId
+    ? await COMMERCIAL.status(initialWorkspaceId)
+    : null;
+
   return {
     user: {
       name: session.user.name || session.user.email || "",
@@ -65,6 +73,7 @@ export async function getProductShellContext(
     },
     workspaces: rows,
     initialWorkspaceId,
-    canReadBilling: permissions.includes("product:billing:read"),
+    canReadBilling,
+    initialCommercialStatus,
   };
 }

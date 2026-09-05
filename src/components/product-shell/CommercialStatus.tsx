@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowUpLeftIcon, ArrowUpRightIcon, CoinsIcon } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import { readCommercialSummary, type CommercialSummary } from "@/lib/commercial/summary";
+import { projectCommercialStatusSummary, readCommercialSummary, type CommercialStatusSummary } from "@/lib/commercial/summary";
 import { getActiveWorkspaceId } from "@/lib/studio/client";
 
-export function useCommercialStatusData({ workspaceId, authorizedWorkspaces, enabled }: { workspaceId: string | null; authorizedWorkspaces: Array<{ id: string }>; enabled: boolean }) {
-  const [summary, setSummary] = useState<CommercialSummary | null>(null);
+export function useCommercialStatusData({ workspaceId, authorizedWorkspaces, enabled, initialSummary }: { workspaceId: string | null; authorizedWorkspaces: Array<{ id: string }>; enabled: boolean; initialSummary: CommercialStatusSummary | null }) {
+  const [summary, setSummary] = useState<CommercialStatusSummary | null>(initialSummary);
 
   useEffect(() => {
     if (!enabled) {
@@ -21,22 +21,23 @@ export function useCommercialStatusData({ workspaceId, authorizedWorkspaces, ena
       setSummary(null);
       return;
     }
+    setSummary(resolvedWorkspaceId === workspaceId ? initialSummary : null);
     const controller = new AbortController();
     void fetch("/api/studio/billing", { headers: { "x-workspace-id": resolvedWorkspaceId }, cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) return;
         const body = await response.json() as { data?: unknown };
         const next = readCommercialSummary(body.data);
-        if (next) setSummary(next);
+        if (next) setSummary(projectCommercialStatusSummary(next));
       })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [authorizedWorkspaces, enabled, workspaceId]);
+  }, [authorizedWorkspaces, enabled, initialSummary, workspaceId]);
 
   return summary;
 }
 
-function commercialPresentation(summary: CommercialSummary, locale: "ar" | "en", freeLabel: string, trialLabel: (plan: string, days: number) => string) {
+function commercialPresentation(summary: CommercialStatusSummary, locale: "ar" | "en", freeLabel: string, trialLabel: (plan: string, days: number) => string) {
   const subscription = summary.subscription;
   const plan = summary.plans.find((candidate) => candidate.planId === (subscription?.planId ?? "free"));
   const planName = plan?.authoredName[locale] ?? (subscription?.planId || freeLabel);
@@ -48,7 +49,7 @@ function commercialPresentation(summary: CommercialSummary, locale: "ar" | "en",
   return { UpgradeIcon, planLabel };
 }
 
-export function CommercialStatus({ summary }: { summary: CommercialSummary | null }) {
+export function CommercialStatus({ summary }: { summary: CommercialStatusSummary | null }) {
   const locale = useLocale() as "ar" | "en";
   const t = useTranslations("shell.commercial");
   if (!summary) {
@@ -85,7 +86,7 @@ export function CommercialStatus({ summary }: { summary: CommercialSummary | nul
   );
 }
 
-export function CommercialStatusCompact({ summary }: { summary: CommercialSummary | null }) {
+export function CommercialStatusCompact({ summary }: { summary: CommercialStatusSummary | null }) {
   const locale = useLocale() as "ar" | "en";
   const t = useTranslations("shell.commercial");
   if (!summary) {

@@ -26,6 +26,20 @@ const completeCommand = async (tx: Tx, input: { workspaceId: string; idempotency
 
 export class CommercialRepository {
   constructor(private readonly database: Db = getDb(), private readonly now = () => new Date()) {}
+  async status(workspaceId: string) {
+    const now = this.now();
+    const [subscriptions, plans, creditRows] = await Promise.all([
+      this.database.select({ state: workspaceSubscriptions.state, planId: workspaceSubscriptions.planId, currentPeriodEndsAt: workspaceSubscriptions.currentPeriodEndsAt }).from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, workspaceId)).limit(1),
+      this.database.select({ planId: billingPlanVersions.planId, authoredName: billingPlanVersions.authoredName }).from(billingPlanVersions).where(and(eq(billingPlanVersions.status, "active"), sql`${billingPlanVersions.effectiveAt} <= ${now}`, or(isNull(billingPlanVersions.retiredAt), gt(billingPlanVersions.retiredAt, now)))).orderBy(asc(billingPlanVersions.priceMinor)),
+      this.database.select({ availableUnits: sql<string>`coalesce(sum(${generationCreditBuckets.availableUnits}), 0)::text` }).from(generationCreditBuckets).where(and(eq(generationCreditBuckets.workspaceId, workspaceId), or(isNull(generationCreditBuckets.expiresAt), gt(generationCreditBuckets.expiresAt, now)))),
+    ]);
+    const subscription = subscriptions[0];
+    return {
+      subscription: subscription ? { ...subscription, currentPeriodEndsAt: subscription.currentPeriodEndsAt.toISOString() } : null,
+      plans,
+      credit: { availableUnits: Number(creditRows[0]?.availableUnits ?? 0) },
+    };
+  }
   async summary(workspaceId: string) {
     const now = this.now(); const [subscription, plans, packs, buckets, reservations, quotes, codes, rewards, payouts, entries, transactions, adjustments, liabilities, executionHolds] = await Promise.all([
       this.database.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, workspaceId)).limit(1),
