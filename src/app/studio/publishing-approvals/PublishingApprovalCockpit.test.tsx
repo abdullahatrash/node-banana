@@ -1,10 +1,12 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render as testingRender, screen, waitFor } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
 import { renderWithIntl as render } from "@/test/renderWithIntl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   PublishingApprovalDto,
   PublishingApprovalPresentation,
 } from "@/lib/agent-runtime/publishing-approvals/types";
+import arMessages from "@/i18n/messages/ar.json";
 import { PublishingApprovalCockpit } from "./PublishingApprovalCockpit";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -242,21 +244,40 @@ describe("PublishingApprovalCockpit", () => {
     expect(await screen.findByText("Exact launch copy", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Node Banana, Inc.")).toBeInTheDocument();
     expect(screen.getByText("target_1")).toBeInTheDocument();
-    expect(screen.getByText("Author type: organization")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "DD" && element.textContent === "Author type: organization")).toBeInTheDocument();
     expect(screen.getByText(/0.42 USD/)).toBeInTheDocument();
     expect(screen.getByText(/Non-authoritative estimate/)).toBeInTheDocument();
-    expect(screen.getByText("publishing-runtime-policy/default@1")).toBeInTheDocument();
-    expect(screen.getByText(/Capability: linkedin@1/)).toBeInTheDocument();
-    expect(screen.getByText(/Outcome:/)).toHaveTextContent(
-      "Outcome: allowed · blockers: none",
-    );
-    expect(screen.getByText(/Content:/)).toHaveTextContent(DIGEST);
+    expect(screen.getAllByText("publishing-runtime-policy/default@1").length).toBeGreaterThan(0);
+    expect(screen.getByText((_, element) => element?.tagName === "SPAN" && element.textContent?.includes("Capability: linkedin@1") === true)).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "DD" && element.textContent?.includes("Outcome: allowed · blockers: none") === true)).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "SPAN" && element.textContent?.includes(`Content: ${DIGEST}`) === true)).toBeInTheDocument();
     expect(
       screen
-        .getAllByText(/Snapshot:/)
+        .getAllByText((_, element) => element?.tagName === "SPAN" && element.textContent?.startsWith("Snapshot:") === true)
         .some((element) => element.textContent?.includes(OTHER_DIGEST)),
     ).toBe(true);
     expect(screen.getByText(/authorizesExecution: false/)).toBeInTheDocument();
+    for (const value of document.querySelectorAll('[data-slot="technical-code"]')) {
+      expect(value).toHaveAttribute("dir", "ltr");
+    }
+  });
+
+  it("renders Arabic approval UI while isolating technical evidence and authored content", async () => {
+    installFetch(presentation());
+    testingRender(
+      <NextIntlClientProvider locale="ar" messages={arMessages} timeZone="UTC">
+        <div dir="rtl">
+          <PublishingApprovalCockpit />
+        </div>
+      </NextIntlClientProvider>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "لوحة موافقات النشر" })).toBeInTheDocument();
+    expect(screen.getByText("صلاحية النشر متوفرة")).toBeInTheDocument();
+    expect(screen.getByText("Exact launch copy", { exact: false }).closest("pre")).toHaveAttribute("dir", "auto");
+    for (const value of document.querySelectorAll('[data-slot="technical-code"]')) {
+      expect(value).toHaveAttribute("dir", "ltr");
+    }
   });
 
   it("does not let an owner or admin role substitute for explicit Channel authority", async () => {
@@ -330,7 +351,7 @@ describe("PublishingApprovalCockpit", () => {
     installFetch(value);
     render(<PublishingApprovalCockpit />);
 
-    expect(await screen.findByText(/final with status/)).toHaveTextContent("denied");
+    expect(await screen.findByText(/final with status/)).toHaveTextContent("Denied");
     expect(
       screen.queryByRole("button", { name: "Approve this exact action" }),
     ).not.toBeInTheDocument();

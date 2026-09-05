@@ -29,7 +29,7 @@ describe("UsageCockpit", () => {
   });
 
   it("renders unknown usage as unknown rather than zero cost", async () => {
-    render(<UsageCockpit />);
+    const { container } = render(<UsageCockpit />);
     expect(await screen.findByText("Contains unknowns")).toBeInTheDocument();
     expect(screen.getByText("1 unknown valuations")).toBeInTheDocument();
     expect(screen.getByText((_, element) =>
@@ -38,5 +38,9 @@ describe("UsageCockpit", () => {
     )).toBeInTheDocument();
     expect(screen.getByText("Local workflow estimates are not billing evidence.", { exact: false })).toBeInTheDocument();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+    expect(container.querySelectorAll('[data-slot="technical-code"]')).not.toHaveLength(0);
+    for (const technicalValue of container.querySelectorAll('[data-slot="technical-code"]')) {
+      expect(technicalValue).toHaveAttribute("dir", "ltr");
+    }
   });
 });

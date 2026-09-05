@@ -181,15 +181,15 @@ describe("RunCockpit", () => {
     render(<RunCockpit workflowId="workflow_1" runId="run_1" />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading canonical Run evidence");
     expect(await screen.findByText("outcome unknown")).toBeInTheDocument();
-    expect(screen.getByText("Revision 7", { exact: false })).toBeInTheDocument();
-    expect(screen.getByText("Input · image")).toBeInTheDocument();
-    expect(screen.getByText("Output · text")).toBeInTheDocument();
+    expect(screen.getAllByText((_, element) => element?.tagName === "P" && element.textContent?.includes("Revision 7") === true).length).toBeGreaterThan(0);
+    expect(screen.getByText((_, element) => element?.tagName === "STRONG" && element.textContent === "Input · image")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "STRONG" && element.textContent === "Output · text")).toBeInTheDocument();
     expect(screen.getByText("Canonical generated copy")).toBeInTheDocument();
-    expect(screen.getByText("direct charge attribution artifact_output", { exact: false })).toBeInTheDocument();
-    expect(screen.getByText("Non-charge lineage context: artifact_input")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent?.includes("direct charge attribution artifact_output") === true)).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "Non-charge lineage context: artifact_input")).toBeInTheDocument();
     expect(screen.getByText("Contains unknown usage or pricing; unknown is not zero.")).toBeInTheDocument();
-    expect(screen.getByText("held · reserved 3.00 USD", { exact: false })).toBeInTheDocument();
-    expect(screen.getByText("held · run.concurrent@1 · reserved 1 count", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "LI" && element.textContent?.includes("held · reserved 3.00 USD") === true)).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "LI" && element.textContent?.includes("held · run.concurrent@1 · reserved 1 count") === true)).toBeInTheDocument();
     expect(screen.getAllByText("Showing up to 100 rows; this capability does not expose continuation.")).toHaveLength(2);
     expect(within(screen.getByRole("region", { name: "Cost Valuations" })).queryByText(/^0(?:\.0+)?(?:\s|$)/)).not.toBeInTheDocument();
     expect(screen.getByRole("table")).toBeInTheDocument();
@@ -202,22 +202,22 @@ describe("RunCockpit", () => {
   it("continues the Human-bound event cursor without duplicates and reload reconstructs the same view", async () => {
     const { calls } = installFetch();
     render(<RunCockpit workflowId="workflow_1" runId="run_1" />);
-    expect(await screen.findByText("#1")).toBeInTheDocument();
+    expect(await screen.findByText("#1", { exact: false })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Check for retained updates" }));
-    expect(await screen.findByText("#2")).toBeInTheDocument();
-    expect(screen.getAllByText("#1")).toHaveLength(1);
+    expect(await screen.findByText("#2", { exact: false })).toBeInTheDocument();
+    expect(screen.getAllByText("#1", { exact: false })).toHaveLength(1);
     expect(calls.find((call) => call.capability === "workflow_run_events.list@2" && call.input.cursor === "cursor_1")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Reload canonical view" }));
     await waitFor(() => expect(calls.filter((call) => call.capability === "workflow_run_events.list@2" && !call.input.cursor)).toHaveLength(2));
-    expect(screen.getAllByText("#1")).toHaveLength(1);
-    expect(screen.getAllByText("#2")).toHaveLength(1);
+    expect(screen.getAllByText("#1", { exact: false })).toHaveLength(1);
+    expect(screen.getAllByText("#2", { exact: false })).toHaveLength(1);
   });
 
   it("keeps independent panel failures partial and opens only allowlisted diagnostics with an active grant", async () => {
     installFetch({ failAttempts: true });
     render(<RunCockpit workflowId="workflow_1" runId="run_1" />);
     expect(await screen.findByText("Step Attempts are temporarily unavailable.")).toBeInTheDocument();
-    expect(screen.getByText("Input · image")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "STRONG" && element.textContent === "Input · image")).toBeInTheDocument();
     const diagnostics = screen.getByRole("region", { name: "Sanitized diagnostics" });
     expect(within(diagnostics).getByLabelText("Operator Trace Reference")).toHaveValue("otr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     expect(within(diagnostics).getByText("otr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toBeInTheDocument();

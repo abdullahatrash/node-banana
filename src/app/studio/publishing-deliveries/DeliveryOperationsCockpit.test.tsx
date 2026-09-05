@@ -333,11 +333,12 @@ describe("DeliveryOperationsCockpit", () => {
     expect(screen.getAllByText("decision_1", { exact: false }).length).toBeGreaterThan(0);
     expect(screen.getByText("warning")).toBeInTheDocument();
     expect(screen.getByText("contains unknown cost", { exact: false })).toBeInTheDocument();
-    expect(screen.getByText((_, element) => element?.tagName === "DD" && element.textContent?.includes("unknown from state dispatching") === true)).toBeInTheDocument();
-    expect(screen.getByText("externally reversed false", { exact: false })).toBeInTheDocument();
+    expect(screen.getByTestId("cancellation-truth")).toHaveTextContent(/unknown\s+from state\s+dispatching/);
+    expect(screen.getByTestId("cancellation-truth")).toHaveTextContent("externally reversed");
+    expect(screen.getByTestId("cancellation-truth")).toHaveTextContent("false");
     expect(screen.getByText("Provider outcome is ambiguous", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("held_unknown_cost", { exact: false })).toBeInTheDocument();
-    expect(screen.getByText("9.00 / 10.00 USD committed", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "ARTICLE" && element.textContent?.includes("9.00 / 10.00 USD committed") === true)).toBeInTheDocument();
     expect(screen.getByText("spend_event_1", { exact: false })).toBeInTheDocument();
     expect(screen.getByLabelText("Durable policy reason")).toBeInTheDocument();
   });
@@ -355,9 +356,14 @@ describe("DeliveryOperationsCockpit", () => {
     async (outcome) => {
       installFetch({ cancellationOutcome: outcome });
       render(<DeliveryOperationsCockpit deliveryId="delivery_1" />);
-      expect(await screen.findByText((_, element) => element?.tagName === "DD" && element.textContent?.includes(`${outcome} from state`) === true)).toBeInTheDocument();
-      expect(screen.getByText("durable true", { exact: false })).toBeInTheDocument();
-      expect(screen.getByText("externally reversed false", { exact: false })).toBeInTheDocument();
+      const truth = await screen.findByTestId("cancellation-truth");
+      expect(truth).toHaveTextContent(outcome);
+      expect(truth).toHaveTextContent("from state");
+      expect(truth).toHaveTextContent(outcome === "prevented" ? "scheduled" : "dispatching");
+      expect(truth).toHaveTextContent("durable");
+      expect(truth).toHaveTextContent("true");
+      expect(truth).toHaveTextContent("externally reversed");
+      expect(truth).toHaveTextContent("false");
     },
   );
 
@@ -444,11 +450,11 @@ describe("DeliveryOperationsCockpit", () => {
     render(<DeliveryOperationsCockpit deliveryId="delivery_1" />);
     const waits = await screen.findByRole("region", { name: "Quota Wait eligibility and resumptions" });
     expect(within(waits).getByText((_, element) => element?.tagName === "P" && element.textContent?.includes("Run run_wait_1") === true)).toBeInTheDocument();
-    expect(within(waits).getByText("Requests 1 count of run.concurrent@1")).toBeInTheDocument();
+    expect(within(waits).getByText((_, element) => element?.tagName === "LI" && element.textContent === "Requests 1 count of run.concurrent@1")).toBeInTheDocument();
     expect(within(waits).getByText("requiredAvailable", { exact: false })).toBeInTheDocument();
     expect(within(waits).getByText("quota_evidence_1", { exact: false })).toBeInTheDocument();
     fireEvent.click(within(waits).getByRole("button", { name: "Re-evaluate and resume" }));
-    expect(await screen.findByText("resumed", { selector: "strong" })).toBeInTheDocument();
+    expect(await screen.findByText((_, element) => element?.tagName === "STRONG" && element.textContent === "resumed")).toBeInTheDocument();
     expect(screen.getAllByText("quota_reservation_2", { exact: false }).length).toBeGreaterThan(0);
     expect(calls.some((call) => call.capability === "quota_waits.resume@1")).toBe(true);
     expect(await screen.findByText("hard limit reached")).toBeInTheDocument();
