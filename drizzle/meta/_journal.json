@@ -1016,6 +1016,13 @@
       "when": 1788770400000,
       "tag": "0144_workspace_seat_entitlement",
       "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1788774000000,
+      "tag": "0145_licensed_trend_provider_inbox",
+      "breakpoints": true
     }
   ]
 }

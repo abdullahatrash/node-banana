@@ -24,6 +24,58 @@ Call `POST /api/studio/internal/licensed-trend-catalog` with `x-studio-internal-
 
 The internal endpoint also supports `set_catalog_state` (`active`, `paused`, or `revoked`) and `revoke_entitlement`. Never expose this endpoint or `STUDIO_INTERNAL_API_SECRET` to the browser.
 
+## Automatic provider feed
+
+A contracted provider can push catalog updates through the provider-neutral webhook at:
+
+```text
+POST /api/studio/webhooks/licensed-trends/<provider-key>
+```
+
+Configure `LICENSED_TREND_PROVIDER_PUBLIC_KEYS_JSON` as a map of provider key to retained Ed25519 public keys:
+
+```json
+{
+  "licensed.partner": {
+    "partner-2026": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n"
+  }
+}
+```
+
+Each request carries `x-trend-event-id`, a positive `x-trend-sequence` beginning at 1, RFC 3339 `x-trend-occurred-at`, `x-trend-key-id`, and an unpadded base64url `x-trend-signature`. The Ed25519 signature covers this exact UTF-8 message:
+
+```text
+<provider-key>
+<event-id>
+<sequence>
+<occurred-at>
+sha256:<lowercase body SHA-256>
+```
+
+The body is a strict `licensed-trend-provider-event/v1` envelope. `publish_batch` accepts 1–20 complete unsigned `licensed-trend-catalog-entry/v1` documents; every document must name the authenticated provider. `set_catalog_state` accepts one catalog ID and `active`, `paused`, or `revoked`; a provider cannot mutate another provider's catalog entry.
+
+The webhook verifies the raw body before parsing it and only enqueues the immutable event. It does not access provider media, publish a catalog revision, grant a Workspace entitlement, or generate content inline. Replaying the same event ID with the exact identity and body returns the stored state. Reusing an event ID or sequence with different signed bytes fails with a conflict.
+
+The scheduled `licensed-trend-provider-events` worker consumes exactly `last_sequence + 1` per provider. Gaps stay queued, leases recover after worker interruption, and partial batch retries are safe because catalog revisions are immutable and digest-bound. A known-invalid event blocks later sequences. Operators may retry it after repairing an object-delivery problem, or explicitly skip only a terminal event with an 8–500 character audit reason:
+
+```bash
+curl -X POST http://localhost:3002/api/studio/internal/licensed-trend-provider-events \
+  -H "x-studio-internal-secret: $STUDIO_INTERNAL_API_SECRET" \
+  -H "content-type: application/json" \
+  -d '{"action":"retry","providerKey":"licensed.partner","eventId":"event-1"}'
+```
+
+```bash
+curl -X POST http://localhost:3002/api/studio/internal/licensed-trend-provider-events \
+  -H "x-studio-internal-secret: $STUDIO_INTERNAL_API_SECRET" \
+  -H "content-type: application/json" \
+  -d '{"action":"skip","providerKey":"licensed.partner","eventId":"event-1","reason":"Provider withdrew the package and confirmed it must not publish."}'
+```
+
+Skipping advances only the exact next provider sequence and never publishes its payload. Entitlement grants remain a separate commercial-operations action: a signed provider package is not automatically available to any Workspace.
+
+Do not configure TikTok's Research API as this product feed. TikTok limits Research Tools to qualifying independent or academic non-profit researchers, so a commercial trend product needs a separately contracted licensed source or an approved product API use case. The Commercial Content API is for commercial-content transparency and is not a general organic MENA trend corpus. See the official [Research API eligibility](https://developers.tiktok.com/doc/research-api-get-started) and [Commercial Content API](https://developers.tiktok.com/products/commercial-content-api) documentation.
+
 ## Local end-to-end test
 
 Start Postgres and MinIO, migrate, seed, and start the app on port 3002:
@@ -50,6 +102,7 @@ pnpm workers:local -- --url http://localhost:3002
 ```
 
 The `licensed-trend-imports` summary reports claimed, succeeded, retried, and terminally failed imports.
+The `licensed-trend-provider-events` summary independently reports signed feed events claimed, published, retried, failed-known, or outcome-unknown.
 
 ## Feature-by-feature acceptance
 

@@ -81,6 +81,9 @@
     "src/app/api/studio/internal/licensed-trend-materialization/route.ts": {
       "maxDuration": 60
     },
+    "src/app/api/studio/internal/licensed-trend-provider-events/route.ts": {
+      "maxDuration": 60
+    },
     "src/app/api/studio/internal/marketing-attribution/route.ts": {
       "maxDuration": 60
     }
@@ -152,6 +155,10 @@
     },
     {
       "path": "/api/studio/internal/licensed-trend-materialization?limit=10",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/licensed-trend-provider-events?limit=10",
       "schedule": "* * * * *"
     },
     {

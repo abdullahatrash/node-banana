@@ -75,6 +75,21 @@ export async function setLicensedTrendCatalogState(input: { catalogId: string; s
   return updated;
 }
 
+export async function setLicensedTrendCatalogStateFromProvider(input: {
+  providerKey: string;
+  catalogId: string;
+  state: "active" | "paused" | "revoked";
+  at?: Date;
+}) {
+  const [head] = await getDb().select({ providerKey: licensedTrendCatalogEntries.providerKey })
+    .from(licensedTrendCatalogEntries)
+    .where(eq(licensedTrendCatalogEntries.id, input.catalogId))
+    .limit(1);
+  if (!head) throw new LicensedTrendCatalogError("CATALOG_NOT_FOUND");
+  if (head.providerKey !== input.providerKey) throw new LicensedTrendCatalogError("CATALOG_PROVIDER_MISMATCH");
+  return setLicensedTrendCatalogState(input);
+}
+
 export async function grantLicensedTrendEntitlement(input: {
   workspaceId: string; catalogId: string; catalogRevision: number; territories: string[];
   expiresAt: Date | null; grantAuthority: string; at?: Date;

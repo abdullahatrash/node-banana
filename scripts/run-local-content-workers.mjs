@@ -15,6 +15,7 @@ const routes = [
   ["performance", "/api/studio/internal/social-performance-sync?limit=20"],
   ["youtube-trends", "/api/studio/internal/youtube-trends?limit=20"],
   ["trends", "/api/studio/internal/inspiration-trends?limit=20"],
+  ["licensed-trend-provider-events", "/api/studio/internal/licensed-trend-provider-events?limit=10"],
   ["licensed-trend-imports", "/api/studio/internal/licensed-trend-materialization?limit=10"],
   ["merchant-checkouts", "/api/studio/internal/reconcile-checkouts?limit=20"],
   ["merchant-adjustments", "/api/studio/internal/reconcile-merchant-adjustments?limit=20"],

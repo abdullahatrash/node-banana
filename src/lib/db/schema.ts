@@ -9538,6 +9538,55 @@ export const licensedTrendCatalogRevisions = pgTable(
   }),
 );
 
+/** Ordered cursor for a contracted provider's signed catalog-event stream. */
+export const licensedTrendProviderCursors = pgTable(
+  "licensed_trend_provider_cursors",
+  {
+    providerKey: text("provider_key").primaryKey(),
+    lastSequence: bigint("last_sequence", { mode: "number" }).default(0).notNull(),
+    lastEventId: text("last_event_id"),
+    lastOccurredAt: timestamp("last_occurred_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    valuesCheck: check("licensed_trend_provider_cursors_values_check", sql`${table.providerKey} ~ '^[a-z][a-z0-9._-]{1,119}$' and ${table.lastSequence} >= 0 and ((${table.lastSequence} = 0 and ${table.lastEventId} is null and ${table.lastOccurredAt} is null) or (${table.lastSequence} > 0 and ${table.lastEventId} is not null and ${table.lastOccurredAt} is not null))`),
+  }),
+);
+
+/** Immutable signed input plus mutable, leased processing state. Events are
+ * consumed strictly in provider sequence; gaps never get silently skipped. */
+export const licensedTrendProviderEvents = pgTable(
+  "licensed_trend_provider_events",
+  {
+    providerKey: text("provider_key").notNull(),
+    eventId: text("event_id").notNull(),
+    sequence: bigint("sequence", { mode: "number" }).notNull(),
+    eventDigest: text("event_digest").notNull(),
+    keyId: text("key_id").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+    payload: jsonb("payload").$type<import("@/lib/product-surfaces/licensed-trend-provider-contract").LicensedTrendProviderEvent>().notNull(),
+    state: text("state").notNull(),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(8).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    operatorNote: text("operator_note"),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "licensed_trend_provider_events_pk", columns: [table.providerKey, table.eventId] }),
+    sequenceUnique: uniqueIndex("licensed_trend_provider_events_sequence_unique").on(table.providerKey, table.sequence),
+    providerFk: foreignKey({ name: "licensed_trend_provider_events_provider_fk", columns: [table.providerKey], foreignColumns: [licensedTrendProviderCursors.providerKey] }).onDelete("restrict"),
+    dueIdx: index("licensed_trend_provider_events_due_idx").on(table.nextAttemptAt, table.providerKey, table.sequence).where(sql`${table.state} in ('queued','claimed')`),
+    valuesCheck: check("licensed_trend_provider_events_values_check", sql`${table.providerKey} ~ '^[a-z][a-z0-9._-]{1,119}$' and octet_length(${table.eventId}) between 1 and 200 and ${table.sequence} > 0 and ${table.eventDigest} ~ '^sha256:[a-f0-9]{64}$' and octet_length(${table.keyId}) between 1 and 120 and ${table.payload}->>'schema' = 'licensed-trend-provider-event/v1' and ${table.payload}->>'action' in ('publish_batch','set_catalog_state') and ${table.state} in ('queued','claimed','succeeded','failed_known','outcome_unknown','skipped') and ${table.attempt} between 0 and ${table.maxAttempts} and ${table.maxAttempts} between 1 and 20 and (${table.operatorNote} is null or octet_length(${table.operatorNote}) between 8 and 500)`),
+    leaseCheck: check("licensed_trend_provider_events_lease_check", sql`(${table.state} = 'claimed' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`),
+  }),
+);
+
 export const licensedTrendWorkspaceEntitlements = pgTable(
   "licensed_trend_workspace_entitlements",
   {

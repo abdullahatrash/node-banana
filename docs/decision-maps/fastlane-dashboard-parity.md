@@ -79,8 +79,8 @@ Which parts of Fastlane’s trend-to-approval loop should be adopted?
 
 - **O UI:** paid gate headed “Inspiration Library”; describes a daily searchable viral short-form feed filtered by niche, topic, and format, with an Upgrade CTA. The authenticated free-trial view did not reveal cards, filters, detail screens, or remix actions.
 - **I behavior:** background ingestion/enrichment of trend items, engagement snapshots, niche/format tagging, search, entitlements, ranking, and a remix handoff that preserves source attribution.
-- **Node Banana:** no trend corpus. Prompt Library is saved/public prompt discovery, not market evidence.
-- **Parity:** `missing` for trends; `unknown` for Fastlane’s paid result/detail interactions.
+- **Node Banana:** `/inspiration` now combines Workspace-owned verified performance, policy-isolated YouTube `mostPopular` metadata, manual rights-aware Inspiration Items, and an entitled licensed-media catalog. The licensed lane has immutable media/license evidence, Arabic variety metadata, Brand-aware ranking and Remix Brief handoff, plus ordered Ed25519-signed provider ingestion with replay, gap, lease, retry, and operator-quarantine controls.
+- **Parity:** `existing` for the rights-aware acquisition, ranking, detail, entitlement, materialization, and Remix Brief spine; `provider-dependent` for the breadth/freshness of a production TikTok/Instagram corpus because that requires a contracted licensed feed rather than undocumented scraping or misuse of research-only access.
 - **Acquisition boundary:** Tasmeemai uses official APIs, licensed datasets, user-submitted links, lawful public metadata, and embeddable source media. An **Inspiration Item** retains source, capture time, metric freshness, rights status, and permitted remix behavior; it is not silently imported as a Workspace Artifact.
 
 **Fastlane surface B — `/blitz`, primary nav.**
