@@ -28,3 +28,22 @@ export async function setReferralCodeStatusAction(formData: FormData) {
   await COMMERCIAL.setReferralCodeStatus({ workspaceId, ...input });
   revalidatePath("/refer-and-earn");
 }
+
+export async function saveReferralRecipientProfileAction(formData: FormData) {
+  const input = z.object({
+    rewardPreference: z.enum(["generation_credit", "cash"]),
+    legalCountry: z.string().trim().regex(/^[A-Za-z]{2}$/).optional().or(z.literal("")),
+    payoutCurrency: z.string().trim().regex(/^[A-Za-z]{3}$/).optional().or(z.literal("")),
+    idempotencyKey: z.string().min(8).max(200),
+  }).parse(Object.fromEntries(formData));
+  const context = await requireReferralManager();
+  await COMMERCIAL.saveReferralRecipientProfile({ ...context, rewardPreference: input.rewardPreference, legalCountry: input.legalCountry || null, payoutCurrency: input.payoutCurrency || null, termsAccepted: formData.get("termsAccepted") === "on", idempotencyKey: input.idempotencyKey });
+  revalidatePath("/refer-and-earn");
+}
+
+export async function requestReferralPayoutAction(formData: FormData) {
+  const input = z.object({ idempotencyKey: z.string().min(8).max(200) }).parse(Object.fromEntries(formData));
+  const context = await requireReferralManager();
+  await COMMERCIAL.requestReferralPayout({ ...context, idempotencyKey: input.idempotencyKey });
+  revalidatePath("/refer-and-earn");
+}

@@ -6,7 +6,7 @@ import { COMMERCIAL } from "@/lib/commercial/production";
 import { getPublicAppUrl } from "@/lib/site-routing";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
 import { resolveWorkspaceMemberPermissions } from "@/lib/studio/authz";
-import { createReferralCodeAction, setReferralCodeStatusAction } from "./actions";
+import { createReferralCodeAction, requestReferralPayoutAction, saveReferralRecipientProfileAction, setReferralCodeStatusAction } from "./actions";
 import { ReferralShareActions } from "./ReferralShareActions";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +37,7 @@ export default async function ReferAndEarnPage() {
   if (!workspaceId) return <main className="p-8"><p role="alert">{t("workspaceRequired")}</p></main>;
   const [permissions, dashboard] = await Promise.all([
     resolveWorkspaceMemberPermissions({ workspaceId, userId: access.session.user.id }),
-    COMMERCIAL.referralDashboard(workspaceId),
+    COMMERCIAL.referralDashboard(workspaceId, access.session.user.id),
   ]);
   if (!permissions.includes("product:billing:read")) return <main className="p-8"><p role="alert">{t("forbidden")}</p></main>;
 
@@ -149,9 +149,27 @@ export default async function ReferAndEarnPage() {
         <section className="rounded-2xl border bg-card p-5 shadow-sm">
           <h2 className="text-xl font-semibold">{t("paymentTitle")}</h2>
           <p className="mt-2 text-sm text-muted-foreground">{t("paymentDescription")}</p>
-          <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
-            <p className="font-semibold">{t("verificationTitle")}</p>
-            <p className="mt-1">{t("verificationDescription")}</p>
+          <div className="mt-4 grid gap-5 lg:grid-cols-2">
+            <form action={saveReferralRecipientProfileAction} className="space-y-4 rounded-xl border p-4">
+              <div><label htmlFor="rewardPreference" className="text-sm font-semibold">{t("profile.rewardPreference")}</label><select id="rewardPreference" name="rewardPreference" defaultValue={dashboard.recipientProfile?.rewardPreference ?? "generation_credit"} className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 text-sm"><option value="generation_credit">{t("rewardModes.generation_credit")}</option><option value="cash">{t("rewardModes.cash")}</option></select></div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div><label htmlFor="legalCountry" className="text-sm font-semibold">{t("profile.country")}</label><input id="legalCountry" name="legalCountry" dir="ltr" maxLength={2} defaultValue={dashboard.recipientProfile?.legalCountry ?? ""} placeholder={t("profile.countryPlaceholder")} className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 text-sm uppercase" /></div>
+                <div><label htmlFor="payoutCurrency" className="text-sm font-semibold">{t("profile.currency")}</label><input id="payoutCurrency" name="payoutCurrency" dir="ltr" maxLength={3} defaultValue={dashboard.recipientProfile?.payoutCurrency ?? ""} placeholder={t("profile.currencyPlaceholder")} className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 text-sm uppercase" /></div>
+              </div>
+              <label className="flex items-start gap-2 text-sm"><input type="checkbox" name="termsAccepted" defaultChecked={Boolean(dashboard.recipientProfile?.termsAcceptedAt)} className="mt-1" /><span>{t("profile.terms")}</span></label>
+              <input type="hidden" name="idempotencyKey" value={`referral-profile:${randomUUID()}`} />
+              <button disabled={!canManage} className="min-h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50">{t("profile.save")}</button>
+            </form>
+            <div className="rounded-xl border p-4">
+              <p className="text-sm font-semibold">{t("profile.status")}</p>
+              <p className="mt-2 text-lg font-semibold">{t(`verificationStates.${dashboard.recipientProfile?.verificationState === "verified" ? "verified" : dashboard.recipientProfile?.verificationState === "pending" ? "pending" : dashboard.recipientProfile?.verificationState === "rejected" ? "rejected" : dashboard.recipientProfile?.verificationState === "suspended" ? "suspended" : "unconfigured"}`)}</p>
+              <p className="mt-2 text-sm text-muted-foreground">{dashboard.recipientProfile?.verificationState === "verified" ? t("profile.verifiedDescription", { provider: dashboard.recipientProfile.payoutProvider ?? t("profile.externalProvider") }) : t("verificationDescription")}</p>
+              {dashboard.recipientProfile?.verificationState === "verified" && canManage ? <form action={requestReferralPayoutAction} className="mt-4"><input type="hidden" name="idempotencyKey" value={`referral-payout:${randomUUID()}`} /><button className="min-h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">{t("profile.requestPayout")}</button></form> : null}
+            </div>
+          </div>
+          <div className="mt-5">
+            <h3 className="font-semibold">{t("payoutsTitle")}</h3>
+            <div className="mt-3 space-y-2">{dashboard.payoutRequests.length === 0 ? <p className="text-sm text-muted-foreground">{t("noPayouts")}</p> : dashboard.payoutRequests.map((request) => <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"><div><p className="font-medium" dir="ltr">{new Intl.NumberFormat(locale, { style: "currency", currency: request.currency }).format(request.totalMinor / 100)}</p><p className="mt-1 text-xs text-muted-foreground">{date.format(new Date(request.submittedAt))}</p></div><span className="rounded-full bg-muted px-3 py-1 text-xs font-medium">{t(`payoutStates.${request.state === "processing" ? "processing" : request.state === "action_required" ? "action_required" : request.state === "paid" ? "paid" : request.state === "failed_known" ? "failed_known" : request.state === "outcome_unknown" ? "outcome_unknown" : request.state === "cancelled" ? "cancelled" : "submitted"}`)}</span></div>)}</div>
           </div>
           <p className="mt-4 text-xs text-muted-foreground">{t("privacyBoundary")}</p>
         </section>

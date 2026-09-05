@@ -10,6 +10,8 @@ describe("internal commercial command idempotency", () => {
     { action: "grant_purchased_credits", workspaceId: "ws", merchantReceiptRef: "receipt", units: 10 },
     { action: "attribute_referral", code: "ABCDEF", referredIdentityDigest: digest, referredWorkspaceId: "referred", attributionDigest: digest },
     { action: "decide_referral", attributionId: "attribution", decision: "hold", policyVersion: "v1", evidenceDigest: digest, reviewerRef: "reviewer", creditUnits: null, cashMinor: null, currency: null, thresholdMinor: null },
+    { action: "verify_referral_recipient", workspaceId: "ws", userId: "user", decision: "verified", payoutProvider: "provider", providerRecipientRef: "recipient", taxEvidenceRef: "tax-evidence", evidenceDigest: digest, reviewerRef: "reviewer" },
+    { action: "record_referral_payout_outcome", workspaceId: "ws", payoutRequestId: "payout", toState: "paid", providerEventRef: "event", merchantPayoutRef: "transfer", evidenceDigest: digest, occurredAt: "2026-09-05T00:00:00.000Z" },
     { action: "transition_subscription", workspaceId: "ws", expectedRevision: 1, toState: "active", reasonCode: "merchant.confirmed", periodEndsAt: "2026-10-05T00:00:00.000Z", graceEndsAt: null, merchantCustomerRef: "customer", merchantSubscriptionRef: "subscription" },
   ] as const;
 

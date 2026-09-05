@@ -15,6 +15,8 @@ export async function POST(request: NextRequest) {
     if (command.action === "grant_purchased_credits") { const { action: _action, ...input } = command; return NextResponse.json({ success: true, result: await COMMERCIAL.grantPurchasedCredits(input) }); }
     if (command.action === "attribute_referral") { const { action: _action, ...input } = command; return NextResponse.json({ success: true, result: await COMMERCIAL.attributeReferral(input) }); }
     if (command.action === "decide_referral") { const { action: _action, ...input } = command; return NextResponse.json({ success: true, result: await COMMERCIAL.decideReferral(input) }); }
+    if (command.action === "verify_referral_recipient") { const { action: _action, ...input } = command; return NextResponse.json({ success: true, result: await COMMERCIAL.verifyReferralRecipient(input) }); }
+    if (command.action === "record_referral_payout_outcome") { const { action: _action, occurredAt, ...input } = command; return NextResponse.json({ success: true, result: await COMMERCIAL.recordReferralPayoutOutcome({ ...input, occurredAt: new Date(occurredAt) }) }); }
     const { action: _action, periodEndsAt, graceEndsAt, ...input } = command; return NextResponse.json({ success: true, result: await COMMERCIAL.transitionSubscription({ ...input, periodEndsAt: new Date(periodEndsAt), graceEndsAt: graceEndsAt ? new Date(graceEndsAt) : null }) });
   } catch (error) { if (error instanceof CommercialError) return NextResponse.json({ success: false, code: error.code }, { status: 422 }); throw error; }
 }

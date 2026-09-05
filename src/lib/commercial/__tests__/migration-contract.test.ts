@@ -61,3 +61,21 @@ describe("referral capture migration", () => {
     expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN)\b|\bTRUNCATE\b/i);
   });
 });
+describe("referral recipient and payout migration", () => {
+  it("separates recipient verification, locked rewards, mutable payout projections, and append-only evidence", () => {
+    const sql = readFileSync("drizzle/0147_referral_recipient_payouts.sql", "utf8");
+    for (const value of [
+      "referral_recipient_profiles",
+      "referral_recipient_profile_revisions",
+      "provider_recipient_ref",
+      "tax_evidence_ref",
+      "referral_payout_requests",
+      "referral_payout_request_rewards_reward_unique",
+      "referral_payout_events",
+      "outcome_unknown",
+      "protect_referral_financial_evidence",
+    ]) expect(sql).toContain(value);
+    expect(sql).not.toMatch(/\b(bank_account|account_number|routing_number|iban|swift_code)\b/i);
+    expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN)\b|\bTRUNCATE\b/i);
+  });
+});

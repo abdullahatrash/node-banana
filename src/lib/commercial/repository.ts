@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { billingPlanVersions, billingTrialGrants, commercialCommandReceipts, generationCreditBuckets, generationCreditLedgerEntries, generationCreditPackVersions, generationCreditReservations, managedExecutionCommercialQuotes, merchantBillingAdjustments, merchantBillingTransactions, merchantCreditLiabilities, merchantExecutionHolds, referralAttributions, referralCaptureReceipts, referralFraudEvidence, referralPayoutLedgerEntries, referralRewards, user, workspaceReferralCodes, workspaceSubscriptionEvents, workspaceSubscriptions, workspaces } from "@/lib/db/schema";
+import { billingPlanVersions, billingTrialGrants, commercialCommandReceipts, generationCreditBuckets, generationCreditLedgerEntries, generationCreditPackVersions, generationCreditReservations, managedExecutionCommercialQuotes, merchantBillingAdjustments, merchantBillingTransactions, merchantCreditLiabilities, merchantExecutionHolds, referralAttributions, referralCaptureReceipts, referralFraudEvidence, referralPayoutEvents, referralPayoutLedgerEntries, referralPayoutRequestRewards, referralPayoutRequests, referralRecipientProfileRevisions, referralRecipientProfiles, referralRewards, user, workspaceReferralCodes, workspaceSubscriptionEvents, workspaceSubscriptions, workspaces } from "@/lib/db/schema";
 import { allocateCredits, SUBSCRIPTION_TRANSITIONS } from "./types";
 import { reconcileReleasedCredits } from "./financial-evidence";
 import { createReferralCaptureToken, isReferralCaptureToken, REFERRAL_CAPTURE_TTL_SECONDS, referralCaptureTokenDigest } from "./referral-capture";
@@ -23,6 +23,13 @@ const claimCommand = async (tx: Tx, input: { workspaceId: string; idempotencyKey
 const completeCommand = async (tx: Tx, input: { workspaceId: string; idempotencyKey: string; requestDigest: string; result: Record<string, unknown> }) => {
   const updated = await tx.update(commercialCommandReceipts).set({ result: input.result }).where(and(eq(commercialCommandReceipts.workspaceId, input.workspaceId), eq(commercialCommandReceipts.idempotencyKey, input.idempotencyKey), eq(commercialCommandReceipts.requestDigest, input.requestDigest))).returning({ key: commercialCommandReceipts.idempotencyKey });
   if (!updated[0]) throw new CommercialError("IDEMPOTENCY_CONFLICT");
+};
+const REFERRAL_PAYOUT_TRANSITIONS: Record<string, readonly string[]> = {
+  submitted: ["processing", "action_required", "paid", "failed_known", "outcome_unknown", "cancelled"],
+  processing: ["action_required", "paid", "failed_known", "outcome_unknown"],
+  action_required: ["processing", "failed_known", "outcome_unknown", "cancelled"],
+  outcome_unknown: ["processing", "action_required", "paid", "failed_known"],
+  paid: [], failed_known: [], cancelled: [],
 };
 
 export class CommercialRepository {
@@ -79,13 +86,15 @@ export class CommercialRepository {
     const currentExecutionHolds = current?.merchantSubscriptionRef ? executionHolds.filter((hold) => hold.merchantSubscriptionRef === current.merchantSubscriptionRef && hold.periodStartsAt.getTime() === current.currentPeriodStartsAt.getTime() && hold.periodEndsAt.getTime() === current.currentPeriodEndsAt.getTime()) : [];
     return { subscription: current ?? null, plans, creditPacks: packs, quotes, credit: { availableUnits: buckets.reduce((sum, row) => sum + row.availableUnits, 0), liabilityUnits: liabilities.reduce((sum, row) => sum + row.outstandingUnits, 0), buckets, heldReservations: reservations, recentEntries: entries }, financials: { transactions, adjustments, executionHolds: currentExecutionHolds }, referrals: { codes, rewards, payoutEntries: payouts } };
   }
-  async referralDashboard(workspaceId: string) {
-    const [codes, captureStates, attributionStates, rewards, payoutEntries] = await Promise.all([
+  async referralDashboard(workspaceId: string, userId?: string) {
+    const [codes, captureStates, attributionStates, rewards, payoutEntries, recipientProfiles, payoutRequests] = await Promise.all([
       this.database.select({ id: workspaceReferralCodes.id, code: workspaceReferralCodes.code, rewardMode: workspaceReferralCodes.rewardMode, status: workspaceReferralCodes.status, createdAt: workspaceReferralCodes.createdAt }).from(workspaceReferralCodes).where(eq(workspaceReferralCodes.workspaceId, workspaceId)).orderBy(desc(workspaceReferralCodes.createdAt)),
       this.database.select({ state: referralCaptureReceipts.state, count: sql<number>`count(*)::int` }).from(referralCaptureReceipts).where(eq(referralCaptureReceipts.referrerWorkspaceId, workspaceId)).groupBy(referralCaptureReceipts.state),
       this.database.select({ state: referralAttributions.state, count: sql<number>`count(*)::int` }).from(referralAttributions).where(eq(referralAttributions.referrerWorkspaceId, workspaceId)).groupBy(referralAttributions.state),
       this.database.select({ id: referralRewards.id, mode: referralRewards.mode, state: referralRewards.state, creditUnits: referralRewards.creditUnits, cashMinor: referralRewards.cashMinor, currency: referralRewards.currency, thresholdMinor: referralRewards.thresholdMinor, createdAt: referralRewards.createdAt, updatedAt: referralRewards.updatedAt }).from(referralRewards).where(eq(referralRewards.workspaceId, workspaceId)).orderBy(desc(referralRewards.updatedAt)).limit(100),
       this.database.select({ sequence: referralPayoutLedgerEntries.sequence, id: referralPayoutLedgerEntries.id, rewardId: referralPayoutLedgerEntries.rewardId, entryType: referralPayoutLedgerEntries.entryType, amountMinor: referralPayoutLedgerEntries.amountMinor, currency: referralPayoutLedgerEntries.currency, occurredAt: referralPayoutLedgerEntries.occurredAt }).from(referralPayoutLedgerEntries).where(eq(referralPayoutLedgerEntries.workspaceId, workspaceId)).orderBy(desc(referralPayoutLedgerEntries.sequence)).limit(100),
+      userId ? this.database.select().from(referralRecipientProfiles).where(and(eq(referralRecipientProfiles.workspaceId, workspaceId), eq(referralRecipientProfiles.userId, userId))).limit(1) : Promise.resolve([]),
+      userId ? this.database.select({ id: referralPayoutRequests.id, state: referralPayoutRequests.state, currency: referralPayoutRequests.currency, totalMinor: referralPayoutRequests.totalMinor, submittedAt: referralPayoutRequests.submittedAt, updatedAt: referralPayoutRequests.updatedAt, paidAt: referralPayoutRequests.paidAt }).from(referralPayoutRequests).where(and(eq(referralPayoutRequests.workspaceId, workspaceId), eq(referralPayoutRequests.recipientUserId, userId))).orderBy(desc(referralPayoutRequests.updatedAt)).limit(100) : Promise.resolve([]),
     ]);
     const captureCounts = Object.fromEntries(captureStates.map((row) => [row.state, row.count]));
     const attributionCounts = Object.fromEntries(attributionStates.map((row) => [row.state, row.count]));
@@ -99,6 +108,8 @@ export class CommercialRepository {
       codes: codes.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
       rewards: rewards.map((row) => ({ ...row, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() })),
       payoutEntries: payoutEntries.map((row) => ({ ...row, occurredAt: row.occurredAt.toISOString() })),
+      recipientProfile: recipientProfiles[0] ? { rewardPreference: recipientProfiles[0].rewardPreference, verificationState: recipientProfiles[0].verificationState, legalCountry: recipientProfiles[0].legalCountry, payoutCurrency: recipientProfiles[0].payoutCurrency, payoutProvider: recipientProfiles[0].payoutProvider, hasProviderRecipient: Boolean(recipientProfiles[0].providerRecipientRef), hasTaxEvidence: Boolean(recipientProfiles[0].taxEvidenceRef), termsAcceptedAt: recipientProfiles[0].termsAcceptedAt?.toISOString() ?? null, revision: recipientProfiles[0].revision, updatedAt: recipientProfiles[0].updatedAt.toISOString() } : null,
+      payoutRequests: payoutRequests.map((row) => ({ ...row, submittedAt: row.submittedAt.toISOString(), updatedAt: row.updatedAt.toISOString(), paidAt: row.paidAt?.toISOString() ?? null })),
     };
   }
   async publishPlan(input: typeof billingPlanVersions.$inferInsert) { await this.database.insert(billingPlanVersions).values(input); return input; }
@@ -300,6 +311,106 @@ export class CommercialRepository {
       if (current.status === "closed" && input.status !== "closed") throw new CommercialError("REFERRAL_CODE_CLOSED");
       await tx.update(workspaceReferralCodes).set({ status: input.status }).where(and(eq(workspaceReferralCodes.workspaceId, input.workspaceId), eq(workspaceReferralCodes.id, input.codeId)));
       const result = { codeId: input.codeId, status: input.status };
+      await completeCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest: command.requestDigest, result });
+      return result;
+    });
+  }
+  async saveReferralRecipientProfile(input: { workspaceId: string; userId: string; rewardPreference: "generation_credit" | "cash"; legalCountry: string | null; payoutCurrency: string | null; termsAccepted: boolean; idempotencyKey: string }) {
+    return this.database.transaction(async (tx) => {
+      const normalized = { rewardPreference: input.rewardPreference, legalCountry: input.legalCountry?.trim().toUpperCase() || null, payoutCurrency: input.payoutCurrency?.trim().toUpperCase() || null, termsAccepted: input.termsAccepted };
+      if ((normalized.legalCountry && !/^[A-Z]{2}$/.test(normalized.legalCountry)) || (normalized.payoutCurrency && !/^[A-Z]{3}$/.test(normalized.payoutCurrency))) throw new CommercialError("REFERRAL_RECIPIENT_INVALID");
+      const command = await claimCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, request: { action: "save_referral_recipient_profile", userId: input.userId, ...normalized } });
+      if (command.kind === "replay") return command.result;
+      const [current] = await tx.select().from(referralRecipientProfiles).where(and(eq(referralRecipientProfiles.workspaceId, input.workspaceId), eq(referralRecipientProfiles.userId, input.userId))).for("update").limit(1);
+      const now = this.now(); const revision = (current?.revision ?? 0) + 1;
+      const termsAcceptedAt = normalized.termsAccepted ? current?.termsAcceptedAt ?? now : null;
+      const payoutFieldsChanged = current && (current.legalCountry !== normalized.legalCountry || current.payoutCurrency !== normalized.payoutCurrency || current.rewardPreference !== normalized.rewardPreference || !termsAcceptedAt);
+      const verificationState = normalized.rewardPreference === "cash" && normalized.legalCountry && normalized.payoutCurrency && termsAcceptedAt ? current?.verificationState === "verified" && !payoutFieldsChanged ? "verified" : "pending" : "unconfigured";
+      const values = { rewardPreference: normalized.rewardPreference, verificationState, legalCountry: normalized.legalCountry, payoutCurrency: normalized.payoutCurrency, payoutProvider: verificationState === "verified" ? current?.payoutProvider ?? null : null, providerRecipientRef: verificationState === "verified" ? current?.providerRecipientRef ?? null : null, taxEvidenceRef: verificationState === "verified" ? current?.taxEvidenceRef ?? null : null, termsAcceptedAt, revision, updatedAt: now };
+      if (current) await tx.update(referralRecipientProfiles).set(values).where(and(eq(referralRecipientProfiles.workspaceId, input.workspaceId), eq(referralRecipientProfiles.userId, input.userId), eq(referralRecipientProfiles.revision, current.revision)));
+      else await tx.insert(referralRecipientProfiles).values({ workspaceId: input.workspaceId, userId: input.userId, ...values, createdAt: now });
+      const { updatedAt: _updatedAt, ...revisionValues } = values;
+      const evidenceDigest = canonicalDigest({ schema: "referral-recipient-profile/v1", workspaceId: input.workspaceId, userId: input.userId, ...revisionValues, updatedAt: now.toISOString() });
+      await tx.insert(referralRecipientProfileRevisions).values({ workspaceId: input.workspaceId, userId: input.userId, ...revisionValues, evidenceDigest, actorRef: `human:${input.userId}`, recordedAt: now });
+      const result = { revision, verificationState, rewardPreference: normalized.rewardPreference };
+      await completeCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest: command.requestDigest, result });
+      return result;
+    });
+  }
+  async verifyReferralRecipient(input: { workspaceId: string; userId: string; decision: "verified" | "rejected" | "suspended"; payoutProvider: string | null; providerRecipientRef: string | null; taxEvidenceRef: string | null; evidenceDigest: string; reviewerRef: string; idempotencyKey: string }) {
+    return this.database.transaction(async (tx) => {
+      const command = await claimCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, request: { action: "verify_referral_recipient", ...input, idempotencyKey: undefined } });
+      if (command.kind === "replay") return command.result;
+      const [current] = await tx.select().from(referralRecipientProfiles).where(and(eq(referralRecipientProfiles.workspaceId, input.workspaceId), eq(referralRecipientProfiles.userId, input.userId))).for("update").limit(1);
+      if (!current || current.rewardPreference !== "cash" || !current.legalCountry || !current.payoutCurrency || !current.termsAcceptedAt) throw new CommercialError("REFERRAL_RECIPIENT_NOT_READY");
+      if (input.decision === "verified" && (!input.payoutProvider || !input.providerRecipientRef || !input.taxEvidenceRef)) throw new CommercialError("REFERRAL_RECIPIENT_EVIDENCE_REQUIRED");
+      if (!/^sha256:[a-f0-9]{64}$/.test(input.evidenceDigest)) throw new CommercialError("REFERRAL_RECIPIENT_EVIDENCE_INVALID");
+      const now = this.now(); const revision = current.revision + 1;
+      const values = { rewardPreference: current.rewardPreference, verificationState: input.decision, legalCountry: current.legalCountry, payoutCurrency: current.payoutCurrency, payoutProvider: input.decision === "verified" ? input.payoutProvider : current.payoutProvider, providerRecipientRef: input.decision === "verified" ? input.providerRecipientRef : current.providerRecipientRef, taxEvidenceRef: input.decision === "verified" ? input.taxEvidenceRef : current.taxEvidenceRef, termsAcceptedAt: current.termsAcceptedAt, revision, updatedAt: now };
+      await tx.update(referralRecipientProfiles).set(values).where(and(eq(referralRecipientProfiles.workspaceId, input.workspaceId), eq(referralRecipientProfiles.userId, input.userId), eq(referralRecipientProfiles.revision, current.revision)));
+      const { updatedAt: _updatedAt, ...revisionValues } = values;
+      await tx.insert(referralRecipientProfileRevisions).values({ workspaceId: input.workspaceId, userId: input.userId, ...revisionValues, evidenceDigest: canonicalDigest({ schema: "referral-recipient-verification/v1", providerEvidenceDigest: input.evidenceDigest, reviewerRef: input.reviewerRef, decision: input.decision, revision }), actorRef: input.reviewerRef, recordedAt: now });
+      const result = { revision, verificationState: input.decision };
+      await completeCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest: command.requestDigest, result });
+      return result;
+    });
+  }
+  async requestReferralPayout(input: { workspaceId: string; userId: string; idempotencyKey: string }) {
+    return this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`referral-payout-ledger:${input.workspaceId}`}, 0))`);
+      const command = await claimCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, request: { action: "request_referral_payout", userId: input.userId } });
+      if (command.kind === "replay") return command.result;
+      const [profile] = await tx.select().from(referralRecipientProfiles).where(and(eq(referralRecipientProfiles.workspaceId, input.workspaceId), eq(referralRecipientProfiles.userId, input.userId), eq(referralRecipientProfiles.verificationState, "verified"))).for("update").limit(1);
+      if (!profile?.payoutCurrency) throw new CommercialError("REFERRAL_RECIPIENT_NOT_VERIFIED");
+      const [activeRequest] = await tx.select({ id: referralPayoutRequests.id }).from(referralPayoutRequests).where(and(eq(referralPayoutRequests.workspaceId, input.workspaceId), eq(referralPayoutRequests.recipientUserId, input.userId), inArray(referralPayoutRequests.state, ["submitted", "processing", "action_required", "outcome_unknown"]))).limit(1);
+      if (activeRequest) throw new CommercialError("REFERRAL_PAYOUT_ALREADY_PENDING");
+      const codes = await tx.select({ id: workspaceReferralCodes.id }).from(workspaceReferralCodes).where(and(eq(workspaceReferralCodes.workspaceId, input.workspaceId), eq(workspaceReferralCodes.recipientUserId, input.userId)));
+      if (!codes.length) throw new CommercialError("REFERRAL_PAYOUT_EMPTY");
+      const attributions = await tx.select({ id: referralAttributions.id }).from(referralAttributions).where(and(eq(referralAttributions.referrerWorkspaceId, input.workspaceId), inArray(referralAttributions.referralCodeId, codes.map((row) => row.id))));
+      if (!attributions.length) throw new CommercialError("REFERRAL_PAYOUT_EMPTY");
+      const rewards = await tx.select().from(referralRewards).where(and(eq(referralRewards.workspaceId, input.workspaceId), eq(referralRewards.mode, "cash"), eq(referralRewards.state, "available"), eq(referralRewards.currency, profile.payoutCurrency), inArray(referralRewards.attributionId, attributions.map((row) => row.id)))).orderBy(asc(referralRewards.createdAt), asc(referralRewards.id)).for("update");
+      if (!rewards.length) throw new CommercialError("REFERRAL_PAYOUT_EMPTY");
+      const totalMinor = rewards.reduce((sum, reward) => sum + (reward.cashMinor ?? 0), 0); const thresholdMinor = Math.max(...rewards.map((reward) => reward.thresholdMinor ?? 0));
+      if (totalMinor < thresholdMinor) throw new CommercialError("REFERRAL_PAYOUT_THRESHOLD_NOT_MET");
+      const now = this.now(); const id = randomUUID(); const evidenceDigest = canonicalDigest({ schema: "referral-payout-request/v1", workspaceId: input.workspaceId, recipientUserId: input.userId, profileRevision: profile.revision, currency: profile.payoutCurrency, rewards: rewards.map((reward) => ({ id: reward.id, amountMinor: reward.cashMinor })) });
+      await tx.insert(referralPayoutRequests).values({ workspaceId: input.workspaceId, id, recipientUserId: input.userId, profileRevision: profile.revision, state: "submitted", currency: profile.payoutCurrency, totalMinor, merchantPayoutRef: null, evidenceDigest, submittedAt: now, updatedAt: now, paidAt: null });
+      await tx.insert(referralPayoutRequestRewards).values(rewards.map((reward) => ({ workspaceId: input.workspaceId, payoutRequestId: id, rewardId: reward.id, amountMinor: reward.cashMinor!, currency: profile.payoutCurrency! })));
+      await tx.update(referralRewards).set({ state: "payout_pending", updatedAt: now }).where(and(eq(referralRewards.workspaceId, input.workspaceId), inArray(referralRewards.id, rewards.map((reward) => reward.id))));
+      for (const reward of rewards) { const sequence = await safeSequence(tx, input.workspaceId, referralPayoutLedgerEntries); await tx.insert(referralPayoutLedgerEntries).values({ workspaceId: input.workspaceId, sequence, id: randomUUID(), rewardId: reward.id, entryType: "hold", amountMinor: -reward.cashMinor!, currency: profile.payoutCurrency, merchantPayoutRef: null, taxEvidenceRef: profile.taxEvidenceRef, occurredAt: now }); }
+      await tx.insert(referralPayoutEvents).values({ workspaceId: input.workspaceId, payoutRequestId: id, sequence: 1, id: randomUUID(), fromState: null, toState: "submitted", eventType: "submitted", providerEventRef: null, evidenceDigest, occurredAt: now, receivedAt: now });
+      const result = { payoutRequestId: id, state: "submitted", currency: profile.payoutCurrency, totalMinor, rewardCount: rewards.length };
+      await completeCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest: command.requestDigest, result });
+      return result;
+    });
+  }
+  async recordReferralPayoutOutcome(input: { workspaceId: string; payoutRequestId: string; toState: "processing" | "action_required" | "paid" | "failed_known" | "outcome_unknown" | "cancelled"; providerEventRef: string; merchantPayoutRef: string | null; evidenceDigest: string; occurredAt: Date; idempotencyKey: string }) {
+    return this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`referral-payout-ledger:${input.workspaceId}`}, 0))`);
+      const [current] = await tx.select().from(referralPayoutRequests).where(and(eq(referralPayoutRequests.workspaceId, input.workspaceId), eq(referralPayoutRequests.id, input.payoutRequestId))).for("update").limit(1);
+      if (!current) throw new CommercialError("REFERRAL_PAYOUT_NOT_FOUND");
+      const [providerReplay] = await tx.select({ payoutRequestId: referralPayoutEvents.payoutRequestId, toState: referralPayoutEvents.toState, sequence: referralPayoutEvents.sequence }).from(referralPayoutEvents).where(eq(referralPayoutEvents.providerEventRef, input.providerEventRef)).limit(1);
+      if (providerReplay) {
+        if (providerReplay.payoutRequestId !== input.payoutRequestId || providerReplay.toState !== input.toState) throw new CommercialError("REFERRAL_PAYOUT_PROVIDER_EVENT_CONFLICT");
+        return { payoutRequestId: input.payoutRequestId, state: providerReplay.toState, sequence: providerReplay.sequence, kind: "provider_replay" as const };
+      }
+      const command = await claimCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, request: { action: "record_referral_payout_outcome", ...input, occurredAt: input.occurredAt.toISOString(), idempotencyKey: undefined } });
+      if (command.kind === "replay") return command.result;
+      if (!REFERRAL_PAYOUT_TRANSITIONS[current.state]?.includes(input.toState)) throw new CommercialError("REFERRAL_PAYOUT_TRANSITION_INVALID");
+      if (!/^sha256:[a-f0-9]{64}$/.test(input.evidenceDigest) || (input.toState === "paid" && !input.merchantPayoutRef)) throw new CommercialError("REFERRAL_PAYOUT_EVIDENCE_INVALID");
+      const now = this.now(); const [sequenceRow] = await tx.select({ value: sql<number>`coalesce(max(${referralPayoutEvents.sequence}), 0)::int` }).from(referralPayoutEvents).where(and(eq(referralPayoutEvents.workspaceId, input.workspaceId), eq(referralPayoutEvents.payoutRequestId, input.payoutRequestId))); const sequence = (sequenceRow?.value ?? 0) + 1;
+      const terminalRelease = input.toState === "paid" || input.toState === "failed_known" || input.toState === "cancelled";
+      const lines = terminalRelease ? await tx.select().from(referralPayoutRequestRewards).where(and(eq(referralPayoutRequestRewards.workspaceId, input.workspaceId), eq(referralPayoutRequestRewards.payoutRequestId, input.payoutRequestId))) : [];
+      if (terminalRelease) {
+        for (const line of lines) {
+          let ledgerSequence = await safeSequence(tx, input.workspaceId, referralPayoutLedgerEntries);
+          await tx.insert(referralPayoutLedgerEntries).values({ workspaceId: input.workspaceId, sequence: ledgerSequence, id: randomUUID(), rewardId: line.rewardId, entryType: "release", amountMinor: line.amountMinor, currency: line.currency, merchantPayoutRef: input.merchantPayoutRef, taxEvidenceRef: null, occurredAt: input.occurredAt });
+          if (input.toState === "paid") { ledgerSequence = await safeSequence(tx, input.workspaceId, referralPayoutLedgerEntries); await tx.insert(referralPayoutLedgerEntries).values({ workspaceId: input.workspaceId, sequence: ledgerSequence, id: randomUUID(), rewardId: line.rewardId, entryType: "paid", amountMinor: -line.amountMinor, currency: line.currency, merchantPayoutRef: input.merchantPayoutRef, taxEvidenceRef: null, occurredAt: input.occurredAt }); }
+        }
+        await tx.update(referralRewards).set({ state: input.toState === "paid" ? "paid" : "available", updatedAt: now }).where(and(eq(referralRewards.workspaceId, input.workspaceId), inArray(referralRewards.id, lines.map((line) => line.rewardId)), eq(referralRewards.state, "payout_pending")));
+      }
+      await tx.update(referralPayoutRequests).set({ state: input.toState, merchantPayoutRef: input.merchantPayoutRef ?? current.merchantPayoutRef, updatedAt: now, paidAt: input.toState === "paid" ? input.occurredAt : null }).where(and(eq(referralPayoutRequests.workspaceId, input.workspaceId), eq(referralPayoutRequests.id, input.payoutRequestId)));
+      await tx.insert(referralPayoutEvents).values({ workspaceId: input.workspaceId, payoutRequestId: input.payoutRequestId, sequence, id: randomUUID(), fromState: current.state, toState: input.toState, eventType: input.toState, providerEventRef: input.providerEventRef, evidenceDigest: input.evidenceDigest, occurredAt: input.occurredAt, receivedAt: now });
+      const result = { payoutRequestId: input.payoutRequestId, state: input.toState, sequence };
       await completeCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, requestDigest: command.requestDigest, result });
       return result;
     });
