@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import {
   Avatar,
   AvatarFallback,
@@ -26,6 +27,7 @@ import { useRouter } from "next/navigation"
 import { useLocale, useTranslations } from "next-intl"
 import { authClient } from "@/lib/auth/client"
 import { getActiveWorkspaceId } from "@/lib/studio/client"
+import { saveInterfaceLocalePreference } from "@/lib/interface-locale/client"
 
 export function NavUser({
   user,
@@ -41,6 +43,7 @@ export function NavUser({
   const setLocale = useDirectionStore((state) => state.setLocale)
   const router = useRouter()
   const t = useTranslations("common")
+  const [isSavingLocale, setIsSavingLocale] = useState(false)
   const initials = user.name
     .trim()
     .split(/\s+/u)
@@ -49,17 +52,20 @@ export function NavUser({
     .join("")
     .toLocaleUpperCase() || "—"
 
-  function toggleLanguage() {
+  async function toggleLanguage() {
+    if (isSavingLocale) return
     const next = locale === "en" ? "ar" : "en"
-    const workspaceId = getActiveWorkspaceId()
+    setIsSavingLocale(true)
     setLocale(next)
-    void fetch("/api/preferences/locale", {
-      method: "POST",
-      headers: { "content-type": "application/json", ...(workspaceId ? { "x-workspace-id": workspaceId } : {}) },
-      body: JSON.stringify({ locale: next }),
-      keepalive: true,
-    })
-    router.refresh()
+    const workspaceId = getActiveWorkspaceId()
+    try {
+      await saveInterfaceLocalePreference({ locale: next, workspaceId })
+      router.refresh()
+    } catch {
+      setLocale(locale === "ar" ? "ar" : "en")
+    } finally {
+      setIsSavingLocale(false)
+    }
   }
 
   async function logOut() {
@@ -120,7 +126,11 @@ export function NavUser({
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={toggleLanguage}>
+            <DropdownMenuItem
+              disabled={isSavingLocale}
+              aria-busy={isSavingLocale}
+              onSelect={() => void toggleLanguage()}
+            >
               <LanguagesIcon />
               {t(`languageSwitch.${locale === "en" ? "ar" : "en"}`)}
             </DropdownMenuItem>
