@@ -8,6 +8,7 @@ import { ModelSelect } from "./ModelSelect";
 import { LatestResultsInline } from "./LatestResultsInline";
 import { GenerateProgress } from "./GenerateProgress";
 import { GenerationAdmissionPanel } from "./GenerationAdmissionPanel";
+import { VideoDurationControl } from "./VideoDurationControl";
 import { useTranslations } from "next-intl";
 
 const ASPECT_RATIOS = [
@@ -15,8 +16,6 @@ const ASPECT_RATIOS = [
 ];
 
 const BATCH_PRESETS = [1, 2, 4, 8];
-const DURATIONS = [4, 5, 6, 8, 10];
-
 const DIALOGUE_LANGUAGES = ["en", "ar"] as const;
 
 export function VideoForm() {
@@ -28,7 +27,6 @@ export function VideoForm() {
   const batchCount = useSimpleStudioStore((s) => s.batchCount);
   const setBatchCount = useSimpleStudioStore((s) => s.setBatchCount);
   const videoDuration = useSimpleStudioStore((s) => s.videoDuration);
-  const setVideoDuration = useSimpleStudioStore((s) => s.setVideoDuration);
   const isGenerating = useSimpleStudioStore((s) => s.isGenerating);
   const isRewriting = useSimpleStudioStore((s) => s.isRewriting);
   const generate = useSimpleStudioStore((s) => s.generate);
@@ -163,28 +161,7 @@ export function VideoForm() {
           )}
         </div>
 
-        <div>
-          <label className="mb-2 block text-sm font-medium">{t("video.duration")}</label>
-          <div className="flex flex-wrap gap-2" dir="ltr">
-            {DURATIONS.map((d) => (
-              <button
-                key={d}
-                type="button"
-                className={`rounded-md border px-3 py-1 text-xs ${
-                  videoDuration === d
-                    ? "border-primary bg-primary/10"
-                    : "border-border hover:bg-muted"
-                }`}
-                onClick={() => setVideoDuration(d)}
-              >
-                {t("video.durationValue", { seconds: d })}
-              </button>
-            ))}
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            {t("video.durationHint")}
-          </p>
-        </div>
+        <VideoDurationControl />
 
         <div className="flex items-center justify-between">
           <label htmlFor="video-dialogue" className="text-sm font-medium">

@@ -14,7 +14,7 @@ interface ProviderModel {
   label: string;
   provider: string;
   capabilities?: string[];
-  qualification: { status: "unqualified" } | { status: "qualified"; version: string; inputSchemaDigest: string; executionPriceUsd: ExecutionPriceUsd };
+  qualification: { status: "unqualified" } | { status: "qualified"; version: string; inputSchemaDigest: string; executionPriceUsd: ExecutionPriceUsd; maxQuantity: number };
 }
 
 interface ModelSelectProps {
@@ -70,11 +70,11 @@ export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) 
           setModels(unique);
           const selected = unique.find((item: ProviderModel) => item.model === selectedModelId);
           if (selected?.qualification.status === "qualified") {
-            setSelectedModel(selected.model, selected.provider, selected.label, selected.qualification.version, selected.qualification.inputSchemaDigest, selected.qualification.executionPriceUsd);
+            setSelectedModel(selected.model, selected.provider, selected.label, selected.qualification.version, selected.qualification.inputSchemaDigest, selected.qualification.executionPriceUsd, mode === "video" ? selected.qualification.maxQuantity : null);
           } else {
             const replacement = unique[0] as ProviderModel | undefined;
             if (replacement?.qualification.status === "qualified") {
-              setSelectedModel(replacement.model, replacement.provider, replacement.label, replacement.qualification.version, replacement.qualification.inputSchemaDigest, replacement.qualification.executionPriceUsd);
+              setSelectedModel(replacement.model, replacement.provider, replacement.label, replacement.qualification.version, replacement.qualification.inputSchemaDigest, replacement.qualification.executionPriceUsd, mode === "video" ? replacement.qualification.maxQuantity : null);
             } else {
               setSelectedModel(null, null, null);
             }
@@ -95,7 +95,7 @@ export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) 
       });
 
     return () => controller.abort();
-  }, [capability, selectedModelId, setSelectedModel]);
+  }, [capability, mode, selectedModelId, setSelectedModel]);
 
   const sorted = [...models].sort((a, b) => a.label.localeCompare(b.label));
   const priceLabel = (price: ExecutionPriceUsd) => price.basis === "components"
@@ -110,7 +110,7 @@ export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) 
     }
     const model = models.find((m) => m.model === value);
     if (model?.qualification.status === "qualified") {
-      setSelectedModel(model.model, model.provider, model.label, model.qualification.version, model.qualification.inputSchemaDigest, model.qualification.executionPriceUsd);
+      setSelectedModel(model.model, model.provider, model.label, model.qualification.version, model.qualification.inputSchemaDigest, model.qualification.executionPriceUsd, mode === "video" ? model.qualification.maxQuantity : null);
     }
   };
 

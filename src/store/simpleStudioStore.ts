@@ -11,6 +11,7 @@ import {
 import { runAdmittedStudioGeneration, StudioGenerationError } from "@/lib/model-routing/studio-generation-client";
 import type { ManagedCreditQuote } from "@/lib/model-routing/budget-authority";
 import { DEFAULT_GENERATION_FUNDING_MODE, type ExecutionPriceUsd } from "@/lib/model-routing/types";
+import { clampVideoDuration } from "@/lib/model-routing/video-duration";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,7 +61,8 @@ export interface SimpleStudioState {
   selectedModelVersion: string | null;
   selectedModelSchemaDigest: string | null;
   selectedModelExecutionPriceUsd: ExecutionPriceUsd | null;
-  setSelectedModel: (id: string | null, provider?: string | null, name?: string | null, version?: string | null, schemaDigest?: string | null, executionPriceUsd?: SimpleStudioState["selectedModelExecutionPriceUsd"]) => void;
+  selectedModelMaxQuantity: number | null;
+  setSelectedModel: (id: string | null, provider?: string | null, name?: string | null, version?: string | null, schemaDigest?: string | null, executionPriceUsd?: SimpleStudioState["selectedModelExecutionPriceUsd"], maxQuantity?: number | null) => void;
   setSelectedModelId: (id: string | null) => void;
   aspectRatio: string;
   setAspectRatio: (ratio: string) => void;
@@ -154,7 +156,7 @@ async function submitAdmittedGeneration(input: { set: StudioSet; state: SimpleSt
   const contentLanguage = input.mode === "copy"
     ? input.state.outputLanguage === "both" ? "mixed" : input.state.outputLanguage
     : input.mode === "video" ? input.state.dialogueLanguage : undefined;
-  return runAdmittedStudioGeneration({ prompt, contentLanguage, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? input.state.videoDuration : 1, fundingMode: input.state.fundingMode, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : [input.mode === "copy" ? "wording for the selected channel" : "composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal, confirmManagedCreditQuote: (quote) => requestManagedQuoteConfirmation(input.set, quote) });
+  return runAdmittedStudioGeneration({ prompt, contentLanguage, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? clampVideoDuration(input.state.videoDuration, input.state.selectedModelMaxQuantity) : 1, fundingMode: input.state.fundingMode, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : [input.mode === "copy" ? "wording for the selected channel" : "composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal, confirmManagedCreditQuote: (quote) => requestManagedQuoteConfirmation(input.set, quote) });
 }
 
 // ---------------------------------------------------------------------------
@@ -249,9 +251,10 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   selectedModelVersion: null,
   selectedModelSchemaDigest: null,
   selectedModelExecutionPriceUsd: null,
-  setSelectedModel: (id, provider = null, name = null, version = null, schemaDigest = null, executionPriceUsd = null) =>
-    set({ selectedModelId: id, selectedModelProvider: provider, selectedModelName: name, selectedModelVersion: version, selectedModelSchemaDigest: schemaDigest, selectedModelExecutionPriceUsd: executionPriceUsd }),
-  setSelectedModelId: (id) => set({ selectedModelId: id, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null, selectedModelExecutionPriceUsd: null }),
+  selectedModelMaxQuantity: null,
+  setSelectedModel: (id, provider = null, name = null, version = null, schemaDigest = null, executionPriceUsd = null, maxQuantity = null) =>
+    set((state) => ({ selectedModelId: id, selectedModelProvider: provider, selectedModelName: name, selectedModelVersion: version, selectedModelSchemaDigest: schemaDigest, selectedModelExecutionPriceUsd: executionPriceUsd, selectedModelMaxQuantity: maxQuantity, videoDuration: maxQuantity === null ? state.videoDuration : clampVideoDuration(state.videoDuration, maxQuantity) })),
+  setSelectedModelId: (id) => set({ selectedModelId: id, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null, selectedModelExecutionPriceUsd: null, selectedModelMaxQuantity: null }),
   aspectRatio: "9:16",
   setAspectRatio: (ratio) => set({ aspectRatio: ratio }),
   batchCount: 4,
@@ -260,9 +263,9 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setReferenceImages: (images) => set({ referenceImages: images }),
   sourceImage: null,
   sourceMediaType: null,
-  setSourceImage: (image, mediaType = image ? "image" : null) => set({ sourceImage: image, sourceMediaType: image ? mediaType : null, selectedModelId: null, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null, selectedModelExecutionPriceUsd: null }),
+  setSourceImage: (image, mediaType = image ? "image" : null) => set({ sourceImage: image, sourceMediaType: image ? mediaType : null, selectedModelId: null, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null, selectedModelExecutionPriceUsd: null, selectedModelMaxQuantity: null }),
   videoDuration: 5,
-  setVideoDuration: (duration) => set({ videoDuration: duration }),
+  setVideoDuration: (duration) => set((state) => ({ videoDuration: clampVideoDuration(duration, state.selectedModelMaxQuantity) })),
   dialogueEnabled: false,
   setDialogueEnabled: (enabled) => set({ dialogueEnabled: enabled }),
   dialogueText: "",
@@ -535,7 +538,10 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       selectedModelId: (config.selectedModelId as string) || null,
       selectedModelProvider: (config.selectedModelProvider as string) || null,
       selectedModelName: (config.selectedModelName as string) || null,
+      selectedModelVersion: null,
+      selectedModelSchemaDigest: null,
       selectedModelExecutionPriceUsd: null,
+      selectedModelMaxQuantity: null,
       aspectRatio: (config.aspectRatio as string) || "1:1",
       batchCount: (config.batchCount as number) || 4,
       tone: (config.tone as string) || "professional",

@@ -6,7 +6,7 @@ import { ModelSelect } from "../ModelSelect";
 vi.mock("next-intl", () => ({ useTranslations: () => (key: string) => key }));
 vi.mock("@/lib/studio/client", () => ({ getActiveWorkspaceId: () => "ws" }));
 
-const qualification = { status: "qualified", version: "immutable-version", inputSchemaDigest: `sha256:${"a".repeat(64)}`, executionPriceUsd: { basis: "image", amount: 0.01 } };
+const qualification = { status: "qualified", version: "immutable-version", inputSchemaDigest: `sha256:${"a".repeat(64)}`, executionPriceUsd: { basis: "image", amount: 0.01 }, maxQuantity: 6 };
 const ready = {
   schema: "generation-readiness/v1",
   qualifiedModelCount: 3,
@@ -23,7 +23,7 @@ const ready = {
 
 describe("ModelSelect capability admission", () => {
   beforeEach(() => {
-    useSimpleStudioStore.setState({ fundingMode: "byok", referenceImages: [], selectedModelId: "text-model", selectedModelProvider: "replicate", selectedModelName: "Text", selectedModelVersion: "immutable-version", selectedModelSchemaDigest: `sha256:${"a".repeat(64)}`, selectedModelExecutionPriceUsd: null });
+    useSimpleStudioStore.setState({ fundingMode: "byok", referenceImages: [], selectedModelId: "text-model", selectedModelProvider: "replicate", selectedModelName: "Text", selectedModelVersion: "immutable-version", selectedModelSchemaDigest: `sha256:${"a".repeat(64)}`, selectedModelExecutionPriceUsd: null, selectedModelMaxQuantity: null });
     global.fetch = vi.fn().mockResolvedValue({ json: async () => ({ success: true, generationReadiness: ready, items: [
       { model: "text-model", label: "Text", provider: "replicate", capabilities: ["text_to_image"], qualification },
       { model: "edit-model", label: "Edit", provider: "replicate", capabilities: ["image_to_image"], qualification },
@@ -51,6 +51,17 @@ describe("ModelSelect capability admission", () => {
     useSimpleStudioStore.setState({ selectedModelId: "edit-model", referenceImages: [] });
     render(<ModelSelect mode="photo" id="model" />);
     await waitFor(() => expect(useSimpleStudioStore.getState().selectedModelId).toBe("text-model"));
+  });
+
+  it("pins the selected video model quantity limit in Studio state", async () => {
+    global.fetch = vi.fn().mockResolvedValue({ json: async () => ({ success: true, generationReadiness: { ...ready, qualifiedCapabilities: ["text_to_video"] }, items: [
+      { model: "video-model", label: "Video", provider: "replicate", capabilities: ["text_to_video"], qualification: { ...qualification, executionPriceUsd: { basis: "second", amount: 0.05 }, maxQuantity: 6 } },
+    ] }) }) as unknown as typeof fetch;
+
+    render(<ModelSelect mode="video" id="model" />);
+
+    await waitFor(() => expect(useSimpleStudioStore.getState().selectedModelId).toBe("video-model"));
+    expect(useSimpleStudioStore.getState().selectedModelMaxQuantity).toBe(6);
   });
 
   it("explains the exact BYOK workspace gates and links to real settings", async () => {
