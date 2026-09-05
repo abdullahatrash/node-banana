@@ -5,6 +5,7 @@ import path from "node:path";
 
 import nextEnv from "@next/env";
 
+import { collectRouteDiagnostics } from "./browser-route-diagnostics.mjs";
 import { terminateChild } from "./child-process-cleanup.mjs";
 
 nextEnv.loadEnvConfig(process.cwd());
@@ -59,6 +60,7 @@ const defaultLocales = [
 const localeFilter = process.env.RTL_SMOKE_LOCALE?.trim() || null;
 const locales = localeFilter ? defaultLocales.filter((item) => item.locale === localeFilter) : defaultLocales;
 if (!locales.length) throw new Error("RTL_SMOKE_LOCALE must be ar or en.");
+const settleMs = Math.max(250, Math.min(5_000, Number(process.env.RTL_SMOKE_SETTLE_MS || 1_000) || 1_000));
 const outputRoot = path.join(process.cwd(), "renders", "rtl-layout");
 const cookieJar = new Map();
 let workspaceId = "";
@@ -134,12 +136,15 @@ async function waitForJson(url) {
   throw cause || new Error("Chrome DevTools did not become available.");
 }
 
-function cdp(socket) {
+function cdp(socket, onEvent) {
   let nextId = 0;
   const pending = new Map();
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(String(event.data));
-    if (!message.id) return;
+    if (!message.id) {
+      onEvent(message);
+      return;
+    }
     const waiter = pending.get(message.id);
     if (!waiter) return;
     pending.delete(message.id);
@@ -176,7 +181,26 @@ async function waitForStableLayout(call) {
     if (pending.result.value === 0) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  await new Promise((resolve) => setTimeout(resolve, settleMs));
+}
+
+async function openPageTarget(debugPort) {
+  const response = await fetch(`http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent("about:blank")}`, { method: "PUT" });
+  if (!response.ok) throw new Error(`Chrome target creation returned HTTP ${response.status}.`);
+  const target = await response.json();
+  if (!target?.id || !target?.webSocketDebuggerUrl) throw new Error("Chrome page target is unavailable.");
+  const socket = new WebSocket(target.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {
+    socket.addEventListener("open", resolve, { once: true });
+    socket.addEventListener("error", reject, { once: true });
+  });
+  const browserEvents = [];
+  return { targetId: target.id, socket, browserEvents, call: cdp(socket, (event) => browserEvents.push(event)) };
+}
+
+async function closePageTarget(debugPort, target) {
+  target.socket.close();
+  await fetch(`http://127.0.0.1:${debugPort}/json/close/${encodeURIComponent(target.targetId)}`).catch(() => null);
 }
 
 function slug(route) {
@@ -203,34 +227,29 @@ process.on("SIGINT", () => { stop(); process.exit(130); });
 
 const failures = [];
 const screenshots = [];
-let socket;
 try {
   await waitForJson(`http://127.0.0.1:${debugPort}/json/version`);
-  const targets = await waitForJson(`http://127.0.0.1:${debugPort}/json/list`);
-  const target = targets.find((candidate) => candidate.type === "page");
-  if (!target?.webSocketDebuggerUrl) throw new Error("Chrome page target is unavailable.");
-  socket = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => {
-    socket.addEventListener("open", resolve, { once: true });
-    socket.addEventListener("error", reject, { once: true });
-  });
-  const call = cdp(socket);
-  await call("Page.enable");
-  await call("Runtime.enable");
-  await call("Network.enable");
 
   for (const { locale, direction } of locales) {
     await setLocale(locale);
-    await call("Network.setCookies", {
-      cookies: [...cookieJar].map(([name, value]) => ({ name, value, url: baseUrl.origin })),
-    });
     for (const viewport of viewports) {
-      await call("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: viewport.name === "mobile" });
       for (const route of [...routes, ...(includePricing ? [`/${locale}/pricing`] : [])]) {
-        const url = new URL(route, baseUrl).toString();
-        await call("Page.navigate", { url });
-        await waitForStableLayout(call);
-        const result = await call("Runtime.evaluate", {
+        const target = await openPageTarget(debugPort);
+        try {
+          const { call, browserEvents } = target;
+          await call("Page.enable");
+          await call("Runtime.enable");
+          await call("Network.enable");
+          await call("Log.enable");
+          await call("Network.setCookies", {
+            cookies: [...cookieJar].map(([name, value]) => ({ name, value, url: baseUrl.origin })),
+          });
+          await call("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: viewport.name === "mobile" });
+          const url = new URL(route, baseUrl).toString();
+          const navigation = await call("Page.navigate", { url });
+          await waitForStableLayout(call);
+          const routeDiagnostics = collectRouteDiagnostics(browserEvents, { baseOrigin: baseUrl.origin, loaderId: navigation.loaderId ?? null }).slice(0, 20);
+          const result = await call("Runtime.evaluate", {
           returnByValue: true,
           expression: `(() => {
             const root = document.documentElement;
@@ -295,33 +314,36 @@ try {
               bidiIsolationOffenders: bidiIsolationOffenders.slice(0, 12),
             };
           })()`,
-        });
-        const observation = result.result.value;
-        const expectedLocation = new URL(url);
-        const actualLocation = new URL(observation.url);
-        const expectedPath = `${expectedLocation.pathname}${expectedLocation.search}`;
-        const actualPath = `${actualLocation.pathname}${actualLocation.search}`;
-        const reasons = [];
-        if (actualPath !== expectedPath) reasons.push(`redirected to ${actualPath}`);
-        if (observation.lang !== locale) reasons.push(`lang=${observation.lang}`);
-        if (observation.dir !== direction) reasons.push(`dir=${observation.dir}`);
-        if (observation.layoutScrollWidth > observation.viewportWidth + 1) reasons.push(`horizontal overflow ${observation.layoutScrollWidth}px > ${observation.viewportWidth}px`);
-        if (!observation.mainPresent) reasons.push("main landmark missing");
-        if (!observation.headingVisible) reasons.push("primary heading missing or outside viewport");
-        if (direction === "rtl" && observation.bidiIsolationOffenders.length > 0) reasons.push(`unisolated technical identifiers: ${observation.bidiIsolationOffenders.map((item) => item.identifier).join(", ")}`);
+          });
+          const observation = result.result.value;
+          const expectedLocation = new URL(url);
+          const actualLocation = new URL(observation.url);
+          const expectedPath = `${expectedLocation.pathname}${expectedLocation.search}`;
+          const actualPath = `${actualLocation.pathname}${actualLocation.search}`;
+          const reasons = [];
+          if (actualPath !== expectedPath) reasons.push(`redirected to ${actualPath}`);
+          if (observation.lang !== locale) reasons.push(`lang=${observation.lang}`);
+          if (observation.dir !== direction) reasons.push(`dir=${observation.dir}`);
+          if (observation.layoutScrollWidth > observation.viewportWidth + 1) reasons.push(`horizontal overflow ${observation.layoutScrollWidth}px > ${observation.viewportWidth}px`);
+          if (!observation.mainPresent) reasons.push("main landmark missing");
+          if (!observation.headingVisible) reasons.push("primary heading missing or outside viewport");
+          if (direction === "rtl" && observation.bidiIsolationOffenders.length > 0) reasons.push(`unisolated technical identifiers: ${observation.bidiIsolationOffenders.map((item) => item.identifier).join(", ")}`);
+          if (routeDiagnostics.length > 0) reasons.push(`browser errors: ${routeDiagnostics.slice(0, 3).map((item) => item.kind === "http" ? `HTTP ${item.status} ${item.url}` : `${item.kind} ${item.text}`).join(" | ")}`);
 
-        const directory = path.join(outputRoot, locale, viewport.name);
-        await mkdir(directory, { recursive: true });
-        const screenshotPath = path.join(directory, `${slug(route)}.png`);
-        const screenshot = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-        await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
-        screenshots.push(screenshotPath);
-        if (reasons.length) failures.push({ locale, viewport: viewport.name, route, reasons, geometry: { viewportWidth: observation.viewportWidth, scrollWidth: observation.scrollWidth, bodyScrollWidth: observation.bodyScrollWidth, rtlViewportOffset: observation.rtlViewportOffset, layoutScrollWidth: observation.layoutScrollWidth }, overflowOffenders: observation.overflowOffenders, oversizedScrollContainers: observation.oversizedScrollContainers, bidiIsolationOffenders: observation.bidiIsolationOffenders });
+          const directory = path.join(outputRoot, locale, viewport.name);
+          await mkdir(directory, { recursive: true });
+          const screenshotPath = path.join(directory, `${slug(route)}.png`);
+          const screenshot = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+          await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
+          screenshots.push(screenshotPath);
+          if (reasons.length) failures.push({ locale, viewport: viewport.name, route, reasons, geometry: { viewportWidth: observation.viewportWidth, scrollWidth: observation.scrollWidth, bodyScrollWidth: observation.bodyScrollWidth, rtlViewportOffset: observation.rtlViewportOffset, layoutScrollWidth: observation.layoutScrollWidth }, overflowOffenders: observation.overflowOffenders, oversizedScrollContainers: observation.oversizedScrollContainers, bidiIsolationOffenders: observation.bidiIsolationOffenders, routeDiagnostics });
+        } finally {
+          await closePageTarget(debugPort, target);
+        }
       }
     }
   }
 } finally {
-  socket?.close();
   await terminateChild(chrome);
   await rm(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   try { await setLocale(originalLocale); }
