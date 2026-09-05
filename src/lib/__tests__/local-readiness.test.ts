@@ -35,6 +35,11 @@ const readyFacts = (overrides: Partial<LocalReadinessFacts> = {}): LocalReadines
   youtubeContentAdaptationApproved: true,
   activeYoutubeTrendSources: 1,
   activeLicensedTrendEntitlements: 2,
+  releaseBuildId: "build-2026-09-05",
+  releaseParityClaimAllowed: true,
+  releaseParityRequiredCells: 18,
+  releaseParityPassingCells: 18,
+  releaseBlockerCount: 0,
   xAdsAttributionAvailable: true,
   xAdsAttributionBlockers: [],
   ...overrides,
@@ -43,7 +48,7 @@ const readyFacts = (overrides: Partial<LocalReadinessFacts> = {}): LocalReadines
 describe("local generation readiness", () => {
   it("reports independently executable BYOK and managed lanes", () => {
     const report = buildLocalReadinessReport(readyFacts());
-    expect(report).toMatchObject({ coreReady: true, byokReady: true, managedReady: true, trendIntelligenceReady: true });
+    expect(report).toMatchObject({ coreReady: true, byokReady: true, managedReady: true, trendIntelligenceReady: true, releaseParityReady: true });
     expect(report.checks.every((check) => check.status === "ready")).toBe(true);
   });
 
@@ -94,6 +99,37 @@ describe("local generation readiness", () => {
     const report = buildLocalReadinessReport(readyFacts({ xAdsAttributionAvailable: false, xAdsAttributionBlockers: ["OAUTH_CREDENTIALS_MISSING", "REGION_REVIEW_MISSING"] }));
     expect(report).toMatchObject({ coreReady: true, xAdsAttributionReady: false });
     expect(report.checks.find((check) => check.id === "x_ads_attribution")).toMatchObject({ status: "optional", detail: expect.stringContaining("OAUTH_CREDENTIALS_MISSING") });
+  });
+
+  it("fails closed when no signed release parity matrix is configured", () => {
+    const report = buildLocalReadinessReport(readyFacts({
+      releaseBuildId: "unconfigured",
+      releaseParityClaimAllowed: false,
+      releaseParityRequiredCells: 0,
+      releaseParityPassingCells: 0,
+      releaseBlockerCount: 1,
+    }));
+
+    expect(report).toMatchObject({ coreReady: true, releaseParityReady: false });
+    expect(report.checks.find((check) => check.id === "release_parity")).toMatchObject({
+      status: "blocked",
+      detail: expect.stringContaining("No valid signed release manifest"),
+    });
+  });
+
+  it("reports partial signed parity coverage without allowing the claim", () => {
+    const report = buildLocalReadinessReport(readyFacts({
+      releaseParityClaimAllowed: false,
+      releaseParityRequiredCells: 18,
+      releaseParityPassingCells: 12,
+      releaseBlockerCount: 6,
+    }));
+
+    expect(report.releaseParityReady).toBe(false);
+    expect(report.checks.find((check) => check.id === "release_parity")).toMatchObject({
+      status: "blocked",
+      detail: "12 of 18 required parity cell(s) pass for build build-2026-09-05; 6 release blocker(s) remain.",
+    });
   });
 
   it("blocks both lanes when shared admission evidence is absent", () => {

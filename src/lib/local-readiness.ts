@@ -15,6 +15,7 @@ export interface LocalReadinessReport {
   byokReady: boolean;
   managedReady: boolean;
   trendIntelligenceReady: boolean;
+  releaseParityReady: boolean;
   xAdsAttributionReady: boolean;
   checks: LocalReadinessCheck[];
 }
@@ -67,6 +68,11 @@ export interface LocalReadinessFacts {
   youtubeContentAdaptationApproved: boolean;
   activeYoutubeTrendSources: number;
   activeLicensedTrendEntitlements: number;
+  releaseBuildId: string;
+  releaseParityClaimAllowed: boolean;
+  releaseParityRequiredCells: number;
+  releaseParityPassingCells: number;
+  releaseBlockerCount: number;
   xAdsAttributionAvailable: boolean;
   xAdsAttributionBlockers: string[];
 }
@@ -273,6 +279,22 @@ export function buildLocalReadinessReport(
           "No active licensed trend entitlement is available to this Workspace.",
           "Publish a verified licensed catalog entry and grant the Workspace an active entitlement.",
         ),
+    facts.releaseParityClaimAllowed &&
+    facts.releaseParityRequiredCells > 0 &&
+    facts.releaseParityPassingCells === facts.releaseParityRequiredCells
+      ? ready(
+          "release_parity",
+          "Release parity evidence",
+          `${facts.releaseParityPassingCells} of ${facts.releaseParityRequiredCells} signed parity cell(s) pass for build ${facts.releaseBuildId}.`,
+        )
+      : blocked(
+          "release_parity",
+          "Release parity evidence",
+          facts.releaseParityRequiredCells > 0
+            ? `${facts.releaseParityPassingCells} of ${facts.releaseParityRequiredCells} required parity cell(s) pass for build ${facts.releaseBuildId}; ${facts.releaseBlockerCount} release blocker(s) remain.`
+            : `No valid signed release manifest and parity matrix are loaded for build ${facts.releaseBuildId}.`,
+          "Open Studio → Release quality, then collect attested evidence and five independent sign-offs for every required cell.",
+        ),
     facts.xAdsAttributionAvailable
       ? ready("x_ads_attribution", "X Ads attribution", "The server Conversion API adapter, event IDs, public notice, and operator reviews are configured.")
       : {
@@ -295,6 +317,7 @@ export function buildLocalReadinessReport(
     byokReady: common && status("byok_encryption") && status("byok_provider"),
     managedReady: common && status("managed_provider") && status("plans") && status("credits"),
     trendIntelligenceReady: status("trend_workers") && status("youtube_trends") && status("licensed_trends"),
+    releaseParityReady: status("release_parity"),
     xAdsAttributionReady: status("x_ads_attribution"),
     checks,
   };

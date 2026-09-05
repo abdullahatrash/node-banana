@@ -111,7 +111,9 @@ catalog discovery paths, but they do not make the admitted production
 generation pipeline executable. Real execution also requires a signed model
 qualification and verified processing-region evidence. Run
 `pnpm doctor:local -- --workspace seed_ws_alice` to see the exact remaining
-gates without calling a provider or spending credits.
+gates without calling a provider or spending credits. The report keeps backend
+infrastructure readiness separate from the signed release-parity matrix; an
+empty, stale, or partially signed matrix is always reported as blocked.
 
 Once a reviewed qualification plan exists, validate it and the operator trust
 configuration without network access or provider spend:

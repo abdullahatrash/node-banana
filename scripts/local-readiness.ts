@@ -1,11 +1,17 @@
 import "./_load-env";
 
+import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import * as dbSchema from "@/lib/db/schema";
 import { configuredCatalog } from "@/lib/model-routing/catalog";
 import { buildLocalReadinessReport, type LocalReadinessFacts } from "@/lib/local-readiness";
 import { evaluateXAdsAttributionReadiness, loadXAdsAttributionConfig } from "@/lib/marketing-attribution/config";
 import { hasConfiguredSecret } from "@/lib/configured-secret";
 import { youtubeTrendDiscoveryCapability } from "@/lib/product-surfaces/youtube-trend-capability";
+import { parseReleaseAttestationKeyring } from "@/lib/release-control/attestation";
+import { loadReleaseManifest } from "@/lib/release-control/manifest";
+import { ReleaseControlRepository } from "@/lib/release-control/repository";
+import { ReleaseControlService } from "@/lib/release-control/service";
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -14,6 +20,24 @@ function argument(name: string): string | null {
 
 const databaseUrl = process.env.DATABASE_URL?.trim() || null;
 const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, max: 1 }) : null;
+const database = pool ? drizzle(pool, { schema: dbSchema }) : null;
+
+function releaseControlService(): ReleaseControlService | null {
+  if (!database) return null;
+  const repository = new ReleaseControlRepository(() => database);
+  const telemetrySecret = process.env.TELEMETRY_PSEUDONYM_SECRET || process.env.BETTER_AUTH_SECRET || "development-only-telemetry-secret";
+  return new ReleaseControlService(repository, telemetrySecret, {
+    keyring: parseReleaseAttestationKeyring(process.env.RELEASE_ATTESTATION_KEYS_JSON),
+    automationUserId: process.env.RELEASE_AUTOMATION_USER_ID?.trim(),
+    manifest: (workspaceId, now) => loadReleaseManifest({
+      raw: process.env.RELEASE_MANIFEST_JSON,
+      signature: process.env.RELEASE_MANIFEST_SIGNATURE,
+      secret: process.env.RELEASE_MANIFEST_SECRET,
+      workspaceId,
+      now,
+    }),
+  });
+}
 
 async function count(query: string, parameters: unknown[] = []): Promise<number> {
   if (!pool) return 0;
@@ -35,6 +59,11 @@ async function run() {
   let availableCredits = 0;
   let activeYoutubeTrendSources = 0;
   let activeLicensedTrendEntitlements = 0;
+  let releaseBuildId = "unconfigured";
+  let releaseParityClaimAllowed = false;
+  let releaseParityRequiredCells = 0;
+  let releaseParityPassingCells = 0;
+  let releaseBlockerCount = 1;
   const configuredReplicateRegion = process.env.PROVIDER_REGION_REPLICATE?.trim() || null;
 
   if (pool) {
@@ -59,6 +88,12 @@ async function run() {
         availableCredits = Number(credits.rows[0]?.credits ?? 0);
         activeYoutubeTrendSources = await count("select count(*) from youtube_trend_discovery_sources where workspace_id = $1 and state = 'active'", [workspaceId]);
         activeLicensedTrendEntitlements = await count("select count(*) from licensed_trend_workspace_entitlements entitlement join licensed_trend_catalog_entries catalog on catalog.id = entitlement.catalog_id join licensed_trend_catalog_revisions revision on revision.catalog_id = entitlement.catalog_id and revision.revision = entitlement.catalog_revision and revision.document_digest = entitlement.catalog_digest where entitlement.workspace_id = $1 and entitlement.state = 'active' and catalog.state = 'active' and (entitlement.expires_at is null or entitlement.expires_at > now()) and (revision.rights_expires_at is null or revision.rights_expires_at > now())", [workspaceId]);
+        const releaseReadiness = await releaseControlService()!.readiness(workspaceId);
+        releaseBuildId = releaseReadiness.buildId;
+        releaseParityClaimAllowed = releaseReadiness.parityClaimAllowed;
+        releaseParityRequiredCells = releaseReadiness.parityMatrix.requiredCells;
+        releaseParityPassingCells = releaseReadiness.parityMatrix.passingCells;
+        releaseBlockerCount = releaseReadiness.blockers.length;
       }
     } catch (error) {
       databaseConnected = false;
@@ -127,6 +162,11 @@ async function run() {
     youtubeContentAdaptationApproved: youtubeReadiness.contentAdaptationApproved,
     activeYoutubeTrendSources,
     activeLicensedTrendEntitlements,
+    releaseBuildId,
+    releaseParityClaimAllowed,
+    releaseParityRequiredCells,
+    releaseParityPassingCells,
+    releaseBlockerCount,
     xAdsAttributionAvailable: xAdsReadiness.available,
     xAdsAttributionBlockers: xAdsReadiness.blockers,
   };
@@ -141,7 +181,7 @@ async function run() {
       process.stdout.write(`[${marker}] ${check.label}: ${check.detail}\n`);
       if (check.action) process.stdout.write(`          ${check.action}\n`);
     }
-    process.stdout.write(`\nCore: ${report.coreReady ? "ready" : "blocked"} · BYOK generation: ${report.byokReady ? "ready" : "blocked"} · Managed generation: ${report.managedReady ? "ready" : "blocked"} · Trend intelligence: ${report.trendIntelligenceReady ? "ready" : "blocked"} · X Ads attribution: ${report.xAdsAttributionReady ? "ready" : "unavailable"}\n`);
+    process.stdout.write(`\nCore: ${report.coreReady ? "ready" : "blocked"} · BYOK generation: ${report.byokReady ? "ready" : "blocked"} · Managed generation: ${report.managedReady ? "ready" : "blocked"} · Trend intelligence: ${report.trendIntelligenceReady ? "ready" : "blocked"} · Release parity: ${report.releaseParityReady ? "ready" : "blocked"} · X Ads attribution: ${report.xAdsAttributionReady ? "ready" : "unavailable"}\n`);
   }
 }
 
