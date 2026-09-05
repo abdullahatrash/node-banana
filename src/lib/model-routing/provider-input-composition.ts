@@ -33,9 +33,12 @@ function digest(value: unknown) {
   return canonicalDigest(value) as `sha256:${string}`;
 }
 
-export function providerMediaPlan(input: { sourceAssetIds: string[]; brand: BrandPromptContext; contract: QualifiedContract }) {
+export function providerMediaPlan(input: { sourceAssetIds: string[]; brand: BrandPromptContext; contract: QualifiedContract; capability: GenerationCapability }) {
   const brandIds = input.brand.referenceAssets.map((asset) => asset.assetId);
   if (!input.contract.imageKey) return { providerMediaAssetIds: [] as string[], brandMediaDisposition: "prompt_context" as const };
+  if (input.capability === "text_to_image" || input.capability === "text_to_video" || input.capability === "text_generation") {
+    return { providerMediaAssetIds: [] as string[], brandMediaDisposition: "prompt_context" as const };
+  }
   if (input.contract.imageMode === "array") return { providerMediaAssetIds: [...input.sourceAssetIds, ...brandIds], brandMediaDisposition: "provider_input" as const };
   if (input.sourceAssetIds.length) return { providerMediaAssetIds: [input.sourceAssetIds[0]!], brandMediaDisposition: "prompt_context" as const };
   return {

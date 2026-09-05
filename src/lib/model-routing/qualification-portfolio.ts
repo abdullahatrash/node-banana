@@ -6,7 +6,6 @@ import {
 } from "./qualification-runner";
 
 export const REQUIRED_REPLICATE_PORTFOLIO_CAPABILITIES = [
-  "text_generation",
   "text_to_image",
   "image_to_image",
   "text_to_video",

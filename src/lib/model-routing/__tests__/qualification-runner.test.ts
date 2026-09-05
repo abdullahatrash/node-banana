@@ -99,7 +99,7 @@ describe("executable Replicate qualification runner", () => {
     expect(durable.completeCase).toHaveBeenCalledTimes(3);
     expect(signed.attestation.qualificationRun.digest).not.toBe(`sha256:${"d".repeat(64)}`);
     const accepted = vi.mocked(execution.submit).mock.calls.map(([call]) => call.providerInput.image);
-    expect(accepted[0]).toEqual(["https://workspace.invalid/brand-logo.png"]);
+    expect(accepted[0]).toBeUndefined();
     expect(accepted[1]).toEqual(["https://workspace.invalid/source.png", "https://workspace.invalid/brand-logo.png"]);
   });
 
@@ -191,20 +191,20 @@ describe("executable Replicate qualification runner", () => {
         endpoint: "official" as const, version: model.model, inputSchemaDigest: `sha256:${"a".repeat(64)}` as const,
         capabilities: [...model.capabilities], contentLanguages: [...model.contentLanguages], arabicVarieties: [...model.arabicVarieties], verifiedRegions: ["replicate-us"], executionModes: ["async" as const],
         executionPriceUsd: { basis: "components" as const, components: model.priceUsd.components.map((component) => ({ ...component })) }, maxQuantity: 1, cancelAfterSeconds: 900, outputShape: { width: 1080, height: 1920, fps: null },
-        inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: "images", imageMode: "array" as const, safety: { parameterKey: "disable_safety_checker", safeValue: false }, lockedParameters: { disable_safety_checker: false, output_megapixels: 1, output_format: "jpg" } },
+        inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: "images", imageMode: "array" as const, safety: { parameterKey: "disable_safety_checker", safeValue: false }, lockedParameters: { disable_safety_checker: false, output_megapixels: "1", output_format: "jpg" } },
         license: { name: "Reviewed commercial license", commercialUse: true as const, derivativeUse: true, sourceUrl: "https://example.com/license", digest: `sha256:${"b".repeat(64)}` as const },
         pricingSource: { sourceUrl: "https://example.com/pricing", digest: `sha256:${"c".repeat(64)}` as const, checkedAt: "2026-09-03T00:00:00.000Z" },
         qualificationRun: { id: "untrusted-placeholder", digest: `sha256:${"d".repeat(64)}` as const, completedAt: "2026-09-03T01:00:00.000Z" },
         issuedAt: "2026-09-03T02:00:00.000Z", expiresAt: "2026-10-03T02:00:00.000Z",
       },
       cases: [
-        { id: "arabic-brand-only", capability: "text_to_image" as const, contentLanguage: "ar" as const, arabicVariety: "gulf" as const, prompt: "حملة عربية", input: {}, billableQuantity: 1, pricingInputAssets: [brandAsset], brandReference, lifecycle: "complete" as const },
+        { id: "arabic-brand-only", capability: "text_to_image" as const, contentLanguage: "ar" as const, arabicVariety: "gulf" as const, prompt: "حملة عربية", input: {}, billableQuantity: 1, pricingInputAssets: [], brandReference, lifecycle: "complete" as const },
         { id: "english-image-remix", capability: "image_to_image" as const, contentLanguage: "en" as const, arabicVariety: null, prompt: "English brand remix", input: { images: [sourceAsset.url] }, billableQuantity: 1, pricingInputAssets: [sourceAsset, brandAsset], brandReference, lifecycle: "complete" as const },
-        { id: "arabic-cancel", capability: "text_to_image" as const, contentLanguage: "ar" as const, arabicVariety: "msa" as const, prompt: "اختبار الإلغاء", input: {}, billableQuantity: 1, pricingInputAssets: [brandAsset], brandReference, lifecycle: "cancel" as const },
+        { id: "arabic-cancel", capability: "text_to_image" as const, contentLanguage: "ar" as const, arabicVariety: "msa" as const, prompt: "اختبار الإلغاء", input: {}, billableQuantity: 1, pricingInputAssets: [], brandReference, lifecycle: "cancel" as const },
       ],
     };
     const checked = validateReplicateQualificationPlan(plan, at);
-    expect(checked.summary.estimatedMaximumSpendUsd).toBeCloseTo(0.011296, 6);
+    expect(checked.summary.estimatedMaximumSpendUsd).toBeCloseTo(0.007148, 6);
     const execution = port({
       inspectSchema: vi.fn().mockResolvedValue({ inputSchemaDigest: `sha256:${"a".repeat(64)}`, inputKeys: ["prompt", "images", "aspect_ratio", "disable_safety_checker", "output_megapixels", "output_format"] }),
       observeSpend: vi.fn(async ({ predictionId, model: executedModel, version, account }) => {
@@ -213,7 +213,7 @@ describe("executable Replicate qualification runner", () => {
       }),
     });
     const result = await executeReplicateQualification(plan, privateKey.export({ type: "pkcs8", format: "pem" }).toString(), execution, ledger(), at);
-    expect(result.report.maximumSpendUsd).toBeCloseTo(0.011296, 6);
+    expect(result.report.maximumSpendUsd).toBeCloseTo(0.007148, 6);
     expect(execution.authorizeSpend).toHaveBeenNthCalledWith(2, expect.objectContaining({ maximumAmountUsd: 0.005148, pricingLineItems: [{ basis: "input_megapixel", unitAmount: 0.001, quantity: 4.1472, maximumAmount: 0.004148 }, { basis: "output_megapixel", unitAmount: 0.001, quantity: 1, maximumAmount: 0.001 }] }));
   });
 

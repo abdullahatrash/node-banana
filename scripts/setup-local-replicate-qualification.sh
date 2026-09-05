@@ -338,20 +338,20 @@ step "Choose Replicate, request the step-up code, paste the Workspace/dev token,
 pause "Press Enter after Settings confirms the Replicate credential is stored."
 
 stage "Contracts, reviewed portfolio, and explicit paid batch" 15
-say "Contract inspection is free. Launch requires a complete portfolio for Arabic copy, text-to-image, image-to-image, text-to-video, and image-to-video. The complete paid batch—not each plan separately—must remain below USD 0.40."
+say "Contract inspection is free. Replicate qualification covers text-to-image, image-to-image, text-to-video, and image-to-video; Arabic copy remains on the configured LLM provider. The complete paid batch—not each plan separately—must remain below USD 0.40."
 ask QUALIFICATION_MODELS_LINE "Enter every curated owner/model to inspect, separated by spaces:"
 read -r -a QUALIFICATION_MODELS <<< "$QUALIFICATION_MODELS_LINE"
-(( ${#QUALIFICATION_MODELS[@]} >= 3 )) || { warn "A launch portfolio normally needs at least three complementary models."; exit 1; }
+(( ${#QUALIFICATION_MODELS[@]} >= 2 )) || { warn "A launch portfolio needs at least two complementary reviewed media models."; exit 1; }
 for QUALIFICATION_MODEL in "${QUALIFICATION_MODELS[@]}"; do
   [[ "$QUALIFICATION_MODEL" =~ ^[^/]+/[^/]+$ ]] || { warn "Use exact owner/model syntax for every model."; exit 1; }
   CONTRACT_PATH="/tmp/node-banana-${QUALIFICATION_MODEL//\//-}-contract.json"
-  pnpm qualify:replicate:inspect "$QUALIFICATION_MODEL" > "$CONTRACT_PATH"
+  pnpm --silent qualify:replicate:inspect "$QUALIFICATION_MODEL" > "$CONTRACT_PATH"
   say "Contract report saved to $CONTRACT_PATH"
 done
 step "Using those reports and docs/model-qualification-operations.md, prepare complementary bilingual Arabic/English, 9:16, cancellation, Brand-reference, license, pricing, and rights-reviewed plans. Set signingKeyId to '$MODEL_SIGNING_KEY_ID'."
 ask QUALIFICATION_PLAN_PATHS_LINE "Paste every reviewed plan JSON path, separated by spaces:"
 read -r -a QUALIFICATION_PLAN_PATHS <<< "$QUALIFICATION_PLAN_PATHS_LINE"
-(( ${#QUALIFICATION_PLAN_PATHS[@]} >= 3 )) || { warn "At least three complementary reviewed plans are required."; exit 1; }
+(( ${#QUALIFICATION_PLAN_PATHS[@]} >= 2 )) || { warn "At least two complementary reviewed media plans are required."; exit 1; }
 for QUALIFICATION_PLAN_PATH in "${QUALIFICATION_PLAN_PATHS[@]}"; do
   [[ -f "$QUALIFICATION_PLAN_PATH" ]] || { warn "Plan file not found: $QUALIFICATION_PLAN_PATH"; exit 1; }
   pnpm qualify:replicate:check "$QUALIFICATION_PLAN_PATH"
@@ -369,7 +369,7 @@ for QUALIFICATION_PLAN_PATH in "${QUALIFICATION_PLAN_PATHS[@]}"; do
   QUALIFICATION_RESULT_INDEX=$((QUALIFICATION_RESULT_INDEX + 1))
   QUALIFICATION_RESULT_PATH="/tmp/node-banana-qualification-result-${QUALIFICATION_RESULT_INDEX}.json"
   MODEL_QUALIFICATION_SIGNING_PRIVATE_KEY=$(awk '{printf "%s\\n",$0}' "$MODEL_SIGNING_PRIVATE_PATH") \
-    pnpm qualify:replicate "$QUALIFICATION_PLAN_PATH" --execute-paid-smoke > "$QUALIFICATION_RESULT_PATH"
+    pnpm --silent qualify:replicate "$QUALIFICATION_PLAN_PATH" --execute-paid-smoke > "$QUALIFICATION_RESULT_PATH"
   QUALIFICATION_RESULT_PATHS+=("$QUALIFICATION_RESULT_PATH")
 done
 REPLICATE_MODEL_QUALIFICATIONS_JSON=$(node -e 'const fs=require("node:fs");const qualifications=process.argv.slice(1).flatMap((path)=>{const value=JSON.parse(fs.readFileSync(path,"utf8"));if(value?.envelope?.version!==1||!Array.isArray(value.envelope.qualifications))throw new Error("Invalid qualification result: ".concat(path));return value.envelope.qualifications});process.stdout.write(JSON.stringify({version:1,qualifications}))' "${QUALIFICATION_RESULT_PATHS[@]}")

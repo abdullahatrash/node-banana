@@ -122,8 +122,13 @@ function qualificationCaseQuote(base: z.infer<typeof modelQualificationAttestati
   const mediaUrls = typeof rawMedia === "string" ? [rawMedia] : Array.isArray(rawMedia) && rawMedia.every((value) => typeof value === "string") ? rawMedia as string[] : [];
   const assets = cell.pricingInputAssets ?? [];
   if (assets.length !== mediaUrls.length || assets.some((asset, index) => asset.url !== mediaUrls[index])) throw new Error(`QUALIFICATION_PRICING_INPUT_EVIDENCE_MISMATCH:${cell.id}`);
-  const outputMegapixels = base.inputContract.lockedParameters.output_megapixels;
-  if (typeof outputMegapixels !== "number" || !Number.isFinite(outputMegapixels) || outputMegapixels <= 0) throw new Error("QUALIFICATION_OUTPUT_MEGAPIXELS_NOT_LOCKED");
+  const rawOutputMegapixels = base.inputContract.lockedParameters.output_megapixels;
+  const outputMegapixels = typeof rawOutputMegapixels === "number"
+    ? rawOutputMegapixels
+    : typeof rawOutputMegapixels === "string" && /^\d+(?:\.\d+)?$/.test(rawOutputMegapixels)
+      ? Number(rawOutputMegapixels)
+      : Number.NaN;
+  if (!Number.isFinite(outputMegapixels) || outputMegapixels <= 0) throw new Error("QUALIFICATION_OUTPUT_MEGAPIXELS_NOT_LOCKED");
   const inputMegapixels = assets.reduce((sum, asset) => sum + imageMegapixels(asset.width, asset.height), 0);
   const pricingQuantities = base.executionPriceUsd.components.map((component) => ({ basis: component.basis, quantity: component.basis === "input_megapixel" ? inputMegapixels : outputMegapixels * cell.billableQuantity }));
   return priceExecution({ price: base.executionPriceUsd, unitQuantity: cell.billableQuantity, pricingQuantities, quotedAt: at, expiresAt: new Date(base.expiresAt) });
@@ -175,7 +180,7 @@ export function validateReplicateQualificationPlan(input: QualificationRunnerInp
     qualificationCaseQuote(base, cell, at);
   }
   if (base.capabilities.some((capability) => ["image_to_image", "image_to_video", "video_to_video"].includes(capability)) && !base.license.derivativeUse) throw new Error("QUALIFICATION_DERIVATIVE_LICENSE_REQUIRED");
-  if (base.inputContract.imageKey && base.capabilities.some((capability) => capability === "text_to_image" || capability === "text_to_video") && !parsed.cases.some((cell) => (cell.capability === "text_to_image" || cell.capability === "text_to_video") && qualificationSourceUrls(cell, base.inputContract.imageKey).length === 0)) throw new Error("QUALIFICATION_BRAND_ONLY_MEDIA_CELL_REQUIRED");
+  if (base.capabilities.some((capability) => capability === "text_to_image" || capability === "text_to_video") && !parsed.cases.some((cell) => (cell.capability === "text_to_image" || cell.capability === "text_to_video") && qualificationSourceUrls(cell, base.inputContract.imageKey).length === 0)) throw new Error("QUALIFICATION_TEXT_ORIGIN_CELL_REQUIRED");
   const estimatedMaximumSpendUsd = parsed.cases.reduce((sum, cell) => sum + quoteTotalUsd(qualificationCaseQuote(base, cell, at)), 0);
   if (!Number.isFinite(estimatedMaximumSpendUsd) || estimatedMaximumSpendUsd <= 0 || estimatedMaximumSpendUsd >= MAX_QUALIFICATION_SPEND_USD) throw new Error("QUALIFICATION_BUDGET_CAP_EXCEEDED");
   return {

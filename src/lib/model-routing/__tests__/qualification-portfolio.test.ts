@@ -81,11 +81,6 @@ function smokeCase(
 
 function completePortfolio(priceMultiplier = 1) {
   return [
-    plan("meta/meta-llama-3-8b-instruct", [
-      smokeCase("copy-ar", "text_generation", "ar", "complete"),
-      smokeCase("copy-en", "text_generation", "en", "cancel"),
-      smokeCase("copy-gulf", "text_generation", "ar", "complete"),
-    ], { basis: "run", amount: 0.001 * priceMultiplier }),
     plan("prunaai/p-image", [
       smokeCase("image-ar", "text_to_image", "ar", "complete"),
       smokeCase("image-en", "text_to_image", "en", "cancel"),
@@ -109,12 +104,12 @@ describe("Replicate qualification portfolio preflight", () => {
     const result = validateReplicateQualificationPortfolio(completePortfolio(), at);
     expect(result.requiredCapabilities).toEqual(REQUIRED_REPLICATE_PORTFOLIO_CAPABILITIES);
     expect(result.coveredCapabilities).toEqual(expect.arrayContaining([...REQUIRED_REPLICATE_PORTFOLIO_CAPABILITIES]));
-    expect(result.estimatedMaximumSpendUsd).toBe(0.063);
-    expect(result.remainingHeadroomUsd).toBe(0.337);
+    expect(result.estimatedMaximumSpendUsd).toBe(0.06);
+    expect(result.remainingHeadroomUsd).toBe(0.34);
   });
 
   it("rejects a partial portfolio even when every individual plan is valid", () => {
-    expect(() => validateReplicateQualificationPortfolio(completePortfolio().slice(0, 3), at))
+    expect(() => validateReplicateQualificationPortfolio(completePortfolio().slice(0, 2), at))
       .toThrow("QUALIFICATION_PORTFOLIO_CAPABILITY_REQUIRED:text_to_video");
   });
 

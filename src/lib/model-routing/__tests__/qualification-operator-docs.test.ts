@@ -43,6 +43,9 @@ describe("Replicate qualification operator contract", () => {
     expect(stages).toContain('GOVERNANCE_DELETION_REGION="$APP_DATA_REGION"')
     expect(stages).toContain("pnpm --silent governance:region-evidence -- --template")
     expect(stages).toContain("pnpm --silent governance:region-evidence -- /tmp/node-banana-region-unsigned.json")
+    expect(stages).toContain('pnpm --silent qualify:replicate:inspect "$QUALIFICATION_MODEL" > "$CONTRACT_PATH"')
+    expect(stages).toContain('pnpm --silent qualify:replicate "$QUALIFICATION_PLAN_PATH" --execute-paid-smoke > "$QUALIFICATION_RESULT_PATH"')
+    expect(stages).toContain("At least two complementary reviewed media plans are required.")
     expect(stages).toContain("Set signingKeyId to '$MODEL_SIGNING_KEY_ID'")
     expect(stages).toContain("pnpm qualify:replicate:check")
     expect(stages).toContain('pnpm qualify:replicate:portfolio -- "${QUALIFICATION_PLAN_PATHS[@]}"')
@@ -52,7 +55,7 @@ describe("Replicate qualification operator contract", () => {
 
     const portfolioPreflight = stages.indexOf('pnpm qualify:replicate:portfolio -- "${QUALIFICATION_PLAN_PATHS[@]}"')
     const confirmation = stages.indexOf('confirm "Run this exact reviewed portfolio now')
-    const paidExecution = stages.indexOf('pnpm qualify:replicate "$QUALIFICATION_PLAN_PATH" --execute-paid-smoke')
+    const paidExecution = stages.indexOf('pnpm --silent qualify:replicate "$QUALIFICATION_PLAN_PATH" --execute-paid-smoke')
     expect(portfolioPreflight).toBeGreaterThan(-1)
     expect(confirmation).toBeGreaterThan(portfolioPreflight)
     expect(confirmation).toBeGreaterThan(-1)

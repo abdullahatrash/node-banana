@@ -47,12 +47,13 @@ function compose(capability: GenerationCapability, input: { mode: "single" | "ar
 }
 
 describe("qualified provider input composition", () => {
-  it("conditions text-to-image on Brand reference media without replacing the prompt", () => {
+  it("keeps text-to-image source-free while carrying Brand evidence in prompt context", () => {
     const result = compose("text_to_image", { mode: "single" });
-    expect(result.providerInput).toMatchObject({ image: brandUrl, aspect_ratio: "9:16" });
+    expect(result.providerInput).toMatchObject({ aspect_ratio: "9:16" });
+    expect(result.providerInput).not.toHaveProperty("image");
     expect(result.providerInput.prompt).toMatch(/^Keep this original prompt unchanged\.\n\n\[TASMEEMAI_BRAND_CONTEXT_V1\]/);
     expect(result.providerInput).not.toHaveProperty("brand_context");
-    expect(result.evidence).toMatchObject({ providerMediaAssetIds: [reference.assetId], brandMediaDisposition: "provider_input" });
+    expect(result.evidence).toMatchObject({ providerMediaAssetIds: [], brandMediaDisposition: "prompt_context" });
   });
 
   it("gives the user source the single image slot and carries Brand evidence in prompt context for image-to-image", () => {
@@ -63,9 +64,12 @@ describe("qualified provider input composition", () => {
     expect(result.evidence).toMatchObject({ providerMediaAssetIds: ["source-asset"], brandMediaDisposition: "prompt_context" });
   });
 
-  it("conditions text-to-video on Brand media and pins the 9:16 input", () => {
+  it("keeps text-to-video source-free, Brand-aware, and pinned to 9:16", () => {
     const result = compose("text_to_video", { mode: "array" });
-    expect(result.providerInput).toMatchObject({ image: [brandUrl], aspect_ratio: "9:16", duration: 8 });
+    expect(result.providerInput).toMatchObject({ aspect_ratio: "9:16", duration: 8 });
+    expect(result.providerInput).not.toHaveProperty("image");
+    expect(result.providerInput.prompt).toContain(reference.digest);
+    expect(result.evidence).toMatchObject({ providerMediaAssetIds: [], brandMediaDisposition: "prompt_context" });
     expect(result.evidence.capability).toBe("text_to_video");
   });
 
