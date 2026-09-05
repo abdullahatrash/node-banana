@@ -119,6 +119,7 @@ async function run() {
           Boolean(process.env.PADDLE_ALLOWED_REDIRECT_HOSTS?.trim())
         )
       : Boolean(process.env.MERCHANT_OF_RECORD_BASE_URL?.trim() && hasConfiguredSecret(process.env.MERCHANT_OF_RECORD_API_TOKEN)),
+    referralPayoutGatewayConfigured: referralPayoutGatewayConfigured(),
     trendWorkerAuthConfigured: hasConfiguredSecret(process.env.STUDIO_INTERNAL_API_SECRET),
     youtubeTrendDiscoveryEnabled: youtubeReadiness.enabled,
     youtubeTrendApiKeyConfigured: youtubeReadiness.keyConfigured,
@@ -140,6 +141,19 @@ async function run() {
       if (check.action) process.stdout.write(`          ${check.action}\n`);
     }
     process.stdout.write(`\nCore: ${report.coreReady ? "ready" : "blocked"} · BYOK generation: ${report.byokReady ? "ready" : "blocked"} · Managed generation: ${report.managedReady ? "ready" : "blocked"} · Trend intelligence: ${report.trendIntelligenceReady ? "ready" : "blocked"} · X Ads attribution: ${report.xAdsAttributionReady ? "ready" : "unavailable"}\n`);
+  }
+}
+
+function referralPayoutGatewayConfigured() {
+  const raw = process.env.REFERRAL_PAYOUT_GATEWAY_URL?.trim();
+  const provider = process.env.REFERRAL_PAYOUT_PROVIDER_NAME?.trim();
+  if (!raw || !provider || !/^[a-z][a-z0-9._-]{0,79}$/i.test(provider) || !hasConfiguredSecret(process.env.REFERRAL_PAYOUT_GATEWAY_TOKEN)) return false;
+  try {
+    const url = new URL(raw);
+    const loopback = new Set(["localhost", "127.0.0.1", "::1"]).has(url.hostname);
+    return (url.protocol === "https:" || (url.protocol === "http:" && loopback)) && !url.username && !url.password && !url.hash && !url.search;
+  } catch {
+    return false;
   }
 }
 

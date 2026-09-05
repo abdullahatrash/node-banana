@@ -27,6 +27,7 @@ const readyFacts = (overrides: Partial<LocalReadinessFacts> = {}): LocalReadines
   activeCreditPacks: 3,
   availableCredits: 250,
   merchantConfigured: true,
+  referralPayoutGatewayConfigured: true,
   trendWorkerAuthConfigured: true,
   youtubeTrendDiscoveryEnabled: true,
   youtubeTrendApiKeyConfigured: true,
@@ -74,10 +75,11 @@ describe("local generation readiness", () => {
   });
 
   it("keeps checkout optional while preserving generation readiness", () => {
-    const report = buildLocalReadinessReport(readyFacts({ merchantConfigured: false, stepUpDeliveryConfigured: false }));
+    const report = buildLocalReadinessReport(readyFacts({ merchantConfigured: false, referralPayoutGatewayConfigured: false, stepUpDeliveryConfigured: false }));
     expect(report.byokReady).toBe(true);
     expect(report.managedReady).toBe(true);
     expect(report.checks.find((check) => check.id === "merchant")).toMatchObject({ status: "optional" });
+    expect(report.checks.find((check) => check.id === "referral_payout_gateway")).toMatchObject({ status: "optional", detail: expect.stringContaining("remain durably submitted") });
     expect(report.checks.find((check) => check.id === "step_up_delivery")).toMatchObject({ status: "optional" });
   });
 

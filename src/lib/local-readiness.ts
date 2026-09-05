@@ -59,6 +59,7 @@ export interface LocalReadinessFacts {
   activeCreditPacks: number;
   availableCredits: number;
   merchantConfigured: boolean;
+  referralPayoutGatewayConfigured: boolean;
   trendWorkerAuthConfigured: boolean;
   youtubeTrendDiscoveryEnabled: boolean;
   youtubeTrendApiKeyConfigured: boolean;
@@ -212,6 +213,15 @@ export function buildLocalReadinessReport(
           status: "optional",
           detail: "Checkout and the billing portal remain unavailable; BYOK generation is unaffected.",
           action: "Configure the Merchant-of-Record adapter when testing purchases.",
+        },
+    facts.referralPayoutGatewayConfigured
+      ? ready("referral_payout_gateway", "Referral payout gateway", "The opaque-recipient payout dispatch and reconciliation boundary is configured.")
+      : {
+          id: "referral_payout_gateway",
+          label: "Referral payout gateway",
+          status: "optional",
+          detail: "Cash referral requests remain durably submitted and their rewards remain held; no transfer can be dispatched.",
+          action: "Configure the three REFERRAL_PAYOUT_GATEWAY_* variables documented in docs/operations/referral-payouts.md.",
         },
     facts.trendWorkerAuthConfigured
       ? ready("trend_workers", "Trend workers", "Local trend workers can authenticate to the internal maintenance routes.")

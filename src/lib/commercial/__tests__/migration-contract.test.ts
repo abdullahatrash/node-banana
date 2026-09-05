@@ -79,3 +79,21 @@ describe("referral recipient and payout migration", () => {
     expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN)\b|\bTRUNCATE\b/i);
   });
 });
+describe("referral payout dispatch migration", () => {
+  it("adds replay-safe provider identity, bounded attempts, and expiring worker leases", () => {
+    const sql = readFileSync("drizzle/0148_referral_payout_dispatch.sql", "utf8");
+    for (const value of [
+      "provider_idempotency_key",
+      "dispatch_attempts",
+      "max_dispatch_attempts",
+      "next_dispatch_at",
+      "dispatch_lease_owner",
+      "dispatch_lease_expires_at",
+      "last_dispatch_error_code",
+      "referral_payout_requests_provider_idempotency_unique",
+      "referral_payout_requests_dispatch_due_idx",
+    ]) expect(sql).toContain(value);
+    expect(sql).toContain('"dispatch_attempts" <= "max_dispatch_attempts"');
+    expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN)\b|\bTRUNCATE\b/i);
+  });
+});

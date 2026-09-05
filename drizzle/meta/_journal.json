@@ -1037,6 +1037,13 @@
       "when": 1788781200000,
       "tag": "0147_referral_recipient_payouts",
       "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1788784800000,
+      "tag": "0148_referral_payout_dispatch",
+      "breakpoints": true
     }
   ]
 }

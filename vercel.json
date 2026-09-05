@@ -60,6 +60,9 @@
     "src/app/api/studio/internal/reconcile-merchant-adjustments/route.ts": {
       "maxDuration": 60
     },
+    "src/app/api/studio/internal/referral-payouts/dispatch/route.ts": {
+      "maxDuration": 60
+    },
     "src/app/api/studio/internal/notification-email/route.ts": {
       "maxDuration": 60
     },
@@ -127,6 +130,10 @@
     },
     {
       "path": "/api/studio/internal/reconcile-merchant-adjustments?limit=20",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/referral-payouts/dispatch?limit=20",
       "schedule": "* * * * *"
     },
     {
