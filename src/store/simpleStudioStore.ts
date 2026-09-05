@@ -6,6 +6,7 @@
 
 import { create } from "zustand";
 import {
+  getStudioAssetDownloadUrl,
   ingestStudioAsset,
 } from "@/lib/studio/client";
 import { runAdmittedStudioGeneration, StudioGenerationError } from "@/lib/model-routing/studio-generation-client";
@@ -435,27 +436,44 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       const res = await fetch("/api/studio/assets?source=simple");
       const data = await res.json();
       if (data.success && data.assets) {
-        const entries: Generation[] = data.assets.map(
-          (asset: Record<string, unknown>) => {
+        const resolvedEntries = await Promise.all(
+          (data.assets as Record<string, unknown>[]).map(async (asset) => {
             const metadata = (asset.metadata as Record<string, unknown>) || {};
+            const type = asset.type;
+            if ((type !== "image" && type !== "video") || metadata.uploadState === "pending" || metadata.uploadState === "failed") return null;
+            const assetId = typeof asset.id === "string" ? asset.id : null;
+            if (!assetId) return null;
+            const download = await getStudioAssetDownloadUrl(assetId).catch(() => null);
+            if (!download) return null;
+            const configuredMode = metadata.mode;
+            const mode: SimpleStudioMode = configuredMode === "photo" || configuredMode === "video"
+              ? configuredMode
+              : type === "video" ? "video" : "photo";
+            const createdAt = typeof metadata.createdAt === "number"
+              ? metadata.createdAt
+              : typeof asset.createdAt === "string" ? Date.parse(asset.createdAt) : NaN;
             return {
-              id: asset.id as string,
+              id: assetId,
               batchId: (metadata.batchId as string) || "unknown",
               status: "complete" as const,
-              result: asset.storageKey as string,
-              assetId: asset.id as string,
+              result: download.downloadUrl,
+              assetId,
               error: null,
               nextActionCode: null,
               nextActionHref: null,
-              mode: (metadata.mode as SimpleStudioMode) || "photo",
+              mode,
               aspectRatio: (metadata.aspectRatio as string) || "1:1",
               prompt: (metadata.prompt as string) || "",
-              createdAt: (metadata.createdAt as number) || Date.now(),
+              createdAt: Number.isFinite(createdAt) ? createdAt : 0,
               modelName: (metadata.modelName as string) || null,
             };
-          },
+          }),
         );
-        setGenerations(set, currentMode, () => entries);
+        const entries: Generation[] = [];
+        for (const entry of resolvedEntries) if (entry) entries.push(entry);
+        const byMode = { photo: [], video: [], copy: [] } as Record<SimpleStudioMode, Generation[]>;
+        for (const entry of entries) byMode[entry.mode].push(entry);
+        set({ generationsByMode: byMode, generations: byMode[currentMode] });
       }
     } catch {
       // Non-fatal — gallery just stays empty

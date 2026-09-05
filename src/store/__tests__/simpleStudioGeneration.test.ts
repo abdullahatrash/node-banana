@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const download = vi.fn(async (_assetId: string) => ({ assetId: "asset-1", key: "key", downloadUrl: "https://media.example/output.mp4", expiresInSeconds: 60 }));
+const download = vi.fn(async (assetId: string) => ({ assetId, key: "key", downloadUrl: assetId === "asset-1" ? "https://media.example/output.mp4" : `https://media.example/${assetId}`, expiresInSeconds: 60 }));
 vi.mock("@/lib/studio/client", () => ({ getActiveWorkspaceId: () => "ws", getStudioAssetDownloadUrl: (assetId: string) => download(assetId), ingestStudioAsset: vi.fn(), createStudioAssetPresign: vi.fn(), finalizeStudioAssetUpload: vi.fn() }));
 import { DEFAULT_GENERATION_FUNDING_MODE } from "@/lib/model-routing/types";
 import { useSimpleStudioStore } from "../simpleStudioStore";
@@ -104,5 +104,30 @@ describe("Simple Studio admitted media generation", () => {
       nextActionCode: "configure_provider_key",
       nextActionHref: "/settings?section=providers",
     });
+  });
+
+  it("loads only ready media through authorized download URLs", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      assets: [
+        { id: "image-ready", type: "image", storageKey: "private/image.png", createdAt: "2026-09-05T10:00:00.000Z", metadata: { uploadState: "ready", prompt: "Launch visual" } },
+        { id: "video-ready", type: "video", storageKey: "private/video.mp4", createdAt: "2026-09-05T09:00:00.000Z", metadata: { uploadState: "ready", prompt: "Launch reel" } },
+        { id: "license-document", type: "document", storageKey: "private/license.pdf", createdAt: "2026-09-05T08:00:00.000Z", metadata: { uploadState: "ready" } },
+        { id: "image-pending", type: "image", storageKey: "private/pending.png", createdAt: "2026-09-05T07:00:00.000Z", metadata: { uploadState: "pending" } },
+      ],
+    }), { headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+
+    await useSimpleStudioStore.getState().loadRecentResults();
+
+    expect(download).toHaveBeenCalledWith("image-ready");
+    expect(download).toHaveBeenCalledWith("video-ready");
+    expect(download).not.toHaveBeenCalledWith("license-document");
+    expect(download).not.toHaveBeenCalledWith("image-pending");
+    expect(useSimpleStudioStore.getState().generationsByMode.photo).toEqual([
+      expect.objectContaining({ id: "image-ready", mode: "photo", result: "https://media.example/image-ready", createdAt: Date.parse("2026-09-05T10:00:00.000Z") }),
+    ]);
+    expect(useSimpleStudioStore.getState().generationsByMode.video).toEqual([
+      expect.objectContaining({ id: "video-ready", mode: "video", result: "https://media.example/video-ready", createdAt: Date.parse("2026-09-05T09:00:00.000Z") }),
+    ]);
   });
 });
