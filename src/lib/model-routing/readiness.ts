@@ -37,6 +37,19 @@ export interface ManagedGenerationReadiness {
   qualifiedCapabilities: GenerationCapability[];
 }
 
+export type ByokGenerationReadinessGate =
+  | "qualifiedModel"
+  | "acceptedBrand"
+  | "canonicalMediaStorage"
+  | "processingRegion"
+  | "byokCredential";
+
+export interface ByokGenerationReadiness {
+  ready: boolean;
+  blockers: ByokGenerationReadinessGate[];
+  qualifiedCapabilities: GenerationCapability[];
+}
+
 type ReadinessModel = {
   capabilities: readonly GenerationCapability[];
   qualification: { status: "qualified" | "unqualified" };
@@ -81,6 +94,25 @@ export function projectManagedGenerationReadiness(
   if (!readiness.gates.processingRegion) blockers.push("processingRegion");
   if (!readiness.gates.managedCredential) blockers.push("managedCredential");
   if (!readiness.gates.managedCreditRate) blockers.push("managedCreditRate");
+
+  return {
+    ready: blockers.length === 0,
+    blockers,
+    qualifiedCapabilities: readiness.qualifiedCapabilities,
+  };
+}
+
+/** Projects the safe, user-actionable gates for a Workspace-owned Replicate credential. */
+export function projectByokGenerationReadiness(
+  readiness: GenerationReadiness,
+): ByokGenerationReadiness {
+  const blockers: ByokGenerationReadinessGate[] = [];
+
+  if (readiness.qualifiedCapabilities.length === 0) blockers.push("qualifiedModel");
+  if (!readiness.gates.acceptedBrand) blockers.push("acceptedBrand");
+  if (!readiness.gates.canonicalMediaStorage) blockers.push("canonicalMediaStorage");
+  if (!readiness.gates.processingRegion) blockers.push("processingRegion");
+  if (!readiness.gates.byokCredential) blockers.push("byokCredential");
 
   return {
     ready: blockers.length === 0,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGenerationReadiness, projectManagedGenerationReadiness } from "../readiness";
+import { buildGenerationReadiness, projectByokGenerationReadiness, projectManagedGenerationReadiness } from "../readiness";
 
 describe("generation readiness projection", () => {
   it("counts only qualified models and returns capabilities in canonical order", () => {
@@ -87,5 +87,27 @@ describe("generation readiness projection", () => {
 
     expect(result.ready).toBe(false);
     expect(result.blockers).toEqual(["qualifiedModel"]);
+  });
+
+  it("keeps BYOK credential readiness separate from managed operator readiness", () => {
+    const source = {
+      schema: "generation-readiness/v1" as const,
+      qualifiedModelCount: 1,
+      qualifiedCapabilities: ["text_to_video" as const],
+      gates: {
+        acceptedBrand: true,
+        canonicalMediaStorage: true,
+        processingRegion: true,
+        byokCredential: true,
+        managedCredential: false,
+        managedCreditRate: false,
+      },
+    };
+
+    expect(projectByokGenerationReadiness(source)).toMatchObject({ ready: true, blockers: [] });
+    expect(projectManagedGenerationReadiness(source)).toMatchObject({
+      ready: false,
+      blockers: ["managedCredential", "managedCreditRate"],
+    });
   });
 });
