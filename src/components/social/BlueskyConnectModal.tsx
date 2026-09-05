@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/Toast"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface BlueskyConnectModalProps {
   open: boolean
@@ -28,6 +29,7 @@ export function BlueskyConnectModal({
   const [appPassword, setAppPassword] = useState("")
   const [isConnecting, setIsConnecting] = useState(false)
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const { fetchAccounts } = useSocialAccountsStore()
 
   async function handleSubmit(e: React.FormEvent) {
@@ -52,7 +54,7 @@ export function BlueskyConnectModal({
       const data = await response.json()
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || t("bluesky.errors.connect"))
+        throw new Error("BLUESKY_CONNECT_FAILED")
       }
 
       showToast(t("bluesky.connected"), "success")
@@ -61,10 +63,7 @@ export function BlueskyConnectModal({
       setHandle("")
       setAppPassword("")
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.connect"),
-        "error",
-      )
+      showClientError(showToast, error, t("bluesky.errors.connect"))
     } finally {
       setIsConnecting(false)
     }

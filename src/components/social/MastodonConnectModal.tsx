@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/Toast"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 const POPULAR_INSTANCES = ["mastodon.social", "fosstodon.org", "hachyderm.io"]
 
@@ -31,6 +32,7 @@ export function MastodonConnectModal({
   const popupRef = useRef<Window | null>(null)
   const popupCheckRef = useRef<number | null>(null)
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const { fetchAccounts } = useSocialAccountsStore()
 
   const cleanupPopup = useCallback(() => {
@@ -50,18 +52,12 @@ export function MastodonConnectModal({
       setIsConnecting(false)
 
       if (event.data.success) {
-        showToast(
-          event.data.message || t("mastodon.connected"),
-          "success",
-        )
+        showToast(t("mastodon.connected"), "success")
         fetchAccounts()
         onOpenChange(false)
         setInstanceUrl("")
       } else {
-        showToast(
-          event.data.message || t("errors.complete"),
-          "error",
-        )
+        showToast(t("errors.complete"), "error")
       }
     }
 
@@ -101,7 +97,7 @@ export function MastodonConnectModal({
       const data = await response.json()
 
       if (!response.ok || !data.success || !data.authUrl) {
-        throw new Error(data.error || t("mastodon.errors.start"))
+        throw new Error("MASTODON_CONNECT_FAILED")
       }
 
       if (!popup || popup.closed) {
@@ -119,10 +115,7 @@ export function MastodonConnectModal({
     } catch (error) {
       popup?.close()
       cleanupPopup()
-      showToast(
-        error instanceof Error ? error.message : t("errors.connect"),
-        "error",
-      )
+      showClientError(showToast, error, t("mastodon.errors.start"))
       setIsConnecting(false)
     }
   }

@@ -26,6 +26,7 @@ import {
 } from "@/lib/studio/client"
 import { useToast } from "@/components/Toast"
 import { useTranslations } from "next-intl"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface AssetItem {
   id: string
@@ -92,6 +93,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const initialized = useRef(false)
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
 
   // Fetch on open — no useEffect
   if (open && !initialized.current) {
@@ -206,10 +208,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
       )
       onOpenChange(false)
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("uploadFailed"),
-        "error",
-      )
+      showClientError(showToast, error, t("uploadFailed"))
     } finally {
       setIsUploading(false)
       setUploadProgress(null)

@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { retrySocialPost } from "@/lib/social/client"
 import { useToast } from "@/components/Toast"
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 export function CalendarListView() {
   const t = useTranslations("social.calendarUi")
@@ -21,6 +22,7 @@ export function CalendarListView() {
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const router = useRouter()
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
 
   // Group by date
@@ -50,10 +52,7 @@ export function CalendarListView() {
       showToast(t("toast.requeued"), "success")
       fetchPosts()
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.retry"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.retry"))
     }
   }
 

@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { StudioApiError } from "@/lib/studio/client"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 import {
   createApiTokenRequest,
   listApiTokensRequest,
@@ -25,6 +25,7 @@ import {
 
 export function ApiTokensSettings() {
   const t = useTranslations("social.settings.tokens")
+  const { show: showClientError } = useClientErrorPresentation()
   const formatValue = useFormatter()
   const formatDate = (value: string | null) => {
     if (!value) return t("never")
@@ -49,12 +50,7 @@ export function ApiTokensSettings() {
     try {
       setTokens(await listApiTokensRequest())
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : t("errors.load"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.load"))
     } finally {
       setIsLoading(false)
     }
@@ -79,12 +75,7 @@ export function ApiTokensSettings() {
       showToast(t("toast.created"), "success")
       await loadTokens()
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : t("errors.create"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.create"))
     } finally {
       setIsCreating(false)
     }
@@ -101,12 +92,7 @@ export function ApiTokensSettings() {
       )
       showToast(t("toast.revoked"), "success")
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : t("errors.revoke"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.revoke"))
     } finally {
       setRevokingId(null)
     }

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { StudioApiError } from "@/lib/studio/client"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 import {
   beginProviderKeyStepUpRequest,
   deleteProviderKeyRequest,
@@ -25,6 +26,7 @@ import {
 
 export function ProviderKeysSettings() {
   const t = useTranslations("social.settings.providerKeys")
+  const { show: showClientError } = useClientErrorPresentation()
   const formatValue = useFormatter()
   const formatDate = (value: string | null) => {
     if (!value) return t("never")
@@ -53,12 +55,7 @@ export function ProviderKeysSettings() {
     try {
       setKeys(await listProviderKeysRequest())
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : t("errors.load"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.load"))
     } finally {
       setIsLoading(false)
     }
@@ -89,12 +86,7 @@ export function ProviderKeysSettings() {
       if (!(error instanceof StudioApiError && error.status === 422)) {
         resetStepUp()
       }
-      showToast(
-        error instanceof StudioApiError || error instanceof Error
-          ? error.message
-          : t("errors.save"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.save"))
     } finally {
       setIsSaving(false)
     }
@@ -170,12 +162,7 @@ export function ProviderKeysSettings() {
       setKeys((prev) => prev.filter((key) => key.provider !== target))
       showToast(t("toast.deleted"), "success")
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : t("errors.delete"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.delete"))
     } finally {
       setDeletingProvider(null)
     }

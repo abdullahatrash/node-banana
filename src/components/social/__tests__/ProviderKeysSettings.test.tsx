@@ -156,7 +156,7 @@ describe("ProviderKeysSettings", () => {
     );
   });
 
-  it("shows the provider's error toast when validation fails", async () => {
+  it("shows authored copy instead of a provider's raw validation error", async () => {
     mockSaveProviderKeyRequest.mockRejectedValue(
       new Error("Incorrect API key provided."),
     );
@@ -172,8 +172,10 @@ describe("ProviderKeysSettings", () => {
 
     await waitFor(() =>
       expect(mockShowToast).toHaveBeenCalledWith(
-        "Incorrect API key provided.",
+        "Failed to save provider key",
         "error",
+        false,
+        null,
       ),
     );
     expect(screen.getByRole("button", { name: /save key/i })).toBeDisabled();

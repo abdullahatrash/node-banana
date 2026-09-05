@@ -17,6 +17,7 @@ import { useToast } from "@/components/Toast"
 import { Loader2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useFormatter, useTranslations } from "next-intl"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 export default function SocialAgentsPage() {
   const t = useTranslations("social.agents")
@@ -35,6 +36,7 @@ export default function SocialAgentsPage() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { show } = useToast()
+  const { present: presentClientError, show: showClientError } = useClientErrorPresentation()
 
   const load = useCallback(async () => {
     setError(null)
@@ -48,8 +50,7 @@ export default function SocialAgentsPage() {
       setTasks(loadedTasks)
       setPrefs(loadedPrefs)
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : t("errors.load")
+      const message = presentClientError(error, t("errors.load")).message
       setError(message)
       setRules([])
       setTasks([])
@@ -57,7 +58,7 @@ export default function SocialAgentsPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [t])
+  }, [presentClientError, t])
 
   useEffect(() => {
     load()
@@ -73,7 +74,7 @@ export default function SocialAgentsPage() {
       setPrefs(updated)
       show(updated.muteAll ? t("toast.muted") : t("toast.notificationsEnabled"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : t("errors.preferences"), "error")
+      showClientError(show, error, t("errors.preferences"))
     } finally {
       setIsSaving(false)
     }
@@ -86,7 +87,7 @@ export default function SocialAgentsPage() {
       await load()
       show(rule.enabled ? t("toast.ruleDisabled") : t("toast.ruleEnabled"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : t("errors.updateRule"), "error")
+      showClientError(show, error, t("errors.updateRule"))
     } finally {
       setBusyId(null)
     }
@@ -100,7 +101,7 @@ export default function SocialAgentsPage() {
       await load()
       show(t("toast.ruleDeleted"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : t("errors.deleteRule"), "error")
+      showClientError(show, error, t("errors.deleteRule"))
     } finally {
       setBusyId(null)
     }
@@ -113,7 +114,7 @@ export default function SocialAgentsPage() {
       await load()
       show(t("toast.taskCancelled"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : t("errors.cancelTask"), "error")
+      showClientError(show, error, t("errors.cancelTask"))
     } finally {
       setBusyId(null)
     }
@@ -127,7 +128,7 @@ export default function SocialAgentsPage() {
       await load()
       show(t("toast.taskDeleted"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : t("errors.deleteTask"), "error")
+      showClientError(show, error, t("errors.deleteTask"))
     } finally {
       setBusyId(null)
     }

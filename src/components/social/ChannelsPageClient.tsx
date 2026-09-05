@@ -22,6 +22,7 @@ import {
   selectPage,
 } from "@/lib/social/client"
 import type { PageInfo } from "@/lib/social/client"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface ChannelsPageClientProps {
   oauthCallback: {
@@ -47,6 +48,7 @@ export function ChannelsPageClient({
     selectionSessionId: string
   } | null>(null)
   const { show: showToast } = useToast()
+  const { present: presentClientError, show: showClientError } = useClientErrorPresentation()
   const initialized = useRef(false)
 
   function notifyOpener(success: boolean, message: string) {
@@ -82,7 +84,7 @@ export function ChannelsPageClient({
             selectionSessionId: result.selectionSessionId,
           })
         } else if (result.requiresPageSelection) {
-          throw new Error(t("errors.missingSelection"))
+          throw new Error("CHANNEL_PAGE_SELECTION_MISSING")
         } else {
           if (notifyOpener(true, t("connected"))) {
             return
@@ -94,10 +96,11 @@ export function ChannelsPageClient({
         // Clean URL params
         router.replace("/social/channels")
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : t("errors.complete")
+        const fallback = error instanceof Error && error.message === "CHANNEL_PAGE_SELECTION_MISSING"
+          ? t("errors.missingSelection")
+          : t("errors.complete")
+        const presentation = presentClientError(error, fallback)
+        const message = presentation.message
         if (notifyOpener(false, message)) {
           return
         }
@@ -107,7 +110,7 @@ export function ChannelsPageClient({
         setIsProcessingCallback(false)
       }
     },
-    [fetchAccounts, router, showToast, t],
+    [fetchAccounts, presentClientError, router, showToast, t],
   )
 
   useEffect(() => {
@@ -125,13 +128,14 @@ export function ChannelsPageClient({
 
     setIsProcessingCallback(false)
     if (oauthError) {
-      if (notifyOpener(false, oauthError)) {
+      const message = t("errors.complete")
+      if (notifyOpener(false, message)) {
         return
       }
-      showToast(oauthError, "error")
+      showToast(message, "error")
       router.replace("/social/channels")
     }
-  }, [oauthCallback, oauthError, processOAuthCallback, router, showToast])
+  }, [oauthCallback, oauthError, processOAuthCallback, router, showToast, t])
 
   async function handlePageSelect(page: PageInfo) {
     if (!pageSelection) return
@@ -148,10 +152,7 @@ export function ChannelsPageClient({
       fetchAccounts()
       setPageSelection(null)
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.selectPage"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.selectPage"))
     }
   }
 

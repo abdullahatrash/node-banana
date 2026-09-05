@@ -25,6 +25,7 @@ import { useToast } from "@/components/Toast"
 import { CalendarPostCard, POST_DND_TYPE } from "./CalendarPostCard"
 import type { SocialPlatform } from "@/lib/db/schema"
 import { canonicalCalendarReschedule } from "./canonical-reschedule"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 const WEEK_DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const
 const MAX_VISIBLE_POSTS = 3
@@ -65,6 +66,7 @@ function CalendarMonthDayCell({
 }) {
   const t = useTranslations("social.calendarUi")
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const setViewMode = useSocialCalendarStore((s) => s.setViewMode)
   const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
   const restorePosts = useSocialCalendarStore((s) => s.restorePosts)
@@ -106,17 +108,14 @@ function CalendarMonthDayCell({
         else showToast(t("toast.approvalRequired"), "success")
       } catch (error) {
         if (previousPosts) restorePosts(previousPosts)
-        showToast(
-          error instanceof Error ? error.message : t("errors.reschedule"),
-          "error",
-        )
+        showClientError(showToast, error, t("errors.reschedule"))
       }
     },
     collect: (monitor) => ({
       isOver: monitor.isOver(),
       canDrop: monitor.canDrop(),
     }),
-  }), [applyOptimisticReschedule, day, fetchPosts, restorePosts, showToast, t])
+  }), [applyOptimisticReschedule, day, fetchPosts, restorePosts, showClientError, showToast, t])
 
   const visiblePosts = posts.slice(0, MAX_VISIBLE_POSTS)
   const hiddenCount = Math.max(0, posts.length - visiblePosts.length)

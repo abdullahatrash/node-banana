@@ -29,6 +29,7 @@ import { canonicalCalendarReschedule } from "./canonical-reschedule"
 import { POST_STATUS_CONFIG } from "@/lib/social/constants"
 import { useToast } from "@/components/Toast"
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface CalendarPostDetailsPopoverProps {
   post: CalendarItem
@@ -84,6 +85,7 @@ export function CalendarPostDetailsPopover({
     : t("notSet")
   const router = useRouter()
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const [position, setPosition] = useState({ top: 0, left: 0 })
   const [isActing, setIsActing] = useState(false)
@@ -177,7 +179,7 @@ export function CalendarPostDetailsPopover({
       await action()
       await onMutate()
     } catch (error) {
-      showToast(error instanceof Error ? error.message : t("errors.action"), "error")
+      showClientError(showToast, error, t("errors.action"))
     } finally {
       setIsActing(false)
     }

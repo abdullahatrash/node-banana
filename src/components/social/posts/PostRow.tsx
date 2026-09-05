@@ -21,6 +21,7 @@ import { useToast } from "@/components/Toast"
 import type { SocialPost } from "@/lib/social/client"
 import type { SocialPostStatus } from "@/lib/db/schema"
 import { useFormatter, useTranslations } from "next-intl"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface PostRowProps {
   post: SocialPost
@@ -32,6 +33,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
   const format = useFormatter()
   const router = useRouter()
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const [showError, setShowError] = useState(false)
   const [isActing, setIsActing] = useState(false)
 
@@ -49,10 +51,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
       showToast(t("toast.requeued"), "success")
       onMutate()
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.retry"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.retry"))
     } finally {
       setIsActing(false)
     }
@@ -66,10 +65,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
       showToast(t("toast.deleted"), "success")
       onMutate()
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.delete"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.delete"))
     } finally {
       setIsActing(false)
     }
@@ -87,10 +83,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
       showToast(t("toast.duplicated"), "success")
       router.push(`/social/compose?postId=${duplicated.id}`)
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.duplicate"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.duplicate"))
     } finally {
       setIsActing(false)
     }

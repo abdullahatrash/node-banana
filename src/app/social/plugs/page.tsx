@@ -13,6 +13,7 @@ import { Loader2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useTranslations } from "next-intl"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 export default function SocialPlugsPage() {
   const t = useTranslations("social.plugs")
@@ -23,20 +24,20 @@ export default function SocialPlugsPage() {
   const [mutatingWebhookId, setMutatingWebhookId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { show } = useToast()
+  const { present: presentClientError, show: showClientError } = useClientErrorPresentation()
 
   const refresh = useCallback(async () => {
     setError(null)
     try {
       setWebhooks(await listSocialWebhooks())
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : t("errors.load")
+      const message = presentClientError(error, t("errors.load")).message
       setError(message)
       setWebhooks([])
     } finally {
       setIsLoading(false)
     }
-  }, [t])
+  }, [presentClientError, t])
 
   useEffect(() => {
     refresh()
@@ -57,8 +58,7 @@ export default function SocialPlugsPage() {
       setTargetUrl("")
       await refresh()
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : t("errors.create")
+      const message = presentClientError(error, t("errors.create")).message
       setError(message)
       show(message, "error")
     } finally {
@@ -73,7 +73,7 @@ export default function SocialPlugsPage() {
       await refresh()
       show(webhook.enabled ? t("toast.disabled") : t("toast.enabled"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : t("errors.update"), "error")
+      showClientError(show, error, t("errors.update"))
     } finally {
       setMutatingWebhookId(null)
     }
@@ -87,7 +87,7 @@ export default function SocialPlugsPage() {
       await refresh()
       show(t("toast.deleted"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : t("errors.delete"), "error")
+      showClientError(show, error, t("errors.delete"))
     } finally {
       setMutatingWebhookId(null)
     }

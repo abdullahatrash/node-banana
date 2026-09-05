@@ -133,7 +133,7 @@ export function Toast() {
             </button>
             {isExpanded && (
               <div id="toast-details" className="px-4 pb-3">
-                <pre className="bg-black/30 rounded p-2 max-h-40 overflow-auto text-xs font-mono whitespace-pre-wrap break-words">
+                <pre dir="ltr" className="bg-black/30 rounded p-2 max-h-40 overflow-auto text-xs font-mono whitespace-pre-wrap break-words [unicode-bidi:isolate]" style={{ textAlign: "left" }}>
                   {details}
                 </pre>
               </div>

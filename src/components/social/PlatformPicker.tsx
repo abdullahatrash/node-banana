@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import type { SocialPlatform } from "@/lib/db/schema"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 // Module-level cache — fetched once, reused across all PlatformPicker renders
 let providerCache: ProviderCapabilities[] | null = null
@@ -55,6 +56,7 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
   const popupRef = useRef<Window | null>(null)
   const popupCheckRef = useRef<number | null>(null)
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const { fetchAccounts } = useSocialAccountsStore()
 
   const cleanupPopup = useCallback(() => {
@@ -75,11 +77,11 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
       setConnectingPlatform(null)
 
       if (data.success) {
-        showToast(data.message || t("connected"), "success")
+        showToast(t("connected"), "success")
         fetchAccounts()
         onOpenChange(false)
       } else {
-        showToast(data.message || t("errors.complete"), "error")
+        showToast(t("errors.complete"), "error")
       }
     }
 
@@ -148,10 +150,7 @@ export function PlatformPicker({ open, onOpenChange }: PlatformPickerProps) {
     } catch (error) {
       popup?.close()
       cleanupPopup()
-      showToast(
-        error instanceof Error ? error.message : t("errors.connect"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.connect"))
       setConnectingPlatform(null)
     }
   }

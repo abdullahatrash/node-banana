@@ -261,6 +261,17 @@ describe("Toast", () => {
       expect(screen.getByText("Error details")).toBeInTheDocument();
     });
 
+    it("isolates technical details as an LTR block", () => {
+      act(() => {
+        useToast.getState().show("رسالة آمنة", "error", false, "TRACE:trace_123");
+      });
+
+      render(<Toast />);
+      fireEvent.click(screen.getByText("Show details"));
+
+      expect(screen.getByText("TRACE:trace_123")).toHaveAttribute("dir", "ltr");
+    });
+
     it("should collapse when 'Hide details' is clicked", () => {
       act(() => {
         useToast.getState().show("Message", "error", false, "Error details");

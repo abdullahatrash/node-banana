@@ -67,6 +67,10 @@ for (const file of currentLegacy.filter((file) => !expectedLegacy.includes(file)
 for (const file of expectedLegacy.filter((file) => !currentLegacy.includes(file))) errors.push(`remove migrated file from legacy-literals.json: ${file}`);
 
 const visibleAttributes = new Set(["placeholder", "title", "aria-label", "alt"]);
+const rawErrorPresentationPatterns = [
+  /\b([A-Za-z_$][\w$]*)\s+instanceof\s+Error\s*\?\s*\1\.message/gu,
+  /\b(?:showToast|show|setError)\s*\(\s*[A-Za-z_$][\w$]*\.message\b/gu,
+];
 function hasVisibleLiteral(file, source) {
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let found = false;
@@ -89,6 +93,15 @@ const visibleLiteralFiles = [];
 for (const file of files) {
   const source = await readFile(path.join(root, file), "utf8");
   if (file.endsWith(".tsx") && hasVisibleLiteral(file, source)) visibleLiteralFiles.push(file);
+  if (file.startsWith("src/components/social/") || file.startsWith("src/app/social/")) {
+    for (const pattern of rawErrorPresentationPatterns) {
+      pattern.lastIndex = 0;
+      if (pattern.test(source)) {
+        errors.push(`raw caught error presentation: ${file}; map it to authored copy and bounded technical evidence`);
+        break;
+      }
+    }
+  }
   for (const utility of findPhysicalDirectionalUtilities(source)) {
     errors.push(`physical RTL layout utility ${utility}: ${file}; use logical start/end utilities`);
   }

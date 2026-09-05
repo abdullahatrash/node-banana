@@ -11,6 +11,7 @@ import { Loader2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/Toast"
 import { useFormatter, useTranslations } from "next-intl"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 export default function SocialEventsPage() {
   const t = useTranslations("social.events")
@@ -20,6 +21,7 @@ export default function SocialEventsPage() {
   const [isUpdatingId, setIsUpdatingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { show } = useToast()
+  const { present: presentClientError, show: showClientError } = useClientErrorPresentation()
 
   const load = useCallback(async () => {
     setError(null)
@@ -31,14 +33,13 @@ export default function SocialEventsPage() {
       })
       setEvents(rows)
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : t("errors.load")
+      const message = presentClientError(error, t("errors.load")).message
       setError(message)
       setEvents([])
     } finally {
       setIsLoading(false)
     }
-  }, [t])
+  }, [presentClientError, t])
 
   useEffect(() => {
     load()
@@ -54,7 +55,7 @@ export default function SocialEventsPage() {
       }
       await load()
     } catch (error) {
-      show(error instanceof Error ? error.message : t("errors.update"), "error")
+      showClientError(show, error, t("errors.update"))
     } finally {
       setIsUpdatingId(null)
     }

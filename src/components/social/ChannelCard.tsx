@@ -26,6 +26,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import type { SocialPlatform } from "@/lib/db/schema"
+import { StudioApiError } from "@/lib/studio/client"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface ChannelCardProps {
   account: SocialAccount
@@ -51,6 +53,7 @@ export function ChannelCard({ account }: ChannelCardProps) {
       : "",
   )
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const { removeAccount, addOrUpdateAccount } = useSocialAccountsStore(useShallow((s) => ({
     removeAccount: s.removeAccount,
     addOrUpdateAccount: s.addOrUpdateAccount,
@@ -64,8 +67,8 @@ export function ChannelCard({ account }: ChannelCardProps) {
       showToast(t("toast.disconnected", { name: account.displayName }), "success")
     } catch (error) {
       if (
-        error instanceof Error &&
-        error.message.includes("existing posts") &&
+        error instanceof StudioApiError &&
+        error.code === "CHANNEL_HAS_LINKED_POSTS" &&
         confirm(t("confirmForceDisconnect"))
       ) {
         try {
@@ -74,19 +77,11 @@ export function ChannelCard({ account }: ChannelCardProps) {
           showToast(t("toast.forceDisconnected", { name: account.displayName }), "success")
           return
         } catch (forceError) {
-          showToast(
-            forceError instanceof Error
-              ? forceError.message
-              : t("errors.forceDisconnect"),
-            "error",
-          )
+          showClientError(showToast, forceError, t("errors.forceDisconnect"))
           return
         }
       }
-      showToast(
-        error instanceof Error ? error.message : t("errors.disconnect"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.disconnect"))
     } finally {
       setIsDisconnecting(false)
       setShowConfirm(false)
@@ -99,10 +94,7 @@ export function ChannelCard({ account }: ChannelCardProps) {
       const { authUrl } = await connectSocialAccount(account.platform, account.id)
       window.location.href = authUrl
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.reconnect"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.reconnect"))
       setIsReconnecting(false)
     }
   }
@@ -119,10 +111,7 @@ export function ChannelCard({ account }: ChannelCardProps) {
         "success",
       )
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.update"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.update"))
     } finally {
       setIsSaving(false)
     }
@@ -148,10 +137,7 @@ export function ChannelCard({ account }: ChannelCardProps) {
       showToast(t("toast.updated"), "success")
       setShowSettings(false)
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.save"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.save"))
     } finally {
       setIsSaving(false)
     }

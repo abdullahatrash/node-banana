@@ -600,6 +600,10 @@ describe("/api/social/accounts/[accountId] DELETE", () => {
     );
 
     expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      code: "CHANNEL_HAS_LINKED_POSTS",
+    });
     expect(mockDisconnectSocialAccount).not.toHaveBeenCalled();
   });
 

@@ -112,6 +112,7 @@ export async function DELETE(
         return NextResponse.json(
           {
             success: false,
+            code: "CHANNEL_HAS_LINKED_POSTS",
             error:
               "This channel has existing posts. Delete or move those posts first, or retry with force=true.",
           },

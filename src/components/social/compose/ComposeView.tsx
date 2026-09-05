@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/components/Toast"
 import type { SocialPlatform } from "@/lib/db/schema"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 export function ComposeView() {
   const t = useTranslations("social.compose")
@@ -39,6 +40,7 @@ export function ComposeView() {
   const tPosts = useTranslations("social.posts.actions")
   const router = useRouter()
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const [isSubmitting, setIsSubmitting] = useState<
     "draft" | "schedule" | "publish" | null
   >(null)
@@ -131,10 +133,7 @@ export function ComposeView() {
       reset()
       router.push("/social/posts")
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.saveDraft"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.saveDraft"))
     } finally {
       setIsSubmitting(null)
     }
@@ -208,10 +207,7 @@ export function ComposeView() {
       reset()
       router.push("/social/calendar")
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.schedule"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.schedule"))
     } finally {
       setIsSubmitting(null)
     }
@@ -269,10 +265,7 @@ export function ComposeView() {
       reset()
       router.push("/social/calendar")
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : t("errors.publish"),
-        "error",
-      )
+      showClientError(showToast, error, t("errors.publish"))
     } finally {
       setIsSubmitting(null)
     }

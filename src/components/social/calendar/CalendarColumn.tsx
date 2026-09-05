@@ -9,6 +9,7 @@ import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useToast } from "@/components/Toast"
 import type { CalendarItem, CanonicalCalendarBinding } from "@/lib/product-surfaces/calendar-projection"
 import { canonicalCalendarReschedule } from "./canonical-reschedule"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface CalendarColumnProps {
   date: Date
@@ -36,6 +37,7 @@ export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumn
   const router = useRouter()
   const t = useTranslations("social.calendarUi")
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
   const restorePosts = useSocialCalendarStore((s) => s.restorePosts)
   const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
@@ -67,10 +69,7 @@ export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumn
         else showToast(t("toast.approvalRequired"), "success")
       } catch (error) {
         if (previousPosts) restorePosts(previousPosts)
-        showToast(
-          error instanceof Error ? error.message : t("errors.reschedule"),
-          "error",
-        )
+        showClientError(showToast, error, t("errors.reschedule"))
       }
     },
     collect: (monitor) => ({
