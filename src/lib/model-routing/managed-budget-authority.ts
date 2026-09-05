@@ -2,6 +2,7 @@ import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { CommercialRepository } from "@/lib/commercial/repository";
 import type { GenerationBudgetAuthority, ManagedCreditQuote } from "./budget-authority";
 import { quoteTotalUsd } from "./pricing";
+import { DEFAULT_GENERATION_FUNDING_MODE } from "./types";
 
 type ManagedCommercialPort = Pick<CommercialRepository, "issueQuote" | "acceptQuote" | "reserveQuote" | "settleGenerationEffect">;
 
@@ -49,7 +50,7 @@ export class ManagedGenerationBudgetAuthority implements GenerationBudgetAuthori
   ) {}
 
   async reserve(input: Parameters<GenerationBudgetAuthority["reserve"]>[0]) {
-    if ((input.fundingMode ?? "byok") === "byok") return this.runtime.reserve(input);
+    if ((input.fundingMode ?? DEFAULT_GENERATION_FUNDING_MODE) === "byok") return this.runtime.reserve(input);
     if (input.model.provider !== "replicate") {
       return { kind: "unavailable" as const, code: "MANAGED_PROVIDER_UNAVAILABLE" };
     }

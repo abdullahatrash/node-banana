@@ -46,6 +46,17 @@ describe("ManagedGenerationBudgetAuthority", () => {
     expect(credits.reserveQuote).toHaveBeenCalledWith(expect.objectContaining({ externalEffectRef: "generation:intent", idempotencyKey: "generation:intent:commercial-reserve" }));
   });
 
+  it("treats an omitted funding mode as managed and still requires exact confirmation", async () => {
+    const rt = runtime(); const credits = commercial();
+    const authority = new ManagedGenerationBudgetAuthority(rt.authority, credits, { MANAGED_GENERATION_USD_PER_CREDIT: "0.03" });
+
+    await expect(authority.reserve({ ...input, fundingMode: undefined })).resolves.toMatchObject({
+      kind: "confirmation_required",
+      quote: { quoteId: "quote-1", totalDebitUnits: 14 },
+    });
+    expect(rt.reserve).not.toHaveBeenCalled();
+  });
+
   it("rejects a quote confirmation that is not bound to the exact admission facts", async () => {
     const rt = runtime(); const credits = commercial();
     const authority = new ManagedGenerationBudgetAuthority(rt.authority, credits, { MANAGED_GENERATION_USD_PER_CREDIT: "0.03" });

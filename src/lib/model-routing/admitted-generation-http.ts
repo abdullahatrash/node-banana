@@ -3,6 +3,7 @@ import { z } from "zod";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 import { admitStudioGeneration } from "./admitted-generation-service";
+import { DEFAULT_GENERATION_FUNDING_MODE } from "./types";
 
 const modelRef = z.object({ provider: z.literal("replicate"), model: z.string().min(1).max(200), version: z.string().min(8).max(200), inputSchemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
 const briefList = z.array(z.string().trim().min(1).max(200)).max(50);
@@ -13,7 +14,7 @@ const bodySchema = z.object({
   quantity: z.number().positive().max(600), sourceAssetIds: z.array(z.string().min(1).max(200)).max(20).default([]),
   rightsBasis: z.enum(["owned","licensed","public_domain","consented"]), permittedRemix: z.enum(["reference_only","transform","derivative"]), rightsEvidenceIds: z.array(z.string().min(1).max(200)).max(20).default([]),
   remixBrief: z.object({ preserve: briefList, transform: briefList, avoid: briefList }).strict(),
-  fundingMode: z.enum(["byok", "managed"]).default("byok"),
+  fundingMode: z.enum(["byok", "managed"]).default(DEFAULT_GENERATION_FUNDING_MODE),
   managedQuoteAcceptance: z.object({ quoteId: z.string().uuid(), confirmationDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).transform((value) => value as `sha256:${string}`) }).strict().nullable().optional(),
   personaId: z.string().min(1).max(200).nullable().default(null),
   contentExecution: z.object({ contentPieceId: z.string().min(1).max(200), contentPieceRevision: z.number().int().positive() }).strict().nullable().default(null),

@@ -5,17 +5,17 @@ import { authorizeFallback } from "./compatibility";
 import { DENYING_GENERATION_BUDGET_AUTHORITY, type GenerationBudgetAuthority } from "./budget-authority";
 import type { ManagedCreditQuoteAcceptance } from "./budget-authority";
 import type { ModelRoutingRepository } from "./repository";
+import { DEFAULT_GENERATION_FUNDING_MODE } from "./types";
 import type {
   ArabicVariety, ContentLanguage, CostQuote, ExactModelRef,
   FallbackAuthorization, GenerationCapability, GenerationIntent,
-  GenerationQuality, ExecutionMode, ModelDescriptor,
+  GenerationQuality, ExecutionMode, ModelDescriptor, PricingQuantity,
 } from "./types";
 import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } from "./generation-region";
 import { validateRightsEvidence } from "./rights-evidence";
 import { validateImmutableBrandContext } from "./brand-context";
 import { createProviderCompositionEvidence } from "./provider-input-composition";
 import { priceExecution, quoteTotalUsd } from "./pricing";
-import type { PricingQuantity } from "./types";
 
 const digest = (value: unknown) => canonicalDigest(value) as `sha256:${string}`;
 const sameModel = (a: ExactModelRef, b: ExactModelRef) =>
@@ -139,7 +139,7 @@ export class ModelRoutingService {
     let quote: CostQuote;
     try { quote = priceExecution({ price: selected.qualification.executionPriceUsd, unitQuantity: input.quantity, pricingQuantities: input.pricingQuantities, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) }); }
     catch { return { kind: "invalid" as const }; }
-    const fundingMode = input.fundingMode ?? "byok";
+    const fundingMode = input.fundingMode ?? DEFAULT_GENERATION_FUNDING_MODE;
     const reservation = await this.budgets.reserve({ workspaceId: input.workspaceId, principalId: input.userId, intentId: id, model: input.selectedModel, quote, fundingMode, managedQuoteAcceptance: input.managedQuoteAcceptance ?? null, at });
     if (reservation.kind !== "reserved") {
       if (fallbackReservation?.disposition === "created") await this.repository.releaseFallbackSpend({ workspaceId: input.workspaceId, authorizationId: fallbackReservation.authorizationId, intentId: id, at });

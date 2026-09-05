@@ -3,6 +3,7 @@ export type GenerationQuality = "preview" | "standard" | "premium";
 export type ExecutionMode = "sync" | "async";
 export type ReplicateEndpoint = "versioned" | "official";
 export type GenerationFundingMode = "byok" | "managed";
+export const DEFAULT_GENERATION_FUNDING_MODE: GenerationFundingMode = "managed";
 export type ContentLanguage = "ar" | "en" | "mixed";
 export type ArabicVariety = "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other";
 export type UnitPriceBasis = "image" | "second" | "run";

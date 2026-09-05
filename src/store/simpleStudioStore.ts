@@ -10,14 +10,13 @@ import {
 } from "@/lib/studio/client";
 import { runAdmittedStudioGeneration, StudioGenerationError } from "@/lib/model-routing/studio-generation-client";
 import type { ManagedCreditQuote } from "@/lib/model-routing/budget-authority";
-import type { ExecutionPriceUsd } from "@/lib/model-routing/types";
+import { DEFAULT_GENERATION_FUNDING_MODE, type ExecutionPriceUsd } from "@/lib/model-routing/types";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type SimpleStudioMode = "photo" | "video" | "copy";
-export const DEFAULT_GENERATION_FUNDING_MODE = "managed" as const;
 
 export interface Generation {
   id: string;

@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const download = vi.fn(async (_assetId: string) => ({ assetId: "asset-1", key: "key", downloadUrl: "https://media.example/output.mp4", expiresInSeconds: 60 }));
 vi.mock("@/lib/studio/client", () => ({ getActiveWorkspaceId: () => "ws", getStudioAssetDownloadUrl: (assetId: string) => download(assetId), ingestStudioAsset: vi.fn(), createStudioAssetPresign: vi.fn(), finalizeStudioAssetUpload: vi.fn() }));
-import { DEFAULT_GENERATION_FUNDING_MODE, useSimpleStudioStore } from "../simpleStudioStore";
+import { DEFAULT_GENERATION_FUNDING_MODE } from "@/lib/model-routing/types";
+import { useSimpleStudioStore } from "../simpleStudioStore";
 
 describe("Simple Studio admitted media generation", () => {
   beforeEach(() => { vi.clearAllMocks(); useSimpleStudioStore.setState({ mode: "video", prompt: "إعلان خليجي", rewrittenPrompt: null, rewriteEnabled: false, selectedModelId: "google/veo-3.1-lite", selectedModelProvider: "replicate", selectedModelName: "Veo", selectedModelVersion: "immutable-version-1", selectedModelSchemaDigest: `sha256:${"a".repeat(64)}`, aspectRatio: "9:16", batchCount: 1, sourceImage: null, sourceMediaType: null, videoDuration: 5, dialogueEnabled: false, dialogueLanguage: "ar", arabicVariety: "gulf", fundingMode: "byok", rightsBasis: "owned", permittedRemix: "transform", rightsConfirmed: true, isGenerating: false, generationsByMode: { photo: [], video: [], copy: [] }, generations: [] }); });
