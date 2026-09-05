@@ -266,6 +266,37 @@ export const verification = pgTable(
 );
 
 /**
+ * Minimal proof that personal authentication state was irreversibly erased.
+ * The referenced user row is a pseudonymous tombstone retained only so
+ * immutable Workspace, rights, audit, and financial evidence remains valid.
+ */
+export const identityErasureReceipts = pgTable(
+  "identity_erasure_receipts",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => user.id, { onDelete: "restrict" }),
+    receiptId: text("receipt_id").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    result: jsonb("result").$type<Record<string, number>>().notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    receiptUnique: uniqueIndex("identity_erasure_receipts_receipt_id_unique").on(
+      table.receiptId,
+    ),
+    valuesCheck: check(
+      "identity_erasure_receipts_values_check",
+      sql`${table.receiptId} ~ '^ier_[a-f0-9]{32}$'
+        and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and octet_length(${table.result}::text) between 2 and 4096
+        and ${table.completedAt} >= ${table.requestedAt}`,
+    ),
+  }),
+);
+
+/**
  * ContentOS domain tables (workspace-scoped, multi-tenant aware).
  */
 export const workspaceRoleEnum = pgEnum("workspace_role", [

@@ -21,6 +21,7 @@ function SignInForm() {
   const searchParams = useSearchParams();
   const { data: session, isPending } = authClient.useSession();
   const nextParam = searchParams.get("next");
+  const identityErased = searchParams.get("erased") === "1";
   const nextPath =
     nextParam && isSafeLocalPath(nextParam)
       ? nextParam
@@ -84,6 +85,7 @@ function SignInForm() {
       <div className="w-full max-w-md border border-neutral-800 bg-neutral-900 rounded-xl p-6">
         <h1 className="text-xl font-semibold">{t("title")}</h1>
         <p className="text-sm text-neutral-400 mt-1">{t("subtitle")}</p>
+        {identityErased ? <p role="status" className="mt-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{t("erased")}</p> : null}
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <label className="block">

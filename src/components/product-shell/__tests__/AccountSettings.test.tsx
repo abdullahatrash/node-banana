@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(), replace: vi.fn(), listAccounts: vi.fn(), listSessions: vi.fn(),
   updateUser: vi.fn(), changeEmail: vi.fn(), changePassword: vi.fn(), unlinkAccount: vi.fn(),
   linkSocial: vi.fn(), revokeOtherSessions: vi.fn(), revokeSession: vi.fn(), signOut: vi.fn(),
+  fetch: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh, replace: mocks.replace }) }));
@@ -25,8 +26,24 @@ const sessions = [
 describe("AccountSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("fetch", mocks.fetch);
     mocks.listAccounts.mockResolvedValue({ data: accounts, error: null });
     mocks.listSessions.mockResolvedValue({ data: sessions, error: null });
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        preflight: {
+          schema: "identity-erasure-preflight/v1",
+          canErase: true,
+          hasCredential: true,
+          requiresFreshSession: false,
+          membershipCount: 2,
+          ownedWorkspaces: [],
+          blockers: [],
+        },
+      }),
+    });
     for (const method of [mocks.updateUser, mocks.changeEmail, mocks.changePassword, mocks.unlinkAccount, mocks.revokeOtherSessions, mocks.revokeSession, mocks.signOut]) method.mockResolvedValue({ data: { status: true }, error: null });
   });
 
@@ -61,5 +78,73 @@ describe("AccountSettings", () => {
     expect(container.firstElementChild).toHaveAttribute("dir", "rtl");
     expect(screen.getByRole("tab", { name: "الملف الشخصي" })).toBeInTheDocument();
     expect(await screen.findByText("البريد وكلمة المرور")).toBeInTheDocument();
+  });
+
+  it("shows exact active-owner blockers instead of exposing the destructive form", async () => {
+    mocks.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        success: true,
+        preflight: {
+          schema: "identity-erasure-preflight/v1",
+          canErase: false,
+          hasCredential: true,
+          requiresFreshSession: false,
+          membershipCount: 1,
+          ownedWorkspaces: [{ id: "workspace-1", name: "Active Brand", lifecycle: "active" }],
+          blockers: [{ code: "ACTIVE_OWNED_WORKSPACE", workspaceId: "workspace-1", workspaceName: "Active Brand" }],
+        },
+      }),
+    });
+
+    render(<I18nTestProvider locale="en"><AccountSettings initialUser={{ name: "Alice", email: "alice@example.test", emailVerified: true }} currentSessionId="current-session" enabledSocialProviders={[]} /></I18nTestProvider>);
+
+    expect(await screen.findByText("Active Brand still has you as its active owner.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Permanently erase identity" })).not.toBeInTheDocument();
+  });
+
+  it("requires explicit acknowledgements and current-password verification before erasure", async () => {
+    mocks.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          preflight: {
+            schema: "identity-erasure-preflight/v1",
+            canErase: true,
+            hasCredential: true,
+            requiresFreshSession: false,
+            membershipCount: 2,
+            ownedWorkspaces: [],
+            blockers: [],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, result: { receiptId: `ier_${"a".repeat(32)}` } }),
+      });
+    const user = userEvent.setup();
+    render(<I18nTestProvider locale="en"><AccountSettings initialUser={{ name: "Alice", email: "alice@example.test", emailVerified: true }} currentSessionId="current-session" enabledSocialProviders={[]} /></I18nTestProvider>);
+
+    await screen.findByRole("button", { name: "Permanently erase identity" });
+    await user.click(screen.getByLabelText("I understand that I will permanently lose access to this login identity."));
+    await user.click(screen.getByLabelText("I understand that all of my Workspace memberships will be removed."));
+    await user.click(screen.getByLabelText("I exported any personal data I need, or I do not need an export."));
+    await user.type(screen.getByRole("textbox", { name: /Confirmation phrase/ }), "ERASE");
+    await user.type(screen.getByLabelText("Current password", { selector: 'input[name="password"]' }), "Password123!");
+    await user.click(screen.getByRole("button", { name: "Permanently erase identity" }));
+
+    expect(mocks.fetch).toHaveBeenLastCalledWith("/api/account/erasure", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        confirmation: "ERASE",
+        acknowledgeAccessLoss: true,
+        acknowledgeMembershipRemoval: true,
+        exportHandled: true,
+        password: "Password123!",
+      }),
+    }));
+    expect(mocks.replace).toHaveBeenCalledWith("/sign-in?erased=1");
   });
 });
