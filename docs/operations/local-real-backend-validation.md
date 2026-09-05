@@ -56,6 +56,7 @@ server-owned managed token and stable key revision.
 | Arabic and English shell | Language switcher, then all primary routes | Stored user preference and authored catalogs | Arabic produces `lang=ar`, `dir=rtl`, logical right-side navigation and correct mixed-direction text; English restores LTR. `smoke:i18n-shell` covers the route matrix. | None |
 | Public pricing | `/ar/pricing` and `/en/pricing` | Active versioned billing catalog | Plans and authored prices render in both languages without authentication. | None |
 | Balance, plans, and packs | Header credit control and `/billing` | Subscription, credit buckets and ledger | Header and billing page agree on available credits; plan/pack actions clearly report merchant availability. | None until checkout is explicitly opened |
+| Paddle sandbox checkout | `/billing`, `/checkout/paddle`, merchant webhook | Separate Paddle sandbox account, approved HTTPS tunnel, sandbox API key/client token/notification secret | The server creates one custom transaction from the immutable local quote; Paddle.js opens it in Arabic or English; a signed `transaction.completed` event applies the exact plan/credits once; recovery finds an uncertain create instead of blindly creating another transaction. | Sandbox only; no real money |
 | Brand memory | `/brand` | Accepted immutable Brand Profile | The active revision contains audience, voice, visual and Arabic-language direction; generation remains closed without an accepted revision. | None |
 | Provider credentials | `/settings?section=providers` | `BYOK_KEY_ENCRYPTION_KEY`, step-up delivery, Workspace vault | Saving a Replicate token requires fresh verification, validates the account without a prediction, stores ciphertext only, and never returns the token. | No generation spend |
 | Workspace media | `/library` and upload controls | MinIO/S3-compatible storage and Postgres | Presign, upload, finalize, preview, list and soft-delete preserve Workspace isolation and storage quota. | None |
@@ -69,6 +70,39 @@ server-owned managed token and stable key revision.
 | Social compose and calendar | `/compose`, `/calendar`, `/channels` | Workspace assets and a real supported channel connection | Draft, approval, scheduling and delivery state are durable. Publishing is external and must be tested on a dedicated test account. | Platform side effect, no Generation Credits |
 | Workers and recovery | `pnpm workers:local -- --url http://localhost:3002` | `STUDIO_INTERNAL_API_SECRET` and Postgres | Leases, retries and idempotency converge without duplicate Assets, posts, ledger entries or Inspiration Items. | A worker never invents authority to start a new generation |
 | Governance and erasure | `/settings` governance/privacy/account sections | Postgres, object storage and configured external adapters | Export, retention, legal hold, closure and erasure show exact scope, require the correct confirmations, and retain only the allowed audit evidence. | None; external deletion adapters may have side effects |
+
+## 4. Exercise Paddle without real money
+
+Create a separate Paddle sandbox account and an HTTPS tunnel that forwards to
+the one running app origin. In Paddle sandbox, set the default payment link to
+`https://<tunnel>/checkout/paddle`, create a client-side token, create a
+least-privileged API key with transaction read/write and customer-portal access,
+and create a notification destination at
+`https://<tunnel>/api/studio/webhooks/merchant`. Subscribe to
+`transaction.completed` and `transaction.canceled` and copy that destination's
+secret into `PADDLE_WEBHOOK_SECRET`.
+
+Set the Paddle variables documented in `.env.example`, restart the app, and run:
+
+```bash
+pnpm doctor:local -- --workspace seed_ws_alice
+```
+
+The Merchant adapter check must be green. Open `/billing`, choose a sandbox
+plan or credit pack, and complete Paddle's documented sandbox checkout. Do not
+use a real card. Refresh Billing only after the signed webhook is accepted; the
+subscription or purchased credit bucket should appear exactly once. Re-deliver
+the same notification from Paddle's delivery log and confirm the projection is
+unchanged. Then open the customer portal from Billing and confirm it returns to
+the app.
+
+If transaction creation loses its response, the local session moves to
+`outcome_unknown`. Retrying or running the commercial reconciliation worker
+searches Paddle for the original `node_banana_checkout_id`; it never blindly
+submits a second create. A recurring renewal copies custom data in Paddle, but
+the webhook adapter acknowledges it without replaying the original checkout.
+Recurring subscription lifecycle projection is a separate billing slice and
+must be completed before live launch.
 
 ### RTL visual approval is a separate gate
 

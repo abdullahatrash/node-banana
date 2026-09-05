@@ -198,7 +198,7 @@ export function buildLocalReadinessReport(
           "Start an eligible trial or complete a configured credit purchase.",
         ),
     facts.merchantConfigured
-      ? ready("merchant", "Merchant adapter", "A Merchant-of-Record endpoint is configured.")
+      ? ready("merchant", "Merchant adapter", "A Merchant-of-Record checkout, webhook, and portal adapter is configured.")
       : {
           id: "merchant",
           label: "Merchant adapter",

@@ -4,8 +4,9 @@ import { MerchantCheckoutError } from "@/lib/commercial/checkout";
 
 export async function POST(request: NextRequest) {
   const body = await request.text();
-  const event = MERCHANT_OF_RECORD.verifyWebhook({ body, timestamp: request.headers.get("x-merchant-timestamp"), signature: request.headers.get("x-merchant-signature"), at: new Date() });
-  if (!event) return NextResponse.json({ success: false, code: "INVALID_MERCHANT_SIGNATURE" }, { status: 401 });
-  try { return NextResponse.json({ success: true, result: await MERCHANT_CHECKOUTS.applyVerifiedEvent(event) }); }
+  const verification = MERCHANT_OF_RECORD.verifyWebhook({ body, timestamp: request.headers.get("x-merchant-timestamp"), signature: request.headers.get("x-merchant-signature"), paddleSignature: request.headers.get("paddle-signature"), at: new Date() });
+  if (verification.kind === "invalid") return NextResponse.json({ success: false, code: "INVALID_MERCHANT_SIGNATURE" }, { status: 401 });
+  if (verification.kind === "ignored") return NextResponse.json({ success: true, result: { state: "ignored", reason: verification.reason } }, { status: 202 });
+  try { return NextResponse.json({ success: true, result: await MERCHANT_CHECKOUTS.applyVerifiedEvent(verification.event) }); }
   catch (error) { if (error instanceof MerchantCheckoutError) return NextResponse.json({ success: false, code: error.code }, { status: error.code.includes("CONFLICT") || error.code.includes("MISMATCH") ? 409 : 422 }); throw error; }
 }

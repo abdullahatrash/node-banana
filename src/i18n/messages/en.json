@@ -1168,6 +1168,13 @@
       }
     }
   },
+  "paddleCheckout": {
+    "title": "Secure checkout",
+    "description": "Paddle is opening the localized payment form as merchant of record. Your plan or credits activate only after the signed transaction webhook is verified.",
+    "loading": "Opening secure checkout…",
+    "retry": "Open checkout",
+    "unavailable": "Secure checkout is not configured or this payment link is invalid. Return to Billing and try again."
+  },
   "generationRecovery": {
     "errors": {
       "MODEL_NOT_EXECUTABLE": "This model does not have a current signed execution qualification.",

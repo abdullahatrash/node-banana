@@ -27,8 +27,8 @@ describe("ConfiguredMerchantOfRecordAdapter", () => {
   it("accepts only a fresh signature over the exact webhook bytes", () => {
     const body = JSON.stringify(event), timestamp = String(Date.parse("2026-09-01T00:01:00.000Z") / 1000), signature = `hmac-sha256=${createHmac("sha256", "secret").update(`${timestamp}.${body}`).digest("hex")}`;
     const adapter = new ConfiguredMerchantOfRecordAdapter(environment, vi.fn());
-    expect(adapter.verifyWebhook({ body, timestamp, signature, at: new Date("2026-09-01T00:02:00.000Z") })?.eventId).toBe("evt_1");
-    expect(adapter.verifyWebhook({ body: `${body} `, timestamp, signature, at: new Date("2026-09-01T00:02:00.000Z") })).toBeNull();
-    expect(adapter.verifyWebhook({ body, timestamp, signature, at: new Date("2026-09-01T00:20:00.000Z") })).toBeNull();
+    expect(adapter.verifyWebhook({ body, timestamp, signature, paddleSignature: null, at: new Date("2026-09-01T00:02:00.000Z") })).toMatchObject({ kind: "event", event: { eventId: "evt_1" } });
+    expect(adapter.verifyWebhook({ body: `${body} `, timestamp, signature, paddleSignature: null, at: new Date("2026-09-01T00:02:00.000Z") })).toEqual({ kind: "invalid" });
+    expect(adapter.verifyWebhook({ body, timestamp, signature, paddleSignature: null, at: new Date("2026-09-01T00:20:00.000Z") })).toEqual({ kind: "invalid" });
   });
 });

@@ -103,7 +103,16 @@ async function run() {
     activePlans,
     activeCreditPacks,
     availableCredits,
-    merchantConfigured: Boolean(process.env.MERCHANT_OF_RECORD_BASE_URL?.trim() && hasConfiguredSecret(process.env.MERCHANT_OF_RECORD_API_TOKEN)),
+    merchantConfigured: process.env.MERCHANT_OF_RECORD_PROVIDER?.trim().toLowerCase() === "paddle"
+      ? Boolean(
+          (["sandbox", "live"] as string[]).includes(process.env.PADDLE_ENVIRONMENT?.trim() ?? "") &&
+          hasConfiguredSecret(process.env.PADDLE_API_KEY) &&
+          hasConfiguredSecret(process.env.PADDLE_WEBHOOK_SECRET) &&
+          Boolean(process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN?.trim()) &&
+          Boolean(process.env.PADDLE_CHECKOUT_URL?.trim()) &&
+          Boolean(process.env.PADDLE_ALLOWED_REDIRECT_HOSTS?.trim())
+        )
+      : Boolean(process.env.MERCHANT_OF_RECORD_BASE_URL?.trim() && hasConfiguredSecret(process.env.MERCHANT_OF_RECORD_API_TOKEN)),
     xAdsAttributionAvailable: xAdsReadiness.available,
     xAdsAttributionBlockers: xAdsReadiness.blockers,
   };

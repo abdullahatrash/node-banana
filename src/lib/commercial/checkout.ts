@@ -43,6 +43,20 @@ export class MerchantCheckoutService {
     if (!session) throw new MerchantCheckoutError("CHECKOUT_NOT_CREATED");
     if (session.state === "completed") return { checkoutId: session.id, state: session.state, url: null, expiresAt: session.expiresAt.toISOString() };
     if (!inArrayValue(session.state, ["creating", "outcome_unknown"])) throw new MerchantCheckoutError("CHECKOUT_NOT_RETRYABLE");
+    if (session.state === "outcome_unknown") {
+      const recovered = await this.merchant.recoverCheckout({ checkoutId: session.id, merchantCheckoutRef: session.merchantCheckoutRef });
+      if (recovered.kind === "terminal") {
+        await this.applyVerifiedEvent(recovered.event);
+        const terminalState = recovered.event.eventType === "checkout.completed" ? "completed" : recovered.event.eventType === "checkout.failed" ? "failed_known" : recovered.event.eventType === "checkout.expired" ? "expired" : "cancelled";
+        return { checkoutId: session.id, state: terminalState, url: null, expiresAt: session.expiresAt.toISOString() };
+      }
+      if (recovered.kind === "ready") {
+        if (recovered.expiresAt <= this.now() || recovered.expiresAt.getTime() - this.now().getTime() > 86_400_000) throw new MerchantCheckoutError("CHECKOUT_EXPIRY_INVALID");
+        await this.database.update(merchantCheckoutSessions).set({ state: "ready", merchantCheckoutRef: recovered.merchantCheckoutRef, expiresAt: recovered.expiresAt, recoveryAttempts: 0, nextRecoveryAt: new Date(this.now().getTime() + 15_000), lastRecoveryStatus: "recovered_ready", updatedAt: this.now() }).where(and(eq(merchantCheckoutSessions.workspaceId, input.workspaceId), eq(merchantCheckoutSessions.id, session.id), eq(merchantCheckoutSessions.state, "outcome_unknown")));
+        return { checkoutId: session.id, state: "ready", url: recovered.url, expiresAt: recovered.expiresAt.toISOString() };
+      }
+      throw new MerchantCheckoutError("CHECKOUT_OUTCOME_UNKNOWN");
+    }
     try {
       const result = await this.merchant.createCheckout({ checkoutId: session.id, workspaceId: input.workspaceId, purposeKind: session.purposeKind as MerchantCheckoutPurpose, purposeRef: session.purposeRef, amountMinor: session.amountMinor, taxMinor: session.taxMinor, currency: session.currency, termsDigest: session.termsDigest, commercialSnapshot: session.commercialSnapshot, successPath: input.successPath, cancelPath: input.cancelPath });
       if (result.kind === "unavailable") { await this.database.update(merchantCheckoutSessions).set({ state: "failed_known", updatedAt: this.now() }).where(and(eq(merchantCheckoutSessions.workspaceId, input.workspaceId), eq(merchantCheckoutSessions.id, session.id), inArray(merchantCheckoutSessions.state, ["creating", "outcome_unknown"]))); throw new MerchantCheckoutError("MERCHANT_OF_RECORD_UNAVAILABLE"); }
@@ -92,13 +106,18 @@ export class MerchantCheckoutService {
       for (const row of rows) await tx.update(merchantCheckoutSessions).set({ recoveryLeaseOwner: owner, recoveryLeaseExpiresAt: leaseExpiresAt, updatedAt: at }).where(and(eq(merchantCheckoutSessions.workspaceId, row.workspaceId), eq(merchantCheckoutSessions.id, row.id)));
       return rows;
     });
-    const summary = { inspected: sessions.length, applied: 0, pending: 0, unavailable: 0, failed: 0 };
+    const summary = { inspected: sessions.length, applied: 0, recovered: 0, pending: 0, unavailable: 0, failed: 0 };
     for (const session of sessions) {
       try {
         const result = await this.merchant.recoverCheckout({ checkoutId: session.id, merchantCheckoutRef: session.merchantCheckoutRef });
         if (result.kind === "terminal") {
           if (result.event.checkoutId !== session.id || (session.merchantCheckoutRef && result.event.merchantCheckoutRef !== session.merchantCheckoutRef)) throw new MerchantCheckoutError("CHECKOUT_EVENT_MISMATCH");
           await this.applyVerifiedEvent(result.event); summary.applied += 1; continue;
+        }
+        if (result.kind === "ready") {
+          if (result.expiresAt <= at || result.expiresAt.getTime() - at.getTime() > 86_400_000) throw new MerchantCheckoutError("CHECKOUT_EXPIRY_INVALID");
+          await this.database.update(merchantCheckoutSessions).set({ state: "ready", merchantCheckoutRef: result.merchantCheckoutRef, expiresAt: result.expiresAt, recoveryAttempts: 0, nextRecoveryAt: new Date(at.getTime() + 15_000), recoveryLeaseOwner: null, recoveryLeaseExpiresAt: null, lastRecoveryStatus: "recovered_ready", updatedAt: at }).where(and(eq(merchantCheckoutSessions.workspaceId, session.workspaceId), eq(merchantCheckoutSessions.id, session.id), eq(merchantCheckoutSessions.recoveryLeaseOwner, owner)));
+          summary.recovered += 1; continue;
         }
         const status = result.kind;
         summary[status] += 1;

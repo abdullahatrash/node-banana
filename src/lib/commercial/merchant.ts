@@ -6,17 +6,21 @@ export type MerchantCheckoutEvent = {
   provider: string; eventId: string; eventType: "checkout.completed" | "checkout.failed" | "checkout.expired" | "checkout.cancelled";
   checkoutId: string; merchantCheckoutRef: string; merchantEffectRef: string; merchantCustomerRef: string | null; merchantSubscriptionRef: string | null; merchantReceiptRef: string | null; periodStartsAt: Date | null; periodEndsAt: Date | null; occurredAt: Date;
 };
+export type MerchantWebhookVerification =
+  | { kind: "event"; event: MerchantCheckoutEvent }
+  | { kind: "ignored"; provider: string; eventId: string; reason: string }
+  | { kind: "invalid" };
 
 export interface MerchantOfRecordAdapter {
   createCheckout(input: { checkoutId: string; workspaceId: string; purposeKind: MerchantCheckoutPurpose; purposeRef: string; amountMinor: number; taxMinor: number; currency: string; termsDigest: string; commercialSnapshot: Record<string, unknown>; successPath: string; cancelPath: string }): Promise<{ kind: "ready"; merchantCheckoutRef: string; url: string; expiresAt: Date } | { kind: "unavailable" }>;
-  recoverCheckout(input: { checkoutId: string; merchantCheckoutRef: string | null }): Promise<{ kind: "pending" } | { kind: "terminal"; event: MerchantCheckoutEvent } | { kind: "unavailable" }>;
-  verifyWebhook(input: { body: string; timestamp: string | null; signature: string | null; at: Date }): MerchantCheckoutEvent | null;
+  recoverCheckout(input: { checkoutId: string; merchantCheckoutRef: string | null }): Promise<{ kind: "pending" } | { kind: "ready"; merchantCheckoutRef: string; url: string; expiresAt: Date } | { kind: "terminal"; event: MerchantCheckoutEvent } | { kind: "unavailable" }>;
+  verifyWebhook(input: { body: string; timestamp: string | null; signature: string | null; paddleSignature: string | null; at: Date }): MerchantWebhookVerification;
   createPortal(input: { workspaceId: string; customerRef: string; returnPath: string }): Promise<{ kind: "ready"; url: string; expiresAt: Date } | { kind: "unavailable" }>;
 }
 
 const eventSchema = z.object({ provider: z.string().min(1).max(80), eventId: z.string().min(1).max(200), eventType: z.enum(["checkout.completed", "checkout.failed", "checkout.expired", "checkout.cancelled"]), checkoutId: z.string().min(1).max(200), merchantCheckoutRef: z.string().min(1).max(500), merchantEffectRef: z.string().min(1).max(500), merchantCustomerRef: z.string().min(1).max(500).nullable(), merchantSubscriptionRef: z.string().min(1).max(500).nullable(), merchantReceiptRef: z.string().min(1).max(500).nullable(), periodStartsAt: z.string().datetime().nullable(), periodEndsAt: z.string().datetime().nullable(), occurredAt: z.string().datetime() }).strict();
 const checkoutSchema = z.object({ merchantCheckoutRef: z.string().min(1).max(500), url: z.string().url(), expiresAt: z.string().datetime() }).strict();
-const recoverySchema = z.discriminatedUnion("state", [z.object({ state: z.literal("pending") }).strict(), z.object({ state: z.literal("terminal"), event: eventSchema }).strict()]);
+const recoverySchema = z.discriminatedUnion("state", [z.object({ state: z.literal("pending") }).strict(), z.object({ state: z.literal("ready"), ...checkoutSchema.shape }).strict(), z.object({ state: z.literal("terminal"), event: eventSchema }).strict()]);
 const portalSchema = z.object({ url: z.string().url(), expiresAt: z.string().datetime() }).strict();
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -34,14 +38,18 @@ export class ConfiguredMerchantOfRecordAdapter implements MerchantOfRecordAdapte
     const url = this.endpoint(`checkouts/by-idempotency-key/${encodeURIComponent(input.checkoutId)}`); if (!url) return { kind: "unavailable" as const };
     if (input.merchantCheckoutRef) url.searchParams.set("merchantCheckoutRef", input.merchantCheckoutRef);
     const response = await this.authorized(url, { method: "GET" }); if (!response) return { kind: "unavailable" as const };
-    const parsed = recoverySchema.parse(await response.json()); return parsed.state === "pending" ? { kind: "pending" as const } : { kind: "terminal" as const, event: hydrateEvent(parsed.event) };
+    const parsed = recoverySchema.parse(await response.json());
+    if (parsed.state === "pending") return { kind: "pending" as const };
+    if (parsed.state === "terminal") return { kind: "terminal" as const, event: hydrateEvent(parsed.event) };
+    this.assertRedirect(parsed.url);
+    return { kind: "ready" as const, merchantCheckoutRef: parsed.merchantCheckoutRef, url: parsed.url, expiresAt: new Date(parsed.expiresAt) };
   }
   verifyWebhook(input: Parameters<MerchantOfRecordAdapter["verifyWebhook"]>[0]) {
-    const secret = this.environment.MERCHANT_OF_RECORD_WEBHOOK_SECRET?.trim(); if (!secret || !input.timestamp || !input.signature || !/^hmac-sha256=[a-f0-9]{64}$/.test(input.signature)) return null;
-    const timestamp = Number(input.timestamp); if (!Number.isFinite(timestamp) || Math.abs(input.at.getTime() - timestamp * 1_000) > 5 * 60_000) return null;
+    const secret = this.environment.MERCHANT_OF_RECORD_WEBHOOK_SECRET?.trim(); if (!secret || !input.timestamp || !input.signature || !/^hmac-sha256=[a-f0-9]{64}$/.test(input.signature)) return { kind: "invalid" as const };
+    const timestamp = Number(input.timestamp); if (!Number.isFinite(timestamp) || Math.abs(input.at.getTime() - timestamp * 1_000) > 5 * 60_000) return { kind: "invalid" as const };
     const expected = `hmac-sha256=${createHmac("sha256", secret).update(`${input.timestamp}.${input.body}`).digest("hex")}`;
-    if (!sameSignature(expected, input.signature)) return null;
-    try { const parsed = eventSchema.safeParse(JSON.parse(input.body)); return parsed.success ? hydrateEvent(parsed.data) : null; } catch { return null; }
+    if (!sameSignature(expected, input.signature)) return { kind: "invalid" as const };
+    try { const parsed = eventSchema.safeParse(JSON.parse(input.body)); return parsed.success ? { kind: "event" as const, event: hydrateEvent(parsed.data) } : { kind: "invalid" as const }; } catch { return { kind: "invalid" as const }; }
   }
   async createPortal(input: Parameters<MerchantOfRecordAdapter["createPortal"]>[0]) {
     const response = await this.call("portal", { method: "POST", headers: { "Idempotency-Key": `portal:${input.workspaceId}:${input.customerRef}` }, body: JSON.stringify(input) });
@@ -57,7 +65,7 @@ export class ConfiguredMerchantOfRecordAdapter implements MerchantOfRecordAdapte
 export class UnavailableMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
   async createCheckout() { return { kind: "unavailable" as const }; }
   async recoverCheckout() { return { kind: "unavailable" as const }; }
-  verifyWebhook() { return null; }
+  verifyWebhook() { return { kind: "invalid" as const }; }
   async createPortal() { return { kind: "unavailable" as const }; }
 }
 
