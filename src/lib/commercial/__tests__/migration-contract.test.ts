@@ -45,3 +45,19 @@ describe("workspace seat entitlement migration", () => {
     expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN)\b|\bTRUNCATE\b/i);
   });
 });
+describe("referral capture migration", () => {
+  it("persists privacy-safe first-touch receipts and immutable terminal attribution state", () => {
+    const sql = readFileSync("drizzle/0146_referral_capture_attribution.sql", "utf8");
+    for (const value of [
+      "referral_capture_receipts",
+      "visitor_token_digest",
+      "referral_attributions_capture_fk",
+      "referral_attributions_capture_unique",
+      "protect_referral_capture_identity",
+      "terminal referral capture state is immutable",
+      "superseded",
+    ]) expect(sql).toContain(value);
+    expect(sql).not.toMatch(/\b(ip_address|user_agent|email)\b/i);
+    expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN)\b|\bTRUNCATE\b/i);
+  });
+});

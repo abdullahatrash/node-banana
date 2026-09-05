@@ -10,6 +10,10 @@ import {
 import { isDatabaseConfigured } from "@/lib/db";
 import { OnboardingError } from "@/lib/onboarding/errors";
 import { createProductionOnboardingService } from "@/lib/onboarding/production";
+import {
+  REFERRAL_CAPTURE_COOKIE,
+  referralCaptureCookieOptions,
+} from "@/lib/commercial/referral-capture";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -136,7 +140,33 @@ export async function POST(request: NextRequest) {
       userId: identity.userId,
       command,
     });
-    return noStoreJson({ success: true, snapshot });
+    const response = noStoreJson({ success: true, snapshot });
+    const referralToken = request.cookies.get(REFERRAL_CAPTURE_COOKIE)?.value;
+    if (
+      referralToken &&
+      typeof command === "object" &&
+      command !== null &&
+      "type" in command &&
+      command.type === "complete" &&
+      snapshot.workspaceId
+    ) {
+      try {
+        const { COMMERCIAL } = await import("@/lib/commercial/production");
+        await COMMERCIAL.claimReferralCapture({
+          token: referralToken,
+          userId: identity.userId,
+          referredWorkspaceId: snapshot.workspaceId,
+        });
+        response.cookies.set(REFERRAL_CAPTURE_COOKIE, "", {
+          ...referralCaptureCookieOptions(),
+          maxAge: 0,
+        });
+      } catch {
+        // Keep the opaque cookie for a later retry. Referral infrastructure must
+        // never roll back a successfully completed onboarding transaction.
+      }
+    }
+    return response;
   } catch (error) {
     if (error instanceof SyntaxError) {
       return noStoreJson(

@@ -82,6 +82,8 @@ export const config = {
     "/inspiration/:path*",
     "/library/:path*",
     "/onboarding/:path*",
+    "/r/:path*",
+    "/refer-and-earn/:path*",
     "/sign-in",
     "/sign-up",
     "/verify-email",

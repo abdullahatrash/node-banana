@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getServerAuthSession: vi.fn(),
   getSnapshot: vi.fn(),
   execute: vi.fn(),
+  claimReferralCapture: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({ isDatabaseConfigured: () => true }));
@@ -19,6 +20,9 @@ vi.mock("@/lib/onboarding/production", () => ({
     getSnapshot: mocks.getSnapshot,
     execute: mocks.execute,
   }),
+}));
+vi.mock("@/lib/commercial/production", () => ({
+  COMMERCIAL: { claimReferralCapture: mocks.claimReferralCapture },
 }));
 
 import { GET, POST } from "../route";
@@ -85,5 +89,59 @@ describe("/api/onboarding", () => {
     const response = await POST(request("POST", command));
     expect(response.status).toBe(200);
     expect(mocks.execute).toHaveBeenCalledWith({ userId: "user_1", command });
+  });
+
+  it("claims a referral only after verified onboarding completes and clears the opaque cookie", async () => {
+    mocks.getServerAuthSession.mockResolvedValue(session(true));
+    mocks.execute.mockResolvedValue({
+      sessionId: "onb_1",
+      userId: "user_1",
+      workspaceId: "workspace_1",
+      status: "completed",
+    });
+    mocks.claimReferralCapture.mockResolvedValue({ kind: "attributed", attributionId: "attr_1" });
+    const command = {
+      type: "complete",
+      expectedRevision: 8,
+      idempotencyKey: "complete_123",
+      payload: {},
+    };
+    const referralToken = "r".repeat(43);
+    const response = await POST(new NextRequest("https://app.example.com/api/onboarding", {
+      method: "POST",
+      headers: {
+        origin: "https://app.example.com",
+        "content-type": "application/json",
+        cookie: `node-banana-referral-capture=${referralToken}`,
+      },
+      body: JSON.stringify(command),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.execute).toHaveBeenCalledBefore(mocks.claimReferralCapture);
+    expect(mocks.claimReferralCapture).toHaveBeenCalledWith({
+      token: referralToken,
+      userId: "user_1",
+      referredWorkspaceId: "workspace_1",
+    });
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
+  it("does not let referral infrastructure roll back completed onboarding", async () => {
+    mocks.getServerAuthSession.mockResolvedValue(session(true));
+    mocks.execute.mockResolvedValue({ workspaceId: "workspace_1", status: "completed" });
+    mocks.claimReferralCapture.mockRejectedValue(new Error("database temporarily unavailable"));
+    const response = await POST(new NextRequest("https://app.example.com/api/onboarding", {
+      method: "POST",
+      headers: {
+        origin: "https://app.example.com",
+        "content-type": "application/json",
+        cookie: `node-banana-referral-capture=${"r".repeat(43)}`,
+      },
+      body: JSON.stringify({ type: "complete", expectedRevision: 8, idempotencyKey: "complete_456", payload: {} }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
 });

@@ -33,6 +33,8 @@ describe("site routing", () => {
     "/dashboard",
     "/ai-studio",
     "/automations",
+    "/billing",
+    "/brand",
     "/content",
     "/library",
     "/calendar",
@@ -42,6 +44,10 @@ describe("site routing", () => {
     "/channels",
     "/approvals",
     "/deliveries",
+    "/influencers",
+    "/inspiration",
+    "/r/REFCODE",
+    "/refer-and-earn",
   ])("recognizes %s as product UI", (pathname) => {
     expect(isProductPath(pathname)).toBe(true);
   });
