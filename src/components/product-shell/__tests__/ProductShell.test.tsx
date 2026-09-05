@@ -97,6 +97,20 @@ describe("ProductShell", () => {
     );
 
     expect(screen.queryByRole("link", { name: "Plans & credits" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("shell-commercial-status-pending")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("shell-commercial-status-compact-pending")).not.toBeInTheDocument();
+  });
+
+  it("keeps plans and credits discoverable while the balance is unavailable", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: false }), { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderShell();
+
+    expect(screen.getByTestId("shell-commercial-status-pending")).toHaveTextContent("Plans & credits");
+    expect(screen.getByTestId("shell-commercial-status-compact-pending")).toHaveAttribute("href", "/billing");
+    expect(screen.getAllByRole("link", { name: "Open plans and credits" })).toHaveLength(2);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
   });
 
   it("marks legacy descendants active under the canonical link", () => {

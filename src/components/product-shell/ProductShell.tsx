@@ -305,7 +305,7 @@ export function ProductShell({
           </nav>
         </SidebarContent>
         <SidebarFooter>
-          <CommercialStatus summary={commercialSummary} />
+          {context.canReadBilling ? <CommercialStatus summary={commercialSummary} /> : null}
           <LanguageSwitcher className="w-full justify-start group-data-[collapsible=icon]:px-2" />
           <NavUser user={context.user} />
         </SidebarFooter>

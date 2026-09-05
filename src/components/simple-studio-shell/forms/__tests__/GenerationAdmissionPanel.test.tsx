@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GenerationAdmissionPanel } from "../GenerationAdmissionPanel";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 
@@ -16,6 +16,9 @@ vi.mock("next-intl", () => ({
     "selectModel": "Select an admitted model.",
     "unitPrice": `Provider price: ${values?.amount ?? ""} per ${values?.basis ?? ""}`,
     "estimatedCost": `Estimated provider cost for this request: ${values?.amount ?? ""}`,
+    "managedBalance": `${values?.count ?? ""} credits currently available`,
+    "managedBalanceLoading": "Loading the current credit balance…",
+    "managedBalanceUnavailable": "Current balance unavailable. Open billing before generating.",
     "basis.image": "image",
     "basis.second": "second",
     "basis.run": "run",
@@ -48,7 +51,13 @@ const quote = {
 };
 
 describe("GenerationAdmissionPanel managed credit confirmation", () => {
-  beforeEach(() => useSimpleStudioStore.setState({ fundingMode: "byok", pendingManagedCreditQuotes: [], selectedModelExecutionPriceUsd: null }));
+  afterEach(() => vi.unstubAllGlobals());
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem("node-banana-active-workspace-id", "workspace-1");
+    useSimpleStudioStore.setState({ fundingMode: "byok", pendingManagedCreditQuotes: [], selectedModelExecutionPriceUsd: null });
+  });
 
   it("explains BYOK billing and previews the selected provider cost", () => {
     useSimpleStudioStore.setState({
@@ -61,10 +70,22 @@ describe("GenerationAdmissionPanel managed credit confirmation", () => {
     expect(screen.getByRole("link", { name: "Manage key" })).toHaveAttribute("href", "/settings?section=providers");
   });
 
-  it("explains managed credits before the exact quote is created", () => {
+  it("shows the live managed-credit balance before the exact quote is created", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true, data: { credit: { availableUnits: 25 } } }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
     useSimpleStudioStore.setState({ fundingMode: "managed", selectedModelExecutionPriceUsd: null });
     render(<GenerationAdmissionPanel />);
     expect(screen.getByTestId("generation-funding-summary")).toHaveTextContent("Node Banana managed credits");
+    expect(await screen.findByTestId("managed-credit-balance")).toHaveTextContent("25 credits currently available");
+    expect(fetchMock).toHaveBeenCalledWith("/api/studio/billing", expect.objectContaining({ headers: { "x-workspace-id": "workspace-1" }, cache: "no-store" }));
+    expect(screen.getByRole("link", { name: "View credits" })).toHaveAttribute("href", "/billing");
+  });
+
+  it("keeps the billing action visible when the managed balance cannot load", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: false }), { status: 503 })));
+    useSimpleStudioStore.setState({ fundingMode: "managed" });
+    render(<GenerationAdmissionPanel />);
+    expect(await screen.findByTestId("managed-credit-balance")).toHaveTextContent("Current balance unavailable");
     expect(screen.getByRole("link", { name: "View credits" })).toHaveAttribute("href", "/billing");
   });
 

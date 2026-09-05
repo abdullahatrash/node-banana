@@ -38,7 +38,7 @@ export default async function DashboardPage() {
         <Metric icon={Radio} label={t("metrics.channels")} value={model.counts.channels} warning={model.counts.reauth} />
         <Metric icon={FileText} label={t("metrics.acceptedContent")} value={model.counts.content} />
         <Metric icon={CalendarClock} label={t("metrics.scheduled")} value={model.counts.scheduled} />
-        <Metric icon={Sparkles} label={t("metrics.credits")} value={model.creditCapacity === "unavailable" ? t("metrics.unavailable") : model.counts.availableCredits} warning={model.creditCapacity === "depleted" ? 1 : 0} />
+        <Metric icon={Sparkles} label={t("metrics.credits")} value={model.creditCapacity === "unavailable" ? t("metrics.unavailable") : model.counts.availableCredits} warning={model.creditCapacity === "depleted" ? 1 : 0} href="/billing" />
         <Metric icon={AlertTriangle} label={t("metrics.failures")} value={attentionCount} warning={attentionCount} />
       </section>
       <section className="rounded-3xl border bg-card p-6 sm:p-8">
@@ -76,5 +76,10 @@ export default async function DashboardPage() {
   </main>;
 }
 
-function Metric({ icon: Icon, label, value, warning = 0 }: { icon: typeof ImageIcon; label: string; value: number | string; warning?: number }) { return <div className="rounded-2xl border bg-card p-5"><div className="flex items-center justify-between"><Icon className="size-5 text-muted-foreground" />{warning > 0 && <span className="size-2 rounded-full bg-red-500" />}</div><p className="mt-5 text-3xl font-semibold">{value}</p><p className="mt-1 text-sm text-muted-foreground">{label}</p></div>; }
+function Metric({ icon: Icon, label, value, warning = 0, href }: { icon: typeof ImageIcon; label: string; value: number | string; warning?: number; href?: string }) {
+  const content = <><div className="flex items-center justify-between"><Icon className="size-5 text-muted-foreground" />{warning > 0 && <span className="size-2 rounded-full bg-red-500" />}</div><p className="mt-5 text-3xl font-semibold">{value}</p><p className="mt-1 text-sm text-muted-foreground">{label}</p></>;
+  return href
+    ? <Link href={href} className="rounded-2xl border bg-card p-5 outline-none transition-colors hover:border-amber-300 hover:bg-amber-50/40 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-amber-950/10">{content}</Link>
+    : <div className="rounded-2xl border bg-card p-5">{content}</div>;
+}
 function Empty({ text, href, action }: { text: string; href: string; action: string }) { return <div className="rounded-xl border border-dashed p-5 text-center"><p className="text-sm text-muted-foreground">{text}</p><Link href={href} className="mt-3 inline-flex text-sm font-semibold text-amber-700">{action}</Link></div>; }

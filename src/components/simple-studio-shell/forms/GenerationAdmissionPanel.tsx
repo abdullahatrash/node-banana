@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { KeyRoundIcon, WalletCardsIcon } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
+import { getActiveWorkspaceId } from "@/lib/studio/client";
 
 const VARIETIES = ["msa", "gulf", "egyptian", "levantine", "maghrebi", "other"] as const;
 
@@ -30,12 +32,39 @@ export function GenerationAdmissionPanel({ runs, quantityPerRun }: { runs?: numb
   const pendingManagedCreditQuotes = useSimpleStudioStore((state) => state.pendingManagedCreditQuotes);
   const resolveManagedCreditQuote = useSimpleStudioStore((state) => state.resolveManagedCreditQuote);
   const quote = pendingManagedCreditQuotes[0] ?? null;
+  const [managedBalance, setManagedBalance] = useState<{ status: "idle" | "loading" | "ready" | "unavailable"; availableUnits: number | null }>({ status: "idle", availableUnits: null });
   const validRuns = runs !== undefined && Number.isFinite(runs) && runs > 0 ? runs : null;
   const validQuantity = quantityPerRun !== undefined && Number.isFinite(quantityPerRun) && quantityPerRun > 0 ? quantityPerRun : null;
   const estimatedProviderCost = selectedModelExecutionPriceUsd && selectedModelExecutionPriceUsd.basis !== "components" && validRuns !== null
     ? selectedModelExecutionPriceUsd.amount * validRuns * (selectedModelExecutionPriceUsd.basis === "second" && validQuantity !== null ? validQuantity : 1)
     : null;
   const FundingIcon = fundingMode === "byok" ? KeyRoundIcon : WalletCardsIcon;
+
+  useEffect(() => {
+    if (fundingMode !== "managed") {
+      setManagedBalance({ status: "idle", availableUnits: null });
+      return;
+    }
+    const workspaceId = getActiveWorkspaceId();
+    if (!workspaceId) {
+      setManagedBalance({ status: "unavailable", availableUnits: null });
+      return;
+    }
+    const controller = new AbortController();
+    setManagedBalance({ status: "loading", availableUnits: null });
+    void fetch("/api/studio/billing", { headers: { "x-workspace-id": workspaceId }, cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const body = await response.json() as { success?: unknown; data?: { credit?: { availableUnits?: unknown } } };
+        const availableUnits = body.data?.credit?.availableUnits;
+        if (!response.ok || body.success !== true || typeof availableUnits !== "number" || !Number.isFinite(availableUnits)) throw new Error("COMMERCIAL_BALANCE_UNAVAILABLE");
+        setManagedBalance({ status: "ready", availableUnits });
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+        setManagedBalance({ status: "unavailable", availableUnits: null });
+      });
+    return () => controller.abort();
+  }, [fundingMode]);
 
   return <fieldset className="space-y-3 rounded-lg border bg-muted/20 p-3">
     <legend className="px-1 text-sm font-semibold">{t("title")}</legend>
@@ -52,6 +81,11 @@ export function GenerationAdmissionPanel({ runs, quantityPerRun }: { runs?: numb
             ? funding("unitPrice", { amount: new Intl.NumberFormat(locale, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(selectedModelExecutionPriceUsd.amount), basis: funding(`basis.${selectedModelExecutionPriceUsd.basis}`) })
             : funding("estimatedCost", { amount: new Intl.NumberFormat(locale, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(estimatedProviderCost) })}
         </p> : <p className="mt-1 text-xs text-muted-foreground">{funding("selectModel")}</p>}
+        {fundingMode === "managed" ? <p aria-live="polite" data-testid="managed-credit-balance" className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+          {managedBalance.status === "ready" && managedBalance.availableUnits !== null
+            ? funding("managedBalance", { count: new Intl.NumberFormat(locale).format(managedBalance.availableUnits) })
+            : funding(managedBalance.status === "loading" ? "managedBalanceLoading" : "managedBalanceUnavailable")}
+        </p> : null}
       </div>
       <Link href={fundingMode === "byok" ? "/settings?section=providers" : "/billing"} className="shrink-0 text-xs font-semibold text-primary underline-offset-4 hover:underline">
         {funding(`${fundingMode}.action`)}

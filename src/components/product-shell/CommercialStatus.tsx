@@ -51,7 +51,22 @@ function commercialPresentation(summary: CommercialSummary, locale: "ar" | "en",
 export function CommercialStatus({ summary }: { summary: CommercialSummary | null }) {
   const locale = useLocale() as "ar" | "en";
   const t = useTranslations("shell.commercial");
-  if (!summary) return null;
+  if (!summary) {
+    return (
+      <div className="rounded-lg border bg-sidebar-accent/35 p-2.5 group-data-[collapsible=icon]:p-1.5" data-testid="shell-commercial-status-pending">
+        <div className="flex items-center gap-2">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-amber-300 text-stone-950"><CoinsIcon className="size-4" aria-hidden="true" /></span>
+          <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+            <p className="truncate text-xs font-semibold">{t("plansAndCredits")}</p>
+            <p className="truncate text-[11px] text-muted-foreground">{t("balancePending")}</p>
+          </div>
+        </div>
+        <Link href="/billing" aria-label={t("openBilling")} className="mt-2 flex min-h-8 items-center justify-center gap-1 rounded-md bg-primary px-2 text-xs font-semibold text-primary-foreground group-data-[collapsible=icon]:sr-only">
+          {t("viewPlans")}
+        </Link>
+      </div>
+    );
+  }
   const { UpgradeIcon, planLabel } = commercialPresentation(summary, locale, t("free"), (plan, days) => t("trial", { plan, days }));
 
   return (
@@ -73,7 +88,20 @@ export function CommercialStatus({ summary }: { summary: CommercialSummary | nul
 export function CommercialStatusCompact({ summary }: { summary: CommercialSummary | null }) {
   const locale = useLocale() as "ar" | "en";
   const t = useTranslations("shell.commercial");
-  if (!summary) return null;
+  if (!summary) {
+    return (
+      <Link
+        href="/billing"
+        aria-label={t("openBilling")}
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-full border bg-background px-2.5 text-xs font-semibold shadow-sm transition-colors hover:bg-muted sm:gap-2 sm:px-3"
+        data-testid="shell-commercial-status-compact-pending"
+      >
+        <CoinsIcon className="size-4 text-amber-600" aria-hidden="true" />
+        <span>{t("plansAndCredits")}</span>
+        <span className="hidden text-primary sm:inline">{t("viewPlans")}</span>
+      </Link>
+    );
+  }
   const { planLabel } = commercialPresentation(summary, locale, t("free"), (plan, days) => t("trial", { plan, days }));
   const formattedCredits = new Intl.NumberFormat(locale).format(summary.credit.availableUnits);
 
