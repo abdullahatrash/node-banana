@@ -85,7 +85,7 @@ export function CommercialStatusCompact({ summary }: { summary: CommercialSummar
       data-testid="shell-commercial-status-compact"
     >
       <CoinsIcon className="size-4 text-amber-600" aria-hidden="true" />
-      <span>{formattedCredits}</span>
+      <span>{t("compactCredits", { count: formattedCredits })}</span>
       <span className="hidden text-muted-foreground lg:inline" aria-hidden="true">·</span>
       <span className="hidden max-w-28 truncate lg:inline">{planLabel}</span>
       <span className="hidden text-primary sm:inline">{t("upgrade")}</span>

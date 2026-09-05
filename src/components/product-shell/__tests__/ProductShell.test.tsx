@@ -161,6 +161,7 @@ describe("ProductShell", () => {
     renderShell();
     expect(await screen.findAllByText("Starter trial · 3d left")).toHaveLength(2);
     expect(screen.getByText("21 credits available")).toBeInTheDocument();
+    expect(screen.getByText("21 credits")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Upgrade" })).toHaveAttribute("href", "/billing");
     expect(screen.getByTestId("shell-commercial-status-compact")).toHaveAccessibleName("Manage plan and 21 available credits");
     expect(screen.getByTestId("shell-commercial-status-compact")).toHaveAttribute("href", "/billing");
@@ -181,8 +182,18 @@ describe("ProductShell", () => {
     renderShell("ar");
     expect(await screen.findAllByText("مجانية")).toHaveLength(2);
     expect(screen.getByText("10 رصيدًا متاحًا")).toBeInTheDocument();
+    expect(screen.getByText("10 رصيدًا")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "ترقية الباقة" })).toBeInTheDocument();
     expect(screen.getByTestId("shell-commercial-status-compact")).toHaveAccessibleName("إدارة الباقة و10 رصيدًا متاحًا");
+  });
+
+  it("keeps the global Copilot launcher compact on mobile without losing its accessible name", () => {
+    renderShell();
+
+    const launcher = screen.getByRole("button", { name: "Copilot" });
+    expect(launcher).toHaveClass("size-12", "sm:w-auto", "sm:px-5");
+    expect(launcher).toHaveAttribute("title", "Copilot");
+    expect(launcher.querySelector("span")).toHaveClass("hidden", "sm:inline");
   });
 
   it("reads commercial state for the same authorized workspace selected by the switcher", async () => {
