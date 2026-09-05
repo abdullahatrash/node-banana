@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Download, ExternalLink, Languages, LibraryBig, LoaderCircle, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Download, ExternalLink, ImageOff, Languages, LibraryBig, LoaderCircle, RotateCcw, ShieldCheck } from "lucide-react";
 import { productRequest } from "@/components/product-surfaces/ProductApi";
 import type { LicensedTrendCatalogCard } from "@/lib/product-surfaces/licensed-trend-types";
 
@@ -19,6 +19,7 @@ export function LicensedTrendCatalog({ items }: { items: LicensedTrendCatalogCar
   const [language, setLanguage] = useState("");
   const [variety, setVariety] = useState("");
   const [region, setRegion] = useState("");
+  const [previewAvailability, setPreviewAvailability] = useState<Record<string, "checking" | "available" | "unavailable">>({});
   const regions = useMemo(() => [...new Set(items.map((item) => item.document.classification.region))].sort(), [items]);
   const varieties = useMemo(() => [...new Set(items.flatMap((item) => item.document.classification.arabicVariety ? [item.document.classification.arabicVariety] : []))].sort(), [items]);
   const visible = useMemo(() => {
@@ -47,14 +48,59 @@ export function LicensedTrendCatalog({ items }: { items: LicensedTrendCatalogCar
     <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {visible.map((item) => {
         const document = item.document;
+        const previewKey = `${item.catalogId}:${item.revision}`;
+        const previewState = previewAvailability[previewKey] ?? "checking";
         return <article key={`${item.catalogId}:${item.revision}`} className="flex flex-col overflow-hidden rounded-2xl border">
-          <div className="relative aspect-[9/16] max-h-80 w-full bg-stone-950">{document.media.type === "video" ? <video src={item.previewUrl} controls preload="metadata" className="size-full object-cover" aria-label={document.title} /> : <Image src={item.previewUrl} alt={document.title} fill unoptimized className="object-cover" />}</div>
-          <div className="flex flex-1 flex-col p-4"><div className="flex items-center justify-between gap-3"><span className="rounded-full bg-emerald-100 px-2 py-1 text-xs text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">{t("licensed")}</span><span className="text-xs text-muted-foreground">{document.classification.region}</span></div><h3 dir="auto" className="mt-3 font-semibold">{document.title}</h3><p dir="auto" className="mt-1 text-sm text-muted-foreground">{document.sourceName} · {date.format(new Date(document.publishedAt))}</p><div className="mt-3 flex flex-wrap gap-2 text-xs"><span className="inline-flex items-center gap-1 rounded-lg bg-muted px-2 py-1"><Languages className="size-3" />{document.classification.contentLanguage === "ar" ? t("arabic") : t("english")}{document.classification.arabicVariety ? ` · ${t(`varieties.${document.classification.arabicVariety}`)}` : ""}</span><span className="rounded-lg bg-muted px-2 py-1">{document.classification.format}</span></div><p dir="auto" className="mt-3 line-clamp-2 text-sm">{document.classification.creativePrimitives.hookPattern ?? document.classification.creativePrimitives.topics.join(" · ")}</p><div className="mt-auto flex gap-2 pt-5"><a href={document.provider.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-3 text-sm"><ExternalLink className="size-4" />{t("source")}</a><button type="button" disabled={Boolean(busy) || (item.state !== "available" && item.state !== "failed")} onClick={() => importItem(item)} className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 text-sm font-semibold text-white disabled:opacity-50">{busy === item.entitlementId ? <LoaderCircle className="size-4 animate-spin" /> : item.state === "imported" ? <CheckCircle2 className="size-4" /> : <Download className="size-4" />}{t(item.state === "failed" ? "retry" : item.state)}</button></div></div>
+          <LicensedTrendPreview
+            mediaType={document.media.type}
+            previewUrl={item.previewUrl}
+            title={document.title}
+            t={t}
+            onAvailabilityChange={(availability) => setPreviewAvailability((current) => current[previewKey] === availability ? current : { ...current, [previewKey]: availability })}
+          />
+          <div className="flex flex-1 flex-col p-4"><div className="flex items-center justify-between gap-3"><span className="rounded-full bg-emerald-100 px-2 py-1 text-xs text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">{t("licensed")}</span><span className="text-xs text-muted-foreground">{document.classification.region}</span></div><h3 dir="auto" className="mt-3 font-semibold">{document.title}</h3><p dir="auto" className="mt-1 text-sm text-muted-foreground">{document.sourceName} · {date.format(new Date(document.publishedAt))}</p><div className="mt-3 flex flex-wrap gap-2 text-xs"><span className="inline-flex items-center gap-1 rounded-lg bg-muted px-2 py-1"><Languages className="size-3" />{document.classification.contentLanguage === "ar" ? t("arabic") : t("english")}{document.classification.arabicVariety ? ` · ${t(`varieties.${document.classification.arabicVariety}`)}` : ""}</span><span className="rounded-lg bg-muted px-2 py-1">{document.classification.format}</span></div><p dir="auto" className="mt-3 line-clamp-2 text-sm">{document.classification.creativePrimitives.hookPattern ?? document.classification.creativePrimitives.topics.join(" · ")}</p><div className="mt-auto flex gap-2 pt-5"><a href={document.provider.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-3 text-sm"><ExternalLink className="size-4" />{t("source")}</a><button type="button" disabled={Boolean(busy) || previewState !== "available" || (item.state !== "available" && item.state !== "failed")} onClick={() => importItem(item)} className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 text-sm font-semibold text-white disabled:opacity-50">{busy === item.entitlementId ? <LoaderCircle className="size-4 animate-spin" /> : previewState === "unavailable" ? <ImageOff className="size-4" /> : item.state === "imported" ? <CheckCircle2 className="size-4" /> : <Download className="size-4" />}{t(previewState === "unavailable" ? "mediaUnavailableAction" : previewState === "checking" ? "checkingMedia" : item.state === "failed" ? "retry" : item.state)}</button></div></div>
         </article>;
       })}
       {visible.length === 0 && <p className="rounded-2xl border border-dashed p-7 text-center text-sm text-muted-foreground md:col-span-2 xl:col-span-3">{items.length ? t("noMatches") : t("empty")}</p>}
     </div>
   </section>;
+}
+
+function LicensedTrendPreview({ mediaType, previewUrl, title, t, onAvailabilityChange }: {
+  mediaType: "image" | "video";
+  previewUrl: string;
+  title: string;
+  t: (key: string, values?: Record<string, string | number>) => string;
+  onAvailabilityChange: (availability: "checking" | "available" | "unavailable") => void;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<"checking" | "available" | "unavailable">("checking");
+  const separator = previewUrl.includes("?") ? "&" : "?";
+  const source = `${previewUrl}${separator}previewAttempt=${attempt}`;
+
+  function available() {
+    setState("available");
+    onAvailabilityChange("available");
+  }
+
+  function unavailable() {
+    setState("unavailable");
+    onAvailabilityChange("unavailable");
+  }
+
+  function retry() {
+    setState("checking");
+    onAvailabilityChange("checking");
+    setAttempt((value) => value + 1);
+  }
+
+  return <div className="relative aspect-[9/16] max-h-80 w-full bg-stone-950 text-white">
+    {state !== "unavailable" && (mediaType === "video"
+      ? <video key={source} src={source} controls preload="metadata" onLoadedMetadata={available} onError={unavailable} className="size-full object-cover" aria-label={title} />
+      : <Image key={source} src={source} alt={title} fill sizes="(max-width: 767px) 100vw, (max-width: 1279px) 50vw, 33vw" unoptimized onLoad={available} onError={unavailable} className="object-cover" />)}
+    {state === "checking" && <div role="status" className="pointer-events-none absolute inset-0 grid place-items-center bg-stone-950/50"><span className="inline-flex items-center gap-2 rounded-full bg-black/60 px-3 py-2 text-xs"><LoaderCircle className="size-4 animate-spin" />{t("checkingMedia")}</span></div>}
+    {state === "unavailable" && <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-5 text-center"><ImageOff className="size-8" /><p className="max-w-xs text-sm">{t("mediaUnavailable")}</p><button type="button" onClick={retry} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/40 px-3 text-sm font-semibold"><RotateCcw className="size-4" />{t("retryPreview")}</button></div>}
+  </div>;
 }
 
 function CatalogSelect({ value, setValue, all, options, disabled = false }: { value: string; setValue: (value: string) => void; all: string; options: Array<{ value: string; label: string }>; disabled?: boolean }) {
