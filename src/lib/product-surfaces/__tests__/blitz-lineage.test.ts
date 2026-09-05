@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAdmittedBlitzArtifact } from "../blitz-lineage";
+import { isAdmittedBlitzArtifact, isAdmittedMetadataBlitzArtifact } from "../blitz-lineage";
 
 const digest = `sha256:${"a".repeat(64)}` as const;
 const base = {
@@ -25,5 +25,20 @@ describe("Blitz artifact lineage", () => {
     { artifactExists: false },
   ])("rejects mismatched or non-final evidence", (override) => {
     expect(isAdmittedBlitzArtifact({ ...base, ...override } as Parameters<typeof isAdmittedBlitzArtifact>[0])).toBe(false);
+  });
+
+  it("admits only a source-free text-to-video artifact for metadata topics", () => {
+    const metadata = {
+      remixBriefDigest: digest,
+      generation: base.generation,
+      receipt: base.receipt,
+      intent: { ...base.intent, capability: "text_to_video", rights: { ...base.intent.rights, sourceAssetIds: [], evidence: [] }, providerComposition: { sourceAssetIds: [] }, remixBrief: { digest, preserve: [], transform: [], avoid: [] } },
+      operation: base.operation,
+      artifactExists: true,
+    };
+    expect(isAdmittedMetadataBlitzArtifact(metadata as unknown as Parameters<typeof isAdmittedMetadataBlitzArtifact>[0])).toBe(true);
+    expect(isAdmittedMetadataBlitzArtifact({ ...metadata, intent: { ...metadata.intent, capability: "video_to_video" } } as unknown as Parameters<typeof isAdmittedMetadataBlitzArtifact>[0])).toBe(false);
+    expect(isAdmittedMetadataBlitzArtifact({ ...metadata, intent: { ...metadata.intent, rights: { ...metadata.intent.rights, sourceAssetIds: ["youtube-video"] } } } as unknown as Parameters<typeof isAdmittedMetadataBlitzArtifact>[0])).toBe(false);
+    expect(isAdmittedMetadataBlitzArtifact({ ...metadata, intent: { ...metadata.intent, remixBrief: { ...metadata.intent.remixBrief, transform: ["source pacing"] } } } as unknown as Parameters<typeof isAdmittedMetadataBlitzArtifact>[0])).toBe(false);
   });
 });

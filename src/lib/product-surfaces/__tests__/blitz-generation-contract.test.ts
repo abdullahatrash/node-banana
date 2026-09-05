@@ -38,4 +38,33 @@ describe("Blitz generation admission contract", () => {
   it("requires old generic proposals to be re-queued", () => {
     expect(validateBrandAwareBlitzGenerationContract({ payloadValue: { ...payload, remixBrief: { influences: ["topic"], protectedExpressionExcluded: true } }, request, brand })).toEqual({ ok: false, code: "BLITZ_BRIEF_SNAPSHOT_REQUIRED" });
   });
+
+  it("admits topic-only text-to-video with no source media or rights evidence", () => {
+    const metadataProvider = { ...provider, transform: [] };
+    const metadataPayload = {
+      ...payload,
+      sourceUsage: "metadata_topic_only",
+      sourceAssetId: null,
+      sourceMediaType: null,
+      rightsSnapshot: null,
+      rightsBasis: null,
+      permittedRemix: null,
+      rightsEvidenceIds: [],
+      remixBrief: {
+        ...payload.remixBrief,
+        schema: "brand-aware-remix-brief/v2",
+        source: { ...payload.remixBrief.source, usage: "metadata_topic_only", evidenceDigest: rightsDigest, rightsSnapshotDigest: null },
+        provider: metadataProvider,
+      },
+    };
+    const metadataRequest = { ...request, prompt: metadataProvider.prompt, capability: "text_to_video", sourceAssetIds: [], rightsBasis: "owned", permittedRemix: "reference_only", rightsEvidenceIds: [], remixBrief: { preserve: metadataProvider.preserve, transform: [], avoid: metadataProvider.avoid } };
+
+    expect(validateBrandAwareBlitzGenerationContract({ payloadValue: metadataPayload, request: metadataRequest, brand })).toMatchObject({ ok: true, brief: { schema: "brand-aware-remix-brief/v2" } });
+    for (const changed of [
+      { ...metadataRequest, capability: "video_to_video" },
+      { ...metadataRequest, sourceAssetIds: ["youtube-video"] },
+      { ...metadataRequest, rightsEvidenceIds: ["youtube-rights"] },
+      { ...metadataRequest, remixBrief: { ...metadataRequest.remixBrief, transform: ["copy pacing"] } },
+    ]) expect(validateBrandAwareBlitzGenerationContract({ payloadValue: metadataPayload, request: changed, brand })).toEqual({ ok: false, code: "BLITZ_GENERATION_CONTRACT_MISMATCH" });
+  });
 });

@@ -128,12 +128,11 @@ export function BlitzClient({
         const brief = brandAwareRemixBriefSchema.safeParse(
           item.payload.remixBrief,
         );
+        const metadataOnly = item.payload.sourceUsage === "metadata_topic_only";
 
         if (
-          !sourceAssetId ||
-          !mediaType ||
-          !basis ||
-          !remix ||
+          (!metadataOnly && (!sourceAssetId || !mediaType || !basis || !remix)) ||
+          (metadataOnly && (sourceAssetId || mediaType || basis || remix)) ||
           !modelId ||
           modelProvider !== "replicate" ||
           !modelVersion ||
@@ -152,8 +151,8 @@ export function BlitzClient({
             inputSchemaDigest: modelSchema,
           },
           mode: "video",
-          sourceMediaType: mediaType,
-          sourceAssetIds: [sourceAssetId],
+          sourceMediaType: metadataOnly ? null : mediaType,
+          sourceAssetIds: metadataOnly ? [] : [sourceAssetId!],
           quantity: videoDuration,
           fundingMode,
           contentLanguage:
@@ -170,9 +169,9 @@ export function BlitzClient({
                   | "levantine"
                   | "maghrebi")
               : null,
-          rightsBasis: basis,
-          permittedRemix: remix,
-          rightsEvidenceIds: Array.isArray(item.payload.rightsEvidenceIds)
+          rightsBasis: metadataOnly ? "owned" : basis!,
+          permittedRemix: metadataOnly ? "reference_only" : remix!,
+          rightsEvidenceIds: metadataOnly ? [] : Array.isArray(item.payload.rightsEvidenceIds)
             ? item.payload.rightsEvidenceIds.filter(
                 (value): value is string => typeof value === "string",
               )
@@ -198,19 +197,21 @@ export function BlitzClient({
           intentId: generated.intentId,
           operationId: generated.operationId,
         };
-        const evaluated = await productRequest("/api/blitz/similarity", {
-          itemId: item.id,
-          expectedRevision: item.revision,
-          candidateAssetId: generated.assetId,
-        });
-        const evidence = evaluated.evidence as { status?: unknown } | undefined;
-        if (
-          typeof evaluated.evidenceId !== "string" ||
-          evidence?.status !== "passed"
-        ) {
-          throw new ProductRequestError("BLITZ_SIMILARITY_BLOCKED");
+        if (!metadataOnly) {
+          const evaluated = await productRequest("/api/blitz/similarity", {
+            itemId: item.id,
+            expectedRevision: item.revision,
+            candidateAssetId: generated.assetId,
+          });
+          const evidence = evaluated.evidence as { status?: unknown } | undefined;
+          if (
+            typeof evaluated.evidenceId !== "string" ||
+            evidence?.status !== "passed"
+          ) {
+            throw new ProductRequestError("BLITZ_SIMILARITY_BLOCKED");
+          }
+          similarityEvidenceId = evaluated.evidenceId;
         }
-        similarityEvidenceId = evaluated.evidenceId;
       }
 
       const reasons =

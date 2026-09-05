@@ -9,7 +9,6 @@ import { BlitzSimilarityServiceError } from "@/lib/product-surfaces/blitz-simila
 const schema = z.object({ itemId: z.string().min(1).max(200), expectedRevision: z.number().int().positive(), decision: z.enum(["accepted", "rejected"]), reasons: z.array(z.object({ code: z.enum(BLITZ_REJECTION_CODES), note: z.string().trim().max(300).default("") }).strict()).max(12).default([]), generation: z.object({ assetId: z.string().min(1).max(200), intentId: z.string().min(1).max(200), operationId: z.string().min(1).max(200) }).strict().nullable().default(null), similarityEvidenceId: z.string().min(1).max(200).nullable().default(null), idempotencyKey: z.string().min(8).max(200) }).strict().superRefine((value, context) => {
   if (value.decision === "rejected" && value.reasons.length === 0) context.addIssue({ code: "custom", path: ["reasons"], message: "A structured rejection reason is required." });
   if (value.decision === "accepted" && value.reasons.length > 0) context.addIssue({ code: "custom", path: ["reasons"], message: "Acceptance cannot include rejection reasons." });
-  if (value.decision === "accepted" && !value.similarityEvidenceId) context.addIssue({ code: "custom", path: ["similarityEvidenceId"], message: "Acceptance requires pinned similarity evidence." });
   if (value.decision === "rejected" && (value.generation || value.similarityEvidenceId)) context.addIssue({ code: "custom", path: ["generation"], message: "Rejection cannot bind generation evidence." });
 });
 

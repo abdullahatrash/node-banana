@@ -2,23 +2,29 @@
 
 import { useState, type FormEvent } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { ExternalLink, LoaderCircle, Pause, Play, RefreshCw, Trash2 } from "lucide-react";
+import { BookmarkPlus, ExternalLink, LoaderCircle, Pause, Play, RefreshCw, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { productRequest } from "@/components/product-surfaces/ProductApi";
 import { WORKSPACE_CONTENT_MARKETS, type WorkspaceContentMarket } from "@/lib/product-surfaces/workspace-preferences-contract";
+import { ARABIC_VARIETIES, CONTENT_FORMATS } from "@/lib/product-surfaces/definitions";
 
 type Capability = { configured: boolean; enabled: boolean; keyConfigured: boolean; disclosuresConfigured: boolean; privacyUrl: string | null; termsUrl: string | null };
 type Source = { id: string; regionCode: string; categoryId: string; displayName: string; state: string; scheduleMinutes: number; pageSize: number; nextRunAt: string; lastRefreshedAt: string | null; lastErrorCode: string | null; estimatedDailyQuotaUnits: number };
 type Entry = { sourceId: string; videoId: string; providerRank: number; title: string; channelTitle: string; sourceUrl: string; thumbnailUrl: string | null; publishedAt: string; viewCount: string | null; likeCount: string | null; commentCount: string | null; observedAt: string; expiresAt: string };
 export type YoutubeTrendDiscoveryData = { capability: Capability; sources: Source[]; entries: Entry[] };
 
-export function YoutubeTrendDiscovery({ data, defaultRegion }: { data: YoutubeTrendDiscoveryData; defaultRegion: WorkspaceContentMarket }) {
+export function YoutubeTrendDiscovery({ data, defaultRegion, defaultContentLanguage }: { data: YoutubeTrendDiscoveryData; defaultRegion: WorkspaceContentMarket; defaultContentLanguage: "ar" | "en" }) {
   const t = useTranslations("product.inspiration.youtube") as (key: string, values?: Record<string, string | number>) => string;
+  const tr = useTranslations("product.inspiration.youtubeRemix") as (key: string) => string;
+  const tq = useTranslations("product.inspiration.youtubeQueue") as (key: string) => string;
   const locale = useLocale();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [contentLanguage, setContentLanguage] = useState<"ar" | "en">(defaultContentLanguage);
+  const [arabicVariety, setArabicVariety] = useState("msa");
+  const [format, setFormat] = useState("video_hook_demo");
   const formatter = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
 
   async function enable(event: FormEvent<HTMLFormElement>) {
@@ -39,9 +45,17 @@ export function YoutubeTrendDiscovery({ data, defaultRegion }: { data: YoutubeTr
     } catch { setError(t("sourceError")); } finally { setBusy(false); }
   }
 
+  async function queue(entry: Entry) {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await productRequest("/api/product-inspiration/youtube/queue", { sourceId: entry.sourceId, videoId: entry.videoId, contentLanguage, arabicVariety: contentLanguage === "ar" ? arabicVariety : null, format, idempotencyKey: crypto.randomUUID() });
+      setNotice(tq("queued")); router.push("/blitz");
+    } catch { setError(tq("error")); } finally { setBusy(false); }
+  }
+
   return <section className="min-w-0 rounded-3xl border bg-card p-5 sm:p-6 [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:w-full" aria-labelledby="youtube-trends-title">
     <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-      <div><div className="flex items-center gap-2"><YoutubeIcon /><h2 id="youtube-trends-title" className="text-xl font-semibold">{t("title")}</h2></div><p className="mt-2 max-w-3xl text-sm text-muted-foreground">{t("description")}</p><p className="mt-2 max-w-3xl text-xs text-muted-foreground">{t("separation")}</p></div>
+      <div><div className="flex items-center gap-2"><YoutubeIcon /><h2 id="youtube-trends-title" className="text-xl font-semibold">{t("title")}</h2></div><p className="mt-2 max-w-3xl text-sm text-muted-foreground">{t("description")}</p><p className="mt-2 max-w-3xl text-xs text-muted-foreground">{tr("separation")}</p></div>
       <span className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ${data.capability.configured ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100"}`}>{t(data.capability.configured ? "configured" : "notConfigured")}</span>
     </div>
 
@@ -53,11 +67,13 @@ export function YoutubeTrendDiscovery({ data, defaultRegion }: { data: YoutubeTr
 
     {data.sources.length > 0 && <div className="mt-5 space-y-2">{data.sources.map((source) => <div key={source.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-sm"><div><p dir="auto" className="font-medium">{source.displayName} · {regionLabel(source.regionCode, t)}</p><p className="text-muted-foreground">{t(`states.${source.state}`)} · {t("quotaEstimate", { count: source.estimatedDailyQuotaUnits })}{source.lastRefreshedAt ? ` · ${t("refreshed", { date: formatter.format(new Date(source.lastRefreshedAt)) })}` : ""}</p>{source.lastErrorCode && <p className="text-xs text-destructive">{source.lastErrorCode}</p>}</div><div className="flex flex-wrap gap-2"><button type="button" disabled={busy || (source.state !== "active" && !data.capability.configured)} onClick={() => update(source.id, source.state === "active" ? "pause" : "resume")} className="inline-flex min-h-9 items-center gap-1 rounded-lg border px-3">{source.state === "active" ? <Pause className="size-3" /> : <Play className="size-3" />}{t(source.state === "active" ? "pause" : "resume")}</button><button type="button" disabled={busy || source.state !== "active" || !data.capability.configured} onClick={() => update(source.id, "run_now")} className="inline-flex min-h-9 items-center gap-1 rounded-lg border px-3"><RefreshCw className="size-3" />{t("refresh")}</button><button type="button" disabled={busy} onClick={() => update(source.id, "remove")} className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-destructive/40 px-3 text-destructive"><Trash2 className="size-3" />{t("remove")}</button></div></div>)}</div>}
 
+    {data.entries.length > 0 && <div className="mt-5 grid gap-3 rounded-2xl border bg-muted/30 p-4 sm:grid-cols-3"><label className="grid gap-1 text-sm font-medium">{tr("language")}<select value={contentLanguage} onChange={(event) => setContentLanguage(event.target.value as "ar" | "en")} className="min-h-11 rounded-xl border bg-background px-3"><option value="ar">{tr("languages.ar")}</option><option value="en">{tr("languages.en")}</option></select></label><label className="grid gap-1 text-sm font-medium">{tr("variety")}<select value={arabicVariety} onChange={(event) => setArabicVariety(event.target.value)} disabled={contentLanguage !== "ar"} className="min-h-11 rounded-xl border bg-background px-3 disabled:opacity-50">{ARABIC_VARIETIES.map((value) => <option key={value} value={value}>{tr(`varieties.${value}`)}</option>)}</select></label><label className="grid gap-1 text-sm font-medium">{tr("format")}<select value={format} onChange={(event) => setFormat(event.target.value)} className="min-h-11 rounded-xl border bg-background px-3">{CONTENT_FORMATS.map((value) => <option key={value} value={value}>{tr(`formats.${value}`)}</option>)}</select></label><p className="text-xs text-muted-foreground sm:col-span-3">{tr("topicOnlyNotice")}</p></div>}
+
     <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{data.entries.map((entry) => <article key={`${entry.sourceId}:${entry.videoId}`} className="overflow-hidden rounded-2xl border bg-background">{entry.thumbnailUrl && <>
       {/* Direct display is deliberate: YouTube thumbnails must remain unmodified and are not ingested or proxied into Workspace storage. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={entry.thumbnailUrl} alt="" className="aspect-video w-full bg-black object-contain" referrerPolicy="strict-origin-when-cross-origin" />
-    </>}<div className="p-4"><div className="flex items-center justify-between gap-3"><a href={entry.sourceUrl} target="_blank" rel="noopener" aria-label={t("openOnYoutube")}><YoutubeIcon /></a><span className="text-xs font-semibold text-muted-foreground">#{entry.providerRank}</span></div><h3 dir="auto" className="mt-3 font-semibold leading-snug">{entry.title}</h3><p dir="auto" className="mt-1 text-sm text-muted-foreground">{entry.channelTitle}</p><dl className="mt-4 grid grid-cols-3 gap-2 text-sm"><Metric label={t("metrics.views")} value={formatCounter(entry.viewCount, locale)} /><Metric label={t("metrics.likes")} value={formatCounter(entry.likeCount, locale)} /><Metric label={t("metrics.comments")} value={formatCounter(entry.commentCount, locale)} /></dl><p className="mt-3 text-xs text-muted-foreground">{t("observed", { date: formatter.format(new Date(entry.observedAt)) })}</p><a href={entry.sourceUrl} target="_blank" rel="noopener" className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm"><ExternalLink className="size-4" />{t("openOnYoutube")}</a></div></article>)}</div>
+    </>}<div className="p-4"><div className="flex items-center justify-between gap-3"><a href={entry.sourceUrl} target="_blank" rel="noopener" aria-label={t("openOnYoutube")}><YoutubeIcon /></a><span className="text-xs font-semibold text-muted-foreground">#{entry.providerRank}</span></div><h3 dir="auto" className="mt-3 font-semibold leading-snug">{entry.title}</h3><p dir="auto" className="mt-1 text-sm text-muted-foreground">{entry.channelTitle}</p><dl className="mt-4 grid grid-cols-3 gap-2 text-sm"><Metric label={t("metrics.views")} value={formatCounter(entry.viewCount, locale)} /><Metric label={t("metrics.likes")} value={formatCounter(entry.likeCount, locale)} /><Metric label={t("metrics.comments")} value={formatCounter(entry.commentCount, locale)} /></dl><p className="mt-3 text-xs text-muted-foreground">{t("observed", { date: formatter.format(new Date(entry.observedAt)) })}</p><div className="mt-4 flex flex-wrap gap-2"><a href={entry.sourceUrl} target="_blank" rel="noopener" className="inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm"><ExternalLink className="size-4" />{t("openOnYoutube")}</a><button type="button" disabled={busy} onClick={() => queue(entry)} className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-amber-300 px-3 text-sm font-semibold text-stone-950 disabled:opacity-50">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <BookmarkPlus className="size-4" />}{tr("createOriginal")}</button></div></div></article>)}</div>
     {data.sources.length > 0 && data.entries.length === 0 && <p className="mt-5 rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t("empty")}</p>}
 
     <div className="mt-6 flex flex-wrap gap-x-4 gap-y-2 border-t pt-4 text-xs text-muted-foreground"><span>{t("legalNotice")}</span><a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener" className="underline">{t("youtubeTerms")}</a><a href="https://policies.google.com/privacy" target="_blank" rel="noopener" className="underline">{t("googlePrivacy")}</a>{data.capability.termsUrl && <a href={data.capability.termsUrl} target="_blank" rel="noopener" className="underline">{t("ourTerms")}</a>}{data.capability.privacyUrl && <a href={data.capability.privacyUrl} target="_blank" rel="noopener" className="underline">{t("ourPrivacy")}</a>}</div>

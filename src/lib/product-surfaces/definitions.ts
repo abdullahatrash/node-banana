@@ -78,7 +78,7 @@ const legacyRemixBriefSchema = z.object({
   influences: z.array(remixInfluence).min(1),
   protectedExpressionExcluded: z.boolean(),
 }).strict();
-export const brandAwareRemixBriefSchema = z.object({
+const brandAwareRemixBriefV1Schema = z.object({
   schema: z.literal("brand-aware-remix-brief/v1"),
   brandProfile: z.object({ id: text(200), revision: z.number().int().positive(), digest: sha256Digest, acceptedAt: z.string().datetime() }).strict(),
   source: z.object({ inspirationItemId: text(200), revision: z.number().int().positive(), evidenceDigest: sha256Digest.nullable(), rightsSnapshotDigest: sha256Digest }).strict(),
@@ -90,6 +90,19 @@ export const brandAwareRemixBriefSchema = z.object({
   createdAt: z.string().datetime(),
   digest: sha256Digest,
 }).strict();
+const brandAwareMetadataBriefV2Schema = z.object({
+  schema: z.literal("brand-aware-remix-brief/v2"),
+  brandProfile: z.object({ id: text(200), revision: z.number().int().positive(), digest: sha256Digest, acceptedAt: z.string().datetime() }).strict(),
+  source: z.object({ inspirationItemId: text(200), revision: z.number().int().positive(), evidenceDigest: sha256Digest, usage: z.literal("metadata_topic_only"), rightsSnapshotDigest: z.null() }).strict(),
+  locale: z.object({ contentLanguage: z.enum(["ar", "en"]), arabicVariety: z.enum(ARABIC_VARIETIES).nullable() }).strict(),
+  influencePlan: z.array(z.object({ kind: z.literal("topic"), direction: text(500) }).strict()).min(1).max(1),
+  brandDirection: z.object({ audience: text(1_000), angle: text(1_000), voice: z.array(text(120)).min(1).max(12), offering: text(1_000), callToAction: text(500) }).strict(),
+  provider: z.object({ prompt: text(10_000), preserve: z.array(text(500)).min(1).max(50), transform: z.array(text(500)).max(0), avoid: z.array(text(500)).min(1).max(50) }).strict(),
+  protectedExpressionExcluded: z.literal(true),
+  createdAt: z.string().datetime(),
+  digest: sha256Digest,
+}).strict();
+export const brandAwareRemixBriefSchema = z.discriminatedUnion("schema", [brandAwareRemixBriefV1Schema, brandAwareMetadataBriefV2Schema]);
 export type BrandAwareRemixBrief = z.infer<typeof brandAwareRemixBriefSchema>;
 const trendRankingSignalsSchema = z.object({
   freshness: z.number().int().min(0).max(100), recency: z.number().int().min(0).max(100), performance: z.number().int().min(0).max(100),
@@ -150,6 +163,7 @@ export const blitzPayloadSchema = z.object({
   inspirationItemId: text(200).nullable().default(null),
   contentPieceId: text(200).nullable().default(null),
   sourceAttribution: text(500),
+  sourceUsage: z.enum(["media_remix", "metadata_topic_only"]).default("media_remix"),
   sourceAssetId: text(200).nullable().default(null),
   sourceMediaType: z.enum(["image", "video"]).nullable().default(null),
   rightsSnapshot: z.object({ id: text(200), revision: z.number().int().positive(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),

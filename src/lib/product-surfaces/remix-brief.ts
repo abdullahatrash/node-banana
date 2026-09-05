@@ -96,6 +96,67 @@ export function compileBrandAwareRemixBrief(input: {
   return brandAwareRemixBriefSchema.parse({ ...unsigned, digest: canonicalDigest(unsigned) });
 }
 
+/** Builds a topic-only brief from public metadata without treating source media as licensed input. */
+export function compileBrandAwareMetadataBrief(input: {
+  inspirationItemId: string;
+  inspirationRevision: number;
+  sourceValue: unknown;
+  brand: { id: string; revision: number; acceptedAt: Date; profile: BrandProfileV1 };
+  evidenceDigest: `sha256:${string}`;
+  createdAt: Date;
+}): BrandAwareRemixBrief {
+  const source = inspirationPayloadSchema.parse(input.sourceValue);
+  const profile = brandProfileV1Schema.parse(input.brand.profile);
+  if (source.rightsStatus !== "metadata_only" || source.sourceAssetId || source.sourceMediaType || source.rightsSnapshot) throw new Error("METADATA_BRIEF_MEDIA_NOT_ALLOWED");
+  if (source.permittedInfluence.length !== 1 || source.permittedInfluence[0] !== "topic") throw new Error("METADATA_BRIEF_TOPIC_ONLY_REQUIRED");
+  if (source.contentLanguage === "ar" && !source.arabicVariety) throw new Error("REMIX_BRIEF_ARABIC_VARIETY_REQUIRED");
+  const audience = [...profile.audiences].sort((left, right) => right.weight - left.weight)[0]!.description;
+  const angle = profile.contentAngles[0] ?? profile.benefits[0] ?? profile.positioning;
+  const offering = profile.offering[0]!;
+  const topics = unique([...source.creativePrimitives.topics, ...source.tags], 8);
+  const topicDirection = bounded(topics.length ? `Explore this public topic signal: ${topics.join(", ")}.` : `Explore the Brand angle: ${angle}.`);
+  const languageDirection = source.contentLanguage === "ar"
+    ? `Create the final content in ${VARIETY_LABELS[source.arabicVariety!]}. Preserve natural Arabic shaping and right-to-left reading order; keep mixed Arabic/Latin tokens in their correct bidi order.`
+    : "Create the final content in English.";
+  const callToAction = source.contentLanguage === "ar" ? "اختم بدعوة واضحة وملائمة لاتخاذ الإجراء دون ادعاءات غير موثقة." : "End with a clear, relevant call to action without unsupported claims.";
+  const preserve = [
+    `Brand identity: ${profile.identity.companyName} — ${profile.identity.coreIdentity}`,
+    `Audience: ${audience}`,
+    `Offering: ${offering}`,
+    `Brand angle: ${angle}`,
+    languageDirection,
+    topicDirection,
+  ].map((value) => bounded(value));
+  const avoid = unique([
+    "Use the source only as a topic signal. Do not retrieve, download, quote, imitate, or send its video, thumbnail, audio, transcript, creator identity, wording, shots, pacing, or structure to a model.",
+    ...profile.voice.doNot,
+    ...profile.prohibitedClaims.map((value) => `Prohibited claim: ${value}`),
+    ...profile.prohibitedTopics.map((value) => `Prohibited topic: ${value}`),
+  ], 50).map((value) => bounded(value));
+  const prompt = [
+    languageDirection,
+    `Create an entirely original 9:16 ${source.format.replaceAll("_", " ")} concept for ${profile.identity.companyName}.`,
+    `Audience: ${audience}`,
+    `Offer: ${offering}`,
+    `Creative angle: ${angle}`,
+    `Topic signal only: ${topicDirection}`,
+    callToAction,
+    "Do not reproduce or infer protected expression from the source. Create original wording, imagery, motion, audio, pacing, and scene structure.",
+  ].join("\n");
+  const unsigned = {
+    schema: "brand-aware-remix-brief/v2" as const,
+    brandProfile: { id: input.brand.id, revision: input.brand.revision, digest: canonicalDigest(profile) as `sha256:${string}`, acceptedAt: input.brand.acceptedAt.toISOString() },
+    source: { inspirationItemId: input.inspirationItemId, revision: input.inspirationRevision, evidenceDigest: input.evidenceDigest, usage: "metadata_topic_only" as const, rightsSnapshotDigest: null },
+    locale: { contentLanguage: source.contentLanguage, arabicVariety: source.arabicVariety },
+    influencePlan: [{ kind: "topic" as const, direction: topicDirection }],
+    brandDirection: { audience, angle, voice: profile.voice.descriptors, offering, callToAction },
+    provider: { prompt, preserve, transform: [] as string[], avoid },
+    protectedExpressionExcluded: true as const,
+    createdAt: input.createdAt.toISOString(),
+  };
+  return brandAwareRemixBriefSchema.parse({ ...unsigned, digest: canonicalDigest(unsigned) });
+}
+
 export function remixBriefProviderContract(value: unknown) {
   const brief = brandAwareRemixBriefSchema.parse(value);
   return { prompt: brief.provider.prompt, remixBrief: { preserve: brief.provider.preserve, transform: brief.provider.transform, avoid: brief.provider.avoid }, digest: brief.digest };

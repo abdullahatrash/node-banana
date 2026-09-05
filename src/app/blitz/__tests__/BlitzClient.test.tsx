@@ -48,6 +48,37 @@ describe("BlitzClient", () => {
     expect(screen.getByTestId("admission")).toBeInTheDocument();
   });
 
+  it("generates a metadata topic with no source media and skips source similarity", async () => {
+    const metadataItem = {
+      ...item,
+      payload: {
+        ...item.payload,
+        sourceUsage: "metadata_topic_only",
+        sourceAssetId: null,
+        sourceMediaType: null,
+        rightsSnapshot: null,
+        rightsBasis: null,
+        permittedRemix: null,
+        rightsEvidenceIds: [],
+        remixBrief: {
+          ...item.payload.remixBrief,
+          schema: "brand-aware-remix-brief/v2",
+          source: { ...item.payload.remixBrief.source, evidenceDigest: rightsDigest, usage: "metadata_topic_only", rightsSnapshotDigest: null },
+          provider: { ...item.payload.remixBrief.provider, transform: [] },
+        },
+      },
+    };
+    runGeneration.mockResolvedValue({ assetId: "original-candidate", intentId: "intent", operationId: "operation" });
+    productRequest.mockResolvedValue({ success: true });
+
+    render(<BlitzClient items={[metadataItem]} generatedAt="2026-09-04T01:00:00.000Z" />);
+    await userEvent.click(screen.getByRole("button", { name: "accept" }));
+
+    await waitFor(() => expect(runGeneration).toHaveBeenCalledWith(expect.objectContaining({ sourceMediaType: null, sourceAssetIds: [], rightsBasis: "owned", permittedRemix: "reference_only", rightsEvidenceIds: [], remixBrief: expect.objectContaining({ transform: [] }) })));
+    expect(productRequest).not.toHaveBeenCalledWith("/api/blitz/similarity", expect.anything());
+    expect(productRequest).toHaveBeenCalledWith("/api/blitz/decision", expect.objectContaining({ decision: "accepted", similarityEvidenceId: null, generation: { assetId: "original-candidate", intentId: "intent", operationId: "operation" } }));
+  });
+
   it("offers only duration presets admitted by the selected model", () => {
     render(<BlitzClient items={[item]} generatedAt="2026-09-04T01:00:00.000Z" />);
 
