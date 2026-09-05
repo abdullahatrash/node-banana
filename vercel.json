@@ -75,6 +75,12 @@
     "src/app/api/studio/internal/inspiration-trends/route.ts": {
       "maxDuration": 60
     },
+    "src/app/api/studio/internal/youtube-trends/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/licensed-trend-materialization/route.ts": {
+      "maxDuration": 60
+    },
     "src/app/api/studio/internal/marketing-attribution/route.ts": {
       "maxDuration": 60
     }
@@ -139,6 +145,14 @@
     {
       "path": "/api/studio/internal/inspiration-trends?limit=20",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/studio/internal/youtube-trends?limit=20",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/studio/internal/licensed-trend-materialization?limit=10",
+      "schedule": "* * * * *"
     },
     {
       "path": "/api/studio/internal/marketing-attribution?limit=20",

@@ -72,6 +72,13 @@ Invoke `GET` or `POST /api/studio/internal/youtube-trends?limit=20` with `x-stud
 
 Run the worker at least hourly. A frequent scheduler does not imply a provider call: only due sources are claimed. The source interval determines quota use.
 
+`vercel.json` invokes this route every five minutes so queued manual refreshes
+start promptly and due charts are not missed. That cadence does not increase
+YouTube quota consumption: the worker schedules only sources whose persisted
+`next_run_at` has passed, and every chart still follows its configured interval.
+Licensed catalog imports use a separate one-minute materialization worker and
+never cause a YouTube or generation-provider request.
+
 ## Release checklist
 
 - Confirm YouTube Data API access and key restrictions in the correct single Google API Project.
