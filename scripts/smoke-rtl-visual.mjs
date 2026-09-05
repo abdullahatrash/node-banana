@@ -5,6 +5,8 @@ import path from "node:path";
 
 import nextEnv from "@next/env";
 
+import { terminateChild } from "./child-process-cleanup.mjs";
+
 nextEnv.loadEnvConfig(process.cwd());
 
 const baseUrl = new URL(process.env.APP_BASE_URL || "http://localhost:3002");
@@ -240,6 +242,19 @@ try {
                 classes: String(element.className || '').slice(0, 180),
               }];
             }).sort((a, b) => b.width - a.width).slice(0, 12);
+            const bidiIsolationOffenders = [];
+            const textWalker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+            const technicalIdentifier = /\\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?:=[A-Za-z0-9._:-]+)?\\b/gu;
+            while (textWalker.nextNode()) {
+              const textNode = textWalker.currentNode;
+              const parent = textNode.parentElement;
+              const matches = textNode.textContent?.match(technicalIdentifier) || [];
+              if (!parent || matches.length === 0 || parent.closest('bdi,[dir="ltr"],[dir="auto"]')) continue;
+              const style = getComputedStyle(parent);
+              const rect = parent.getBoundingClientRect();
+              if (style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || rect.height <= 0) continue;
+              bidiIsolationOffenders.push(...matches.map((identifier) => ({ identifier, tag: parent.tagName.toLowerCase(), classes: String(parent.className || '').slice(0, 180) })));
+            }
             return {
               url: location.href,
               lang: root.lang,
@@ -249,6 +264,7 @@ try {
               mainPresent: Boolean(main),
               headingVisible: Boolean(headingRect && headingRect.width > 0 && headingRect.height > 0 && headingRect.right > 0 && headingRect.left < viewportWidth),
               overflowOffenders,
+              bidiIsolationOffenders: bidiIsolationOffenders.slice(0, 12),
             };
           })()`,
         });
@@ -264,6 +280,7 @@ try {
         if (observation.scrollWidth > observation.viewportWidth + 1) reasons.push(`horizontal overflow ${observation.scrollWidth}px > ${observation.viewportWidth}px`);
         if (!observation.mainPresent) reasons.push("main landmark missing");
         if (!observation.headingVisible) reasons.push("primary heading missing or outside viewport");
+        if (direction === "rtl" && observation.bidiIsolationOffenders.length > 0) reasons.push(`unisolated technical identifiers: ${observation.bidiIsolationOffenders.map((item) => item.identifier).join(", ")}`);
 
         const directory = path.join(outputRoot, locale, viewport.name);
         await mkdir(directory, { recursive: true });
@@ -271,14 +288,14 @@ try {
         const screenshot = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
         await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
         screenshots.push(screenshotPath);
-        if (reasons.length) failures.push({ locale, viewport: viewport.name, route, reasons, overflowOffenders: observation.overflowOffenders });
+        if (reasons.length) failures.push({ locale, viewport: viewport.name, route, reasons, overflowOffenders: observation.overflowOffenders, bidiIsolationOffenders: observation.bidiIsolationOffenders });
       }
     }
   }
 } finally {
   socket?.close();
-  stop();
-  await rm(userDataDir, { recursive: true, force: true });
+  await terminateChild(chrome);
+  await rm(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   try { await setLocale(originalLocale); }
   catch (error) { process.stderr.write(`[WARN] Could not restore the original locale: ${error instanceof Error ? error.message : "unknown"}\n`); }
 }
