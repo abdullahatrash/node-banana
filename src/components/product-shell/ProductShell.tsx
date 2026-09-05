@@ -142,6 +142,7 @@ function ShellLink({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
+        id={`shell-nav-${item.key}`}
         isActive={active}
         tooltip={label}
         render={

@@ -80,7 +80,7 @@ export function NavUser({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <SidebarMenuButton size="lg" className="aria-expanded:bg-muted" />
+              <SidebarMenuButton id="shell-user-menu" size="lg" className="aria-expanded:bg-muted" />
             }
           >
             <Avatar className="size-8 rounded-lg grayscale">

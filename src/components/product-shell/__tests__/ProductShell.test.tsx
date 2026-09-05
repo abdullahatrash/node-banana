@@ -67,6 +67,7 @@ describe("ProductShell", () => {
 
     expect(screen.getByRole("navigation", { name: "Product navigation" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/dashboard");
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("id", "shell-nav-dashboard");
     expect(screen.getByRole("link", { name: "Automations" })).toHaveAttribute("href", "/automations");
     expect(screen.getByRole("link", { name: "AI Studio" })).toHaveAttribute("href", "/ai-studio");
     expect(screen.getByRole("link", { name: "Plans & credits" })).toHaveAttribute("href", "/billing");
@@ -86,6 +87,8 @@ describe("ProductShell", () => {
     expect(document.querySelector('[data-slot="sidebar-inset"]')?.tagName).toBe(
       "DIV",
     );
+    expect(screen.getByRole("button", { name: /Noura Studio/ })).toHaveAttribute("id", "shell-workspace-switcher");
+    expect(screen.getByRole("button", { name: /Noura Alnajjarnoura@example.com/ })).toHaveAttribute("id", "shell-user-menu");
   });
 
   it("hides workspace billing navigation without billing-read authority", () => {

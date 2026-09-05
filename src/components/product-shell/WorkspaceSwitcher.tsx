@@ -52,7 +52,7 @@ export function WorkspaceSwitcher({
     return (
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton disabled tooltip={t("empty")}>
+          <SidebarMenuButton id="shell-workspace-switcher" disabled tooltip={t("empty")}>
             <PanelsTopLeftIcon />
             <span>{t("empty")}</span>
           </SidebarMenuButton>
@@ -68,6 +68,7 @@ export function WorkspaceSwitcher({
           <DropdownMenuTrigger
             render={
               <SidebarMenuButton
+                id="shell-workspace-switcher"
                 size="lg"
                 tooltip={activeWorkspace?.name ?? t("selectionRequired")}
               />
