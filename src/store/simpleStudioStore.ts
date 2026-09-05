@@ -17,6 +17,7 @@ import type { ExecutionPriceUsd } from "@/lib/model-routing/types";
 // ---------------------------------------------------------------------------
 
 export type SimpleStudioMode = "photo" | "video" | "copy";
+export const DEFAULT_GENERATION_FUNDING_MODE = "managed" as const;
 
 export interface Generation {
   id: string;
@@ -279,7 +280,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setOutputLanguage: (lang) => set({ outputLanguage: lang }),
   arabicVariety: "msa",
   setArabicVariety: (arabicVariety) => set({ arabicVariety }),
-  fundingMode: "byok",
+  fundingMode: DEFAULT_GENERATION_FUNDING_MODE,
   setFundingMode: (fundingMode) => set({ fundingMode }),
   pendingManagedCreditQuotes: [],
   resolveManagedCreditQuote: (quoteId, accepted) => {
@@ -546,7 +547,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       dialogueText: (config.dialogueText as string) || "",
       dialogueLanguage: (config.dialogueLanguage as "ar" | "en") || "en",
       copyModelId: (config.copyModelId as string) || "gemini-2.5-flash",
-      fundingMode: config.fundingMode === "managed" ? "managed" : "byok",
+      fundingMode: config.fundingMode === "byok" ? "byok" : DEFAULT_GENERATION_FUNDING_MODE,
     });
   },
 }));

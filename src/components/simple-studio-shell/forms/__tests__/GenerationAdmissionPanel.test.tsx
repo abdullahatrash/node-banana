@@ -10,9 +10,11 @@ vi.mock("next-intl", () => ({
     "byok.title": "Your Replicate key (BYOK)",
     "byok.description": "Replicate bills your provider account directly; Node Banana generation credits are not debited.",
     "byok.action": "Manage key",
+    "byok.option": "Your provider key (optional BYOK)",
     "managed.title": "Node Banana managed credits",
     "managed.description": "An exact credit debit must be approved before provider work starts.",
     "managed.action": "View credits",
+    "managed.option": "Managed credits (recommended)",
     "selectModel": "Select an admitted model.",
     "unitPrice": `Provider price: ${values?.amount ?? ""} per ${values?.basis ?? ""}`,
     "estimatedCost": `Estimated provider cost for this request: ${values?.amount ?? ""}`,
@@ -79,6 +81,8 @@ describe("GenerationAdmissionPanel managed credit confirmation", () => {
     expect(await screen.findByTestId("managed-credit-balance")).toHaveTextContent("25 credits currently available");
     expect(fetchMock).toHaveBeenCalledWith("/api/studio/billing", expect.objectContaining({ headers: { "x-workspace-id": "workspace-1" }, cache: "no-store" }));
     expect(screen.getByRole("link", { name: "View credits" })).toHaveAttribute("href", "/billing");
+    expect(screen.getByRole("option", { name: "Managed credits (recommended)" })).toHaveValue("managed");
+    expect(screen.getByRole("option", { name: "Your provider key (optional BYOK)" })).toHaveValue("byok");
   });
 
   it("keeps the billing action visible when the managed balance cannot load", async () => {

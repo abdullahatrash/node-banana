@@ -15,7 +15,6 @@ export function GenerationAdmissionPanel({ runs, quantityPerRun }: { runs?: numb
   const funding = useTranslations("generationFunding");
   const pricingT = useTranslations("pricingMetering");
   const automationFields = useTranslations("product.automations.fields");
-  const fundingModes = useTranslations("product.automations.modes");
   const fundingMode = useSimpleStudioStore((state) => state.fundingMode);
   const setFundingMode = useSimpleStudioStore((state) => state.setFundingMode);
   const selectedModelExecutionPriceUsd = useSimpleStudioStore((state) => state.selectedModelExecutionPriceUsd);
@@ -92,7 +91,7 @@ export function GenerationAdmissionPanel({ runs, quantityPerRun }: { runs?: numb
       </Link>
     </div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <label className="text-xs font-medium">{automationFields("mode")}<select className="mt-1 w-full rounded-md border bg-background p-2" value={fundingMode} onChange={(event) => setFundingMode(event.target.value as typeof fundingMode)}><option value="byok">{fundingModes("byok")}</option><option value="managed">{fundingModes("managed")}</option></select></label>
+      <label className="text-xs font-medium">{automationFields("mode")}<select className="mt-1 w-full rounded-md border bg-background p-2" value={fundingMode} onChange={(event) => setFundingMode(event.target.value as typeof fundingMode)}><option value="managed">{funding("managed.option")}</option><option value="byok">{funding("byok.option")}</option></select></label>
       <label className="text-xs font-medium">{t("arabicVariety")}<select className="mt-1 w-full rounded-md border bg-background p-2" value={arabicVariety} onChange={(event) => setArabicVariety(event.target.value as typeof arabicVariety)}>{VARIETIES.map((value) => <option key={value} value={value}>{t(`varieties.${value}`)}</option>)}</select></label>
       <label className="text-xs font-medium">{t("rightsBasis")}<select className="mt-1 w-full rounded-md border bg-background p-2" value={rightsBasis} onChange={(event) => setRightsBasis(event.target.value as typeof rightsBasis)}><option value="owned">{t("rights.owned")}</option><option value="licensed">{t("rights.licensed")}</option><option value="public_domain">{t("rights.public_domain")}</option><option value="consented">{t("rights.consented")}</option></select></label>
       <label className="text-xs font-medium">{t("permittedRemix")}<select className="mt-1 w-full rounded-md border bg-background p-2" value={permittedRemix} onChange={(event) => setPermittedRemix(event.target.value as typeof permittedRemix)}><option value="reference_only">{t("remix.reference_only")}</option><option value="transform">{t("remix.transform")}</option><option value="derivative">{t("remix.derivative")}</option></select></label>

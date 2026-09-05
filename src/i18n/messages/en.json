@@ -1245,12 +1245,14 @@
     "byok": {
       "title": "Your Replicate key (BYOK)",
       "description": "Uses the encrypted Replicate credential saved for this workspace. Replicate bills your provider account directly; Node Banana generation credits are not debited.",
-      "action": "Manage key"
+      "action": "Manage key",
+      "option": "Your provider key (optional BYOK)"
     },
     "managed": {
       "title": "Node Banana managed credits",
       "description": "An exact credit debit and money total must be approved before provider work starts. Declining the quote spends nothing.",
-      "action": "View credits"
+      "action": "View credits",
+      "option": "Managed credits (recommended)"
     },
     "selectModel": "Select an admitted model to see its provider price.",
     "unitPrice": "Provider price: {amount} per {basis}",
