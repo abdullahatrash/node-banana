@@ -97,9 +97,20 @@ describe("ProviderKeysSettings", () => {
     render(<ProviderKeysSettings />, "ar");
 
     expect(await screen.findByLabelText("المزود")).toBeInTheDocument();
+    expect(screen.getByText(/لتشفير بيانات الاعتماد المحفوظة فقط/)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "إرسال رمز التحقق" }),
     ).toBeInTheDocument();
+  });
+
+  it("distinguishes vault encryption, BYOK spend, and managed credits", async () => {
+    render(<ProviderKeysSettings />);
+
+    expect(await screen.findByText(/only encrypts saved credentials/i)).toBeInTheDocument();
+    expect(screen.getByText(/provider charges that account directly/i)).toBeInTheDocument();
+    expect(screen.getByText(/only after you accept an exact quote/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /inspect generation readiness/i })).toHaveAttribute("href", "/studio/model-routing");
+    expect(screen.getByRole("link", { name: /view plans and credits/i })).toHaveAttribute("href", "/billing");
   });
 
   it("requires an exact-provider challenge, verifies it, and forwards the token when saving", async () => {

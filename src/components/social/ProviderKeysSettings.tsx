@@ -2,7 +2,8 @@
 
 import { useRef, useState } from "react"
 import { useFormatter, useTranslations } from "next-intl"
-import { KeyRoundIcon, Loader2Icon, ShieldCheckIcon } from "lucide-react"
+import Link from "next/link"
+import { KeyRoundIcon, Loader2Icon, RouteIcon, ShieldCheckIcon, WalletCardsIcon } from "lucide-react"
 import { useToast } from "@/components/Toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -191,6 +192,42 @@ export function ProviderKeysSettings() {
           {t("description")}
         </p>
       </div>
+
+      <section aria-labelledby="provider-funding-title" className="grid gap-3 rounded-xl border bg-muted/20 p-4">
+        <div>
+          <h3 id="provider-funding-title" className="text-sm font-semibold">{t("funding.title")}</h3>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            {t.rich("funding.encryptionBoundary", {
+              encryptionKey: (chunks) => <bdi dir="ltr" className="font-mono text-xs">{chunks}</bdi>,
+            })}
+          </p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-lg border bg-background p-3">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <KeyRoundIcon className="size-4" aria-hidden="true" />
+              {t("funding.byokTitle")}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{t("funding.byokDescription")}</p>
+          </div>
+          <div className="rounded-lg border bg-background p-3">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <WalletCardsIcon className="size-4" aria-hidden="true" />
+              {t("funding.managedTitle")}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{t("funding.managedDescription")}</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs font-semibold">
+          <Link href="/studio/model-routing" className="inline-flex items-center gap-1.5 text-primary underline-offset-4 hover:underline">
+            <RouteIcon className="size-3.5" aria-hidden="true" />
+            {t("funding.readinessAction")}
+          </Link>
+          <Link href="/billing" className="text-primary underline-offset-4 hover:underline">
+            {t("funding.billingAction")}
+          </Link>
+        </div>
+      </section>
 
       <form
         onSubmit={handleSave}
