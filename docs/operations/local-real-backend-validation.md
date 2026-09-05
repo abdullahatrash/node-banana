@@ -126,6 +126,16 @@ reservation are applied to that liability before becoming available. A signed
 refund or chargeback reversal restores only the previously applied clawback and
 records a separate `clawback_reverse` ledger entry.
 
+Subscription transaction evidence also stores the exact paid period. Partial
+refunds claw back the same proportion of that period's allowance; a full refund
+or open dispute targets the full allowance. In addition, a full refund or open
+dispute creates a managed-execution hold keyed to the merchant subscription and
+that exact period. The hold prevents purchased or referral credits from
+bypassing the unpaid current-period requirement. A reversal releases the hold,
+and a later paid renewal is not blocked by an older period's hold. A legacy
+subscription transaction without exact period evidence fails closed with
+`ADJUSTMENT_SUBSCRIPTION_PERIOD_NOT_READY` and must be reconciled before retry.
+
 ### RTL visual approval is a separate gate
 
 `smoke:i18n-shell` proves server-rendered locale and direction semantics. It does

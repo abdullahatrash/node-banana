@@ -946,6 +946,20 @@
       "when": 1788734400000,
       "tag": "0134_merchant_credit_clawbacks",
       "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1788738000000,
+      "tag": "0135_subscription_period_financial_holds",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1788741600000,
+      "tag": "0136_execution_hold_workspace_index",
+      "breakpoints": true
     }
   ]
 }

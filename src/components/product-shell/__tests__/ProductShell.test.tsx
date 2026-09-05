@@ -152,7 +152,7 @@ describe("ProductShell", () => {
         subscription: { state: "trialing", planId: "starter", planVersion: 1, currentPeriodEndsAt: trialEndsAt, graceEndsAt: null, merchantCustomerRef: null },
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }, { planId: "starter", version: 1, authoredName: { ar: "البداية", en: "Starter" } }],
         credit: { availableUnits: 21, liabilityUnits: 0 },
-        financials: { transactions: [], adjustments: [] },
+        financials: { transactions: [], adjustments: [], executionHolds: [] },
       } }), { status: 200, headers: { "content-type": "application/json" } });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -173,7 +173,7 @@ describe("ProductShell", () => {
         subscription: null,
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }],
         credit: { availableUnits: 10, liabilityUnits: 0 },
-        financials: { transactions: [], adjustments: [] },
+        financials: { transactions: [], adjustments: [], executionHolds: [] },
       } }), { status: 200, headers: { "content-type": "application/json" } });
     }));
 
@@ -192,7 +192,7 @@ describe("ProductShell", () => {
         subscription: null,
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }],
         credit: { availableUnits: 7, liabilityUnits: 0 },
-        financials: { transactions: [], adjustments: [] },
+        financials: { transactions: [], adjustments: [], executionHolds: [] },
       } }), { status: 200, headers: { "content-type": "application/json" } });
     });
     vi.stubGlobal("fetch", fetchMock);

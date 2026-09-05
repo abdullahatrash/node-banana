@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { creditPackClawbackTarget, financialStateFromAdjustments, reconcileCreditClawback, reconcileReleasedCredits } from "../financial-evidence";
+import { creditClawbackTarget, creditPackClawbackTarget, financialStateFromAdjustments, reconcileCreditClawback, reconcileReleasedCredits, subscriptionFinancialHoldState } from "../financial-evidence";
 
 const at = (day: number) => new Date(`2026-09-${String(day).padStart(2, "0")}T00:00:00.000Z`);
 
@@ -46,6 +46,40 @@ describe("creditPackClawbackTarget", () => {
   it("rejects unsafe or impossible monetary ratios", () => {
     expect(() => creditPackClawbackTarget({ grantedUnits: 100, amountMinor: 0, refundedMinor: 0, transactionStatus: "completed" })).toThrow("CREDIT_CLAWBACK_INPUT_INVALID");
     expect(() => creditPackClawbackTarget({ grantedUnits: 100, amountMinor: 1_000, refundedMinor: 1_001, transactionStatus: "refunded" })).toThrow("CREDIT_CLAWBACK_INPUT_INVALID");
+  });
+});
+
+describe("creditClawbackTarget", () => {
+  it("uses the same exact proportional rule for a subscription allowance", () => {
+    expect(creditClawbackTarget({ grantedUnits: 150, amountMinor: 2_900, refundedMinor: 1_450, transactionStatus: "partially_refunded" })).toBe(75);
+    expect(creditClawbackTarget({ grantedUnits: 150, amountMinor: 2_900, refundedMinor: 2_900, transactionStatus: "refunded" })).toBe(150);
+  });
+
+  it("targets the full allowance while its subscription charge is disputed", () => {
+    expect(creditClawbackTarget({ grantedUnits: 150, amountMinor: 2_900, refundedMinor: 0, transactionStatus: "disputed" })).toBe(150);
+    expect(creditClawbackTarget({ grantedUnits: 150, amountMinor: 2_900, refundedMinor: 0, transactionStatus: "chargeback_reversed" })).toBe(0);
+  });
+});
+
+describe("subscriptionFinancialHoldState", () => {
+  it.each([
+    [{ amountMinor: 2_900, refundedMinor: 0, transactionStatus: "disputed" }, "active"],
+    [{ amountMinor: 2_900, refundedMinor: 2_900, transactionStatus: "refunded" }, "active"],
+  ] as const)("activates for a disputed or fully refunded paid period", (input, expected) => {
+    expect(subscriptionFinancialHoldState(input)).toBe(expected);
+  });
+
+  it.each([
+    [{ amountMinor: 2_900, refundedMinor: 1_450, transactionStatus: "partially_refunded" }, "released"],
+    [{ amountMinor: 2_900, refundedMinor: 0, transactionStatus: "completed" }, "released"],
+    [{ amountMinor: 2_900, refundedMinor: 0, transactionStatus: "chargeback_reversed" }, "released"],
+  ] as const)("does not hold a partially refunded, paid, or reversed period", (input, expected) => {
+    expect(subscriptionFinancialHoldState(input)).toBe(expected);
+  });
+
+  it("rejects invalid monetary evidence instead of accidentally releasing access", () => {
+    expect(() => subscriptionFinancialHoldState({ amountMinor: 0, refundedMinor: 0, transactionStatus: "completed" })).toThrow("SUBSCRIPTION_FINANCIAL_HOLD_INPUT_INVALID");
+    expect(() => subscriptionFinancialHoldState({ amountMinor: 2_900, refundedMinor: 2_901, transactionStatus: "refunded" })).toThrow("SUBSCRIPTION_FINANCIAL_HOLD_INPUT_INVALID");
   });
 });
 

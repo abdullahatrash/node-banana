@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { billingPlanVersions, billingTrialGrants, commercialCommandReceipts, generationCreditBuckets, generationCreditLedgerEntries, generationCreditPackVersions, generationCreditReservations, managedExecutionCommercialQuotes, merchantBillingAdjustments, merchantBillingTransactions, merchantCreditLiabilities, referralAttributions, referralFraudEvidence, referralPayoutLedgerEntries, referralRewards, user, workspaceReferralCodes, workspaceSubscriptionEvents, workspaceSubscriptions, workspaces } from "@/lib/db/schema";
+import { billingPlanVersions, billingTrialGrants, commercialCommandReceipts, generationCreditBuckets, generationCreditLedgerEntries, generationCreditPackVersions, generationCreditReservations, managedExecutionCommercialQuotes, merchantBillingAdjustments, merchantBillingTransactions, merchantCreditLiabilities, merchantExecutionHolds, referralAttributions, referralFraudEvidence, referralPayoutLedgerEntries, referralRewards, user, workspaceReferralCodes, workspaceSubscriptionEvents, workspaceSubscriptions, workspaces } from "@/lib/db/schema";
 import { allocateCredits, SUBSCRIPTION_TRANSITIONS } from "./types";
 import { reconcileReleasedCredits } from "./financial-evidence";
 
@@ -27,7 +27,7 @@ const completeCommand = async (tx: Tx, input: { workspaceId: string; idempotency
 export class CommercialRepository {
   constructor(private readonly database: Db = getDb(), private readonly now = () => new Date()) {}
   async summary(workspaceId: string) {
-    const now = this.now(); const [subscription, plans, packs, buckets, reservations, quotes, codes, rewards, payouts, entries, transactions, adjustments, liabilities] = await Promise.all([
+    const now = this.now(); const [subscription, plans, packs, buckets, reservations, quotes, codes, rewards, payouts, entries, transactions, adjustments, liabilities, executionHolds] = await Promise.all([
       this.database.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, workspaceId)).limit(1),
       this.database.select().from(billingPlanVersions).where(and(eq(billingPlanVersions.status, "active"), sql`${billingPlanVersions.effectiveAt} <= ${now}`, or(isNull(billingPlanVersions.retiredAt), gt(billingPlanVersions.retiredAt, now)))).orderBy(asc(billingPlanVersions.priceMinor)),
       this.database.select().from(generationCreditPackVersions).where(and(eq(generationCreditPackVersions.status, "active"), sql`${generationCreditPackVersions.effectiveAt} <= ${now}`, or(isNull(generationCreditPackVersions.retiredAt), gt(generationCreditPackVersions.retiredAt, now)))).orderBy(asc(generationCreditPackVersions.priceMinor)),
@@ -41,8 +41,11 @@ export class CommercialRepository {
       this.database.select().from(merchantBillingTransactions).where(eq(merchantBillingTransactions.workspaceId, workspaceId)).orderBy(desc(merchantBillingTransactions.providerOccurredAt), desc(merchantBillingTransactions.transactionRef)).limit(100),
       this.database.select().from(merchantBillingAdjustments).where(eq(merchantBillingAdjustments.workspaceId, workspaceId)).orderBy(desc(merchantBillingAdjustments.providerOccurredAt), desc(merchantBillingAdjustments.adjustmentRef)).limit(100),
       this.database.select().from(merchantCreditLiabilities).where(eq(merchantCreditLiabilities.workspaceId, workspaceId)),
+      this.database.select().from(merchantExecutionHolds).where(and(eq(merchantExecutionHolds.workspaceId, workspaceId), eq(merchantExecutionHolds.state, "active"))),
     ]);
-    return { subscription: subscription[0] ?? null, plans, creditPacks: packs, quotes, credit: { availableUnits: buckets.reduce((sum, row) => sum + row.availableUnits, 0), liabilityUnits: liabilities.reduce((sum, row) => sum + row.outstandingUnits, 0), buckets, heldReservations: reservations, recentEntries: entries }, financials: { transactions, adjustments }, referrals: { codes, rewards, payoutEntries: payouts } };
+    const current = subscription[0];
+    const currentExecutionHolds = current?.merchantSubscriptionRef ? executionHolds.filter((hold) => hold.merchantSubscriptionRef === current.merchantSubscriptionRef && hold.periodStartsAt.getTime() === current.currentPeriodStartsAt.getTime() && hold.periodEndsAt.getTime() === current.currentPeriodEndsAt.getTime()) : [];
+    return { subscription: current ?? null, plans, creditPacks: packs, quotes, credit: { availableUnits: buckets.reduce((sum, row) => sum + row.availableUnits, 0), liabilityUnits: liabilities.reduce((sum, row) => sum + row.outstandingUnits, 0), buckets, heldReservations: reservations, recentEntries: entries }, financials: { transactions, adjustments, executionHolds: currentExecutionHolds }, referrals: { codes, rewards, payoutEntries: payouts } };
   }
   async publishPlan(input: typeof billingPlanVersions.$inferInsert) { await this.database.insert(billingPlanVersions).values(input); return input; }
   async startTrial(input: { workspaceId: string; userId: string; planId: string; planVersion: number; idempotencyKey: string }) {
@@ -91,6 +94,10 @@ export class CommercialRepository {
     return this.database.transaction(async (tx) => {
       const command = await claimCommand(tx, { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, request: { action: "reserve_quote", quoteId: input.quoteId, externalEffectRef: input.externalEffectRef } }); if (command.kind === "replay") return command.result;
       const [subscription] = await tx.select().from(workspaceSubscriptions).where(and(eq(workspaceSubscriptions.workspaceId, input.workspaceId), inArray(workspaceSubscriptions.state, ["trialing", "active", "grace"]))).for("update").limit(1); if (!subscription) throw new CommercialError("ENTITLEMENT_REQUIRED");
+      if (subscription.merchantSubscriptionRef) {
+        const [executionHold] = await tx.select({ transactionRef: merchantExecutionHolds.transactionRef }).from(merchantExecutionHolds).where(and(eq(merchantExecutionHolds.workspaceId, input.workspaceId), eq(merchantExecutionHolds.merchantSubscriptionRef, subscription.merchantSubscriptionRef), eq(merchantExecutionHolds.periodStartsAt, subscription.currentPeriodStartsAt), eq(merchantExecutionHolds.periodEndsAt, subscription.currentPeriodEndsAt), eq(merchantExecutionHolds.state, "active"))).for("update").limit(1);
+        if (executionHold) throw new CommercialError("SUBSCRIPTION_FINANCIAL_HOLD");
+      }
       const [liability] = await tx.select().from(merchantCreditLiabilities).where(and(eq(merchantCreditLiabilities.workspaceId, input.workspaceId), eq(merchantCreditLiabilities.state, "open"), gt(merchantCreditLiabilities.outstandingUnits, 0))).for("update").limit(1); if (liability) throw new CommercialError("COMMERCIAL_LIABILITY_OUTSTANDING");
       const [quote] = await tx.select().from(managedExecutionCommercialQuotes).where(and(eq(managedExecutionCommercialQuotes.workspaceId, input.workspaceId), eq(managedExecutionCommercialQuotes.id, input.quoteId), eq(managedExecutionCommercialQuotes.state, "accepted"), gt(managedExecutionCommercialQuotes.expiresAt, this.now()))).for("update").limit(1); if (!quote) throw new CommercialError("QUOTE_NOT_RESERVABLE");
       const buckets = await tx.select().from(generationCreditBuckets).where(and(eq(generationCreditBuckets.workspaceId, input.workspaceId), gt(generationCreditBuckets.availableUnits, 0), or(isNull(generationCreditBuckets.expiresAt), gt(generationCreditBuckets.expiresAt, this.now())))).orderBy(asc(generationCreditBuckets.kind), asc(generationCreditBuckets.expiresAt), asc(generationCreditBuckets.createdAt), asc(generationCreditBuckets.id)).for("update");

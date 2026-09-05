@@ -13,7 +13,7 @@ const summary = {
   creditPacks: [],
   quotes: [],
   credit: { availableUnits: 10, liabilityUnits: 0, buckets: [], heldReservations: [], recentEntries: [] },
-  financials: { transactions: [], adjustments: [] },
+  financials: { transactions: [], adjustments: [], executionHolds: [] },
   referrals: { codes: [], rewards: [], payoutEntries: [] },
 };
 
@@ -109,5 +109,42 @@ describe("BillingSettings default plan", () => {
     render(<I18nTestProvider locale="en"><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
     expect(await screen.findByRole("alert")).toHaveTextContent("6 refunded or disputed credits were already consumed");
     expect(screen.getByText("4")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["en" as const, "Managed generation is paused for this billing period because its payment was disputed. Use the billing portal or contact support to resolve it."],
+    ["ar" as const, "توقف التوليد المُدار لهذه الفترة لأن دفعتها متنازع عليها. استخدم بوابة الفوترة أو تواصل مع الدعم لتسويتها."],
+  ])("warns in %s when the current subscription period has an active financial hold", async (locale, message) => {
+    const evidence = {
+      ...summary,
+      subscription: {
+        state: "active",
+        planId: "starter",
+        planVersion: 1,
+        currentPeriodStartsAt: "2026-09-01T00:00:00.000Z",
+        currentPeriodEndsAt: "2026-10-01T00:00:00.000Z",
+        graceEndsAt: null,
+        merchantCustomerRef: "ctm_1",
+        merchantSubscriptionRef: "sub_1",
+      },
+      financials: {
+        ...summary.financials,
+        executionHolds: [{
+          provider: "paddle",
+          transactionRef: "txn_1",
+          merchantSubscriptionRef: "sub_1",
+          reason: "disputed",
+          state: "active",
+          periodStartsAt: "2026-09-01T00:00:00.000Z",
+          periodEndsAt: "2026-10-01T00:00:00.000Z",
+        }],
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ success: true, data: evidence }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    const { container } = render(<I18nTestProvider locale={locale}><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
+
+    expect(await screen.findByText(message)).toHaveAttribute("role", "alert");
+    expect(container.firstElementChild).toHaveAttribute("dir", locale === "ar" ? "rtl" : "ltr");
   });
 });
