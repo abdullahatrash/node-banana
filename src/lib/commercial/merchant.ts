@@ -6,8 +6,21 @@ export type MerchantCheckoutEvent = {
   provider: string; eventId: string; eventType: "checkout.completed" | "checkout.failed" | "checkout.expired" | "checkout.cancelled";
   checkoutId: string; merchantCheckoutRef: string; merchantEffectRef: string; merchantCustomerRef: string | null; merchantSubscriptionRef: string | null; merchantReceiptRef: string | null; periodStartsAt: Date | null; periodEndsAt: Date | null; occurredAt: Date;
 };
+export type MerchantSubscriptionEvent = {
+  provider: string;
+  eventId: string;
+  eventType: "subscription.payment_completed" | "subscription.active" | "subscription.grace" | "subscription.cancel_at_period_end" | "subscription.cancelled" | "subscription.suspended";
+  workspaceId: string;
+  merchantCustomerRef: string;
+  merchantSubscriptionRef: string;
+  merchantTransactionRef: string | null;
+  periodStartsAt: Date | null;
+  periodEndsAt: Date | null;
+  occurredAt: Date;
+};
 export type MerchantWebhookVerification =
-  | { kind: "event"; event: MerchantCheckoutEvent }
+  | { kind: "checkout_event"; event: MerchantCheckoutEvent }
+  | { kind: "subscription_event"; event: MerchantSubscriptionEvent }
   | { kind: "ignored"; provider: string; eventId: string; reason: string }
   | { kind: "invalid" };
 
@@ -49,7 +62,7 @@ export class ConfiguredMerchantOfRecordAdapter implements MerchantOfRecordAdapte
     const timestamp = Number(input.timestamp); if (!Number.isFinite(timestamp) || Math.abs(input.at.getTime() - timestamp * 1_000) > 5 * 60_000) return { kind: "invalid" as const };
     const expected = `hmac-sha256=${createHmac("sha256", secret).update(`${input.timestamp}.${input.body}`).digest("hex")}`;
     if (!sameSignature(expected, input.signature)) return { kind: "invalid" as const };
-    try { const parsed = eventSchema.safeParse(JSON.parse(input.body)); return parsed.success ? { kind: "event" as const, event: hydrateEvent(parsed.data) } : { kind: "invalid" as const }; } catch { return { kind: "invalid" as const }; }
+    try { const parsed = eventSchema.safeParse(JSON.parse(input.body)); return parsed.success ? { kind: "checkout_event" as const, event: hydrateEvent(parsed.data) } : { kind: "invalid" as const }; } catch { return { kind: "invalid" as const }; }
   }
   async createPortal(input: Parameters<MerchantOfRecordAdapter["createPortal"]>[0]) {
     const response = await this.call("portal", { method: "POST", headers: { "Idempotency-Key": `portal:${input.workspaceId}:${input.customerRef}` }, body: JSON.stringify(input) });

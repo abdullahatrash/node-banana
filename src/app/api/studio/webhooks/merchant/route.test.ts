@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ verify: vi.fn(), apply: vi.fn() }));
+const mocks = vi.hoisted(() => ({ verify: vi.fn(), apply: vi.fn(), applySubscription: vi.fn() }));
 vi.mock("@/lib/commercial/production", () => ({
   MERCHANT_OF_RECORD: { verifyWebhook: (...args: unknown[]) => mocks.verify(...args) },
   MERCHANT_CHECKOUTS: { applyVerifiedEvent: (...args: unknown[]) => mocks.apply(...args) },
+  MERCHANT_SUBSCRIPTIONS: { applyVerifiedEvent: (...args: unknown[]) => mocks.applySubscription(...args) },
 }));
 
 import { POST } from "./route";
@@ -30,10 +31,20 @@ describe("merchant webhook route", () => {
 
   it("applies only a verified terminal checkout event", async () => {
     const event = { eventId: "evt_1" };
-    mocks.verify.mockReturnValue({ kind: "event", event });
+    mocks.verify.mockReturnValue({ kind: "checkout_event", event });
     mocks.apply.mockResolvedValue({ state: "applied" });
     const response = await POST(new NextRequest("http://localhost/api/studio/webhooks/merchant", { method: "POST", body: "{}" }));
     expect(response.status).toBe(200);
     expect(mocks.apply).toHaveBeenCalledWith(event);
+  });
+
+  it("routes verified subscription events to the lifecycle projector", async () => {
+    const event = { eventId: "evt_subscription" };
+    mocks.verify.mockReturnValue({ kind: "subscription_event", event });
+    mocks.applySubscription.mockResolvedValue({ state: "applied" });
+    const response = await POST(new NextRequest("http://localhost/api/studio/webhooks/merchant", { method: "POST", body: "{}" }));
+    expect(response.status).toBe(200);
+    expect(mocks.applySubscription).toHaveBeenCalledWith(event);
+    expect(mocks.apply).not.toHaveBeenCalled();
   });
 });

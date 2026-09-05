@@ -79,8 +79,9 @@ the one running app origin. In Paddle sandbox, set the default payment link to
 least-privileged API key with transaction read/write and customer-portal access,
 and create a notification destination at
 `https://<tunnel>/api/studio/webhooks/merchant`. Subscribe to
-`transaction.completed` and `transaction.canceled` and copy that destination's
-secret into `PADDLE_WEBHOOK_SECRET`.
+`transaction.completed`, `transaction.canceled`, and the subscription lifecycle
+events listed in `.env.example`, then copy that destination's secret into
+`PADDLE_WEBHOOK_SECRET`.
 
 Set the Paddle variables documented in `.env.example`, restart the app, and run:
 
@@ -99,10 +100,11 @@ the app.
 If transaction creation loses its response, the local session moves to
 `outcome_unknown`. Retrying or running the commercial reconciliation worker
 searches Paddle for the original `node_banana_checkout_id`; it never blindly
-submits a second create. A recurring renewal copies custom data in Paddle, but
-the webhook adapter acknowledges it without replaying the original checkout.
-Recurring subscription lifecycle projection is a separate billing slice and
-must be completed before live launch.
+submits a second create. A recurring renewal copies custom data in Paddle and is
+projected as a new paid period rather than replaying the original checkout. It
+grants one expiring Plan allowance per period. Signed subscription events update
+active, grace, period-end cancellation, paused, and cancelled state in provider
+occurrence order, so delayed delivery cannot roll the Workspace backward.
 
 ### RTL visual approval is a separate gate
 

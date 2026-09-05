@@ -78,17 +78,26 @@ describe("PaddleMerchantOfRecordAdapter", () => {
     const timestamp = Math.floor(at.getTime() / 1000) - 2;
     const valid = createHmac("sha256", environment.PADDLE_WEBHOOK_SECRET).update(`${timestamp}:${body}`).digest("hex");
     const adapter = new PaddleMerchantOfRecordAdapter(environment, vi.fn());
-    expect(adapter.verifyWebhook({ body, timestamp: null, signature: null, paddleSignature: `ts=${timestamp};h1=${"0".repeat(64)};h1=${valid}`, at })).toMatchObject({ kind: "event", event: { provider: "paddle", eventId: "evt_01test", checkoutId: "checkout_1", merchantReceiptRef: "INV-100" } });
+    expect(adapter.verifyWebhook({ body, timestamp: null, signature: null, paddleSignature: `ts=${timestamp};h1=${"0".repeat(64)};h1=${valid}`, at })).toMatchObject({ kind: "checkout_event", event: { provider: "paddle", eventId: "evt_01test", checkoutId: "checkout_1", merchantReceiptRef: "INV-100" } });
     expect(adapter.verifyWebhook({ body: `${body} `, timestamp: null, signature: null, paddleSignature: `ts=${timestamp};h1=${valid}`, at })).toEqual({ kind: "invalid" });
   });
 
-  it("acknowledges recurring renewals without replaying the original checkout", () => {
+  it("maps recurring renewals to a subscription period payment instead of replaying the original checkout", () => {
     const renewal = { ...transaction, id: "txn_renewal", origin: "subscription_recurring" };
     const body = JSON.stringify({ event_id: "evt_renewal", event_type: "transaction.completed", occurred_at: "2026-09-05T12:00:01.000Z", data: renewal });
     const timestamp = Math.floor(at.getTime() / 1000);
     const signature = createHmac("sha256", environment.PADDLE_WEBHOOK_SECRET).update(`${timestamp}:${body}`).digest("hex");
     const adapter = new PaddleMerchantOfRecordAdapter(environment, vi.fn());
-    expect(adapter.verifyWebhook({ body, timestamp: null, signature: null, paddleSignature: `ts=${timestamp};h1=${signature}`, at })).toEqual({ kind: "ignored", provider: "paddle", eventId: "evt_renewal", reason: "recurring_or_adjustment_transaction" });
+    expect(adapter.verifyWebhook({ body, timestamp: null, signature: null, paddleSignature: `ts=${timestamp};h1=${signature}`, at })).toMatchObject({ kind: "subscription_event", event: { eventType: "subscription.payment_completed", workspaceId: "workspace_1", merchantTransactionRef: "txn_renewal" } });
+  });
+
+  it("maps an active subscription with scheduled cancellation to period-end cancellation", () => {
+    const subscription = { id: "sub_01test", status: "active", customer_id: "ctm_01test", custom_data: transaction.custom_data, current_billing_period: transaction.billing_period, scheduled_change: { action: "cancel", effective_at: "2026-10-05T12:00:00.000Z" } };
+    const body = JSON.stringify({ event_id: "evt_subscription", event_type: "subscription.updated", occurred_at: "2026-09-05T12:00:01.000Z", data: subscription });
+    const timestamp = Math.floor(at.getTime() / 1000);
+    const signature = createHmac("sha256", environment.PADDLE_WEBHOOK_SECRET).update(`${timestamp}:${body}`).digest("hex");
+    const adapter = new PaddleMerchantOfRecordAdapter(environment, vi.fn());
+    expect(adapter.verifyWebhook({ body, timestamp: null, signature: null, paddleSignature: `ts=${timestamp};h1=${signature}`, at })).toMatchObject({ kind: "subscription_event", event: { eventType: "subscription.cancel_at_period_end", workspaceId: "workspace_1", merchantSubscriptionRef: "sub_01test" } });
   });
 
   it("rejects a signed event when Paddle totals do not match the immutable local quote", () => {

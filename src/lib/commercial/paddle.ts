@@ -3,6 +3,7 @@ import { z } from "zod";
 import type {
   MerchantCheckoutEvent,
   MerchantOfRecordAdapter,
+  MerchantSubscriptionEvent,
   MerchantWebhookVerification,
 } from "./merchant";
 
@@ -37,6 +38,14 @@ const transactionResponseSchema = z.object({ data: transactionSchema }).passthro
 const transactionListSchema = z.object({ data: z.array(transactionSchema) }).passthrough();
 const portalResponseSchema = z.object({
   data: z.object({ urls: z.object({ general: z.object({ overview: z.string().url() }).passthrough() }).passthrough() }).passthrough(),
+}).passthrough();
+const subscriptionSchema = z.object({
+  id: z.string().regex(/^sub_[a-z0-9]+$/),
+  status: z.enum(["trialing", "active", "past_due", "paused", "canceled"]),
+  customer_id: z.string().regex(/^ctm_[a-z0-9]+$/),
+  custom_data: z.unknown().nullable().optional(),
+  current_billing_period: z.object({ starts_at: z.string().datetime(), ends_at: z.string().datetime() }).nullable().optional(),
+  scheduled_change: z.object({ action: z.enum(["cancel", "pause", "resume"]), effective_at: z.string().datetime() }).passthrough().nullable().optional(),
 }).passthrough();
 const webhookEnvelopeSchema = z.object({
   event_id: z.string().min(1).max(200),
@@ -100,6 +109,14 @@ export class PaddleMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
       return { kind: "invalid" };
     }
 
+    if (envelope.event_type.startsWith("subscription.")) {
+      const subscription = subscriptionSchema.safeParse(envelope.data);
+      if (!subscription.success) return { kind: "invalid" };
+      const customData = customDataSchema.safeParse(subscription.data.custom_data);
+      if (!customData.success || customData.data.node_banana_purpose_kind !== "subscription") return { kind: "ignored", provider: "paddle", eventId: envelope.event_id, reason: "foreign_subscription" };
+      const event = paddleSubscriptionStatusEvent(subscription.data, customData.data, envelope.event_id, new Date(envelope.occurred_at));
+      return { kind: "subscription_event", event };
+    }
     if (!envelope.event_type.startsWith("transaction.")) {
       return { kind: "ignored", provider: "paddle", eventId: envelope.event_id, reason: "unsupported_entity" };
     }
@@ -109,15 +126,30 @@ export class PaddleMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
     if (!customData.success) {
       return { kind: "ignored", provider: "paddle", eventId: envelope.event_id, reason: "foreign_transaction" };
     }
+    if (transaction.data.origin === "subscription_recurring" && envelope.event_type === "transaction.completed") {
+      if (customData.data.node_banana_purpose_kind !== "subscription" || !transaction.data.customer_id || !transaction.data.subscription_id || !transaction.data.billing_period || !this.transactionTotalsMatch(transaction.data, customData.data)) return { kind: "invalid" };
+      return { kind: "subscription_event", event: {
+        provider: "paddle",
+        eventId: envelope.event_id,
+        eventType: "subscription.payment_completed",
+        workspaceId: customData.data.node_banana_workspace_id,
+        merchantCustomerRef: transaction.data.customer_id,
+        merchantSubscriptionRef: transaction.data.subscription_id,
+        merchantTransactionRef: transaction.data.id,
+        periodStartsAt: new Date(transaction.data.billing_period.starts_at),
+        periodEndsAt: new Date(transaction.data.billing_period.ends_at),
+        occurredAt: new Date(envelope.occurred_at),
+      } };
+    }
     if (transaction.data.origin && transaction.data.origin !== "api") {
-      return { kind: "ignored", provider: "paddle", eventId: envelope.event_id, reason: "recurring_or_adjustment_transaction" };
+      return { kind: "ignored", provider: "paddle", eventId: envelope.event_id, reason: "non_checkout_transaction" };
     }
     if (!["transaction.completed", "transaction.canceled"].includes(envelope.event_type)) {
       return { kind: "ignored", provider: "paddle", eventId: envelope.event_id, reason: "non_terminal_transaction" };
     }
     if (!this.transactionTotalsMatch(transaction.data, customData.data)) return { kind: "invalid" };
     const event = this.terminalEvent(transaction.data, envelope.event_id, new Date(envelope.occurred_at));
-    return event ? { kind: "event", event } : { kind: "invalid" };
+    return event ? { kind: "checkout_event", event } : { kind: "invalid" };
   }
 
   async createPortal(input: Parameters<MerchantOfRecordAdapter["createPortal"]>[0]) {
@@ -287,4 +319,26 @@ function productName(input: CheckoutInput) {
 function safeReturnPath(value: string) {
   if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) throw new Error("PADDLE_RETURN_PATH_UNSAFE");
   return value;
+}
+
+function paddleSubscriptionStatusEvent(subscription: z.infer<typeof subscriptionSchema>, customData: z.infer<typeof customDataSchema>, eventId: string, occurredAt: Date): MerchantSubscriptionEvent {
+  const period = subscription.current_billing_period;
+  let eventType: MerchantSubscriptionEvent["eventType"];
+  if (subscription.status === "past_due") eventType = "subscription.grace";
+  else if (subscription.status === "paused") eventType = "subscription.suspended";
+  else if (subscription.status === "canceled") eventType = "subscription.cancelled";
+  else if (subscription.scheduled_change?.action === "cancel") eventType = "subscription.cancel_at_period_end";
+  else eventType = "subscription.active";
+  return {
+    provider: "paddle",
+    eventId,
+    eventType,
+    workspaceId: customData.node_banana_workspace_id,
+    merchantCustomerRef: subscription.customer_id,
+    merchantSubscriptionRef: subscription.id,
+    merchantTransactionRef: null,
+    periodStartsAt: period ? new Date(period.starts_at) : null,
+    periodEndsAt: period ? new Date(period.ends_at) : null,
+    occurredAt,
+  };
 }
