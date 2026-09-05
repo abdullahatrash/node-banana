@@ -27,6 +27,12 @@ const readyFacts = (overrides: Partial<LocalReadinessFacts> = {}): LocalReadines
   activeCreditPacks: 3,
   availableCredits: 250,
   merchantConfigured: true,
+  trendWorkerAuthConfigured: true,
+  youtubeTrendDiscoveryEnabled: true,
+  youtubeTrendApiKeyConfigured: true,
+  youtubeTrendDisclosuresConfigured: true,
+  activeYoutubeTrendSources: 1,
+  activeLicensedTrendEntitlements: 2,
   xAdsAttributionAvailable: true,
   xAdsAttributionBlockers: [],
   ...overrides,
@@ -35,8 +41,29 @@ const readyFacts = (overrides: Partial<LocalReadinessFacts> = {}): LocalReadines
 describe("local generation readiness", () => {
   it("reports independently executable BYOK and managed lanes", () => {
     const report = buildLocalReadinessReport(readyFacts());
-    expect(report).toMatchObject({ coreReady: true, byokReady: true, managedReady: true });
+    expect(report).toMatchObject({ coreReady: true, byokReady: true, managedReady: true, trendIntelligenceReady: true });
     expect(report.checks.every((check) => check.status === "ready")).toBe(true);
+  });
+
+  it("explains every independent Trend Intelligence blocker", () => {
+    const report = buildLocalReadinessReport(readyFacts({
+      trendWorkerAuthConfigured: false,
+      youtubeTrendApiKeyConfigured: false,
+      youtubeTrendDisclosuresConfigured: false,
+      activeYoutubeTrendSources: 0,
+      activeLicensedTrendEntitlements: 0,
+    }));
+
+    expect(report.trendIntelligenceReady).toBe(false);
+    expect(report.checks.find((check) => check.id === "trend_workers")).toMatchObject({ status: "blocked" });
+    expect(report.checks.find((check) => check.id === "youtube_trends")).toMatchObject({
+      status: "blocked",
+      detail: expect.stringContaining("server-side YouTube Data API key"),
+    });
+    expect(report.checks.find((check) => check.id === "licensed_trends")).toMatchObject({
+      status: "blocked",
+      detail: expect.stringContaining("No active licensed trend entitlement"),
+    });
   });
 
   it("does not claim BYOK readiness from an AI token without vault encryption", () => {

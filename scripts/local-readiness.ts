@@ -5,6 +5,7 @@ import { configuredCatalog } from "@/lib/model-routing/catalog";
 import { buildLocalReadinessReport, type LocalReadinessFacts } from "@/lib/local-readiness";
 import { evaluateXAdsAttributionReadiness, loadXAdsAttributionConfig } from "@/lib/marketing-attribution/config";
 import { hasConfiguredSecret } from "@/lib/configured-secret";
+import { youtubeTrendDiscoveryCapability } from "@/lib/product-surfaces/youtube-trend-capability";
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -32,6 +33,8 @@ async function run() {
   let activePlans = 0;
   let activeCreditPacks = 0;
   let availableCredits = 0;
+  let activeYoutubeTrendSources = 0;
+  let activeLicensedTrendEntitlements = 0;
   const configuredReplicateRegion = process.env.PROVIDER_REGION_REPLICATE?.trim() || null;
 
   if (pool) {
@@ -54,6 +57,8 @@ async function run() {
         verifiedReplicateRegion = Boolean(configuredReplicateRegion) && (await count("select count(*) from workspace_governance_resources where workspace_id = $1 and kind = 'data_region_policy' and id = 'active' and status = 'active' and body->>'verified' = 'true' and body->'verifiedEvidence'->>'expiresAt' > $2 and exists (select 1 from jsonb_array_elements(body->'verifiedEvidence'->'routes') route where route->>'kind' = 'processing' and route->>'routeId' = 'provider:replicate' and route->>'region' = $3)", [workspaceId, new Date().toISOString(), configuredReplicateRegion])) > 0;
         const credits = await pool.query<{ credits: string }>("select coalesce(sum(available_units), 0)::text as credits from generation_credit_buckets where workspace_id = $1 and (expires_at is null or expires_at > now())", [workspaceId]);
         availableCredits = Number(credits.rows[0]?.credits ?? 0);
+        activeYoutubeTrendSources = await count("select count(*) from youtube_trend_discovery_sources where workspace_id = $1 and state = 'active'", [workspaceId]);
+        activeLicensedTrendEntitlements = await count("select count(*) from licensed_trend_workspace_entitlements entitlement join licensed_trend_catalog_entries catalog on catalog.id = entitlement.catalog_id join licensed_trend_catalog_revisions revision on revision.catalog_id = entitlement.catalog_id and revision.revision = entitlement.catalog_revision and revision.document_digest = entitlement.catalog_digest where entitlement.workspace_id = $1 and entitlement.state = 'active' and catalog.state = 'active' and (entitlement.expires_at is null or entitlement.expires_at > now()) and (revision.rights_expires_at is null or revision.rights_expires_at > now())", [workspaceId]);
       }
     } catch (error) {
       databaseConnected = false;
@@ -63,6 +68,7 @@ async function run() {
 
   const encryptionKey = process.env.BYOK_KEY_ENCRYPTION_KEY?.trim() || "";
   const xAdsReadiness = evaluateXAdsAttributionReadiness(loadXAdsAttributionConfig());
+  const youtubeReadiness = youtubeTrendDiscoveryCapability();
   const facts: LocalReadinessFacts = {
     generatedAt: new Date(),
     workspaceId,
@@ -113,6 +119,12 @@ async function run() {
           Boolean(process.env.PADDLE_ALLOWED_REDIRECT_HOSTS?.trim())
         )
       : Boolean(process.env.MERCHANT_OF_RECORD_BASE_URL?.trim() && hasConfiguredSecret(process.env.MERCHANT_OF_RECORD_API_TOKEN)),
+    trendWorkerAuthConfigured: hasConfiguredSecret(process.env.STUDIO_INTERNAL_API_SECRET),
+    youtubeTrendDiscoveryEnabled: youtubeReadiness.enabled,
+    youtubeTrendApiKeyConfigured: youtubeReadiness.keyConfigured,
+    youtubeTrendDisclosuresConfigured: youtubeReadiness.disclosuresConfigured,
+    activeYoutubeTrendSources,
+    activeLicensedTrendEntitlements,
     xAdsAttributionAvailable: xAdsReadiness.available,
     xAdsAttributionBlockers: xAdsReadiness.blockers,
   };
@@ -127,7 +139,7 @@ async function run() {
       process.stdout.write(`[${marker}] ${check.label}: ${check.detail}\n`);
       if (check.action) process.stdout.write(`          ${check.action}\n`);
     }
-    process.stdout.write(`\nCore: ${report.coreReady ? "ready" : "blocked"} · BYOK generation: ${report.byokReady ? "ready" : "blocked"} · Managed generation: ${report.managedReady ? "ready" : "blocked"} · X Ads attribution: ${report.xAdsAttributionReady ? "ready" : "unavailable"}\n`);
+    process.stdout.write(`\nCore: ${report.coreReady ? "ready" : "blocked"} · BYOK generation: ${report.byokReady ? "ready" : "blocked"} · Managed generation: ${report.managedReady ? "ready" : "blocked"} · Trend intelligence: ${report.trendIntelligenceReady ? "ready" : "blocked"} · X Ads attribution: ${report.xAdsAttributionReady ? "ready" : "unavailable"}\n`);
   }
 }
 

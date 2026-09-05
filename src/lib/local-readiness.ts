@@ -14,6 +14,7 @@ export interface LocalReadinessReport {
   coreReady: boolean;
   byokReady: boolean;
   managedReady: boolean;
+  trendIntelligenceReady: boolean;
   xAdsAttributionReady: boolean;
   checks: LocalReadinessCheck[];
 }
@@ -58,6 +59,12 @@ export interface LocalReadinessFacts {
   activeCreditPacks: number;
   availableCredits: number;
   merchantConfigured: boolean;
+  trendWorkerAuthConfigured: boolean;
+  youtubeTrendDiscoveryEnabled: boolean;
+  youtubeTrendApiKeyConfigured: boolean;
+  youtubeTrendDisclosuresConfigured: boolean;
+  activeYoutubeTrendSources: number;
+  activeLicensedTrendEntitlements: number;
   xAdsAttributionAvailable: boolean;
   xAdsAttributionBlockers: string[];
 }
@@ -206,6 +213,46 @@ export function buildLocalReadinessReport(
           detail: "Checkout and the billing portal remain unavailable; BYOK generation is unaffected.",
           action: "Configure the Merchant-of-Record adapter when testing purchases.",
         },
+    facts.trendWorkerAuthConfigured
+      ? ready("trend_workers", "Trend workers", "Local trend workers can authenticate to the internal maintenance routes.")
+      : blocked(
+          "trend_workers",
+          "Trend workers",
+          "The local content worker cannot authenticate to trend maintenance routes.",
+          "Set STUDIO_INTERNAL_API_SECRET to a durable local secret and restart the app.",
+        ),
+    facts.youtubeTrendDiscoveryEnabled &&
+    facts.youtubeTrendApiKeyConfigured &&
+    facts.youtubeTrendDisclosuresConfigured &&
+    facts.activeYoutubeTrendSources > 0
+      ? ready(
+          "youtube_trends",
+          "YouTube trend discovery",
+          `${facts.activeYoutubeTrendSources} active provider-ordered chart source(s) are configured.`,
+        )
+      : blocked(
+          "youtube_trends",
+          "YouTube trend discovery",
+          "Missing: " + [
+            !facts.youtubeTrendDiscoveryEnabled ? "the operator enable switch" : null,
+            !facts.youtubeTrendApiKeyConfigured ? "a server-side YouTube Data API key" : null,
+            !facts.youtubeTrendDisclosuresConfigured ? "public Terms and Privacy disclosures" : null,
+            facts.activeYoutubeTrendSources === 0 ? "an active Workspace chart source" : null,
+          ].filter(Boolean).join(", ") + ".",
+          "Follow docs/operations/youtube-trend-discovery.md, then add a MENA chart from Inspiration.",
+        ),
+    facts.activeLicensedTrendEntitlements > 0
+      ? ready(
+          "licensed_trends",
+          "Licensed remix catalog",
+          `${facts.activeLicensedTrendEntitlements} active licensed trend entitlement(s) can be imported for Remix and Blitz.`,
+        )
+      : blocked(
+          "licensed_trends",
+          "Licensed remix catalog",
+          "No active licensed trend entitlement is available to this Workspace.",
+          "Publish a verified licensed catalog entry and grant the Workspace an active entitlement.",
+        ),
     facts.xAdsAttributionAvailable
       ? ready("x_ads_attribution", "X Ads attribution", "The server Conversion API adapter, event IDs, public notice, and operator reviews are configured.")
       : {
@@ -227,6 +274,7 @@ export function buildLocalReadinessReport(
     coreReady: status("database") && status("storage") && status("workspace"),
     byokReady: common && status("byok_encryption") && status("byok_provider"),
     managedReady: common && status("managed_provider") && status("plans") && status("credits"),
+    trendIntelligenceReady: status("trend_workers") && status("youtube_trends") && status("licensed_trends"),
     xAdsAttributionReady: status("x_ads_attribution"),
     checks,
   };

@@ -5,6 +5,9 @@ import { and, asc, eq, gt, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { youtubeTrendDiscoveryEntries, youtubeTrendDiscoveryJobs, youtubeTrendDiscoverySources } from "@/lib/db/schema";
+import { youtubeTrendDiscoveryCapability } from "./youtube-trend-capability";
+
+export { youtubeTrendDiscoveryCapability } from "./youtube-trend-capability";
 
 export const YOUTUBE_TREND_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/videos";
@@ -48,25 +51,6 @@ export type YoutubeFailureKind = "permanent" | "quota" | "transient";
 
 export class YoutubeTrendDiscoveryError extends Error {
   constructor(public readonly code: string, public readonly kind: YoutubeFailureKind, public readonly retryAt: Date | null = null) { super(code); }
-}
-
-function configuredValue(value: string | undefined) { return Boolean(value?.trim()); }
-
-function disclosureUrl(value: string | undefined) {
-  if (!value?.trim()) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(url.hostname)) ? url.toString() : null;
-  } catch { return null; }
-}
-
-export function youtubeTrendDiscoveryCapability(env: NodeJS.ProcessEnv = process.env) {
-  const enabled = env.YOUTUBE_TREND_DISCOVERY_ENABLED === "true";
-  const keyConfigured = configuredValue(env.YOUTUBE_DATA_API_KEY);
-  const privacyUrl = disclosureUrl(env.NEXT_PUBLIC_PRIVACY_URL);
-  const termsUrl = disclosureUrl(env.NEXT_PUBLIC_TERMS_URL);
-  const disclosuresConfigured = Boolean(privacyUrl && termsUrl);
-  return { enabled, keyConfigured, disclosuresConfigured, configured: enabled && keyConfigured && disclosuresConfigured, privacyUrl, termsUrl };
 }
 
 function safeThumbnail(thumbnails: Record<string, { url: string }> | undefined) {
