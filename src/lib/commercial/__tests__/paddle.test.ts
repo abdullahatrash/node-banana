@@ -9,6 +9,7 @@ const environment = {
   PADDLE_WEBHOOK_SECRET: "pdl_ntfset_secret",
   PADDLE_CHECKOUT_URL: "https://checkout.example/checkout/paddle",
   PADDLE_ALLOWED_REDIRECT_HOSTS: "checkout.example,customer-portal.paddle.com",
+  PADDLE_ALLOWED_INVOICE_HOSTS: "paddle-invoices.example",
 };
 const at = new Date("2026-09-05T12:00:02.000Z");
 const transaction = {
@@ -112,5 +113,30 @@ describe("PaddleMerchantOfRecordAdapter", () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { urls: { general: { overview: "https://customer-portal.paddle.com/session/1" } } } }), { status: 201 }));
     const adapter = new PaddleMerchantOfRecordAdapter(environment, fetcher, () => new Date("2026-09-05T12:00:00.000Z"));
     await expect(adapter.createPortal({ workspaceId: "workspace_1", customerRef: "ctm_01test", returnPath: "/billing" })).resolves.toEqual({ kind: "ready", url: "https://customer-portal.paddle.com/session/1", expiresAt: new Date("2026-09-05T12:30:00.000Z") });
+  });
+
+  it("maps signed adjustment evidence without trusting workspace data in the payload", () => {
+    const adjustment = { id: "adj_01test", action: "refund", status: "approved", transaction_id: "txn_01test", subscription_id: "sub_01test", customer_id: "ctm_01test", currency_code: "USD", reason: "customer request", totals: { total: "400" } };
+    const body = JSON.stringify({ event_id: "evt_adjustment", event_type: "adjustment.updated", occurred_at: "2026-09-05T12:00:01.000Z", data: adjustment });
+    const timestamp = Math.floor(at.getTime() / 1000);
+    const signature = createHmac("sha256", environment.PADDLE_WEBHOOK_SECRET).update(`${timestamp}:${body}`).digest("hex");
+    const adapter = new PaddleMerchantOfRecordAdapter(environment, vi.fn());
+    expect(adapter.verifyWebhook({ body, timestamp: null, signature: null, paddleSignature: `ts=${timestamp};h1=${signature}`, at })).toEqual({ kind: "adjustment_event", event: { provider: "paddle", eventId: "evt_adjustment", adjustmentRef: "adj_01test", transactionRef: "txn_01test", merchantSubscriptionRef: "sub_01test", merchantCustomerRef: "ctm_01test", action: "refund", status: "approved", amountMinor: 400, currency: "USD", reason: "customer request", occurredAt: new Date("2026-09-05T12:00:01.000Z") } });
+  });
+
+  it("rejects signed monetary evidence that cannot be represented safely", () => {
+    const adjustment = { id: "adj_unsafe", action: "refund", status: "approved", transaction_id: "txn_01test", subscription_id: "sub_01test", customer_id: "ctm_01test", currency_code: "USD", reason: "unsafe integer", totals: { total: "9007199254740992" } };
+    const body = JSON.stringify({ event_id: "evt_unsafe", event_type: "adjustment.updated", occurred_at: "2026-09-05T12:00:01.000Z", data: adjustment });
+    const timestamp = Math.floor(at.getTime() / 1000);
+    const signature = createHmac("sha256", environment.PADDLE_WEBHOOK_SECRET).update(`${timestamp}:${body}`).digest("hex");
+    const adapter = new PaddleMerchantOfRecordAdapter(environment, vi.fn());
+    expect(adapter.verifyWebhook({ body, timestamp: null, signature: null, paddleSignature: `ts=${timestamp};h1=${signature}`, at })).toEqual({ kind: "invalid" });
+  });
+
+  it("requests a fresh inline merchant invoice and allowlists its temporary host", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { url: "https://paddle-invoices.example/invoice.pdf?token=short-lived" } }), { status: 200 }));
+    const adapter = new PaddleMerchantOfRecordAdapter(environment, fetcher, () => new Date("2026-09-05T12:00:00.000Z"));
+    await expect(adapter.createInvoiceLink({ workspaceId: "workspace_1", transactionRef: "txn_01test" })).resolves.toEqual({ kind: "ready", url: "https://paddle-invoices.example/invoice.pdf?token=short-lived", expiresAt: new Date("2026-09-05T13:00:00.000Z") });
+    expect(fetcher.mock.calls[0][0].toString()).toBe("https://sandbox-api.paddle.com/transactions/txn_01test/invoice?disposition=inline");
   });
 });

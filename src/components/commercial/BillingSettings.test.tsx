@@ -13,6 +13,7 @@ const summary = {
   creditPacks: [],
   quotes: [],
   credit: { availableUnits: 10, buckets: [], heldReservations: [], recentEntries: [] },
+  financials: { transactions: [], adjustments: [] },
   referrals: { codes: [], rewards: [], payoutEntries: [] },
 };
 

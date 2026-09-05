@@ -5,7 +5,9 @@ export type MerchantCheckoutPurpose = "subscription" | "credit_pack" | "channel_
 export type MerchantCheckoutEvent = {
   provider: string; eventId: string; eventType: "checkout.completed" | "checkout.failed" | "checkout.expired" | "checkout.cancelled";
   checkoutId: string; merchantCheckoutRef: string; merchantEffectRef: string; merchantCustomerRef: string | null; merchantSubscriptionRef: string | null; merchantReceiptRef: string | null; periodStartsAt: Date | null; periodEndsAt: Date | null; occurredAt: Date;
+  billingTransaction: MerchantBillingTransactionEvidence | null;
 };
+export type MerchantBillingTransactionEvidence = { transactionRef: string; amountMinor: number; currency: string; invoiceNumber: string | null };
 export type MerchantSubscriptionEvent = {
   provider: string;
   eventId: string;
@@ -17,10 +19,26 @@ export type MerchantSubscriptionEvent = {
   periodStartsAt: Date | null;
   periodEndsAt: Date | null;
   occurredAt: Date;
+  billingTransaction: MerchantBillingTransactionEvidence | null;
+};
+export type MerchantAdjustmentEvent = {
+  provider: string;
+  eventId: string;
+  adjustmentRef: string;
+  transactionRef: string;
+  merchantSubscriptionRef: string | null;
+  merchantCustomerRef: string;
+  action: "credit" | "refund" | "chargeback" | "chargeback_reverse" | "chargeback_warning" | "chargeback_warning_reverse" | "credit_reverse";
+  status: "pending_approval" | "approved" | "rejected" | "reversed";
+  amountMinor: number;
+  currency: string;
+  reason: string;
+  occurredAt: Date;
 };
 export type MerchantWebhookVerification =
   | { kind: "checkout_event"; event: MerchantCheckoutEvent }
   | { kind: "subscription_event"; event: MerchantSubscriptionEvent }
+  | { kind: "adjustment_event"; event: MerchantAdjustmentEvent }
   | { kind: "ignored"; provider: string; eventId: string; reason: string }
   | { kind: "invalid" };
 
@@ -29,9 +47,10 @@ export interface MerchantOfRecordAdapter {
   recoverCheckout(input: { checkoutId: string; merchantCheckoutRef: string | null }): Promise<{ kind: "pending" } | { kind: "ready"; merchantCheckoutRef: string; url: string; expiresAt: Date } | { kind: "terminal"; event: MerchantCheckoutEvent } | { kind: "unavailable" }>;
   verifyWebhook(input: { body: string; timestamp: string | null; signature: string | null; paddleSignature: string | null; at: Date }): MerchantWebhookVerification;
   createPortal(input: { workspaceId: string; customerRef: string; returnPath: string }): Promise<{ kind: "ready"; url: string; expiresAt: Date } | { kind: "unavailable" }>;
+  createInvoiceLink(input: { workspaceId: string; transactionRef: string }): Promise<{ kind: "ready"; url: string; expiresAt: Date } | { kind: "unavailable" }>;
 }
 
-const eventSchema = z.object({ provider: z.string().min(1).max(80), eventId: z.string().min(1).max(200), eventType: z.enum(["checkout.completed", "checkout.failed", "checkout.expired", "checkout.cancelled"]), checkoutId: z.string().min(1).max(200), merchantCheckoutRef: z.string().min(1).max(500), merchantEffectRef: z.string().min(1).max(500), merchantCustomerRef: z.string().min(1).max(500).nullable(), merchantSubscriptionRef: z.string().min(1).max(500).nullable(), merchantReceiptRef: z.string().min(1).max(500).nullable(), periodStartsAt: z.string().datetime().nullable(), periodEndsAt: z.string().datetime().nullable(), occurredAt: z.string().datetime() }).strict();
+const eventSchema = z.object({ provider: z.string().min(1).max(80), eventId: z.string().min(1).max(200), eventType: z.enum(["checkout.completed", "checkout.failed", "checkout.expired", "checkout.cancelled"]), checkoutId: z.string().min(1).max(200), merchantCheckoutRef: z.string().min(1).max(500), merchantEffectRef: z.string().min(1).max(500), merchantCustomerRef: z.string().min(1).max(500).nullable(), merchantSubscriptionRef: z.string().min(1).max(500).nullable(), merchantReceiptRef: z.string().min(1).max(500).nullable(), periodStartsAt: z.string().datetime().nullable(), periodEndsAt: z.string().datetime().nullable(), occurredAt: z.string().datetime(), billingTransaction: z.object({ transactionRef: z.string().min(1).max(500), amountMinor: z.number().int().nonnegative(), currency: z.string().regex(/^[A-Z]{3}$/), invoiceNumber: z.string().min(1).max(500).nullable() }).strict().nullable().optional() }).strict();
 const checkoutSchema = z.object({ merchantCheckoutRef: z.string().min(1).max(500), url: z.string().url(), expiresAt: z.string().datetime() }).strict();
 const recoverySchema = z.discriminatedUnion("state", [z.object({ state: z.literal("pending") }).strict(), z.object({ state: z.literal("ready"), ...checkoutSchema.shape }).strict(), z.object({ state: z.literal("terminal"), event: eventSchema }).strict()]);
 const portalSchema = z.object({ url: z.string().url(), expiresAt: z.string().datetime() }).strict();
@@ -69,6 +88,11 @@ export class ConfiguredMerchantOfRecordAdapter implements MerchantOfRecordAdapte
     if (!response) return { kind: "unavailable" as const };
     const parsed = portalSchema.parse(await response.json()); this.assertRedirect(parsed.url); return { kind: "ready" as const, url: parsed.url, expiresAt: new Date(parsed.expiresAt) };
   }
+  async createInvoiceLink(input: Parameters<MerchantOfRecordAdapter["createInvoiceLink"]>[0]) {
+    const response = await this.call(`transactions/${encodeURIComponent(input.transactionRef)}/invoice`, { method: "POST", body: JSON.stringify({ workspaceId: input.workspaceId }) });
+    if (!response) return { kind: "unavailable" as const };
+    const parsed = portalSchema.parse(await response.json()); this.assertRedirect(parsed.url); return { kind: "ready" as const, url: parsed.url, expiresAt: new Date(parsed.expiresAt) };
+  }
   private endpoint(path: string) { const raw = this.environment.MERCHANT_OF_RECORD_BASE_URL?.trim(); if (!raw) return null; try { const base = new URL(raw.endsWith("/") ? raw : `${raw}/`); if (base.protocol !== "https:" && base.hostname !== "localhost" && base.hostname !== "127.0.0.1") return null; return new URL(path, base); } catch { return null; } }
   private async call(path: string, init: RequestInit) { const url = this.endpoint(path); return url ? this.authorized(url, init) : null; }
   private async authorized(url: URL, init: RequestInit) { const token = this.environment.MERCHANT_OF_RECORD_API_TOKEN?.trim(); if (!token) return null; const response = await this.fetcher(url, { ...init, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...init.headers }, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(30_000) }); if (!response.ok) throw new Error(`MERCHANT_OF_RECORD_HTTP_${response.status}`); return response; }
@@ -80,6 +104,7 @@ export class UnavailableMerchantOfRecordAdapter implements MerchantOfRecordAdapt
   async recoverCheckout() { return { kind: "unavailable" as const }; }
   verifyWebhook() { return { kind: "invalid" as const }; }
   async createPortal() { return { kind: "unavailable" as const }; }
+  async createInvoiceLink() { return { kind: "unavailable" as const }; }
 }
 
-function hydrateEvent(value: z.infer<typeof eventSchema>): MerchantCheckoutEvent { return { ...value, periodStartsAt: value.periodStartsAt ? new Date(value.periodStartsAt) : null, periodEndsAt: value.periodEndsAt ? new Date(value.periodEndsAt) : null, occurredAt: new Date(value.occurredAt) }; }
+function hydrateEvent(value: z.infer<typeof eventSchema>): MerchantCheckoutEvent { return { ...value, billingTransaction: value.billingTransaction ?? null, periodStartsAt: value.periodStartsAt ? new Date(value.periodStartsAt) : null, periodEndsAt: value.periodEndsAt ? new Date(value.periodEndsAt) : null, occurredAt: new Date(value.occurredAt) }; }

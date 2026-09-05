@@ -39,6 +39,18 @@ const transactionListSchema = z.object({ data: z.array(transactionSchema) }).pas
 const portalResponseSchema = z.object({
   data: z.object({ urls: z.object({ general: z.object({ overview: z.string().url() }).passthrough() }).passthrough() }).passthrough(),
 }).passthrough();
+const invoiceResponseSchema = z.object({ data: z.object({ url: z.string().url() }).passthrough() }).passthrough();
+const adjustmentSchema = z.object({
+  id: z.string().regex(/^adj_[a-z0-9]+$/),
+  action: z.enum(["credit", "refund", "chargeback", "chargeback_reverse", "chargeback_warning", "chargeback_warning_reverse", "credit_reverse"]),
+  status: z.enum(["pending_approval", "approved", "rejected", "reversed"]),
+  transaction_id: z.string().regex(/^txn_[a-z0-9]+$/),
+  subscription_id: z.string().regex(/^sub_[a-z0-9]+$/).nullable(),
+  customer_id: z.string().regex(/^ctm_[a-z0-9]+$/),
+  currency_code: z.string().length(3),
+  reason: z.string().min(1).max(2_000),
+  totals: z.object({ total: z.string().regex(/^\d+$/) }).passthrough(),
+}).passthrough();
 const subscriptionSchema = z.object({
   id: z.string().regex(/^sub_[a-z0-9]+$/),
   status: z.enum(["trialing", "active", "past_due", "paused", "canceled"]),
@@ -117,6 +129,26 @@ export class PaddleMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
       const event = paddleSubscriptionStatusEvent(subscription.data, customData.data, envelope.event_id, new Date(envelope.occurred_at));
       return { kind: "subscription_event", event };
     }
+    if (envelope.event_type.startsWith("adjustment.")) {
+      const adjustment = adjustmentSchema.safeParse(envelope.data);
+      if (!adjustment.success) return { kind: "invalid" };
+      const amountMinor = safeMinorUnits(adjustment.data.totals.total);
+      if (amountMinor === null) return { kind: "invalid" };
+      return { kind: "adjustment_event", event: {
+        provider: "paddle",
+        eventId: envelope.event_id,
+        adjustmentRef: adjustment.data.id,
+        transactionRef: adjustment.data.transaction_id,
+        merchantSubscriptionRef: adjustment.data.subscription_id,
+        merchantCustomerRef: adjustment.data.customer_id,
+        action: adjustment.data.action,
+        status: adjustment.data.status,
+        amountMinor,
+        currency: adjustment.data.currency_code.toUpperCase(),
+        reason: adjustment.data.reason,
+        occurredAt: new Date(envelope.occurred_at),
+      } };
+    }
     if (!envelope.event_type.startsWith("transaction.")) {
       return { kind: "ignored", provider: "paddle", eventId: envelope.event_id, reason: "unsupported_entity" };
     }
@@ -128,6 +160,8 @@ export class PaddleMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
     }
     if (transaction.data.origin === "subscription_recurring" && envelope.event_type === "transaction.completed") {
       if (customData.data.node_banana_purpose_kind !== "subscription" || !transaction.data.customer_id || !transaction.data.subscription_id || !transaction.data.billing_period || !this.transactionTotalsMatch(transaction.data, customData.data)) return { kind: "invalid" };
+      const amountMinor = safeMinorUnits(transaction.data.details.totals.total);
+      if (amountMinor === null) return { kind: "invalid" };
       return { kind: "subscription_event", event: {
         provider: "paddle",
         eventId: envelope.event_id,
@@ -139,6 +173,7 @@ export class PaddleMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
         periodStartsAt: new Date(transaction.data.billing_period.starts_at),
         periodEndsAt: new Date(transaction.data.billing_period.ends_at),
         occurredAt: new Date(envelope.occurred_at),
+        billingTransaction: { transactionRef: transaction.data.id, amountMinor, currency: transaction.data.currency_code.toUpperCase(), invoiceNumber: transaction.data.invoice_number || null },
       } };
     }
     if (transaction.data.origin && transaction.data.origin !== "api") {
@@ -162,6 +197,17 @@ export class PaddleMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
     const url = portalResponseSchema.parse(await response.json()).data.urls.general.overview;
     this.assertRedirect(url);
     return { kind: "ready" as const, url, expiresAt: new Date(this.now().getTime() + CHECKOUT_LIFETIME_MS) };
+  }
+
+  async createInvoiceLink(input: Parameters<MerchantOfRecordAdapter["createInvoiceLink"]>[0]) {
+    if (!this.configuration()) return { kind: "unavailable" as const };
+    const id = z.string().regex(/^txn_[a-z0-9]+$/).parse(input.transactionRef);
+    const url = new URL(`transactions/${encodeURIComponent(id)}/invoice`, this.apiBase());
+    url.searchParams.set("disposition", "inline");
+    const response = await this.authorized(url, { method: "GET" });
+    const invoiceUrl = invoiceResponseSchema.parse(await response.json()).data.url;
+    this.assertInvoiceRedirect(invoiceUrl);
+    return { kind: "ready" as const, url: invoiceUrl, expiresAt: new Date(this.now().getTime() + 60 * 60_000) };
   }
 
   private transactionPayload(input: CheckoutInput) {
@@ -202,6 +248,8 @@ export class PaddleMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
     const customData = customDataSchema.safeParse(transaction.custom_data);
     if (!customData.success || !this.transactionTotalsMatch(transaction, customData.data)) return null;
     if (transaction.status !== "completed" && transaction.status !== "canceled") return null;
+    const amountMinor = safeMinorUnits(transaction.details.totals.total);
+    if (amountMinor === null) return null;
     return {
       provider: "paddle",
       eventId,
@@ -215,6 +263,7 @@ export class PaddleMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
       periodStartsAt: transaction.billing_period ? new Date(transaction.billing_period.starts_at) : null,
       periodEndsAt: transaction.billing_period ? new Date(transaction.billing_period.ends_at) : null,
       occurredAt,
+      billingTransaction: transaction.status === "completed" ? { transactionRef: transaction.id, amountMinor, currency: transaction.currency_code.toUpperCase(), invoiceNumber: transaction.invoice_number || null } : null,
     };
   }
 
@@ -290,6 +339,12 @@ export class PaddleMerchantOfRecordAdapter implements MerchantOfRecordAdapter {
     const allowed = new Set((this.environment.PADDLE_ALLOWED_REDIRECT_HOSTS ?? "").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean));
     if (url.protocol !== "https:" || !allowed.has(url.hostname.toLowerCase())) throw new Error("MERCHANT_REDIRECT_UNSAFE");
   }
+
+  private assertInvoiceRedirect(value: string) {
+    const url = new URL(value);
+    const allowed = new Set((this.environment.PADDLE_ALLOWED_INVOICE_HOSTS ?? "").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean));
+    if (url.protocol !== "https:" || !allowed.has(url.hostname.toLowerCase())) throw new Error("MERCHANT_INVOICE_REDIRECT_UNSAFE");
+  }
 }
 
 function parsePaddleSignature(value: string) {
@@ -308,6 +363,11 @@ function sameHexDigest(expected: string, supplied: string) {
 function webhookToleranceSeconds(value: string | undefined) {
   const parsed = Number(value ?? "5");
   return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 300 ? parsed : 5;
+}
+
+function safeMinorUnits(value: string) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function productName(input: CheckoutInput) {
@@ -340,5 +400,6 @@ function paddleSubscriptionStatusEvent(subscription: z.infer<typeof subscription
     periodStartsAt: period ? new Date(period.starts_at) : null,
     periodEndsAt: period ? new Date(period.ends_at) : null,
     occurredAt,
+    billingTransaction: null,
   };
 }

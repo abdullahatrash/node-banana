@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import { getDb } from "@/lib/db";
-import { billingPlanVersions, billingTrialGrants, commercialCommandReceipts, generationCreditBuckets, generationCreditLedgerEntries, generationCreditPackVersions, generationCreditReservations, managedExecutionCommercialQuotes, referralAttributions, referralFraudEvidence, referralPayoutLedgerEntries, referralRewards, user, workspaceReferralCodes, workspaceSubscriptionEvents, workspaceSubscriptions, workspaces } from "@/lib/db/schema";
+import { billingPlanVersions, billingTrialGrants, commercialCommandReceipts, generationCreditBuckets, generationCreditLedgerEntries, generationCreditPackVersions, generationCreditReservations, managedExecutionCommercialQuotes, merchantBillingAdjustments, merchantBillingTransactions, referralAttributions, referralFraudEvidence, referralPayoutLedgerEntries, referralRewards, user, workspaceReferralCodes, workspaceSubscriptionEvents, workspaceSubscriptions, workspaces } from "@/lib/db/schema";
 import { allocateCredits, SUBSCRIPTION_TRANSITIONS } from "./types";
 
 type Db = ReturnType<typeof getDb>; export class CommercialError extends Error { constructor(readonly code: string) { super(code); this.name = "CommercialError"; } }
@@ -26,7 +26,7 @@ const completeCommand = async (tx: Tx, input: { workspaceId: string; idempotency
 export class CommercialRepository {
   constructor(private readonly database: Db = getDb(), private readonly now = () => new Date()) {}
   async summary(workspaceId: string) {
-    const now = this.now(); const [subscription, plans, packs, buckets, reservations, quotes, codes, rewards, payouts, entries] = await Promise.all([
+    const now = this.now(); const [subscription, plans, packs, buckets, reservations, quotes, codes, rewards, payouts, entries, transactions, adjustments] = await Promise.all([
       this.database.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, workspaceId)).limit(1),
       this.database.select().from(billingPlanVersions).where(and(eq(billingPlanVersions.status, "active"), sql`${billingPlanVersions.effectiveAt} <= ${now}`, or(isNull(billingPlanVersions.retiredAt), gt(billingPlanVersions.retiredAt, now)))).orderBy(asc(billingPlanVersions.priceMinor)),
       this.database.select().from(generationCreditPackVersions).where(and(eq(generationCreditPackVersions.status, "active"), sql`${generationCreditPackVersions.effectiveAt} <= ${now}`, or(isNull(generationCreditPackVersions.retiredAt), gt(generationCreditPackVersions.retiredAt, now)))).orderBy(asc(generationCreditPackVersions.priceMinor)),
@@ -37,8 +37,10 @@ export class CommercialRepository {
       this.database.select().from(referralRewards).where(eq(referralRewards.workspaceId, workspaceId)).orderBy(desc(referralRewards.updatedAt)).limit(100),
       this.database.select().from(referralPayoutLedgerEntries).where(eq(referralPayoutLedgerEntries.workspaceId, workspaceId)).orderBy(desc(referralPayoutLedgerEntries.sequence)).limit(100),
       this.database.select().from(generationCreditLedgerEntries).where(eq(generationCreditLedgerEntries.workspaceId, workspaceId)).orderBy(desc(generationCreditLedgerEntries.sequence)).limit(100),
+      this.database.select().from(merchantBillingTransactions).where(eq(merchantBillingTransactions.workspaceId, workspaceId)).orderBy(desc(merchantBillingTransactions.providerOccurredAt), desc(merchantBillingTransactions.transactionRef)).limit(100),
+      this.database.select().from(merchantBillingAdjustments).where(eq(merchantBillingAdjustments.workspaceId, workspaceId)).orderBy(desc(merchantBillingAdjustments.providerOccurredAt), desc(merchantBillingAdjustments.adjustmentRef)).limit(100),
     ]);
-    return { subscription: subscription[0] ?? null, plans, creditPacks: packs, quotes, credit: { availableUnits: buckets.reduce((sum, row) => sum + row.availableUnits, 0), buckets, heldReservations: reservations, recentEntries: entries }, referrals: { codes, rewards, payoutEntries: payouts } };
+    return { subscription: subscription[0] ?? null, plans, creditPacks: packs, quotes, credit: { availableUnits: buckets.reduce((sum, row) => sum + row.availableUnits, 0), buckets, heldReservations: reservations, recentEntries: entries }, financials: { transactions, adjustments }, referrals: { codes, rewards, payoutEntries: payouts } };
   }
   async publishPlan(input: typeof billingPlanVersions.$inferInsert) { await this.database.insert(billingPlanVersions).values(input); return input; }
   async startTrial(input: { workspaceId: string; userId: string; planId: string; planVersion: number; idempotencyKey: string }) {

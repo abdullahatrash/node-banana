@@ -152,6 +152,7 @@ describe("ProductShell", () => {
         subscription: { state: "trialing", planId: "starter", planVersion: 1, currentPeriodEndsAt: trialEndsAt, graceEndsAt: null, merchantCustomerRef: null },
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }, { planId: "starter", version: 1, authoredName: { ar: "البداية", en: "Starter" } }],
         credit: { availableUnits: 21 },
+        financials: { transactions: [], adjustments: [] },
       } }), { status: 200, headers: { "content-type": "application/json" } });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -172,6 +173,7 @@ describe("ProductShell", () => {
         subscription: null,
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }],
         credit: { availableUnits: 10 },
+        financials: { transactions: [], adjustments: [] },
       } }), { status: 200, headers: { "content-type": "application/json" } });
     }));
 
@@ -190,6 +192,7 @@ describe("ProductShell", () => {
         subscription: null,
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }],
         credit: { availableUnits: 7 },
+        financials: { transactions: [], adjustments: [] },
       } }), { status: 200, headers: { "content-type": "application/json" } });
     });
     vi.stubGlobal("fetch", fetchMock);

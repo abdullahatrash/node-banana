@@ -79,8 +79,9 @@ the one running app origin. In Paddle sandbox, set the default payment link to
 least-privileged API key with transaction read/write and customer-portal access,
 and create a notification destination at
 `https://<tunnel>/api/studio/webhooks/merchant`. Subscribe to
-`transaction.completed`, `transaction.canceled`, and the subscription lifecycle
-events listed in `.env.example`, then copy that destination's secret into
+`transaction.completed`, `transaction.canceled`, `adjustment.created`,
+`adjustment.updated`, and the subscription lifecycle events listed in
+`.env.example`, then copy that destination's secret into
 `PADDLE_WEBHOOK_SECRET`.
 
 Set the Paddle variables documented in `.env.example`, restart the app, and run:
@@ -105,6 +106,16 @@ projected as a new paid period rather than replaying the original checkout. It
 grants one expiring Plan allowance per period. Signed subscription events update
 active, grace, period-end cancellation, paused, and cancelled state in provider
 occurrence order, so delayed delivery cannot roll the Workspace backward.
+
+Billing history is projected from signed Paddle transactions and adjustments,
+not locally fabricated invoices. Use the invoice action in `/billing` to request
+a fresh, short-lived Paddle PDF link and add its exact observed host to
+`PADDLE_ALLOWED_INVOICE_HOSTS`. In sandbox, create and then update a refund and
+re-deliver both notifications: the immutable event history must retain both
+deliveries while the customer surface shows only the latest adjustment state.
+Exercise chargeback and reversal fixtures the same way; the transaction should
+move through disputed and chargeback-reversed states without changing the
+original paid amount or merchant receipt reference.
 
 ### RTL visual approval is a separate gate
 

@@ -9,7 +9,7 @@ const current = {
   merchantLastEventId: "evt_b",
 };
 const base: MerchantSubscriptionEvent = {
-  provider: "paddle", eventId: "evt_c", eventType: "subscription.active", workspaceId: "workspace_1", merchantCustomerRef: "ctm_1", merchantSubscriptionRef: "sub_1", merchantTransactionRef: null, periodStartsAt: null, periodEndsAt: null, occurredAt: new Date("2026-09-05T12:00:01.000Z"),
+  provider: "paddle", eventId: "evt_c", eventType: "subscription.active", workspaceId: "workspace_1", merchantCustomerRef: "ctm_1", merchantSubscriptionRef: "sub_1", merchantTransactionRef: null, periodStartsAt: null, periodEndsAt: null, occurredAt: new Date("2026-09-05T12:00:01.000Z"), billingTransaction: null,
 };
 
 describe("subscriptionLifecycleProjection", () => {
