@@ -8,6 +8,7 @@ import { getReleaseControlService } from "@/lib/release-control/production";
 import { canUseS3Storage, createPresignedDownload } from "@/lib/storage";
 import { loadImmutableBrandContext } from "./brand-context";
 import { findCuratedModel } from "./catalog";
+import { quoteTotalUsd } from "./pricing";
 import { contentModelPolicyRevisions, inspirationRightsSnapshots, modelGenerationBudgetReservations } from "./db-schema";
 import type { GenerationExecutionResult } from "./execution";
 import { PostgresModelRoutingRepository } from "./postgres-repository";
@@ -111,7 +112,7 @@ export async function executeAdmittedGeneration(input: {
   const [brand] = await getDb().select({ acceptedAt: brandProfiles.acceptedAt, profile: brandProfiles.profile }).from(brandProfiles).where(and(eq(brandProfiles.workspaceId, input.workspaceId), eq(brandProfiles.id, intent.brand.profileId), eq(brandProfiles.revision, intent.brand.revision), eq(brandProfiles.status, "active"))).limit(1);
   if (!brand?.acceptedAt || canonicalDigest(brand.profile) !== intent.brand.digest) return rejected(409, "BRAND_REVISION_NOT_ACCEPTED");
   const [budget] = await getDb().select({ status: modelGenerationBudgetReservations.status, amount: modelGenerationBudgetReservations.quotedAmountUsd }).from(modelGenerationBudgetReservations).where(and(eq(modelGenerationBudgetReservations.workspaceId, input.workspaceId), eq(modelGenerationBudgetReservations.intentId, intent.id))).limit(1);
-  if (!budget || budget.status !== "held" || Number(budget.amount) !== intent.quote.amount * intent.quote.quantity) return rejected(409, "AUTHORITATIVE_BUDGET_RESERVATION_UNAVAILABLE");
+  if (!budget || budget.status !== "held" || Number(budget.amount) !== quoteTotalUsd(intent.quote)) return rejected(409, "AUTHORITATIVE_BUDGET_RESERVATION_UNAVAILABLE");
   const [rights] = await getDb().select({ digest: inspirationRightsSnapshots.digest, permittedRemix: inspirationRightsSnapshots.permittedRemix }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, input.workspaceId), eq(inspirationRightsSnapshots.id, intent.rights.snapshotId), eq(inspirationRightsSnapshots.revision, intent.rights.revision))).limit(1);
   if (!rights || rights.digest !== intent.rights.digest || rights.permittedRemix !== intent.rights.permittedRemix) return rejected(409, "RIGHTS_SNAPSHOT_MISMATCH");
   const sourceIds = [...input.sourceAssetIds];

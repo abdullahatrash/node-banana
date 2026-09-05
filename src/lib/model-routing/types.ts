@@ -5,6 +5,14 @@ export type ReplicateEndpoint = "versioned" | "official";
 export type GenerationFundingMode = "byok" | "managed";
 export type ContentLanguage = "ar" | "en" | "mixed";
 export type ArabicVariety = "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other";
+export type UnitPriceBasis = "image" | "second" | "run";
+export type MeteredPriceBasis = "input_megapixel" | "output_megapixel";
+export type PriceBasis = UnitPriceBasis | MeteredPriceBasis;
+export type ExecutionPriceUsd =
+  | { basis: UnitPriceBasis; amount: number }
+  | { basis: "components"; components: ReadonlyArray<{ basis: MeteredPriceBasis; amount: number }> };
+export type PricingQuantity = { basis: PriceBasis; quantity: number };
+export type CostQuoteLineItem = { basis: PriceBasis; unitAmount: number; quantity: number; maximumAmount: number };
 
 export interface ExactModelRef { provider: "replicate" | "google" | "kie" | "openai" | "fal" | "wavespeed"; model: string; version: string; inputSchemaDigest: string; }
 export interface GenerationPersonaBinding {
@@ -15,7 +23,16 @@ export interface GenerationPersonaBinding {
   disclosure: string;
   evidence: { consentEvidenceId: string | null; providerAcceptanceEvidenceId: string; disclosureEvidenceId: string; abuseReviewEvidenceId: string };
 }
-export interface CostQuote { currency: "USD"; amount: number; basis: "image" | "second" | "run"; quantity: number; quotedAt: Date; expiresAt: Date; }
+export interface CostQuote {
+  currency: "USD";
+  /** Legacy normalized unit fields. Component quotes normalize to one run. */
+  amount: number;
+  basis: UnitPriceBasis;
+  quantity: number;
+  lineItems?: readonly CostQuoteLineItem[];
+  quotedAt: Date;
+  expiresAt: Date;
+}
 export interface ModelQualificationEvidence {
   id: string; revision: number; digest: `sha256:${string}`; issuedAt: Date; expiresAt: Date;
   signingKeyId: string;
@@ -43,13 +60,13 @@ export interface ImmutableBrandContext {
 }
 export type ModelExecutionQualification =
   | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
-  | { status: "qualified"; endpoint: ReplicateEndpoint; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: { basis: CostQuote["basis"]; amount: number }; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number | null; height: number | null; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string | null; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean } | null; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
+  | { status: "qualified"; endpoint: ReplicateEndpoint; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: ExecutionPriceUsd; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number | null; height: number | null; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string | null; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean } | null; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
 export interface ModelDescriptor {
   provider: ExactModelRef["provider"]; model: string; label: string;
   capabilities: readonly GenerationCapability[]; quality: GenerationQuality;
   contentLanguages: readonly ContentLanguage[]; arabicVarieties: readonly ArabicVariety[];
   verifiedRegions: readonly string[]; executionModes: readonly ExecutionMode[];
-  aspectRatios: readonly string[]; priceUsd: { basis: CostQuote["basis"]; amount: number };
+  aspectRatios: readonly string[]; priceUsd: ExecutionPriceUsd;
   lane: "preview" | "brand" | "final" | "canary"; qualification: ModelExecutionQualification;
 }
 

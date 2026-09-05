@@ -7,14 +7,14 @@ import { useSimpleStudioStore } from "@/store/simpleStudioStore";
 import { getActiveWorkspaceId } from "@/lib/studio/client";
 import { useTranslations } from "next-intl";
 import type { GenerationReadiness } from "@/lib/model-routing/readiness";
-import type { GenerationCapability } from "@/lib/model-routing/types";
+import type { ExecutionPriceUsd, GenerationCapability } from "@/lib/model-routing/types";
 
 interface ProviderModel {
   model: string;
   label: string;
   provider: string;
   capabilities?: string[];
-  qualification: { status: "unqualified" } | { status: "qualified"; version: string; inputSchemaDigest: string; executionPriceUsd: { basis: "image" | "second" | "run"; amount: number } };
+  qualification: { status: "unqualified" } | { status: "qualified"; version: string; inputSchemaDigest: string; executionPriceUsd: ExecutionPriceUsd };
 }
 
 interface ModelSelectProps {
@@ -27,6 +27,7 @@ type ReadinessGate = "qualifiedModel" | "acceptedBrand" | "canonicalMediaStorage
 
 export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) {
   const t = useTranslations("simpleStudio.modelSelect");
+  const pricingT = useTranslations("pricingMetering");
   const readinessT = useTranslations("generationReadiness");
   const locale = typeof document === "undefined" ? undefined : document.documentElement.lang || undefined;
   const selectedModelId = useSimpleStudioStore((s) => s.selectedModelId);
@@ -97,6 +98,9 @@ export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) 
   }, [capability, selectedModelId, setSelectedModel]);
 
   const sorted = [...models].sort((a, b) => a.label.localeCompare(b.label));
+  const priceLabel = (price: ExecutionPriceUsd) => price.basis === "components"
+    ? price.components.map((item) => t("price", { amount: new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(item.amount), basis: pricingT(item.basis) })).join(" + ")
+    : t("price", { amount: new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(price.amount), basis: t(`basis.${price.basis}`) });
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
@@ -141,7 +145,7 @@ export function ModelSelect({ mode, id, requiredCapability }: ModelSelectProps) 
         {!hasError && !isLoading && sorted.length === 0 && <option disabled>{t("none")}</option>}
         {sorted.map((m) => (
           <option key={m.model} value={m.model} dir="auto">
-            {m.qualification.status === "qualified" ? `${m.label} · ${t("price", { amount: new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(m.qualification.executionPriceUsd.amount), basis: t(`basis.${m.qualification.executionPriceUsd.basis}`) })}` : m.label}
+            {m.qualification.status === "qualified" ? `${m.label} · ${priceLabel(m.qualification.executionPriceUsd)}` : m.label}
           </option>
         ))}
       </select>

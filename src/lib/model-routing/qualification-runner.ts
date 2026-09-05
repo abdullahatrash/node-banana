@@ -5,6 +5,7 @@ import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { CURATED_MODELS, modelQualificationAttestationSchema } from "./catalog";
 import type { QualificationProviderAccount, QualificationRunLedger, QualificationSpendAuthorization, QualificationSpendReceipt } from "./qualification-ledger";
 import { composeQualifiedProviderInput } from "./provider-input-composition";
+import { imageMegapixels, priceExecution, quoteTotalUsd } from "./pricing";
 import type { ReplicateEndpoint } from "./types";
 
 export const MAX_QUALIFICATION_SPEND_USD = 0.4;
@@ -17,6 +18,7 @@ export const qualificationSmokeCaseSchema = z.object({
   prompt: z.string().min(1).max(5_000),
   input: z.record(z.string(), z.unknown()),
   billableQuantity: z.number().positive().max(600),
+  pricingInputAssets: z.array(z.object({ url: z.string().url().refine((value) => new URL(value).protocol === "https:"), width: z.number().int().positive().max(16_384), height: z.number().int().positive().max(16_384) }).strict()).max(5).optional(),
   brandReference: z.object({ assetId: z.string().min(1).max(200), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/), url: z.string().url().refine((value) => new URL(value).protocol === "https:") }).strict(),
   lifecycle: z.enum(["complete", "cancel"]),
 }).strict();
@@ -65,7 +67,7 @@ type QualificationExecutionTarget = { endpoint: ReplicateEndpoint; model: string
 
 export interface QualificationExecutionPort {
   identifyAccount(): Promise<QualificationProviderAccount>;
-  authorizeSpend(input: { runId: string; model: string; version: string; capability: QualificationSmokeCase["capability"]; billableQuantity: number; maximumAmountUsd: number; pricingSourceDigest: `sha256:${string}`; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendAuthorization>;
+  authorizeSpend(input: { runId: string; model: string; version: string; capability: QualificationSmokeCase["capability"]; billableQuantity: number; pricingLineItems: QualificationSpendAuthorization["pricingLineItems"]; maximumAmountUsd: number; pricingSourceDigest: `sha256:${string}`; caseId: string; account: QualificationProviderAccount }): Promise<QualificationSpendAuthorization>;
   inspectSchema(input: QualificationExecutionTarget): Promise<{ inputSchemaDigest: `sha256:${string}`; inputKeys: string[] }>;
   submit(input: QualificationExecutionTarget & { providerInput: Record<string, unknown>; cancelAfterSeconds: number; caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string; acceptedInput: Record<string, unknown> }>;
   recoverSubmission(input: QualificationExecutionTarget & { caseId: string; submissionKey: string }): Promise<{ predictionId: string; version: string } | null>;
@@ -111,6 +113,22 @@ function qualificationSourceUrls(cell: QualificationSmokeCase, imageKey: string 
   return [];
 }
 
+function qualificationCaseQuote(base: z.infer<typeof modelQualificationAttestationSchema>, cell: QualificationSmokeCase, at: Date) {
+  if (base.executionPriceUsd.basis !== "components") return priceExecution({ price: base.executionPriceUsd, unitQuantity: cell.billableQuantity, quotedAt: at, expiresAt: new Date(base.expiresAt) });
+  const sourceUrls = qualificationSourceUrls(cell, base.inputContract.imageKey);
+  const brand = qualificationBrand(cell);
+  const composed = composeQualifiedProviderInput({ rawPrompt: cell.prompt, brand, sourceAssetIds: sourceUrls.map((_, index) => `qualification:${cell.id}:source:${index}`), sourceUrls, brandReferenceUrls: [{ assetId: cell.brandReference.assetId, url: cell.brandReference.url }], model: { provider: base.provider, model: base.model, version: base.version, inputSchemaDigest: base.inputSchemaDigest }, capability: cell.capability, contract: base.inputContract, aspectRatio: "9:16", quantity: cell.billableQuantity, baseInput: cell.input });
+  const rawMedia = base.inputContract.imageKey ? composed.providerInput[base.inputContract.imageKey] : undefined;
+  const mediaUrls = typeof rawMedia === "string" ? [rawMedia] : Array.isArray(rawMedia) && rawMedia.every((value) => typeof value === "string") ? rawMedia as string[] : [];
+  const assets = cell.pricingInputAssets ?? [];
+  if (assets.length !== mediaUrls.length || assets.some((asset, index) => asset.url !== mediaUrls[index])) throw new Error(`QUALIFICATION_PRICING_INPUT_EVIDENCE_MISMATCH:${cell.id}`);
+  const outputMegapixels = base.inputContract.lockedParameters.output_megapixels;
+  if (typeof outputMegapixels !== "number" || !Number.isFinite(outputMegapixels) || outputMegapixels <= 0) throw new Error("QUALIFICATION_OUTPUT_MEGAPIXELS_NOT_LOCKED");
+  const inputMegapixels = assets.reduce((sum, asset) => sum + imageMegapixels(asset.width, asset.height), 0);
+  const pricingQuantities = base.executionPriceUsd.components.map((component) => ({ basis: component.basis, quantity: component.basis === "input_megapixel" ? inputMegapixels : outputMegapixels * cell.billableQuantity }));
+  return priceExecution({ price: base.executionPriceUsd, unitQuantity: cell.billableQuantity, pricingQuantities, quotedAt: at, expiresAt: new Date(base.expiresAt) });
+}
+
 export type QualificationPlanPreflight = {
   schema: "replicate-qualification-plan-preflight/v1";
   runId: string;
@@ -154,10 +172,11 @@ export function validateReplicateQualificationPlan(input: QualificationRunnerInp
     if (sourceUrls.some((value) => {
       try { return new URL(value).protocol !== "https:"; } catch { return true; }
     })) throw new Error(`QUALIFICATION_SOURCE_MEDIA_URL_INVALID:${cell.id}`);
+    qualificationCaseQuote(base, cell, at);
   }
   if (base.capabilities.some((capability) => ["image_to_image", "image_to_video", "video_to_video"].includes(capability)) && !base.license.derivativeUse) throw new Error("QUALIFICATION_DERIVATIVE_LICENSE_REQUIRED");
   if (base.inputContract.imageKey && base.capabilities.some((capability) => capability === "text_to_image" || capability === "text_to_video") && !parsed.cases.some((cell) => (cell.capability === "text_to_image" || cell.capability === "text_to_video") && qualificationSourceUrls(cell, base.inputContract.imageKey).length === 0)) throw new Error("QUALIFICATION_BRAND_ONLY_MEDIA_CELL_REQUIRED");
-  const estimatedMaximumSpendUsd = parsed.cases.reduce((sum, cell) => sum + base.executionPriceUsd.amount * cell.billableQuantity, 0);
+  const estimatedMaximumSpendUsd = parsed.cases.reduce((sum, cell) => sum + quoteTotalUsd(qualificationCaseQuote(base, cell, at)), 0);
   if (!Number.isFinite(estimatedMaximumSpendUsd) || estimatedMaximumSpendUsd <= 0 || estimatedMaximumSpendUsd >= MAX_QUALIFICATION_SPEND_USD) throw new Error("QUALIFICATION_BUDGET_CAP_EXCEEDED");
   return {
     parsed,
@@ -186,11 +205,13 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
   const pricingSourceDigest = base.pricingSource.digest as `sha256:${string}`;
   const account = await execution.identifyAccount();
   if (account.provider !== "replicate" || !account.accountId.trim() || !/^sha256:[a-f0-9]{64}$/.test(account.credentialFingerprint)) throw new Error("QUALIFICATION_ACCOUNT_IDENTITY_INVALID");
-  const spendAuthorizations = await Promise.all(parsed.cases.map((cell) => execution.authorizeSpend({ runId: parsed.runId, model: base.model, version: base.version, capability: cell.capability, billableQuantity: cell.billableQuantity, maximumAmountUsd: base.executionPriceUsd.amount * cell.billableQuantity, pricingSourceDigest, caseId: cell.id, account })));
+  const caseQuotes = parsed.cases.map((cell) => qualificationCaseQuote(base, cell, at));
+  const spendAuthorizations = await Promise.all(parsed.cases.map((cell, index) => execution.authorizeSpend({ runId: parsed.runId, model: base.model, version: base.version, capability: cell.capability, billableQuantity: cell.billableQuantity, pricingLineItems: [...(caseQuotes[index]!.lineItems ?? [])], maximumAmountUsd: quoteTotalUsd(caseQuotes[index]!), pricingSourceDigest, caseId: cell.id, account })));
   const authoritativeMaximums = spendAuthorizations.map((authorization, index) => {
     const cell = parsed.cases[index]!;
-    if (authorization.schema !== "replicate-qualification-spend-authorization/v1" || authorization.source !== "reviewed-pricing-contract" || !authorization.signingKeyId || !/^sha256:[a-f0-9]{64}$/.test(authorization.digest) || authorization.accountId !== account.accountId || authorization.credentialFingerprint !== account.credentialFingerprint || authorization.model !== base.model || authorization.version !== base.version || authorization.capability !== cell.capability || authorization.billableQuantity !== cell.billableQuantity || authorization.pricingSourceDigest !== base.pricingSource.digest || !Number.isFinite(authorization.maximumAmountUsd) || authorization.maximumAmountUsd <= 0 || new Date(authorization.expiresAt) <= at) throw new Error(`QUALIFICATION_SPEND_AUTHORIZATION_MISMATCH:${cell.id}`);
-    const attestedMaximum = base.executionPriceUsd.amount * cell.billableQuantity;
+    if (authorization.schema !== "replicate-qualification-spend-authorization/v2" || authorization.source !== "reviewed-pricing-contract" || !authorization.signingKeyId || !/^sha256:[a-f0-9]{64}$/.test(authorization.digest) || authorization.accountId !== account.accountId || authorization.credentialFingerprint !== account.credentialFingerprint || authorization.model !== base.model || authorization.version !== base.version || authorization.capability !== cell.capability || authorization.billableQuantity !== cell.billableQuantity || authorization.pricingSourceDigest !== base.pricingSource.digest || !Number.isFinite(authorization.maximumAmountUsd) || authorization.maximumAmountUsd <= 0 || new Date(authorization.expiresAt) <= at) throw new Error(`QUALIFICATION_SPEND_AUTHORIZATION_MISMATCH:${cell.id}`);
+    const attestedMaximum = quoteTotalUsd(caseQuotes[index]!);
+    if (canonicalDigest(authorization.pricingLineItems) !== canonicalDigest(caseQuotes[index]!.lineItems ?? [])) throw new Error(`QUALIFICATION_PRICING_LINE_ITEMS_MISMATCH:${cell.id}`);
     if (Math.abs(attestedMaximum - authorization.maximumAmountUsd) > Number.EPSILON) throw new Error(`QUALIFICATION_PRICING_PARITY_MISMATCH:${cell.id}`);
     return authorization.maximumAmountUsd;
   });

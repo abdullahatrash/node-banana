@@ -8,6 +8,7 @@ import { readConfiguredSecret } from "@/lib/configured-secret";
 import type { getDb } from "@/lib/db";
 import { modelQualificationCases, modelQualificationRuns, modelQualificationSpendAuthorizations, modelQualificationSpendEvidenceImports, modelQualificationWebhookReceipts } from "./db-schema";
 import type { QualificationProviderAccount, QualificationSpendAuthorization } from "./qualification-ledger";
+import type { CostQuoteLineItem } from "./types";
 
 type Db = ReturnType<typeof getDb>;
 type Capability = QualificationSpendAuthorization["capability"];
@@ -50,18 +51,22 @@ type AuthorizationInput = {
   version: string;
   capability: Capability;
   billableQuantity: number;
+  pricingLineItems: CostQuoteLineItem[];
   maximumAmountUsd: number;
   pricingSourceDigest: `sha256:${string}`;
   account: QualificationProviderAccount;
 };
 
 function sameAuthorization(row: typeof modelQualificationSpendAuthorizations.$inferSelect, input: AuthorizationInput) {
-  return row.runId === input.runId && row.caseId === input.caseId && row.providerAccountId === input.account.accountId && row.credentialFingerprint === input.account.credentialFingerprint && row.model === input.model && row.modelVersion === input.version && row.capability === input.capability && Number(row.billableQuantity) === input.billableQuantity && Number(row.maximumAmountUsd) === input.maximumAmountUsd && row.pricingSourceDigest === input.pricingSourceDigest;
+  const envelope = row.envelope as { authorization?: { pricingLineItems?: unknown } };
+  return row.runId === input.runId && row.caseId === input.caseId && row.providerAccountId === input.account.accountId && row.credentialFingerprint === input.account.credentialFingerprint && row.model === input.model && row.modelVersion === input.version && row.capability === input.capability && Number(row.billableQuantity) === input.billableQuantity && Number(row.maximumAmountUsd) === input.maximumAmountUsd && row.pricingSourceDigest === input.pricingSourceDigest && canonicalDigest(envelope.authorization?.pricingLineItems) === canonicalDigest(input.pricingLineItems);
 }
 
 export async function authorizeQualificationSpend(input: AuthorizationInput & { database: Db; authority: QualificationSpendSigningAuthority; at: Date }) {
   if (!Number.isFinite(input.maximumAmountUsd) || input.maximumAmountUsd <= 0 || input.maximumAmountUsd >= 0.4) throw new Error("QUALIFICATION_SPEND_AUTHORIZATION_AMOUNT_INVALID");
   if (!Number.isFinite(input.billableQuantity) || input.billableQuantity <= 0 || input.billableQuantity > 600) throw new Error("QUALIFICATION_SPEND_AUTHORIZATION_QUANTITY_INVALID");
+  const lineItemTotal = Number(input.pricingLineItems.reduce((sum, item) => sum + item.maximumAmount, 0).toFixed(6));
+  if (!input.pricingLineItems.length || input.pricingLineItems.some((item) => !Number.isFinite(item.unitAmount) || item.unitAmount <= 0 || !Number.isFinite(item.quantity) || item.quantity < 0 || !Number.isFinite(item.maximumAmount) || item.maximumAmount < 0) || lineItemTotal !== Number(input.maximumAmountUsd.toFixed(6))) throw new Error("QUALIFICATION_SPEND_AUTHORIZATION_LINE_ITEMS_INVALID");
   if (Number(input.maximumAmountUsd.toFixed(6)) !== input.maximumAmountUsd || Number(input.billableQuantity.toFixed(6)) !== input.billableQuantity) throw new Error("QUALIFICATION_SPEND_AUTHORIZATION_PRECISION_INVALID");
   return input.database.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`qualification-spend-authorization:${input.runId}:${input.caseId}`}, 0))`);
@@ -70,10 +75,10 @@ export async function authorizeQualificationSpend(input: AuthorizationInput & { 
       if (!sameAuthorization(existing, input)) throw new Error("QUALIFICATION_SPEND_AUTHORIZATION_CONFLICT");
       return existing.envelope;
     }
-    const identity = { runId: input.runId, caseId: input.caseId, provider: "replicate" as const, accountId: input.account.accountId, credentialFingerprint: input.account.credentialFingerprint, model: input.model, version: input.version, capability: input.capability, billableQuantity: input.billableQuantity, maximumAmountUsd: input.maximumAmountUsd, pricingSourceDigest: input.pricingSourceDigest };
+    const identity = { runId: input.runId, caseId: input.caseId, provider: "replicate" as const, accountId: input.account.accountId, credentialFingerprint: input.account.credentialFingerprint, model: input.model, version: input.version, capability: input.capability, billableQuantity: input.billableQuantity, pricingLineItems: input.pricingLineItems, maximumAmountUsd: input.maximumAmountUsd, pricingSourceDigest: input.pricingSourceDigest };
     const authorizationId = `qsa_${canonicalDigest(identity).slice(-32)}`;
     const expiresAt = new Date(input.at.getTime() + 15 * 60_000);
-    const signed = input.authority.signPayload({ schema: "replicate-qualification-spend-authorization/v1", authorizationId, provider: "replicate", accountId: input.account.accountId, credentialFingerprint: input.account.credentialFingerprint, model: input.model, version: input.version, capability: input.capability, billableQuantity: input.billableQuantity, maximumAmountUsd: input.maximumAmountUsd, expiresAt: expiresAt.toISOString(), pricingSourceDigest: input.pricingSourceDigest, source: "reviewed-pricing-contract" });
+    const signed = input.authority.signPayload({ schema: "replicate-qualification-spend-authorization/v2", authorizationId, provider: "replicate", accountId: input.account.accountId, credentialFingerprint: input.account.credentialFingerprint, model: input.model, version: input.version, capability: input.capability, billableQuantity: input.billableQuantity, pricingLineItems: input.pricingLineItems, maximumAmountUsd: input.maximumAmountUsd, expiresAt: expiresAt.toISOString(), pricingSourceDigest: input.pricingSourceDigest, source: "reviewed-pricing-contract" });
     const envelope = { authorization: signed.payload, signature: signed.signature };
     await tx.insert(modelQualificationSpendAuthorizations).values({ authorizationId, runId: input.runId, caseId: input.caseId, providerAccountId: input.account.accountId, credentialFingerprint: input.account.credentialFingerprint, model: input.model, modelVersion: input.version, capability: input.capability, billableQuantity: input.billableQuantity.toFixed(6), maximumAmountUsd: input.maximumAmountUsd.toFixed(6), pricingSourceDigest: input.pricingSourceDigest, payloadDigest: signed.payload.digest, signingKeyId: input.authority.keyId, envelope, expiresAt, createdAt: input.at });
     return envelope;

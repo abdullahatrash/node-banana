@@ -21,6 +21,15 @@ describe("ModelRoutingService", () => {
   });
   it("rejects silent fallback", async () => { const service = new ModelRoutingService(new MemoryModelRoutingRepository(), () => at, resolveTestModel, new MemoryGenerationBudgetAuthority(), ALLOWING_TEST_REGION_AUTHORITY); const result = await service.createIntent({ workspaceId: "ws", brand: testBrand("b", 1, at, `sha256:${"b".repeat(64)}`), rawPrompt: "x", capability: "text_to_image", contentLanguage: "en", arabicVariety: null, rights: TEST_RIGHTS, remixBrief: TEST_REMIX_BRIEF, requestedModel: testRef(0), selectedModel: testRef(2), fallbackAuthorizationId: null, quantity: 1, userId: "u", idempotencyKey: "intent-002" }); expect(result.kind).toBe("fallback_not_authorized"); });
 
+  it("reserves an exact megapixel-priced quote and fails closed below its ceiling", async () => {
+    const model = testRef(10);
+    const command = { workspaceId: "ws", brand: testBrand("brand", 1, at), rawPrompt: "Arabic campaign", capability: "text_to_image" as const, contentLanguage: "ar" as const, arabicVariety: "msa" as const, rights: TEST_RIGHTS, remixBrief: TEST_REMIX_BRIEF, requestedModel: model, selectedModel: model, fallbackAuthorizationId: null, quantity: 1, pricingQuantities: [{ basis: "input_megapixel" as const, quantity: 2.0736 }, { basis: "output_megapixel" as const, quantity: 1 }], userId: "u" };
+    const denied = await new ModelRoutingService(new MemoryModelRoutingRepository(), () => at, resolveTestModel, new MemoryGenerationBudgetAuthority(0.003), ALLOWING_TEST_REGION_AUTHORITY).createIntent({ ...command, idempotencyKey: "compound-denied" });
+    expect(denied).toMatchObject({ kind: "budget_denied", code: "BUDGET_LIMIT_EXCEEDED" });
+    const admitted = await new ModelRoutingService(new MemoryModelRoutingRepository(), () => at, resolveTestModel, new MemoryGenerationBudgetAuthority(0.003074), ALLOWING_TEST_REGION_AUTHORITY).createIntent({ ...command, idempotencyKey: "compound-admitted" });
+    expect(admitted.intent?.quote).toMatchObject({ amount: 0.003074, basis: "run", quantity: 1, lineItems: [{ basis: "input_megapixel", quantity: 2.0736, maximumAmount: 0.002074 }, { basis: "output_megapixel", quantity: 1, maximumAmount: 0.001 }] });
+  });
+
   it("persists the exact governed Persona snapshot on its generation intent", async () => {
     const service = new ModelRoutingService(new MemoryModelRoutingRepository(), () => at, resolveTestModel, new MemoryGenerationBudgetAuthority(), ALLOWING_TEST_REGION_AUTHORITY);
     const selected = testRef(5);

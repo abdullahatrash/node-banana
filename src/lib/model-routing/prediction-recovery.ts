@@ -9,6 +9,7 @@ import { PostgresModelRoutingRepository } from "./postgres-repository";
 import type { ReplicatePredictionAdapter, ReplicateExecutionResult } from "./replicate-contract";
 import type { DurableProviderCredentialRef } from "@/lib/byok/repository";
 import { settleGenerationSpend } from "./generation-spend";
+import { quoteTotalUsd } from "./pricing";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -28,7 +29,7 @@ export async function recoverReplicatePredictions(input: { database: Db; operati
         summary.unknown++;
         await input.database.update(modelProviderEffectClaims).set({ state: "outcome_unknown", providerStatus: "submit_identity_lost", nextPollAt: new Date(at.getTime() + 24 * 60 * 60_000), leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner)));
         await projectGenerationOperation(input.database, input.operations, { workspaceId: row.workspaceId, intentId: row.intentId, predictionId: null, pollAttempt: row.pollAttempts + 1 }, { state: "outcome_unknown", predictionId: null, code: "SUBMISSION_IDENTITY_LOST" });
-        await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome: { kind: "cost_unknown" }, quotedAmountUsd: intent.quote.amount * intent.quote.quantity, at });
+        await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome: { kind: "cost_unknown" }, quotedAmountUsd: quoteTotalUsd(intent.quote), at });
         continue;
       }
       if (!row.credentialRef) throw new Error("DURABLE_PROVIDER_CREDENTIAL_REF_MISSING");
@@ -41,13 +42,13 @@ export async function recoverReplicatePredictions(input: { database: Db; operati
         const disposition = recoveryDisposition(result); const terminal = disposition.operationState; summary.terminal++;
         await input.database.update(modelProviderEffectClaims).set({ state: disposition.effectState, providerStatus: result.state, pollAttempts: row.pollAttempts + 1, leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner)));
         const outcome = terminal === "succeeded"
-          ? { kind: "succeeded" as const, actualAmountUsd: intent.quote.amount * intent.quote.quantity }
+          ? { kind: "succeeded" as const, actualAmountUsd: quoteTotalUsd(intent.quote) }
           : result.state === "failed_known"
             ? { kind: "failed_known" as const }
             : result.state === "aborted_pre_start"
               ? { kind: "pre_start_cancelled" as const }
               : { kind: "cost_unknown" as const };
-        await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome, quotedAmountUsd: intent.quote.amount * intent.quote.quantity, at });
+        await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome, quotedAmountUsd: quoteTotalUsd(intent.quote), at });
       }
     } catch { summary.failed++; await input.database.update(modelProviderEffectClaims).set({ state: "outcome_unknown", providerStatus: "transport_lost", nextPollAt: new Date(at.getTime() + 60_000), leaseOwner: null, leaseExpiresAt: null, updatedAt: at }).where(and(eq(modelProviderEffectClaims.workspaceId, row.workspaceId), eq(modelProviderEffectClaims.intentId, row.intentId), eq(modelProviderEffectClaims.leaseOwner, owner))); await settleGenerationSpend({ database: input.database, workspaceId: row.workspaceId, intentId: row.intentId, outcome: { kind: "cost_unknown" }, quotedAmountUsd: 0, at }); }
   }

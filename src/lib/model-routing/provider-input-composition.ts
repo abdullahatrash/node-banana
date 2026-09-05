@@ -33,7 +33,7 @@ function digest(value: unknown) {
   return canonicalDigest(value) as `sha256:${string}`;
 }
 
-function providerMediaPlan(input: { sourceAssetIds: string[]; brand: BrandPromptContext; contract: QualifiedContract }) {
+export function providerMediaPlan(input: { sourceAssetIds: string[]; brand: BrandPromptContext; contract: QualifiedContract }) {
   const brandIds = input.brand.referenceAssets.map((asset) => asset.assetId);
   if (!input.contract.imageKey) return { providerMediaAssetIds: [] as string[], brandMediaDisposition: "prompt_context" as const };
   if (input.contract.imageMode === "array") return { providerMediaAssetIds: [...input.sourceAssetIds, ...brandIds], brandMediaDisposition: "provider_input" as const };

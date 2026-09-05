@@ -14,7 +14,7 @@ function envelope(amountUsd = 0.012) {
 }
 
 function authorizationEnvelope() {
-  const unsigned = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: "authorization-case-1", ...account, model: "owner/model", version: "immutable-version-1", capability: "image_to_video" as const, billableQuantity: 5, maximumAmountUsd: 0.025, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest: `sha256:${"6".repeat(64)}` as const, source: "reviewed-pricing-contract" as const };
+  const unsigned = { schema: "replicate-qualification-spend-authorization/v2" as const, authorizationId: "authorization-case-1", ...account, model: "owner/model", version: "immutable-version-1", capability: "image_to_video" as const, billableQuantity: 5, pricingLineItems: [{ basis: "second" as const, unitAmount: 0.005, quantity: 5, maximumAmount: 0.025 }], maximumAmountUsd: 0.025, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest: `sha256:${"6".repeat(64)}` as const, source: "reviewed-pricing-contract" as const };
   const authorization = { ...unsigned, digest: canonicalDigest(unsigned) as `sha256:${string}` };
   return { authorization, signature: { algorithm: "ed25519" as const, keyId: "billing-key", value: sign(null, Buffer.from(canonicalJson(authorization)), privateKey).toString("base64url") } };
 }
@@ -35,7 +35,7 @@ describe("qualification spend receipts", () => {
 
   it("verifies the credential-bound maximum before any paid submission", () => {
     const trusted = { "billing-key": publicKey.export({ type: "spki", format: "pem" }).toString() };
-    const expected = { account, model: "owner/model", version: "immutable-version-1", capability: "image_to_video" as const, billableQuantity: 5, maximumAmountUsd: 0.025, pricingSourceDigest: `sha256:${"6".repeat(64)}` };
+    const expected = { account, model: "owner/model", version: "immutable-version-1", capability: "image_to_video" as const, billableQuantity: 5, pricingLineItems: [{ basis: "second" as const, unitAmount: 0.005, quantity: 5, maximumAmount: 0.025 }], maximumAmountUsd: 0.025, pricingSourceDigest: `sha256:${"6".repeat(64)}` };
     const result = verifyQualificationSpendAuthorization(authorizationEnvelope(), trusted, expected);
     expect(result).toMatchObject({ maximumAmountUsd: 0.025, signingKeyId: "billing-key", ...account });
     expect(() => verifyQualificationSpendAuthorization(authorizationEnvelope(), trusted, { ...expected, capability: "text_to_video" })).toThrow("QUALIFICATION_SPEND_AUTHORIZATION_IDENTITY_MISMATCH");

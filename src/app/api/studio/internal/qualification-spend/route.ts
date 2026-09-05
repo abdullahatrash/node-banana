@@ -29,6 +29,7 @@ const authorizationRequest = z.object({
   version: z.string().min(8).max(200),
   capability,
   billableQuantity: z.number().positive().max(600),
+  pricingLineItems: z.array(z.object({ basis: z.enum(["image", "second", "run", "input_megapixel", "output_megapixel"]), unitAmount: z.number().positive(), quantity: z.number().nonnegative(), maximumAmount: z.number().nonnegative() }).strict()).min(1).max(4),
   maximumAmountUsd: z.number().positive().lt(0.4),
   pricingSourceDigest: digest,
   accountId: z.string().min(1).max(200),

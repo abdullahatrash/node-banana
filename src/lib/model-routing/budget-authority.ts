@@ -1,4 +1,5 @@
 import type { CostQuote, ExactModelRef, GenerationFundingMode } from "./types";
+import { quoteTotalUsd } from "./pricing";
 
 export interface ManagedCreditQuote {
   schema: "managed-generation-credit-quote/v1";
@@ -50,8 +51,8 @@ export class MemoryGenerationBudgetAuthority implements GenerationBudgetAuthorit
   constructor(private readonly ceilingUsd = Number.POSITIVE_INFINITY) {}
   async reserve(input: Parameters<GenerationBudgetAuthority["reserve"]>[0]) {
     const existing = this.reservations.get(`${input.workspaceId}:${input.intentId}`);
-    if (existing) return existing.status !== "released" && existing.quotedAmount === input.quote.amount * input.quote.quantity ? { kind: "reserved" as const, reservationIds: [...existing.reservationIds], disposition: "replayed" as const } : { kind: "unavailable" as const, code: "BUDGET_RESERVATION_CONFLICT" };
-    const amount = input.quote.amount * input.quote.quantity;
+    if (existing) return existing.status !== "released" && existing.quotedAmount === quoteTotalUsd(input.quote) ? { kind: "reserved" as const, reservationIds: [...existing.reservationIds], disposition: "replayed" as const } : { kind: "unavailable" as const, code: "BUDGET_RESERVATION_CONFLICT" };
+    const amount = quoteTotalUsd(input.quote);
     const consumed = [...this.reservations.values()].reduce((sum, row) => sum + (row.status === "settled" ? row.actualAmount ?? row.quotedAmount : row.status === "released" ? 0 : row.quotedAmount), 0);
     if (consumed + amount > this.ceilingUsd) return { kind: "denied" as const, code: "BUDGET_LIMIT_EXCEEDED" };
     const reservationIds = [`generation:${input.workspaceId}:${input.intentId}`];

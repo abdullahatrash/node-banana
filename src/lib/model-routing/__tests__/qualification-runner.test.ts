@@ -34,8 +34,8 @@ function port(overrides: Partial<QualificationExecutionPort> = {}): Qualificatio
   const mediaItem = { contentDigest: `sha256:${"e".repeat(64)}` as const, width: 1080, height: 1920, durationSeconds: null, fps: null };
   return {
     identifyAccount: vi.fn().mockResolvedValue({ provider: "replicate", accountId: "replicate-account", credentialFingerprint: `sha256:${"8".repeat(64)}` }),
-    authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, maximumAmountUsd, pricingSourceDigest, caseId, account }) => {
-      const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest, source: "reviewed-pricing-contract" as const };
+    authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, pricingLineItems, maximumAmountUsd, pricingSourceDigest, caseId, account }) => {
+      const authorization = { schema: "replicate-qualification-spend-authorization/v2" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, pricingLineItems, maximumAmountUsd, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest, source: "reviewed-pricing-contract" as const };
       return { ...authorization, digest: canonicalDigest(authorization) as `sha256:${string}`, signingKeyId: "spend-key" };
     }),
     inspectSchema: vi.fn().mockResolvedValue({ inputSchemaDigest: `sha256:${"a".repeat(64)}`, inputKeys: ["prompt", "image", "aspect_ratio", "disable_safety_filter"] }),
@@ -104,8 +104,8 @@ describe("executable Replicate qualification runner", () => {
   });
 
   it("makes no paid calls when the provider-authorized matrix reaches the hard cap", async () => {
-    const execution = port({ authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, maximumAmountUsd, pricingSourceDigest, caseId, account }) => {
-      const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest, source: "reviewed-pricing-contract" as const };
+    const execution = port({ authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, pricingLineItems, maximumAmountUsd, pricingSourceDigest, caseId, account }) => {
+      const authorization = { schema: "replicate-qualification-spend-authorization/v2" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, pricingLineItems, maximumAmountUsd, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest, source: "reviewed-pricing-contract" as const };
       return { ...authorization, digest: canonicalDigest(authorization) as `sha256:${string}`, signingKeyId: "spend-key" };
     }) });
     const durable = ledger();
@@ -178,6 +178,45 @@ describe("executable Replicate qualification runner", () => {
     expect(() => validateReplicateQualificationPlan(subset as never, at)).toThrow("QUALIFICATION_CAPABILITY_SET_MISMATCH");
   });
 
+  it("binds megapixel-priced qualification cells to the exact provider media order", async () => {
+    const model = CURATED_MODELS.find((candidate) => candidate.model === "black-forest-labs/flux-2-klein-4b")!;
+    if (model.priceUsd.basis !== "components") throw new Error("test model must use component pricing");
+    const brandReference = { assetId: "qualification-brand-logo", digest: `sha256:${"9".repeat(64)}` as const, url: "https://workspace.invalid/brand-logo.png" };
+    const brandAsset = { url: brandReference.url, width: 1080, height: 1920 };
+    const sourceAsset = { url: "https://workspace.invalid/source.png", width: 1080, height: 1920 };
+    const plan = {
+      signingKeyId: "offline-operator-key", runId: "qualification-klein-run-001",
+      attestation: {
+        schema: "model-execution-qualification/v1" as const, id: "qualification-klein-reviewed-001", revision: 1, provider: "replicate" as const, model: model.model,
+        endpoint: "official" as const, version: model.model, inputSchemaDigest: `sha256:${"a".repeat(64)}` as const,
+        capabilities: [...model.capabilities], contentLanguages: [...model.contentLanguages], arabicVarieties: [...model.arabicVarieties], verifiedRegions: ["replicate-us"], executionModes: ["async" as const],
+        executionPriceUsd: { basis: "components" as const, components: model.priceUsd.components.map((component) => ({ ...component })) }, maxQuantity: 1, cancelAfterSeconds: 900, outputShape: { width: 1080, height: 1920, fps: null },
+        inputContract: { promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: "images", imageMode: "array" as const, safety: { parameterKey: "disable_safety_checker", safeValue: false }, lockedParameters: { disable_safety_checker: false, output_megapixels: 1, output_format: "jpg" } },
+        license: { name: "Reviewed commercial license", commercialUse: true as const, derivativeUse: true, sourceUrl: "https://example.com/license", digest: `sha256:${"b".repeat(64)}` as const },
+        pricingSource: { sourceUrl: "https://example.com/pricing", digest: `sha256:${"c".repeat(64)}` as const, checkedAt: "2026-09-03T00:00:00.000Z" },
+        qualificationRun: { id: "untrusted-placeholder", digest: `sha256:${"d".repeat(64)}` as const, completedAt: "2026-09-03T01:00:00.000Z" },
+        issuedAt: "2026-09-03T02:00:00.000Z", expiresAt: "2026-10-03T02:00:00.000Z",
+      },
+      cases: [
+        { id: "arabic-brand-only", capability: "text_to_image" as const, contentLanguage: "ar" as const, arabicVariety: "gulf" as const, prompt: "حملة عربية", input: {}, billableQuantity: 1, pricingInputAssets: [brandAsset], brandReference, lifecycle: "complete" as const },
+        { id: "english-image-remix", capability: "image_to_image" as const, contentLanguage: "en" as const, arabicVariety: null, prompt: "English brand remix", input: { images: [sourceAsset.url] }, billableQuantity: 1, pricingInputAssets: [sourceAsset, brandAsset], brandReference, lifecycle: "complete" as const },
+        { id: "arabic-cancel", capability: "text_to_image" as const, contentLanguage: "ar" as const, arabicVariety: "msa" as const, prompt: "اختبار الإلغاء", input: {}, billableQuantity: 1, pricingInputAssets: [brandAsset], brandReference, lifecycle: "cancel" as const },
+      ],
+    };
+    const checked = validateReplicateQualificationPlan(plan, at);
+    expect(checked.summary.estimatedMaximumSpendUsd).toBeCloseTo(0.011296, 6);
+    const execution = port({
+      inspectSchema: vi.fn().mockResolvedValue({ inputSchemaDigest: `sha256:${"a".repeat(64)}`, inputKeys: ["prompt", "images", "aspect_ratio", "disable_safety_checker", "output_megapixels", "output_format"] }),
+      observeSpend: vi.fn(async ({ predictionId, model: executedModel, version, account }) => {
+        const receipt = { schema: "replicate-qualification-spend-receipt/v1" as const, receiptId: `receipt-${predictionId}`, ...account, predictionId, model: executedModel, version, currency: "USD" as const, amountUsd: 0.001, observedAt: at.toISOString(), source: "replicate-account-billing" as const, providerEvidence: { kind: "replicate_account_usage_export" as const, scope: "exact_prediction_charge" as const, digest: `sha256:${"4".repeat(64)}` as const, observedBy: "operator@example.com", notesDigest: `sha256:${"5".repeat(64)}` as const } };
+        return { ...receipt, digest: canonicalDigest(receipt) as `sha256:${string}`, signingKeyId: "spend-key" };
+      }),
+    });
+    const result = await executeReplicateQualification(plan, privateKey.export({ type: "pkcs8", format: "pem" }).toString(), execution, ledger(), at);
+    expect(result.report.maximumSpendUsd).toBeCloseTo(0.011296, 6);
+    expect(execution.authorizeSpend).toHaveBeenNthCalledWith(2, expect.objectContaining({ maximumAmountUsd: 0.005148, pricingLineItems: [{ basis: "input_megapixel", unitAmount: 0.001, quantity: 4.1472, maximumAmount: 0.004148 }, { basis: "output_megapixel", unitAmount: 0.001, quantity: 1, maximumAmount: 0.001 }] }));
+  });
+
   it("qualifies bilingual brand-aware text output with text-specific ingestion evidence", async () => {
     const model = CURATED_MODELS.find((candidate) => candidate.capabilities.includes("text_generation"))!;
     const brandReference = { assetId: "qualification-brand-logo", digest: `sha256:${"9".repeat(64)}` as const, url: "https://workspace.invalid/brand-logo.png" };
@@ -202,8 +241,8 @@ describe("executable Replicate qualification runner", () => {
       ],
     };
     const execution = port({
-      authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, maximumAmountUsd, pricingSourceDigest, caseId, account }) => {
-        const authorization = { schema: "replicate-qualification-spend-authorization/v1" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, maximumAmountUsd, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest, source: "reviewed-pricing-contract" as const };
+      authorizeSpend: vi.fn(async ({ model, version, capability, billableQuantity, pricingLineItems, maximumAmountUsd, pricingSourceDigest, caseId, account }) => {
+        const authorization = { schema: "replicate-qualification-spend-authorization/v2" as const, authorizationId: `authorization-${caseId}`, ...account, model, version, capability, billableQuantity, pricingLineItems, maximumAmountUsd, expiresAt: "2026-09-05T00:00:00.000Z", pricingSourceDigest, source: "reviewed-pricing-contract" as const };
         return { ...authorization, digest: canonicalDigest(authorization) as `sha256:${string}`, signingKeyId: "spend-key" };
       }),
       inspectSchema: vi.fn().mockResolvedValue({ inputSchemaDigest: `sha256:${"a".repeat(64)}`, inputKeys: ["prompt"] }),

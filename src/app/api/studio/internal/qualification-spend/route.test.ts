@@ -18,6 +18,7 @@ const authorization = {
   version: "immutable-version-001",
   capability: "text_to_image",
   billableQuantity: 1,
+  pricingLineItems: [{ basis: "image", unitAmount: 0.01, quantity: 1, maximumAmount: 0.01 }],
   maximumAmountUsd: 0.01,
   pricingSourceDigest: `sha256:${"a".repeat(64)}`,
   accountId: "replicate-account",

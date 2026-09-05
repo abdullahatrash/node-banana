@@ -34,6 +34,7 @@ describe("model qualification catalog", () => {
     expect(CURATED_MODELS.every((model) => model.qualification.status === "unqualified")).toBe(true);
     expect(CURATED_MODELS.map((model) => JSON.stringify(model)).join("\n")).not.toContain("pinned-2026");
     expect(CURATED_MODELS.find((model) => model.model === "wan-video/wan-2.7-videoedit")?.priceUsd).toEqual({ basis: "second", amount: 0.1 });
+    expect(CURATED_MODELS.find((model) => model.model === "black-forest-labs/flux-2-klein-4b")?.priceUsd).toEqual({ basis: "components", components: [{ basis: "input_megapixel", amount: 0.001 }, { basis: "output_megapixel", amount: 0.001 }] });
   });
 
   it("qualifies only a trusted, immutable, unexpired signed attestation", () => {

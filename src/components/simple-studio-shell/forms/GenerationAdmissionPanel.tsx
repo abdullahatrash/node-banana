@@ -11,6 +11,7 @@ export function GenerationAdmissionPanel({ runs, quantityPerRun }: { runs?: numb
   const locale = useLocale();
   const t = useTranslations("simpleStudio.admission");
   const funding = useTranslations("generationFunding");
+  const pricingT = useTranslations("pricingMetering");
   const automationFields = useTranslations("product.automations.fields");
   const fundingModes = useTranslations("product.automations.modes");
   const fundingMode = useSimpleStudioStore((state) => state.fundingMode);
@@ -31,7 +32,7 @@ export function GenerationAdmissionPanel({ runs, quantityPerRun }: { runs?: numb
   const quote = pendingManagedCreditQuotes[0] ?? null;
   const validRuns = runs !== undefined && Number.isFinite(runs) && runs > 0 ? runs : null;
   const validQuantity = quantityPerRun !== undefined && Number.isFinite(quantityPerRun) && quantityPerRun > 0 ? quantityPerRun : null;
-  const estimatedProviderCost = selectedModelExecutionPriceUsd && validRuns !== null
+  const estimatedProviderCost = selectedModelExecutionPriceUsd && selectedModelExecutionPriceUsd.basis !== "components" && validRuns !== null
     ? selectedModelExecutionPriceUsd.amount * validRuns * (selectedModelExecutionPriceUsd.basis === "second" && validQuantity !== null ? validQuantity : 1)
     : null;
   const FundingIcon = fundingMode === "byok" ? KeyRoundIcon : WalletCardsIcon;
@@ -45,7 +46,9 @@ export function GenerationAdmissionPanel({ runs, quantityPerRun }: { runs?: numb
         <p className="text-xs font-semibold">{funding(`${fundingMode}.title`)}</p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{funding(`${fundingMode}.description`)}</p>
         {selectedModelExecutionPriceUsd ? <p className="mt-1 text-xs font-medium">
-          {estimatedProviderCost === null
+          {selectedModelExecutionPriceUsd.basis === "components"
+            ? pricingT("exactQuote")
+            : estimatedProviderCost === null
             ? funding("unitPrice", { amount: new Intl.NumberFormat(locale, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(selectedModelExecutionPriceUsd.amount), basis: funding(`basis.${selectedModelExecutionPriceUsd.basis}`) })
             : funding("estimatedCost", { amount: new Intl.NumberFormat(locale, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(estimatedProviderCost) })}
         </p> : <p className="mt-1 text-xs text-muted-foreground">{funding("selectModel")}</p>}

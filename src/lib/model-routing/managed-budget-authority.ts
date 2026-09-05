@@ -1,6 +1,7 @@
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import type { CommercialRepository } from "@/lib/commercial/repository";
 import type { GenerationBudgetAuthority, ManagedCreditQuote } from "./budget-authority";
+import { quoteTotalUsd } from "./pricing";
 
 type ManagedCommercialPort = Pick<CommercialRepository, "issueQuote" | "acceptQuote" | "reserveQuote" | "settleGenerationEffect">;
 
@@ -56,7 +57,7 @@ export class ManagedGenerationBudgetAuthority implements GenerationBudgetAuthori
     if (!rate) {
       return { kind: "unavailable" as const, code: "MANAGED_CREDIT_PRICING_UNAVAILABLE" };
     }
-    const totalUsd = input.quote.amount * input.quote.quantity;
+    const totalUsd = quoteTotalUsd(input.quote);
     const debit = Math.ceil(totalUsd / rate);
     const subtotalMinor = Math.ceil(totalUsd * 100);
     if (!Number.isSafeInteger(debit) || debit <= 0 || !Number.isSafeInteger(subtotalMinor) || subtotalMinor <= 0) {

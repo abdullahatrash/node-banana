@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import type { getDb } from "@/lib/db";
 import { modelQualificationCases, modelQualificationRuns, modelQualificationSpendReceipts } from "./db-schema";
+import type { CostQuoteLineItem } from "./types";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -42,12 +43,13 @@ export type QualificationSpendReceipt = QualificationProviderAccount & {
 };
 
 export type QualificationSpendAuthorization = QualificationProviderAccount & {
-  schema: "replicate-qualification-spend-authorization/v1";
+  schema: "replicate-qualification-spend-authorization/v2";
   authorizationId: string;
   model: string;
   version: string;
   capability: "text_generation" | "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "video_to_video";
   billableQuantity: number;
+  pricingLineItems: CostQuoteLineItem[];
   maximumAmountUsd: number;
   expiresAt: string;
   pricingSourceDigest: `sha256:${string}`;

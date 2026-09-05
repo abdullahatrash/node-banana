@@ -81,7 +81,7 @@ export class ReplicateQualificationHttpExecution implements QualificationExecuti
   }
 
   async authorizeSpend(input: Parameters<QualificationExecutionPort["authorizeSpend"]>[0]) {
-    const response = await this.harness(this.spendObserverUrl, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `qualification:${input.runId}:${input.caseId}` }, body: JSON.stringify({ kind: "authorize_qualification_spend", runId: input.runId, model: input.model, version: input.version, capability: input.capability, billableQuantity: input.billableQuantity, maximumAmountUsd: input.maximumAmountUsd, pricingSourceDigest: input.pricingSourceDigest, caseId: input.caseId, accountId: input.account.accountId, credentialFingerprint: input.account.credentialFingerprint }) });
+    const response = await this.harness(this.spendObserverUrl, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `qualification:${input.runId}:${input.caseId}` }, body: JSON.stringify({ kind: "authorize_qualification_spend", runId: input.runId, model: input.model, version: input.version, capability: input.capability, billableQuantity: input.billableQuantity, pricingLineItems: input.pricingLineItems, maximumAmountUsd: input.maximumAmountUsd, pricingSourceDigest: input.pricingSourceDigest, caseId: input.caseId, accountId: input.account.accountId, credentialFingerprint: input.account.credentialFingerprint }) });
     if (!response.ok) throw new Error(`QUALIFICATION_SPEND_AUTHORIZATION_HTTP_${response.status}`);
     return verifyQualificationSpendAuthorization(await response.json(), this.spendReceiptKeys, input);
   }

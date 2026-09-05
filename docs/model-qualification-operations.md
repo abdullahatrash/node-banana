@@ -26,6 +26,15 @@ qualification evidence: review and digest current license and pricing sources
 separately, then map the prompt, aspect ratio, quantity, media, safety, and locked
 parameters into the reviewed plan.
 
+For models whose reviewed price is composed from input and output megapixels,
+each smoke cell must also provide `pricingInputAssets` in the exact order sent
+to the provider. Every entry pins the HTTPS URL and authoritative decoded width
+and height. The attestation must lock a positive `output_megapixels` value.
+Preflight recomposes the provider input, rejects missing or reordered evidence,
+and signs the resulting per-component maximums into spend authorization v2.
+Runtime uses the same calculation from server-probed Workspace asset dimensions;
+browser-declared dimensions are never trusted for a reservation.
+
 ## Replicate target identity
 
 Replicate has two supported target contracts and the reviewed plan must name the

@@ -41,7 +41,7 @@ describe("qualification spend signing authority", () => {
     const database = {} as never;
     const authority = {} as never;
     const account = { provider: "replicate" as const, accountId: "account", credentialFingerprint: `sha256:${"a".repeat(64)}` as const };
-    await expect(authorizeQualificationSpend({ database, authority, at: new Date(), runId: "run", caseId: "case", model: "owner/model", version: "immutable-version", capability: "text_to_image", billableQuantity: 1, maximumAmountUsd: 0.0000001, pricingSourceDigest: `sha256:${"b".repeat(64)}`, account })).rejects.toThrow("QUALIFICATION_SPEND_AUTHORIZATION_PRECISION_INVALID");
+    await expect(authorizeQualificationSpend({ database, authority, at: new Date(), runId: "run", caseId: "case", model: "owner/model", version: "immutable-version", capability: "text_to_image", billableQuantity: 1, pricingLineItems: [{ basis: "image", unitAmount: 0.0000001, quantity: 1, maximumAmount: 0.0000001 }], maximumAmountUsd: 0.0000001, pricingSourceDigest: `sha256:${"b".repeat(64)}`, account })).rejects.toThrow("QUALIFICATION_SPEND_AUTHORIZATION_PRECISION_INVALID");
     await expect(importQualificationSpendEvidence({ database, authority, at: new Date(), runId: "run", caseId: "case", predictionId: "prediction", amountUsd: 0.0000001, providerObservedAt: new Date(), providerEvidenceKind: "replicate_invoice", providerEvidenceDigest: `sha256:${"c".repeat(64)}`, importedBy: "operator", notes: "exact charge" })).rejects.toThrow("QUALIFICATION_SPEND_RECEIPT_PRECISION_INVALID");
   });
 });

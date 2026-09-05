@@ -14,6 +14,8 @@ import { DENYING_GENERATION_REGION_AUTHORITY, type GenerationRegionAuthority } f
 import { validateRightsEvidence } from "./rights-evidence";
 import { validateImmutableBrandContext } from "./brand-context";
 import { createProviderCompositionEvidence } from "./provider-input-composition";
+import { priceExecution, quoteTotalUsd } from "./pricing";
+import type { PricingQuantity } from "./types";
 
 const digest = (value: unknown) => canonicalDigest(value) as `sha256:${string}`;
 const sameModel = (a: ExactModelRef, b: ExactModelRef) =>
@@ -49,7 +51,7 @@ export class ModelRoutingService {
       (!input.arabicVariety || target.arabicVarieties.includes(input.arabicVariety)) &&
       target.verifiedRegions.includes(input.verifiedRegion) &&
       target.executionModes.includes(input.executionMode));
-    if (!source || source.qualification.status !== "qualified" || !source.capabilities.includes(input.capability) ||
+    if (!source || source.qualification.status !== "qualified" || source.qualification.executionPriceUsd.basis === "components" || !source.capabilities.includes(input.capability) ||
       targets.some((target) => !target) || !targetCompatible ||
       input.targets.some((target) => sameModel(target, input.source)) ||
       new Set(input.targets.map((target) => `${target.provider}:${target.model}:${target.version}:${target.inputSchemaDigest}`)).size !== input.targets.length ||
@@ -96,6 +98,7 @@ export class ModelRoutingService {
     fallbackAuthorizationId: string | null; quantity: number;
     remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
     userId: string; idempotencyKey: string; fundingMode?: GenerationIntent["fundingMode"]; managedQuoteAcceptance?: ManagedCreditQuoteAcceptance | null; persona?: GenerationIntent["persona"]; contentExecution?: GenerationIntent["contentExecution"]; id?: string;
+    pricingQuantities?: readonly PricingQuantity[];
   }) {
     const at = this.now();
     const id = input.id ?? stableId("intent", input.workspaceId, input.idempotencyKey);
@@ -121,17 +124,21 @@ export class ModelRoutingService {
       const grant = await this.repository.getAuthorization(input.workspaceId, input.fallbackAuthorizationId);
       if (!grant || !sameModel(grant.source, input.requestedModel)) return { kind: "fallback_not_authorized" as const };
       if (selected.qualification.status !== "qualified" || input.quantity > selected.qualification.maxQuantity) return { kind: "invalid" as const };
-      const quote: CostQuote = { currency: "USD", amount: selected.qualification.executionPriceUsd.amount, basis: selected.qualification.executionPriceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
+      let quote: CostQuote;
+      try { quote = priceExecution({ price: selected.qualification.executionPriceUsd, unitQuantity: input.quantity, pricingQuantities: input.pricingQuantities, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) }); }
+      catch { return { kind: "invalid" as const }; }
       const compatibility = authorizeFallback({ authorization: grant, target: input.selectedModel, quote, at, resolveModel: this.resolveModel });
       if (!compatibility.authorized) return { kind: "fallback_incompatible" as const, reasons: compatibility.reasons };
-      const grantReservation = await this.repository.reserveFallbackSpend({ workspaceId: input.workspaceId, authorizationId: grant.id, intentId: id, amountUsd: quote.amount * quote.quantity, at });
+      const grantReservation = await this.repository.reserveFallbackSpend({ workspaceId: input.workspaceId, authorizationId: grant.id, intentId: id, amountUsd: quoteTotalUsd(quote), at });
       if (grantReservation === "ceiling_exceeded") return { kind: "fallback_incompatible" as const, reasons: ["cost_ceiling" as const] };
       if (grantReservation === "unavailable") return { kind: "unavailable" as const };
       fallbackReservation = { authorizationId: grant.id, disposition: grantReservation === "replayed" ? "replayed" : "created" };
     } else if (input.fallbackAuthorizationId) return { kind: "invalid" as const };
 
     if (selected.qualification.status !== "qualified" || input.quantity > selected.qualification.maxQuantity) return { kind: "invalid" as const };
-    const quote: CostQuote = { currency: "USD", amount: selected.qualification.executionPriceUsd.amount, basis: selected.qualification.executionPriceUsd.basis, quantity: input.quantity, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) };
+    let quote: CostQuote;
+    try { quote = priceExecution({ price: selected.qualification.executionPriceUsd, unitQuantity: input.quantity, pricingQuantities: input.pricingQuantities, quotedAt: at, expiresAt: new Date(at.getTime() + 5 * 60_000) }); }
+    catch { return { kind: "invalid" as const }; }
     const fundingMode = input.fundingMode ?? "byok";
     const reservation = await this.budgets.reserve({ workspaceId: input.workspaceId, principalId: input.userId, intentId: id, model: input.selectedModel, quote, fundingMode, managedQuoteAcceptance: input.managedQuoteAcceptance ?? null, at });
     if (reservation.kind !== "reserved") {

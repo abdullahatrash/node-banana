@@ -10,6 +10,7 @@ import {
 } from "@/lib/studio/client";
 import { runAdmittedStudioGeneration, StudioGenerationError } from "@/lib/model-routing/studio-generation-client";
 import type { ManagedCreditQuote } from "@/lib/model-routing/budget-authority";
+import type { ExecutionPriceUsd } from "@/lib/model-routing/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,7 +59,7 @@ export interface SimpleStudioState {
   selectedModelName: string | null;
   selectedModelVersion: string | null;
   selectedModelSchemaDigest: string | null;
-  selectedModelExecutionPriceUsd: { basis: "image" | "second" | "run"; amount: number } | null;
+  selectedModelExecutionPriceUsd: ExecutionPriceUsd | null;
   setSelectedModel: (id: string | null, provider?: string | null, name?: string | null, version?: string | null, schemaDigest?: string | null, executionPriceUsd?: SimpleStudioState["selectedModelExecutionPriceUsd"]) => void;
   setSelectedModelId: (id: string | null) => void;
   aspectRatio: string;

@@ -1,5 +1,6 @@
 import { findCuratedModel } from "./catalog";
 import type { CompatibilityFailure, CostQuote, ExactModelRef, FallbackAuthorization, GenerationQuality, ModelDescriptor } from "./types";
+import { quoteTotalUsd } from "./pricing";
 
 const rank: Record<GenerationQuality, number> = { preview: 0, standard: 1, premium: 2 };
 const same = (a: ExactModelRef, b: ExactModelRef) => a.provider === b.provider && a.model === b.model && a.version === b.version && a.inputSchemaDigest === b.inputSchemaDigest;
@@ -17,6 +18,6 @@ export function authorizeFallback(input: { authorization: FallbackAuthorization;
   if (!model?.executionModes.includes(grant.executionMode)) reasons.push("execution_mode");
   if (quote.expiresAt <= at) reasons.push("quote_expired");
   if (quote.basis !== grant.sourceQuote.basis || quote.amount > grant.sourceQuote.maxUnitAmount) reasons.push("source_quote");
-  if (quote.amount * quote.quantity > grant.maxTotalCostUsd) reasons.push("cost_ceiling");
+  if (quoteTotalUsd(quote) > grant.maxTotalCostUsd) reasons.push("cost_ceiling");
   return reasons.length ? { authorized: false, reasons } : { authorized: true };
 }

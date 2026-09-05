@@ -28,8 +28,8 @@ const envelopeSchema = z.object({
 }).strict();
 
 const authorizationPayloadSchema = z.object({
-  schema: z.literal("replicate-qualification-spend-authorization/v1"), authorizationId: z.string().min(8).max(200), provider: z.literal("replicate"), accountId: z.string().min(1).max(200), credentialFingerprint: digest,
-  model: z.string().min(1).max(200), version: z.string().min(8).max(200), capability: z.enum(["text_generation", "text_to_image", "image_to_image", "text_to_video", "image_to_video", "video_to_video"]), billableQuantity: z.number().positive().max(600), maximumAmountUsd: z.number().positive().max(1_000_000), expiresAt: z.string().datetime({ offset: true }), pricingSourceDigest: digest, source: z.literal("reviewed-pricing-contract"), digest,
+  schema: z.literal("replicate-qualification-spend-authorization/v2"), authorizationId: z.string().min(8).max(200), provider: z.literal("replicate"), accountId: z.string().min(1).max(200), credentialFingerprint: digest,
+  model: z.string().min(1).max(200), version: z.string().min(8).max(200), capability: z.enum(["text_generation", "text_to_image", "image_to_image", "text_to_video", "image_to_video", "video_to_video"]), billableQuantity: z.number().positive().max(600), pricingLineItems: z.array(z.object({ basis: z.enum(["image", "second", "run", "input_megapixel", "output_megapixel"]), unitAmount: z.number().positive(), quantity: z.number().nonnegative(), maximumAmount: z.number().nonnegative() }).strict()).min(1).max(4), maximumAmountUsd: z.number().positive().max(1_000_000), expiresAt: z.string().datetime({ offset: true }), pricingSourceDigest: digest, source: z.literal("reviewed-pricing-contract"), digest,
 }).strict();
 const authorizationEnvelopeSchema = z.object({ authorization: authorizationPayloadSchema, signature: z.object({ algorithm: z.literal("ed25519"), keyId: z.string().min(1).max(100), value: z.string().min(40).max(500) }).strict() }).strict();
 
@@ -42,13 +42,13 @@ function trustedSignature(payload: Record<string, unknown>, signature: { keyId: 
   if (publicKey.asymmetricKeyType !== "ed25519" || !verify(null, Buffer.from(canonicalJson(payload)), publicKey, Buffer.from(signature.value, "base64url"))) throw new Error("QUALIFICATION_SPEND_RECEIPT_SIGNATURE_INVALID");
 }
 
-export function verifyQualificationSpendAuthorization(value: unknown, trustedKeys: Readonly<Record<string, string>>, expected: { account: QualificationProviderAccount; model: string; version: string; capability: QualificationSpendAuthorization["capability"]; billableQuantity: number; maximumAmountUsd: number; pricingSourceDigest: string }): QualificationSpendAuthorization {
+export function verifyQualificationSpendAuthorization(value: unknown, trustedKeys: Readonly<Record<string, string>>, expected: { account: QualificationProviderAccount; model: string; version: string; capability: QualificationSpendAuthorization["capability"]; billableQuantity: number; pricingLineItems: QualificationSpendAuthorization["pricingLineItems"]; maximumAmountUsd: number; pricingSourceDigest: string }): QualificationSpendAuthorization {
   const envelope = authorizationEnvelopeSchema.parse(value);
   const { authorization, signature } = envelope;
   const { digest: claimedDigest, ...unsigned } = authorization;
   if (canonicalDigest(unsigned) !== claimedDigest) throw new Error("QUALIFICATION_SPEND_AUTHORIZATION_DIGEST_INVALID");
   trustedSignature(authorization, signature, trustedKeys);
-  if (authorization.provider !== expected.account.provider || authorization.accountId !== expected.account.accountId || authorization.credentialFingerprint !== expected.account.credentialFingerprint || authorization.model !== expected.model || authorization.version !== expected.version || authorization.capability !== expected.capability || authorization.billableQuantity !== expected.billableQuantity || authorization.maximumAmountUsd !== expected.maximumAmountUsd || authorization.pricingSourceDigest !== expected.pricingSourceDigest) throw new Error("QUALIFICATION_SPEND_AUTHORIZATION_IDENTITY_MISMATCH");
+  if (authorization.provider !== expected.account.provider || authorization.accountId !== expected.account.accountId || authorization.credentialFingerprint !== expected.account.credentialFingerprint || authorization.model !== expected.model || authorization.version !== expected.version || authorization.capability !== expected.capability || authorization.billableQuantity !== expected.billableQuantity || canonicalDigest(authorization.pricingLineItems) !== canonicalDigest(expected.pricingLineItems) || authorization.maximumAmountUsd !== expected.maximumAmountUsd || authorization.pricingSourceDigest !== expected.pricingSourceDigest) throw new Error("QUALIFICATION_SPEND_AUTHORIZATION_IDENTITY_MISMATCH");
   return { ...authorization, credentialFingerprint: authorization.credentialFingerprint as `sha256:${string}`, pricingSourceDigest: authorization.pricingSourceDigest as `sha256:${string}`, digest: authorization.digest as `sha256:${string}`, signingKeyId: signature.keyId };
 }
 
