@@ -2,19 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { Loader2Icon } from "lucide-react"
+import { useTranslations } from "next-intl"
 import { listSocialPosts, type SocialPost } from "@/lib/social/client"
 import { PostRow } from "@/components/social/posts/PostRow"
-import type { SocialPostStatus } from "@/lib/db/schema"
+type PostStatusTab = "all" | "draft" | "scheduled" | "published" | "failed"
 
-type PostStatusTab = SocialPostStatus | "all" | "scheduled"
-
-const STATUS_TABS: { value: PostStatusTab; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "draft", label: "Drafts" },
-  { value: "scheduled", label: "Scheduled" },
-  { value: "published", label: "Published" },
-  { value: "failed", label: "Failed" },
-]
+const STATUS_TABS: PostStatusTab[] = ["all", "draft", "scheduled", "published", "failed"]
 
 function isWaitingForScheduledPublish(post: SocialPost) {
   return (
@@ -30,6 +23,7 @@ function isScheduledPost(post: SocialPost) {
 }
 
 export default function PostsPage() {
+  const t = useTranslations("social.postsPage")
   const [posts, setPosts] = useState<SocialPost[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<PostStatusTab>("all")
@@ -46,12 +40,12 @@ export default function PostsPage() {
       .then((posts) => {
         setPosts(status === "scheduled" ? posts.filter(isScheduledPost) : posts)
       })
-      .catch((error) => {
-        setError(error instanceof Error ? error.message : "Failed to load posts")
+      .catch(() => {
+        setError(t("errors.load"))
         setPosts([])
       })
       .finally(() => setIsLoading(false))
-  }, [])
+  }, [t])
 
   useEffect(() => {
     fetchPosts()
@@ -63,20 +57,22 @@ export default function PostsPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col">
+    <main className="flex flex-1 flex-col">
       {/* Status tab filters */}
       <div className="flex items-center gap-1 border-b px-4 py-2">
         {STATUS_TABS.map((tab) => (
           <button
-            key={tab.value}
-            onClick={() => handleTabChange(tab.value)}
+            key={tab}
+            type="button"
+            aria-pressed={activeTab === tab}
+            onClick={() => handleTabChange(tab)}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-              activeTab === tab.value
+              activeTab === tab
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-accent"
             }`}
           >
-            {tab.label}
+            {t(`tabs.${tab}`)}
           </button>
         ))}
       </div>
@@ -89,15 +85,15 @@ export default function PostsPage() {
           </div>
         ) : null}
         {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+          <div className="flex items-center justify-center py-12" role="status" aria-label={t("loading")}>
+            <Loader2Icon className="size-5 animate-spin text-muted-foreground" aria-hidden="true" />
           </div>
         ) : posts.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <p className="text-sm text-muted-foreground">
               {activeTab === "all"
-                ? "No posts yet. Create one from the Compose page."
-                : `No ${activeTab} posts.`}
+                ? t("empty.all")
+                : t("empty.filtered", { status: t(`tabs.${activeTab}`) })}
             </p>
           </div>
         ) : (
@@ -112,6 +108,6 @@ export default function PostsPage() {
           </div>
         )}
       </div>
-    </div>
+    </main>
   )
 }

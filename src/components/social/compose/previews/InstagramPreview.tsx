@@ -14,7 +14,7 @@ export function InstagramPreview({ displayName, content, media }: InstagramPrevi
       {/* Header */}
       <div className="flex items-center gap-2.5 px-3 py-2.5">
         <div className="size-8 rounded-full bg-muted" />
-        <span className="text-xs font-semibold">{displayName}</span>
+        <bdi className="text-xs font-semibold">{displayName}</bdi>
       </div>
       {/* Media (full width) */}
       {media.length > 0 ? (
@@ -35,8 +35,8 @@ export function InstagramPreview({ displayName, content, media }: InstagramPrevi
       {/* Caption */}
       <div className="px-3 pb-3">
         <p className="text-xs leading-relaxed">
-          <span className="font-semibold">{displayName}</span>{" "}
-          {content}
+          <bdi className="font-semibold">{displayName}</bdi>{" "}
+          <span dir="auto">{content}</span>
         </p>
       </div>
     </div>

@@ -19,13 +19,13 @@ export function XPreview({ displayName, username, content, media }: XPreviewProp
         <div className="min-w-0 flex-1">
           {/* Header */}
           <div className="flex items-center gap-1">
-            <span className="text-xs font-semibold">{displayName}</span>
+            <bdi className="text-xs font-semibold">{displayName}</bdi>
             <span className="text-[10px] text-muted-foreground">
-              <bdi>{username ? `@${username}` : ""}</bdi> · {t("now")}
+              <bdi dir="ltr">{username ? `@${username}` : ""}</bdi> · {t("now")}
             </span>
           </div>
           {/* Content */}
-          <p className="mt-1 whitespace-pre-line text-xs leading-relaxed">{content}</p>
+          <p dir="auto" className="mt-1 whitespace-pre-line text-xs leading-relaxed">{content}</p>
           {/* Media */}
           {media.length > 0 && (
             <div

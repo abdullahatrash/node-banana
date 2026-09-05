@@ -16,8 +16,8 @@ function GenerationCard({ gen }: { gen: Generation }) {
         <div className="mb-2 text-xs text-muted-foreground">
           {t("type.copy")} · <bdi>{createdAt}</bdi>
         </div>
-        <div className="mb-2 text-sm font-medium line-clamp-2">{gen.prompt}</div>
-        <div className="text-sm line-clamp-4 whitespace-pre-wrap">
+        <div dir="auto" className="mb-2 text-sm font-medium line-clamp-2">{gen.prompt}</div>
+        <div dir="auto" className="text-sm line-clamp-4 whitespace-pre-wrap">
           {gen.result ?? t("noOutput")}
         </div>
       </div>
@@ -41,7 +41,7 @@ function GenerationCard({ gen }: { gen: Generation }) {
           <div className="mb-1 text-xs text-muted-foreground">
             {t("type.video")} · <bdi>{createdAt}</bdi>
           </div>
-          <div className="text-sm line-clamp-2">{gen.prompt}</div>
+          <div dir="auto" className="text-sm line-clamp-2">{gen.prompt}</div>
         </div>
       </div>
     );
@@ -53,14 +53,14 @@ function GenerationCard({ gen }: { gen: Generation }) {
       <div className="aspect-square bg-muted">
         {gen.result && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={gen.result} alt={gen.prompt} className="h-full w-full object-cover" />
+          <img dir="auto" src={gen.result} alt={gen.prompt} className="h-full w-full object-cover" />
         )}
       </div>
       <div className="p-3">
         <div className="mb-1 text-xs text-muted-foreground">
           {t("type.photo")} · <bdi>{createdAt}</bdi>
         </div>
-        <div className="text-sm line-clamp-2">{gen.prompt}</div>
+        <div dir="auto" className="text-sm line-clamp-2">{gen.prompt}</div>
       </div>
     </div>
   );
@@ -83,7 +83,7 @@ export function LibraryGallery() {
 
   if (visible.length === 0) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-12 text-center">
+      <main className="flex flex-1 flex-col items-center justify-center gap-4 p-12 text-center">
         <div className="text-sm text-muted-foreground">{t("empty")}</div>
         <div className="flex gap-2">
           <Link
@@ -105,15 +105,15 @@ export function LibraryGallery() {
             {t("writeCopy")}
           </Link>
         </div>
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="grid grid-cols-2 gap-4 p-6 md:grid-cols-3 lg:grid-cols-4">
+    <main className="grid grid-cols-2 gap-4 p-6 md:grid-cols-3 lg:grid-cols-4">
       {visible.map((gen) => (
         <GenerationCard key={gen.id} gen={gen} />
       ))}
-    </div>
+    </main>
   );
 }

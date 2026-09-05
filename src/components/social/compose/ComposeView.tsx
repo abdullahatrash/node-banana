@@ -279,7 +279,7 @@ export function ComposeView() {
   }
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <main className="flex min-w-0 flex-1 flex-col">
       {/* Top bar */}
       <div className="flex min-w-0 items-center gap-2 border-b px-4 py-2">
         <Button
@@ -361,6 +361,6 @@ export function ComposeView() {
           {t("publishNow")}
         </Button>
       </div>
-    </div>
+    </main>
   )
 }

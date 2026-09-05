@@ -25,12 +25,12 @@ export function MastodonPreview({
         <div className="size-9 flex-shrink-0 rounded-full bg-muted" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-col">
-            <span className="text-xs font-semibold">{displayName}</span>
+            <bdi className="text-xs font-semibold">{displayName}</bdi>
             <span className="text-[10px] text-muted-foreground">
-              {username ? `@${username}` : ""}
+              <bdi dir="ltr">{username ? `@${username}` : ""}</bdi>
             </span>
           </div>
-          <p className="mt-2 whitespace-pre-line text-xs leading-relaxed">
+          <p dir="auto" className="mt-2 whitespace-pre-line text-xs leading-relaxed">
             {content}
           </p>
           {images.length > 0 && (

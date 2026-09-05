@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "@/i18n/messages/en.json";
+import messagesAr from "@/i18n/messages/ar.json";
 import type { CalendarItem } from "@/lib/product-surfaces/calendar-projection";
 import { useSocialCalendarStore } from "@/store/socialCalendarStore";
 
@@ -67,5 +68,24 @@ describe("CalendarListView authority", () => {
     expect(screen.getByText("Canonical Publishing Plan")).toBeInTheDocument();
     expect(screen.getByText("Compatibility post (legacy)")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(1);
+  });
+
+  it("auto-detects mixed post content direction under Arabic UI", () => {
+    const content = "Launch الحملة at 5 PM";
+    useSocialCalendarStore.setState({
+      posts: [
+        item(content, { kind: "legacy_compatibility" }),
+      ],
+    });
+
+    render(
+      <NextIntlClientProvider locale="ar" messages={messagesAr} timeZone="UTC">
+        <div dir="rtl">
+          <CalendarListView />
+        </div>
+      </NextIntlClientProvider>,
+    );
+
+    expect(screen.getByText(content)).toHaveAttribute("dir", "auto");
   });
 });

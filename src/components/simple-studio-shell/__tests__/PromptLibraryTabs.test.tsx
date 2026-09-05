@@ -10,11 +10,20 @@ import {
 } from "@/store/simpleStudioStore";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
 import messages from "@/i18n/messages/en.json";
+import messagesAr from "@/i18n/messages/ar.json";
 
 function render(ui: ReactElement) {
   return testingRender(
     <NextIntlClientProvider locale="en" messages={messages}>
       {ui}
+    </NextIntlClientProvider>,
+  );
+}
+
+function renderArabic(ui: ReactElement) {
+  return testingRender(
+    <NextIntlClientProvider locale="ar" messages={messagesAr}>
+      <div dir="rtl">{ui}</div>
     </NextIntlClientProvider>,
   );
 }
@@ -90,5 +99,23 @@ describe("PromptLibraryTabs", () => {
     render(<PromptLibraryTabs />);
     await userEvent.click(screen.getByRole("tab", { name: /saved/i }));
     expect(screen.getByText(/no saved prompts yet/i)).toBeInTheDocument();
+  });
+
+  it("auto-detects mixed prompt directions under Arabic UI", () => {
+    useSimpleStudioStore.setState({
+      publicPrompts: [
+        makePrompt({
+          id: "mixed",
+          name: "Product إطلاق",
+          promptText: "Write عنوان for launch",
+          isPublic: true,
+        }),
+      ],
+    });
+
+    renderArabic(<PromptLibraryTabs />);
+
+    expect(screen.getByText("Product إطلاق")).toHaveAttribute("dir", "auto");
+    expect(screen.getByText("Write عنوان for launch")).toHaveAttribute("dir", "auto");
   });
 });

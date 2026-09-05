@@ -23,12 +23,12 @@ function PromptCard({
   return (
     <div className="flex flex-col gap-2 rounded-lg border p-4">
       <div className="flex items-start justify-between gap-2">
-        <div className="font-medium text-sm">{prompt.name}</div>
+        <div dir="auto" className="font-medium text-sm">{prompt.name}</div>
         <span className="text-xs rounded-full border px-2 py-0.5 text-muted-foreground">
           {t(`mode.${prompt.mode}`)}
         </span>
       </div>
-      <div className="text-xs text-muted-foreground line-clamp-3">
+      <div dir="auto" className="text-xs text-muted-foreground line-clamp-3">
         {prompt.promptText}
       </div>
       <div className="pt-2">
@@ -63,7 +63,7 @@ export function PromptLibraryTabs() {
   };
 
   return (
-    <div className="p-6">
+    <main className="p-6">
       <Tabs value={tab} onValueChange={(v) => setTab(v as "templates" | "saved")}>
         <TabsList>
           <TabsTrigger value="templates">{t("templates")}</TabsTrigger>
@@ -98,6 +98,6 @@ export function PromptLibraryTabs() {
           )}
         </TabsContent>
       </Tabs>
-    </div>
+    </main>
   );
 }

@@ -6,11 +6,20 @@ import { LibraryGallery } from "../LibraryGallery";
 import { useSimpleStudioStore, type Generation } from "@/store/simpleStudioStore";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
 import messages from "@/i18n/messages/en.json";
+import messagesAr from "@/i18n/messages/ar.json";
 
 function render(ui: ReactElement) {
   return testingRender(
-    <NextIntlClientProvider locale="en" messages={messages}>
+    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
       {ui}
+    </NextIntlClientProvider>,
+  );
+}
+
+function renderArabic(ui: ReactElement) {
+  return testingRender(
+    <NextIntlClientProvider locale="ar" messages={messagesAr} timeZone="UTC">
+      <div dir="rtl">{ui}</div>
     </NextIntlClientProvider>,
   );
 }
@@ -84,5 +93,22 @@ describe("LibraryGallery", () => {
     });
     render(<LibraryGallery />);
     expect(screen.getByText(/no generations yet/i)).toBeInTheDocument();
+  });
+
+  it("auto-detects mixed prompt and copy directions under Arabic UI", () => {
+    useSimpleStudioStore.setState({
+      generationsByMode: {
+        photo: [makeGen({ id: "p1", mode: "photo", prompt: "Photo صورة launch" })],
+        video: [makeGen({ id: "v1", mode: "video", prompt: "Video فيديو launch" })],
+        copy: [makeGen({ id: "c1", mode: "copy", prompt: "Copy نص launch", result: "Result نتيجة ready" })],
+      },
+    });
+
+    renderArabic(<LibraryGallery />);
+
+    for (const text of ["Photo صورة launch", "Video فيديو launch", "Copy نص launch", "Result نتيجة ready"]) {
+      expect(screen.getByText(text)).toHaveAttribute("dir", "auto");
+    }
+    expect(screen.getByAltText("Photo صورة launch")).toHaveAttribute("dir", "auto");
   });
 });

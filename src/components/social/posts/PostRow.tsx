@@ -101,7 +101,7 @@ export function PostRow({ post, onMutate }: PostRowProps) {
       <div className="flex items-center gap-3 p-3">
         {/* Content */}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm">
+          <p dir="auto" className="truncate text-sm">
             {post.content?.slice(0, 100) || t("noContent")}
           </p>
           {post.mediaUrls && post.mediaUrls.length > 0 && (

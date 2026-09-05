@@ -26,11 +26,11 @@ export function YouTubePreview({ displayName, content, media }: YouTubePreviewPr
       <div className="flex gap-2.5 p-3">
         <div className="size-8 flex-shrink-0 rounded-full bg-muted" />
         <div className="min-w-0 flex-1">
-          <p className="line-clamp-2 text-xs font-medium leading-snug">
+          <p dir="auto" className="line-clamp-2 text-xs font-medium leading-snug">
             {content || t("untitledVideo")}
           </p>
           <p className="mt-0.5 text-[10px] text-muted-foreground">
-            {displayName}
+            <bdi>{displayName}</bdi>
           </p>
           <p className="text-[10px] text-muted-foreground">
             {t("viewCount", { count: 0 })} · {t("justNow")}

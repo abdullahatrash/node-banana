@@ -45,17 +45,32 @@ export function SimpleStudioHeaderActions() {
 
   return (
         <>
-          {isLibrary &&
-            FILTER_VALUES.map((f) => (
-              <Button
-                key={f.value}
-                size="sm"
-                variant={libraryModeFilter === f.value ? "default" : "ghost"}
-                onClick={() => setLibraryModeFilter(f.value)}
+          {isLibrary && (
+            <>
+              <select
+                aria-label={t("filtersLabel")}
+                className="h-9 max-w-24 rounded-lg border border-input bg-background px-2 text-sm xl:hidden"
+                value={libraryModeFilter}
+                onChange={(event) => setLibraryModeFilter(event.target.value as LibraryModeFilter)}
               >
-                {t(`filters.${f.value}`)}
-              </Button>
-            ))}
+                {FILTER_VALUES.map((filter) => (
+                  <option key={filter.value} value={filter.value}>{t(`filters.${filter.value}`)}</option>
+                ))}
+              </select>
+              <div className="hidden items-center gap-1 xl:flex">
+                {FILTER_VALUES.map((filter) => (
+                  <Button
+                    key={filter.value}
+                    size="sm"
+                    variant={libraryModeFilter === filter.value ? "default" : "ghost"}
+                    onClick={() => setLibraryModeFilter(filter.value)}
+                  >
+                    {t(`filters.${filter.value}`)}
+                  </Button>
+                ))}
+              </div>
+            </>
+          )}
 
           {isForm && (
             <Button
@@ -69,9 +84,13 @@ export function SimpleStudioHeaderActions() {
           )}
 
           {isPromptLibrary && (
-            <Button size="sm" onClick={() => openSavePromptDialog()}>
+            <Button
+              size="sm"
+              aria-label={t("actions.newSavedPrompt")}
+              title={t("actions.newSavedPrompt")}
+              onClick={() => openSavePromptDialog()}
+            >
               <PlusIcon className="size-4" />
-              {t("actions.newSavedPrompt")}
             </Button>
           )}
         </>

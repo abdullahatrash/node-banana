@@ -17,13 +17,13 @@ export function LinkedInPreview({ displayName, content, media }: LinkedInPreview
       <div className="flex items-center gap-2.5 px-3 pt-3">
         <div className="size-10 rounded-full bg-muted" />
         <div>
-          <p className="text-xs font-semibold">{displayName}</p>
+          <p dir="auto" className="text-xs font-semibold">{displayName}</p>
           <p className="text-[10px] text-muted-foreground">{t("linkedin")} · {t("justNow")}</p>
         </div>
       </div>
       {/* Content */}
       <div className="px-3 py-2">
-        <p className="whitespace-pre-line text-xs leading-relaxed">{content}</p>
+        <p dir="auto" className="whitespace-pre-line text-xs leading-relaxed">{content}</p>
       </div>
       {/* Media */}
       {media.length > 0 && (

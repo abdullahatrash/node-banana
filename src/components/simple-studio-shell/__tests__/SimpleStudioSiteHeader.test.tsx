@@ -56,6 +56,7 @@ describe("SimpleStudioHeaderActions", () => {
     expect(screen.getByRole("button", { name: /^photo$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^video$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^copy$/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /filter library/i })).toHaveValue("all");
   });
 
   it("clicking a filter pill updates the store", async () => {
@@ -63,5 +64,12 @@ describe("SimpleStudioHeaderActions", () => {
     renderHeader();
     await userEvent.click(screen.getByRole("button", { name: /^photo$/i }));
     expect(useSimpleStudioShellStore.getState().libraryModeFilter).toBe("photo");
+  });
+
+  it("changing the compact mobile filter updates the store", async () => {
+    pathnameMock.mockReturnValue("/simple-studio/library");
+    renderHeader();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: /filter library/i }), "video");
+    expect(useSimpleStudioShellStore.getState().libraryModeFilter).toBe("video");
   });
 });

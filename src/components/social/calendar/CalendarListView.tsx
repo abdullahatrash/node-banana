@@ -85,7 +85,7 @@ export function CalendarListView() {
                     size={16}
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs">
+                    <p dir="auto" className="truncate text-xs">
                       {post.content?.slice(0, 80) || t("noContent")}
                     </p>
                     <p className="truncate text-[10px] text-muted-foreground">
