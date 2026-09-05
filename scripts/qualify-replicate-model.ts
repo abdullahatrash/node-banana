@@ -1,3 +1,5 @@
+import "./_load-env";
+
 import { readFile } from "node:fs/promises";
 import { ReplicateQualificationHttpExecution } from "@/lib/model-routing/qualification-http-execution";
 import { executeReplicateQualification } from "@/lib/model-routing/qualification-runner";
