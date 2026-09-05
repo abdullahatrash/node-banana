@@ -39,7 +39,7 @@ export function YoutubeTrendDiscovery({ data, defaultRegion }: { data: YoutubeTr
     } catch { setError(t("sourceError")); } finally { setBusy(false); }
   }
 
-  return <section className="rounded-3xl border bg-card p-5 sm:p-6" aria-labelledby="youtube-trends-title">
+  return <section className="min-w-0 rounded-3xl border bg-card p-5 sm:p-6 [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:w-full" aria-labelledby="youtube-trends-title">
     <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
       <div><div className="flex items-center gap-2"><YoutubeIcon /><h2 id="youtube-trends-title" className="text-xl font-semibold">{t("title")}</h2></div><p className="mt-2 max-w-3xl text-sm text-muted-foreground">{t("description")}</p><p className="mt-2 max-w-3xl text-xs text-muted-foreground">{t("separation")}</p></div>
       <span className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ${data.capability.configured ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100"}`}>{t(data.capability.configured ? "configured" : "notConfigured")}</span>
