@@ -40,6 +40,12 @@ interface AuthorityGrantDto {
   revokedByUserId: string | null;
 }
 
+function authorityGrantState(grant: AuthorityGrantDto): "active" | "expired" | "revoked" {
+  if (grant.revokedAt) return "revoked";
+  if (grant.expiresAt && new Date(grant.expiresAt).getTime() <= Date.now()) return "expired";
+  return "active";
+}
+
 function workspaceHeaders(missingWorkspaceMessage: string, extra?: HeadersInit): Headers {
   const workspaceId = getActiveWorkspaceId();
   if (!workspaceId) throw new Error(missingWorkspaceMessage);
@@ -627,7 +633,7 @@ export function PublishingApprovalCockpit() {
               {t("copy.issueExplicitGrant")}
             </button>
           </form>
-          <div dir="ltr" className="mt-4 w-full min-w-0 max-w-full overflow-x-auto">
+          {grants.length ? <div dir="ltr" className="mt-4 hidden w-full min-w-0 max-w-full overflow-x-auto lg:block">
             <table dir={locale === "ar" ? "rtl" : "ltr"} className="w-full min-w-[48rem] text-start text-xs">
               <caption className="sr-only">{t("copy.publishingApprovalAuthorityGrants")}</caption>
               <thead className="text-neutral-500">
@@ -642,14 +648,7 @@ export function PublishingApprovalCockpit() {
               </thead>
               <tbody>
                 {grants.map((grant) => {
-                  const expired =
-                    Boolean(grant.expiresAt) &&
-                    new Date(grant.expiresAt!).getTime() <= Date.now();
-                  const state = grant.revokedAt
-                    ? "revoked"
-                    : expired
-                      ? "expired"
-                      : "active";
+                  const state = authorityGrantState(grant);
                   return (
                     <tr key={grant.id} className="border-t border-neutral-800">
                       <td className="px-2 py-3"><TechnicalCode>{grant.userId}</TechnicalCode><TechnicalCode className="block text-neutral-500">{grant.subjectRoleAtIssue}</TechnicalCode></td>
@@ -676,10 +675,29 @@ export function PublishingApprovalCockpit() {
                 })}
               </tbody>
             </table>
-            {!grants.length ? (
-              <p className="py-4 text-sm text-neutral-500">{t("copy.noExplicitApprovalAuthorityGrants")}</p>
-            ) : null}
-          </div>
+          </div> : null}
+          {grants.length ? <ul aria-label={t("copy.publishingApprovalAuthorityGrants")} className="mt-4 grid min-w-0 gap-3 lg:hidden">
+            {grants.map((grant) => {
+              const state = authorityGrantState(grant);
+              return <li key={grant.id} className="min-w-0 rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm">
+                <dl className="grid min-w-0 gap-3 sm:grid-cols-2">
+                  <div className="min-w-0"><dt className="text-xs text-neutral-500">{t("copy.human")}</dt><dd className="mt-1 min-w-0"><TechnicalCode>{grant.userId}</TechnicalCode><TechnicalCode className="block text-neutral-500">{grant.subjectRoleAtIssue}</TechnicalCode></dd></div>
+                  <div className="min-w-0"><dt className="text-xs text-neutral-500">{t("copy.channel2")}</dt><dd className="mt-1 min-w-0"><TechnicalCode>{grant.channelId}</TechnicalCode></dd></div>
+                  <div className="min-w-0"><dt className="text-xs text-neutral-500">{t("copy.scope")}</dt><dd className="mt-1">{t("copy.linkedin2")} <TechnicalCode>{grant.action}</TechnicalCode></dd></div>
+                  <div className="min-w-0"><dt className="text-xs text-neutral-500">{t("copy.issuedExpires")}</dt><dd className="mt-1">{formatDate(grant.issuedAt, locale)}<span className="block text-neutral-500">{grant.expiresAt ? formatDate(grant.expiresAt, locale) : t("copy.noExpiry")}</span></dd></div>
+                  <div className="min-w-0"><dt className="text-xs text-neutral-500">{t("copy.state2")}</dt><dd className="mt-1">{t(`status.${state}`)}</dd></div>
+                </dl>
+                <button
+                  type="button"
+                  disabled={busy || state !== "active"}
+                  onClick={() => void revokeAuthority(grant.id).catch((cause) => setError(String(cause)))}
+                  className="mt-4 w-full rounded border border-red-800 px-3 py-2 text-red-300 disabled:opacity-40 sm:w-auto"
+                >
+                  {t("copy.revoke")}
+                </button>
+              </li>;
+            })}
+          </ul> : <p className="py-4 text-sm text-neutral-500">{t("copy.noExplicitApprovalAuthorityGrants")}</p>}
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[20rem_1fr]">

@@ -488,6 +488,53 @@ describe("PublishingApprovalCockpit", () => {
     });
   });
 
+  it("uses responsive authority cards below desktop instead of leaking the wide table", async () => {
+    const value = presentation();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === "/api/studio/publishing-approval-authority") {
+          return new Response(JSON.stringify({
+            success: true,
+            grants: [{
+              id: "paag_1",
+              workspaceId: "workspace_1",
+              userId: "human_subject",
+              subjectRoleAtIssue: "owner",
+              channelId: "channel_1",
+              action: "publish",
+              issuedByUserId: "issuer_1",
+              issuedAt: "2026-09-01T12:00:00.000Z",
+              expiresAt: null,
+              revokedAt: null,
+              revokedByUserId: null,
+            }],
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        if (url.includes("?limit=")) {
+          return new Response(JSON.stringify({ success: true, items: [value.approval] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ success: true, presentation: value }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+
+    render(<PublishingApprovalCockpit />);
+
+    await screen.findByRole("list", { name: "Publishing Approval Authority grants" });
+    const table = document.querySelector("table");
+    expect(table).not.toBeNull();
+    expect(table?.querySelector("caption")).toHaveTextContent("Publishing Approval Authority grants");
+    expect(table?.parentElement).toHaveClass("hidden", "overflow-x-auto", "lg:block");
+    expect(screen.getByRole("list", { name: "Publishing Approval Authority grants" })).toHaveClass("lg:hidden");
+    expect(screen.getAllByText("human_subject")).toHaveLength(2);
+  });
+
   it("administers an exact grant without sending caller-asserted role or issuer", async () => {
     const value = presentation();
     const mutations: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
