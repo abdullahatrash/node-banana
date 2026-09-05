@@ -23,6 +23,7 @@ vi.mock("@/lib/auth/client", () => ({
 vi.mock("@/components/release-control/ServiceStatusBanner", () => ({
   ServiceStatusBanner: () => null,
 }));
+vi.mock("../WorkspaceNotificationCenter", () => ({ WorkspaceNotificationCenter: () => null }));
 
 const context: ProductShellContext = {
   user: {

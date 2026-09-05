@@ -10,6 +10,7 @@ import { MerchantFinancialEvidenceError, MerchantFinancialEvidenceService } from
 type Db = ReturnType<typeof getDb>;
 type Receipt = typeof merchantAdjustmentWebhookReceipts.$inferSelect;
 type Claim = Receipt & { leaseOwner: string; attempt: number };
+export interface MerchantAdjustmentNotificationRecorder { recordBillingAdjustment(event: MerchantAdjustmentEvent): Promise<unknown> }
 
 const claimableStates = ["received", "pending_dependency"] as const;
 const terminalStates = new Set(["applied", "failed_known"]);
@@ -19,6 +20,7 @@ export class MerchantAdjustmentInboxService {
     private readonly database: Db = getDb(),
     private readonly financials = new MerchantFinancialEvidenceService(database),
     private readonly now = () => new Date(),
+    private readonly notifications?: MerchantAdjustmentNotificationRecorder,
   ) {}
 
   async applyVerifiedEvent(event: MerchantAdjustmentEvent) {
@@ -81,7 +83,8 @@ export class MerchantAdjustmentInboxService {
   private async processClaim(claim: Claim) {
     try {
       const event = hydrateMerchantAdjustmentEvent(claim);
-      await this.financials.applyAdjustment(event);
+      const financialResult = await this.financials.applyAdjustment(event);
+      if (financialResult.state === "applied" && this.notifications) await this.notifications.recordBillingAdjustment(event);
       const at = this.now();
       await this.database.update(merchantAdjustmentWebhookReceipts).set({ state: "applied", leaseOwner: null, leaseExpiresAt: null, lastErrorCode: null, updatedAt: at, processedAt: at }).where(and(eq(merchantAdjustmentWebhookReceipts.provider, claim.provider), eq(merchantAdjustmentWebhookReceipts.eventId, claim.eventId), eq(merchantAdjustmentWebhookReceipts.state, "processing"), eq(merchantAdjustmentWebhookReceipts.leaseOwner, claim.leaseOwner)));
       return { state: "applied" as const };

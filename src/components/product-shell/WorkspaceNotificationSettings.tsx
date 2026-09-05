@@ -16,13 +16,14 @@ type DeliveryState = {
   inAppEnabled: boolean;
   emailEnabled: boolean;
   muteAll: boolean;
+  billingEmailEnabled: boolean;
   document: SocialNotificationPreferencesDocument;
 };
 
 export function WorkspaceNotificationSettings({ workspaceId, interfaceLocale, workspaceTimeZone }: { workspaceId: string; interfaceLocale: AppLocale; workspaceTimeZone: string }) {
   const t = useTranslations("product.notificationPreferences") as (key: string) => string;
   const { show } = useToast();
-  const [state, setState] = useState<DeliveryState>(() => ({ inAppEnabled: true, emailEnabled: false, muteAll: false, document: defaultSocialNotificationPreferences({ locale: interfaceLocale, timeZone: workspaceTimeZone }) }));
+  const [state, setState] = useState<DeliveryState>(() => ({ inAppEnabled: true, emailEnabled: false, muteAll: false, billingEmailEnabled: true, document: defaultSocialNotificationPreferences({ locale: interfaceLocale, timeZone: workspaceTimeZone }) }));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -30,15 +31,22 @@ export function WorkspaceNotificationSettings({ workspaceId, interfaceLocale, wo
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError("");
-    void fetch("/api/social/notifications/preferences", { headers: { "x-workspace-id": workspaceId }, cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const result = await response.json() as { success?: boolean; preferences?: { inAppEnabled?: boolean; emailEnabled?: boolean; muteAll?: boolean; preferences?: unknown } };
-        if (!response.ok || !result.success || !result.preferences) throw new Error("NOTIFICATION_PREFERENCES_LOAD_FAILED");
+    void Promise.all([
+      fetch("/api/social/notifications/preferences", { headers: { "x-workspace-id": workspaceId }, cache: "no-store", signal: controller.signal }),
+      fetch("/api/studio/notifications/preferences", { headers: { "x-workspace-id": workspaceId }, cache: "no-store", signal: controller.signal }),
+    ]).then(async ([socialResponse, productResponse]) => {
+        const [result, productResult] = await Promise.all([
+          socialResponse.json() as Promise<{ success?: boolean; preferences?: { inAppEnabled?: boolean; emailEnabled?: boolean; muteAll?: boolean; preferences?: unknown } }>,
+          productResponse.json() as Promise<{ success?: boolean; preferences?: { deliveryLocale?: AppLocale | null; billingEmailEnabled?: boolean } }>,
+        ]);
+        if (!socialResponse.ok || !productResponse.ok || !result.success || !result.preferences || !productResult.success || !productResult.preferences) throw new Error("NOTIFICATION_PREFERENCES_LOAD_FAILED");
+        const document = readSocialNotificationPreferencesDocument(result.preferences.preferences, { locale: interfaceLocale, timeZone: workspaceTimeZone });
         setState({
           inAppEnabled: result.preferences.inAppEnabled ?? true,
           emailEnabled: result.preferences.emailEnabled ?? false,
           muteAll: result.preferences.muteAll ?? false,
-          document: readSocialNotificationPreferencesDocument(result.preferences.preferences, { locale: interfaceLocale, timeZone: workspaceTimeZone }),
+          billingEmailEnabled: productResult.preferences.billingEmailEnabled ?? true,
+          document: { ...document, deliveryLocale: productResult.preferences.deliveryLocale ?? document.deliveryLocale },
         });
       })
       .catch((cause) => { if (cause instanceof DOMException && cause.name === "AbortError") return; setError(t("errors.load")); })
@@ -53,14 +61,18 @@ export function WorkspaceNotificationSettings({ workspaceId, interfaceLocale, wo
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setSaving(true); setError("");
     try {
-      const response = await fetch("/api/social/notifications/preferences", {
-        method: "PUT",
-        headers: { "content-type": "application/json", "x-workspace-id": workspaceId },
-        body: JSON.stringify({ inAppEnabled: state.inAppEnabled, emailEnabled: state.emailEnabled, muteAll: state.muteAll, preferences: state.document }),
-      });
-      const result = await response.json() as { success?: boolean; preferences?: { inAppEnabled: boolean; emailEnabled: boolean; muteAll: boolean; preferences: unknown } };
-      if (!response.ok || !result.success || !result.preferences) throw new Error("NOTIFICATION_PREFERENCES_SAVE_FAILED");
-      setState({ inAppEnabled: result.preferences.inAppEnabled, emailEnabled: result.preferences.emailEnabled, muteAll: result.preferences.muteAll, document: readSocialNotificationPreferencesDocument(result.preferences.preferences, { locale: interfaceLocale, timeZone: workspaceTimeZone }) });
+      const headers = { "content-type": "application/json", "x-workspace-id": workspaceId };
+      const [response, productResponse] = await Promise.all([
+        fetch("/api/social/notifications/preferences", { method: "PUT", headers, body: JSON.stringify({ inAppEnabled: state.inAppEnabled, emailEnabled: state.emailEnabled, muteAll: state.muteAll, preferences: state.document }) }),
+        fetch("/api/studio/notifications/preferences", { method: "PUT", headers, body: JSON.stringify({ deliveryLocale: state.document.deliveryLocale, billingEmailEnabled: state.billingEmailEnabled }) }),
+      ]);
+      const [result, productResult] = await Promise.all([
+        response.json() as Promise<{ success?: boolean; preferences?: { inAppEnabled: boolean; emailEnabled: boolean; muteAll: boolean; preferences: unknown } }>,
+        productResponse.json() as Promise<{ success?: boolean; preferences?: { deliveryLocale: AppLocale | null; billingEmailEnabled: boolean } }>,
+      ]);
+      if (!response.ok || !productResponse.ok || !result.success || !result.preferences || !productResult.success || !productResult.preferences) throw new Error("NOTIFICATION_PREFERENCES_SAVE_FAILED");
+      const document = readSocialNotificationPreferencesDocument(result.preferences.preferences, { locale: interfaceLocale, timeZone: workspaceTimeZone });
+      setState({ inAppEnabled: result.preferences.inAppEnabled, emailEnabled: result.preferences.emailEnabled, muteAll: result.preferences.muteAll, billingEmailEnabled: productResult.preferences.billingEmailEnabled, document: { ...document, deliveryLocale: productResult.preferences.deliveryLocale ?? document.deliveryLocale } });
       show(t("saved"), "success");
     } catch { setError(t("errors.save")); show(t("errors.save"), "error"); }
     finally { setSaving(false); }
@@ -70,10 +82,11 @@ export function WorkspaceNotificationSettings({ workspaceId, interfaceLocale, wo
 
   return <form onSubmit={save} className="mx-auto max-w-5xl space-y-6 p-5 sm:p-8">
     <header><p className="text-xs font-semibold uppercase tracking-[.18em] text-amber-600">{t("eyebrow")}</p><h2 className="mt-2 text-2xl font-semibold">{t("title")}</h2><p className="mt-2 max-w-3xl text-sm text-muted-foreground">{t("description")}</p></header>
-    <section className="grid gap-4 md:grid-cols-3">
+    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Toggle icon={Bell} label={t("channels.inApp.title")} description={t("channels.inApp.description")} checked={state.inAppEnabled} onChange={(value) => setState((current) => ({ ...current, inAppEnabled: value }))} />
       <Toggle icon={Mail} label={t("channels.email.title")} description={t("channels.email.description")} checked={state.emailEnabled} onChange={(value) => setState((current) => ({ ...current, emailEnabled: value }))} />
       <Toggle icon={Bell} label={t("channels.mute.title")} description={t("channels.mute.description")} checked={state.muteAll} onChange={(value) => setState((current) => ({ ...current, muteAll: value }))} />
+      <Toggle icon={ShieldAlert} label={t("channels.billingEmail.title")} description={t("channels.billingEmail.description")} checked={state.billingEmailEnabled} onChange={(value) => setState((current) => ({ ...current, billingEmailEnabled: value }))} />
     </section>
     <section className="grid gap-5 rounded-2xl border bg-card p-5 md:grid-cols-2">
       <div><div className="flex items-center gap-2"><Languages className="size-4 text-amber-600" /><h3 className="font-semibold">{t("delivery.title")}</h3></div><p className="mt-1 text-sm text-muted-foreground">{t("delivery.description")}</p></div>

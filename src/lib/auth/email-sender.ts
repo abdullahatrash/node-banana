@@ -8,6 +8,8 @@ export interface TransactionalEmail {
   subject: string;
   text: string;
   html: string;
+  /** Stable per-message key for provider-safe retries; omitted for one-shot auth mail. */
+  idempotencyKey?: string;
 }
 
 export interface EmailSender {
@@ -38,6 +40,7 @@ export class ResendEmailSender implements EmailSender {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
+        ...(message.idempotencyKey ? { "Idempotency-Key": message.idempotencyKey } : {}),
       },
       body: JSON.stringify({
         from: this.from,

@@ -129,6 +129,24 @@ conflict. Expired worker leases are reclaimable even on the final attempt, while
 deterministic evidence conflicts finish as `failed_known` and exhausted unknown
 failures remain explicit as `outcome_unknown`.
 
+Each applied refund, credit reversal, chargeback, or chargeback reversal also
+creates one canonical Workspace notification event. Only current members with
+`product:billing:read` receive a recipient projection. Their personal
+notification locale is snapshotted as authored Arabic or English, and the
+header notification center keeps read state private to that recipient. Validate
+both locales with a mixed-direction transaction reference and confirm that a
+member without billing-read authority cannot list or receive the event.
+
+Settings → Notifications exposes a separate billing-email switch. Run
+`pnpm workers:local -- --url http://localhost:3002` or call
+`/api/studio/internal/notification-email?limit=20` with worker authentication.
+Local console delivery redacts message contents unless explicitly enabled;
+production Resend delivery carries a stable per-recipient `Idempotency-Key`.
+Disable billing email before claim and confirm the worker re-checks the current
+preference, records `suppressed`, and retains the in-app event. A crashed worker
+may reclaim an expired lease even on the final attempt. Exhausted uncertain
+delivery remains `outcome_unknown` instead of being represented as delivered.
+
 For a Generation Credit pack, an approved partial refund removes the same
 proportion of credits using integer minor-unit arithmetic; a full refund or open
 chargeback targets the full pack. Unspent units are clawed back immediately. If

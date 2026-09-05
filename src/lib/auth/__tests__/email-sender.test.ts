@@ -53,6 +53,13 @@ describe("auth email sender", () => {
     ).rejects.toThrow("delivery failed (400)");
   });
 
+  it("passes a stable idempotency key for safely retried service notifications", async () => {
+    const fetchImplementation = vi.fn(async () => new Response(null, { status: 202 }));
+    await new ResendEmailSender("secret", "auth@example.com", fetchImplementation).send({ to: "billing@example.com", subject: "Billing update", text: "Billing update", html: "<p>Billing update</p>", idempotencyKey: "notification/abc123" });
+    const [, request] = fetchImplementation.mock.calls[0] as unknown as [string, RequestInit];
+    expect(request.headers).toMatchObject({ "Idempotency-Key": "notification/abc123" });
+  });
+
   it("redacts verification links from normal console logs", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     await new ConsoleEmailSender().send(
