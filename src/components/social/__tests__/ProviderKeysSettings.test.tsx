@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render as testingRender, screen, fireEvent, waitFor } from "@testing-library/react";
-import type { ReactElement } from "react";
+import { StrictMode, type ReactElement } from "react";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "@/i18n/messages/en.json";
 import arMessages from "@/i18n/messages/ar.json";
@@ -91,6 +91,13 @@ describe("ProviderKeysSettings", () => {
     render(<ProviderKeysSettings />);
 
     expect(await screen.findByText(/no provider keys yet/i)).toBeInTheDocument();
+  });
+
+  it("loads once after mount under React Strict Mode", async () => {
+    render(<StrictMode><ProviderKeysSettings /></StrictMode>);
+
+    expect(await screen.findByText(/no provider keys yet/i)).toBeInTheDocument();
+    expect(mockListProviderKeysRequest).toHaveBeenCalledTimes(1);
   });
 
   it("exposes the secure confirmation controls with Arabic accessible names", async () => {

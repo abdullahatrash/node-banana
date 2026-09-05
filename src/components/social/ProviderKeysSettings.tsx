@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useFormatter, useTranslations } from "next-intl"
 import Link from "next/link"
 import { KeyRoundIcon, Loader2Icon, RouteIcon, ShieldCheckIcon, WalletCardsIcon } from "lucide-react"
@@ -50,7 +50,7 @@ export function ProviderKeysSettings() {
   const [deletingProvider, setDeletingProvider] = useState<string | null>(null)
   const initialized = useRef(false)
 
-  async function loadKeys() {
+  const loadKeys = useCallback(async () => {
     setIsLoading(true)
     try {
       setKeys(await listProviderKeysRequest())
@@ -59,13 +59,13 @@ export function ProviderKeysSettings() {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [showClientError, showToast, t])
 
-  // Load once on first render — no useEffect (matches repo convention).
-  if (!initialized.current) {
+  useEffect(() => {
+    if (initialized.current) return
     initialized.current = true
-    loadKeys()
-  }
+    void loadKeys()
+  }, [loadKeys])
 
   async function handleSave(event: React.FormEvent) {
     event.preventDefault()
