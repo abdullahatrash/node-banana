@@ -136,7 +136,7 @@ export function composeQualifiedProviderInput(input: {
     if (media.some((url) => !url)) throw new Error("PROVIDER_MEDIA_BINDING_MISMATCH");
     providerInput[input.contract.imageKey] = input.contract.imageMode === "array" ? media : media[0];
   }
-  if (input.contract.safety) providerInput[input.contract.safety.parameterKey] = input.contract.safety.safeValue;
+  if (input.contract.safety?.parameterKey) providerInput[input.contract.safety.parameterKey] = input.contract.safety.safeValue;
   const evidence = createProviderCompositionEvidence(input);
   return { providerInput, evidence, providerInputDigest: digest(providerInput) };
 }

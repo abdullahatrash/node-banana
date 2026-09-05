@@ -2,6 +2,7 @@ import { createPrivateKey, sign } from "node:crypto";
 import { z } from "zod";
 
 import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
+import { isNineSixteenDimensions } from "./aspect-ratio";
 import { CURATED_MODELS, modelQualificationAttestationSchema } from "./catalog";
 import type { QualificationProviderAccount, QualificationRunLedger, QualificationSpendAuthorization, QualificationSpendReceipt } from "./qualification-ledger";
 import { composeQualifiedProviderInput } from "./provider-input-composition";
@@ -278,7 +279,7 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
     }
     if (submitted.version !== base.version) throw new Error(`QUALIFICATION_VERSION_MISMATCH:${cell.id}`);
     if (canonicalDigest(submitted.acceptedInput) !== composed.providerInputDigest) throw new Error(`QUALIFICATION_ACCEPTED_INPUT_MISMATCH:${cell.id}`);
-    if (base.inputContract.safety && submitted.acceptedInput[base.inputContract.safety.parameterKey] !== base.inputContract.safety.safeValue) throw new Error(`QUALIFICATION_SAFETY_MISMATCH:${cell.id}`);
+    if (base.inputContract.safety?.parameterKey && submitted.acceptedInput[base.inputContract.safety.parameterKey] !== base.inputContract.safety.safeValue) throw new Error(`QUALIFICATION_SAFETY_MISMATCH:${cell.id}`);
     try {
       let terminal: "succeeded" | "failed" | "canceled" | "aborted";
       let output: unknown = null;
@@ -305,10 +306,10 @@ export async function executeReplicateQualification(input: QualificationRunnerIn
         ingestion = await execution.ingest({ predictionId: submitted.predictionId, caseId: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, output });
         if (cell.capability === "text_generation") {
           if (ingestion.kind !== "text" || ingestion.characterCount <= 0) throw new Error(`QUALIFICATION_TEXT_OUTPUT_INVALID:${cell.id}`);
-        } else if (ingestion.kind !== "media" || base.outputShape.width === null || base.outputShape.height === null || ingestion.itemCount !== ingestion.items.length || ingestion.items.length === 0 || ingestion.items.some((item) => item.width * 16 !== item.height * 9 || item.width !== base.outputShape.width || item.height !== base.outputShape.height || (base.outputShape.fps === null ? item.fps !== null : item.fps === null || Math.abs(item.fps - base.outputShape.fps) > 0.1)) || ingestion.width !== ingestion.items[0]!.width || ingestion.height !== ingestion.items[0]!.height || ingestion.durationSeconds !== ingestion.items[0]!.durationSeconds || ingestion.fps !== ingestion.items[0]!.fps) throw new Error(`QUALIFICATION_OUTPUT_SHAPE_MISMATCH:${cell.id}`);
+        } else if (ingestion.kind !== "media" || base.outputShape.width === null || base.outputShape.height === null || ingestion.itemCount !== ingestion.items.length || ingestion.items.length === 0 || ingestion.items.some((item) => !isNineSixteenDimensions(item.width, item.height) || item.width !== base.outputShape.width || item.height !== base.outputShape.height || (base.outputShape.fps === null ? item.fps !== null : item.fps === null || Math.abs(item.fps - base.outputShape.fps) > 0.1)) || ingestion.width !== ingestion.items[0]!.width || ingestion.height !== ingestion.items[0]!.height || ingestion.durationSeconds !== ingestion.items[0]!.durationSeconds || ingestion.fps !== ingestion.items[0]!.fps) throw new Error(`QUALIFICATION_OUTPUT_SHAPE_MISMATCH:${cell.id}`);
         if (!ingestion.observedLanguages.includes(cell.contentLanguage)) throw new Error(`QUALIFICATION_LANGUAGE_EVIDENCE_MISSING:${cell.id}`);
       }
-      const result = { id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: authoritativeMaximum, spendAuthorizationId: spendAuthorizations[index]!.authorizationId, spendAuthorizationDigest: spendAuthorizations[index]!.digest, observedSpendUsd: receipt.amountUsd, spendReceiptId: receipt.receiptId, spendReceiptDigest: receipt.digest, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, providerCompositionDigest: composed.evidence.digest, composedPromptDigest: composed.evidence.composedPromptDigest, providerInputDigest: composed.providerInputDigest, safetyVerified: Boolean(base.inputContract.safety), webhookDeliveryId: webhook.deliveryId, ingestion };
+      const result = { id: cell.id, capability: cell.capability, contentLanguage: cell.contentLanguage, arabicVariety: cell.arabicVariety, lifecycle: cell.lifecycle, maximumSpendUsd: authoritativeMaximum, spendAuthorizationId: spendAuthorizations[index]!.authorizationId, spendAuthorizationDigest: spendAuthorizations[index]!.digest, observedSpendUsd: receipt.amountUsd, spendReceiptId: receipt.receiptId, spendReceiptDigest: receipt.digest, predictionId: submitted.predictionId, terminal, schemaDigest: schema.inputSchemaDigest, providerCompositionDigest: composed.evidence.digest, composedPromptDigest: composed.evidence.composedPromptDigest, providerInputDigest: composed.providerInputDigest, safetyVerified: Boolean(base.inputContract.safety), safetyMode: base.inputContract.safety ? base.inputContract.safety.mode ?? "provider_input" : null, webhookDeliveryId: webhook.deliveryId, ingestion };
       await ledger.completeCase({ runId: parsed.runId, caseId: cell.id, claimToken: claim.claimToken, predictionId: submitted.predictionId, executedVersion: submitted.version, terminalStatus: terminal, result, at });
       results.push(result);
     } catch (error) {

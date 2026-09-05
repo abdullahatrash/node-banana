@@ -66,6 +66,19 @@ describe("model qualification catalog", () => {
     expect(configuredCatalog(positive, trustedKeys, at)[0]?.qualification.status).toBe("qualified");
   });
 
+  it("accepts evidenced provider-managed safety without inventing an API parameter", () => {
+    const providerManaged = signedQualification({
+      outputShape: { width: 768, height: 1376, fps: null },
+      inputContract: {
+        promptKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: "image_input", imageMode: "array",
+        safety: { mode: "provider_managed", parameterKey: null, safeValue: null, evidenceSourceUrl: "https://example.com/safety", evidenceDigest: `sha256:${"e5".repeat(32)}` },
+        lockedParameters: { resolution: "1K", output_format: "jpg" },
+      },
+    });
+    const qualification = configuredCatalog(providerManaged, trustedKeys, at)[0]?.qualification;
+    expect(qualification).toMatchObject({ status: "qualified", outputShape: { width: 768, height: 1376 }, inputContract: { safety: { mode: "provider_managed", parameterKey: null } } });
+  });
+
   it("rejects guessed Brand fields and provider-native input key collisions", () => {
     const guessedBrandField = signedQualification({ inputContract: { promptKey: "prompt", brandContextKey: "prompt", aspectRatioKey: "aspect_ratio", quantityKey: null, imageKey: null, imageMode: "single", safety: { parameterKey: "disable_safety_filter", safeValue: false }, lockedParameters: { disable_safety_filter: false } } });
     expect(configuredCatalog(guessedBrandField, trustedKeys, at)[0]?.qualification.status).toBe("unqualified");

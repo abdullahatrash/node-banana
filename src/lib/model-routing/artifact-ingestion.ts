@@ -9,6 +9,7 @@ import { getDb } from "@/lib/db";
 import { assets } from "@/lib/db/schema";
 import { buildAssetObjectKey, streamUploadToS3 } from "@/lib/storage";
 import { finalizeAssetUpload, recordPendingS3AssetWithQuota } from "@/lib/studio/repository";
+import { isNineSixteenDimensions } from "./aspect-ratio";
 import { PostgresArtifactReceiptRepository, type ArtifactReceiptPort } from "./artifact-receipts";
 import type { CanonicalArtifactIngestionPort } from "./replicate-contract";
 import type { GenerationIntent } from "./types";
@@ -22,7 +23,7 @@ function recordMetadata(intent: GenerationIntent, predictionId: string, outputIn
 export interface DecodedArtifactMetadata { width: number; height: number; durationSeconds: number | null; fps: number | null; }
 export function validateDecodedArtifact(contract: GenerationIntent["outputContract"], metadata: DecodedArtifactMetadata): void {
   if (contract.mediaType === "text" || contract.width === null || contract.height === null) throw new Error("ARTIFACT_MEDIA_CONTRACT_REQUIRED");
-  if (metadata.width !== contract.width || metadata.height !== contract.height || metadata.width * 16 !== metadata.height * 9) throw new Error("ARTIFACT_DIMENSIONS_MISMATCH");
+  if (metadata.width !== contract.width || metadata.height !== contract.height || !isNineSixteenDimensions(metadata.width, metadata.height)) throw new Error("ARTIFACT_DIMENSIONS_MISMATCH");
   if (contract.mediaType === "image") { if (metadata.durationSeconds !== null || metadata.fps !== null) throw new Error("ARTIFACT_MEDIA_METADATA_MISMATCH"); return; }
   if (metadata.durationSeconds === null || contract.durationSeconds === null || metadata.fps === null || contract.fps === null) throw new Error("ARTIFACT_VIDEO_METADATA_REQUIRED");
   const frameTolerance = Math.max(0.05, 1 / contract.fps);

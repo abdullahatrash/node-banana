@@ -6,6 +6,7 @@ const source = (overrides: Partial<CanonicalGenerationSource> = {}): CanonicalGe
 describe("paid generation source admission", () => {
   it("accepts a single canonical server-decoded 9:16 I2V source", () => {
     expect(validateGenerationSources("image_to_video", ["asset-1"], [source()])).toEqual({ ok: true });
+    expect(validateGenerationSources("image_to_video", ["asset-1"], [source({ width: 768, height: 1376 })])).toEqual({ ok: true });
   });
 
   it("admits ordered multi-image recipes only for an array-qualified model contract", () => {

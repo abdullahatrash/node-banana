@@ -23,6 +23,12 @@ describe("canonical artifact ingestion", () => {
     expect(() => validateDecodedArtifact(intent.outputContract, { width: 1080, height: 1920, durationSeconds: 8, fps: 24 })).toThrow("ARTIFACT_VIDEO_CONTRACT_MISMATCH");
   });
 
+  it("accepts provider-documented rounded 9:16 dimensions when exactly pinned", () => {
+    const rounded = { ...intent.outputContract, mediaType: "image" as const, width: 768, height: 1376, durationSeconds: null, fps: null };
+    expect(() => validateDecodedArtifact(rounded, { width: 768, height: 1376, durationSeconds: null, fps: null })).not.toThrow();
+    expect(() => validateDecodedArtifact(rounded, { width: 768, height: 1360, durationSeconds: null, fps: null })).toThrow("ARTIFACT_DIMENSIONS_MISMATCH");
+  });
+
   it("replays a completed prediction/output receipt without network or duplicate asset work", async () => {
     const fetcher = vi.fn(() => { throw new Error("network must not run on replay"); });
     const receipts = { claim: vi.fn(async () => ({ kind: "ready" as const, receipt: { assetId: "asset-existing" } })), complete: vi.fn() } as unknown as ArtifactReceiptPort;

@@ -125,7 +125,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   if (!sourceValidation.ok) return fail(422, sourceValidation.code, [{ code: "prepare_source", href: "/simple-studio/library" }]);
   let pricingQuantities: PricingQuantity[] | undefined;
   if (model.qualification.executionPriceUsd.basis === "components") {
-    const mediaIds = providerMediaPlan({ sourceAssetIds: providerSourceIds, brand: brandContext.context, contract: model.qualification.inputContract }).providerMediaAssetIds;
+    const mediaIds = providerMediaPlan({ sourceAssetIds: providerSourceIds, brand: brandContext.context, contract: model.qualification.inputContract, capability: input.capability }).providerMediaAssetIds;
     const pricingRows = mediaIds.length ? await getDb().select({ id: assets.id, type: assets.type, width: assets.width, height: assets.height, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, context.workspaceId), inArray(assets.id, mediaIds), isNull(assets.deletedAt))) : [];
     const pricingById = new Map(pricingRows.map((row) => [row.id, row]));
     if (pricingById.size !== new Set(mediaIds).size) return fail(422, "PRICING_INPUT_ASSET_EVIDENCE_REQUIRED", [{ code: "prepare_source", href: "/simple-studio/library" }]);

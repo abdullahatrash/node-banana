@@ -12,6 +12,9 @@ export type PriceBasis = UnitPriceBasis | MeteredPriceBasis;
 export type ExecutionPriceUsd =
   | { basis: UnitPriceBasis; amount: number }
   | { basis: "components"; components: ReadonlyArray<{ basis: MeteredPriceBasis; amount: number }> };
+export type ProviderSafetyContract =
+  | { mode?: "provider_input"; parameterKey: string; safeValue: string | number | boolean }
+  | { mode: "provider_managed"; parameterKey: null; safeValue: null; evidenceSourceUrl: string; evidenceDigest: `sha256:${string}` };
 export type PricingQuantity = { basis: PriceBasis; quantity: number };
 export type CostQuoteLineItem = { basis: PriceBasis; unitAmount: number; quantity: number; maximumAmount: number };
 
@@ -61,7 +64,7 @@ export interface ImmutableBrandContext {
 }
 export type ModelExecutionQualification =
   | { status: "unqualified"; reason: "IMMUTABLE_VERSION_AND_SCHEMA_NOT_CONFIGURED" }
-  | { status: "qualified"; endpoint: ReplicateEndpoint; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: ExecutionPriceUsd; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number | null; height: number | null; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string | null; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: { parameterKey: string; safeValue: string | number | boolean } | null; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
+  | { status: "qualified"; endpoint: ReplicateEndpoint; version: string; inputSchemaDigest: `sha256:${string}`; executionPriceUsd: ExecutionPriceUsd; maxQuantity: number; cancelAfterSeconds: number; outputShape: { width: number | null; height: number | null; fps: number | null }; inputContract: { promptKey: string; aspectRatioKey: string | null; quantityKey: string | null; imageKey: string | null; imageMode: "single" | "array"; safety: ProviderSafetyContract | null; lockedParameters: Record<string, string | number | boolean> }; evidence: ModelQualificationEvidence };
 export interface ModelDescriptor {
   provider: ExactModelRef["provider"]; model: string; label: string;
   capabilities: readonly GenerationCapability[]; quality: GenerationQuality;

@@ -1,4 +1,5 @@
 import type { GenerationCapability } from "./types";
+import { isNineSixteenDimensions } from "./aspect-ratio";
 
 export interface CanonicalGenerationSource {
   id: string;
@@ -26,7 +27,7 @@ export function validateGenerationSources(capability: GenerationCapability, expe
   if (sources.some((source) => source.type !== expectedType)) return { ok: false, code: "SOURCE_MEDIA_TYPE_MISMATCH" };
   if (capability === "image_to_image") return { ok: true };
   if (sources.some((source) => !source.width || !source.height || source.metadata?.dimensionEvidence !== "server-media-probe/v1")) return { ok: false, code: "SOURCE_DECODED_DIMENSIONS_REQUIRED" };
-  if (sources.some((source) => source.width! * 16 !== source.height! * 9)) return { ok: false, code: "SOURCE_9_16_REQUIRED" };
+  if (sources.some((source) => !isNineSixteenDimensions(source.width!, source.height!))) return { ok: false, code: "SOURCE_9_16_REQUIRED" };
   const source = sources[0]!;
   if (capability === "video_to_video") {
     if (!source.mimeType || !["video/mp4", "video/webm", "video/quicktime"].includes(source.mimeType)) return { ok: false, code: "SOURCE_VIDEO_FORMAT_UNSUPPORTED" };
