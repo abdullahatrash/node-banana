@@ -1,6 +1,8 @@
 # YouTube trend discovery operations
 
-Node Banana exposes YouTube's public `mostPopular` chart as a separate, metadata-only discovery lane. It does not feed the Brand-fit ranking, Workspace Product Record history, Remix, or Blitz. No YouTube video or audio is downloaded, copied to object storage, or sent to a generation provider.
+Node Banana exposes YouTube's public `mostPopular` chart as a separate, metadata-only discovery lane. By default it does not feed Brand-fit ranking, Workspace Product Record history, Remix, or Blitz. No YouTube video, thumbnail, audio, transcript, or creator identity is downloaded, copied to object storage, or sent to a generation provider.
+
+The codebase also contains a topic-only Brand/Blitz adaptation path, but it fails closed unless `YOUTUBE_CONTENT_ADAPTATION_APPROVED=true`. An operator may set that flag only after written approval covers this exact durable content-derivation use, its retention model, and the product's public disclosures. The flag is not a substitute for approval. Even when enabled, the AI request receives no YouTube media or rights evidence: it receives a server-authored topic direction and must use text-to-video with entirely new wording, imagery, motion, audio, pacing, and scene structure.
 
 ## Why it is separate
 
@@ -19,6 +21,8 @@ NEXT_PUBLIC_TERMS_URL=https://example.com/terms
 NEXT_PUBLIC_PRIVACY_URL=https://example.com/privacy
 ```
 
+Discovery remains read-only with respect to Remix and Blitz under this default configuration. After obtaining and documenting the separate written approval described above, add `YOUTUBE_CONTENT_ADAPTATION_APPROVED=true` and restart the app to expose topic-only original creation.
+
 The API key is a Google/YouTube provider credential, not `BYOK_KEY_ENCRYPTION_KEY`. Keep it server-side and restrict it in Google Cloud to the YouTube Data API and the deployment's server egress where possible. The Terms URL must state that users of the YouTube feature agree to the YouTube Terms of Service. The Privacy URL must disclose use of YouTube API Services, data access/storage/use/sharing, and link to Google's Privacy Policy. Obtain legal review before production launch.
 
 Setting `YOUTUBE_TREND_DISCOVERY_ENABLED=false` is the operator erasure switch. The next YouTube worker run deletes every cached discovery entry across Workspaces and performs no provider call. Removing one chart in the UI immediately cascades deletion of that chart's cached entries and jobs.
@@ -32,7 +36,7 @@ Each configured chart run makes exactly one `videos.list` request and asks for a
 - Every 12 hours: 2 units/day per chart.
 - Daily: 1 unit/day per chart.
 
-Viewing or refreshing this lane spends no Node Banana Generation Credits and does not call Replicate, Gemini, OpenAI, Kie, fal.ai, or WaveSpeed. YouTube quota is a separate Google Cloud allowance. Invalid requests can still consume provider quota, so the adapter validates region, category, interval, and result count before making a request; permanent credential/configuration failures pause the source; quota failures defer it for 24 hours; only transient network, 408, 429, and 5xx failures retry automatically.
+Viewing or refreshing this lane spends no Node Banana Generation Credits and does not call Replicate, Gemini, OpenAI, Kie, fal.ai, or WaveSpeed. YouTube quota is a separate Google Cloud allowance. Invalid requests can still consume provider quota, so the adapter validates region, category, interval, and result count before making a request; permanent credential/configuration failures pause the source; quota failures defer it for 24 hours; only transient network, 408, 429, and 5xx failures retry automatically. When the separately approved adaptation gate is enabled, queueing a topic still spends no Generation Credits; accepting it in Blitz is a normal billable text-to-video generation and must pass the usual quote or BYOK confirmation.
 
 Pricing remains available publicly at `/en/pricing` and `/ar/pricing`. The authenticated balance and plan controls are at `/settings?section=billing`.
 
@@ -62,7 +66,7 @@ Pricing remains available publicly at `/en/pricing` and `/ar/pricing`. The authe
 
    The `youtube-trends` line reports whether the provider lane is configured, how many expired records were purged, jobs claimed, and items refreshed. Running the worker with no chart or with the feature disabled makes no YouTube API call.
 
-6. Reload `/inspiration` in English and Arabic. Verify provider order, YouTube attribution, source links, raw metrics, observed time, and that there is no Remix or Blitz action on these cards.
+6. Reload `/inspiration` in English and Arabic. Verify provider order, YouTube attribution, source links, raw metrics, and observed time. Without documented adaptation approval, verify the original-content action is disabled and the approval notice is visible. With the approved gate enabled, queue one topic and verify the resulting Blitz request is text-to-video with empty source-Asset and rights-evidence arrays; do not accept the paid generation unless that spend is explicitly authorized.
 
 7. Pause and resume the source, queue a refresh, then delete it. Confirm the cards disappear. Set the feature flag to `false`, run the worker once, and confirm the summary reports erased entries.
 
@@ -87,6 +91,7 @@ never cause a YouTube or generation-provider request.
 - Confirm the official YouTube attribution icon is visible and links to YouTube content.
 - Confirm source links preserve referrer identity and no embedded player suppresses the required identity signal.
 - Confirm database backups and operational exports follow the same deletion/retention policy.
-- Do not connect this data to Brand scoring, inferred Arabic variety, Content Format classification, search embeddings, Remix, Blitz, or long-lived analytics unless the exact YouTube derived-metrics use case has been accepted in writing.
+- Confirm `YOUTUBE_CONTENT_ADAPTATION_APPROVED` remains false unless written approval explicitly covers durable Brand/Blitz derivation, retention, and disclosures for this exact use.
+- Even with that approval, confirm no YouTube media, thumbnail, audio, transcript, creator identity, rights claim, or source-expression instruction enters the model request.
 
 Primary references: [videos.list](https://developers.google.com/youtube/v3/docs/videos/list), [most-popular implementation guide](https://developers.google.com/youtube/v3/guides/implementation/videos), [Developer Policies](https://developers.google.com/youtube/terms/developer-policies), [compliance guide](https://developers.google.com/youtube/terms/developer-policies-guide), and [Branding Guidelines](https://developers.google.com/youtube/terms/branding-guidelines).

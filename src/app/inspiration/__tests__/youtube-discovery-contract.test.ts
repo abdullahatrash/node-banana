@@ -18,6 +18,8 @@ describe("YouTube discovery presentation", () => {
     expect(component).toContain("https://policies.google.com/privacy");
     expect(component).toContain("BookmarkPlus");
     expect(component).toContain('productRequest("/api/product-inspiration/youtube/queue"');
+    expect(component).toContain("data.capability.contentAdaptationApproved");
+    expect(component).toContain("YOUTUBE_CONTENT_ADAPTATION_APPROVED=true");
     expect(component).toContain("sourceId: entry.sourceId, videoId: entry.videoId, contentLanguage");
     expect(component).not.toContain("thumbnailUrl: entry.thumbnailUrl");
     expect(en.product.inspiration.youtubeRemix.separation).toContain("no video, thumbnail, audio, transcript, or creator identity");

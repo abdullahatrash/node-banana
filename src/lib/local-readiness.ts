@@ -64,6 +64,7 @@ export interface LocalReadinessFacts {
   youtubeTrendDiscoveryEnabled: boolean;
   youtubeTrendApiKeyConfigured: boolean;
   youtubeTrendDisclosuresConfigured: boolean;
+  youtubeContentAdaptationApproved: boolean;
   activeYoutubeTrendSources: number;
   activeLicensedTrendEntitlements: number;
   xAdsAttributionAvailable: boolean;
@@ -251,6 +252,15 @@ export function buildLocalReadinessReport(
           ].filter(Boolean).join(", ") + ".",
           "Follow docs/operations/youtube-trend-discovery.md, then add a MENA chart from Inspiration.",
         ),
+    facts.youtubeContentAdaptationApproved
+      ? ready("youtube_content_adaptation", "YouTube topic adaptation", "The operator attests that written approval covers the exact durable Brand/Blitz derivation and retention use.")
+      : {
+          id: "youtube_content_adaptation",
+          label: "YouTube topic adaptation",
+          status: "optional",
+          detail: "Discovery remains available, but durable Brand/Blitz topic derivation is fail-closed without written approval for this exact use.",
+          action: "Document the approval first; only then set YOUTUBE_CONTENT_ADAPTATION_APPROVED=true and restart the app.",
+        },
     facts.activeLicensedTrendEntitlements > 0
       ? ready(
           "licensed_trends",

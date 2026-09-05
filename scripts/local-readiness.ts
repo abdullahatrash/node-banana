@@ -124,6 +124,7 @@ async function run() {
     youtubeTrendDiscoveryEnabled: youtubeReadiness.enabled,
     youtubeTrendApiKeyConfigured: youtubeReadiness.keyConfigured,
     youtubeTrendDisclosuresConfigured: youtubeReadiness.disclosuresConfigured,
+    youtubeContentAdaptationApproved: youtubeReadiness.contentAdaptationApproved,
     activeYoutubeTrendSources,
     activeLicensedTrendEntitlements,
     xAdsAttributionAvailable: xAdsReadiness.available,

@@ -8,6 +8,7 @@ import type { ArabicVariety, ContentLanguage } from "@/lib/model-routing/types";
 import { createProductRecordInTransaction } from "./repository";
 import type { ContentFormat } from "./definitions";
 import { compileBrandAwareMetadataBrief } from "./remix-brief";
+import { youtubeTrendDiscoveryCapability } from "./youtube-trend-capability";
 
 export class YoutubeMetadataRemixError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -36,6 +37,7 @@ export async function queueYoutubeMetadataRemix(input: {
   at?: Date;
 }) {
   const at = input.at ?? new Date();
+  if (!youtubeTrendDiscoveryCapability().contentAdaptationConfigured) throw new YoutubeMetadataRemixError("YOUTUBE_CONTENT_ADAPTATION_NOT_APPROVED");
   if (input.contentLanguage === "ar" && !input.arabicVariety) throw new YoutubeMetadataRemixError("YOUTUBE_REMIX_ARABIC_VARIETY_REQUIRED");
   if (input.contentLanguage === "en" && input.arabicVariety) throw new YoutubeMetadataRemixError("YOUTUBE_REMIX_LANGUAGE_INVALID");
 

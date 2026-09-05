@@ -32,6 +32,7 @@ const readyFacts = (overrides: Partial<LocalReadinessFacts> = {}): LocalReadines
   youtubeTrendDiscoveryEnabled: true,
   youtubeTrendApiKeyConfigured: true,
   youtubeTrendDisclosuresConfigured: true,
+  youtubeContentAdaptationApproved: true,
   activeYoutubeTrendSources: 1,
   activeLicensedTrendEntitlements: 2,
   xAdsAttributionAvailable: true,
@@ -81,6 +82,12 @@ describe("local generation readiness", () => {
     expect(report.checks.find((check) => check.id === "merchant")).toMatchObject({ status: "optional" });
     expect(report.checks.find((check) => check.id === "referral_payout_gateway")).toMatchObject({ status: "optional", detail: expect.stringContaining("remain durably submitted") });
     expect(report.checks.find((check) => check.id === "step_up_delivery")).toMatchObject({ status: "optional" });
+  });
+
+  it("keeps trend discovery independent while surfacing unapproved durable topic adaptation", () => {
+    const report = buildLocalReadinessReport(readyFacts({ youtubeContentAdaptationApproved: false }));
+    expect(report.trendIntelligenceReady).toBe(true);
+    expect(report.checks.find((check) => check.id === "youtube_content_adaptation")).toMatchObject({ status: "optional", detail: expect.stringContaining("fail-closed") });
   });
 
   it("keeps advertising attribution separate and fail-closed", () => {

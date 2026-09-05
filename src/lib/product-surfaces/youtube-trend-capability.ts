@@ -22,11 +22,14 @@ export function youtubeTrendDiscoveryCapability(env: NodeJS.ProcessEnv = process
   const privacyUrl = disclosureUrl(env.NEXT_PUBLIC_PRIVACY_URL);
   const termsUrl = disclosureUrl(env.NEXT_PUBLIC_TERMS_URL);
   const disclosuresConfigured = Boolean(privacyUrl && termsUrl);
+  const contentAdaptationApproved = env.YOUTUBE_CONTENT_ADAPTATION_APPROVED === "true";
   return {
     enabled,
     keyConfigured,
     disclosuresConfigured,
     configured: enabled && keyConfigured && disclosuresConfigured,
+    contentAdaptationApproved,
+    contentAdaptationConfigured: enabled && keyConfigured && disclosuresConfigured && contentAdaptationApproved,
     privacyUrl,
     termsUrl,
   };

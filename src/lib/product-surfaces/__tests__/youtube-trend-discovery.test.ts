@@ -41,7 +41,8 @@ describe("YouTube most-popular adapter", () => {
 
   it("fails closed until the key, switch, and public disclosures are all configured", () => {
     expect(youtubeTrendDiscoveryCapability({ NODE_ENV: "test", YOUTUBE_TREND_DISCOVERY_ENABLED: "true", YOUTUBE_DATA_API_KEY: "key" })).toMatchObject({ configured: false, disclosuresConfigured: false });
-    expect(youtubeTrendDiscoveryCapability({ NODE_ENV: "test", YOUTUBE_TREND_DISCOVERY_ENABLED: "true", YOUTUBE_DATA_API_KEY: "key", NEXT_PUBLIC_TERMS_URL: "https://example.com/terms", NEXT_PUBLIC_PRIVACY_URL: "https://example.com/privacy" })).toMatchObject({ configured: true, keyConfigured: true, disclosuresConfigured: true });
+    expect(youtubeTrendDiscoveryCapability({ NODE_ENV: "test", YOUTUBE_TREND_DISCOVERY_ENABLED: "true", YOUTUBE_DATA_API_KEY: "key", NEXT_PUBLIC_TERMS_URL: "https://example.com/terms", NEXT_PUBLIC_PRIVACY_URL: "https://example.com/privacy" })).toMatchObject({ configured: true, keyConfigured: true, disclosuresConfigured: true, contentAdaptationApproved: false, contentAdaptationConfigured: false });
+    expect(youtubeTrendDiscoveryCapability({ NODE_ENV: "test", YOUTUBE_TREND_DISCOVERY_ENABLED: "true", YOUTUBE_DATA_API_KEY: "key", NEXT_PUBLIC_TERMS_URL: "https://example.com/terms", NEXT_PUBLIC_PRIVACY_URL: "https://example.com/privacy", YOUTUBE_CONTENT_ADAPTATION_APPROVED: "true" })).toMatchObject({ configured: true, contentAdaptationApproved: true, contentAdaptationConfigured: true });
   });
 });
 
