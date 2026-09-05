@@ -2,14 +2,46 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useLocale, useTranslations } from "next-intl";
-import { LoaderCircle } from "lucide-react";
+import { CircleAlertIcon, CircleCheckIcon, LoaderCircle } from "lucide-react";
 import { readCommercialSummary, type CommercialSummary } from "@/lib/commercial/summary";
 import { getDirection } from "@/i18n/config";
+import {
+  projectManagedGenerationReadiness,
+  type GenerationReadiness,
+  type ManagedGenerationReadinessGate,
+} from "@/lib/model-routing/readiness";
+
+const readinessGateLinks: Record<ManagedGenerationReadinessGate, string> = {
+  qualifiedModel: "/studio/model-routing",
+  acceptedBrand: "/brand",
+  canonicalMediaStorage: "/settings?section=storage",
+  processingRegion: "/settings?section=data",
+  managedCredential: "/studio/model-routing",
+  managedCreditRate: "/studio/model-routing",
+};
 
 export function BillingSettings({ workspaceId, canManage, canPurchase }: { workspaceId: string; canManage: boolean; canPurchase: boolean }) {
-  const t = useTranslations("product.billing") as (key: string, values?: Record<string, string | number>) => string; const locale = useLocale() as "ar" | "en";
-  const [data, setData] = useState<CommercialSummary | null>(null); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { const response = await fetch("/api/studio/billing", { headers: { "x-workspace-id": workspaceId }, cache: "no-store" }); const body = await response.json() as { success: boolean; data?: unknown; code?: string }; const summary = readCommercialSummary(body.data); if (!response.ok || !summary) throw new Error(body.code ?? "REQUEST_FAILED"); setData(summary); }, [workspaceId]);
+  const t = useTranslations("product.billing") as (key: string, values?: Record<string, string | number>) => string; const readinessT = useTranslations("generationReadiness"); const locale = useLocale() as "ar" | "en";
+  const [data, setData] = useState<CommercialSummary | null>(null); const [readiness, setReadiness] = useState<GenerationReadiness | null>(null); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    const readinessRequest = fetch("/api/studio/model-routing/catalog", {
+      headers: { "x-workspace-id": workspaceId },
+      cache: "no-store",
+    }).then(async (response) => {
+      if (!response.ok) return null;
+      const body = await response.json() as { generationReadiness?: GenerationReadiness };
+      return body.generationReadiness?.schema === "generation-readiness/v1" ? body.generationReadiness : null;
+    }).catch(() => null);
+    const [response, nextReadiness] = await Promise.all([
+      fetch("/api/studio/billing", { headers: { "x-workspace-id": workspaceId }, cache: "no-store" }),
+      readinessRequest,
+    ]);
+    const body = await response.json() as { success: boolean; data?: unknown; code?: string };
+    const summary = readCommercialSummary(body.data);
+    if (!response.ok || !summary) throw new Error(body.code ?? "REQUEST_FAILED");
+    setData(summary);
+    setReadiness(nextReadiness);
+  }, [workspaceId]);
   useEffect(() => { void load().catch((cause) => setError(cause instanceof Error ? cause.message : "REQUEST_FAILED")); }, [load]);
   async function command(body: Record<string, unknown>) { setBusy(true); setError(""); try { const response = await fetch("/api/studio/billing", { method: "POST", headers: { "content-type": "application/json", "x-workspace-id": workspaceId }, body: JSON.stringify({ ...body, idempotencyKey: crypto.randomUUID() }) }); const result = await response.json() as { success: boolean; code?: string }; if (!response.ok || !result.success) throw new Error(result.code ?? "REQUEST_FAILED"); await load(); } catch (cause) { setError(cause instanceof Error ? cause.message : "REQUEST_FAILED"); } finally { setBusy(false); } }
   async function portal() { setBusy(true); try { const response = await fetch("/api/studio/billing/portal", { method: "POST", headers: { "x-workspace-id": workspaceId } }); const result = await response.json() as { success: boolean; code?: string; portal?: { url: string } }; if (!result.portal) throw new Error(result.code ?? "MERCHANT_PORTAL_UNAVAILABLE"); window.location.assign(result.portal.url); } catch (cause) { setError(cause instanceof Error ? cause.message : "REQUEST_FAILED"); } finally { setBusy(false); } }
@@ -20,10 +52,12 @@ export function BillingSettings({ workspaceId, canManage, canPurchase }: { works
   const integer = new Intl.NumberFormat(locale, { signDisplay: "always" });
   const canChoosePlan = !data?.subscription || (data.subscription.state === "active" && data.subscription.planId === "free" && data.subscription.planVersion === 1);
   const canOpenPortal = Boolean(data?.subscription?.merchantCustomerRef);
+  const managedReadiness = readiness ? projectManagedGenerationReadiness(readiness) : null;
   const errorMessage = error === "CHECKOUT_OUTCOME_UNKNOWN" ? t("checkoutOutcomeUnknown") : error.startsWith("BILLING_DOCUMENT_") ? t("billingDocumentUnavailable") : error ? t(`errors.${error}`) : "";
   if (!data) return <div className="p-6">{error ? <p role="alert">{errorMessage}</p> : <LoaderCircle className="size-5 animate-spin" aria-label={t("loading")} />}</div>;
   return <div dir={getDirection(locale)} className="space-y-8 p-5 sm:p-8"><header className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-2xl font-semibold">{t("title")}</h2><p className="mt-2 max-w-3xl text-sm text-muted-foreground">{t("description")}</p></div><Link href="/pricing" className="inline-flex min-h-10 items-center rounded-lg border px-4 text-sm font-semibold hover:bg-muted">{t("viewPricing")}</Link></header>{error && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{errorMessage}</p>}
     <section className="grid gap-4 md:grid-cols-2"><article className="rounded-2xl border p-5"><p className="text-sm text-muted-foreground">{t("subscription")}</p><p className="mt-2 text-xl font-semibold">{data.subscription ? t(`states.${data.subscription.state}`) : t("noSubscription")}</p>{data.subscription && <><p dir="ltr" className="mt-1 text-start text-sm">{data.subscription.planId} v{data.subscription.planVersion}</p><p className="mt-1 text-xs text-muted-foreground">{t("periodEnds", { date: date.format(new Date(data.subscription.currentPeriodEndsAt)) })}</p>{data.financials.executionHolds.length > 0 && <p role="alert" className="mt-3 rounded-lg bg-destructive/10 p-3 text-xs text-destructive">{t("subscriptionFinancialHold", { reason: t(`holdReasons.${data.financials.executionHolds[0].reason}`) })}</p>}{canManage && canOpenPortal && <button disabled={busy} onClick={() => void portal()} className="mt-4 min-h-10 rounded-lg border px-4 text-sm">{t("portal")}</button>}</>}</article><article className="rounded-2xl border p-5"><p className="text-sm text-muted-foreground">{t("credits")}</p><p className="mt-2 text-3xl font-semibold tabular-nums"><bdi>{new Intl.NumberFormat(locale).format(data.credit.availableUnits)}</bdi></p><p className="mt-1 text-xs text-muted-foreground">{t("creditBoundary")}</p>{data.credit.liabilityUnits > 0 && <p role="alert" className="mt-3 rounded-lg bg-destructive/10 p-3 text-xs text-destructive">{t("creditLiability", { count: new Intl.NumberFormat(locale).format(data.credit.liabilityUnits) })}</p>}</article></section>
+    {managedReadiness ? <section aria-labelledby="managed-readiness-title" className={`rounded-2xl border p-5 ${managedReadiness.ready ? "border-emerald-300/60 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/20" : "border-amber-300/60 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20"}`}><div className="flex items-start gap-3">{managedReadiness.ready ? <CircleCheckIcon className="mt-0.5 size-5 shrink-0 text-emerald-700 dark:text-emerald-300" aria-hidden="true" /> : <CircleAlertIcon className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-300" aria-hidden="true" />}<div className="min-w-0 flex-1"><h3 id="managed-readiness-title" className="font-semibold">{t(managedReadiness.ready ? "managedReadiness.readyTitle" : "managedReadiness.blockedTitle")}</h3><p className="mt-1 text-sm text-muted-foreground">{t(managedReadiness.ready ? "managedReadiness.readyDescription" : "managedReadiness.blockedDescription")}</p>{managedReadiness.qualifiedCapabilities.length > 0 ? <p className="mt-2 text-xs text-muted-foreground">{t("managedReadiness.qualifiedCapabilities", { count: new Intl.NumberFormat(locale).format(managedReadiness.qualifiedCapabilities.length) })}</p> : null}{managedReadiness.blockers.length > 0 ? <ul className="mt-4 grid gap-3 md:grid-cols-2">{managedReadiness.blockers.map((gate) => <li key={gate} className="rounded-lg border bg-background/80 p-3 text-sm"><p className="font-semibold">{readinessT(`gates.${gate}.title`)}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{readinessT(`gates.${gate}.detail`)}</p><Link href={readinessGateLinks[gate]} className="mt-2 inline-flex text-xs font-semibold underline underline-offset-4">{readinessT(`gates.${gate}.action`)}</Link></li>)}</ul> : null}</div></div></section> : null}
     {canChoosePlan && <section><h3 className="font-semibold">{t("plans")}</h3><div className="mt-3 grid gap-3 md:grid-cols-2">{data.plans.map((plan) => <article key={`${plan.planId}:${plan.version}`} className="rounded-xl border p-4"><h4 className="font-semibold">{plan.authoredName[locale]}</h4><p className="mt-1 text-sm"><bdi>{new Intl.NumberFormat(locale, { style: "currency", currency: plan.currency }).format(plan.priceMinor / 100)}</bdi> / {t(`intervals.${plan.billingInterval}`)}</p>{plan.trialDays > 0 && <p className="text-xs text-muted-foreground">{t("trialOffer", { days: plan.trialDays, credits: plan.trialCreditUnits })}</p>}{plan.planId === "free" ? <p className="mt-3 text-sm font-semibold text-muted-foreground">{t("currentPlan")}</p> : canPurchase && <div className="mt-3 flex flex-wrap gap-2">{plan.trialDays > 0 && canManage && <button disabled={busy} onClick={() => void command({ action: "start_trial", planId: plan.planId, planVersion: plan.version })} className="min-h-10 rounded-lg border px-4 text-sm">{t("startTrial")}</button>}<button disabled={busy} onClick={() => void checkout({ kind: "subscription", planId: plan.planId, planVersion: plan.version })} className="min-h-10 rounded-lg bg-amber-300 px-4 text-sm font-semibold text-stone-950">{t("subscribe")}</button></div>}</article>)}</div></section>}
     <section><h3 className="font-semibold">{t("creditPacks")}</h3><div className="mt-3 grid gap-3 md:grid-cols-3">{data.creditPacks.map((pack) => <article key={`${pack.packId}:${pack.version}`} className="rounded-xl border p-4"><h4 className="font-semibold">{pack.authoredName[locale]}</h4><p className="mt-1 text-sm"><bdi>{new Intl.NumberFormat(locale, { style: "currency", currency: pack.currency }).format((pack.priceMinor + pack.taxMinor) / 100)}</bdi></p>{canPurchase && <button disabled={busy} onClick={() => void checkout({ kind: "credit_pack", packId: pack.packId, packVersion: pack.version })} className="mt-3 min-h-10 rounded-lg bg-amber-300 px-4 text-sm font-semibold text-stone-950">{t("buyCredits", { credits: pack.creditUnits })}</button>}</article>)}</div></section>
     <section><h3 className="font-semibold">{t("buckets")}</h3><div className="mt-3 grid gap-2">{data.credit.buckets.map((bucket) => <div key={bucket.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm"><span>{t(`bucketKinds.${bucket.kind}`)} · {bucket.expiresAt ? t("bucketExpiry", { date: date.format(new Date(bucket.expiresAt)) }) : t("noExpiry")}</span><strong><bdi>{new Intl.NumberFormat(locale).format(bucket.availableUnits)}</bdi></strong></div>)}</div>{data.credit.heldReservations.map((reservation) => <p key={reservation.id} className="mt-2 text-sm text-amber-700">{t("held", { count: reservation.maxDebitUnits, state: t(`reservationStates.${reservation.state}`) })}</p>)}</section>

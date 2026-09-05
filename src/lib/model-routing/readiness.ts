@@ -23,6 +23,20 @@ export interface GenerationReadiness {
   };
 }
 
+export type ManagedGenerationReadinessGate =
+  | "qualifiedModel"
+  | "acceptedBrand"
+  | "canonicalMediaStorage"
+  | "processingRegion"
+  | "managedCredential"
+  | "managedCreditRate";
+
+export interface ManagedGenerationReadiness {
+  ready: boolean;
+  blockers: ManagedGenerationReadinessGate[];
+  qualifiedCapabilities: GenerationCapability[];
+}
+
 type ReadinessModel = {
   capabilities: readonly GenerationCapability[];
   qualification: { status: "qualified" | "unqualified" };
@@ -52,5 +66,25 @@ export function buildGenerationReadiness(input: {
       managedCredential: input.managedCredential,
       managedCreditRate: input.managedCreditRate,
     },
+  };
+}
+
+/** Projects the safe, user-actionable gates for workspace-funded Replicate execution. */
+export function projectManagedGenerationReadiness(
+  readiness: GenerationReadiness,
+): ManagedGenerationReadiness {
+  const blockers: ManagedGenerationReadinessGate[] = [];
+
+  if (readiness.qualifiedCapabilities.length === 0) blockers.push("qualifiedModel");
+  if (!readiness.gates.acceptedBrand) blockers.push("acceptedBrand");
+  if (!readiness.gates.canonicalMediaStorage) blockers.push("canonicalMediaStorage");
+  if (!readiness.gates.processingRegion) blockers.push("processingRegion");
+  if (!readiness.gates.managedCredential) blockers.push("managedCredential");
+  if (!readiness.gates.managedCreditRate) blockers.push("managedCreditRate");
+
+  return {
+    ready: blockers.length === 0,
+    blockers,
+    qualifiedCapabilities: readiness.qualifiedCapabilities,
   };
 }

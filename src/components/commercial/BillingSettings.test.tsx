@@ -22,6 +22,20 @@ const withSubscription = (subscription: NonNullable<typeof summary["subscription
   subscription,
 });
 
+const readyGeneration = {
+  schema: "generation-readiness/v1" as const,
+  qualifiedModelCount: 2,
+  qualifiedCapabilities: ["text_to_image", "text_to_video"],
+  gates: {
+    acceptedBrand: true,
+    canonicalMediaStorage: true,
+    processingRegion: true,
+    byokCredential: false,
+    managedCredential: true,
+    managedCreditRate: true,
+  },
+};
+
 describe("BillingSettings default plan", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -146,5 +160,52 @@ describe("BillingSettings default plan", () => {
 
     expect(await screen.findByText(message)).toHaveAttribute("role", "alert");
     expect(container.firstElementChild).toHaveAttribute("dir", locale === "ar" ? "rtl" : "ltr");
+  });
+
+  it("keeps credits visible while explaining every missing managed-generation gate", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/api/studio/model-routing/catalog")) {
+        return new Response(JSON.stringify({
+          success: true,
+          generationReadiness: {
+            ...readyGeneration,
+            qualifiedModelCount: 0,
+            qualifiedCapabilities: [],
+            gates: {
+              ...readyGeneration.gates,
+              processingRegion: false,
+              managedCredential: false,
+            },
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ success: true, data: summary }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<I18nTestProvider locale="en"><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
+
+    expect(await screen.findByRole("heading", { name: "Your credits are available, but managed AI setup is incomplete" })).toBeInTheDocument();
+    expect(screen.getByText("10")).toBeInTheDocument();
+    expect(screen.getByText("Qualify a compatible Replicate model")).toBeInTheDocument();
+    expect(screen.getByText("Verify the Replicate processing region")).toBeInTheDocument();
+    expect(screen.getByText("Enable the managed Replicate account")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Model routing" })[0]).toHaveAttribute("href", "/studio/model-routing");
+  });
+
+  it("renders an authored Arabic ready state without requiring a workspace BYOK key", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/api/studio/model-routing/catalog")) {
+        return new Response(JSON.stringify({ success: true, generationReadiness: readyGeneration }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ success: true, data: summary }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    const { container } = render(<I18nTestProvider locale="ar"><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
+
+    expect(await screen.findByRole("heading", { name: "التوليد المُدار بالذكاء الاصطناعي جاهز" })).toBeInTheDocument();
+    expect(screen.getByText("يتوفر حاليًا 2 من إمكانات التوليد المعتمدة.")).toBeInTheDocument();
+    expect(screen.queryByText("حفظ مفتاح Replicate متحقق منه")).not.toBeInTheDocument();
+    expect(container.firstElementChild).toHaveAttribute("dir", "rtl");
   });
 });

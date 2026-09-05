@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGenerationReadiness } from "../readiness";
+import { buildGenerationReadiness, projectManagedGenerationReadiness } from "../readiness";
 
 describe("generation readiness projection", () => {
   it("counts only qualified models and returns capabilities in canonical order", () => {
@@ -46,5 +46,46 @@ describe("generation readiness projection", () => {
     expect(result.qualifiedModelCount).toBe(0);
     expect(result.qualifiedCapabilities).toEqual([]);
     expect(Object.values(result.gates)).toEqual([false, false, false, false, false, false]);
+  });
+
+  it("projects only the gates required for managed execution", () => {
+    const result = projectManagedGenerationReadiness({
+      schema: "generation-readiness/v1",
+      qualifiedModelCount: 1,
+      qualifiedCapabilities: ["text_to_image", "image_to_image"],
+      gates: {
+        acceptedBrand: true,
+        canonicalMediaStorage: true,
+        processingRegion: false,
+        byokCredential: false,
+        managedCredential: false,
+        managedCreditRate: true,
+      },
+    });
+
+    expect(result).toEqual({
+      ready: false,
+      blockers: ["processingRegion", "managedCredential"],
+      qualifiedCapabilities: ["text_to_image", "image_to_image"],
+    });
+  });
+
+  it("requires at least one qualified capability before managed execution is ready", () => {
+    const result = projectManagedGenerationReadiness({
+      schema: "generation-readiness/v1",
+      qualifiedModelCount: 0,
+      qualifiedCapabilities: [],
+      gates: {
+        acceptedBrand: true,
+        canonicalMediaStorage: true,
+        processingRegion: true,
+        byokCredential: false,
+        managedCredential: true,
+        managedCreditRate: true,
+      },
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toEqual(["qualifiedModel"]);
   });
 });
