@@ -21,6 +21,7 @@ describe("app navigation registry", () => {
       "calendar",
       "analytics",
       "billing",
+      "referAndEarn",
       "brand",
       "settings",
     ]);

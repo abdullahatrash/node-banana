@@ -18,6 +18,7 @@ import {
   FileTextIcon,
   FingerprintIcon,
   GaugeIcon,
+  GiftIcon,
   ImageIcon,
   KeyRoundIcon,
   LibraryIcon,
@@ -91,6 +92,7 @@ const primaryIcons = {
   calendar: CalendarDaysIcon,
   analytics: BarChart3Icon,
   billing: CreditCardIcon,
+  referAndEarn: GiftIcon,
   brand: FingerprintIcon,
   settings: SettingsIcon,
 } satisfies Record<PrimaryNavigationKey, typeof ActivityIcon>;
