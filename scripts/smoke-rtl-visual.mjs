@@ -30,6 +30,7 @@ const defaultRoutes = [
   "/social/posts",
   "/social/compose",
   "/studio/usage",
+  "/studio/model-routing",
   "/studio/publishing-approvals",
   "/studio/publishing-deliveries",
   "/content",
@@ -39,7 +40,9 @@ const defaultRoutes = [
   ...settingsSections.map((section) => `/settings?section=${section}`),
 ];
 const routeFilter = process.env.RTL_SMOKE_ROUTE?.trim() || null;
-const routes = routeFilter ? [routeFilter.startsWith("/") ? routeFilter : `/${routeFilter}`] : defaultRoutes;
+const routes = routeFilter
+  ? routeFilter.split(",").map((route) => route.trim()).filter(Boolean).map((route) => route.startsWith("/") ? route : `/${route}`)
+  : defaultRoutes;
 const includePricing = !routeFilter;
 const defaultViewports = [
   { name: "mobile", width: 390, height: 844 },
@@ -222,7 +225,7 @@ try {
       cookies: [...cookieJar].map(([name, value]) => ({ name, value, url: baseUrl.origin })),
     });
     for (const viewport of viewports) {
-      await call("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: viewport.width < 800 });
+      await call("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: viewport.name === "mobile" });
       for (const route of [...routes, ...(includePricing ? [`/${locale}/pricing`] : [])]) {
         const url = new URL(route, baseUrl).toString();
         await call("Page.navigate", { url });
@@ -235,11 +238,14 @@ try {
             const main = document.querySelector('main');
             const heading = document.querySelector('h1');
             const viewportWidth = root.clientWidth;
+            const bodyRect = body?.getBoundingClientRect();
+            const rtlViewportOffset = root.dir === 'rtl' ? Math.max(0, root.clientLeft, bodyRect?.left || 0) : 0;
+            const layoutScrollWidth = Math.max(viewportWidth, root.scrollWidth - rtlViewportOffset);
             const headingRect = heading?.getBoundingClientRect();
             const overflowOffenders = [...document.querySelectorAll('body *')].flatMap((element) => {
               const style = getComputedStyle(element);
               const rect = element.getBoundingClientRect();
-              if (style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || (rect.left >= -0.5 && rect.right <= viewportWidth + 0.5)) return [];
+              if (style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || (rect.left >= rtlViewportOffset - 0.5 && rect.right <= viewportWidth + rtlViewportOffset + 0.5)) return [];
               return [{
                 tag: element.tagName.toLowerCase(),
                 slot: element.getAttribute('data-slot'),
@@ -249,6 +255,17 @@ try {
                 classes: String(element.className || '').slice(0, 180),
               }];
             }).sort((a, b) => b.width - a.width).slice(0, 12);
+            const oversizedScrollContainers = [root, body, ...document.querySelectorAll('body *')].flatMap((element) => {
+              if (!element || element.scrollWidth <= element.clientWidth + 1) return [];
+              return [{
+                tag: element.tagName.toLowerCase(),
+                slot: element.getAttribute('data-slot'),
+                clientWidth: element.clientWidth,
+                scrollWidth: element.scrollWidth,
+                overflowX: getComputedStyle(element).overflowX,
+                classes: String(element.className || '').slice(0, 180),
+              }];
+            }).sort((a, b) => (b.scrollWidth - b.clientWidth) - (a.scrollWidth - a.clientWidth)).slice(0, 12);
             const bidiIsolationOffenders = [];
             const textWalker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
             const technicalIdentifier = /\\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?:=[A-Za-z0-9._:-]+)?\\b/gu;
@@ -267,10 +284,14 @@ try {
               lang: root.lang,
               dir: root.dir,
               viewportWidth,
-              scrollWidth: Math.max(root.scrollWidth, body?.scrollWidth || 0),
+              scrollWidth: root.scrollWidth,
+              bodyScrollWidth: body?.scrollWidth || 0,
+              rtlViewportOffset,
+              layoutScrollWidth,
               mainPresent: Boolean(main),
               headingVisible: Boolean(headingRect && headingRect.width > 0 && headingRect.height > 0 && headingRect.right > 0 && headingRect.left < viewportWidth),
               overflowOffenders,
+              oversizedScrollContainers,
               bidiIsolationOffenders: bidiIsolationOffenders.slice(0, 12),
             };
           })()`,
@@ -284,7 +305,7 @@ try {
         if (actualPath !== expectedPath) reasons.push(`redirected to ${actualPath}`);
         if (observation.lang !== locale) reasons.push(`lang=${observation.lang}`);
         if (observation.dir !== direction) reasons.push(`dir=${observation.dir}`);
-        if (observation.scrollWidth > observation.viewportWidth + 1) reasons.push(`horizontal overflow ${observation.scrollWidth}px > ${observation.viewportWidth}px`);
+        if (observation.layoutScrollWidth > observation.viewportWidth + 1) reasons.push(`horizontal overflow ${observation.layoutScrollWidth}px > ${observation.viewportWidth}px`);
         if (!observation.mainPresent) reasons.push("main landmark missing");
         if (!observation.headingVisible) reasons.push("primary heading missing or outside viewport");
         if (direction === "rtl" && observation.bidiIsolationOffenders.length > 0) reasons.push(`unisolated technical identifiers: ${observation.bidiIsolationOffenders.map((item) => item.identifier).join(", ")}`);
@@ -295,7 +316,7 @@ try {
         const screenshot = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
         await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
         screenshots.push(screenshotPath);
-        if (reasons.length) failures.push({ locale, viewport: viewport.name, route, reasons, overflowOffenders: observation.overflowOffenders, bidiIsolationOffenders: observation.bidiIsolationOffenders });
+        if (reasons.length) failures.push({ locale, viewport: viewport.name, route, reasons, geometry: { viewportWidth: observation.viewportWidth, scrollWidth: observation.scrollWidth, bodyScrollWidth: observation.bodyScrollWidth, rtlViewportOffset: observation.rtlViewportOffset, layoutScrollWidth: observation.layoutScrollWidth }, overflowOffenders: observation.overflowOffenders, oversizedScrollContainers: observation.oversizedScrollContainers, bidiIsolationOffenders: observation.bidiIsolationOffenders });
       }
     }
   }

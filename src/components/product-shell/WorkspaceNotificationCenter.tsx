@@ -53,7 +53,7 @@ export function WorkspaceNotificationCenter({ workspaceId, authorizedWorkspaces 
       <BellIcon className="size-4" />
       {unread > 0 ? <span className="absolute -end-1 -top-1 flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-5 text-white" aria-label={t("unread", { count: unread })}>{Math.min(unread, 99)}</span> : null}
     </summary>
-    <section className="absolute end-0 z-50 mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border bg-popover text-popover-foreground shadow-xl" aria-label={t("title")}>
+    <section className="fixed inset-x-4 top-14 z-50 w-auto overflow-hidden rounded-2xl border bg-popover text-popover-foreground shadow-xl sm:absolute sm:inset-x-auto sm:end-0 sm:top-auto sm:mt-2 sm:w-[min(24rem,calc(100vw-2rem))]" aria-label={t("title")}>
       <header className="border-b px-4 py-3"><h2 className="font-semibold">{t("title")}</h2><p className="text-xs text-muted-foreground">{t("description")}</p></header>
       <div className="max-h-[28rem] overflow-y-auto">
         {loading ? <div className="flex min-h-24 items-center justify-center"><LoaderCircle className="size-5 animate-spin" aria-label={t("loading")} /></div> : items.length === 0 ? <p className="p-5 text-sm text-muted-foreground">{t("empty")}</p> : <ol className="divide-y">{items.map((item) => <li key={item.id} className={item.read ? "p-4" : "bg-amber-50/70 p-4 dark:bg-amber-950/20"}>

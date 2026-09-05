@@ -225,6 +225,7 @@ describe("ProductShell", () => {
     expect(screen.getByText("10 رصيدًا متاحًا")).toBeInTheDocument();
     expect(screen.getByText("10 رصيدًا")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "ترقية الباقة" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "المساعد" })).toHaveStyle({ left: "1.25rem" });
     expect(screen.getByTestId("shell-commercial-status-compact")).toHaveAccessibleName("إدارة الباقة و10 رصيدًا متاحًا");
   });
 
@@ -233,6 +234,10 @@ describe("ProductShell", () => {
 
     const launcher = screen.getByRole("button", { name: "Copilot" });
     expect(launcher).toHaveClass("size-12", "sm:w-auto", "sm:px-5");
+    expect(launcher).toHaveStyle({ right: "1.25rem" });
+    expect(launcher.parentElement).toHaveAttribute("data-slot", "global-copilot-viewport");
+    expect(launcher.parentElement).toHaveClass("fixed", "inset-0", "overflow-hidden");
+    expect(launcher.parentElement?.parentElement).toBe(document.body);
     expect(launcher).toHaveAttribute("title", "Copilot");
     expect(launcher.querySelector("span")).toHaveClass("hidden", "sm:inline");
   });

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useFormatter, useTranslations } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { ArrowUpRight, LoaderCircle, Sparkles, X } from "lucide-react";
 import { getActiveWorkspaceId } from "@/lib/studio/client";
 
@@ -20,12 +21,16 @@ type CopilotContext = {
 export function GlobalCopilot() {
   const t = useTranslations("socialCopilot");
   const dashboard = useTranslations("product.dashboard");
+  const locale = useLocale();
   const format = useFormatter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [context, setContext] = useState<CopilotContext | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     setOpen(false);
@@ -52,9 +57,11 @@ export function GlobalCopilot() {
   }
 
   const hidden = context && (dismissed || sessionStorageValue(`tasmeemai-copilot:${getActiveWorkspaceId()}:${context.suggestion.key}`) === "dismissed");
-  return <>
-    <button type="button" onClick={inspect} aria-label={t("button")} title={t("button")} aria-expanded={open} aria-controls="global-copilot-panel" className="fixed bottom-5 end-5 z-40 inline-flex size-12 min-h-12 items-center justify-center gap-2 rounded-full bg-stone-950 px-0 font-semibold text-white shadow-xl outline-none hover:bg-stone-800 focus-visible:ring-2 focus-visible:ring-amber-400 sm:w-auto sm:px-5"><Sparkles className="size-4 text-amber-300" aria-hidden="true" /><span className="hidden sm:inline">{t("button")}</span></button>
-    {open && <aside id="global-copilot-panel" className="fixed bottom-20 end-5 z-40 w-[min(24rem,calc(100vw-2.5rem))] rounded-3xl border bg-card p-5 shadow-2xl" aria-labelledby="global-copilot-title">
+  const viewportEdge = locale === "ar" ? { left: "1.25rem" } : { right: "1.25rem" };
+  if (!mounted) return null;
+  return createPortal(<div className="pointer-events-none fixed inset-0 z-40 overflow-hidden" data-slot="global-copilot-viewport">
+    <button type="button" style={viewportEdge} onClick={inspect} aria-label={t("button")} title={t("button")} aria-expanded={open} aria-controls="global-copilot-panel" className="pointer-events-auto absolute bottom-5 inline-flex size-12 min-h-12 items-center justify-center gap-2 rounded-full bg-stone-950 px-0 font-semibold text-white shadow-xl outline-none hover:bg-stone-800 focus-visible:ring-2 focus-visible:ring-amber-400 sm:w-auto sm:px-5"><Sparkles className="size-4 text-amber-300" aria-hidden="true" /><span className="hidden sm:inline">{t("button")}</span></button>
+    {open && <aside id="global-copilot-panel" style={viewportEdge} className="pointer-events-auto absolute bottom-20 w-[min(24rem,calc(100vw-2.5rem))] rounded-3xl border bg-card p-5 shadow-2xl" aria-labelledby="global-copilot-title">
       <div className="flex items-start gap-3"><div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800"><Sparkles className="size-5" /></div><div className="min-w-0 flex-1"><h2 id="global-copilot-title" className="font-semibold">{t("panelTitle")}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">{t("panelHelp")}</p></div><button type="button" onClick={() => setOpen(false)} aria-label={t("close")} className="rounded-lg p-2 hover:bg-muted"><X className="size-4" /></button></div>
       <div className="mt-5">
         {loading ? <div className="flex min-h-32 items-center justify-center"><LoaderCircle className="size-5 animate-spin" /></div> : hidden ? <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">{t("dismissed")}</div> : context ? <article className="rounded-2xl bg-stone-950 p-5 text-white"><p className="text-xs font-semibold uppercase tracking-[.16em] text-amber-300">{t("nextAction")}</p><h3 className="mt-2 text-lg font-semibold">{dashboard(`actions.${context.suggestion.key}` as never)}</h3><p className="mt-2 text-sm leading-6 text-stone-300">{dashboard(`reasons.${context.suggestion.reason}` as never)}</p>
@@ -69,7 +76,7 @@ export function GlobalCopilot() {
       </div>
       <p className="mt-4 text-xs leading-5 text-muted-foreground">{t("authorityBoundary")}</p>
     </aside>}
-  </>;
+  </div>, document.body);
 }
 
 function sessionStorageValue(key: string) {
