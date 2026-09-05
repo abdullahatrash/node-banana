@@ -32,7 +32,7 @@ Keep the HMAC key in server-side secret storage. Do not paste it into the browse
 1. Generate an unsigned manifest from the configured routes:
 
    ```bash
-   pnpm governance:region-evidence -- --template > /tmp/node-banana-region-unsigned.json
+   pnpm --silent governance:region-evidence -- --template > /tmp/node-banana-region-unsigned.json
    ```
 
 2. Review every `REVIEW_REQUIRED` value. Replace it only with a value supported by the actual deployment or authoritative disclosure.
@@ -40,7 +40,7 @@ Keep the HMAC key in server-side secret storage. Do not paste it into the browse
 4. Sign and locally verify the exact document:
 
    ```bash
-   pnpm governance:region-evidence -- /tmp/node-banana-region-unsigned.json > /tmp/node-banana-region-signed.json
+   pnpm --silent governance:region-evidence -- /tmp/node-banana-region-unsigned.json > /tmp/node-banana-region-signed.json
    ```
 
    Signing fails if a placeholder remains, the trust key is missing or shorter than 32 bytes, a route is missing, source evidence is stale, or the resulting signature does not verify.

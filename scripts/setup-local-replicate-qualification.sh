@@ -288,15 +288,45 @@ ask PROVIDER_REGION_REPLICATE "Enter the exact conservative region label support
 [[ -n "$PROVIDER_REGION_REPLICATE" ]] || { warn "A reviewed provider region label is required."; exit 1; }
 REGION_KEY_ID="region-key-local-v1"
 REGION_TRUST=$(_existing GOVERNANCE_REGION_TRUST_KEYS || true)
-if [[ -z "$REGION_TRUST" ]]; then
+if ! REGION_TRUST_JSON="$REGION_TRUST" REGION_KEY_ID="$REGION_KEY_ID" node -e '
+  try {
+    const trust = JSON.parse(process.env.REGION_TRUST_JSON || "{}");
+    const encoded = trust[process.env.REGION_KEY_ID];
+    if (typeof encoded !== "string" || Buffer.from(encoded, "base64").byteLength < 32) process.exit(1);
+  } catch {
+    process.exit(1);
+  }
+'; then
   REGION_KEY=$(openssl rand -base64 32 | tr -d '\n')
   REGION_TRUST="{\"$REGION_KEY_ID\":\"$REGION_KEY\"}"
 fi
+S3_REGION=$(_existing S3_REGION || true)
+if [[ -z "$S3_REGION" ]]; then
+  ask S3_REGION "Enter the exact region label configured for local workspace object storage:"
+fi
+[[ -n "$S3_REGION" ]] || { warn "A workspace object-storage region label is required."; exit 1; }
+APP_DATA_REGION=$(_existing APP_DATA_REGION || true)
+[[ -n "$APP_DATA_REGION" ]] || APP_DATA_REGION="local-development"
+GOVERNANCE_EXPORT_STORAGE_REGION=$(_existing GOVERNANCE_EXPORT_STORAGE_REGION || true)
+[[ -n "$GOVERNANCE_EXPORT_STORAGE_REGION" ]] || GOVERNANCE_EXPORT_STORAGE_REGION="$S3_REGION"
+GOVERNANCE_IMPORT_STORAGE_REGION=$(_existing GOVERNANCE_IMPORT_STORAGE_REGION || true)
+[[ -n "$GOVERNANCE_IMPORT_STORAGE_REGION" ]] || GOVERNANCE_IMPORT_STORAGE_REGION="$S3_REGION"
+GOVERNANCE_IMPORT_PROCESSING_REGION=$(_existing GOVERNANCE_IMPORT_PROCESSING_REGION || true)
+[[ -n "$GOVERNANCE_IMPORT_PROCESSING_REGION" ]] || GOVERNANCE_IMPORT_PROCESSING_REGION="$APP_DATA_REGION"
+GOVERNANCE_DELETION_REGION=$(_existing GOVERNANCE_DELETION_REGION || true)
+[[ -n "$GOVERNANCE_DELETION_REGION" ]] || GOVERNANCE_DELETION_REGION="$APP_DATA_REGION"
 write_env PROVIDER_REGION_REPLICATE "$PROVIDER_REGION_REPLICATE"
 write_env GOVERNANCE_REGION_TRUST_KEYS "$REGION_TRUST"
-step "In another terminal run: pnpm governance:region-evidence -- --template > /tmp/node-banana-region-unsigned.json"
+write_env S3_REGION "$S3_REGION"
+write_env APP_DATA_REGION "$APP_DATA_REGION"
+write_env GOVERNANCE_EXPORT_STORAGE_REGION "$GOVERNANCE_EXPORT_STORAGE_REGION"
+write_env GOVERNANCE_IMPORT_STORAGE_REGION "$GOVERNANCE_IMPORT_STORAGE_REGION"
+write_env GOVERNANCE_IMPORT_PROCESSING_REGION "$GOVERNANCE_IMPORT_PROCESSING_REGION"
+write_env GOVERNANCE_DELETION_REGION "$GOVERNANCE_DELETION_REGION"
+note "Local processing/deletion routes default to local-development; local object-storage routes reuse S3_REGION. Review these facts before signing."
+step "In another terminal run: pnpm --silent governance:region-evidence -- --template > /tmp/node-banana-region-unsigned.json"
 step "Replace every REVIEW_REQUIRED value and the placeholder source URL/digest using the disclosure you just reviewed."
-step "Sign it with: pnpm governance:region-evidence -- /tmp/node-banana-region-unsigned.json > /tmp/node-banana-region-signed.json"
+step "Sign it with: pnpm --silent governance:region-evidence -- /tmp/node-banana-region-unsigned.json > /tmp/node-banana-region-signed.json"
 step "In Settings → Data and retention, complete step-up verification, paste the signed JSON, and activate it."
 pause "Press Enter only after the signed region policy is active."
 
