@@ -27,6 +27,13 @@ The portfolio total covers the pending batch only. The durable Postgres ledger
 remains authoritative for completed and incomplete spend already committed by
 the same Replicate account and can still block the first paid submission.
 
+For local setup, `pnpm setup:replicate:qualification` now inspects every model
+contract, preflights every plan individually, validates the complete portfolio,
+asks once for explicit approval of that exact paid batch, executes the plans in
+order under the durable account ceiling, and combines only successful signed
+attestations into the runtime envelope. It cannot qualify a single convenient
+model and present the launch portfolio as complete.
+
 Before authoring that plan, inspect the current Official Model contract with the
 dedicated qualification token:
 

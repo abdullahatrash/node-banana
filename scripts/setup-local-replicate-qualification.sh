@@ -191,7 +191,7 @@ finish() {
 # ──────────────────────────────────────────────────────────────────────────
 
 TOTAL_STAGES=9
-TOTAL_MINUTES=50
+TOTAL_MINUTES=55
 [[ "$ENV_FILE" == ".env" ]] && ENV_FILE=".env.local"
 APP_BASE_URL="http://localhost:3002"
 SECRETS_DIR=".local-secrets"
@@ -307,29 +307,44 @@ step "If the app is not running, start it in another terminal with: PORT=3002 pn
 step "Choose Replicate, request the step-up code, paste the Workspace/dev token, validate, and save."
 pause "Press Enter after Settings confirms the Replicate credential is stored."
 
-stage "Contract, reviewed plan, and explicit paid run" 10
-say "Inspecting the contract is free. The final command can spend up to—but never including—USD 0.40 across the reviewed matrix."
-ask QUALIFICATION_MODEL "Enter the curated Replicate owner/model to inspect:"
-[[ "$QUALIFICATION_MODEL" =~ ^[^/]+/[^/]+$ ]] || { warn "Use exact owner/model syntax."; exit 1; }
-CONTRACT_PATH="/tmp/node-banana-${QUALIFICATION_MODEL//\//-}-contract.json"
-pnpm qualify:replicate:inspect "$QUALIFICATION_MODEL" > "$CONTRACT_PATH"
-say "Contract report saved to $CONTRACT_PATH"
-step "Using that report and docs/model-qualification-operations.md, prepare the bilingual Arabic/English, 9:16, cancellation, Brand-reference, license, pricing, and rights-reviewed plan. Set signingKeyId to '$MODEL_SIGNING_KEY_ID'."
-ask QUALIFICATION_PLAN_PATH "Paste the reviewed plan JSON path:"
-[[ -f "$QUALIFICATION_PLAN_PATH" ]] || { warn "Plan file not found."; exit 1; }
-pnpm qualify:replicate:check "$QUALIFICATION_PLAN_PATH"
-warn "The next run creates paid predictions. During it, use two other terminals for 'pnpm qualify:replicate:review -- --list' and 'pnpm qualify:replicate:spend -- --list'."
-if ! confirm "Run this exact reviewed matrix now with the strict account-wide cap below USD 0.40?"; then
-  SKIPPED+=("Paid model qualification; rerun this wizard when the exact plan is approved")
+stage "Contracts, reviewed portfolio, and explicit paid batch" 15
+say "Contract inspection is free. Launch requires a complete portfolio for Arabic copy, text-to-image, image-to-image, text-to-video, and image-to-video. The complete paid batch—not each plan separately—must remain below USD 0.40."
+ask QUALIFICATION_MODELS_LINE "Enter every curated owner/model to inspect, separated by spaces:"
+read -r -a QUALIFICATION_MODELS <<< "$QUALIFICATION_MODELS_LINE"
+(( ${#QUALIFICATION_MODELS[@]} >= 3 )) || { warn "A launch portfolio normally needs at least three complementary models."; exit 1; }
+for QUALIFICATION_MODEL in "${QUALIFICATION_MODELS[@]}"; do
+  [[ "$QUALIFICATION_MODEL" =~ ^[^/]+/[^/]+$ ]] || { warn "Use exact owner/model syntax for every model."; exit 1; }
+  CONTRACT_PATH="/tmp/node-banana-${QUALIFICATION_MODEL//\//-}-contract.json"
+  pnpm qualify:replicate:inspect "$QUALIFICATION_MODEL" > "$CONTRACT_PATH"
+  say "Contract report saved to $CONTRACT_PATH"
+done
+step "Using those reports and docs/model-qualification-operations.md, prepare complementary bilingual Arabic/English, 9:16, cancellation, Brand-reference, license, pricing, and rights-reviewed plans. Set signingKeyId to '$MODEL_SIGNING_KEY_ID'."
+ask QUALIFICATION_PLAN_PATHS_LINE "Paste every reviewed plan JSON path, separated by spaces:"
+read -r -a QUALIFICATION_PLAN_PATHS <<< "$QUALIFICATION_PLAN_PATHS_LINE"
+(( ${#QUALIFICATION_PLAN_PATHS[@]} >= 3 )) || { warn "At least three complementary reviewed plans are required."; exit 1; }
+for QUALIFICATION_PLAN_PATH in "${QUALIFICATION_PLAN_PATHS[@]}"; do
+  [[ -f "$QUALIFICATION_PLAN_PATH" ]] || { warn "Plan file not found: $QUALIFICATION_PLAN_PATH"; exit 1; }
+  pnpm qualify:replicate:check "$QUALIFICATION_PLAN_PATH"
+done
+pnpm qualify:replicate:portfolio -- "${QUALIFICATION_PLAN_PATHS[@]}"
+warn "The next batch creates paid predictions. During every run, use two other terminals for 'pnpm qualify:replicate:review -- --list' and 'pnpm qualify:replicate:spend -- --list'."
+if ! confirm "Run this exact reviewed portfolio now with the shared strict account-wide cap below USD 0.40?"; then
+  SKIPPED+=("Paid model qualification portfolio; rerun this wizard when every exact plan is approved")
   finish
   exit 0
 fi
-QUALIFICATION_RESULT_PATH="/tmp/node-banana-qualification-result.json"
-MODEL_QUALIFICATION_SIGNING_PRIVATE_KEY=$(awk '{printf "%s\\n",$0}' "$MODEL_SIGNING_PRIVATE_PATH") \
-  pnpm qualify:replicate "$QUALIFICATION_PLAN_PATH" --execute-paid-smoke > "$QUALIFICATION_RESULT_PATH"
-REPLICATE_MODEL_QUALIFICATIONS_JSON=$(node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(JSON.stringify(value.envelope))' "$QUALIFICATION_RESULT_PATH")
+QUALIFICATION_RESULT_PATHS=()
+QUALIFICATION_RESULT_INDEX=0
+for QUALIFICATION_PLAN_PATH in "${QUALIFICATION_PLAN_PATHS[@]}"; do
+  QUALIFICATION_RESULT_INDEX=$((QUALIFICATION_RESULT_INDEX + 1))
+  QUALIFICATION_RESULT_PATH="/tmp/node-banana-qualification-result-${QUALIFICATION_RESULT_INDEX}.json"
+  MODEL_QUALIFICATION_SIGNING_PRIVATE_KEY=$(awk '{printf "%s\\n",$0}' "$MODEL_SIGNING_PRIVATE_PATH") \
+    pnpm qualify:replicate "$QUALIFICATION_PLAN_PATH" --execute-paid-smoke > "$QUALIFICATION_RESULT_PATH"
+  QUALIFICATION_RESULT_PATHS+=("$QUALIFICATION_RESULT_PATH")
+done
+REPLICATE_MODEL_QUALIFICATIONS_JSON=$(node -e 'const fs=require("node:fs");const qualifications=process.argv.slice(1).flatMap((path)=>{const value=JSON.parse(fs.readFileSync(path,"utf8"));if(value?.envelope?.version!==1||!Array.isArray(value.envelope.qualifications))throw new Error("Invalid qualification result: ".concat(path));return value.envelope.qualifications});process.stdout.write(JSON.stringify({version:1,qualifications}))' "${QUALIFICATION_RESULT_PATHS[@]}")
 write_env REPLICATE_MODEL_QUALIFICATIONS_JSON "$REPLICATE_MODEL_QUALIFICATIONS_JSON"
-say "Signed runtime envelope stored; restart the app, then run pnpm doctor:local -- --workspace seed_ws_alice."
+say "Combined signed runtime envelope stored; restart the app, then run pnpm doctor:local -- --workspace seed_ws_alice."
 
 finish
 note "No GitHub secrets were written: qualification is intentionally a local, operator-attended procedure."
