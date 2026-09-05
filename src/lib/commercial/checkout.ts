@@ -17,6 +17,7 @@ type Snapshot =
   | { kind: "credit_pack"; packId: string; packVersion: number; creditUnits: number }
   | { kind: "channel_onboarding"; orderId: string; orderRevision: number; quoteId: string };
 export interface CheckoutAttributionRecorder { record(input: { workspaceId: string; userId: string; email: string; eventName: "purchase"; occurredAt: Date; value: string; currency: string; idempotencyKey: string }): Promise<unknown> }
+export interface CheckoutFinancialEvidenceRecorder { recordCheckout(event: MerchantCheckoutEvent): Promise<unknown> }
 export function checkoutPurchaseAttribution(input: { workspaceId: string; userId: string; email: string; amountMinor: number; currency: string; occurredAt: Date; provider: string; providerEventId: string }) {
   return { workspaceId: input.workspaceId, userId: input.userId, email: input.email, eventName: "purchase" as const, occurredAt: input.occurredAt, value: (input.amountMinor / 100).toFixed(2), currency: input.currency.toUpperCase(), idempotencyKey: `xads:purchase:${input.provider}:${input.providerEventId}` };
 }
@@ -29,7 +30,7 @@ export function checkoutRecoveryDelayMs(attempt: number, status: "pending" | "un
 }
 
 export class MerchantCheckoutService {
-  constructor(private readonly database: Db, private readonly merchant: MerchantOfRecordAdapter, private readonly commercial: CommercialRepository, private readonly onboarding: ChannelOnboardingRepository, private readonly now = () => new Date(), private readonly attribution?: CheckoutAttributionRecorder) {}
+  constructor(private readonly database: Db, private readonly merchant: MerchantOfRecordAdapter, private readonly commercial: CommercialRepository, private readonly onboarding: ChannelOnboardingRepository, private readonly now = () => new Date(), private readonly attribution?: CheckoutAttributionRecorder, private readonly financialEvidence?: CheckoutFinancialEvidenceRecorder) {}
 
   async create(input: { workspaceId: string; userId: string; purpose: Purpose; idempotencyKey: string; successPath: string; cancelPath: string }) {
     const now = this.now(), purposeRef = purposeKey(input.purpose, input.idempotencyKey);
@@ -76,7 +77,10 @@ export class MerchantCheckoutService {
     const inserted = await this.database.insert(merchantWebhookReceipts).values({ provider: event.provider, eventId: event.eventId, payloadDigest, eventType: event.eventType, checkoutId: event.checkoutId, merchantEffectRef: event.merchantEffectRef, state: "received", providerOccurredAt: event.occurredAt, receivedAt: now }).onConflictDoNothing().returning();
     const [receipt] = inserted[0] ? inserted : await this.database.select().from(merchantWebhookReceipts).where(and(eq(merchantWebhookReceipts.provider, event.provider), eq(merchantWebhookReceipts.eventId, event.eventId))).limit(1);
     if (!receipt || receipt.payloadDigest !== payloadDigest || receipt.checkoutId !== event.checkoutId || receipt.merchantEffectRef !== event.merchantEffectRef) throw new MerchantCheckoutError("WEBHOOK_REPLAY_CONFLICT");
-    if (receipt.state === "applied" || receipt.state === "ignored") return { state: receipt.state };
+    if (receipt.state === "applied" || receipt.state === "ignored") {
+      if (receipt.state === "applied" && event.eventType === "checkout.completed" && this.financialEvidence) await this.financialEvidence.recordCheckout(event);
+      return { state: receipt.state };
+    }
     const [checkout] = await this.database.select().from(merchantCheckoutSessions).where(eq(merchantCheckoutSessions.id, event.checkoutId)).limit(1);
     if (!checkout || (checkout.merchantCheckoutRef && checkout.merchantCheckoutRef !== event.merchantCheckoutRef)) throw new MerchantCheckoutError("CHECKOUT_EVENT_MISMATCH");
     await this.database.update(merchantWebhookReceipts).set({ state: "processing" }).where(and(eq(merchantWebhookReceipts.provider, event.provider), eq(merchantWebhookReceipts.eventId, event.eventId)));
@@ -84,6 +88,7 @@ export class MerchantCheckoutService {
     try {
       if (state === "completed") await this.applyCompletion(checkout.workspaceId, checkout.commercialSnapshot as Snapshot, event);
       await this.database.update(merchantCheckoutSessions).set({ state, merchantCheckoutRef: event.merchantCheckoutRef, merchantEffectRef: event.merchantEffectRef, merchantCustomerRef: event.merchantCustomerRef, recoveryLeaseOwner: null, recoveryLeaseExpiresAt: null, lastRecoveryStatus: `terminal:${state}`, completedAt: state === "completed" ? now : null, updatedAt: now }).where(and(eq(merchantCheckoutSessions.workspaceId, checkout.workspaceId), eq(merchantCheckoutSessions.id, checkout.id), inArray(merchantCheckoutSessions.state, ["creating", "ready", "outcome_unknown"])));
+      if (state === "completed" && this.financialEvidence) await this.financialEvidence.recordCheckout(event);
       await this.database.update(merchantWebhookReceipts).set({ state: "applied", processedAt: now }).where(and(eq(merchantWebhookReceipts.provider, event.provider), eq(merchantWebhookReceipts.eventId, event.eventId)));
       if (state === "completed" && this.attribution) {
         try {

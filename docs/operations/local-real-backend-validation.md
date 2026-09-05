@@ -117,6 +117,18 @@ Exercise chargeback and reversal fixtures the same way; the transaction should
 move through disputed and chargeback-reversed states without changing the
 original paid amount or merchant receipt reference.
 
+Every verified adjustment is first persisted as normalized, digest-bound inbox
+evidence. To test delivery reordering, deliver an adjustment before its matching
+transaction. The merchant route must return `202` with `pending_dependency`, not
+discard it or mutate balances. Deliver the transaction, then run
+`pnpm workers:local -- --url http://localhost:3002`; the adjustment recovery
+worker must claim the receipt with a short lease, apply it exactly once, and
+finish as `applied`. Re-delivering the identical event is a no-op. Reusing its
+provider event ID with different normalized evidence must fail as a replay
+conflict. Expired worker leases are reclaimable even on the final attempt, while
+deterministic evidence conflicts finish as `failed_known` and exhausted unknown
+failures remain explicit as `outcome_unknown`.
+
 For a Generation Credit pack, an approved partial refund removes the same
 proportion of credits using integer minor-unit arithmetic; a full refund or open
 chargeback targets the full pack. Unspent units are clawed back immediately. If

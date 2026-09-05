@@ -960,6 +960,13 @@
       "when": 1788741600000,
       "tag": "0136_execution_hold_workspace_index",
       "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1788745200000,
+      "tag": "0137_merchant_adjustment_inbox",
+      "breakpoints": true
     }
   ]
 }

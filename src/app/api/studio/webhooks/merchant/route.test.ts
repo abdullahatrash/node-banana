@@ -1,15 +1,17 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ verify: vi.fn(), apply: vi.fn(), applySubscription: vi.fn(), recordCheckout: vi.fn(), recordSubscription: vi.fn(), applyAdjustment: vi.fn() }));
+const mocks = vi.hoisted(() => ({ verify: vi.fn(), apply: vi.fn(), applySubscription: vi.fn(), recordCheckout: vi.fn(), recordSubscription: vi.fn(), applyAdjustment: vi.fn(), applyVerifiedAdjustment: vi.fn() }));
 vi.mock("@/lib/commercial/production", () => ({
   MERCHANT_OF_RECORD: { verifyWebhook: (...args: unknown[]) => mocks.verify(...args) },
   MERCHANT_CHECKOUTS: { applyVerifiedEvent: (...args: unknown[]) => mocks.apply(...args) },
   MERCHANT_SUBSCRIPTIONS: { applyVerifiedEvent: (...args: unknown[]) => mocks.applySubscription(...args) },
   MERCHANT_FINANCIALS: { recordCheckout: (...args: unknown[]) => mocks.recordCheckout(...args), recordSubscription: (...args: unknown[]) => mocks.recordSubscription(...args), applyAdjustment: (...args: unknown[]) => mocks.applyAdjustment(...args) },
+  MERCHANT_ADJUSTMENT_INBOX: { applyVerifiedEvent: (...args: unknown[]) => mocks.applyVerifiedAdjustment(...args) },
 }));
 
 import { POST } from "./route";
+import { MerchantFinancialEvidenceError } from "@/lib/commercial/financial-evidence";
 
 describe("merchant webhook route", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -30,15 +32,14 @@ describe("merchant webhook route", () => {
     expect(mocks.apply).not.toHaveBeenCalled();
   });
 
-  it("applies only a verified terminal checkout event", async () => {
+  it("delegates a verified terminal checkout as one fulfillment operation", async () => {
     const event = { eventId: "evt_1" };
     mocks.verify.mockReturnValue({ kind: "checkout_event", event });
     mocks.apply.mockResolvedValue({ state: "applied" });
-    mocks.recordCheckout.mockResolvedValue({ state: "recorded" });
     const response = await POST(new NextRequest("http://localhost/api/studio/webhooks/merchant", { method: "POST", body: "{}" }));
     expect(response.status).toBe(200);
     expect(mocks.apply).toHaveBeenCalledWith(event);
-    expect(mocks.recordCheckout).toHaveBeenCalledWith(event);
+    expect(mocks.recordCheckout).not.toHaveBeenCalled();
   });
 
   it("routes verified subscription events to the lifecycle projector", async () => {
@@ -55,11 +56,35 @@ describe("merchant webhook route", () => {
   it("projects a signed adjustment without invoking checkout fulfillment", async () => {
     const event = { eventId: "evt_adjustment" };
     mocks.verify.mockReturnValue({ kind: "adjustment_event", event });
-    mocks.applyAdjustment.mockResolvedValue({ state: "applied" });
+    mocks.applyVerifiedAdjustment.mockResolvedValue({ state: "applied" });
     const response = await POST(new NextRequest("http://localhost/api/studio/webhooks/merchant", { method: "POST", body: "{}" }));
     expect(response.status).toBe(200);
-    expect(mocks.applyAdjustment).toHaveBeenCalledWith(event);
+    expect(mocks.applyVerifiedAdjustment).toHaveBeenCalledWith(event);
+    expect(mocks.applyAdjustment).not.toHaveBeenCalled();
     expect(mocks.apply).not.toHaveBeenCalled();
     expect(mocks.applySubscription).not.toHaveBeenCalled();
+  });
+
+  it("durably accepts an adjustment that arrived before its transaction dependency", async () => {
+    const event = { eventId: "evt_adjustment_early", transactionRef: "txn_later" };
+    mocks.verify.mockReturnValue({ kind: "adjustment_event", event });
+    mocks.applyVerifiedAdjustment.mockResolvedValueOnce({ state: "pending_dependency" });
+
+    const response = await POST(new NextRequest("http://localhost/api/studio/webhooks/merchant", { method: "POST", body: "{}" }));
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ success: true, result: { state: "pending_dependency" } });
+    expect(mocks.applyAdjustment).not.toHaveBeenCalled();
+  });
+
+  it("rejects the same provider event ID when its signed facts conflict", async () => {
+    const event = { eventId: "evt_adjustment_replayed", transactionRef: "txn_changed" };
+    mocks.verify.mockReturnValue({ kind: "adjustment_event", event });
+    mocks.applyVerifiedAdjustment.mockRejectedValueOnce(new MerchantFinancialEvidenceError("ADJUSTMENT_INBOX_REPLAY_CONFLICT"));
+
+    const response = await POST(new NextRequest("http://localhost/api/studio/webhooks/merchant", { method: "POST", body: "{}" }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ success: false, code: "ADJUSTMENT_INBOX_REPLAY_CONFLICT" });
   });
 });
