@@ -11,7 +11,7 @@ describe("workspace notification preferences route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue({ authorized: true, session: { workspace: { id: "ws_1" }, user: { id: "user_1" } } });
-    mocks.get.mockResolvedValue({ deliveryLocale: null, billingEmailEnabled: true });
+    mocks.get.mockResolvedValue({ deliveryLocale: null, billingEmailEnabled: true, channelEmailEnabled: true, publishingEmailEnabled: true, creditEmailEnabled: true });
     mocks.update.mockImplementation(async (value) => value);
   });
 
@@ -21,11 +21,16 @@ describe("workspace notification preferences route", () => {
     expect(mocks.get).toHaveBeenCalledWith("ws_1", "user_1");
   });
 
-  it("accepts only the explicit bilingual billing preference contract", async () => {
-    const response = await PUT(new NextRequest("http://localhost/api/studio/notifications/preferences", { method: "PUT", body: JSON.stringify({ deliveryLocale: "ar", billingEmailEnabled: false }) }));
+  it("accepts only the explicit bilingual operational-email preference contract", async () => {
+    const preferences = { deliveryLocale: "ar", billingEmailEnabled: false, channelEmailEnabled: true, publishingEmailEnabled: false, creditEmailEnabled: true };
+    const response = await PUT(new NextRequest("http://localhost/api/studio/notifications/preferences", { method: "PUT", body: JSON.stringify(preferences) }));
     expect(response.status).toBe(200);
-    expect(mocks.update).toHaveBeenCalledWith({ workspaceId: "ws_1", userId: "user_1", deliveryLocale: "ar", billingEmailEnabled: false });
-    const invalid = await PUT(new NextRequest("http://localhost/api/studio/notifications/preferences", { method: "PUT", body: JSON.stringify({ deliveryLocale: "fr", billingEmailEnabled: true }) }));
+    expect(mocks.update).toHaveBeenCalledWith({ workspaceId: "ws_1", userId: "user_1", ...preferences });
+    const invalid = await PUT(new NextRequest("http://localhost/api/studio/notifications/preferences", { method: "PUT", body: JSON.stringify({ ...preferences, deliveryLocale: "fr" }) }));
     expect(invalid.status).toBe(422);
+    const partial = await PUT(new NextRequest("http://localhost/api/studio/notifications/preferences", { method: "PUT", body: JSON.stringify({ deliveryLocale: "ar", billingEmailEnabled: true }) }));
+    expect(partial.status).toBe(422);
+    const unknown = await PUT(new NextRequest("http://localhost/api/studio/notifications/preferences", { method: "PUT", body: JSON.stringify({ ...preferences, extra: true }) }));
+    expect(unknown.status).toBe(422);
   });
 });

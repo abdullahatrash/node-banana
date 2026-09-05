@@ -4,7 +4,7 @@ import { WorkspaceNotificationError } from "@/lib/product-notifications/service"
 import { withApiPermission } from "@/lib/studio/authz";
 
 async function setRead(request: NextRequest, context: { params: Promise<{ eventId: string }> }, read: boolean) {
-  const auth = await withApiPermission(request, { route: "/api/studio/notifications/:eventId/read", permission: "product:billing:read" });
+  const auth = await withApiPermission(request, { route: "/api/studio/notifications/:eventId/read", permission: "workspaces:read" });
   if (!auth.authorized) return auth.response;
   try {
     const { eventId } = await context.params;

@@ -18,6 +18,7 @@ const routes = [
   ["licensed-trend-imports", "/api/studio/internal/licensed-trend-materialization?limit=10"],
   ["merchant-checkouts", "/api/studio/internal/reconcile-checkouts?limit=20"],
   ["merchant-adjustments", "/api/studio/internal/reconcile-merchant-adjustments?limit=20"],
+  ["notification-projection", "/api/studio/internal/notification-projection?limit=50"],
   ["notification-email", "/api/studio/internal/notification-email?limit=20"],
 ];
 

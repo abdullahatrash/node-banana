@@ -3,7 +3,7 @@ import { WORKSPACE_NOTIFICATIONS } from "@/lib/product-notifications/production"
 import { withApiPermission } from "@/lib/studio/authz";
 
 export async function GET(request: NextRequest) {
-  const auth = await withApiPermission(request, { route: "/api/studio/notifications", permission: "product:billing:read" });
+  const auth = await withApiPermission(request, { route: "/api/studio/notifications", permission: "workspaces:read" });
   if (!auth.authorized) return auth.response;
   const unreadOnly = request.nextUrl.searchParams.get("unreadOnly") === "true";
   const parsed = Number(request.nextUrl.searchParams.get("limit") ?? "50");

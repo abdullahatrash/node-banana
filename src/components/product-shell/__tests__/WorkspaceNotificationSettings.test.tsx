@@ -13,9 +13,9 @@ describe("WorkspaceNotificationSettings", () => {
     vi.clearAllMocks();
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, preferences: { inAppEnabled: true, emailEnabled: false, webhookEnabled: false, muteAll: false, preferences: null } }), { status: 200, headers: { "content-type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, preferences: { deliveryLocale: null, billingEmailEnabled: true } }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, preferences: { deliveryLocale: null, billingEmailEnabled: true, channelEmailEnabled: true, publishingEmailEnabled: true, creditEmailEnabled: true } }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, preferences: { inAppEnabled: true, emailEnabled: true, webhookEnabled: false, muteAll: true, preferences: { schema: "social-notification-preferences/v1", deliveryLocale: "en", digestCadence: "weekly", weeklyDigestDay: 1, quietHours: { enabled: true, start: "23:00", end: "07:00", timeZone: "Asia/Riyadh" }, categories: { publishingProgress: true, publishingSuccess: false, channelUpdates: true } } } }), { status: 200, headers: { "content-type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, preferences: { deliveryLocale: "en", billingEmailEnabled: true } }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, preferences: { deliveryLocale: "en", billingEmailEnabled: true, channelEmailEnabled: false, publishingEmailEnabled: true, creditEmailEnabled: true } }), { status: 200, headers: { "content-type": "application/json" } }))
     );
   });
 
@@ -33,6 +33,7 @@ describe("WorkspaceNotificationSettings", () => {
     await user.clear(screen.getByLabelText("Ends"));
     await user.type(screen.getByLabelText("Ends"), "07:00");
     await user.click(screen.getByRole("checkbox", { name: /Publishing success/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Channel access email/ }));
     await user.click(screen.getByRole("button", { name: "Save notification preferences" }));
 
     await waitFor(() => expect(fetch).toHaveBeenNthCalledWith(3, "/api/social/notifications/preferences", expect.objectContaining({
@@ -46,13 +47,13 @@ describe("WorkspaceNotificationSettings", () => {
       muteAll: true,
       preferences: { deliveryLocale: "en", digestCadence: "weekly", weeklyDigestDay: 1, quietHours: { start: "23:00", end: "07:00", timeZone: "Asia/Riyadh" }, categories: { publishingSuccess: false } },
     });
-    expect(JSON.parse(String((vi.mocked(fetch).mock.calls[3][1] as RequestInit).body))).toEqual({ deliveryLocale: "en", billingEmailEnabled: true });
+    expect(JSON.parse(String((vi.mocked(fetch).mock.calls[3][1] as RequestInit).body))).toEqual({ deliveryLocale: "en", billingEmailEnabled: true, channelEmailEnabled: false, publishingEmailEnabled: true, creditEmailEnabled: true });
     expect(showToast).toHaveBeenCalledWith("Notification preferences saved", "success");
   });
 
   it("renders the non-disableable boundary in authored Arabic", async () => {
     render(<I18nTestProvider locale="ar"><WorkspaceNotificationSettings workspaceId="workspace-1" interfaceLocale="ar" workspaceTimeZone="Asia/Riyadh" /></I18nTestProvider>);
-    expect(await screen.findByRole("note")).toHaveTextContent("لبريد الفوترة مفتاح صريح مستقل");
+    expect(await screen.findByRole("note")).toHaveTextContent("تبقى تغيّرات الأمان متاحة دائمًا");
     expect(screen.getByLabelText("لغة الإشعارات")).toHaveValue("ar");
     expect(screen.getByRole("checkbox", { name: /بريد الفوترة والنزاعات/ })).toBeChecked();
   });

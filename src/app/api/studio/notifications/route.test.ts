@@ -14,11 +14,11 @@ describe("workspace notifications route", () => {
     mocks.list.mockResolvedValue([]);
   });
 
-  it("lists only the authenticated billing reader's workspace projection", async () => {
+  it("lists the authenticated member's permission-filtered workspace projection", async () => {
     const response = await GET(new NextRequest("http://localhost/api/studio/notifications?unreadOnly=true&limit=999"));
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toContain("no-store");
-    expect(mocks.auth).toHaveBeenCalledWith(expect.anything(), { route: "/api/studio/notifications", permission: "product:billing:read" });
+    expect(mocks.auth).toHaveBeenCalledWith(expect.anything(), { route: "/api/studio/notifications", permission: "workspaces:read" });
     expect(mocks.list).toHaveBeenCalledWith({ workspaceId: "ws_1", userId: "user_1", unreadOnly: true, limit: 100 });
   });
 

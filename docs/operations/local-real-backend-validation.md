@@ -68,7 +68,8 @@ server-owned managed token and stable key revision.
 | Brand-aware remix | `/blitz` | Remixable Inspiration Item and admitted video model | The user sees preserved influences, Brand direction and protected-expression exclusions; acceptance generates a new 9:16 Asset and must pass similarity gates before promotion. | Provider/credit spend only after generation confirmation |
 | Content formats | `/content` | Format definitions, Brand resources and admitted model when generation is used | Draft/save/revision behavior works; generated media pins its source Assets, format, Brand, rights and model receipts. | Only generation actions |
 | Social compose and calendar | `/compose`, `/calendar`, `/channels` | Workspace assets and a real supported channel connection | Draft, approval, scheduling and delivery state are durable. Publishing is external and must be tested on a dedicated test account. | Platform side effect, no Generation Credits |
-| Workers and recovery | `pnpm workers:local -- --url http://localhost:3002` | `STUDIO_INTERNAL_API_SECRET` and Postgres | Leases, retries and idempotency converge without duplicate Assets, posts, ledger entries or Inspiration Items. | A worker never invents authority to start a new generation |
+| Workspace notifications | Header bell and `/settings?section=notifications` | Canonical security, Channel, Approval, Delivery, social-failure, credit and merchant evidence | Each authorized member sees only events allowed by their current permission; authored Arabic/English snapshots, private read state, category email controls and security-email policy remain intact. | None |
+| Workers and recovery | `pnpm workers:local -- --url http://localhost:3002` | `STUDIO_INTERNAL_API_SECRET` and Postgres | Leases, retries and idempotency converge without duplicate Assets, posts, ledger entries, notifications or Inspiration Items. Notification projection runs before email dispatch. | A worker never invents authority to start a new generation |
 | Governance and erasure | `/settings` governance/privacy/account sections | Postgres, object storage and configured external adapters | Export, retention, legal hold, closure and erasure show exact scope, require the correct confirmations, and retain only the allowed audit evidence. | None; external deletion adapters may have side effects |
 
 ## 4. Exercise Paddle without real money
@@ -129,23 +130,36 @@ conflict. Expired worker leases are reclaimable even on the final attempt, while
 deterministic evidence conflicts finish as `failed_known` and exhausted unknown
 failures remain explicit as `outcome_unknown`.
 
-Each applied refund, credit reversal, chargeback, or chargeback reversal also
-creates one canonical Workspace notification event. Only current members with
-`product:billing:read` receive a recipient projection. Their personal
-notification locale is snapshotted as authored Arabic or English, and the
-header notification center keeps read state private to that recipient. Validate
-both locales with a mixed-direction transaction reference and confirm that a
-member without billing-read authority cannot list or receive the event.
+Canonical Workspace notifications cover provider-credential changes, Channel
+consent expiry/reconnection, publishing Approval requests and decisions,
+terminal or ambiguous Delivery failures, critical social publishing failures,
+low/exhausted Generation Credits, and applied refund/dispute transitions. Run
+`pnpm workers:local -- --url http://localhost:3002` or call the internal
+projection route before the email route. The projector anti-joins each
+append-only source by a stable source reference, so replay and crash recovery do
+not create duplicate events. Credit alerts are episode-based: one low warning,
+one exhausted warning if the balance crosses zero, and a new episode only after
+the balance returns to healthy.
 
-Settings → Notifications exposes a separate billing-email switch. Run
-`pnpm workers:local -- --url http://localhost:3002` or call
-`/api/studio/internal/notification-email?limit=20` with worker authentication.
-Local console delivery redacts message contents unless explicitly enabled;
-production Resend delivery carries a stable per-recipient `Idempotency-Key`.
-Disable billing email before claim and confirm the worker re-checks the current
-preference, records `suppressed`, and retains the in-app event. A crashed worker
-may reclaim an expired lease even on the final attempt. Exhausted uncertain
-delivery remains `outcome_unknown` instead of being represented as delivered.
+Recipient fan-out and every later list, read-state, and email action re-check
+the member's current exact permission: `workspaces:write` for security,
+`social:manage` for Channel alerts and pending Approval requests, `social:view`
+for Approval outcomes and publishing failures, and `product:billing:read` for
+billing or credit alerts. Remove one permission after fan-out and confirm the
+event immediately disappears and cannot be marked read or emailed. Restore it
+and confirm the existing recipient state returns; no duplicate row is created.
+
+The member's personal notification locale and rendered payload are snapshotted
+as authored Arabic or English, while read state stays private to that recipient.
+Validate mixed-direction provider, Channel, transaction and Delivery references
+in both locales. Settings → Notifications exposes independent billing, Channel,
+publishing and credit email switches. Security-change email is mandatory for a
+verified currently authorized manager. Disable each optional category before
+claim and confirm the worker records `suppressed` while retaining its in-app
+event. Local console delivery redacts contents unless explicitly enabled;
+production Resend delivery uses a stable per-recipient `Idempotency-Key`.
+Expired leases are reclaimable and exhausted uncertain delivery remains
+`outcome_unknown`, never falsely delivered.
 
 For a Generation Credit pack, an approved partial refund removes the same
 proportion of credits using integer minor-unit arithmetic; a full refund or open

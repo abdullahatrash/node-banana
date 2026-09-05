@@ -20,5 +20,6 @@ describe("workspace notification read state route", () => {
     expect(mocks.setRead).toHaveBeenCalledWith({ workspaceId: "ws_1", eventId: "event_1", userId: "user_1", read: true });
     expect((await DELETE(new NextRequest("http://localhost/api/studio/notifications/event_1/read", { method: "DELETE" }), context)).status).toBe(200);
     expect(mocks.setRead).toHaveBeenCalledWith({ workspaceId: "ws_1", eventId: "event_1", userId: "user_1", read: false });
+    expect(mocks.auth).toHaveBeenCalledWith(expect.anything(), { route: "/api/studio/notifications/:eventId/read", permission: "workspaces:read" });
   });
 });

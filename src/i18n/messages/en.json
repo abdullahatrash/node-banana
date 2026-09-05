@@ -162,6 +162,52 @@
       "disputeResolvedBody": "The dispute for {amount} on transaction {transaction} was resolved. Credits still owed: {credits}. Managed generation hold: {hold}.",
       "executionHold": { "active": "active", "released": "released", "none": "none" },
       "openBilling": "Open billing"
+    },
+    "security": {
+      "credentialCreatedTitle": "A provider credential was added",
+      "credentialCreatedBody": "{name} for {provider} was added. Security reference: {reference}.",
+      "credentialRotatedTitle": "A provider credential was rotated",
+      "credentialRotatedBody": "{name} for {provider} was rotated. Security reference: {reference}.",
+      "credentialRevokedTitle": "Provider credential access was revoked",
+      "credentialRevokedBody": "Access for {name} on {provider} was revoked. Security reference: {reference}.",
+      "credentialStatusChangedTitle": "Provider credential status changed",
+      "credentialStatusChangedBody": "{name} on {provider} changed to {change}. Security reference: {reference}.",
+      "spendAuthorityChangedTitle": "AI spend authority changed",
+      "spendAuthorityChangedBody": "Spend authority for {name} on {provider} changed to {change}. Security reference: {reference}.",
+      "change": { "created": "created", "reprovisioned": "reprovisioned", "rotated": "rotated", "revoked": "revoked", "enabled": "enabled", "disabled": "disabled" },
+      "openCredentials": "Review credentials"
+    },
+    "channel": {
+      "consentExpiringTitle": "Channel access expires soon",
+      "consentExpiringBody": "Access for {channel} on {platform} expires on {date}. Reconnect before scheduled publishing is interrupted.",
+      "reconnectRequiredTitle": "A channel must be reconnected",
+      "reconnectRequiredBody": "Access for {channel} on {platform} is no longer usable. Reconnect the channel before publishing.",
+      "unknownDate": "an unknown date",
+      "openChannels": "Open channels"
+    },
+    "publishing": {
+      "approvalRequestedTitle": "A publishing approval is waiting",
+      "approvalRequestedBody": "Request {request} covers {targets, plural, one {# target} other {# targets}} across {channels, plural, one {# channel} other {# channels}}.",
+      "approvalApprovedTitle": "A publishing request was approved",
+      "approvalApprovedBody": "Request {request} for {targets, plural, one {# target} other {# targets}} across {channels, plural, one {# channel} other {# channels}} was approved.",
+      "approvalDeniedTitle": "A publishing request was denied",
+      "approvalDeniedBody": "Request {request} for {targets, plural, one {# target} other {# targets}} across {channels, plural, one {# channel} other {# channels}} was denied.",
+      "deliveryFailedTitle": "A publishing delivery failed",
+      "deliveryFailedBody": "Delivery {reference} for channel {channel} failed with {failure}. Review the evidence before retrying.",
+      "deliveryOutcomeUnknownTitle": "A publishing outcome needs reconciliation",
+      "deliveryOutcomeUnknownBody": "Delivery {reference} for channel {channel} has an unknown provider outcome ({failure}). Do not publish again until reconciled.",
+      "socialFailedTitle": "Social publishing needs attention",
+      "socialFailedBody": "Social operation {reference} on {channel} failed with {failure}.",
+      "openApprovals": "Open approvals",
+      "openDeliveries": "Open deliveries",
+      "openSocialEvents": "Open social events"
+    },
+    "credits": {
+      "lowTitle": "Generation Credits are running low",
+      "lowBody": "This Workspace has {credits, plural, one {# Generation Credit} other {# Generation Credits}} available, at or below the warning threshold of {threshold}.",
+      "exhaustedTitle": "Generation Credits are exhausted",
+      "exhaustedBody": "This Workspace has {credits} Generation Credits available. Managed AI generation will remain blocked until credits are added.",
+      "openBilling": "Open billing"
     }
   },
   "shell": {
@@ -174,7 +220,7 @@
     "status": { "planned": "Planned", "plannedDetail": "This complete capability is scheduled for a later parity slice and is not presented as available yet." },
     "workspace": { "label": "Workspace", "select": "Select workspace", "selectionRequired": "Choose an authorized workspace to continue", "owner": "Owner", "admin": "Admin", "member": "Member", "empty": "No authorized workspace", "unavailable": "Workspace context is unavailable" },
     "commercial": { "free": "Free", "credits": "{count} credits available", "trial": "{plan} trial · {days}d left", "upgrade": "Upgrade", "manageCredits": "Manage plan and {count} available credits" },
-    "notifications": { "open": "Open notifications", "title": "Billing notifications", "description": "Refund and dispute changes visible to authorized billing readers.", "loading": "Loading notifications", "empty": "No billing notifications yet.", "markRead": "Mark as read", "unread": "{count, plural, one {# unread notification} other {# unread notifications}}" },
+    "notifications": { "open": "Open notifications", "title": "Workspace notifications", "description": "Security, channels, publishing, approvals, credits, and billing activity you are authorized to see.", "loading": "Loading notifications", "empty": "No Workspace notifications yet.", "markRead": "Mark as read", "unread": "{count, plural, one {# unread notification} other {# unread notifications}}" },
     "dashboard": { "eyebrow": "Workspace home", "title": "Create, review, and publish from one place", "description": "Use the unified workspace navigation to move between every available creation, publishing, agent, and operations capability.", "createTitle": "Create content", "createDescription": "Start with an image, video, or copy workflow in AI Studio.", "publishTitle": "Plan and publish", "publishDescription": "Compose a post, connect channels, and manage the calendar.", "operateTitle": "Review operations", "operateDescription": "Inspect approvals, deliveries, usage, budgets, and service health.", "open": "Open" },
     "contentHub": { "title": "Content workspace", "description": "Choose a live creation or publishing surface. The complete format system arrives as its own parity slice; this hub does not disguise unfinished formats as available.", "copyTitle": "Write copy", "copyDescription": "Create campaign and social copy with the copy studio.", "imagesTitle": "Generate images", "imagesDescription": "Create and refine visual assets in AI Studio.", "videosTitle": "Generate videos", "videosDescription": "Create short-form video assets with available models.", "postsTitle": "Manage posts", "postsDescription": "Open saved social drafts and publishing records." },
     "settings": { "title": "Settings", "description": "Workspace access, trust, and provider configuration", "close": "Close settings", "navigationLabel": "Settings sections", "sections": { "account": "Account", "members": "Members and invitations", "roles": "Roles", "approval": "Approval policies", "portfolios": "Portfolios", "audit": "Audit trail", "data": "Data and retention", "safety": "Safety and appeals", "bulk": "Bulk operations", "portability": "Import and export", "language": "Language", "preferences": "Workspace preferences", "notifications": "Notifications", "channels": "Publishing Channels", "demoVideos": "Demo Videos", "remix": "Remix", "privacy": "Privacy", "storage": "Storage", "billing": "Billing and credits", "api": "API access", "providers": "Provider credentials" } },
@@ -647,12 +693,12 @@
     },
     "notificationPreferences": {
       "eyebrow": "Personal delivery policy", "title": "Notification preferences", "description": "Choose how optional publishing activity reaches you in this Workspace. These choices belong to your account and never change another member's delivery policy.", "loading": "Loading notification preferences", "saving": "Saving…", "save": "Save notification preferences", "saved": "Notification preferences saved",
-      "channels": { "inApp": { "title": "In-app activity", "description": "Include selected activity in the authenticated notification digest." }, "email": { "title": "Email digest", "description": "Send selected activity to your verified account email on the cadence below." }, "mute": { "title": "Mute optional activity", "description": "Pause optional categories without erasing your channel and schedule choices." }, "billingEmail": { "title": "Billing and dispute email", "description": "Email verified billing readers when a refund or dispute changes financial access." } },
+      "channels": { "inApp": { "title": "In-app activity", "description": "Include selected activity in the authenticated notification digest." }, "email": { "title": "Email digest", "description": "Send selected activity to your verified account email on the cadence below." }, "mute": { "title": "Mute optional activity", "description": "Pause optional categories without erasing your channel and schedule choices." }, "billingEmail": { "title": "Billing and dispute email", "description": "Email verified billing readers when a refund or dispute changes financial access." }, "channelEmail": { "title": "Channel access email", "description": "Warn when channel consent is expiring or reconnection is required." }, "publishingEmail": { "title": "Approvals and delivery email", "description": "Send approval decisions and terminal publishing failures." }, "creditEmail": { "title": "Credit balance email", "description": "Warn authorized billing readers when Generation Credits are low or exhausted." } },
       "delivery": { "title": "Delivery language and cadence", "description": "Notification language is independent from generated Content Language.", "language": "Notification language", "cadence": "Email digest cadence", "weeklyDay": "Weekly digest day" },
       "languages": { "ar": "Arabic", "en": "English" }, "cadence": { "daily": "Daily", "weekly": "Weekly" }, "weekdays": { "0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday" },
       "quiet": { "title": "Quiet hours", "description": "Optional email waits while the local clock is inside this interval. In-app evidence remains available.", "enable": "Use quiet hours", "start": "Starts", "end": "Ends", "timeZone": "IANA timezone" },
       "categories": { "title": "Optional activity", "description": "Choose which non-critical publishing events can enter your digest.", "publishingProgress": { "title": "Publishing progress", "description": "Queued and actively publishing posts." }, "publishingSuccess": { "title": "Publishing success", "description": "Confirmed public delivery outcomes." }, "channelUpdates": { "title": "Channel updates", "description": "Routine credential refresh activity." } },
-      "mandatory": "Known publishing failures, dispatch failures, Channel reauthorization requirements, and billing changes remain available in-app. Billing email has its own explicit switch; its delivery language follows the notification language above.",
+      "mandatory": "Security changes always remain available in-app and are emailed to verified authorized managers. Other Workspace email categories have explicit switches; all use the notification language above.",
       "errors": { "load": "Notification preferences could not be loaded.", "save": "Notification preferences could not be saved. Check the timezone and quiet-hour interval." }
     },
     "workspacePreferences": {

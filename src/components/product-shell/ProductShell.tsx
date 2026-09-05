@@ -316,7 +316,7 @@ export function ProductShell({
           <span className="h-4 w-px bg-border" aria-hidden="true" />
           <h1 className="min-w-0 truncate text-base font-semibold">{title}</h1>
           <div className="ms-auto flex min-w-0 shrink-0 items-center gap-2">
-            {context.canReadBilling ? <WorkspaceNotificationCenter workspaceId={context.initialWorkspaceId} authorizedWorkspaces={context.workspaces} /> : null}
+            <WorkspaceNotificationCenter workspaceId={context.initialWorkspaceId} authorizedWorkspaces={context.workspaces} />
             {context.canReadBilling ? <CommercialStatusCompact summary={commercialSummary} /> : null}
             {headerActions}
           </div>

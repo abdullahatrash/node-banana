@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { renderBillingNotification } from "@/i18n/notifications";
-import { billingNotificationEventType, notificationIdempotencyKey, notificationRetryDelayMs } from "../service";
+import { renderBillingNotification, renderWorkspaceNotification } from "@/i18n/notifications";
+import { billingNotificationEventType, notificationEmailEnabled, notificationIdempotencyKey, notificationRetryDelayMs } from "../service";
 
 describe("workspace billing notifications", () => {
   it("maps only approved customer-relevant financial transitions", () => {
@@ -20,6 +20,24 @@ describe("workspace billing notifications", () => {
     expect(ar).toMatchObject({ title: "نزاع فوترة يحتاج إلى تدخلك", actionLabel: "فتح الفوترة" });
     expect(ar.body).toContain("\u2068txn_123\u2069");
     expect(ar.body).toContain("نشط");
+  });
+
+  it("renders Arabic and English operational alerts from semantic facts", () => {
+    const facts = { resourceName: "Replicate production", provider: "replicate", change: "rotated", reference: "event_123" };
+    const en = renderWorkspaceNotification("en", "workspace-notifications/v2", "security.credential_rotated", facts);
+    const ar = renderWorkspaceNotification("ar", "workspace-notifications/v2", "security.credential_rotated", facts);
+    expect(en.title).toBe("A provider credential was rotated");
+    expect(ar.title).toBe("دُوّرت بيانات اعتماد لمزوّد");
+    expect(ar.body).toContain("\u2068replicate\u2069");
+  });
+
+  it("keeps security email mandatory while honoring every optional category", () => {
+    const disabled = { billingEmailEnabled: false, channelEmailEnabled: false, publishingEmailEnabled: false, creditEmailEnabled: false };
+    expect(notificationEmailEnabled("security.credential_rotated", disabled)).toBe(true);
+    expect(notificationEmailEnabled("billing.refund_applied", disabled)).toBe(false);
+    expect(notificationEmailEnabled("channel.reconnect_required", disabled)).toBe(false);
+    expect(notificationEmailEnabled("publishing.delivery_failed", disabled)).toBe(false);
+    expect(notificationEmailEnabled("credits.low", disabled)).toBe(false);
   });
 
   it("keeps all email retries inside the provider idempotency window", () => {

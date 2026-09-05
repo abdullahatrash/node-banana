@@ -15,7 +15,9 @@ export async function PUT(request: NextRequest) {
   try { body = await request.json(); } catch { return NextResponse.json({ success: false, code: "INVALID_JSON" }, { status: 400 }); }
   if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ success: false, code: "INVALID_PREFERENCES" }, { status: 422 });
   const value = body as Record<string, unknown>;
-  if (![null, "ar", "en"].includes(value.deliveryLocale as null | string) || typeof value.billingEmailEnabled !== "boolean" || Object.keys(value).some((key) => !["deliveryLocale", "billingEmailEnabled"].includes(key))) return NextResponse.json({ success: false, code: "INVALID_PREFERENCES" }, { status: 422 });
-  const preferences = await WORKSPACE_NOTIFICATIONS.updatePreferences({ workspaceId: auth.session.workspace.id, userId: auth.session.user.id, deliveryLocale: value.deliveryLocale as "ar" | "en" | null, billingEmailEnabled: value.billingEmailEnabled });
+  const booleanKeys = ["billingEmailEnabled", "channelEmailEnabled", "publishingEmailEnabled", "creditEmailEnabled"] as const;
+  const allowedKeys = new Set<string>(["deliveryLocale", ...booleanKeys]);
+  if (![null, "ar", "en"].includes(value.deliveryLocale as null | string) || booleanKeys.some((key) => typeof value[key] !== "boolean") || Object.keys(value).some((key) => !allowedKeys.has(key))) return NextResponse.json({ success: false, code: "INVALID_PREFERENCES" }, { status: 422 });
+  const preferences = await WORKSPACE_NOTIFICATIONS.updatePreferences({ workspaceId: auth.session.workspace.id, userId: auth.session.user.id, deliveryLocale: value.deliveryLocale as "ar" | "en" | null, billingEmailEnabled: value.billingEmailEnabled as boolean, channelEmailEnabled: value.channelEmailEnabled as boolean, publishingEmailEnabled: value.publishingEmailEnabled as boolean, creditEmailEnabled: value.creditEmailEnabled as boolean });
   return NextResponse.json({ success: true, preferences }, { headers: { "Cache-Control": "private, no-store" } });
 }

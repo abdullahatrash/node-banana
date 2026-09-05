@@ -63,6 +63,9 @@
     "src/app/api/studio/internal/notification-email/route.ts": {
       "maxDuration": 60
     },
+    "src/app/api/studio/internal/notification-projection/route.ts": {
+      "maxDuration": 60
+    },
     "src/app/api/studio/internal/persona-training/dispatch/route.ts": {
       "maxDuration": 60
     },
@@ -115,6 +118,10 @@
     },
     {
       "path": "/api/studio/internal/reconcile-merchant-adjustments?limit=20",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/notification-projection?limit=50",
       "schedule": "* * * * *"
     },
     {

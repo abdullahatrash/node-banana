@@ -1705,6 +1705,9 @@ export const credentialSecurityEvents = pgTable(
     workspaceCreatedIdx: index(
       "credential_security_events_workspace_created_idx",
     ).on(table.workspaceId, table.createdAt),
+    notificationCursorIdx: index(
+      "credential_security_events_notification_cursor_idx",
+    ).on(table.createdAt, table.id).where(sql`${table.eventType} in ('profile.created','profile.reprovisioned','profile.rotated','version.revoked','profile.status_changed','spend_grant.created','spend_grant.revoked')`),
     workspaceEffectIdx: index(
       "credential_security_events_workspace_effect_idx",
     ).on(table.workspaceId, table.effectRef),
@@ -3037,6 +3040,9 @@ export const runtimePublishingApprovalRequests = pgTable(
     workspaceStateExpiryIdx: index(
       "runtime_publishing_approval_requests_workspace_expiry_idx",
     ).on(table.workspaceId, table.decisionPolicyExpiresAt, table.id),
+    notificationCursorIdx: index(
+      "runtime_publishing_approval_requests_notification_cursor_idx",
+    ).on(table.createdAt, table.id),
     retrySourceIdx: index(
       "runtime_publishing_approval_requests_retry_source_idx",
     ).on(table.workspaceId, table.retrySourceDeliveryId,
@@ -3162,6 +3168,9 @@ export const runtimePublishingApprovalDecisions = pgTable(
     workspaceDecidedIdx: index(
       "runtime_publishing_approval_decisions_workspace_decided_idx",
     ).on(table.workspaceId, table.decidedAt.desc(), table.id.desc()),
+    notificationCursorIdx: index(
+      "runtime_publishing_approval_decisions_notification_cursor_idx",
+    ).on(table.decidedAt, table.id),
     identityCheck: check(
       "runtime_publishing_approval_decisions_identity_check",
       sql`length(${table.id}) between 1 and 200
@@ -5040,6 +5049,9 @@ export const runtimePublishingDeliveryEvents = pgTable(
     deliverySequenceIdx: index(
       "runtime_publishing_delivery_events_delivery_sequence_idx",
     ).on(table.workspaceId, table.deliveryId, table.sequence),
+    notificationCursorIdx: index(
+      "runtime_publishing_delivery_events_notification_cursor_idx",
+    ).on(table.occurredAt, table.id).where(sql`${table.type} in ('publication.failed_terminal','publication.outcome_unknown')`),
     sequenceCheck: check(
       "runtime_publishing_delivery_events_sequence_check",
       sql`${table.sequence} > 0`,
@@ -6663,6 +6675,9 @@ export const socialAccounts = pgTable(
     ).on(table.workspaceId, table.platform, table.platformUserId),
     workspaceIdUnique: uniqueIndex("social_accounts_workspace_id_unique").on(table.workspaceId, table.id),
     workspaceIdx: index("social_accounts_workspace_idx").on(table.workspaceId),
+    consentExpiryIdx: index("social_accounts_consent_expiry_idx")
+      .on(table.tokenExpiresAt, table.id)
+      .where(sql`${table.disabled} = false and ${table.requiresReauth} = false and ${table.tokenExpiresAt} is not null`),
     createdAtIdx: index("social_accounts_created_at_idx").on(table.createdAt),
   }),
 );
@@ -6875,6 +6890,9 @@ export const socialEvents = pgTable(
     postIdx: index("social_events_post_idx").on(table.postId),
     accountIdx: index("social_events_account_idx").on(table.accountId),
     createdAtIdx: index("social_events_created_at_idx").on(table.createdAt),
+    notificationCursorIdx: index("social_events_notification_cursor_idx")
+      .on(table.createdAt, table.id)
+      .where(sql`${table.userFacing} = true and ${table.eventType} in ('account.reauth_required','post.failed','dispatch.failed')`),
   }),
 );
 
@@ -9999,16 +10017,20 @@ export const merchantExecutionHolds = pgTable("merchant_execution_holds", {
 }, (table) => ({ pk: primaryKey({ name: "merchant_execution_holds_pk", columns: [table.provider, table.transactionRef] }), transactionFk: foreignKey({ name: "merchant_execution_holds_transaction_fk", columns: [table.provider, table.transactionRef], foreignColumns: [merchantBillingTransactions.provider, merchantBillingTransactions.transactionRef] }).onDelete("restrict"), workspaceIdx: index("merchant_execution_holds_workspace_idx").on(table.workspaceId, table.state, table.updatedAt), activePeriodIdx: index("merchant_execution_holds_active_period_idx").on(table.workspaceId, table.merchantSubscriptionRef, table.periodStartsAt, table.periodEndsAt).where(sql`${table.state} = 'active'`), valuesCheck: check("merchant_execution_holds_values_check", sql`${table.periodEndsAt} > ${table.periodStartsAt} and ${table.reason} in ('refunded','disputed') and ${table.state} in ('active','released')`) }));
 
 export const workspaceNotificationPreferences = pgTable("workspace_notification_preferences", {
-  workspaceId: text("workspace_id").notNull(), userId: text("user_id").notNull(), deliveryLocale: text("delivery_locale"), billingEmailEnabled: boolean("billing_email_enabled").default(true).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  workspaceId: text("workspace_id").notNull(), userId: text("user_id").notNull(), deliveryLocale: text("delivery_locale"), billingEmailEnabled: boolean("billing_email_enabled").default(true).notNull(), channelEmailEnabled: boolean("channel_email_enabled").default(true).notNull(), publishingEmailEnabled: boolean("publishing_email_enabled").default(true).notNull(), creditEmailEnabled: boolean("credit_email_enabled").default(true).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 }, (table) => ({ pk: primaryKey({ name: "workspace_notification_preferences_pk", columns: [table.workspaceId, table.userId] }), membershipFk: foreignKey({ name: "workspace_notification_preferences_membership_fk", columns: [table.workspaceId, table.userId], foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId] }).onDelete("cascade"), userIdx: index("workspace_notification_preferences_user_idx").on(table.userId, table.workspaceId), localeCheck: check("workspace_notification_preferences_locale_check", sql`${table.deliveryLocale} is null or ${table.deliveryLocale} in ('ar','en')`) }));
 
 export const workspaceNotificationEvents = pgTable("workspace_notification_events", {
-  workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), eventType: text("event_type").notNull(), sourceRef: text("source_ref").notNull(), severity: text("severity").notNull(), facts: jsonb("facts").$type<Record<string, string | number | boolean | null>>().notNull(), actionPath: text("action_path").notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-}, (table) => ({ pk: primaryKey({ name: "workspace_notification_events_pk", columns: [table.workspaceId, table.id] }), sourceUnique: uniqueIndex("workspace_notification_events_source_unique").on(table.workspaceId, table.sourceRef), workspaceFk: foreignKey({ name: "workspace_notification_events_workspace_fk", columns: [table.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"), cursorIdx: index("workspace_notification_events_cursor_idx").on(table.workspaceId, table.occurredAt.desc(), table.id.desc()), valuesCheck: check("workspace_notification_events_values_check", sql`${table.eventType} in ('billing.refund_applied','billing.refund_reversed','billing.dispute_opened','billing.dispute_resolved') and ${table.severity} in ('info','warning','critical') and octet_length(${table.facts}::text) between 2 and 8192 and octet_length(${table.actionPath}) between 1 and 501 and ${table.actionPath} ~ '^/[A-Za-z0-9/_?=&.-]*$'`) }));
+  workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), eventType: text("event_type").notNull(), sourceRef: text("source_ref").notNull(), requiredPermission: text("required_permission").notNull(), severity: text("severity").notNull(), facts: jsonb("facts").$type<Record<string, string | number | boolean | null>>().notNull(), actionPath: text("action_path").notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "workspace_notification_events_pk", columns: [table.workspaceId, table.id] }), sourceUnique: uniqueIndex("workspace_notification_events_source_unique").on(table.workspaceId, table.sourceRef), workspaceFk: foreignKey({ name: "workspace_notification_events_workspace_fk", columns: [table.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"), cursorIdx: index("workspace_notification_events_cursor_idx").on(table.workspaceId, table.occurredAt.desc(), table.id.desc()), permissionCursorIdx: index("workspace_notification_events_permission_cursor_idx").on(table.workspaceId, table.requiredPermission, table.occurredAt.desc(), table.id.desc()), valuesCheck: check("workspace_notification_events_values_check", sql`${table.eventType} in ('billing.refund_applied','billing.refund_reversed','billing.dispute_opened','billing.dispute_resolved','security.credential_created','security.credential_rotated','security.credential_revoked','security.credential_status_changed','security.spend_authority_changed','channel.consent_expiring','channel.reconnect_required','publishing.approval_requested','publishing.approval_approved','publishing.approval_denied','publishing.delivery_failed','publishing.delivery_outcome_unknown','publishing.social_failed','credits.low','credits.exhausted') and ${table.requiredPermission} in ('workspaces:write','social:view','social:manage','product:billing:read') and ((${table.eventType} like 'billing.%' and ${table.requiredPermission} = 'product:billing:read') or (${table.eventType} like 'credits.%' and ${table.requiredPermission} = 'product:billing:read') or (${table.eventType} like 'security.%' and ${table.requiredPermission} = 'workspaces:write') or (${table.eventType} like 'channel.%' and ${table.requiredPermission} = 'social:manage') or (${table.eventType} = 'publishing.approval_requested' and ${table.requiredPermission} = 'social:manage') or (${table.eventType} in ('publishing.approval_approved','publishing.approval_denied','publishing.delivery_failed','publishing.delivery_outcome_unknown','publishing.social_failed') and ${table.requiredPermission} = 'social:view')) and ${table.severity} in ('info','warning','critical') and octet_length(${table.sourceRef}) between 1 and 500 and octet_length(${table.facts}::text) between 2 and 8192 and octet_length(${table.actionPath}) between 1 and 501 and ${table.actionPath} ~ '^/[A-Za-z0-9/_?=&.-]*$'`) }));
 
 export const workspaceNotificationRecipients = pgTable("workspace_notification_recipients", {
   workspaceId: text("workspace_id").notNull(), eventId: text("event_id").notNull(), userId: text("user_id").notNull(), deliveryLocale: text("delivery_locale").notNull(), inAppState: text("in_app_state").default("unread").notNull(), emailState: text("email_state").notNull(), attempt: integer("attempt").default(0).notNull(), maxAttempts: integer("max_attempts").default(8).notNull(), nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), lastErrorCode: text("last_error_code"), catalogVersion: text("catalog_version"), renderedTitle: text("rendered_title"), renderedBody: text("rendered_body"), renderedActionLabel: text("rendered_action_label"), emailActionUrl: text("email_action_url"), emailPayloadDigest: text("email_payload_digest"), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(), readAt: timestamp("read_at", { withTimezone: true }), emailDeliveredAt: timestamp("email_delivered_at", { withTimezone: true }),
 }, (table) => ({ pk: primaryKey({ name: "workspace_notification_recipients_pk", columns: [table.workspaceId, table.eventId, table.userId] }), eventFk: foreignKey({ name: "workspace_notification_recipients_event_fk", columns: [table.workspaceId, table.eventId], foreignColumns: [workspaceNotificationEvents.workspaceId, workspaceNotificationEvents.id] }).onDelete("cascade"), membershipFk: foreignKey({ name: "workspace_notification_recipients_membership_fk", columns: [table.workspaceId, table.userId], foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId] }).onDelete("cascade"), userCursorIdx: index("workspace_notification_recipients_user_cursor_idx").on(table.workspaceId, table.userId, table.createdAt.desc(), table.eventId.desc()), emailDueIdx: index("workspace_notification_recipients_email_due_idx").on(table.nextAttemptAt, table.workspaceId, table.eventId, table.userId).where(sql`${table.emailState} in ('pending','processing')`), valuesCheck: check("workspace_notification_recipients_values_check", sql`${table.deliveryLocale} in ('ar','en') and ${table.inAppState} in ('unread','read') and ${table.emailState} in ('pending','processing','delivered','suppressed','failed_known','outcome_unknown') and ${table.maxAttempts} between 1 and 20 and ${table.attempt} between 0 and ${table.maxAttempts} and ((${table.inAppState} = 'unread' and ${table.readAt} is null) or (${table.inAppState} = 'read' and ${table.readAt} is not null)) and ((${table.emailState} = 'processing' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.emailState} <> 'processing' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)) and ((${table.emailState} = 'delivered' and ${table.emailDeliveredAt} is not null) or (${table.emailState} <> 'delivered' and ${table.emailDeliveredAt} is null))`), snapshotCheck: check("workspace_notification_recipients_snapshot_check", sql`((${table.catalogVersion} is null and ${table.renderedTitle} is null and ${table.renderedBody} is null and ${table.renderedActionLabel} is null and ${table.emailActionUrl} is null and ${table.emailPayloadDigest} is null) or (octet_length(${table.catalogVersion}) between 1 and 80 and octet_length(${table.renderedTitle}) between 1 and 500 and octet_length(${table.renderedBody}) between 1 and 4096 and octet_length(${table.renderedActionLabel}) between 1 and 200 and octet_length(${table.emailActionUrl}) between 9 and 2048 and ${table.emailActionUrl} ~ '^https?://[^[:space:]]+$' and ${table.emailPayloadDigest} ~ '^sha256:[a-f0-9]{64}$'))`) }));
+
+export const workspaceNotificationCreditStates = pgTable("workspace_notification_credit_states", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "restrict" }), balanceState: text("balance_state").notNull(), availableUnits: bigint("available_units", { mode: "number" }).notNull(), warningThreshold: bigint("warning_threshold", { mode: "number" }).default(10).notNull(), episode: integer("episode").default(0).notNull(), lastLedgerSequence: integer("last_ledger_sequence").default(0).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ valuesCheck: check("workspace_notification_credit_states_values_check", sql`${table.balanceState} in ('healthy','low','exhausted') and ${table.availableUnits} >= 0 and ${table.warningThreshold} between 1 and 1000000 and ${table.episode} >= 0 and ${table.lastLedgerSequence} >= 0`) }));
 
 export const generationCreditPackVersions = pgTable("generation_credit_pack_versions", {
   packId: text("pack_id").notNull(), version: integer("version").notNull(), status: text("status").notNull(), authoredName: jsonb("authored_name").$type<{ ar: string; en: string }>().notNull(), creditUnits: bigint("credit_units", { mode: "number" }).notNull(), priceMinor: bigint("price_minor", { mode: "number" }).notNull(), taxMinor: bigint("tax_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(), termsDigest: text("terms_digest").notNull(), effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(), retiredAt: timestamp("retired_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

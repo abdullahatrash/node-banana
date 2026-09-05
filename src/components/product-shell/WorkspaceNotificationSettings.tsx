@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useTranslations } from "next-intl";
-import { Bell, Clock3, Languages, LoaderCircle, Mail, Save, ShieldAlert } from "lucide-react";
+import { Bell, Cable, Clock3, Coins, Languages, LoaderCircle, Mail, Save, Send, ShieldAlert } from "lucide-react";
 import type { AppLocale } from "@/i18n/config";
 import { useToast } from "@/components/Toast";
 import {
@@ -17,13 +17,16 @@ type DeliveryState = {
   emailEnabled: boolean;
   muteAll: boolean;
   billingEmailEnabled: boolean;
+  channelEmailEnabled: boolean;
+  publishingEmailEnabled: boolean;
+  creditEmailEnabled: boolean;
   document: SocialNotificationPreferencesDocument;
 };
 
 export function WorkspaceNotificationSettings({ workspaceId, interfaceLocale, workspaceTimeZone }: { workspaceId: string; interfaceLocale: AppLocale; workspaceTimeZone: string }) {
   const t = useTranslations("product.notificationPreferences") as (key: string) => string;
   const { show } = useToast();
-  const [state, setState] = useState<DeliveryState>(() => ({ inAppEnabled: true, emailEnabled: false, muteAll: false, billingEmailEnabled: true, document: defaultSocialNotificationPreferences({ locale: interfaceLocale, timeZone: workspaceTimeZone }) }));
+  const [state, setState] = useState<DeliveryState>(() => ({ inAppEnabled: true, emailEnabled: false, muteAll: false, billingEmailEnabled: true, channelEmailEnabled: true, publishingEmailEnabled: true, creditEmailEnabled: true, document: defaultSocialNotificationPreferences({ locale: interfaceLocale, timeZone: workspaceTimeZone }) }));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -37,7 +40,7 @@ export function WorkspaceNotificationSettings({ workspaceId, interfaceLocale, wo
     ]).then(async ([socialResponse, productResponse]) => {
         const [result, productResult] = await Promise.all([
           socialResponse.json() as Promise<{ success?: boolean; preferences?: { inAppEnabled?: boolean; emailEnabled?: boolean; muteAll?: boolean; preferences?: unknown } }>,
-          productResponse.json() as Promise<{ success?: boolean; preferences?: { deliveryLocale?: AppLocale | null; billingEmailEnabled?: boolean } }>,
+          productResponse.json() as Promise<{ success?: boolean; preferences?: { deliveryLocale?: AppLocale | null; billingEmailEnabled?: boolean; channelEmailEnabled?: boolean; publishingEmailEnabled?: boolean; creditEmailEnabled?: boolean } }>,
         ]);
         if (!socialResponse.ok || !productResponse.ok || !result.success || !result.preferences || !productResult.success || !productResult.preferences) throw new Error("NOTIFICATION_PREFERENCES_LOAD_FAILED");
         const document = readSocialNotificationPreferencesDocument(result.preferences.preferences, { locale: interfaceLocale, timeZone: workspaceTimeZone });
@@ -46,6 +49,9 @@ export function WorkspaceNotificationSettings({ workspaceId, interfaceLocale, wo
           emailEnabled: result.preferences.emailEnabled ?? false,
           muteAll: result.preferences.muteAll ?? false,
           billingEmailEnabled: productResult.preferences.billingEmailEnabled ?? true,
+          channelEmailEnabled: productResult.preferences.channelEmailEnabled ?? true,
+          publishingEmailEnabled: productResult.preferences.publishingEmailEnabled ?? true,
+          creditEmailEnabled: productResult.preferences.creditEmailEnabled ?? true,
           document: { ...document, deliveryLocale: productResult.preferences.deliveryLocale ?? document.deliveryLocale },
         });
       })
@@ -64,15 +70,15 @@ export function WorkspaceNotificationSettings({ workspaceId, interfaceLocale, wo
       const headers = { "content-type": "application/json", "x-workspace-id": workspaceId };
       const [response, productResponse] = await Promise.all([
         fetch("/api/social/notifications/preferences", { method: "PUT", headers, body: JSON.stringify({ inAppEnabled: state.inAppEnabled, emailEnabled: state.emailEnabled, muteAll: state.muteAll, preferences: state.document }) }),
-        fetch("/api/studio/notifications/preferences", { method: "PUT", headers, body: JSON.stringify({ deliveryLocale: state.document.deliveryLocale, billingEmailEnabled: state.billingEmailEnabled }) }),
+        fetch("/api/studio/notifications/preferences", { method: "PUT", headers, body: JSON.stringify({ deliveryLocale: state.document.deliveryLocale, billingEmailEnabled: state.billingEmailEnabled, channelEmailEnabled: state.channelEmailEnabled, publishingEmailEnabled: state.publishingEmailEnabled, creditEmailEnabled: state.creditEmailEnabled }) }),
       ]);
       const [result, productResult] = await Promise.all([
         response.json() as Promise<{ success?: boolean; preferences?: { inAppEnabled: boolean; emailEnabled: boolean; muteAll: boolean; preferences: unknown } }>,
-        productResponse.json() as Promise<{ success?: boolean; preferences?: { deliveryLocale: AppLocale | null; billingEmailEnabled: boolean } }>,
+        productResponse.json() as Promise<{ success?: boolean; preferences?: { deliveryLocale: AppLocale | null; billingEmailEnabled: boolean; channelEmailEnabled: boolean; publishingEmailEnabled: boolean; creditEmailEnabled: boolean } }>,
       ]);
       if (!response.ok || !productResponse.ok || !result.success || !result.preferences || !productResult.success || !productResult.preferences) throw new Error("NOTIFICATION_PREFERENCES_SAVE_FAILED");
       const document = readSocialNotificationPreferencesDocument(result.preferences.preferences, { locale: interfaceLocale, timeZone: workspaceTimeZone });
-      setState({ inAppEnabled: result.preferences.inAppEnabled, emailEnabled: result.preferences.emailEnabled, muteAll: result.preferences.muteAll, billingEmailEnabled: productResult.preferences.billingEmailEnabled, document: { ...document, deliveryLocale: productResult.preferences.deliveryLocale ?? document.deliveryLocale } });
+      setState({ inAppEnabled: result.preferences.inAppEnabled, emailEnabled: result.preferences.emailEnabled, muteAll: result.preferences.muteAll, billingEmailEnabled: productResult.preferences.billingEmailEnabled, channelEmailEnabled: productResult.preferences.channelEmailEnabled, publishingEmailEnabled: productResult.preferences.publishingEmailEnabled, creditEmailEnabled: productResult.preferences.creditEmailEnabled, document: { ...document, deliveryLocale: productResult.preferences.deliveryLocale ?? document.deliveryLocale } });
       show(t("saved"), "success");
     } catch { setError(t("errors.save")); show(t("errors.save"), "error"); }
     finally { setSaving(false); }
@@ -87,6 +93,9 @@ export function WorkspaceNotificationSettings({ workspaceId, interfaceLocale, wo
       <Toggle icon={Mail} label={t("channels.email.title")} description={t("channels.email.description")} checked={state.emailEnabled} onChange={(value) => setState((current) => ({ ...current, emailEnabled: value }))} />
       <Toggle icon={Bell} label={t("channels.mute.title")} description={t("channels.mute.description")} checked={state.muteAll} onChange={(value) => setState((current) => ({ ...current, muteAll: value }))} />
       <Toggle icon={ShieldAlert} label={t("channels.billingEmail.title")} description={t("channels.billingEmail.description")} checked={state.billingEmailEnabled} onChange={(value) => setState((current) => ({ ...current, billingEmailEnabled: value }))} />
+      <Toggle icon={Cable} label={t("channels.channelEmail.title")} description={t("channels.channelEmail.description")} checked={state.channelEmailEnabled} onChange={(value) => setState((current) => ({ ...current, channelEmailEnabled: value }))} />
+      <Toggle icon={Send} label={t("channels.publishingEmail.title")} description={t("channels.publishingEmail.description")} checked={state.publishingEmailEnabled} onChange={(value) => setState((current) => ({ ...current, publishingEmailEnabled: value }))} />
+      <Toggle icon={Coins} label={t("channels.creditEmail.title")} description={t("channels.creditEmail.description")} checked={state.creditEmailEnabled} onChange={(value) => setState((current) => ({ ...current, creditEmailEnabled: value }))} />
     </section>
     <section className="grid gap-5 rounded-2xl border bg-card p-5 md:grid-cols-2">
       <div><div className="flex items-center gap-2"><Languages className="size-4 text-amber-600" /><h3 className="font-semibold">{t("delivery.title")}</h3></div><p className="mt-1 text-sm text-muted-foreground">{t("delivery.description")}</p></div>
