@@ -63,6 +63,7 @@ export class GenerationExecutionService {
         contract,
         aspectRatio: expectedAspectRatio,
         quantity: intent.quote.quantity,
+        promptVersion: intent.providerComposition.promptVersion,
       });
     } catch (error) {
       return { kind: "invalid", code: error instanceof Error ? error.message : "PROVIDER_INPUT_COMPOSITION_FAILED" };

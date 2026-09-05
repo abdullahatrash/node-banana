@@ -33,7 +33,7 @@ export const creativeRequestSchema = z.object({
     fps: z.number().int().min(1).max(60).nullable(),
   }).strict(),
   sourceAssets: z.array(assetRefSchema).max(20),
-  rights: z.object({ snapshotId: id, revision: z.number().int().positive(), digest: digestSchema, basis: z.enum(["owned", "licensed", "public_domain", "consented"]), evidenceIds: z.array(id).max(20) }).strict(),
+  rights: z.object({ snapshotId: id, revision: z.number().int().positive(), digest: digestSchema, basis: z.enum(["owned", "licensed", "public_domain", "consented"]), permittedRemix: z.enum(["reference_only", "transform", "derivative"]), evidenceIds: z.array(id).max(20) }).strict(),
   fundingMode: z.enum(["managed", "byok"]),
 }).strict().superRefine((value, context) => {
   const issue = (path: string[], message: string) => context.addIssue({ code: "custom", path, message });

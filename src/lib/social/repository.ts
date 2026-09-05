@@ -925,6 +925,11 @@ export async function resolveSocialPostMediaForDelivery(
   const resources = new Map<string, OwnedSocialMediaResource>();
   for (const asset of assetRows) {
     if (!asset.storageKey || (asset.type !== "image" && asset.type !== "video")) continue;
+    const metadata = asset.metadata as Record<string, unknown> | null;
+    if (metadata?.creativeReviewRequired === true || metadata?.creativePlateReviewRequired === true || typeof metadata?.creativeSessionId === "string") {
+      const { assertCreativeAssetDelivery } = await import("@/lib/creative-generation/publishing");
+      await assertCreativeAssetDelivery(workspaceId, asset);
+    }
     resources.set(`studio_asset:${asset.id}`, { resourceKind: "studio_asset", id: asset.id, digest: socialAssetDigest(asset), type: asset.type, storageKey: asset.storageKey });
   }
   for (const { artifact, content } of artifactRows) {

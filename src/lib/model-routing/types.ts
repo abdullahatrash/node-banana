@@ -86,7 +86,7 @@ export interface GenerationIntent {
   schema: "generation-intent/v1"; id: string; workspaceId: string;
   brand: { profileId: string; revision: number; digest: `sha256:${string}`; acceptedAt: Date; context: ImmutableBrandContext };
   promptDigest: `sha256:${string}`; capability: GenerationCapability; contentLanguage: ContentLanguage; arabicVariety: ArabicVariety | null;
-  providerComposition: { schema: "provider-input-composition/v1"; promptVersion: "tasmeemai-brand-prompt/v1"; mediaVersion: "tasmeemai-brand-media/v1"; rawPromptDigest: `sha256:${string}`; brandContextDigest: `sha256:${string}`; composedPromptDigest: `sha256:${string}`; sourceAssetIds: string[]; brandReferenceAssets: Array<{ assetId: string; digest: `sha256:${string}`; kind: "logo" }>; providerMediaAssetIds: string[]; brandMediaDisposition: "provider_input" | "prompt_context" | "provider_input_and_prompt_context"; model: ExactModelRef; capability: GenerationCapability; contractDigest: `sha256:${string}`; digest: `sha256:${string}` };
+  providerComposition: import("./provider-input-composition").ProviderCompositionEvidence;
   rights: { snapshotId: string; revision: number; digest: `sha256:${string}`; basis: "owned" | "licensed" | "public_domain" | "consented"; permittedRemix: "reference_only" | "transform" | "derivative"; evidence: InspirationRightsEvidence[]; sourceAssetIds: string[] };
   remixBrief: { digest: `sha256:${string}`; preserve: string[]; transform: string[]; avoid: string[] };
   qualification: { id: string; revision: number; digest: `sha256:${string}`; expiresAt: Date };
@@ -105,6 +105,12 @@ export interface GenerationIntent {
     digest: `sha256:${string}`;
   } | null;
   persona?: GenerationPersonaBinding | null;
+  creativeBinding?: {
+    sessionId: string; sessionRevision: number; briefDigest: `sha256:${string}`;
+    promptPolicyRevision: "arabic-safe-creative/v1"; stage: "copy" | "visual";
+    copyRevision: number | null; copyDigest: `sha256:${string}` | null;
+    output: { format: "image" | "video"; durationMs: number | null };
+  };
   quote: CostQuote; reservationIds: string[]; createdByUserId: string; createdAt: Date;
 }
 

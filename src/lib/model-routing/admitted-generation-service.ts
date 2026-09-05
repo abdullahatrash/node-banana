@@ -41,6 +41,11 @@ export interface AdmittedGenerationInput {
   personaId?: string | null;
   contentExecution?: { contentPieceId: string; contentPieceRevision: number } | null;
   blitzContext?: { itemId: string; expectedRevision: number } | null;
+  pinnedBrand?: { profileId: string; revision: number; digest: string };
+  pinnedRightsSnapshot?: { id: string; revision: number; digest: string };
+  /** Server-compiled creative briefs only; never accepted as an HTTP override. */
+  promptVersion?: import("./provider-input-composition").PromptCompositionVersion;
+  creativeBinding?: import("./types").GenerationIntent["creativeBinding"];
 }
 export type AdmittedGenerationResult = { ok: true; status: 200 | 202; value: { intentId: string; operation: OperationRecord; provider: unknown; operationHref: string } } | { ok: false; status: 402 | 409 | 422 | 503; code: string; nextActions?: Array<{ code: string; href: string }>; managedCreditQuote?: ManagedCreditQuote };
 const fail = (status: 402 | 409 | 422 | 503, code: string, nextActions?: Array<{ code: string; href: string }>, managedCreditQuote?: ManagedCreditQuote): AdmittedGenerationResult => ({ ok: false, status, code, ...(nextActions ? { nextActions } : {}), ...(managedCreditQuote ? { managedCreditQuote } : {}) });
@@ -71,6 +76,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
     : fail(422, "DURABLE_REPLICATE_CREDENTIAL_REQUIRED", [{ code: "configure_provider_key", href: "/settings?section=providers" }]);
   const [brand] = await getDb().select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, context.workspaceId), eq(brandProfiles.status, "active"))).orderBy(desc(brandProfiles.revision)).limit(1);
   if (!brand?.acceptedAt) return fail(422, "ACCEPTED_BRAND_REVISION_REQUIRED", [{ code: "accept_brand", href: "/brand" }]);
+  if (input.pinnedBrand && (brand.id !== input.pinnedBrand.profileId || brand.revision !== input.pinnedBrand.revision || canonicalDigest(brand.profile) !== input.pinnedBrand.digest)) return fail(409, "BRAND_REVISION_STALE", [{ code: "review_brand", href: "/brand" }]);
   if (input.blitzContext) {
     const [row] = await getDb().select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, context.workspaceId), eq(workspaceProductRecords.id, input.blitzContext.itemId), eq(workspaceProductRecords.kind, "blitz_item"), isNull(workspaceProductRecords.archivedAt))).limit(1);
     if (!row || row.state !== "queued" || row.revision !== input.blitzContext.expectedRevision) return fail(409, "BLITZ_REVISION_STALE", [{ code: "refresh_blitz", href: "/blitz" }]);
@@ -125,7 +131,7 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   if (!sourceValidation.ok) return fail(422, sourceValidation.code, [{ code: "prepare_source", href: "/simple-studio/library" }]);
   let pricingQuantities: PricingQuantity[] | undefined;
   if (model.qualification.executionPriceUsd.basis === "components") {
-    const mediaIds = providerMediaPlan({ sourceAssetIds: providerSourceIds, brand: brandContext.context, contract: model.qualification.inputContract, capability: input.capability }).providerMediaAssetIds;
+    const mediaIds = providerMediaPlan({ sourceAssetIds: providerSourceIds, brand: brandContext.context, contract: model.qualification.inputContract, capability: input.capability, promptVersion: input.promptVersion }).providerMediaAssetIds;
     const pricingRows = mediaIds.length ? await getDb().select({ id: assets.id, type: assets.type, width: assets.width, height: assets.height, metadata: assets.metadata }).from(assets).where(and(eq(assets.workspaceId, context.workspaceId), inArray(assets.id, mediaIds), isNull(assets.deletedAt))) : [];
     const pricingById = new Map(pricingRows.map((row) => [row.id, row]));
     if (pricingById.size !== new Set(mediaIds).size) return fail(422, "PRICING_INPUT_ASSET_EVIDENCE_REQUIRED", [{ code: "prepare_source", href: "/simple-studio/library" }]);
@@ -144,15 +150,31 @@ export async function admitStudioGeneration(context: { workspaceId: string; user
   }
   if (input.permittedRemix === "reference_only" && input.remixBrief.transform.length) return fail(422, "REMIX_SCOPE_CONFLICT");
   const at = new Date(); const snapshotId = rightsId(context.workspaceId, context.idempotencyKey);
-  const evidence = input.rightsBasis === "owned" ? await Promise.all(sourceRows.map(async (source) => { const result = await createImmutableRightsEvidence({ workspaceId: context.workspaceId, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:owned:${source.id}`, sourceAssetId: source.id, basis: "owned", permittedRemix: input.permittedRemix, issuer: { type: "workspace_asset_owner", id: source.createdByUserId }, scope: { commercialUse: true, derivativeUse: true, modelInputUse: true, territories: ["worldwide"] }, evidenceDocumentAssetId: null, sourceUrl: null, issuedAt: source.createdAt, expiresAt: null, at }); return result.kind === "created" || result.kind === "replayed" ? result.evidence : null; })) : await loadRightsEvidence(context.workspaceId, [...new Set(input.rightsEvidenceIds)]);
+  const pinnedRightsRow = input.pinnedRightsSnapshot ? (await getDb().select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, context.workspaceId), eq(inspirationRightsSnapshots.id, input.pinnedRightsSnapshot.id), eq(inspirationRightsSnapshots.revision, input.pinnedRightsSnapshot.revision))).limit(1))[0] : null;
+  const pinnedRights = pinnedRightsRow ? hydrateRightsSnapshot(pinnedRightsRow.snapshot) : null;
+  if (input.pinnedRightsSnapshot && (!pinnedRights || pinnedRights.digest !== input.pinnedRightsSnapshot.digest || pinnedRights.basis !== input.rightsBasis || pinnedRights.permittedRemix !== input.permittedRemix || canonicalDigest(pinnedRights.sourceAssetIds) !== canonicalDigest(sourceAssetIds) || canonicalDigest(pinnedRights.evidence.map((item) => item.id).sort()) !== canonicalDigest([...input.rightsEvidenceIds].sort()))) return fail(422, "RIGHTS_SNAPSHOT_MISMATCH");
+  const evidence = pinnedRights ? pinnedRights.evidence : input.rightsBasis === "owned" ? await Promise.all(sourceRows.map(async (source) => { const result = await createImmutableRightsEvidence({ workspaceId: context.workspaceId, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:owned:${source.id}`, sourceAssetId: source.id, basis: "owned", permittedRemix: input.permittedRemix, issuer: { type: "workspace_asset_owner", id: source.createdByUserId }, scope: { commercialUse: true, derivativeUse: true, modelInputUse: true, territories: ["worldwide"] }, evidenceDocumentAssetId: null, sourceUrl: null, issuedAt: source.createdAt, expiresAt: null, at }); return result.kind === "created" || result.kind === "replayed" ? result.evidence : null; })) : await loadRightsEvidence(context.workspaceId, [...new Set(input.rightsEvidenceIds)]);
   if (evidence.some((item) => !item)) return fail(422, "OWNERSHIP_EVIDENCE_UNAVAILABLE", [{ code: "review_rights", href: "/simple-studio/library" }]);
   const typedEvidence = evidence.filter((item): item is InspirationRightsEvidence => item !== null); const rightsValidation = validateRightsEvidence({ workspaceId: context.workspaceId, basis: input.rightsBasis, permittedRemix: input.permittedRemix, sourceAssetIds, evidence: typedEvidence, at });
   if (!rightsValidation.ok) return fail(422, rightsValidation.code, [{ code: "review_rights", href: "/simple-studio/library" }]);
-  const rightsInput = { basis: input.rightsBasis, permittedRemix: input.permittedRemix, evidence: typedEvidence, sourceAssetIds }; const snapshot: InspirationRightsSnapshot = { schema: "inspiration-rights-snapshot/v1", id: snapshotId, workspaceId: context.workspaceId, revision: 1, ...rightsInput, digest: canonicalDigest(rightsInput) as `sha256:${string}`, createdByUserId: context.userId, createdAt: at };
-  const [inserted] = await getDb().insert(inspirationRightsSnapshots).values({ workspaceId: context.workspaceId, id: snapshot.id, revision: 1, snapshot, digest: snapshot.digest, basis: snapshot.basis, permittedRemix: snapshot.permittedRemix, createdByUserId: context.userId, createdAt: at }).onConflictDoNothing().returning({ snapshot: inspirationRightsSnapshots.snapshot });
+  const rightsInput = { basis: input.rightsBasis, permittedRemix: input.permittedRemix, evidence: typedEvidence, sourceAssetIds }; const snapshot: InspirationRightsSnapshot = pinnedRights ?? { schema: "inspiration-rights-snapshot/v1", id: snapshotId, workspaceId: context.workspaceId, revision: 1, ...rightsInput, digest: canonicalDigest(rightsInput) as `sha256:${string}`, createdByUserId: context.userId, createdAt: at };
+  const [inserted] = pinnedRights ? [{ snapshot: pinnedRights }] : await getDb().insert(inspirationRightsSnapshots).values({ workspaceId: context.workspaceId, id: snapshot.id, revision: 1, snapshot, digest: snapshot.digest, basis: snapshot.basis, permittedRemix: snapshot.permittedRemix, createdByUserId: context.userId, createdAt: at }).onConflictDoNothing().returning({ snapshot: inspirationRightsSnapshots.snapshot });
   const stored = inserted?.snapshot ?? (await getDb().select({ snapshot: inspirationRightsSnapshots.snapshot }).from(inspirationRightsSnapshots).where(and(eq(inspirationRightsSnapshots.workspaceId, context.workspaceId), eq(inspirationRightsSnapshots.id, snapshotId), eq(inspirationRightsSnapshots.revision, 1))).limit(1))[0]?.snapshot; const rights = stored ? hydrateRightsSnapshot(stored) : null;
   if (!rights || rights.digest !== snapshot.digest) return fail(409, "IDEMPOTENCY_CONFLICT");
-  const created = await PRODUCTION_MODEL_ROUTING.createIntent({ workspaceId: context.workspaceId, brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context }, rawPrompt: input.prompt, capability: input.capability, contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety, rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds }, providerSourceAssetIds: providerSourceIds, remixBrief: input.remixBrief, requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null, fundingMode: input.fundingMode, managedQuoteAcceptance: input.managedQuoteAcceptance ?? null, persona, contentExecution, quantity: input.quantity, pricingQuantities, userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent` });
+  const created = await PRODUCTION_MODEL_ROUTING.createIntent({
+    workspaceId: context.workspaceId,
+    brand: { profileId: brand.id, revision: brand.revision, digest: canonicalDigest(brand.profile) as `sha256:${string}`, acceptedAt: brand.acceptedAt, context: brandContext.context },
+    rawPrompt: input.prompt, capability: input.capability,
+    contentLanguage: input.contentLanguage, arabicVariety: input.arabicVariety,
+    rights: { snapshotId: rights.id, revision: rights.revision, digest: rights.digest, basis: rights.basis, permittedRemix: rights.permittedRemix, evidence: rights.evidence, sourceAssetIds: rights.sourceAssetIds },
+    providerSourceAssetIds: providerSourceIds, remixBrief: input.remixBrief,
+    requestedModel: input.model, selectedModel: input.model, fallbackAuthorizationId: null,
+    fundingMode: input.fundingMode, managedQuoteAcceptance: input.managedQuoteAcceptance ?? null,
+    persona, contentExecution, quantity: input.quantity, pricingQuantities,
+    userId: context.userId, idempotencyKey: `${context.idempotencyKey}:intent`,
+    ...(input.promptVersion ? { promptVersion: input.promptVersion } : {}),
+    ...(input.creativeBinding ? { creativeBinding: input.creativeBinding } : {}),
+  });
   if (created.kind === "managed_quote_confirmation_required") return fail(409, "MANAGED_CREDIT_CONFIRMATION_REQUIRED", undefined, created.quote);
   if (created.kind !== "created" && created.kind !== "replayed") return fail(created.kind === "unavailable" || created.kind === "budget_unavailable" ? 503 : created.kind === "budget_denied" ? 402 : 422, "code" in created && typeof created.code === "string" ? created.code : created.kind.toUpperCase(), [{ code: "inspect_operations", href: "/studio/operations" }]);
   if (!created.intent) return fail(503, "GENERATION_INTENT_UNAVAILABLE");

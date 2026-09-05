@@ -6,7 +6,7 @@ import { CreativeError } from "./contracts";
 export const CREATIVE_FONT = {
   id: "noto-sans-arabic-v1",
   family: "Noto Sans Arabic",
-  file: "public/fonts/creative/NotoSansArabic.ttf",
+  file: "assets/fonts/creative/NotoSansArabic.ttf",
   sha256: "63111b5b2e074dd48cc67692e0a2726d86ee94c1c37fe8598257b7b4e87e869e",
   source: "https://github.com/google/fonts/tree/main/ofl/notosansarabic",
   license: "SIL Open Font License 1.1",

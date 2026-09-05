@@ -19,6 +19,7 @@ const bodySchema = z.object({
   personaId: z.string().min(1).max(200).nullable().default(null),
   contentExecution: z.object({ contentPieceId: z.string().min(1).max(200), contentPieceRevision: z.number().int().positive() }).strict().nullable().default(null),
   blitzContext: z.object({ itemId: z.string().min(1).max(200), expectedRevision: z.number().int().positive() }).strict().nullable().default(null),
+  pinnedBrand: z.object({ profileId: z.string().min(1).max(200), revision: z.number().int().positive(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict().optional(),
 }).strict();
 
 export function createAdmittedGenerationPost(route: string) {

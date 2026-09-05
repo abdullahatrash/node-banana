@@ -41,6 +41,9 @@ const nextConfig: NextConfig = {
       "node_modules/recharts/**",
     ],
   },
+  outputFileTracingIncludes: {
+    "/api/studio/creatives/*": ["./assets/fonts/creative/**"],
+  },
 };
 
 export default withWorkflow(withMicrofrontends(withNextIntl(nextConfig)));

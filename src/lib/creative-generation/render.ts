@@ -59,9 +59,9 @@ export type CreativeRenderReceipt = ReturnType<typeof renderEvidence>;
 
 /** The exact same PNG layers are used by image export, video export, and
  * frame preview. No browser-font metrics or provider calls enter this path. */
-export async function renderCreativeFrame(input: { composition: Composition; copy: StructuredCopy; plate: Buffer; timeMs?: number; plateIsDecodedVideoFrame?: boolean }) {
+export async function renderCreativeFrame(input: { composition: Composition; copy: StructuredCopy; plate: Buffer; timeMs?: number }) {
   const composition = validateComposition(input.composition, input.copy);
-  if (!input.plateIsDecodedVideoFrame && bytesDigest(input.plate) !== composition.plate.digest) throw new CreativeError("creative.errors.sourceBinding");
+  if (bytesDigest(input.plate) !== composition.plate.digest) throw new CreativeError("creative.errors.sourceBinding");
   const time = input.timeMs ?? 0;
   if (!Number.isFinite(time) || time < 0 || composition.canvas.durationMs !== null && time >= composition.canvas.durationMs) throw new CreativeError("creative.errors.duration");
   const metadata = await sharp(input.plate, { failOn: "error", limitInputPixels: 16_777_216 }).metadata();
@@ -92,7 +92,7 @@ export async function renderCreativeVideo(input: { composition: Composition; cop
     const args = ["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1", "-i", source];
     for (const [index, layer] of rendered.layers.entries()) { const file = join(directory, `layer-${index}.png`); await writeFile(file, layer.buffer, { flag: "wx" }); args.push("-i", file); }
     const filters = rendered.layers.map((layer, index) => `[${index === 0 ? "0:v" : `v${index}`}][${index + 1}:v]overlay=${layer.left}:${layer.top}:enable='gte(t,${layer.timing!.startMs / 1000})*lt(t,${layer.timing!.endMs / 1000})':eof_action=repeat[v${index + 1}]`);
-    args.push("-filter_complex_threads", "1", "-filter_complex", filters.join(";"), "-map", `[v${rendered.layers.length}]`, "-map", "0:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", String(composition.canvas.fps), "-t", String(composition.canvas.durationMs! / 1000), "-c:a", "copy", "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:v", "+bitexact", "-movflags", "+faststart", output);
+    args.push("-filter_complex_threads", "1", "-filter_complex", filters.join(";"), "-map", `[v${rendered.layers.length}]`, "-map", "0:a?", "-c:v", "libx264", "-threads", "1", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", String(composition.canvas.fps), "-t", String(composition.canvas.durationMs! / 1000), "-c:a", "copy", "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:v", "+bitexact", "-movflags", "+faststart", output);
     try { await execFileAsync(input.ffmpegPath ?? process.env.CREATIVE_FFMPEG_PATH ?? "ffmpeg", args, { signal: input.signal, timeout: 300_000, maxBuffer: 64_000 }); }
     catch (error) { if (input.signal?.aborted) throw new CreativeError("creative.errors.cancelled"); if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") throw new CreativeError("creative.errors.videoRendererUnavailable"); throw new CreativeError("creative.errors.renderFailed"); }
     const buffer = await readFile(output);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
-import { composeQualifiedProviderInput } from "../provider-input-composition";
+import { composeQualifiedProviderInput, CREATIVE_PROMPT_COMPOSITION_VERSION } from "../provider-input-composition";
 import type { GenerationCapability, ImmutableBrandContext, ModelExecutionQualification } from "../types";
 import { testBrand, testRef } from "./fixtures";
 
@@ -47,6 +47,14 @@ function compose(capability: GenerationCapability, input: { mode: "single" | "ar
 }
 
 describe("qualified provider input composition", () => {
+  it("keeps a compiled creative brief minimal and excludes automatic logo inputs", () => {
+    const result = composeQualifiedProviderInput({ rawPrompt: "Text-free artwork. Compiled minimal creative brief.", brand: brandWithReference(), sourceAssetIds: ["source"], sourceUrls: [sourceUrl], brandReferenceUrls: [{ assetId: reference.assetId, url: brandUrl }], model: testRef(2), capability: "image_to_image", contract: contract("array"), aspectRatio: "9:16", quantity: 1, promptVersion: CREATIVE_PROMPT_COMPOSITION_VERSION });
+    expect(result.providerInput.prompt).toBe("Text-free artwork. Compiled minimal creative brief.");
+    expect(result.providerInput.image).toEqual([sourceUrl]);
+    expect(result.evidence.promptVersion).toBe(CREATIVE_PROMPT_COMPOSITION_VERSION);
+    expect(result.evidence.brandContextDigest).toBe(brandWithReference().digest);
+    expect(result.evidence.brandReferenceAssets).toEqual([reference]);
+  });
   it("keeps text-to-image source-free while carrying Brand evidence in prompt context", () => {
     const result = compose("text_to_image", { mode: "single" });
     expect(result.providerInput).toMatchObject({ aspect_ratio: "9:16" });

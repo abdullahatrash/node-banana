@@ -99,6 +99,8 @@ export class ModelRoutingService {
     remixBrief: { preserve: string[]; transform: string[]; avoid: string[] };
     userId: string; idempotencyKey: string; fundingMode?: GenerationIntent["fundingMode"]; managedQuoteAcceptance?: ManagedCreditQuoteAcceptance | null; persona?: GenerationIntent["persona"]; contentExecution?: GenerationIntent["contentExecution"]; id?: string;
     pricingQuantities?: readonly PricingQuantity[];
+    promptVersion?: import("./provider-input-composition").PromptCompositionVersion;
+    creativeBinding?: GenerationIntent["creativeBinding"];
   }) {
     const at = this.now();
     const id = input.id ?? stableId("intent", input.workspaceId, input.idempotencyKey);
@@ -153,11 +155,13 @@ export class ModelRoutingService {
       model: input.selectedModel,
       capability: input.capability,
       contract: selected.qualification.inputContract,
+      promptVersion: input.promptVersion,
     });
     const value: GenerationIntent = {
       schema: "generation-intent/v1", id, workspaceId: input.workspaceId,
       brand: input.brand, promptDigest: digest(input.rawPrompt), providerComposition, capability: input.capability,
       contentLanguage: input.contentLanguage,
+      ...(input.creativeBinding ? { creativeBinding: input.creativeBinding } : {}),
       arabicVariety: input.contentLanguage === "en" ? null : input.arabicVariety,
       rights: { ...input.rights, evidence: structuredClone(input.rights.evidence), sourceAssetIds: [...input.rights.sourceAssetIds] },
       remixBrief: { digest: digest(input.remixBrief), preserve: [...input.remixBrief.preserve], transform: [...input.remixBrief.transform], avoid: [...input.remixBrief.avoid] },
