@@ -236,7 +236,11 @@ APP_BASE_URL=http://localhost:3002 pnpm demo:licensed-trend:clean
 The retained fixture is namespaced to `local.smoke`, expires after one day, and
 does not call an AI provider. The cleanup command revokes its entitlement and
 catalog entry, then archives its Workspace Inspiration record. Regular
-`smoke:licensed-trends` still cleans up automatically.
+`smoke:licensed-trends` still cleans up automatically. Its complete no-spend
+path is catalog publish → Workspace grant → browse → import → verified
+materialization → Brand-aware Remix Brief → Blitz. The smoke asserts that the
+Generation Intent count and Generation Credit balance do not change before a
+human accepts billable generation.
 
 ## 4. Open real Replicate execution deliberately
 

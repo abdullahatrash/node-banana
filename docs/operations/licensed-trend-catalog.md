@@ -41,7 +41,7 @@ In another terminal, run:
 pnpm smoke:licensed-trends
 ```
 
-The smoke test signs in as the local seeded user, uploads a synthetic one-pixel fixture and evidence document, publishes and grants an exact catalog revision, browses and previews it through the Workspace API, requests import, runs the materialization worker, verifies the completed database lineage, and renders `/inspiration`. It then revokes its synthetic catalog/entitlement and archives the imported fixture. It never calls an AI provider or spends Generation Credits.
+The smoke test signs in as the local seeded user, uploads a synthetic one-pixel fixture and evidence document, publishes and grants an exact catalog revision, browses and previews it through the Workspace API, requests import, runs the materialization worker, verifies the completed database lineage, and renders `/inspiration`. It then queues the exact item into Blitz, verifies the accepted Brand revision and Arabic variety are pinned into a protected-expression-safe Remix Brief, renders `/blitz`, and proves both the Generation Intent count and Generation Credit balance are unchanged. Finally it revokes its synthetic catalog/entitlement and archives both imported and queued fixtures. It never calls an AI provider or spends Generation Credits.
 
 For normal queued work, run:
 

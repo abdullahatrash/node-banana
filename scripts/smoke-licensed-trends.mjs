@@ -26,7 +26,7 @@ const suffix = randomUUID();
 const catalogId = `smoke_catalog_${suffix}`;
 const sourceKey = `licensed-catalog-smoke/${suffix}/source.png`;
 const evidenceKey = `licensed-catalog-smoke/${suffix}/license.txt`;
-let workspaceId = ""; let entitlementId = ""; let jobId = ""; let inspirationItemId = ""; let rightsSnapshotId = ""; let rightsEvidenceId = ""; let sourceAssetId = ""; let evidenceAssetId = ""; let passed = false;
+let workspaceId = ""; let entitlementId = ""; let jobId = ""; let inspirationItemId = ""; let blitzItemId = ""; let rightsSnapshotId = ""; let rightsEvidenceId = ""; let sourceAssetId = ""; let evidenceAssetId = ""; let passed = false;
 
 const sha256 = (body) => `sha256:${createHash("sha256").update(body).digest("hex")}`;
 const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wf8MZ0AAAAASUVORK5CYII=", "base64");
@@ -47,6 +47,14 @@ async function internal(body) {
   return json(await fetch(new URL("/api/studio/internal/licensed-trend-catalog", baseUrl), { method: "POST", headers: { "content-type": "application/json", "x-studio-internal-secret": internalSecret }, body: JSON.stringify(body) }), body.action);
 }
 
+async function noSpendState(workspace) {
+  const [credits, intents] = await Promise.all([
+    pool.query("select coalesce(sum(available_units), 0)::text as available from generation_credit_buckets where workspace_id = $1 and (expires_at is null or expires_at > now())", [workspace]),
+    pool.query("select count(*)::text as count from generation_intents where workspace_id = $1", [workspace]),
+  ]);
+  return { availableCredits: credits.rows[0]?.available ?? "0", generationIntents: intents.rows[0]?.count ?? "0" };
+}
+
 async function cleanup() {
   const catalogs = await pool.query("select id from licensed_trend_catalog_entries where provider_key = 'local.smoke'");
   const catalogIds = catalogs.rows.map((row) => row.id);
@@ -57,8 +65,12 @@ async function cleanup() {
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const records = await client.query("select workspace_id, id, revision, title, payload, updated_by_user_id from workspace_product_records where kind = 'inspiration_item' and archived_at is null and payload->'catalogBinding'->>'catalogId' = any($1::text[]) for update", [catalogIds]);
-    for (const record of records.rows) {
+    const inspirationRecords = await client.query("select workspace_id, id, revision, title, payload, updated_by_user_id from workspace_product_records where kind = 'inspiration_item' and archived_at is null and payload->'catalogBinding'->>'catalogId' = any($1::text[]) for update", [catalogIds]);
+    const inspirationIds = inspirationRecords.rows.map((record) => record.id);
+    const blitzRecords = inspirationIds.length
+      ? await client.query("select workspace_id, id, revision, title, payload, updated_by_user_id from workspace_product_records where kind = 'blitz_item' and archived_at is null and payload->>'inspirationItemId' = any($1::text[]) for update", [inspirationIds])
+      : { rows: [] };
+    for (const record of [...blitzRecords.rows, ...inspirationRecords.rows]) {
       const revision = record.revision + 1; const at = new Date();
       await client.query("update workspace_product_records set state = 'archived', revision = $3, archived_at = $4, updated_at = $4 where workspace_id = $1 and id = $2", [record.workspace_id, record.id, revision, at]);
       await client.query("insert into workspace_product_record_revisions (workspace_id, record_id, revision, title, state, payload, author_user_id, created_at) values ($1,$2,$3,$4,'archived',$5,$6,$7)", [record.workspace_id, record.id, revision, record.title, record.payload, record.updated_by_user_id, at]);
@@ -100,9 +112,26 @@ try {
   const page = await fetch(new URL("/inspiration", baseUrl), { headers: { cookie }, redirect: "manual" });
   if (page.status !== 200) throw new Error(`Inspiration page returned HTTP ${page.status}.`);
   if (!(await page.text()).includes("اختبار كتالوج مرخّص")) throw new Error("Inspiration page did not render the materialized licensed trend.");
+  const beforeQueue = await noSpendState(workspaceId);
+  const queued = await json(await fetch(new URL("/api/product-inspiration", baseUrl), { method: "POST", headers: { cookie, "content-type": "application/json", origin: baseUrl.origin, "x-workspace-id": workspaceId }, body: JSON.stringify({ action: "queue", inspirationItemId, idempotencyKey: `smoke:blitz:${suffix}` }) }), "Brand-aware Blitz queue");
+  blitzItemId = queued.record?.id || "";
+  if (!blitzItemId) throw new Error("Blitz queue did not return a durable record.");
+  const [blitz, brand] = await Promise.all([
+    pool.query("select state, payload from workspace_product_records where workspace_id = $1 and id = $2 and kind = 'blitz_item'", [workspaceId, blitzItemId]),
+    pool.query("select id, revision, accepted_at from brand_profiles where workspace_id = $1 and status = 'active' order by revision desc limit 1", [workspaceId]),
+  ]);
+  const blitzRecord = blitz.rows[0]; const activeBrand = brand.rows[0]; const payload = blitzRecord?.payload; const brief = payload?.remixBrief;
+  if (!blitzRecord || blitzRecord.state !== "queued" || !activeBrand?.accepted_at) throw new Error("Blitz proposal or accepted Brand evidence is missing.");
+  if (payload.inspirationItemId !== inspirationItemId || payload.sourceAssetId !== sourceAssetId || payload.rightsSnapshot?.id !== rightsSnapshotId || !payload.rightsEvidenceIds?.includes(rightsEvidenceId)) throw new Error("Blitz proposal lost its licensed source or rights lineage.");
+  if (brief?.schema !== "brand-aware-remix-brief/v1" || brief.brandProfile?.id !== activeBrand.id || brief.brandProfile?.revision !== activeBrand.revision || brief.source?.inspirationItemId !== inspirationItemId) throw new Error("Remix Brief is not pinned to the accepted Brand and exact Inspiration revision.");
+  if (brief.locale?.contentLanguage !== "ar" || brief.locale?.arabicVariety !== "gulf" || brief.protectedExpressionExcluded !== true || !brief.provider?.prompt?.includes("العربية الخليجية")) throw new Error("Remix Brief lost its Arabic Gulf or protected-expression contract.");
+  const afterQueue = await noSpendState(workspaceId);
+  if (JSON.stringify(afterQueue) !== JSON.stringify(beforeQueue)) throw new Error(`Viewing and queueing Inspiration crossed the spend boundary: ${JSON.stringify({ beforeQueue, afterQueue })}`);
+  const blitzPage = await fetch(new URL("/blitz", baseUrl), { headers: { cookie }, redirect: "manual" });
+  if (blitzPage.status !== 200 || !(await blitzPage.text()).includes("اختبار كتالوج مرخّص")) throw new Error("Blitz page did not render the Brand-aware proposal.");
   passed = true;
-  console.log("[OK] licensed trend publish → grant → browse → import → verified materialization");
-  if (keepFixture) console.log("[KEPT] Open /inspiration to inspect and queue the Arabic licensed trend; run pnpm demo:licensed-trend:clean when finished.");
+  console.log("[OK] licensed trend publish → grant → browse → import → verified materialization → Brand-aware Remix Brief → Blitz; credits and Generation Intents unchanged");
+  if (keepFixture) console.log("[KEPT] Open /blitz to inspect the queued Arabic Brand-aware proposal; run pnpm demo:licensed-trend:clean when finished.");
   }
 } finally {
   if (!cleanupOnly && (!keepFixture || !passed)) {
