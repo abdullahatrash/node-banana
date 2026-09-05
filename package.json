@@ -23,6 +23,7 @@
     "i18n:check": "node scripts/check-i18n.mjs",
     "qualify:replicate": "tsx scripts/qualify-replicate-model.ts",
     "qualify:replicate:check": "tsx scripts/check-replicate-qualification.ts",
+    "qualify:replicate:portfolio": "tsx scripts/check-replicate-qualification-portfolio.ts",
     "qualify:replicate:inspect": "tsx scripts/inspect-replicate-qualification-contract.ts",
     "qualify:replicate:review": "tsx scripts/review-replicate-qualification-artifact.ts",
     "qualify:replicate:spend": "tsx scripts/import-replicate-qualification-spend.ts",

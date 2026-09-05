@@ -10,6 +10,23 @@ pnpm qualify:replicate:check reviewed-plan.json
 
 The preflight validates the complete reviewed plan, exact curated capability set, bilingual and Arabic-variety cells, lifecycle coverage, source-media URLs, derivative-use evidence, runtime-compatible region/mode, per-cell quantities, the local `$0.40` ceiling, dedicated credential separation, safe harness endpoints, and both Ed25519 trust maps. It never constructs a provider client and rejects the paid-execution flag. Use `--json` for machine-readable output.
 
+Before executing more than one model plan, validate the whole intended launch
+portfolio together. This no-network check requires Arabic copy, text-to-image,
+image remix, text-to-video, and image-to-video coverage, rejects duplicate runs
+or executions, and totals every reviewed plan under the same account ceiling:
+
+```bash
+pnpm qualify:replicate:portfolio -- \
+  reviewed-copy-plan.json \
+  reviewed-image-plan.json \
+  reviewed-image-remix-plan.json \
+  reviewed-video-plan.json
+```
+
+The portfolio total covers the pending batch only. The durable Postgres ledger
+remains authoritative for completed and incomplete spend already committed by
+the same Replicate account and can still block the first paid submission.
+
 Before authoring that plan, inspect the current Official Model contract with the
 dedicated qualification token:
 
