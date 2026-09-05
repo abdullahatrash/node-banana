@@ -51,6 +51,7 @@ export async function createProductRecord(input: {
   payload: Record<string, unknown>;
   idempotencyKey: string;
   now?: Date;
+  beforeInsert?: (executor: ProductRecordExecutor) => Promise<void>;
 }) {
   return getDb().transaction((tx) => createProductRecordInTransaction(tx, input));
 }
@@ -64,6 +65,7 @@ export async function createProductRecordInTransaction(executor: ProductRecordEx
   payload: Record<string, unknown>;
   idempotencyKey: string;
   now?: Date;
+  beforeInsert?: (executor: ProductRecordExecutor) => Promise<void>;
 }) {
   assertState(input.kind, input.state);
   if (input.kind === "creator_persona" && input.state !== "draft") throw new ProductRecordTransitionError("CREATOR_PERSONA_MUST_START_AS_DRAFT");
@@ -78,6 +80,7 @@ export async function createProductRecordInTransaction(executor: ProductRecordEx
       if (receipt.requestDigest !== digest) throw new ProductRecordIdempotencyError("Idempotency key was already used for another command.");
       return replayReceipt(executor, { workspaceId: input.workspaceId, recordId: receipt.recordId, resultRevision: receipt.resultRevision });
     }
+    await input.beforeInsert?.(executor);
     const id = randomUUID();
     const [record] = await executor.insert(workspaceProductRecords).values({
       workspaceId: input.workspaceId, id, kind: input.kind, title: input.title.trim(), state: input.state,
@@ -100,6 +103,7 @@ export async function updateProductRecord(input: {
   payload?: Record<string, unknown>;
   idempotencyKey: string;
   now?: Date;
+  beforeUpdate?: (executor: ProductRecordExecutor, current: ProductRecord, nextState: string) => Promise<void>;
 }) {
   return getDb().transaction((tx) => updateProductRecordInTransaction(tx, input));
 }
@@ -115,6 +119,7 @@ export async function updateProductRecordInTransaction(executor: ProductRecordEx
   payload?: Record<string, unknown>;
   idempotencyKey: string;
   now?: Date;
+  beforeUpdate?: (executor: ProductRecordExecutor, current: ProductRecord, nextState: string) => Promise<void>;
 }) {
   const now = input.now ?? new Date();
     const [current] = await executor.select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id))).limit(1);
@@ -133,6 +138,7 @@ export async function updateProductRecordInTransaction(executor: ProductRecordEx
       if (receipt.requestDigest !== digest) throw new ProductRecordIdempotencyError("Idempotency key was already used for another command.");
       return replayReceipt(executor, { workspaceId: input.workspaceId, recordId: receipt.recordId, resultRevision: receipt.resultRevision });
     }
+    await input.beforeUpdate?.(executor, current, state);
     const [updated] = await executor.update(workspaceProductRecords).set({ title, state, payload, revision: sql`${workspaceProductRecords.revision} + 1`, updatedByUserId: input.userId, updatedAt: now, archivedAt: state === "archived" || state === "deleted" || state === "closed" ? now : null })
       .where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id), eq(workspaceProductRecords.revision, input.expectedRevision))).returning();
     if (!updated) throw new ProductRecordConflictError("The record changed on another device. Refresh and try again.");

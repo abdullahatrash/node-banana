@@ -1,14 +1,38 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { updateProductRecord, validateCampaignAuthoringPayload, database } = vi.hoisted(() => ({
-  updateProductRecord: vi.fn(),
-  validateCampaignAuthoringPayload: vi.fn(),
-  database: { select: vi.fn() },
-}));
+const { updateProductRecord, validateCampaignAuthoringPayload, database, databaseRows, assertActiveAutomationCapacityWith, MockCommercialEntitlementError } = vi.hoisted(() => {
+  const rows: unknown[] = [];
+  return {
+    updateProductRecord: vi.fn(),
+    validateCampaignAuthoringPayload: vi.fn(),
+    database: { select: vi.fn() },
+    databaseRows: rows,
+    assertActiveAutomationCapacityWith: vi.fn(),
+    MockCommercialEntitlementError: class CommercialEntitlementError extends Error {
+      constructor(readonly code: string) { super(code); }
+    },
+  };
+});
 
 vi.mock("@/lib/db", () => ({ getDb: () => database }));
 vi.mock("@/lib/product-surfaces/repository", () => ({ updateProductRecord }));
 vi.mock("@/lib/product-surfaces/campaign-authoring", () => ({ validateCampaignAuthoringPayload }));
+vi.mock("@/lib/commercial/entitlements", () => ({
+  assertActiveAutomationCapacityWith,
+  CommercialEntitlementError: MockCommercialEntitlementError,
+}));
+vi.mock("@/lib/product-surfaces/campaign-quote", () => ({
+  CampaignQuoteError: class CampaignQuoteError extends Error { constructor(readonly code: string) { super(code); } },
+  issueCampaignAcceptedQuote: () => ({
+    quote: {
+      quoteId: "quote-1", amount: "1.00", currency: "USD",
+      expiresAt: "2026-09-05T01:00:00.000Z",
+      ceiling: { maximumProviderAttempts: 1 },
+      providerModels: [],
+    },
+    ref: "accepted-quote-ref",
+  }),
+}));
 
 import { activateCampaignCommand } from "../campaign-runtime";
 
@@ -29,7 +53,11 @@ describe("campaign activation ordering", () => {
   beforeEach(() => {
     updateProductRecord.mockReset();
     validateCampaignAuthoringPayload.mockReset().mockResolvedValue({ issues: [] });
-    database.select.mockReset().mockReturnValue({ from: () => ({ where: () => ({ limit: async () => [record] }) }) });
+    assertActiveAutomationCapacityWith.mockReset().mockResolvedValue({});
+    databaseRows.splice(0, databaseRows.length, record);
+    database.select.mockReset().mockReturnValue({
+      from: () => ({ where: () => ({ limit: async () => databaseRows }) }),
+    });
   });
 
   it("does not move a draft to validating when admission is denied", async () => {
@@ -40,6 +68,28 @@ describe("campaign activation ordering", () => {
 
     await expect(activateCampaignCommand({ workspaceId: "workspace-1", userId: "user-1", authContextId: "session-1", id: "campaign-1", expectedRevision: 4, idempotencyKey: "activation-1", runtime })).rejects.toMatchObject({ code: "BUDGET_LIMIT_EXCEEDED" });
     expect(updateProductRecord).not.toHaveBeenCalled();
+    expect(runtime.start).not.toHaveBeenCalled();
+  });
+
+  it("reserves an Automation slot before starting any provider-backed workflow", async () => {
+    const runtime = {
+      preview: vi.fn().mockResolvedValue({
+        admissible: true,
+        denialReasons: [], warnings: [], evaluatedAt: new Date("2026-09-05T00:00:00.000Z"),
+        ceiling: { amount: "1.00", currency: "USD", certainty: "exact" }, stepExposures: [],
+      }),
+      start: vi.fn(),
+    };
+    updateProductRecord.mockImplementationOnce(async (input: { beforeUpdate?: (executor: object) => Promise<void> }) => {
+      await input.beforeUpdate?.({});
+      return { ...record, state: "validating", revision: 5 };
+    });
+    assertActiveAutomationCapacityWith.mockRejectedValueOnce(
+      new MockCommercialEntitlementError("PLAN_ACTIVE_AUTOMATION_LIMIT_REACHED"),
+    );
+
+    await expect(activateCampaignCommand({ workspaceId: "workspace-1", userId: "user-1", authContextId: "session-1", id: "campaign-1", expectedRevision: 4, idempotencyKey: "activation-2", runtime })).rejects.toMatchObject({ code: "PLAN_ACTIVE_AUTOMATION_LIMIT_REACHED" });
+    expect(assertActiveAutomationCapacityWith).toHaveBeenCalledWith({}, expect.objectContaining({ workspaceId: "workspace-1", excludeRecordId: "campaign-1" }));
     expect(runtime.start).not.toHaveBeenCalled();
   });
 });

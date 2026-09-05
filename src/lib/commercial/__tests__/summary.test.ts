@@ -42,6 +42,8 @@ describe("projectCommercialStatusSummary", () => {
         state: "trialing",
         planId: "starter",
         planVersion: 1,
+        authoredName: { ar: "البداية", en: "Starter" },
+        entitlements: { managedGeneration: true },
         currentPeriodEndsAt: "2026-09-11T00:00:00.000Z",
         graceEndsAt: null,
         merchantCustomerRef: null,

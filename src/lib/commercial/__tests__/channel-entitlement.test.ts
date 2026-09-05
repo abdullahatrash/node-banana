@@ -9,7 +9,15 @@ const base = {
   currentPeriodEndsAt: new Date("2026-10-01T00:00:00.000Z"),
   graceEndsAt: null,
   authoredName: { ar: "النمو", en: "Growth" },
-  entitlements: { connectedChannels: 15 },
+  entitlements: {
+    generationCreditsPerPeriod: 500,
+    workspaceSeats: 10,
+    connectedChannels: 15,
+    activeAutomations: 15,
+    apiAccess: true,
+    creatorPersonas: true,
+    managedChannelOnboarding: true,
+  },
 };
 
 describe("workspace Channel entitlement", () => {
@@ -31,7 +39,7 @@ describe("workspace Channel entitlement", () => {
       graceEndsAt: new Date("2026-09-10T00:00:00.000Z"),
     }, now).connectedChannels).toBe(15);
     expect(resolveWorkspaceChannelEntitlement({ ...base, currentPeriodEndsAt: new Date("2026-09-01T00:00:00.000Z") }, now).connectedChannels).toBe(0);
-    expect(resolveWorkspaceChannelEntitlement({ ...base, entitlements: { connectedChannels: -1 } }, now).connectedChannels).toBe(0);
+    expect(() => resolveWorkspaceChannelEntitlement({ ...base, entitlements: { ...base.entitlements, connectedChannels: -1 } }, now)).toThrow("PLAN_ENTITLEMENTS_INVALID");
   });
 
   it("uses the published Free v1 terms only when no subscription exists", () => {

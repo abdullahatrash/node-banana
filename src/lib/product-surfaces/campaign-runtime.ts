@@ -11,9 +11,27 @@ import { CampaignQuoteError, issueCampaignAcceptedQuote } from "./campaign-quote
 import { PRODUCTION_CAMPAIGN_SCHEDULER_REPOSITORY } from "./campaign-scheduler-repository";
 import { validateCampaignAuthoringPayload } from "./campaign-authoring";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import {
+  assertActiveAutomationCapacityWith,
+  CommercialEntitlementError,
+} from "@/lib/commercial/entitlements";
 
 export class CampaignRuntimeError extends Error {
   constructor(readonly code: string) { super(code); }
+}
+
+async function reserveAutomationSlot(
+  executor: Parameters<NonNullable<Parameters<typeof updateProductRecord>[0]["beforeUpdate"]>>[0],
+  workspaceId: string,
+  campaignId: string,
+  at: Date,
+) {
+  try {
+    await assertActiveAutomationCapacityWith(executor, { workspaceId, excludeRecordId: campaignId, at });
+  } catch (error) {
+    if (error instanceof CommercialEntitlementError) throw new CampaignRuntimeError(error.code);
+    throw error;
+  }
 }
 
 export interface CampaignWorkflowRuntime {
@@ -105,6 +123,9 @@ export async function activateCampaignCommand(input: {
   // unquotable request therefore remains an editable draft rather than a
   // misleading partially-launched campaign.
   const preview = await runtime.preview({ workspaceId: input.workspaceId, workflowId: binding.workflowId, revisionId: binding.workflowRevisionId, inputs: binding.inputs, principalId: input.userId, inputArtifactIds: artifactIds });
+  if (!preview.admissible) {
+    throw new CampaignRuntimeError(preview.denialReasons[0] ?? "CAMPAIGN_ADMISSION_DENIED");
+  }
   const activationRevision = record.state === "validating" ? record.revision : record.revision + 1;
   let acceptedQuote;
   try { acceptedQuote = issueCampaignAcceptedQuote({ preview, binding, workspaceId: input.workspaceId, userId: input.userId, keyId, campaignId: record.id, campaignRevision: activationRevision, now, codec: productionWorkflowRunSpendQuoteCodec(), quoteId: stableActivationQuoteId(record.id, activationRevision) }); }
@@ -117,6 +138,7 @@ export async function activateCampaignCommand(input: {
     expectedRevision: record.revision,
     state: "validating",
     idempotencyKey: `${input.idempotencyKey}:validate`,
+    beforeUpdate: (executor) => reserveAutomationSlot(executor, input.workspaceId, record.id, now),
   });
   if (!validating) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
   if (validating.revision !== activationRevision) throw new CampaignRuntimeError("CAMPAIGN_REVISION_CONFLICT");
@@ -175,7 +197,13 @@ export async function resumeCampaignCommand(input: { workspaceId: string; userId
   const payload = campaignPayloadSchema.parse(record.payload);
   const validation = await validateCampaignAuthoringPayload({ workspaceId: input.workspaceId, userId: input.userId, payload, complete: true, now: input.now });
   if (validation.issues.length) throw new CampaignRuntimeError(validation.issues[0]!);
-  const active = await updateProductRecord({ ...input, expectedKind: "campaign_automation", state: "active" });
+  const now = input.now ?? new Date();
+  const active = await updateProductRecord({
+    ...input,
+    expectedKind: "campaign_automation",
+    state: "active",
+    beforeUpdate: (executor) => reserveAutomationSlot(executor, input.workspaceId, record.id, now),
+  });
   if (!active) throw new CampaignRuntimeError("CAMPAIGN_NOT_FOUND");
   return active;
 }

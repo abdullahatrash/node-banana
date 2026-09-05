@@ -4,11 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nTestProvider } from "@/test/i18n";
 import { BillingSettings } from "./BillingSettings";
 
+const freeEntitlements = { generationCreditsPerPeriod: 10, workspaceSeats: 1, connectedChannels: 2, activeAutomations: 0, apiAccess: false, creatorPersonas: false, managedChannelOnboarding: false };
+const starterEntitlements = { generationCreditsPerPeriod: 250, workspaceSeats: 3, connectedChannels: 5, activeAutomations: 3, apiAccess: false, creatorPersonas: false, managedChannelOnboarding: false };
+
 const summary = {
   subscription: null,
   plans: [
-    { planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" }, currency: "USD", priceMinor: 0, billingInterval: "month", trialDays: 0, trialCreditUnits: 0, entitlements: {} },
-    { planId: "starter", version: 1, authoredName: { ar: "البداية", en: "Starter" }, currency: "USD", priceMinor: 2_900, billingInterval: "month", trialDays: 7, trialCreditUnits: 25, entitlements: {} },
+    { planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" }, currency: "USD", priceMinor: 0, billingInterval: "month", trialDays: 0, trialCreditUnits: 0, entitlements: freeEntitlements },
+    { planId: "starter", version: 1, authoredName: { ar: "البداية", en: "Starter" }, currency: "USD", priceMinor: 2_900, billingInterval: "month", trialDays: 7, trialCreditUnits: 25, entitlements: starterEntitlements },
   ],
   creditPacks: [],
   quotes: [],
@@ -58,6 +61,8 @@ describe("BillingSettings default plan", () => {
         state: "active",
         planId: "free",
         planVersion: 1,
+        authoredName: { ar: "مجانية", en: "Free" },
+        entitlements: freeEntitlements,
         currentPeriodEndsAt: "2026-10-04T00:00:00.000Z",
         graceEndsAt: null,
         merchantCustomerRef: null,
@@ -79,6 +84,8 @@ describe("BillingSettings default plan", () => {
         state: "trialing",
         planId: "starter",
         planVersion: 1,
+        authoredName: { ar: "البداية", en: "Starter" },
+        entitlements: starterEntitlements,
         currentPeriodEndsAt: "2026-09-11T00:00:00.000Z",
         graceEndsAt: null,
         merchantCustomerRef: null,
@@ -89,7 +96,9 @@ describe("BillingSettings default plan", () => {
     render(<I18nTestProvider locale="en"><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
 
     expect(await screen.findByText("Trial")).toBeInTheDocument();
-    expect(screen.queryByText("Starter")).not.toBeInTheDocument();
+    expect(screen.getByText("Starter")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Current plan allowances" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Subscribe securely" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open billing portal" })).not.toBeInTheDocument();
   });
 
@@ -135,6 +144,8 @@ describe("BillingSettings default plan", () => {
         state: "active",
         planId: "starter",
         planVersion: 1,
+        authoredName: { ar: "البداية", en: "Starter" },
+        entitlements: starterEntitlements,
         currentPeriodStartsAt: "2026-09-01T00:00:00.000Z",
         currentPeriodEndsAt: "2026-10-01T00:00:00.000Z",
         graceEndsAt: null,
@@ -186,7 +197,7 @@ describe("BillingSettings default plan", () => {
     render(<I18nTestProvider locale="en"><BillingSettings workspaceId="workspace-1" canManage canPurchase /></I18nTestProvider>);
 
     expect(await screen.findByRole("heading", { name: "Your credits are available, but managed AI setup is incomplete" })).toBeInTheDocument();
-    expect(screen.getByText("10")).toBeInTheDocument();
+    expect(screen.getAllByText("10").length).toBeGreaterThan(0);
     expect(screen.getByText("Qualify a compatible Replicate model")).toBeInTheDocument();
     expect(screen.getByText("Verify the Replicate processing region")).toBeInTheDocument();
     expect(screen.getByText("Enable the managed Replicate account")).toBeInTheDocument();

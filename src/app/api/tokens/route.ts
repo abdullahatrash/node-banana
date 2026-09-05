@@ -7,6 +7,10 @@ import {
   type CreatedApiToken,
 } from "@/lib/api-tokens/repository";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import {
+  CommercialEntitlementError,
+  requireWorkspaceCommercialFeature,
+} from "@/lib/commercial/entitlements";
 
 const ROUTE = "/api/tokens";
 
@@ -19,6 +23,7 @@ interface TokensListResponse {
 interface TokenCreateResponse {
   success: boolean;
   token?: CreatedApiToken;
+  code?: string;
   error?: string;
 }
 
@@ -61,11 +66,23 @@ export const POST = withStudioAuth<undefined>(
       );
     }
 
-    const token = await createApiToken({
-      workspaceId: authz.workspaceId,
-      name,
-      createdByUserId: authz.userId,
-    });
+    let token: CreatedApiToken;
+    try {
+      await requireWorkspaceCommercialFeature(authz.workspaceId, "apiAccess");
+      token = await createApiToken({
+        workspaceId: authz.workspaceId,
+        name,
+        createdByUserId: authz.userId,
+      });
+    } catch (error) {
+      if (error instanceof CommercialEntitlementError) {
+        return NextResponse.json(
+          { success: false, code: error.code, error: "This plan does not include API access." },
+          { status: 403 },
+        );
+      }
+      throw error;
+    }
 
     return NextResponse.json({ success: true, token }, { status: 201 });
   },

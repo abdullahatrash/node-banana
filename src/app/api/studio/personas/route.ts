@@ -3,6 +3,10 @@ import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 import { createPersonaSchema } from "@/lib/creator-personas/schemas";
 import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
 import { CreatorPersonaError } from "@/lib/creator-personas/repository";
+import {
+  CommercialEntitlementError,
+  requireWorkspaceCommercialFeature,
+} from "@/lib/commercial/entitlements";
 
 function failure(error: unknown) {
   if (error instanceof CreatorPersonaError) return NextResponse.json({ success: false, code: error.code }, { status: ["REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT"].includes(error.code) ? 409 : 422 });
@@ -21,8 +25,12 @@ export const POST = withStudioAuth<undefined>({ route: "/api/studio/personas", a
   const parsed = createPersonaSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ success: false, code: "INVALID_PERSONA", issues: parsed.error.issues }, { status: 400 });
   try {
+    await requireWorkspaceCommercialFeature(authz.workspaceId, "creatorPersonas");
     const { action: _action, retentionUntil, ...input } = parsed.data;
     const result = await CREATOR_PERSONAS.create({ ...input, retentionUntil: new Date(retentionUntil), workspaceId: authz.workspaceId, userId: authz.userId });
     return NextResponse.json({ success: true, result }, { status: 201 });
-  } catch (error) { return failure(error); }
+  } catch (error) {
+    if (error instanceof CommercialEntitlementError) return NextResponse.json({ success: false, code: error.code }, { status: 403 });
+    return failure(error);
+  }
 });

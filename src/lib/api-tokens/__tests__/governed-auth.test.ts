@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   resolve: vi.fn(),
   permissions: vi.fn(),
   closureAdmission: vi.fn(),
+  requireFeature: vi.fn(),
 }));
 
 vi.mock("../repository", () => ({ resolveApiTokenAuthorityByRawToken: (...args: unknown[]) => mocks.resolve(...args) }));
@@ -13,6 +14,10 @@ vi.mock("@/lib/studio/authz", () => ({
   authzErrorResponse: vi.fn(),
   isWorkspacePermissionAdmittedDuringClosure: (...args: unknown[]) => mocks.closureAdmission(...args),
 }));
+vi.mock("@/lib/commercial/entitlements", () => ({
+  CommercialEntitlementError: class CommercialEntitlementError extends Error {},
+  requireWorkspaceCommercialFeature: (...args: unknown[]) => mocks.requireFeature(...args),
+}));
 
 import { authorizePublicApiRequest } from "../auth";
 
@@ -21,6 +26,7 @@ describe("governed API token authorization", () => {
     mocks.resolve.mockReset().mockResolvedValue({ workspaceId: "workspace-a", createdByUserId: "viewer-a" });
     mocks.permissions.mockReset().mockResolvedValue(["workspaces:read", "assets:read", "social:view"]);
     mocks.closureAdmission.mockReset().mockResolvedValue(true);
+    mocks.requireFeature.mockReset().mockResolvedValue({});
   });
 
   it("uses the token creator's exact active role and denies Viewer writes/publishing", async () => {

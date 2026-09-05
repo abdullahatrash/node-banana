@@ -5,6 +5,10 @@ import { CREATOR_PERSONAS } from "@/lib/creator-personas/production";
 import { CreatorPersonaError } from "@/lib/creator-personas/repository";
 import { verifyPersonaAttestation } from "@/lib/creator-personas/attestation";
 import { PRODUCTION_PERSONA_TRAINING_ADMISSION } from "@/lib/creator-personas/training-admission-production";
+import {
+  CommercialEntitlementError,
+  requireWorkspaceCommercialFeature,
+} from "@/lib/commercial/entitlements";
 
 type Context = { params: Promise<{ personaId: string }> };
 export const POST = withStudioAuth<Context>({ route: "/api/studio/personas/[personaId]/commands", action: "write", permission: "product:personas:manage" }, async (request, authz, context) => {
@@ -12,6 +16,9 @@ export const POST = withStudioAuth<Context>({ route: "/api/studio/personas/[pers
   if (!parsed.success) return NextResponse.json({ success: false, code: "INVALID_PERSONA_COMMAND", issues: parsed.error.issues }, { status: 400 });
   const { personaId } = await context.params;
   try {
+    if (!["revoke_consent", "suspend", "delete"].includes(parsed.data.action)) {
+      await requireWorkspaceCommercialFeature(authz.workspaceId, "creatorPersonas");
+    }
     let result: Record<string, unknown>;
     if (parsed.data.action === "record_consent") {
       if (!['owner', 'admin'].includes(authz.role)) return NextResponse.json({ success: false, code: "EVIDENCE_ISSUER_FORBIDDEN" }, { status: 403 });
@@ -47,6 +54,7 @@ export const POST = withStudioAuth<Context>({ route: "/api/studio/personas/[pers
     }
     return NextResponse.json({ success: true, result });
   } catch (error) {
+    if (error instanceof CommercialEntitlementError) return NextResponse.json({ success: false, code: error.code }, { status: 403 });
     if (error instanceof CreatorPersonaError) return NextResponse.json({ success: false, code: error.code }, { status: ["REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT"].includes(error.code) ? 409 : 422 });
     throw error;
   }

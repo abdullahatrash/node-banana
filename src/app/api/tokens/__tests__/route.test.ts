@@ -6,11 +6,17 @@ const {
   mockAuthorizeStudioRequest,
   mockCreateApiToken,
   mockListApiTokens,
+  mockRequireWorkspaceCommercialFeature,
+  MockCommercialEntitlementError,
 } = vi.hoisted(() => ({
   mockIsDatabaseConfigured: vi.fn(() => true),
   mockAuthorizeStudioRequest: vi.fn(),
   mockCreateApiToken: vi.fn(),
   mockListApiTokens: vi.fn(),
+  mockRequireWorkspaceCommercialFeature: vi.fn(),
+  MockCommercialEntitlementError: class CommercialEntitlementError extends Error {
+    constructor(readonly code: string) { super(code); }
+  },
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -30,6 +36,11 @@ vi.mock("@/lib/studio/authz", () => ({
 vi.mock("@/lib/api-tokens/repository", () => ({
   createApiToken: (...args: unknown[]) => mockCreateApiToken(...args),
   listApiTokens: (...args: unknown[]) => mockListApiTokens(...args),
+}));
+
+vi.mock("@/lib/commercial/entitlements", () => ({
+  CommercialEntitlementError: MockCommercialEntitlementError,
+  requireWorkspaceCommercialFeature: (...args: unknown[]) => mockRequireWorkspaceCommercialFeature(...args),
 }));
 
 import { GET, POST } from "../route";
@@ -66,6 +77,7 @@ describe("/api/tokens", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsDatabaseConfigured.mockReturnValue(true);
+    mockRequireWorkspaceCommercialFeature.mockResolvedValue({});
   });
 
   describe("POST (create)", () => {
@@ -107,6 +119,18 @@ describe("/api/tokens", () => {
 
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
+      expect(mockCreateApiToken).not.toHaveBeenCalled();
+    });
+
+    it("denies token creation when the immutable plan excludes API access", async () => {
+      authorizedAs("ws_1");
+      mockRequireWorkspaceCommercialFeature.mockRejectedValue(new MockCommercialEntitlementError("PLAN_API_ACCESS_REQUIRED"));
+
+      const response = await POST(createRequest({ name: "CI" }));
+      const data = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(data).toMatchObject({ success: false, code: "PLAN_API_ACCESS_REQUIRED" });
       expect(mockCreateApiToken).not.toHaveBeenCalled();
     });
 

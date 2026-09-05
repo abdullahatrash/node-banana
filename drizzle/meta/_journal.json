@@ -1009,6 +1009,13 @@
       "when": 1788766800000,
       "tag": "0143_identity_erasure_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1788770400000,
+      "tag": "0144_workspace_seat_entitlement",
+      "breakpoints": true
     }
   ]
 }

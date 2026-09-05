@@ -1,5 +1,15 @@
 export type CommercialLocale = "ar" | "en";
 
+export type CommercialPlanEntitlements = {
+  generationCreditsPerPeriod: number;
+  workspaceSeats: number;
+  connectedChannels: number;
+  activeAutomations: number;
+  apiAccess: boolean;
+  creatorPersonas: boolean;
+  managedChannelOnboarding: boolean;
+};
+
 export type DefaultBillingPlan = {
   planId: "free" | "starter" | "growth" | "pro";
   version: 1;
@@ -11,15 +21,7 @@ export type DefaultBillingPlan = {
   taxMode: "inclusive";
   trialDays: number;
   trialCreditUnits: number;
-  entitlements: {
-    generationCreditsPerPeriod: number;
-    workspaceSeats: number;
-    connectedChannels: number;
-    activeAutomations: number;
-    apiAccess: boolean;
-    creatorPersonas: boolean;
-    managedChannelOnboarding: boolean;
-  };
+  entitlements: CommercialPlanEntitlements;
   termsDigest: `sha256:${string}`;
   effectiveAt: string;
 };

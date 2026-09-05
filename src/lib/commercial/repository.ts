@@ -42,7 +42,24 @@ export class CommercialRepository {
   }
   async summary(workspaceId: string) {
     const now = this.now(); const [subscription, plans, packs, buckets, reservations, quotes, codes, rewards, payouts, entries, transactions, adjustments, liabilities, executionHolds] = await Promise.all([
-      this.database.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, workspaceId)).limit(1),
+      this.database.select({
+        workspaceId: workspaceSubscriptions.workspaceId,
+        state: workspaceSubscriptions.state,
+        planId: workspaceSubscriptions.planId,
+        planVersion: workspaceSubscriptions.planVersion,
+        authoredName: billingPlanVersions.authoredName,
+        entitlements: billingPlanVersions.entitlements,
+        trialGrantId: workspaceSubscriptions.trialGrantId,
+        merchantCustomerRef: workspaceSubscriptions.merchantCustomerRef,
+        merchantSubscriptionRef: workspaceSubscriptions.merchantSubscriptionRef,
+        merchantLastEventAt: workspaceSubscriptions.merchantLastEventAt,
+        merchantLastEventId: workspaceSubscriptions.merchantLastEventId,
+        currentPeriodStartsAt: workspaceSubscriptions.currentPeriodStartsAt,
+        currentPeriodEndsAt: workspaceSubscriptions.currentPeriodEndsAt,
+        graceEndsAt: workspaceSubscriptions.graceEndsAt,
+        revision: workspaceSubscriptions.revision,
+        updatedAt: workspaceSubscriptions.updatedAt,
+      }).from(workspaceSubscriptions).innerJoin(billingPlanVersions, and(eq(billingPlanVersions.planId, workspaceSubscriptions.planId), eq(billingPlanVersions.version, workspaceSubscriptions.planVersion))).where(eq(workspaceSubscriptions.workspaceId, workspaceId)).limit(1),
       this.database.select().from(billingPlanVersions).where(and(eq(billingPlanVersions.status, "active"), sql`${billingPlanVersions.effectiveAt} <= ${now}`, or(isNull(billingPlanVersions.retiredAt), gt(billingPlanVersions.retiredAt, now)))).orderBy(asc(billingPlanVersions.priceMinor)),
       this.database.select().from(generationCreditPackVersions).where(and(eq(generationCreditPackVersions.status, "active"), sql`${generationCreditPackVersions.effectiveAt} <= ${now}`, or(isNull(generationCreditPackVersions.retiredAt), gt(generationCreditPackVersions.retiredAt, now)))).orderBy(asc(generationCreditPackVersions.priceMinor)),
       this.database.select().from(generationCreditBuckets).where(and(eq(generationCreditBuckets.workspaceId, workspaceId), or(isNull(generationCreditBuckets.expiresAt), gt(generationCreditBuckets.expiresAt, now)))).orderBy(asc(generationCreditBuckets.kind), asc(generationCreditBuckets.expiresAt)),

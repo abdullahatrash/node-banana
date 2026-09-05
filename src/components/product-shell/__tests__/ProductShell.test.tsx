@@ -191,7 +191,13 @@ describe("ProductShell", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) !== "/api/studio/billing") return new Response(null, { status: 204 });
       return new Response(JSON.stringify({ success: true, data: {
-        subscription: { state: "trialing", planId: "starter", planVersion: 1, currentPeriodEndsAt: trialEndsAt, graceEndsAt: null, merchantCustomerRef: null },
+        subscription: {
+          state: "trialing", planId: "starter", planVersion: 1,
+          authoredName: { ar: "البداية", en: "Starter" },
+          entitlements: { generationCreditsPerPeriod: 250 },
+          currentPeriodEndsAt: trialEndsAt, graceEndsAt: null,
+          merchantCustomerRef: null, merchantSubscriptionRef: null,
+        },
         plans: [{ planId: "free", version: 1, authoredName: { ar: "مجانية", en: "Free" } }, { planId: "starter", version: 1, authoredName: { ar: "البداية", en: "Starter" } }],
         credit: { availableUnits: 21, liabilityUnits: 0 },
         financials: { transactions: [], adjustments: [], executionHolds: [] },

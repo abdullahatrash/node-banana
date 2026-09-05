@@ -28,3 +28,20 @@ describe("subscription period financial holds migration", () => {
     expect(readFileSync("drizzle/0136_execution_hold_workspace_index.sql", "utf8")).toContain("merchant_execution_holds_workspace_idx");
   });
 });
+describe("workspace seat entitlement migration", () => {
+  it("serializes membership inserts and fails closed at the immutable plan limit", () => {
+    const sql = readFileSync("drizzle/0144_workspace_seat_entitlement.sql", "utf8");
+    for (const value of [
+      "enforce_workspace_seat_entitlement",
+      "FOR UPDATE",
+      "workspaceSeats",
+      "PLAN_ENTITLEMENTS_INVALID",
+      "PLAN_WORKSPACE_SEAT_LIMIT_REACHED",
+      "BEFORE INSERT",
+      "cancel_at_period_end",
+      "grace_ends_at",
+      "clock_timestamp()",
+    ]) expect(sql).toContain(value);
+    expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN)\b|\bTRUNCATE\b/i);
+  });
+});

@@ -11,6 +11,10 @@ import {
 
 import { resolveApiTokenAuthorityByRawToken } from "./repository";
 import { API_TOKEN_PREFIX } from "./tokens";
+import {
+  CommercialEntitlementError,
+  requireWorkspaceCommercialFeature,
+} from "@/lib/commercial/entitlements";
 
 const BEARER_SCHEME = "Bearer ";
 
@@ -113,6 +117,19 @@ export async function authorizePublicApiRequest(
         authorized: false,
         response: NextResponse.json(
           { success: false, error: "This token cannot access this resource." },
+          { status: 403 },
+        ),
+      };
+    }
+
+    try {
+      await requireWorkspaceCommercialFeature(session.workspace.id, "apiAccess");
+    } catch (error) {
+      if (!(error instanceof CommercialEntitlementError)) throw error;
+      return {
+        authorized: false,
+        response: NextResponse.json(
+          { success: false, error: "This workspace plan does not include API access." },
           { status: 403 },
         ),
       };

@@ -43,6 +43,11 @@ vi.mock("@/lib/api-tokens/repository", () => ({
     mockResolveWorkspaceIdByRawToken(...args),
 }));
 
+vi.mock("@/lib/commercial/entitlements", () => ({
+  CommercialEntitlementError: class CommercialEntitlementError extends Error {},
+  requireWorkspaceCommercialFeature: vi.fn().mockResolvedValue({}),
+}));
+
 // Session-auth fallback lives in the studio authz layer; the public route
 // delegates to it when no Bearer token is present.
 vi.mock("@/lib/studio/authz", async () => {

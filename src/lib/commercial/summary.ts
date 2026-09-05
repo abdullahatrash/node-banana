@@ -1,5 +1,5 @@
 export type CommercialSummary = {
-  subscription: null | { state: string; planId: string; planVersion: number; currentPeriodEndsAt: string; graceEndsAt: string | null; merchantCustomerRef: string | null; merchantSubscriptionRef: string | null };
+  subscription: null | { state: string; planId: string; planVersion: number; authoredName: { ar: string; en: string }; entitlements: Record<string, number | boolean>; currentPeriodEndsAt: string; graceEndsAt: string | null; merchantCustomerRef: string | null; merchantSubscriptionRef: string | null };
   plans: Array<{ planId: string; version: number; authoredName: { ar: string; en: string }; currency: string; priceMinor: number; billingInterval: string; trialDays: number; trialCreditUnits: number; entitlements: Record<string, number | boolean> }>;
   creditPacks: Array<{ packId: string; version: number; authoredName: { ar: string; en: string }; creditUnits: number; currency: string; priceMinor: number; taxMinor: number }>;
   quotes: Array<{ id: string; state: string; purposeRef: string; maxCreditDebit: number; currency: string | null; localPriceMinor: number | null; taxMinor: number | null; expiresAt: string }>;
@@ -30,6 +30,6 @@ export function readCommercialSummary(value: unknown): CommercialSummary | null 
   if (!value || typeof value !== "object") return null;
   const summary = value as Partial<CommercialSummary>;
   if (!summary.credit || typeof summary.credit.availableUnits !== "number" || typeof summary.credit.liabilityUnits !== "number" || !Array.isArray(summary.plans) || !summary.financials || !Array.isArray(summary.financials.transactions) || !Array.isArray(summary.financials.adjustments) || !Array.isArray(summary.financials.executionHolds)) return null;
-  if (summary.subscription !== null && (typeof summary.subscription !== "object" || typeof summary.subscription.planId !== "string" || typeof summary.subscription.state !== "string" || typeof summary.subscription.currentPeriodEndsAt !== "string")) return null;
+  if (summary.subscription !== null && (typeof summary.subscription !== "object" || typeof summary.subscription.planId !== "string" || typeof summary.subscription.state !== "string" || typeof summary.subscription.currentPeriodEndsAt !== "string" || !summary.subscription.authoredName || !summary.subscription.entitlements)) return null;
   return summary as CommercialSummary;
 }

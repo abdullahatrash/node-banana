@@ -3,7 +3,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { billingPlanVersions, workspaceSubscriptions } from "@/lib/db/schema";
-import { DEFAULT_BILLING_PLANS } from "@/lib/commercial/catalog";
+import { resolveWorkspaceCommercialEntitlements } from "@/lib/commercial/entitlements";
 
 export type WorkspaceChannelEntitlement = {
   planId: string;
@@ -23,38 +23,18 @@ type EntitlementRow = {
   entitlements: Record<string, number | boolean>;
 };
 
-const fallbackFreePlan = DEFAULT_BILLING_PLANS.find((plan) => plan.planId === "free")!;
-
 export function resolveWorkspaceChannelEntitlement(
   row: EntitlementRow | null,
   at: Date = new Date(),
 ): WorkspaceChannelEntitlement {
-  if (!row) {
-    return {
-      planId: fallbackFreePlan.planId,
-      planVersion: fallbackFreePlan.version,
-      subscriptionState: "active",
-      authoredName: fallbackFreePlan.authoredName,
-      connectedChannels: fallbackFreePlan.entitlements.connectedChannels,
-    };
-  }
-
-  const periodIsCurrent = row.currentPeriodEndsAt > at;
-  const graceIsCurrent = row.subscriptionState === "grace" && Boolean(row.graceEndsAt && row.graceEndsAt > at);
-  const grantsAccess =
-    (["trialing", "active", "cancel_at_period_end"].includes(row.subscriptionState) && periodIsCurrent) ||
-    graceIsCurrent;
-  const configuredLimit = row.entitlements.connectedChannels;
-  const connectedChannels = grantsAccess && typeof configuredLimit === "number" && Number.isInteger(configuredLimit) && configuredLimit >= 0
-    ? configuredLimit
-    : 0;
+  const access = resolveWorkspaceCommercialEntitlements(row, at);
 
   return {
-    planId: row.planId,
-    planVersion: row.planVersion,
-    subscriptionState: row.subscriptionState,
-    authoredName: row.authoredName,
-    connectedChannels,
+    planId: access.planId,
+    planVersion: access.planVersion,
+    subscriptionState: access.subscriptionState,
+    authoredName: access.authoredName,
+    connectedChannels: access.entitlements.connectedChannels,
   };
 }
 
