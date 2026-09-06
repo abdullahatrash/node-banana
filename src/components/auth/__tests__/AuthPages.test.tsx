@@ -5,13 +5,14 @@ import en from "@/i18n/messages/en.json";
 import ar from "@/i18n/messages/ar.json";
 import SignInPage from "@/app/sign-in/page";
 import SignUpPage from "@/app/sign-up/page";
+import VerifyEmailPage from "@/app/verify-email/page";
 
 const mocks = vi.hoisted(() => ({
-  signIn: vi.fn(), signUp: vi.fn(), replace: vi.fn(),
+  signIn: vi.fn(), signUp: vi.fn(), resend: vi.fn(), replace: vi.fn(),
   query: new URLSearchParams(), session: vi.fn(),
 }));
 vi.mock("@/lib/auth/client", () => ({
-  authClient: { useSession: mocks.session, signIn: { email: mocks.signIn }, signUp: { email: mocks.signUp } },
+  authClient: { useSession: mocks.session, signIn: { email: mocks.signIn }, signUp: { email: mocks.signUp }, sendVerificationEmail: mocks.resend },
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.replace }),
@@ -29,9 +30,50 @@ beforeEach(() => {
   mocks.session.mockReturnValue({ data: null, isPending: false });
   mocks.signIn.mockResolvedValue({});
   mocks.signUp.mockResolvedValue({});
+  mocks.resend.mockResolvedValue({});
 });
 
 describe("auth page behavior", () => {
+  it.each(["en", "ar"] as const)("verification shares the auth layout and resends with the requested destination in %s", async (locale) => {
+    const messages = locale === "ar" ? ar : en;
+    mocks.query = new URLSearchParams({ email: "person@example.com", next: "/social/compose" });
+    show(VerifyEmailPage, locale);
+    expect(screen.getByRole("heading", { name: messages.auth.shell.title })).toBeInTheDocument();
+    expect(screen.getByLabelText(messages.common.email)).toHaveValue("person@example.com");
+    expect(screen.getByLabelText(messages.common.email)).toHaveAttribute("dir", "ltr");
+    fireEvent.click(screen.getByRole("button", { name: messages.auth.verifyEmail.resend }));
+    await waitFor(() => expect(mocks.resend).toHaveBeenCalledWith({
+      email: "person@example.com",
+      callbackURL: new URL("/onboarding?next=%2Fsocial%2Fcompose", window.location.origin).toString(),
+    }));
+    expect(await screen.findByRole("status")).toHaveTextContent(messages.auth.verifyEmail.sent);
+    expect(screen.getByRole("link", { name: messages.auth.verifyEmail.back })).toHaveAttribute("href", "/sign-in?next=%2Fsocial%2Fcompose");
+  });
+
+  it.each(["response", "network"])("allows another resend after a %s failure", async (failure) => {
+    mocks.query.set("email", "person@example.com");
+    if (failure === "network") mocks.resend.mockRejectedValueOnce(new Error("network offline"));
+    else mocks.resend.mockResolvedValueOnce({ error: { message: "raw provider error" } });
+    show(VerifyEmailPage);
+    fireEvent.click(screen.getByRole("button", { name: en.auth.verifyEmail.resend }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.auth.verifyEmail.failed);
+    expect(screen.getByRole("button", { name: en.auth.verifyEmail.resend })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: en.auth.verifyEmail.resend }));
+    expect(await screen.findByRole("status")).toHaveTextContent(en.auth.verifyEmail.sent);
+  });
+
+  it("requires an email and does not forward an external verification destination", async () => {
+    mocks.query.set("next", "https://example.com/untrusted");
+    show(VerifyEmailPage);
+    expect(screen.getByRole("button", { name: en.auth.verifyEmail.resend })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(en.common.email), { target: { value: "person@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: en.auth.verifyEmail.resend }));
+    await waitFor(() => expect(mocks.resend).toHaveBeenCalledWith({
+      email: "person@example.com",
+      callbackURL: new URL("/onboarding?next=%2Fblitz", window.location.origin).toString(),
+    }));
+  });
+
   it("preserves the requested destination after sign in", async () => {
     mocks.query.set("next", "/social/compose");
     show(SignInPage);
