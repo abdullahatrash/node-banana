@@ -54,3 +54,17 @@ Snapshots now expose a failed pending dispatch. `retry_preparation` validates th
 Initial profiles and suggestions use the existing local draft path. Provider configuration is now checked when admitted external generation is requested, rather than when constructing the generator. External generation still requires the qualified model configuration and accepted Brand context; this incident fix does not enable or bypass that path. Arabic and English copy describes the draft accurately.
 
 The checked-in public Workflow manifest is stale; the build-generated manifest includes onboarding and its compiled entry point has the expected workflow ID. Do not treat the public file as proof that a production build omitted the workflow.
+
+## SDK compatibility follow-up
+
+After the recovery UI was deployed, five retried submissions on 2026-09-06 logged `WorkflowWorldError` with HTTP 426. The saved dispatch remained pending and the analysis never started. Queue health probes passed because they did not exercise creation of a Workflow run. They are insufficient as an onboarding readiness check.
+
+The application was pinned to `workflow@4.2.0-beta.72`, whose current protocol version is 2. This follow-up pins stable `workflow@4.8.5` and its matching dependencies, whose current protocol version is 3 with CBOR queue transport. No compatibility override or provider-control bypass is introduced. Release reference: https://github.com/vercel/workflow/releases/tag/workflow%404.8.5.
+
+`workflow-runtime-smoke.test.ts` runs the real compiled onboarding workflow through the local queue and Next.js step handlers. It creates only disposable local fixture data and checks the final ready state, persisted profile and suggestion. The test refuses a non-local database or queue server. To run it, build the app, start Next.js with the local rehearsal database and `WORKFLOW_TARGET_WORLD=local`, and give both server and test the same explicit `WORKFLOW_LOCAL_DATA_DIR`. Set `WORKFLOW_LOCAL_BASE_URL=http://127.0.0.1:3157` on the server and `ONBOARDING_WORKFLOW_SMOKE_BASE_URL=http://127.0.0.1:3157` on the test process. Run:
+
+```sh
+pnpm test:run src/lib/onboarding/__tests__/workflow-runtime-smoke.test.ts
+```
+
+Production verification must exercise a real preparation retry after deployment and observe the run reaching ready. Direct programmatic production triggering was blocked by automatic approval review because it could duplicate a saved run; do not substitute another triggering route without explicit authorization. A successful local smoke or queue health probe does not establish live recovery.
