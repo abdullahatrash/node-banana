@@ -88,7 +88,7 @@ async function publishSinglePostWorkflow(
   post = await waitForPublishWindow(postId, workspaceId, post);
 
   // Step 3: Refresh token if expiring soon
-  const account = await refreshTokenStep(post.socialAccountId);
+  const account = await refreshTokenStep(workspaceId, post.socialAccountId);
 
   // Step 4: Publish to the provider. Media is re-read, hash-verified, and
   // resolved from stable Workspace references inside the provider-effect step.
@@ -383,11 +383,12 @@ interface AccountData {
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes
 
 async function refreshTokenStep(
+  workspaceId: string,
   accountId: string,
 ): Promise<AccountData> {
   "use step";
 
-  const { getSocialAccountById, updateSocialAccountTokens, markRequiresReauth } =
+  const { getSocialAccount, SocialAccountNotFoundError, updateSocialAccountTokens, markRequiresReauth } =
     await import("@/lib/social/repository");
   const { decryptToken, encryptToken } = await import("@/lib/social/crypto");
   const { ensureSocialProvidersBootstrapped } = await import(
@@ -397,7 +398,13 @@ async function refreshTokenStep(
   const { getProvider } = await import("@/lib/social/provider-registry");
   const { emitSocialEvent } = await import("@/lib/social/events");
 
-  const account = await getSocialAccountById(accountId);
+  const { SOCIAL_CHANNEL_UNAVAILABLE } = await import("@/lib/social/publishing-errors");
+  const account = await getSocialAccount(workspaceId, accountId).catch((error: unknown) => {
+    if (error instanceof SocialAccountNotFoundError) {
+      throw new FatalError(SOCIAL_CHANNEL_UNAVAILABLE);
+    }
+    throw error;
+  });
 
   // Check if token needs refresh
   const needsRefresh =
@@ -522,7 +529,7 @@ async function publishStep(
 ): Promise<PublishResultData> {
   "use step";
 
-  const { updatePostStatus, markRequiresReauth, claimSocialPostProviderEffect, resolveSocialPostMediaForDelivery } = await import(
+  const { updatePostStatus, markRequiresReauth, claimSocialPostProviderEffect, resolveSocialPostMediaForDelivery, SocialPostNotFoundError } = await import(
     "@/lib/social/repository"
   );
   const { emitSocialEvent } = await import("@/lib/social/events");
@@ -558,14 +565,15 @@ async function publishStep(
     throw new FatalError(message);
   }
 
-  const accessToken = decryptToken(account.accessTokenEncrypted);
-  const accessTokenSecret = account.accessTokenSecret
-    ? decryptToken(account.accessTokenSecret)
-    : undefined;
-
-  const current = await claimSocialPostProviderEffect(account.workspaceId, postId);
+  const { SOCIAL_CHANNEL_UNAVAILABLE } = await import("@/lib/social/publishing-errors");
+  const current = await claimSocialPostProviderEffect(account.workspaceId, postId).catch((error: unknown) => {
+    if (error instanceof SocialPostNotFoundError) {
+      throw new FatalError(SOCIAL_CHANNEL_UNAVAILABLE);
+    }
+    throw error;
+  });
   if (current.socialAccountId !== account.id) {
-    throw new FatalError("Social account changed before the provider effect.");
+    throw new FatalError(SOCIAL_CHANNEL_UNAVAILABLE);
   }
   const currentPost: PostData = {
     id: current.id,
@@ -588,6 +596,11 @@ async function publishStep(
     await resolveSocialPostMediaForDelivery(current.workspaceId, current.stableMediaRefs),
     account.platform,
   );
+
+  const accessToken = decryptToken(account.accessTokenEncrypted);
+  const accessTokenSecret = account.accessTokenSecret
+    ? decryptToken(account.accessTokenSecret)
+    : undefined;
 
   try {
     const results = await provider.post(

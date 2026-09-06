@@ -348,6 +348,13 @@ describe("social/repository", () => {
   });
 
   describe("createSocialPost", () => {
+    it("does not insert a post when its channel is outside the workspace", async () => {
+      setupChainableMock([]);
+      const { createSocialPost } = await import("@/lib/social/repository");
+      await expect(createSocialPost({ workspaceId: "ws_1", socialAccountId: "foreign", content: "Hello", createdByUserId: "user_1" })).rejects.toThrow(SocialAccountNotFoundError);
+      expect(mockInsert).not.toHaveBeenCalled();
+    });
+
     it("creates a draft post", async () => {
       const mockPost = {
         id: "spost_test",

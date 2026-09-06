@@ -41,6 +41,9 @@ jobs:
       - name: Run Gate A deterministic tests
         run: pnpm test:gate-a
 
+      - name: Check publishing workspace isolation
+        run: pnpm test:publishing-safety
+
       - name: Check YouTube SDK integration
         run: pnpm test:run src/lib/social/providers/__tests__/youtube.test.ts src/lib/social/providers/__tests__/youtube.contract.test.ts
 

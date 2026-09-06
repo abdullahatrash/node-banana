@@ -30,6 +30,7 @@ import { POST_STATUS_CONFIG } from "@/lib/social/constants"
 import { useToast } from "@/components/Toast"
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
 import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
+import { SOCIAL_CHANNEL_UNAVAILABLE } from "@/lib/social/publishing-errors"
 
 interface CalendarPostDetailsPopoverProps {
   post: CalendarItem
@@ -256,7 +257,9 @@ export function CalendarPostDetailsPopover({
         )}
         {post.errorMessage && (
           <div dir="auto" className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-destructive">
-            {post.errorMessage}
+            {post.errorMessage === SOCIAL_CHANNEL_UNAVAILABLE
+              ? t("destinationUnavailable")
+              : post.errorMessage}
           </div>
         )}
       </div>

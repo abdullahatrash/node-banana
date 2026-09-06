@@ -1,3 +1,4 @@
+import { SOCIAL_CHANNEL_UNAVAILABLE } from "@/lib/social/publishing-errors";
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
@@ -9,7 +10,8 @@ import {
   claimPostForDispatch,
   claimSocialDispatchRun,
   finalizeSocialDispatchRun,
-  getSocialAccountById,
+  getSocialAccount,
+  SocialAccountNotFoundError,
   hasChainChildren,
   listDueQueuedPosts,
   updatePostStatus,
@@ -160,7 +162,7 @@ async function handleDispatch(
 
       if (claimed.socialAccountId) {
         try {
-          const account = await getSocialAccountById(claimed.socialAccountId);
+          const account = await getSocialAccount(claimed.workspaceId, claimed.socialAccountId);
           providerKey = getProviderKey(account.platform);
           if (providerKey) {
             const provider = getProvider(providerKey);
@@ -190,8 +192,19 @@ async function handleDispatch(
             }
             activeByProvider.set(providerKey, active + 1);
           }
-        } catch {
-          providerKey = null;
+        } catch (error) {
+          if (error instanceof SocialAccountNotFoundError) {
+            await updatePostStatus(claimed.id, "failed", {
+              dispatchStatus: "failed",
+              errorMessage: SOCIAL_CHANNEL_UNAVAILABLE,
+              lastDispatchError: SOCIAL_CHANNEL_UNAVAILABLE,
+              nextDispatchAt: null,
+              lockedAt: null,
+            });
+            failed += 1;
+            continue;
+          }
+          throw error;
         }
       }
 

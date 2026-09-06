@@ -1,3 +1,4 @@
+import { SOCIAL_CHANNEL_UNAVAILABLE } from "@/lib/social/publishing-errors";
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
@@ -5,7 +6,8 @@ import { withApiPermission } from "@/lib/studio/authz";
 import {
   claimSocialDispatchRun,
   finalizeSocialDispatchRun,
-  getSocialAccountById,
+  getSocialAccount,
+  SocialAccountNotFoundError,
   getSocialPost,
   hasChainChildren,
   updatePostStatus,
@@ -234,7 +236,7 @@ export async function POST(
       );
     }
 
-    const account = await getSocialAccountById(post.socialAccountId);
+    const account = await getSocialAccount(workspaceId, post.socialAccountId);
     const publishingSettingsValidation = validateSelectedPublishingSettings({
       selectedChannelIds: [post.socialAccountId],
       settingsByChannelId: {
@@ -432,6 +434,12 @@ export async function POST(
       );
     }
   } catch (error) {
+    if (error instanceof SocialAccountNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: SOCIAL_CHANNEL_UNAVAILABLE, code: SOCIAL_CHANNEL_UNAVAILABLE },
+        { status: 404 },
+      );
+    }
     if (error instanceof SocialPostNotFoundError) {
       return NextResponse.json(
         { success: false, error: error.message },

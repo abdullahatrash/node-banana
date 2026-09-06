@@ -6,7 +6,7 @@ const mockListDueQueuedPosts = vi.fn();
 const mockClaimPostForDispatch = vi.fn();
 const mockClaimSocialDispatchRun = vi.fn();
 const mockFinalizeSocialDispatchRun = vi.fn();
-const mockGetSocialAccountById = vi.fn();
+const mockGetSocialAccount = vi.fn();
 const mockHasChainChildren = vi.fn();
 const mockUpdatePostStatus = vi.fn();
 const mockWorkflowStart = vi.fn();
@@ -22,10 +22,13 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/social/repository", () => ({
   listDueQueuedPosts: mockListDueQueuedPosts,
+  listQueuedDispatchedPostsMissingWorkflow: mockListDueQueuedPosts,
   claimPostForDispatch: mockClaimPostForDispatch,
+  claimQueuedDispatchedPostForRecovery: mockClaimPostForDispatch,
   claimSocialDispatchRun: mockClaimSocialDispatchRun,
   finalizeSocialDispatchRun: mockFinalizeSocialDispatchRun,
-  getSocialAccountById: mockGetSocialAccountById,
+  getSocialAccount: mockGetSocialAccount,
+  SocialAccountNotFoundError: class extends Error {},
   hasChainChildren: mockHasChainChildren,
   updatePostStatus: mockUpdatePostStatus,
 }));
@@ -93,6 +96,21 @@ describe("/api/social/internal/dispatch POST", () => {
 
     const response = await POST(request);
     expect(response.status).toBe(401);
+  });
+
+  it.each(["dispatch", "recover-missing-dispatch"])("%s fails an invalid channel association without starting a workflow", async (endpoint) => {
+    const { SocialAccountNotFoundError } = await import("@/lib/social/repository");
+    mockListDueQueuedPosts.mockResolvedValue([{ id: "bad", workspaceId: "ws_1" }]);
+    mockClaimPostForDispatch.mockResolvedValue({ id: "bad", workspaceId: "ws_1", socialAccountId: "foreign", dispatchAttempts: 1 });
+    mockGetSocialAccount.mockRejectedValueOnce(new SocialAccountNotFoundError("foreign"));
+    const { POST } = endpoint === "dispatch"
+      ? await import("../route")
+      : await import("../../recover-missing-dispatch/route");
+    const response = await POST(createRequest(`http://localhost:3000/api/social/internal/${endpoint}`));
+    expect(response.status).toBe(200);
+    expect(mockGetSocialAccount).toHaveBeenCalledWith("ws_1", "foreign");
+    expect(mockWorkflowStart).not.toHaveBeenCalled();
+    expect(mockUpdatePostStatus).toHaveBeenCalledWith("bad", "failed", expect.objectContaining({ lastDispatchError: "channel_not_found" }));
   });
 
   it("dispatches claimed queued posts", async () => {

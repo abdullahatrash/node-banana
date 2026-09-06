@@ -32,6 +32,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:gate-a": "vitest run src/app/api/studio/workspaces/__tests__/route.test.ts src/app/api/studio/assets/__tests__/route.test.ts src/app/api/studio/assets/[assetId]/__tests__/route.test.ts src/app/api/studio/assets/presign/__tests__/route.test.ts src/app/api/social/accounts/__tests__/route.test.ts src/app/api/social/posts/__tests__/route.test.ts",
+    "test:publishing-safety": "vitest run src/app/api/social/internal/dispatch/__tests__/route.test.ts src/lib/social/__tests__/repository.test.ts src/lib/social/__tests__/publishing-workspace.test.ts src/lib/social/__tests__/social-publish-workflow-security.test.ts src/components/social/posts/__tests__/PostRow.test.tsx src/components/social/calendar/__tests__/CalendarViews.test.tsx",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "db:up": "docker compose up -d postgres",
